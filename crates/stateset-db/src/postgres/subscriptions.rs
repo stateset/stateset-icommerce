@@ -12,7 +12,7 @@ use stateset_core::{
     Result, SkipBillingCycle, Subscription, SubscriptionEvent, SubscriptionEventType,
     SubscriptionFilter, SubscriptionId, SubscriptionItem, SubscriptionPlan, SubscriptionPlanFilter,
     SubscriptionPlanItem, SubscriptionRepository, SubscriptionStatus, UpdateSubscription,
-    UpdateSubscriptionPlan, generate_plan_code, generate_subscription_number,
+    UpdateSubscriptionPlan, generate_plan_code, generate_subscription_number, resumed_schedule,
 };
 use uuid::Uuid;
 
@@ -1373,8 +1373,14 @@ impl PgSubscriptionRepository {
         }
 
         let now = Utc::now();
+        // `next_billing_date` is cleared so the billing poll skips the
+        // subscription, but the paid-through date is RETAINED in
+        // `current_period_end` so `resume_subscription_async` can give the
+        // remaining paid time back (mirrors SQLite).
         sqlx::query(
-            "UPDATE subscriptions SET status = 'paused', paused_at = $1, resume_at = $2, next_billing_date = NULL, updated_at = $3 WHERE id = $4",
+            "UPDATE subscriptions SET status = 'paused', paused_at = $1, resume_at = $2,
+                current_period_end = COALESCE(next_billing_date, current_period_end),
+                next_billing_date = NULL, updated_at = $3 WHERE id = $4",
         )
         .bind(now)
         .bind(input.resume_at)
@@ -1393,9 +1399,9 @@ impl PgSubscriptionRepository {
         self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Resume a paused subscription, restoring the paid time that was left
+    /// when it was paused (see the SQLite twin for the worked example).
     pub async fn resume_subscription_async(&self, id: SubscriptionId) -> Result<Subscription> {
-        let sub = self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)?;
-
         // Guard, write and audit in ONE transaction (see
         // `cancel_subscription_async`). Mirrors the SQLite backend.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -1407,21 +1413,32 @@ impl PgSubscriptionRepository {
             )));
         }
 
+        let (paused_at, period_end, trial_ends_at): (
+            Option<DateTime<Utc>>,
+            DateTime<Utc>,
+            Option<DateTime<Utc>>,
+        ) = sqlx::query_as(
+            "SELECT paused_at, current_period_end, trial_ends_at FROM subscriptions WHERE id = $1",
+        )
+        .bind(id.into_uuid())
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
         let now = Utc::now();
-        let interval_days = if sub.billing_interval == BillingInterval::Custom {
-            i64::from(sub.custom_interval_days.unwrap_or(30))
-        } else {
-            sub.billing_interval.days()
-        };
-        let new_period_end = now + Duration::days(interval_days);
+        let (next_billing_date, resumed_status, new_trial_end) =
+            resumed_schedule(now, paused_at, period_end, trial_ends_at);
 
         sqlx::query(
-            "UPDATE subscriptions SET status = 'active', paused_at = NULL, resume_at = NULL, current_period_start = $1, current_period_end = $2, next_billing_date = $3, updated_at = $4 WHERE id = $5",
+            "UPDATE subscriptions SET status = $1, paused_at = NULL, resume_at = NULL,
+                current_period_start = $2, current_period_end = $3, next_billing_date = $3,
+                trial_ends_at = COALESCE($4, trial_ends_at), updated_at = $2
+             WHERE id = $5",
         )
+        .bind(subscription_status_str(resumed_status))
         .bind(now)
-        .bind(new_period_end)
-        .bind(new_period_end)
-        .bind(now)
+        .bind(next_billing_date)
+        .bind(new_trial_end)
         .bind(id.into_uuid())
         .execute(tx.as_mut())
         .await
@@ -1432,7 +1449,7 @@ impl PgSubscriptionRepository {
             id,
             SubscriptionEventType::Resumed,
             "Subscription resumed",
-            None,
+            Some(serde_json::json!({ "next_billing_date": next_billing_date.to_rfc3339() })),
             None,
         )
         .await?;
@@ -1466,14 +1483,12 @@ impl PgSubscriptionRepository {
         }
 
         let now = Utc::now();
-        let interval_days = if sub.billing_interval == BillingInterval::Custom {
-            i64::from(sub.custom_interval_days.unwrap_or(30))
-        } else {
-            sub.billing_interval.days()
-        };
-
-        let new_billing_date =
-            sub.next_billing_date.unwrap_or(sub.current_period_end) + Duration::days(interval_days);
+        // Skip exactly one interval with the same calendar arithmetic the paid
+        // path uses (`advance`) — mirrors SQLite.
+        let new_billing_date = sub.billing_interval.advance(
+            sub.next_billing_date.unwrap_or(sub.current_period_end),
+            sub.custom_interval_days,
+        );
 
         // `AND next_billing_date IS NOT DISTINCT FROM $5` pins the read the new
         // date was derived from, so a racing skip that already moved the date
@@ -1509,6 +1524,10 @@ impl PgSubscriptionRepository {
     // Billing cycles
     // ========================================================================
 
+    /// Create a billing cycle. When the subscription is in trial and the cycle
+    /// bills a period that starts at or after `trial_ends_at`, the subscription
+    /// becomes `Active` in the SAME transaction — billing a trial is what ends
+    /// it. Mirrors SQLite.
     pub async fn create_billing_cycle_async(
         &self,
         input: CreateBillingCycle,
@@ -1518,11 +1537,11 @@ impl PgSubscriptionRepository {
             self.get_subscription_async(subscription_id).await?.ok_or(CommerceError::NotFound)?;
 
         let id = Uuid::new_v4();
-        let subtotal = sub.calculate_total();
-        let discount = sub.discount_amount.unwrap_or(Decimal::ZERO)
-            + (sub.discount_percent.unwrap_or(Decimal::ZERO) * subtotal);
-        let total = (subtotal - discount).max(Decimal::ZERO);
+        let (subtotal, discount, total) = sub.billing_cycle_amounts();
         let currency = sub.currency;
+        let now = Utc::now();
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         sqlx::query(
             "INSERT INTO billing_cycles (id, subscription_id, cycle_number, status, period_start, period_end,
@@ -1539,9 +1558,9 @@ impl PgSubscriptionRepository {
         .bind(total)
         .bind(currency.as_str())
         .bind(Self::cycle_key(subscription_id, cycle_number))
-        .bind(Utc::now())
-        .bind(Utc::now())
-        .execute(&self.pool)
+        .bind(now)
+        .bind(now)
+        .execute(tx.as_mut())
         .await
         // A duplicate `(subscription_id, cycle_number)` trips the unique index
         // on `cycle_key` and maps to `Conflict` — the backstop that stops a
@@ -1549,7 +1568,48 @@ impl PgSubscriptionRepository {
         // billed. (Mirrors the SQLite backend.)
         .map_err(map_db_error)?;
 
+        self.activate_if_trial_elapsed_tx(&mut tx, subscription_id, period_start, now).await?;
+
+        tx.commit().await.map_err(map_db_error)?;
+
         self.get_billing_cycle_async(id).await?.ok_or(CommerceError::NotFound)
+    }
+
+    /// `Trial -> Active` once the billing clock reaches `trial_ends_at`:
+    /// a conditional UPDATE, so it is idempotent and cannot revive any other
+    /// status. Returns whether the transition happened (and was audited).
+    async fn activate_if_trial_elapsed_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subscription_id: SubscriptionId,
+        as_of: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<bool> {
+        let rows = sqlx::query(
+            "UPDATE subscriptions SET status = 'active', updated_at = $1
+             WHERE id = $2 AND status = 'trial'
+               AND (trial_ends_at IS NULL OR trial_ends_at <= $3)",
+        )
+        .bind(now)
+        .bind(subscription_id.into_uuid())
+        .bind(as_of)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            return Ok(false);
+        }
+        self.record_event_tx(
+            tx,
+            subscription_id,
+            SubscriptionEventType::Activated,
+            "Trial ended; subscription activated",
+            None,
+            Some("system".to_string()),
+        )
+        .await?;
+        Ok(true)
     }
 
     pub async fn get_billing_cycle_async(&self, id: Uuid) -> Result<Option<BillingCycle>> {
@@ -1803,6 +1863,9 @@ impl PgSubscriptionRepository {
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+            // The paid cycle carried the clock to `period_end`; a trial whose
+            // end has been reached is over.
+            self.activate_if_trial_elapsed_tx(tx, subscription_id, period_end, now).await?;
         } else {
             sqlx::query(
                 "UPDATE subscriptions SET

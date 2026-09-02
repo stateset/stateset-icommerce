@@ -268,11 +268,24 @@ impl Orders {
     }
 
     /// Delete an order.
+    ///
+    /// Releases the order's inventory reservations and cancels its backorders
+    /// in the same transaction. Orders that have shipped, been delivered or
+    /// refunded are fulfilment/financial records and are refused with
+    /// [`CommerceError::Conflict`](stateset_core::CommerceError::Conflict) —
+    /// cancel or refund them instead. Deleting an unknown id is a no-op.
     pub fn delete(&self, id: OrderId) -> Result<()> {
         self.db.orders().delete(id)
     }
 
     /// Add an item to an order.
+    ///
+    /// Only allowed before fulfilment (`pending`, `confirmed`, `processing`);
+    /// later statuses are refused with
+    /// [`CommerceError::Conflict`](stateset_core::CommerceError::Conflict).
+    /// The new line is reserved from stock (backordering any shortfall) and
+    /// the order total is re-derived as `lines + tax + shipping - discount`,
+    /// all in one transaction.
     pub fn add_item(&self, order_id: OrderId, item: CreateOrderItem) -> Result<OrderItem> {
         let order_item = self.db.orders().add_item(order_id, item)?;
         #[cfg(feature = "events")]
@@ -289,6 +302,10 @@ impl Orders {
     }
 
     /// Remove an item from an order.
+    ///
+    /// Only allowed before fulfilment; releases the line's inventory
+    /// reservation and cancels its backorder in the same transaction as the
+    /// delete, then re-derives the order total.
     pub fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()> {
         self.db.orders().remove_item(order_id, item_id)?;
         #[cfg(feature = "events")]

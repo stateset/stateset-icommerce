@@ -2,7 +2,10 @@
 
 use super::kernel_outbox::append_kernel_event_tx;
 use super::{
-    backorder::{cancel_backorders_for_order_in_tx, create_backorder_in_tx},
+    backorder::{
+        cancel_backorders_for_order_in_tx, cancel_backorders_for_order_line_in_tx,
+        create_backorder_in_tx,
+    },
     build_in_clause,
     inventory::{ReservationConfirmOutcome, SqliteInventoryRepository},
     map_db_error, params_refs, parse_datetime_row, parse_decimal_row, parse_enum, parse_enum_row,
@@ -17,7 +20,7 @@ use stateset_core::{
     Address, BatchResult, CartId, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem,
     CustomerId, FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem, OrderItemId,
     OrderRepository, OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result, ShipOrder,
-    ShipmentLineInput, UpdateOrder, validate_batch_size, validate_currency_code,
+    ShipmentLineInput, StockPolicy, UpdateOrder, validate_batch_size, validate_currency_code,
     validate_postal_code, validate_price, validate_required_text, validate_required_uuid,
     validate_sku,
 };
@@ -50,6 +53,40 @@ pub(crate) struct LineDelta {
 
 fn to_sql_err(err: CommerceError) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(err))
+}
+
+/// Result of one in-transaction order update.
+///
+/// `post_commit_error` carries [`CommerceError::ReservationExpired`] when a
+/// shipment found an expired reservation: the expiry bookkeeping must commit,
+/// after which the caller surfaces the error (legacy full-ship behaviour).
+pub(crate) struct UpdateOutcome {
+    pub(crate) order: Order,
+    pub(crate) post_commit_error: Option<CommerceError>,
+}
+
+/// Refuse a line change on an order whose status no longer allows it.
+fn ensure_lines_mutable(id: OrderId, status: OrderStatus) -> Result<()> {
+    if status.allows_line_changes() {
+        Ok(())
+    } else {
+        Err(CommerceError::Conflict(format!(
+            "order {id} lines cannot be changed while it is {status}; \
+             lines may only be added or removed before fulfilment (pending, confirmed, processing)"
+        )))
+    }
+}
+
+/// Refuse deletion of an order that is a fulfilment/financial record.
+fn ensure_deletable(id: OrderId, status: OrderStatus) -> Result<()> {
+    if status.allows_delete() {
+        Ok(())
+    } else {
+        Err(CommerceError::Conflict(format!(
+            "order {id} cannot be deleted while it is {status}; \
+             shipped, delivered and refunded orders are records — cancel or refund instead"
+        )))
+    }
 }
 
 impl SqliteOrderRepository {
@@ -224,11 +261,15 @@ impl SqliteOrderRepository {
             Self::validate_order_item_input(item)?;
         }
 
-        // Invariant M1 (`commerce.money.scale_exceeds_currency`): no line money
-        // amount may carry more decimal places than the order currency allows.
-        // Checked here, before the first write, so a rejected order persists
-        // nothing.
+        // Invariant M1 (`commerce.money.scale_exceeds_currency`): no money
+        // amount — line or order-level — may carry more decimal places than
+        // the order currency allows. Checked here, before the first write, so
+        // a rejected order persists nothing.
         input.validate_money_scale()?;
+        // Order-level tax/shipping/discount must be non-negative and must not
+        // drive `lines + tax + shipping - discount` below zero (refused, never
+        // clamped).
+        input.validate_order_level_money()?;
 
         if let Some(address) = &input.shipping_address {
             Self::validate_address_input(address, "order.shipping_address")?;
@@ -619,91 +660,8 @@ impl SqliteOrderRepository {
             }
         }
 
-        let reference_id = &id_str;
-        let mut inv_lookup = tx.prepare_cached("SELECT id FROM inventory_items WHERE sku = ?")?;
         for item in &items {
-            if item.quantity <= 0 {
-                continue;
-            }
-
-            let item_row = inv_lookup.query_row([&item.sku], |row| row.get::<_, i64>(0));
-
-            let item_id = match item_row {
-                Ok(item_id) => item_id,
-                Err(rusqlite::Error::QueryReturnedNoRows) => continue,
-                Err(e) => return Err(e),
-            };
-
-            let available = sum_decimal_query(
-                tx,
-                "SELECT quantity_available FROM inventory_balances WHERE item_id = ?",
-                &[&item_id],
-                "inventory_balance",
-                "quantity_available",
-            )
-            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-
-            let requested = Decimal::from(item.quantity);
-            if !input.stock_policy.allows_backorder() && available < requested {
-                // Fail the whole transaction: no order row, no reservations,
-                // no backorders survive.
-                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                    CommerceError::InsufficientStock {
-                        sku: item.sku.clone(),
-                        requested: requested.to_string(),
-                        available: available.to_string(),
-                    },
-                )));
-            }
-            let reserve_qty =
-                if available > Decimal::ZERO { requested.min(available) } else { Decimal::ZERO };
-
-            let mut reserved = Decimal::ZERO;
-            if reserve_qty > Decimal::ZERO {
-                let reserve_input = ReserveInventory {
-                    sku: item.sku.clone(),
-                    location_id: None,
-                    quantity: reserve_qty,
-                    reference_type: "order".to_string(),
-                    reference_id: reference_id.clone(),
-                    expires_in_seconds: None,
-                };
-
-                match SqliteInventoryRepository::reserve_in_tx(tx, &reserve_input) {
-                    Ok(_reservation) => {
-                        reserved = reserve_qty;
-                    }
-                    Err(err) => {
-                        let commerce_err = map_db_error(err);
-                        if input.stock_policy.allows_backorder()
-                            && matches!(commerce_err, CommerceError::InsufficientStock { .. })
-                        {
-                            reserved = Decimal::ZERO;
-                        } else {
-                            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                                commerce_err,
-                            )));
-                        }
-                    }
-                }
-            }
-
-            let remaining = requested - reserved;
-            if remaining > Decimal::ZERO {
-                let backorder_input = CreateBackorder {
-                    order_id: id.into_uuid(),
-                    order_line_id: Some(item.id.into_uuid()),
-                    customer_id: input.customer_id.into_uuid(),
-                    sku: item.sku.clone(),
-                    quantity: remaining,
-                    priority: None,
-                    expected_date: None,
-                    promised_date: None,
-                    source_location_id: None,
-                    notes: Some("Auto backorder: insufficient stock".to_string()),
-                };
-                create_backorder_in_tx(tx, &backorder_input)?;
-            }
+            Self::reserve_line_stock_in_tx(tx, id, input.customer_id, item, input.stock_policy)?;
         }
 
         Ok(Order {
@@ -730,6 +688,176 @@ impl SqliteOrderRepository {
             created_at: now,
             updated_at: now,
         })
+    }
+
+    /// Reserve stock for one order line under `stock_policy`, backordering any
+    /// shortfall. Lines whose SKU is not a tracked inventory item are skipped.
+    ///
+    /// Shared by order creation (every line) and [`OrderRepository::add_item`]
+    /// (the new line) so a line added after the fact is reserved exactly like
+    /// one present at creation. Under `RejectIfInsufficient` the error rolls
+    /// the caller's transaction back.
+    pub(crate) fn reserve_line_stock_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        order_id: OrderId,
+        customer_id: CustomerId,
+        item: &OrderItem,
+        stock_policy: StockPolicy,
+    ) -> std::result::Result<(), rusqlite::Error> {
+        if item.quantity <= 0 {
+            return Ok(());
+        }
+        let reference_id = order_id.to_string();
+
+        let item_id =
+            match tx.query_row("SELECT id FROM inventory_items WHERE sku = ?", [&item.sku], |row| {
+                row.get::<_, i64>(0)
+            }) {
+                Ok(item_id) => item_id,
+                Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+                Err(e) => return Err(e),
+            };
+
+        let available = sum_decimal_query(
+            tx,
+            "SELECT quantity_available FROM inventory_balances WHERE item_id = ?",
+            &[&item_id],
+            "inventory_balance",
+            "quantity_available",
+        )
+        .map_err(to_sql_err)?;
+
+        let requested = Decimal::from(item.quantity);
+        if !stock_policy.allows_backorder() && available < requested {
+            // Fail the whole transaction: no order row, no reservations,
+            // no backorders survive.
+            return Err(to_sql_err(CommerceError::InsufficientStock {
+                sku: item.sku.clone(),
+                requested: requested.to_string(),
+                available: available.to_string(),
+            }));
+        }
+        let reserve_qty =
+            if available > Decimal::ZERO { requested.min(available) } else { Decimal::ZERO };
+
+        let mut reserved = Decimal::ZERO;
+        if reserve_qty > Decimal::ZERO {
+            let reserve_input = ReserveInventory {
+                sku: item.sku.clone(),
+                location_id: None,
+                quantity: reserve_qty,
+                reference_type: "order".to_string(),
+                reference_id,
+                expires_in_seconds: None,
+            };
+
+            match SqliteInventoryRepository::reserve_in_tx(tx, &reserve_input) {
+                Ok(_reservation) => {
+                    reserved = reserve_qty;
+                }
+                Err(err) => {
+                    let commerce_err = map_db_error(err);
+                    if stock_policy.allows_backorder()
+                        && matches!(commerce_err, CommerceError::InsufficientStock { .. })
+                    {
+                        reserved = Decimal::ZERO;
+                    } else {
+                        return Err(to_sql_err(commerce_err));
+                    }
+                }
+            }
+        }
+
+        let remaining = requested - reserved;
+        if remaining > Decimal::ZERO {
+            let backorder_input = CreateBackorder {
+                order_id: order_id.into_uuid(),
+                order_line_id: Some(item.id.into_uuid()),
+                customer_id: customer_id.into_uuid(),
+                sku: item.sku.clone(),
+                quantity: remaining,
+                priority: None,
+                expected_date: None,
+                promised_date: None,
+                source_location_id: None,
+                notes: Some("Auto backorder: insufficient stock".to_string()),
+            };
+            create_backorder_in_tx(tx, &backorder_input)?;
+        }
+        Ok(())
+    }
+
+    /// Release the open reservations held for `sku` on this order that cover
+    /// `quantity` units (whole reservations, oldest first), returning stock to
+    /// available. Used when a line is removed.
+    ///
+    /// Reservations are created one per line, so releasing whole reservations
+    /// until the line's quantity is covered releases exactly that line's hold.
+    fn release_line_reservations_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        order_id: OrderId,
+        sku: &str,
+        quantity: Decimal,
+    ) -> std::result::Result<(), rusqlite::Error> {
+        let mut remaining = quantity;
+        let open = SqliteInventoryRepository::list_open_reservations_for_sku_in_tx(
+            tx,
+            "order",
+            &order_id.to_string(),
+            sku,
+        )?;
+        for (reservation_id, reserved_qty) in open {
+            if remaining <= Decimal::ZERO {
+                break;
+            }
+            SqliteInventoryRepository::release_reservation_in_tx(tx, reservation_id)?;
+            remaining -= reserved_qty;
+        }
+        Ok(())
+    }
+
+    /// Release every reservation and cancel every backorder held by the order.
+    fn release_order_stock_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id: OrderId,
+    ) -> std::result::Result<(), rusqlite::Error> {
+        let reservation_ids = SqliteInventoryRepository::list_reservation_ids_by_reference_in_tx(
+            tx,
+            "order",
+            &id.to_string(),
+        )?;
+        for reservation_id in reservation_ids {
+            SqliteInventoryRepository::release_reservation_in_tx(tx, reservation_id)?;
+        }
+        cancel_backorders_for_order_in_tx(tx, id.into_uuid())
+    }
+
+    /// Delete one order and everything it holds (lines, reservations,
+    /// backorders) on the caller's transaction. A missing order is a no-op.
+    ///
+    /// Decision: orders that have shipped (`PartiallyShipped`/`Shipped`/
+    /// `Delivered`) or been refunded are refused with `Conflict` — they are
+    /// fulfilment and financial records. Pending/confirmed/processing orders
+    /// release their stock before the rows go; cancelled orders already have.
+    fn delete_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id: OrderId,
+    ) -> std::result::Result<(), rusqlite::Error> {
+        let status_raw =
+            match tx.query_row("SELECT status FROM orders WHERE id = ?", [id.to_string()], |row| {
+                row.get::<_, String>(0)
+            }) {
+                Ok(status) => status,
+                Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+                Err(e) => return Err(e),
+            };
+        let status: OrderStatus = parse_enum(&status_raw, "order", "status").map_err(to_sql_err)?;
+        ensure_deletable(id, status).map_err(to_sql_err)?;
+
+        Self::release_order_stock_in_tx(tx, id)?;
+        tx.execute("DELETE FROM order_items WHERE order_id = ?", [id.to_string()])?;
+        tx.execute("DELETE FROM orders WHERE id = ?", [id.to_string()])?;
+        Ok(())
     }
 
     pub(crate) fn create_from_cart_in_tx(
@@ -926,18 +1054,28 @@ impl SqliteOrderRepository {
         Ok(None)
     }
 
-    /// Shared implementation of [`OrderRepository::update`] and [`OrderRepository::ship`].
+    /// Apply one order update (status transition with all its side effects,
+    /// field patches, version bump, outbox event) on the caller's transaction.
     ///
-    /// `ship` selects how a transition to `Shipped` touches the order lines:
-    /// [`ShipMode::All`] ships every remaining unit (legacy status flip),
-    /// [`ShipMode::Lines`] ships explicit per-line quantities and resolves the
-    /// status to `PartiallyShipped`/`Shipped` from the line totals.
-    fn apply_update(&self, id: OrderId, input: UpdateOrder, ship: ShipMode<'_>) -> Result<Order> {
+    /// This is THE transition path: [`OrderRepository::update`],
+    /// [`OrderRepository::ship`] and [`OrderRepository::update_batch_atomic`]
+    /// all route through it, so a batch of N updates behaves exactly like N
+    /// single updates sharing one commit. `ship` selects how a transition to
+    /// `Shipped` touches the order lines: [`ShipMode::All`] ships every
+    /// remaining unit (legacy status flip), [`ShipMode::Lines`] ships explicit
+    /// per-line quantities and resolves the status to
+    /// `PartiallyShipped`/`Shipped` from the line totals.
+    pub(crate) fn apply_update_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id: OrderId,
+        input: &UpdateOrder,
+        ship: &ShipMode<'_>,
+    ) -> std::result::Result<UpdateOutcome, rusqlite::Error> {
         if let Some(address) = &input.shipping_address {
-            Self::validate_address_input(address, "order.shipping_address")?;
+            Self::validate_address_input(address, "order.shipping_address").map_err(to_sql_err)?;
         }
         if let Some(address) = &input.billing_address {
-            Self::validate_address_input(address, "order.billing_address")?;
+            Self::validate_address_input(address, "order.billing_address").map_err(to_sql_err)?;
         }
 
         let shipping_address_json = input
@@ -945,9 +1083,9 @@ impl SqliteOrderRepository {
             .as_ref()
             .map(|a| {
                 serde_json::to_string(a).map_err(|e| {
-                    CommerceError::DatabaseError(format!(
+                    to_sql_err(CommerceError::DatabaseError(format!(
                         "Failed to serialize order.shipping_address: {e}"
-                    ))
+                    )))
                 })
             })
             .transpose()?;
@@ -956,19 +1094,14 @@ impl SqliteOrderRepository {
             .as_ref()
             .map(|a| {
                 serde_json::to_string(a).map_err(|e| {
-                    CommerceError::DatabaseError(format!(
+                    to_sql_err(CommerceError::DatabaseError(format!(
                         "Failed to serialize order.billing_address: {e}"
-                    ))
+                    )))
                 })
             })
             .transpose()?;
 
-        struct UpdateOutcome {
-            order: Order,
-            post_commit_error: Option<CommerceError>,
-        }
-
-        let outcome = with_immediate_transaction(&self.pool, |tx| {
+        {
             let now = Utc::now();
             let (current_version, current_status_raw, current_payment_status_raw): (
                 i32,
@@ -1002,7 +1135,7 @@ impl SqliteOrderRepository {
             if let Some(status) = input.status {
                 let is_ship = status == OrderStatus::Shipped && !matches!(ship, ShipMode::None);
                 if is_ship {
-                    let (resolved, deltas) = Self::plan_shipment_in_tx(tx, id, &ship)?;
+                    let (resolved, deltas) = Self::plan_shipment_in_tx(tx, id, ship)?;
                     effective_status = Some(resolved);
                     line_deltas = deltas;
                 }
@@ -1043,7 +1176,7 @@ impl SqliteOrderRepository {
 
                 if is_ship {
                     reservation_expired =
-                        Self::confirm_shipped_reservations_in_tx(tx, id, &ship, &line_deltas, now)?;
+                        Self::confirm_shipped_reservations_in_tx(tx, id, ship, &line_deltas, now)?;
                 }
             }
 
@@ -1187,6 +1320,14 @@ impl SqliteOrderRepository {
             )?;
 
             Ok(UpdateOutcome { order, post_commit_error: None })
+        }
+    }
+
+    /// Shared implementation of [`OrderRepository::update`] and [`OrderRepository::ship`]:
+    /// one [`Self::apply_update_in_tx`] in its own immediate transaction.
+    fn apply_update(&self, id: OrderId, input: UpdateOrder, ship: ShipMode<'_>) -> Result<Order> {
+        let outcome = with_immediate_transaction(&self.pool, |tx| {
+            Self::apply_update_in_tx(tx, id, &input, &ship)
         })?;
 
         if let Some(err) = outcome.post_commit_error {
@@ -1194,6 +1335,21 @@ impl SqliteOrderRepository {
         }
 
         Ok(outcome.order)
+    }
+
+    /// How a plain status update touches the lines: `Shipped` ships every
+    /// remaining unit; `PartiallyShipped` is derived from line quantities and
+    /// cannot be set directly (use [`OrderRepository::ship`] with lines).
+    fn ship_mode_for_update(input: &UpdateOrder) -> Result<ShipMode<'static>> {
+        match input.status {
+            Some(OrderStatus::Shipped) => Ok(ShipMode::All),
+            Some(OrderStatus::PartiallyShipped) => Err(CommerceError::ValidationError(
+                "order status partially_shipped is derived from shipped line quantities; \
+                 use OrderRepository::ship with explicit lines"
+                    .to_string(),
+            )),
+            _ => Ok(ShipMode::None),
+        }
     }
 }
 
@@ -1243,17 +1399,7 @@ impl OrderRepository for SqliteOrderRepository {
     }
 
     fn update(&self, id: OrderId, input: UpdateOrder) -> Result<Order> {
-        let mode = match input.status {
-            Some(OrderStatus::Shipped) => ShipMode::All,
-            Some(OrderStatus::PartiallyShipped) => {
-                return Err(CommerceError::ValidationError(
-                    "order status partially_shipped is derived from shipped line quantities; \
-                     use OrderRepository::ship with explicit lines"
-                        .to_string(),
-                ));
-            }
-            _ => ShipMode::None,
-        };
+        let mode = Self::ship_mode_for_update(&input)?;
         self.apply_update(id, input, mode)
     }
 
@@ -1341,11 +1487,7 @@ impl OrderRepository for SqliteOrderRepository {
     }
 
     fn delete(&self, id: OrderId) -> Result<()> {
-        with_immediate_transaction(&self.pool, |tx| {
-            tx.execute("DELETE FROM order_items WHERE order_id = ?", [id.to_string()])?;
-            tx.execute("DELETE FROM orders WHERE id = ?", [id.to_string()])?;
-            Ok(())
-        })
+        with_immediate_transaction(&self.pool, |tx| Self::delete_in_tx(tx, id))
     }
 
     fn add_item(&self, order_id: OrderId, item: CreateOrderItem) -> Result<OrderItem> {
@@ -1359,34 +1501,7 @@ impl OrderRepository for SqliteOrderRepository {
             item.discount.unwrap_or_default(),
             item.tax_amount.unwrap_or_default(),
         );
-
-        with_immediate_transaction(&self.pool, |tx| {
-            tx.execute(
-                "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
-                                          quantity, unit_price, discount, tax_amount, total)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                rusqlite::params![
-                    item_id.to_string(),
-                    order_id.to_string(),
-                    item.product_id.to_string(),
-                    item.variant_id.map(|v| v.to_string()),
-                    item.sku,
-                    item.name,
-                    item.quantity,
-                    item.unit_price.to_string(),
-                    item.discount.unwrap_or_default().to_string(),
-                    item.tax_amount.unwrap_or_default().to_string(),
-                    item_total.to_string(),
-                ],
-            )?;
-
-            // Update order total
-            self.update_order_total(tx, order_id)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            Ok(())
-        })?;
-
-        Ok(OrderItem {
+        let order_item = OrderItem {
             id: item_id,
             order_id,
             product_id: item.product_id,
@@ -1399,18 +1514,82 @@ impl OrderRepository for SqliteOrderRepository {
             discount: item.discount.unwrap_or_default(),
             tax_amount: item.tax_amount.unwrap_or_default(),
             total: item_total,
-        })
+        };
+
+        with_immediate_transaction(&self.pool, |tx| {
+            // Status predicate, line insert, stock reservation/backorder and
+            // total recompute share this transaction: a refused or failed add
+            // leaves no line and no reservation behind.
+            let (status, customer_id) = Self::load_status_and_customer_in_tx(tx, order_id)?;
+            ensure_lines_mutable(order_id, status).map_err(to_sql_err)?;
+
+            tx.execute(
+                "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
+                                          quantity, unit_price, discount, tax_amount, total)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    order_item.id.to_string(),
+                    order_id.to_string(),
+                    order_item.product_id.to_string(),
+                    order_item.variant_id.map(|v| v.to_string()),
+                    &order_item.sku,
+                    &order_item.name,
+                    order_item.quantity,
+                    order_item.unit_price.to_string(),
+                    order_item.discount.to_string(),
+                    order_item.tax_amount.to_string(),
+                    order_item.total.to_string(),
+                ],
+            )?;
+
+            // Same stock-policy path as creation. A line added later has no
+            // per-request policy, so it takes the default (`AllowBackorder`):
+            // reserve what is available, backorder the rest.
+            Self::reserve_line_stock_in_tx(
+                tx,
+                order_id,
+                customer_id,
+                &order_item,
+                StockPolicy::default(),
+            )?;
+
+            Self::update_order_total(tx, order_id).map_err(to_sql_err)?;
+            Ok(())
+        })?;
+
+        Ok(order_item)
     }
 
     fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()> {
         with_immediate_transaction(&self.pool, |tx| {
+            let (status, _customer_id) = Self::load_status_and_customer_in_tx(tx, order_id)?;
+            ensure_lines_mutable(order_id, status).map_err(to_sql_err)?;
+
+            let (sku, quantity) = match tx.query_row(
+                "SELECT sku, quantity FROM order_items WHERE id = ? AND order_id = ?",
+                [item_id.to_string(), order_id.to_string()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?)),
+            ) {
+                Ok(line) => line,
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    return Err(to_sql_err(CommerceError::ValidationError(format!(
+                        "Order item {item_id} does not belong to order {order_id}"
+                    ))));
+                }
+                Err(e) => return Err(e),
+            };
+
+            // Give the line's stock back and drop its backorder in the same
+            // transaction as the delete, so removal never leaks a hold.
+            Self::release_line_reservations_in_tx(tx, order_id, &sku, Decimal::from(quantity))?;
+            cancel_backorders_for_order_line_in_tx(tx, order_id.into_uuid(), item_id.into_uuid())?;
+
             tx.execute(
                 "DELETE FROM order_items WHERE id = ? AND order_id = ?",
                 [item_id.to_string(), order_id.to_string()],
             )?;
 
-            self.update_order_total(tx, order_id)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            Self::update_order_total(tx, order_id).map_err(to_sql_err)?;
             Ok(())
         })
     }
@@ -1541,148 +1720,29 @@ impl OrderRepository for SqliteOrderRepository {
             return Ok(vec![]);
         }
 
-        // For atomic updates, we use a transaction and fail on any error
+        // Every row goes through the SAME in-transaction path as a single
+        // `update` (shipment planning, reservation confirm/release, backorder
+        // cancel, outbox event, `PartiallyShipped` rejection), sharing one
+        // commit: batch == N single updates, all or nothing.
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut results = Vec::with_capacity(updates.len());
 
-        for (id, input) in updates {
-            let now = Utc::now();
-            let (current_version, current_status_raw, current_payment_status_raw): (
-                i32,
-                String,
-                String,
-            ) = tx
-                .query_row(
-                    "SELECT version, status, payment_status FROM orders WHERE id = ?",
-                    [id.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => {
-                        CommerceError::OrderNotFound(id.into_uuid())
-                    }
-                    e => map_db_error(e),
-                })?;
-            let current_status: OrderStatus = parse_enum(&current_status_raw, "order", "status")?;
-            let current_payment_status: PaymentStatus =
-                parse_enum(&current_payment_status_raw, "order", "payment_status")?;
-
-            let mut update_parts = vec!["updated_at = ?"];
-            let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
-
-            if let Some(status) = &input.status {
-                let next_status = *status;
-                if !current_status.can_transition_to(next_status) {
-                    if next_status == OrderStatus::Cancelled {
-                        return Err(CommerceError::OrderCannotBeCancelled(
-                            current_status.to_string(),
-                        ));
-                    }
-
-                    return Err(CommerceError::InvalidOrderStatusTransition {
-                        from: current_status.to_string(),
-                        to: next_status.to_string(),
-                    });
-                }
-
-                if next_status == OrderStatus::Refunded {
-                    let effective_payment_status =
-                        input.payment_status.unwrap_or(current_payment_status);
-                    if !matches!(
-                        effective_payment_status,
-                        PaymentStatus::Paid
-                            | PaymentStatus::PartiallyPaid
-                            | PaymentStatus::Refunded
-                            | PaymentStatus::PartiallyRefunded
-                    ) {
-                        return Err(CommerceError::OrderCannotBeRefunded(
-                            effective_payment_status.to_string(),
-                        ));
-                    }
-                }
-
-                update_parts.push("status = ?");
-                params.push(Box::new(status.to_string()));
+        for (id, input) in &updates {
+            let mode = Self::ship_mode_for_update(input)?;
+            let outcome = Self::apply_update_in_tx(&tx, *id, input, &mode).map_err(map_db_error)?;
+            if let Some(err) = outcome.post_commit_error {
+                // A single update commits the expiry bookkeeping before
+                // surfacing `ReservationExpired`; an atomic batch cannot
+                // commit part of itself, so the whole batch rolls back (the
+                // reservation is still expired by time and is re-expired on
+                // retry).
+                return Err(err);
             }
-            if let Some(payment_status) = &input.payment_status {
-                update_parts.push("payment_status = ?");
-                params.push(Box::new(payment_status.to_string()));
-            }
-            if let Some(fulfillment_status) = &input.fulfillment_status {
-                update_parts.push("fulfillment_status = ?");
-                params.push(Box::new(fulfillment_status.to_string()));
-            }
-            if let Some(tracking) = &input.tracking_number {
-                update_parts.push("tracking_number = ?");
-                params.push(Box::new(tracking.clone()));
-            }
-            if let Some(notes) = &input.notes {
-                update_parts.push("notes = ?");
-                params.push(Box::new(notes.clone()));
-            }
-            if let Some(addr) = &input.shipping_address {
-                Self::validate_address_input(addr, "order.shipping_address")?;
-                update_parts.push("shipping_address = ?");
-                let address_json = serde_json::to_string(addr).map_err(|e| {
-                    CommerceError::DatabaseError(format!(
-                        "Failed to serialize order.shipping_address: {e}"
-                    ))
-                })?;
-                params.push(Box::new(address_json));
-            }
-            if let Some(addr) = &input.billing_address {
-                Self::validate_address_input(addr, "order.billing_address")?;
-                update_parts.push("billing_address = ?");
-                let address_json = serde_json::to_string(addr).map_err(|e| {
-                    CommerceError::DatabaseError(format!(
-                        "Failed to serialize order.billing_address: {e}"
-                    ))
-                })?;
-                params.push(Box::new(address_json));
-            }
-
-            update_parts.push("version = version + 1");
-            params.push(Box::new(id.to_string()));
-            params.push(Box::new(current_version));
-
-            let sql = format!(
-                "UPDATE orders SET {} WHERE id = ? AND version = ?",
-                update_parts.join(", ")
-            );
-
-            let params_refs: Vec<&dyn rusqlite::ToSql> =
-                params.iter().map(std::convert::AsRef::as_ref).collect();
-            let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
-            if rows_affected == 0 {
-                return Err(CommerceError::VersionConflict {
-                    entity: "order".to_string(),
-                    id: id.to_string(),
-                    expected_version: current_version,
-                });
-            }
-
-            let order = tx
-                .query_row(
-                    "SELECT * FROM orders WHERE id = ?",
-                    [id.to_string()],
-                    Self::row_to_order,
-                )
-                .map_err(map_db_error)?;
-
-            results.push(order);
+            results.push(outcome.order);
         }
 
         tx.commit().map_err(map_db_error)?;
-
-        // Load items for all orders in one batched query
-        let conn = self.conn()?;
-        let ids: Vec<OrderId> = results.iter().map(|o| o.id).collect();
-        let mut items_by_id = Self::load_order_items_batch(&conn, &ids)?;
-        for order in &mut results {
-            order.items = items_by_id.remove(&order.id).unwrap_or_default();
-        }
-
         Ok(results)
     }
 
@@ -1709,18 +1769,11 @@ impl OrderRepository for SqliteOrderRepository {
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
-        let placeholders = build_in_clause(ids.len());
-        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
-        let params = uuid_params(&raw_ids);
-        let params_refs = params_refs(&params);
-
-        // Delete order items first
-        let sql = format!("DELETE FROM order_items WHERE order_id IN ({placeholders})");
-        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
-
-        // Delete orders
-        let sql = format!("DELETE FROM orders WHERE id IN ({placeholders})");
-        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+        // Same per-order path as a single delete (status predicate, reservation
+        // release, backorder cancel), one commit.
+        for id in &ids {
+            Self::delete_in_tx(&tx, *id).map_err(map_db_error)?;
+        }
 
         tx.commit().map_err(map_db_error)?;
         Ok(())
@@ -1761,28 +1814,62 @@ impl OrderRepository for SqliteOrderRepository {
 }
 
 impl SqliteOrderRepository {
-    fn update_order_total(&self, conn: &rusqlite::Connection, order_id: OrderId) -> Result<()> {
-        let current_version: i32 = conn
-            .query_row("SELECT version FROM orders WHERE id = ?", [order_id.to_string()], |row| {
-                row.get(0)
-            })
+    /// Current `(status, customer_id)` of an order, or `OrderNotFound`.
+    fn load_status_and_customer_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        order_id: OrderId,
+    ) -> std::result::Result<(OrderStatus, CustomerId), rusqlite::Error> {
+        let (status_raw, customer_raw) = match tx.query_row(
+            "SELECT status, customer_id FROM orders WHERE id = ?",
+            [order_id.to_string()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        ) {
+            Ok(row) => row,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(to_sql_err(CommerceError::OrderNotFound(order_id.into_uuid())));
+            }
+            Err(e) => return Err(e),
+        };
+        let status: OrderStatus = parse_enum(&status_raw, "order", "status").map_err(to_sql_err)?;
+        let customer_id = CustomerId::from(parse_uuid_row(&customer_raw, "order", "customer_id")?);
+        Ok((status, customer_id))
+    }
+
+    /// Re-derive `total_amount` after a line change.
+    ///
+    /// The total always foots to `Σ order_items.total + tax_amount +
+    /// shipping_amount - discount_amount` — the same rule `create` writes and
+    /// [`Order::calculate_total`] reads. It used to be the bare line sum, which
+    /// silently dropped the order-level money on the first `add_item`.
+    fn update_order_total(conn: &rusqlite::Connection, order_id: OrderId) -> Result<()> {
+        let (current_version, tax_raw, shipping_raw, discount_raw): (i32, String, String, String) =
+            conn.query_row(
+                "SELECT version, tax_amount, shipping_amount, discount_amount FROM orders WHERE id = ?",
+                [order_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
             .map_err(|e| match e {
                 rusqlite::Error::QueryReturnedNoRows => {
                     CommerceError::OrderNotFound(order_id.into_uuid())
                 }
                 e => map_db_error(e),
             })?;
+        let tax = parse_decimal_row(&tax_raw, "order", "tax_amount").map_err(map_db_error)?;
+        let shipping =
+            parse_decimal_row(&shipping_raw, "order", "shipping_amount").map_err(map_db_error)?;
+        let discount =
+            parse_decimal_row(&discount_raw, "order", "discount_amount").map_err(map_db_error)?;
 
         let order_id_param = order_id.to_string();
         let order_params: [&dyn rusqlite::ToSql; 1] = [&order_id_param];
-        let total = sum_decimal_query(
+        let line_total = sum_decimal_query(
             conn,
             "SELECT total FROM order_items WHERE order_id = ?",
             &order_params,
             "order_item",
             "total",
         )?;
-        let total = total.to_string();
+        let total = (line_total + tax + shipping - discount).to_string();
 
         let rows_affected = conn
             .execute(

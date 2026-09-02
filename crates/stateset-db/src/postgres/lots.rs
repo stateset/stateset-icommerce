@@ -85,6 +85,7 @@ struct LotReservationRow {
     quantity: Decimal,
     reference_type: String,
     reference_id: Uuid,
+    expires_at: Option<DateTime<Utc>>,
 }
 
 /// Refuse to use `lot` as a source for a stock-moving operation (`merge`,
@@ -117,6 +118,58 @@ fn ensure_consolidatable_source(lot: &Lot, operation: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// Refuse a stock-moving operation (`consume`, `reserve`, `confirm_reservation`)
+/// unless the lot is `Active` *and* unexpired as of `now`.
+///
+/// Status alone is not enough: `expire_lots` is a sweeper, so a lot whose
+/// `expiration_date` has passed may still read `Active`. The error names the
+/// lot and the reason so an operator can act on it.
+fn ensure_consumable(lot: &Lot, now: DateTime<Utc>, operation: &str) -> Result<()> {
+    if lot.status != LotStatus::Active {
+        return Err(CommerceError::ValidationError(format!(
+            "Cannot {operation} from lot {} ({}): status is {}",
+            lot.lot_number, lot.id, lot.status
+        )));
+    }
+    if let Some(exp) = lot.expiration_date.filter(|exp| now > *exp) {
+        return Err(CommerceError::ValidationError(format!(
+            "Cannot {operation} from lot {} ({}): lot expired at {}",
+            lot.lot_number,
+            lot.id,
+            exp.to_rfc3339()
+        )));
+    }
+    Ok(())
+}
+
+/// Expiry half of [`ensure_consumable`], for `consume`/`reserve`, which keep
+/// reporting a non-`Active` status as `InsufficientStock` (nothing is
+/// available from a blocked lot) but must name an expired lot explicitly.
+fn ensure_unexpired(lot: &Lot, now: DateTime<Utc>, operation: &str) -> Result<()> {
+    if let Some(exp) = lot.expiration_date.filter(|exp| now > *exp) {
+        return Err(CommerceError::ValidationError(format!(
+            "Cannot {operation} from lot {} ({}): lot expired at {}",
+            lot.lot_number,
+            lot.id,
+            exp.to_rfc3339()
+        )));
+    }
+    Ok(())
+}
+
+/// Refuse a workflow status change that the [`LotStatus`] transition table
+/// does not allow, naming the lot and both states.
+fn ensure_transition(lot: &Lot, next: LotStatus, operation: &str) -> Result<()> {
+    if lot.status.can_transition_to(next) {
+        Ok(())
+    } else {
+        Err(CommerceError::ValidationError(format!(
+            "Cannot {operation} lot {} ({}): status is {} (cannot move to {next})",
+            lot.lot_number, lot.id, lot.status
+        )))
+    }
 }
 
 /// Reject a `MergeLots` request whose source list is malformed before any row
@@ -573,7 +626,9 @@ impl PgLotRepository {
             .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
         let lot = Self::row_to_lot(lot_row)?;
 
-        if !lot.can_consume(input.quantity) {
+        let now = Utc::now();
+        ensure_unexpired(&lot, now, "consume")?;
+        if !lot.can_consume_at(input.quantity, now) {
             return Err(CommerceError::InsufficientStock {
                 sku: lot.sku.clone(),
                 requested: input.quantity.to_string(),
@@ -629,7 +684,9 @@ impl PgLotRepository {
             .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
         let lot = Self::row_to_lot(lot_row)?;
 
-        if !lot.can_reserve(input.quantity) {
+        let now = Utc::now();
+        ensure_unexpired(&lot, now, "reserve")?;
+        if !lot.can_reserve_at(input.quantity, now) {
             return Err(CommerceError::InsufficientStock {
                 sku: lot.sku.clone(),
                 requested: input.quantity.to_string(),
@@ -638,7 +695,6 @@ impl PgLotRepository {
         }
 
         let reservation_id = Uuid::new_v4();
-        let now = Utc::now();
         let expires_at = input.expires_in_seconds.map(|s| now + chrono::Duration::seconds(s));
 
         sqlx::query(
@@ -691,9 +747,10 @@ impl PgLotRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         let row = sqlx::query_as::<_, LotReservationRow>(
-            "SELECT lot_id, quantity, reference_type, reference_id
+            "SELECT lot_id, quantity, reference_type, reference_id, expires_at
              FROM lot_reservations
-             WHERE id = $1 AND released_at IS NULL AND confirmed_at IS NULL",
+             WHERE id = $1 AND released_at IS NULL AND confirmed_at IS NULL
+             FOR UPDATE",
         )
         .bind(reservation_id)
         .fetch_optional(tx.as_mut())
@@ -711,9 +768,16 @@ impl PgLotRepository {
             .map_err(map_db_error)?;
 
         // Floor the aggregate at zero — it must never go negative even if it
-        // has drifted relative to the reservation rows.
+        // has drifted relative to the reservation rows. While the lot is
+        // quarantined the freed units join the quarantined count, so they
+        // never read as "available" on a blocked lot.
         sqlx::query(
-            "UPDATE lots SET quantity_reserved = GREATEST(quantity_reserved - $1, 0), updated_at = $2 WHERE id = $3",
+            "UPDATE lots SET
+                quantity_reserved = GREATEST(quantity_reserved - $1, 0),
+                quantity_quarantined = CASE WHEN status = 'quarantine'
+                    THEN quantity_quarantined + $1 ELSE quantity_quarantined END,
+                updated_at = $2
+             WHERE id = $3",
         )
         .bind(row.quantity)
         .bind(now)
@@ -745,9 +809,10 @@ impl PgLotRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         let row = sqlx::query_as::<_, LotReservationRow>(
-            "SELECT lot_id, quantity, reference_type, reference_id
+            "SELECT lot_id, quantity, reference_type, reference_id, expires_at
              FROM lot_reservations
-             WHERE id = $1 AND released_at IS NULL AND confirmed_at IS NULL",
+             WHERE id = $1 AND released_at IS NULL AND confirmed_at IS NULL
+             FOR UPDATE",
         )
         .bind(reservation_id)
         .fetch_optional(tx.as_mut())
@@ -757,6 +822,37 @@ impl PgLotRepository {
 
         let now = Utc::now();
 
+        // An expired reservation no longer holds its units for the caller: it
+        // must be released (which always succeeds) and re-reserved, never
+        // confirmed. The units stay reserved until that release.
+        if let Some(exp) = row.expires_at.filter(|exp| now > *exp) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot confirm reservation {reservation_id}: it expired at {}; release it and reserve again",
+                exp.to_rfc3339()
+            )));
+        }
+
+        // Confirming consumes stock: lock the lot row and require it to be
+        // Active and unexpired — a quarantined / held / recalled lot keeps its
+        // reservations, but they cannot ship until the lot is released.
+        // Reserved units are inside `quantity_remaining` (not
+        // `quantity_available`), so that is the bound.
+        let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
+            .bind(row.lot_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        let lot = Self::row_to_lot(lot_row)?;
+        ensure_consumable(&lot, now, "confirm reservation")?;
+        if lot.quantity_remaining < row.quantity {
+            return Err(CommerceError::InsufficientStock {
+                sku: lot.sku.clone(),
+                requested: row.quantity.to_string(),
+                available: lot.quantity_remaining.to_string(),
+            });
+        }
+
         sqlx::query("UPDATE lot_reservations SET confirmed_at = $1 WHERE id = $2")
             .bind(now)
             .bind(reservation_id)
@@ -764,26 +860,17 @@ impl PgLotRepository {
             .await
             .map_err(map_db_error)?;
 
-        // Confirming consumes stock: lock the lot row, require the remaining
-        // quantity to cover the reservation, and floor the reserved aggregate.
-        let (sku, quantity_remaining): (String, rust_decimal::Decimal) =
-            sqlx::query_as("SELECT sku, quantity_remaining FROM lots WHERE id = $1 FOR UPDATE")
-                .bind(row.lot_id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        if quantity_remaining < row.quantity {
-            return Err(CommerceError::InsufficientStock {
-                sku,
-                requested: row.quantity.to_string(),
-                available: quantity_remaining.to_string(),
-            });
-        }
-
+        // The lot is Consumed once nothing remains, exactly like `consume`.
+        let new_remaining = lot.quantity_remaining - row.quantity;
+        let new_status =
+            if new_remaining <= Decimal::ZERO { LotStatus::Consumed } else { lot.status };
         sqlx::query(
-            "UPDATE lots SET quantity_reserved = GREATEST(quantity_reserved - $1, 0), quantity_remaining = quantity_remaining - $1, updated_at = $2 WHERE id = $3",
+            "UPDATE lots SET quantity_reserved = GREATEST(quantity_reserved - $1, 0),
+                quantity_remaining = quantity_remaining - $1, status = $2, updated_at = $3
+             WHERE id = $4",
         )
         .bind(row.quantity)
+        .bind(new_status.to_string())
         .bind(now)
         .bind(row.lot_id)
         .execute(tx.as_mut())
@@ -1127,7 +1214,9 @@ impl PgLotRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1")
+        // Lock the row: the quarantined count is derived from the reserved
+        // count, so a concurrent reserve must serialize against this write.
+        let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
             .bind(id)
             .fetch_optional(tx.as_mut())
             .await
@@ -1135,18 +1224,36 @@ impl PgLotRepository {
             .ok_or(CommerceError::NotFound)?;
         let lot = Self::row_to_lot(lot_row)?;
 
-        let available = lot.quantity_available();
+        // Only Active / OnHold lots enter quarantine; a second quarantine
+        // would otherwise zero the quarantined count, and terminal lots have
+        // nothing to hold.
+        ensure_transition(&lot, LotStatus::Quarantine, "quarantine")?;
 
-        sqlx::query(
-            "UPDATE lots SET status = $1, quantity_quarantined = $2, updated_at = $3 WHERE id = $4",
+        // Every unreserved unit is quarantined. Reserved units stay reserved
+        // but are blocked by the status: `confirm_reservation` refuses until
+        // `release_quarantine`, and releasing a reservation meanwhile folds the
+        // units into `quantity_quarantined`.
+        let available = lot.quantity_available().max(Decimal::ZERO);
+
+        let updated = sqlx::query(
+            "UPDATE lots SET status = $1, quantity_quarantined = $2, updated_at = $3
+             WHERE id = $4 AND status = $5",
         )
         .bind(LotStatus::Quarantine.to_string())
         .bind(available)
         .bind(now)
         .bind(id)
+        .bind(lot.status.to_string())
         .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        if updated != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot quarantine lot {} ({}): status changed concurrently",
+                lot.lot_number, lot.id
+            )));
+        }
 
         self.record_transaction_tx(
             &mut tx,
@@ -1171,21 +1278,41 @@ impl PgLotRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let (quarantined,): (Decimal,) =
-            sqlx::query_as("SELECT quantity_quarantined FROM lots WHERE id = $1")
-                .bind(id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
+        let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        let lot = Self::row_to_lot(lot_row)?;
 
-        sqlx::query(
-            "UPDATE lots SET status = 'active', quantity_quarantined = 0, updated_at = $1 WHERE id = $2",
+        // Only a quarantined lot can be released back to Active; anything else
+        // (scrapped, recalled, consumed, expired…) must not be resurrected.
+        if lot.status != LotStatus::Quarantine {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot release quarantine on lot {} ({}): status is {} (not quarantine)",
+                lot.lot_number, lot.id, lot.status
+            )));
+        }
+        ensure_transition(&lot, LotStatus::Active, "release quarantine on")?;
+        let quarantined = lot.quantity_quarantined;
+
+        let updated = sqlx::query(
+            "UPDATE lots SET status = 'active', quantity_quarantined = 0, updated_at = $1
+             WHERE id = $2 AND status = 'quarantine'",
         )
         .bind(now)
         .bind(id)
         .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        if updated != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot release quarantine on lot {} ({}): status changed concurrently",
+                lot.lot_number, lot.id
+            )));
+        }
 
         self.record_transaction_tx(
             &mut tx,
@@ -1365,14 +1492,44 @@ impl PgLotRepository {
         Ok(lots)
     }
 
-    pub async fn get_available_lots_for_sku_async(&self, sku: &str) -> Result<Vec<Lot>> {
-        self.list_async(LotFilter {
-            sku: Some(sku.to_string()),
-            status: Some(LotStatus::Active),
-            has_quantity: Some(true),
-            ..Default::default()
-        })
+    pub async fn expire_lots_async(&self, now: DateTime<Utc>) -> Result<u64> {
+        let flipped = sqlx::query(
+            "UPDATE lots SET status = 'expired', updated_at = $1
+             WHERE status = 'active' AND expiration_date IS NOT NULL AND expiration_date < $1",
+        )
+        .bind(now)
+        .execute(&self.pool)
         .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        Ok(flipped)
+    }
+
+    /// Lots a picker may draw from for `sku`, in FEFO order: soonest
+    /// `expiration_date` first, unexpiring lots last (oldest first within a
+    /// tie). Only `Active`, unexpired lots with unreserved, unquarantined units
+    /// qualify.
+    pub async fn get_available_lots_for_sku_async(&self, sku: &str) -> Result<Vec<Lot>> {
+        let rows = sqlx::query_as::<_, LotRow>(
+            r#"
+            SELECT * FROM lots
+            WHERE sku = $1 AND status = 'active'
+              AND (expiration_date IS NULL OR expiration_date >= $2)
+              AND (quantity_remaining - quantity_reserved - quantity_quarantined) > 0
+            ORDER BY expiration_date ASC NULLS LAST, created_at ASC
+            "#,
+        )
+        .bind(sku)
+        .bind(Utc::now())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let mut lots = Vec::with_capacity(rows.len());
+        for row in rows {
+            lots.push(Self::row_to_lot(row)?);
+        }
+        Ok(lots)
     }
 
     pub async fn trace_async(&self, lot_id: Uuid) -> Result<TraceabilityResult> {
@@ -1594,6 +1751,10 @@ impl LotRepository for PgLotRepository {
 
     fn get_expired_lots(&self) -> Result<Vec<Lot>> {
         block_on(self.get_expired_lots_async())
+    }
+
+    fn expire_lots(&self, now: DateTime<Utc>) -> Result<u64> {
+        block_on(self.expire_lots_async(now))
     }
 
     fn get_available_lots_for_sku(&self, sku: &str) -> Result<Vec<Lot>> {

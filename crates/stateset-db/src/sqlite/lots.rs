@@ -55,6 +55,58 @@ fn ensure_consolidatable_source(lot: &Lot, operation: &str) -> Result<()> {
     Ok(())
 }
 
+/// Refuse a stock-moving operation (`consume`, `reserve`, `confirm_reservation`)
+/// unless the lot is `Active` *and* unexpired as of `now`.
+///
+/// Status alone is not enough: `expire_lots` is a sweeper, so a lot whose
+/// `expiration_date` has passed may still read `Active`. The error names the
+/// lot and the reason so an operator can act on it.
+fn ensure_consumable(lot: &Lot, now: chrono::DateTime<Utc>, operation: &str) -> Result<()> {
+    if lot.status != LotStatus::Active {
+        return Err(CommerceError::ValidationError(format!(
+            "Cannot {operation} from lot {} ({}): status is {}",
+            lot.lot_number, lot.id, lot.status
+        )));
+    }
+    if let Some(exp) = lot.expiration_date.filter(|exp| now > *exp) {
+        return Err(CommerceError::ValidationError(format!(
+            "Cannot {operation} from lot {} ({}): lot expired at {}",
+            lot.lot_number,
+            lot.id,
+            exp.to_rfc3339()
+        )));
+    }
+    Ok(())
+}
+
+/// Expiry half of [`ensure_consumable`], for `consume`/`reserve`, which keep
+/// reporting a non-`Active` status as `InsufficientStock` (nothing is
+/// available from a blocked lot) but must name an expired lot explicitly.
+fn ensure_unexpired(lot: &Lot, now: chrono::DateTime<Utc>, operation: &str) -> Result<()> {
+    if let Some(exp) = lot.expiration_date.filter(|exp| now > *exp) {
+        return Err(CommerceError::ValidationError(format!(
+            "Cannot {operation} from lot {} ({}): lot expired at {}",
+            lot.lot_number,
+            lot.id,
+            exp.to_rfc3339()
+        )));
+    }
+    Ok(())
+}
+
+/// Refuse a workflow status change that the [`LotStatus`] transition table
+/// does not allow, naming the lot and both states.
+fn ensure_transition(lot: &Lot, next: LotStatus, operation: &str) -> Result<()> {
+    if lot.status.can_transition_to(next) {
+        Ok(())
+    } else {
+        Err(CommerceError::ValidationError(format!(
+            "Cannot {operation} lot {} ({}): status is {} (cannot move to {next})",
+            lot.lot_number, lot.id, lot.status
+        )))
+    }
+}
+
 /// Reject a `MergeLots` request whose source list is malformed before any row
 /// is touched: fewer than two lots, or the same lot listed twice (which would
 /// double-count its quantity on the merged lot).
@@ -625,7 +677,9 @@ impl LotRepository for SqliteLotRepository {
                 e => map_db_error(e),
             })?;
 
-        if !lot.can_consume(input.quantity) {
+        let now = Utc::now();
+        ensure_unexpired(&lot, now, "consume")?;
+        if !lot.can_consume_at(input.quantity, now) {
             return Err(CommerceError::InsufficientStock {
                 sku: lot.sku.clone(),
                 requested: input.quantity.to_string(),
@@ -688,7 +742,9 @@ impl LotRepository for SqliteLotRepository {
                 e => map_db_error(e),
             })?;
 
-        if !lot.can_reserve(input.quantity) {
+        let now = Utc::now();
+        ensure_unexpired(&lot, now, "reserve")?;
+        if !lot.can_reserve_at(input.quantity, now) {
             return Err(CommerceError::InsufficientStock {
                 sku: lot.sku.clone(),
                 requested: input.quantity.to_string(),
@@ -697,7 +753,6 @@ impl LotRepository for SqliteLotRepository {
         }
 
         let reservation_id = Uuid::new_v4();
-        let now = Utc::now();
         let expires_at = input.expires_in_seconds.map(|s| now + chrono::Duration::seconds(s));
 
         // Create reservation
@@ -775,13 +830,25 @@ impl LotRepository for SqliteLotRepository {
 
         // Update lot reserved quantity, computed in Decimal and floored at
         // zero (the aggregate must never go negative even if it has drifted).
+        // While the lot is quarantined the freed units join the quarantined
+        // count, so they never read as "available" on a blocked lot.
         let lot: Lot = tx
             .query_row("SELECT * FROM lots WHERE id = ?", [lot_id.to_string()], Self::row_to_lot)
             .map_err(map_db_error)?;
         let new_reserved = (lot.quantity_reserved - quantity).max(Decimal::ZERO);
+        let new_quarantined = if lot.status == LotStatus::Quarantine {
+            lot.quantity_quarantined + quantity
+        } else {
+            lot.quantity_quarantined
+        };
         tx.execute(
-            "UPDATE lots SET quantity_reserved = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![new_reserved.to_string(), now.to_rfc3339(), lot_id.to_string()],
+            "UPDATE lots SET quantity_reserved = ?, quantity_quarantined = ?, updated_at = ? WHERE id = ?",
+            rusqlite::params![
+                new_reserved.to_string(),
+                new_quarantined.to_string(),
+                now.to_rfc3339(),
+                lot_id.to_string()
+            ],
         )
         .map_err(map_db_error)?;
 
@@ -809,11 +876,17 @@ impl LotRepository for SqliteLotRepository {
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         // Get reservation
-        let (lot_id, quantity, reference_type, reference_id): (String, String, String, String) = tx
+        let (lot_id, quantity, reference_type, reference_id, expires_at): (
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+        ) = tx
             .query_row(
-                "SELECT lot_id, quantity, reference_type, reference_id FROM lot_reservations WHERE id = ? AND released_at IS NULL AND confirmed_at IS NULL",
+                "SELECT lot_id, quantity, reference_type, reference_id, expires_at FROM lot_reservations WHERE id = ? AND released_at IS NULL AND confirmed_at IS NULL",
                 [reservation_id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .map_err(map_db_error)?;
 
@@ -822,18 +895,26 @@ impl LotRepository for SqliteLotRepository {
         let reference_id = parse_uuid(&reference_id, "lot_reservation", "reference_id")?;
         let now = Utc::now();
 
-        // Mark reservation as confirmed
-        tx.execute(
-            "UPDATE lot_reservations SET confirmed_at = ? WHERE id = ?",
-            rusqlite::params![now.to_rfc3339(), reservation_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        // An expired reservation no longer holds its units for the caller: it
+        // must be released (which always succeeds) and re-reserved, never
+        // confirmed. The units stay reserved until that release.
+        let expires_at = parse_datetime_opt_row(expires_at, "lot_reservation", "expires_at")
+            .map_err(map_db_error)?;
+        if let Some(exp) = expires_at.filter(|exp| now > *exp) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot confirm reservation {reservation_id}: it expired at {}; release it and reserve again",
+                exp.to_rfc3339()
+            )));
+        }
 
-        // Update lot: reduce both reserved and remaining, computed in Decimal.
-        // Confirming consumes stock, so the remaining quantity must cover it.
+        // Confirming consumes stock, so the lot must be Active and unexpired —
+        // a quarantined / held / recalled lot keeps its reservations, but they
+        // cannot ship until the lot is released. Reserved units are inside
+        // `quantity_remaining` (not `quantity_available`), so that is the bound.
         let lot: Lot = tx
             .query_row("SELECT * FROM lots WHERE id = ?", [lot_id.to_string()], Self::row_to_lot)
             .map_err(map_db_error)?;
+        ensure_consumable(&lot, now, "confirm reservation")?;
         if lot.quantity_remaining < quantity {
             return Err(CommerceError::InsufficientStock {
                 sku: lot.sku.clone(),
@@ -841,11 +922,29 @@ impl LotRepository for SqliteLotRepository {
                 available: lot.quantity_remaining.to_string(),
             });
         }
+
+        // Mark reservation as confirmed
+        tx.execute(
+            "UPDATE lot_reservations SET confirmed_at = ? WHERE id = ?",
+            rusqlite::params![now.to_rfc3339(), reservation_id.to_string()],
+        )
+        .map_err(map_db_error)?;
+
+        // Update lot: reduce both reserved and remaining, computed in Decimal;
+        // the lot is Consumed once nothing remains, exactly like `consume`.
         let new_reserved = (lot.quantity_reserved - quantity).max(Decimal::ZERO);
         let new_remaining = lot.quantity_remaining - quantity;
+        let new_status =
+            if new_remaining <= Decimal::ZERO { LotStatus::Consumed } else { lot.status };
         tx.execute(
-            "UPDATE lots SET quantity_reserved = ?, quantity_remaining = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![new_reserved.to_string(), new_remaining.to_string(), now.to_rfc3339(), lot_id.to_string()],
+            "UPDATE lots SET quantity_reserved = ?, quantity_remaining = ?, status = ?, updated_at = ? WHERE id = ?",
+            rusqlite::params![
+                new_reserved.to_string(),
+                new_remaining.to_string(),
+                new_status.to_string(),
+                now.to_rfc3339(),
+                lot_id.to_string()
+            ],
         )
         .map_err(map_db_error)?;
 
@@ -1221,19 +1320,37 @@ impl LotRepository for SqliteLotRepository {
                 e => map_db_error(e),
             })?;
 
-        let available = lot.quantity_available();
+        // Only Active / OnHold lots enter quarantine; a second quarantine
+        // would otherwise zero the quarantined count, and terminal lots have
+        // nothing to hold.
+        ensure_transition(&lot, LotStatus::Quarantine, "quarantine")?;
 
-        // Update lot
-        tx.execute(
-            "UPDATE lots SET status = ?, quantity_quarantined = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![
-                LotStatus::Quarantine.to_string(),
-                available.to_string(),
-                now.to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+        // Every unreserved unit is quarantined. Reserved units stay reserved
+        // but are blocked by the status: `confirm_reservation` refuses until
+        // `release_quarantine`, and releasing a reservation meanwhile folds the
+        // units into `quantity_quarantined`.
+        let available = lot.quantity_available().max(Decimal::ZERO);
+
+        // Status-conditional so a concurrent transition cannot be overwritten.
+        let updated = tx
+            .execute(
+                "UPDATE lots SET status = ?, quantity_quarantined = ?, updated_at = ?
+                 WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    LotStatus::Quarantine.to_string(),
+                    available.to_string(),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                    lot.status.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+        if updated != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot quarantine lot {} ({}): status changed concurrently",
+                lot.lot_number, lot.id
+            )));
+        }
 
         // Record transaction
         self.record_transaction(
@@ -1259,23 +1376,37 @@ impl LotRepository for SqliteLotRepository {
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
-        // Get current quarantined quantity
-        let quarantined: String = tx
-            .query_row(
-                "SELECT quantity_quarantined FROM lots WHERE id = ?",
-                [id.to_string()],
-                |row| row.get(0),
+        let lot: Lot = tx
+            .query_row("SELECT * FROM lots WHERE id = ?", [id.to_string()], Self::row_to_lot)
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
+                e => map_db_error(e),
+            })?;
+
+        // Only a quarantined lot can be released back to Active; anything else
+        // (scrapped, recalled, consumed, expired…) must not be resurrected.
+        if lot.status != LotStatus::Quarantine {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot release quarantine on lot {} ({}): status is {} (not quarantine)",
+                lot.lot_number, lot.id, lot.status
+            )));
+        }
+        ensure_transition(&lot, LotStatus::Active, "release quarantine on")?;
+        let quarantined = lot.quantity_quarantined;
+
+        let updated = tx
+            .execute(
+                "UPDATE lots SET status = 'active', quantity_quarantined = '0', updated_at = ?
+                 WHERE id = ? AND status = 'quarantine'",
+                rusqlite::params![now.to_rfc3339(), id.to_string()],
             )
             .map_err(map_db_error)?;
-
-        let quarantined = parse_decimal_strict(&quarantined, "lot", "quantity_quarantined")?;
-
-        // Update lot
-        tx.execute(
-            "UPDATE lots SET status = 'active', quantity_quarantined = '0', updated_at = ? WHERE id = ?",
-            rusqlite::params![now.to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        if updated != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot release quarantine on lot {} ({}): status changed concurrently",
+                lot.lot_number, lot.id
+            )));
+        }
 
         // Record transaction
         self.record_transaction(
@@ -1466,13 +1597,44 @@ impl LotRepository for SqliteLotRepository {
         Ok(lots)
     }
 
+    fn expire_lots(&self, now: chrono::DateTime<Utc>) -> Result<u64> {
+        let conn = self.conn()?;
+        let flipped = conn
+            .execute(
+                "UPDATE lots SET status = 'expired', updated_at = ?
+                 WHERE status = 'active' AND expiration_date IS NOT NULL AND expiration_date < ?",
+                rusqlite::params![now.to_rfc3339(), now.to_rfc3339()],
+            )
+            .map_err(map_db_error)?;
+        Ok(flipped as u64)
+    }
+
+    /// Lots a picker may draw from for `sku`, in FEFO order: soonest
+    /// `expiration_date` first, unexpiring lots last (oldest first within a
+    /// tie). Only `Active`, unexpired lots with unreserved, unquarantined units
+    /// qualify.
     fn get_available_lots_for_sku(&self, sku: &str) -> Result<Vec<Lot>> {
-        self.list(LotFilter {
-            sku: Some(sku.to_string()),
-            status: Some(LotStatus::Active),
-            has_quantity: Some(true),
-            ..Default::default()
-        })
+        let conn = self.conn()?;
+        let now = Utc::now().to_rfc3339();
+        let mut stmt = conn
+            .prepare(
+                "SELECT * FROM lots
+                 WHERE sku = ? AND status = 'active'
+                   AND (expiration_date IS NULL OR expiration_date >= ?)
+                   AND (CAST(quantity_remaining AS REAL) - CAST(quantity_reserved AS REAL)
+                        - CAST(quantity_quarantined AS REAL)) > 0
+                 ORDER BY expiration_date IS NULL ASC, expiration_date ASC, created_at ASC",
+            )
+            .map_err(map_db_error)?;
+        let lots = stmt
+            .query_map(rusqlite::params![sku, now], Self::row_to_lot)
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+        // Re-check in exact Decimal arithmetic: the SQL filter is a REAL
+        // pre-screen and could admit a lot whose available quantity is a
+        // vanishingly small positive float artefact.
+        Ok(lots.into_iter().filter(Lot::has_available).collect())
     }
 
     fn trace(&self, lot_id: Uuid) -> Result<TraceabilityResult> {
@@ -1611,8 +1773,8 @@ mod tests {
     use chrono::Duration;
     use rust_decimal_macros::dec;
     use stateset_core::{
-        AdjustLot, CreateLot, LotFilter, LotRepository, LotStatus, MergeLots, ReserveLot, SplitLot,
-        UpdateLot,
+        AdjustLot, ConsumeLot, CreateLot, LotFilter, LotRepository, LotStatus, MergeLots,
+        ReserveLot, SplitLot, UpdateLot,
     };
 
     fn fresh_repo() -> SqliteLotRepository {
@@ -2179,6 +2341,335 @@ mod tests {
         let stranger = Uuid::new_v4();
         let fetched = repo.get_batch(vec![l1.id, l2.id, stranger]).expect("ok");
         assert_eq!(fetched.len(), 2);
+    }
+
+    // ========================================================================
+    // L1–L5: reservation / quarantine / expiry guards
+    // ========================================================================
+
+    fn reserve_units(repo: &SqliteLotRepository, lot: &Lot, qty: Decimal) -> Uuid {
+        repo.reserve(ReserveLot {
+            lot_id: lot.id,
+            quantity: qty,
+            reference_type: "order".into(),
+            reference_id: Uuid::new_v4(),
+            expires_in_seconds: None,
+        })
+        .expect("reserve")
+    }
+
+    /// L1: a reservation on a quarantined lot must not be confirmable — the
+    /// reserved units sat outside `quantity_quarantined`, so confirm shipped
+    /// blocked stock. After release the same reservation confirms normally.
+    #[test]
+    fn confirm_reservation_refuses_quarantined_lot_until_released() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-L1", dec!(100));
+        let res = reserve_units(&repo, &lot, dec!(30));
+        repo.quarantine(lot.id, "qc fail").expect("quarantine");
+
+        let err = repo.confirm_reservation(res).expect_err("quarantined lot must not ship");
+        assert_validation_mentions(&err, &[&lot.lot_number, "quarantine"]);
+        let after = repo.get(lot.id).expect("ok").expect("found");
+        assert_eq!(after.quantity_remaining, dec!(100), "nothing consumed");
+        assert_eq!(after.quantity_reserved, dec!(30), "reservation intact");
+        assert_eq!(after.status, LotStatus::Quarantine);
+
+        repo.release_quarantine(lot.id).expect("release");
+        repo.confirm_reservation(res).expect("confirm after release");
+        let done = repo.get(lot.id).expect("ok").expect("found");
+        assert_eq!(done.quantity_remaining, dec!(70));
+        assert_eq!(done.quantity_reserved, dec!(0));
+    }
+
+    #[test]
+    fn confirm_reservation_refuses_every_non_active_status() {
+        for status in
+            [LotStatus::OnHold, LotStatus::Recalled, LotStatus::Expired, LotStatus::Scrapped]
+        {
+            let repo = fresh_repo();
+            let lot = make_lot(&repo, "SKU-L1S", dec!(10));
+            let res = reserve_units(&repo, &lot, dec!(4));
+            repo.update(lot.id, UpdateLot { status: Some(status), ..Default::default() })
+                .expect("set status");
+            let err = repo.confirm_reservation(res).expect_err("must refuse");
+            assert_validation_mentions(&err, &[&lot.lot_number, &status.to_string()]);
+            let after = repo.get(lot.id).expect("ok").expect("found");
+            assert_eq!(after.quantity_remaining, dec!(10), "{status:?}");
+            assert_eq!(after.quantity_reserved, dec!(4), "{status:?}");
+        }
+    }
+
+    /// Releasing a reservation while the lot is quarantined must fold the
+    /// freed units into `quantity_quarantined` rather than leaving them
+    /// numerically "available" on a blocked lot.
+    #[test]
+    fn release_reservation_under_quarantine_folds_units_into_quarantine() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-L1R", dec!(100));
+        let res = reserve_units(&repo, &lot, dec!(30));
+        let q = repo.quarantine(lot.id, "qc").expect("quarantine");
+        assert_eq!(q.quantity_quarantined, dec!(70));
+        repo.release_reservation(res).expect("release");
+        let after = repo.get(lot.id).expect("ok").expect("found");
+        assert_eq!(after.quantity_reserved, dec!(0));
+        assert_eq!(after.quantity_quarantined, dec!(100));
+        assert_eq!(after.quantity_available(), dec!(0));
+    }
+
+    /// L2: quarantine is only reachable from Active/OnHold and release only
+    /// from Quarantine. A second quarantine used to zero the quarantined
+    /// count; release used to resurrect scrapped/recalled/consumed lots.
+    #[test]
+    fn quarantine_twice_is_refused_and_keeps_count() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-L2", dec!(50));
+        let q = repo.quarantine(lot.id, "first").expect("quarantine");
+        assert_eq!(q.quantity_quarantined, dec!(50));
+        let err = repo.quarantine(lot.id, "again").expect_err("double quarantine");
+        assert_validation_mentions(&err, &[&lot.lot_number, "quarantine"]);
+        let after = repo.get(lot.id).expect("ok").expect("found");
+        assert_eq!(after.quantity_quarantined, dec!(50), "count must survive");
+        assert_eq!(after.status, LotStatus::Quarantine);
+        // Only one quarantine transaction was written.
+        let n = repo
+            .get_transactions(lot.id, 50)
+            .expect("txns")
+            .iter()
+            .filter(|t| t.transaction_type == LotTransactionType::Quarantined)
+            .count();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn quarantine_allowed_from_on_hold_but_not_terminal_states() {
+        let repo = fresh_repo();
+        let held = make_lot(&repo, "SKU-L2H", dec!(5));
+        repo.update(held.id, UpdateLot { status: Some(LotStatus::OnHold), ..Default::default() })
+            .expect("hold");
+        let q = repo.quarantine(held.id, "escalate").expect("on_hold -> quarantine");
+        assert_eq!(q.status, LotStatus::Quarantine);
+
+        for status in
+            [LotStatus::Scrapped, LotStatus::Consumed, LotStatus::Recalled, LotStatus::Expired]
+        {
+            let lot = make_lot(&repo, "SKU-L2T", dec!(5));
+            repo.update(lot.id, UpdateLot { status: Some(status), ..Default::default() })
+                .expect("set status");
+            let err = repo.quarantine(lot.id, "nope").expect_err("must refuse");
+            assert_validation_mentions(&err, &[&lot.lot_number, &status.to_string()]);
+            let after = repo.get(lot.id).expect("ok").expect("found");
+            assert_eq!(after.status, status, "unchanged");
+        }
+    }
+
+    #[test]
+    fn release_quarantine_refuses_non_quarantined_lots() {
+        let repo = fresh_repo();
+        for status in [
+            LotStatus::Active,
+            LotStatus::Scrapped,
+            LotStatus::Recalled,
+            LotStatus::Consumed,
+            LotStatus::OnHold,
+            LotStatus::Expired,
+        ] {
+            let lot = make_lot(&repo, "SKU-L2R", dec!(5));
+            repo.update(lot.id, UpdateLot { status: Some(status), ..Default::default() })
+                .expect("set status");
+            let err = repo.release_quarantine(lot.id).expect_err("must not resurrect");
+            assert_validation_mentions(&err, &[&lot.lot_number, &status.to_string()]);
+            let after = repo.get(lot.id).expect("ok").expect("found");
+            assert_eq!(after.status, status, "unchanged");
+        }
+        assert!(matches!(
+            repo.release_quarantine(Uuid::new_v4()).expect_err("unknown"),
+            CommerceError::NotFound
+        ));
+        assert!(matches!(
+            repo.quarantine(Uuid::new_v4(), "x").expect_err("unknown"),
+            CommerceError::NotFound
+        ));
+    }
+
+    /// L3: expiry is enforced on the consumption paths even before the
+    /// sweeper runs, and `expire_lots` flips only Active lots past expiry.
+    #[test]
+    fn expired_lot_is_refused_by_consume_reserve_and_confirm() {
+        let repo = fresh_repo();
+        let lot = repo
+            .create(CreateLot {
+                sku: "SKU-L3".into(),
+                quantity: dec!(10),
+                expiration_date: Some(Utc::now() + Duration::seconds(2)),
+                initial_location_id: Some(1),
+                ..Default::default()
+            })
+            .expect("create");
+        let res = reserve_units(&repo, &lot, dec!(3));
+        // Push expiry into the past without touching status.
+        repo.update(
+            lot.id,
+            UpdateLot {
+                expiration_date: Some(Utc::now() - Duration::days(1)),
+                ..Default::default()
+            },
+        )
+        .expect("expire");
+        assert_eq!(repo.get(lot.id).unwrap().unwrap().status, LotStatus::Active);
+
+        let err = repo
+            .consume(ConsumeLot {
+                lot_id: lot.id,
+                quantity: dec!(1),
+                reference_type: "order".into(),
+                reference_id: Uuid::new_v4(),
+                ..Default::default()
+            })
+            .expect_err("consume expired");
+        assert!(
+            matches!(
+                err,
+                CommerceError::ValidationError(_) | CommerceError::InsufficientStock { .. }
+            ),
+            "got {err:?}"
+        );
+        assert!(
+            repo.reserve(ReserveLot {
+                lot_id: lot.id,
+                quantity: dec!(1),
+                reference_type: "order".into(),
+                reference_id: Uuid::new_v4(),
+                expires_in_seconds: None,
+            })
+            .is_err(),
+            "reserve expired"
+        );
+        let err = repo.confirm_reservation(res).expect_err("confirm on expired lot");
+        assert_validation_mentions(&err, &[&lot.lot_number, "expired"]);
+        let after = repo.get(lot.id).expect("ok").expect("found");
+        assert_eq!(after.quantity_remaining, dec!(10));
+    }
+
+    #[test]
+    fn expire_lots_flips_only_active_lots_past_expiry() {
+        let repo = fresh_repo();
+        let past = repo
+            .create(CreateLot {
+                sku: "SKU-L3E".into(),
+                quantity: dec!(10),
+                expiration_date: Some(Utc::now() - Duration::days(1)),
+                ..Default::default()
+            })
+            .expect("past");
+        let future = repo
+            .create(CreateLot {
+                sku: "SKU-L3E".into(),
+                quantity: dec!(10),
+                expiration_date: Some(Utc::now() + Duration::days(30)),
+                ..Default::default()
+            })
+            .expect("future");
+        let none = make_lot(&repo, "SKU-L3E", dec!(10));
+        let quarantined = repo
+            .create(CreateLot {
+                sku: "SKU-L3E".into(),
+                quantity: dec!(10),
+                expiration_date: Some(Utc::now() - Duration::days(1)),
+                ..Default::default()
+            })
+            .expect("q");
+        repo.quarantine(quarantined.id, "qc").expect("quarantine");
+
+        assert_eq!(repo.expire_lots(Utc::now()).expect("sweep"), 1);
+        assert_eq!(repo.get(past.id).unwrap().unwrap().status, LotStatus::Expired);
+        assert_eq!(repo.get(future.id).unwrap().unwrap().status, LotStatus::Active);
+        assert_eq!(repo.get(none.id).unwrap().unwrap().status, LotStatus::Active);
+        assert_eq!(
+            repo.get(quarantined.id).unwrap().unwrap().status,
+            LotStatus::Quarantine,
+            "sweeper only touches Active lots"
+        );
+        assert_eq!(repo.expire_lots(Utc::now()).expect("idempotent"), 0);
+        // A future `now` catches the later lot too.
+        assert_eq!(repo.expire_lots(Utc::now() + Duration::days(31)).expect("sweep"), 1);
+    }
+
+    /// L4: picking order is FEFO — soonest expiry first, unexpiring lots last
+    /// (oldest first within a tie), and expired / non-active / fully reserved
+    /// lots are excluded.
+    #[test]
+    fn get_available_lots_for_sku_is_fefo_and_excludes_blocked() {
+        let repo = fresh_repo();
+        let mk = |exp: Option<chrono::DateTime<Utc>>, qty: Decimal| {
+            repo.create(CreateLot {
+                sku: "SKU-L4".into(),
+                quantity: qty,
+                expiration_date: exp,
+                ..Default::default()
+            })
+            .expect("create")
+        };
+        let no_exp_old = mk(None, dec!(10));
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let late = mk(Some(Utc::now() + Duration::days(60)), dec!(10));
+        let soon = mk(Some(Utc::now() + Duration::days(5)), dec!(10));
+        let no_exp_new = mk(None, dec!(10));
+        let expired = mk(Some(Utc::now() - Duration::days(1)), dec!(10));
+        let fully_reserved = mk(Some(Utc::now() + Duration::days(2)), dec!(10));
+        reserve_units(&repo, &fully_reserved, dec!(10));
+        let quarantined = mk(Some(Utc::now() + Duration::days(1)), dec!(10));
+        repo.quarantine(quarantined.id, "qc").expect("quarantine");
+
+        let picked: Vec<Uuid> =
+            repo.get_available_lots_for_sku("SKU-L4").expect("ok").iter().map(|l| l.id).collect();
+        assert_eq!(
+            picked,
+            vec![soon.id, late.id, no_exp_old.id, no_exp_new.id],
+            "FEFO: {picked:?} vs expired={} reserved={} quarantined={}",
+            expired.id,
+            fully_reserved.id,
+            quarantined.id
+        );
+    }
+
+    /// L5: confirming the last units flips the lot to Consumed (like
+    /// `consume`), and an expired reservation cannot be confirmed but can
+    /// still be released.
+    #[test]
+    fn confirm_reservation_marks_lot_consumed_at_zero() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-L5", dec!(10));
+        let res = reserve_units(&repo, &lot, dec!(10));
+        repo.confirm_reservation(res).expect("confirm");
+        let after = repo.get(lot.id).expect("ok").expect("found");
+        assert_eq!(after.quantity_remaining, dec!(0));
+        assert_eq!(after.status, LotStatus::Consumed);
+    }
+
+    #[test]
+    fn expired_reservation_cannot_be_confirmed_but_can_be_released() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-L5X", dec!(10));
+        let res = repo
+            .reserve(ReserveLot {
+                lot_id: lot.id,
+                quantity: dec!(4),
+                reference_type: "order".into(),
+                reference_id: Uuid::new_v4(),
+                expires_in_seconds: Some(-60),
+            })
+            .expect("reserve already-expired");
+        let err = repo.confirm_reservation(res).expect_err("expired reservation");
+        assert_validation_mentions(&err, &["expired"]);
+        let mid = repo.get(lot.id).expect("ok").expect("found");
+        assert_eq!(mid.quantity_remaining, dec!(10));
+        assert_eq!(mid.quantity_reserved, dec!(4), "still held until released");
+        repo.release_reservation(res).expect("release frees the units");
+        let after = repo.get(lot.id).expect("ok").expect("found");
+        assert_eq!(after.quantity_reserved, dec!(0));
+        // And it cannot be confirmed afterwards either.
+        assert!(repo.confirm_reservation(res).is_err());
     }
 
     #[test]

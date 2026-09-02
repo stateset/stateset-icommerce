@@ -254,6 +254,12 @@ impl AsyncLots {
         self.db.lots().get_expired_lots_async().await
     }
 
+    /// Sweep `Active` lots past their `expiration_date` into `Expired`;
+    /// returns how many were flipped. Idempotent.
+    pub async fn expire_lots(&self) -> Result<u64> {
+        self.db.lots().expire_lots_async(chrono::Utc::now()).await
+    }
+
     pub async fn get_available_lots_for_sku(&self, sku: &str) -> Result<Vec<Lot>> {
         self.db.lots().get_available_lots_for_sku_async(sku).await
     }
@@ -327,6 +333,25 @@ impl AsyncSerials {
 
     pub async fn release_reservation(&self, reservation_id: Uuid) -> Result<()> {
         self.db.serials().release_reservation_async(reservation_id).await
+    }
+
+    pub async fn get_reservation(&self, reservation_id: Uuid) -> Result<Option<SerialReservation>> {
+        self.db.serials().get_reservation_async(reservation_id).await
+    }
+
+    pub async fn release_expired_reservations(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64> {
+        self.db.serials().release_expired_reservations_async(now).await
+    }
+
+    pub async fn quarantine_for_lot(&self, lot_id: Uuid, reason: &str) -> Result<u64> {
+        self.db.serials().quarantine_for_lot_async(lot_id, reason).await
+    }
+
+    pub async fn release_quarantine_for_lot(&self, lot_id: Uuid) -> Result<u64> {
+        self.db.serials().release_quarantine_for_lot_async(lot_id).await
     }
 
     pub async fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()> {

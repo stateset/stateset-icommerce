@@ -494,17 +494,13 @@ pub struct UpdatePayment {
     pub failure_code: Option<String>,
     /// Update metadata
     pub metadata: Option<String>,
-    // =========================================================================
-    // Blockchain/Stablecoin Update Fields
-    // =========================================================================
-    /// On-chain transaction hash (set after broadcast)
-    pub tx_hash: Option<String>,
-    /// Block number (set after confirmation)
-    pub block_number: Option<i64>,
-    /// Number of confirmations
-    pub confirmations: Option<i32>,
-    /// VES payment intent ID
-    pub ves_intent_id: Option<String>,
+    // NOTE: the blockchain/stablecoin fields (`tx_hash`, `block_number`,
+    // `confirmations`, `ves_intent_id`) were removed from this struct. Neither
+    // backend's `payments` table has those columns, so both UPDATE paths
+    // silently dropped them; on-chain settlement state lives on the x402 /
+    // A2A payment-intent tables instead. Reinstate them here only together
+    // with a migration that adds the columns and UPDATE statements that
+    // persist them.
 }
 
 /// Filter for listing payments

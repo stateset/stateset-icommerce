@@ -15,9 +15,9 @@ use stateset_core::{
     Address, BatchResult, CartId, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem,
     CurrencyCode, CustomerId, FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem,
     OrderItemId, OrderRepository, OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result,
-    ShipOrder, ShipmentLineInput, UpdateOrder, validate_batch_size, validate_currency_code,
-    validate_postal_code, validate_price, validate_required_text, validate_required_uuid,
-    validate_sku,
+    ShipOrder, ShipmentLineInput, StockPolicy, UpdateOrder, validate_batch_size,
+    validate_currency_code, validate_postal_code, validate_price, validate_required_text,
+    validate_required_uuid, validate_sku,
 };
 use uuid::Uuid;
 
@@ -44,6 +44,40 @@ pub(crate) struct LineDelta {
     pub(crate) item_id: Uuid,
     pub(crate) sku: String,
     pub(crate) delta: i32,
+}
+
+/// Result of one in-transaction order update.
+///
+/// `post_commit_error` carries [`CommerceError::ReservationExpired`] when a
+/// shipment found an expired reservation: the expiry bookkeeping must commit,
+/// after which the caller surfaces the error (legacy full-ship behaviour).
+pub(crate) struct UpdateOutcome {
+    pub(crate) order: Order,
+    pub(crate) post_commit_error: Option<CommerceError>,
+}
+
+/// Refuse a line change on an order whose status no longer allows it.
+fn ensure_lines_mutable(id: Uuid, status: OrderStatus) -> Result<()> {
+    if status.allows_line_changes() {
+        Ok(())
+    } else {
+        Err(CommerceError::Conflict(format!(
+            "order {id} lines cannot be changed while it is {status}; \
+             lines may only be added or removed before fulfilment (pending, confirmed, processing)"
+        )))
+    }
+}
+
+/// Refuse deletion of an order that is a fulfilment/financial record.
+fn ensure_deletable(id: Uuid, status: OrderStatus) -> Result<()> {
+    if status.allows_delete() {
+        Ok(())
+    } else {
+        Err(CommerceError::Conflict(format!(
+            "order {id} cannot be deleted while it is {status}; \
+             shipped, delivered and refunded orders are records — cancel or refund instead"
+        )))
+    }
 }
 
 #[derive(FromRow)]
@@ -165,11 +199,15 @@ impl PgOrderRepository {
             Self::validate_order_item_input(item)?;
         }
 
-        // Invariant M1 (`commerce.money.scale_exceeds_currency`): no line money
-        // amount may carry more decimal places than the order currency allows.
-        // Checked here, before the first write, so a rejected order persists
-        // nothing.
+        // Invariant M1 (`commerce.money.scale_exceeds_currency`): no money
+        // amount — line or order-level — may carry more decimal places than
+        // the order currency allows. Checked here, before the first write, so
+        // a rejected order persists nothing.
         input.validate_money_scale()?;
+        // Order-level tax/shipping/discount must be non-negative and must not
+        // drive `lines + tax + shipping - discount` below zero (refused, never
+        // clamped).
+        input.validate_order_level_money()?;
 
         if let Some(address) = &input.shipping_address {
             Self::validate_address_input(address, "order.shipping_address")?;
@@ -295,26 +333,35 @@ impl PgOrderRepository {
         }
     }
 
+    /// Re-derive `total_amount` after a line change.
+    ///
+    /// The total always foots to `Σ order_items.total + tax_amount +
+    /// shipping_amount - discount_amount` — the same rule `create` writes and
+    /// [`Order::calculate_total`] reads. It used to be the bare line sum, which
+    /// silently dropped the order-level money on the first `add_item`.
     async fn update_order_total_tx(
-        &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         order_id: Uuid,
     ) -> Result<()> {
-        let current_version: i32 =
-            sqlx::query_scalar("SELECT version FROM orders WHERE id = $1 FOR UPDATE")
-                .bind(order_id)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?
-                .ok_or(CommerceError::OrderNotFound(order_id))?;
+        let (current_version, tax, shipping, discount): (i32, Decimal, Decimal, Decimal) =
+            sqlx::query_as(
+                "SELECT version, tax_amount, shipping_amount, discount_amount
+                 FROM orders WHERE id = $1 FOR UPDATE",
+            )
+            .bind(order_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::OrderNotFound(order_id))?;
 
-        let total: Decimal = sqlx::query_scalar(
+        let line_total: Decimal = sqlx::query_scalar(
             "SELECT COALESCE(SUM(total), 0) FROM order_items WHERE order_id = $1",
         )
         .bind(order_id)
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        let total = line_total + tax + shipping - discount;
 
         let result = sqlx::query(
             "UPDATE orders SET total_amount = $1, updated_at = $2, version = version + 1 WHERE id = $3 AND version = $4",
@@ -390,9 +437,6 @@ impl PgOrderRepository {
     ) -> Result<Order> {
         let id = Uuid::new_v4();
         let now = Utc::now();
-
-        let inventory_repo = PgInventoryRepository::new(self.pool.clone());
-        let backorder_repo = PgBackorderRepository::new(self.pool.clone());
 
         // Get next order number
         let order_number: (i64,) = sqlx::query_as("SELECT nextval('order_number_seq')")
@@ -600,91 +644,15 @@ impl PgOrderRepository {
             });
         }
 
-        let reference_id = order_id.to_string();
         for item in &items {
-            if item.quantity <= 0 {
-                continue;
-            }
-
-            let item_id: Option<i64> =
-                sqlx::query_scalar("SELECT id FROM inventory_items WHERE sku = $1")
-                    .bind(&item.sku)
-                    .fetch_optional(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-
-            let item_id = match item_id {
-                Some(item_id) => item_id,
-                None => {
-                    // Non-inventory item; skip reservations/backorders.
-                    continue;
-                }
-            };
-
-            let available: Decimal = sqlx::query_scalar(
-                "SELECT COALESCE(SUM(quantity_available), 0) FROM inventory_balances WHERE item_id = $1",
+            self.reserve_line_stock_in_tx(
+                tx,
+                order_id,
+                input.customer_id.into_uuid(),
+                item,
+                input.stock_policy,
             )
-            .bind(item_id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            let requested = Decimal::from(item.quantity);
-            if !input.stock_policy.allows_backorder() && available < requested {
-                // Returning drops `tx`, which rolls the whole order back: no
-                // order row, no reservations, no backorders survive.
-                return Err(CommerceError::InsufficientStock {
-                    sku: item.sku.clone(),
-                    requested: requested.to_string(),
-                    available: available.to_string(),
-                });
-            }
-            let reserve_qty =
-                if available > Decimal::ZERO { requested.min(available) } else { Decimal::ZERO };
-
-            let mut reserved = Decimal::ZERO;
-            if reserve_qty > Decimal::ZERO {
-                let reserve_input = ReserveInventory {
-                    sku: item.sku.clone(),
-                    location_id: None,
-                    quantity: reserve_qty,
-                    reference_type: "order".to_string(),
-                    reference_id: reference_id.clone(),
-                    expires_in_seconds: None,
-                };
-
-                match inventory_repo.reserve_in_tx(tx, &reserve_input).await {
-                    Ok(_) => {
-                        reserved = reserve_qty;
-                    }
-                    Err(err) => {
-                        if input.stock_policy.allows_backorder()
-                            && matches!(err, CommerceError::InsufficientStock { .. })
-                        {
-                            reserved = Decimal::ZERO;
-                        } else {
-                            return Err(err);
-                        }
-                    }
-                }
-            }
-
-            let remaining = requested - reserved;
-            if remaining > Decimal::ZERO {
-                let backorder_input = CreateBackorder {
-                    order_id,
-                    order_line_id: Some(item.id.into_uuid()),
-                    customer_id: input.customer_id.into_uuid(),
-                    sku: item.sku.clone(),
-                    quantity: remaining,
-                    priority: None,
-                    expected_date: None,
-                    promised_date: None,
-                    source_location_id: None,
-                    notes: Some("Auto backorder: insufficient stock".to_string()),
-                };
-                backorder_repo.create_backorder_in_tx(tx, &backorder_input).await?;
-            }
+            .await?;
         }
 
         Ok(Order {
@@ -711,6 +679,229 @@ impl PgOrderRepository {
             created_at: now,
             updated_at: now,
         })
+    }
+
+    /// Reserve stock for one order line under `stock_policy`, backordering any
+    /// shortfall. Lines whose SKU is not a tracked inventory item are skipped.
+    ///
+    /// Shared by order creation (every line) and `add_item` (the new line) so
+    /// a line added after the fact is reserved exactly like one present at
+    /// creation. Under `RejectIfInsufficient` the error drops the caller's
+    /// transaction, rolling everything back.
+    pub(crate) async fn reserve_line_stock_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        order_id: Uuid,
+        customer_id: Uuid,
+        item: &OrderItem,
+        stock_policy: StockPolicy,
+    ) -> Result<()> {
+        if item.quantity <= 0 {
+            return Ok(());
+        }
+        let inventory_repo = PgInventoryRepository::new(self.pool.clone());
+        let backorder_repo = PgBackorderRepository::new(self.pool.clone());
+        let reference_id = order_id.to_string();
+
+        let item_id: Option<i64> =
+            sqlx::query_scalar("SELECT id FROM inventory_items WHERE sku = $1")
+                .bind(&item.sku)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let Some(item_id) = item_id else {
+            // Non-inventory item; skip reservations/backorders.
+            return Ok(());
+        };
+
+        let available: Decimal = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(quantity_available), 0) FROM inventory_balances WHERE item_id = $1",
+        )
+        .bind(item_id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let requested = Decimal::from(item.quantity);
+        if !stock_policy.allows_backorder() && available < requested {
+            return Err(CommerceError::InsufficientStock {
+                sku: item.sku.clone(),
+                requested: requested.to_string(),
+                available: available.to_string(),
+            });
+        }
+        let reserve_qty =
+            if available > Decimal::ZERO { requested.min(available) } else { Decimal::ZERO };
+
+        let mut reserved = Decimal::ZERO;
+        if reserve_qty > Decimal::ZERO {
+            let reserve_input = ReserveInventory {
+                sku: item.sku.clone(),
+                location_id: None,
+                quantity: reserve_qty,
+                reference_type: "order".to_string(),
+                reference_id,
+                expires_in_seconds: None,
+            };
+
+            match inventory_repo.reserve_in_tx(tx, &reserve_input).await {
+                Ok(_) => {
+                    reserved = reserve_qty;
+                }
+                Err(err) => {
+                    if stock_policy.allows_backorder()
+                        && matches!(err, CommerceError::InsufficientStock { .. })
+                    {
+                        reserved = Decimal::ZERO;
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        let remaining = requested - reserved;
+        if remaining > Decimal::ZERO {
+            let backorder_input = CreateBackorder {
+                order_id,
+                order_line_id: Some(item.id.into_uuid()),
+                customer_id,
+                sku: item.sku.clone(),
+                quantity: remaining,
+                priority: None,
+                expected_date: None,
+                promised_date: None,
+                source_location_id: None,
+                notes: Some("Auto backorder: insufficient stock".to_string()),
+            };
+            backorder_repo.create_backorder_in_tx(tx, &backorder_input).await?;
+        }
+        Ok(())
+    }
+
+    /// Release the open reservations held for `sku` on this order that cover
+    /// `quantity` units (whole reservations, oldest first). Used when a line
+    /// is removed; reservations are one per line so this releases that
+    /// line's hold. Mirrors the SQLite backend.
+    async fn release_line_reservations_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        order_id: Uuid,
+        sku: &str,
+        quantity: Decimal,
+    ) -> Result<()> {
+        let inventory_repo = PgInventoryRepository::new(self.pool.clone());
+        let mut remaining = quantity;
+        let open = inventory_repo
+            .list_open_reservations_for_sku_in_tx(tx, "order", &order_id.to_string(), sku)
+            .await?;
+        for (reservation_id, reserved_qty) in open {
+            if remaining <= Decimal::ZERO {
+                break;
+            }
+            inventory_repo.release_reservation_in_tx(tx, reservation_id).await?;
+            remaining -= reserved_qty;
+        }
+        Ok(())
+    }
+
+    /// Release every reservation and cancel every backorder held by the order.
+    async fn release_order_stock_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+    ) -> Result<()> {
+        let inventory_repo = PgInventoryRepository::new(self.pool.clone());
+        let backorder_repo = PgBackorderRepository::new(self.pool.clone());
+        let reservation_ids = inventory_repo
+            .list_reservation_ids_by_reference_in_tx(tx, "order", &id.to_string())
+            .await?;
+        for reservation_id in reservation_ids {
+            inventory_repo.release_reservation_in_tx(tx, reservation_id).await?;
+        }
+        backorder_repo.cancel_backorders_for_order_in_tx(tx, id).await
+    }
+
+    /// Current `(status, customer_id)` of an order, row-locked, or
+    /// `OrderNotFound`.
+    async fn load_status_and_customer_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        order_id: Uuid,
+    ) -> Result<(OrderStatus, Uuid)> {
+        let (status_raw, customer_id): (String, Uuid) =
+            sqlx::query_as("SELECT status, customer_id FROM orders WHERE id = $1 FOR UPDATE")
+                .bind(order_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::OrderNotFound(order_id))?;
+        let status: OrderStatus = status_raw.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid order.status '{status_raw}': {e}"))
+        })?;
+        Ok((status, customer_id))
+    }
+
+    /// Load an order with its lines on the caller's transaction.
+    async fn load_order_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+    ) -> Result<Order> {
+        let row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::OrderNotFound(id))?;
+        let items = sqlx::query_as::<_, OrderItemRow>(
+            "SELECT * FROM order_items WHERE order_id = $1 ORDER BY created_at, id",
+        )
+        .bind(id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        Self::row_to_order(row, items.into_iter().map(Self::row_to_item).collect())
+    }
+
+    /// Delete one order and everything it holds (lines, reservations,
+    /// backorders) on the caller's transaction. A missing order is a no-op.
+    ///
+    /// Decision: orders that have shipped (`PartiallyShipped`/`Shipped`/
+    /// `Delivered`) or been refunded are refused with `Conflict` — they are
+    /// fulfilment and financial records. Pending/confirmed/processing orders
+    /// release their stock before the rows go; cancelled orders already have.
+    /// Previously this was a bare pool `DELETE` relying on CASCADE, which
+    /// left reservations and backorders (no FK to orders) dangling.
+    async fn delete_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+    ) -> Result<()> {
+        let status_raw: Option<String> =
+            sqlx::query_scalar("SELECT status FROM orders WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let Some(status_raw) = status_raw else {
+            return Ok(());
+        };
+        let status: OrderStatus = status_raw.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid order.status '{status_raw}': {e}"))
+        })?;
+        ensure_deletable(id, status)?;
+
+        self.release_order_stock_in_tx(tx, id).await?;
+        sqlx::query("DELETE FROM order_items WHERE order_id = $1")
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        sqlx::query("DELETE FROM orders WHERE id = $1")
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        Ok(())
     }
 
     /// Get an order by ID (async)
@@ -800,18 +991,23 @@ impl PgOrderRepository {
 
     /// Update an order (async)
     pub async fn update_async(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
-        let mode = match input.status {
-            Some(OrderStatus::Shipped) => ShipMode::All,
-            Some(OrderStatus::PartiallyShipped) => {
-                return Err(CommerceError::ValidationError(
-                    "order status partially_shipped is derived from shipped line quantities; \
-                     use OrderRepository::ship with explicit lines"
-                        .to_string(),
-                ));
-            }
-            _ => ShipMode::None,
-        };
+        let mode = Self::ship_mode_for_update(&input)?;
         self.apply_update_async(id, input, mode).await
+    }
+
+    /// How a plain status update touches the lines: `Shipped` ships every
+    /// remaining unit; `PartiallyShipped` is derived from line quantities and
+    /// cannot be set directly (use `ship_async` with lines).
+    fn ship_mode_for_update(input: &UpdateOrder) -> Result<ShipMode<'static>> {
+        match input.status {
+            Some(OrderStatus::Shipped) => Ok(ShipMode::All),
+            Some(OrderStatus::PartiallyShipped) => Err(CommerceError::ValidationError(
+                "order status partially_shipped is derived from shipped line quantities; \
+                 use OrderRepository::ship with explicit lines"
+                    .to_string(),
+            )),
+            _ => Ok(ShipMode::None),
+        }
     }
 
     /// Ship an order (async), fully or per line. See [`OrderRepository::ship`].
@@ -906,13 +1102,36 @@ impl PgOrderRepository {
         Ok((resolved, deltas))
     }
 
-    /// Shared implementation of `update_async` and `ship_async`.
+    /// Shared implementation of `update_async` and `ship_async`: one
+    /// [`Self::apply_update_in_tx`] in its own transaction.
     async fn apply_update_async(
         &self,
         id: Uuid,
         input: UpdateOrder,
         ship: ShipMode<'_>,
     ) -> Result<Order> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let outcome = self.apply_update_in_tx(&mut tx, id, &input, ship).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        if let Some(err) = outcome.post_commit_error {
+            return Err(err);
+        }
+        Ok(outcome.order)
+    }
+
+    /// Apply one order update (status transition with all its side effects,
+    /// field patches, version bump, outbox event) on the caller's transaction.
+    ///
+    /// This is THE transition path: `update_async`, `ship_async` and
+    /// `update_batch_atomic_async` all route through it, so a batch of N
+    /// updates behaves exactly like N single updates sharing one commit.
+    pub(crate) async fn apply_update_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+        input: &UpdateOrder,
+        ship: ShipMode<'_>,
+    ) -> Result<UpdateOutcome> {
         if let Some(address) = &input.shipping_address {
             Self::validate_address_input(address, "order.shipping_address")?;
         }
@@ -947,8 +1166,6 @@ impl PgOrderRepository {
 
         let inventory_repo = PgInventoryRepository::new(self.pool.clone());
         let backorder_repo = PgBackorderRepository::new(self.pool.clone());
-
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         let existing_row =
             sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1 FOR UPDATE")
@@ -994,7 +1211,7 @@ impl PgOrderRepository {
 
         let is_ship = input.status == Some(OrderStatus::Shipped) && !matches!(ship, ShipMode::None);
         let (new_status, line_deltas) = if is_ship {
-            Self::plan_shipment_in_tx(&mut tx, id, ship).await?
+            Self::plan_shipment_in_tx(tx, id, ship).await?
         } else {
             (input.status.unwrap_or(current_status), Vec::new())
         };
@@ -1027,13 +1244,13 @@ impl PgOrderRepository {
 
         if is_ship {
             let reservation_ids = inventory_repo
-                .list_reservation_ids_by_reference_in_tx(&mut tx, "order", &id.to_string())
+                .list_reservation_ids_by_reference_in_tx(tx, "order", &id.to_string())
                 .await?;
 
             let mut expired_reservation: Option<Uuid> = None;
             for reservation_id in &reservation_ids {
                 if inventory_repo
-                    .expire_reservation_if_needed_in_tx(&mut tx, *reservation_id, now)
+                    .expire_reservation_if_needed_in_tx(tx, *reservation_id, now)
                     .await?
                     && expired_reservation.is_none()
                 {
@@ -1042,8 +1259,11 @@ impl PgOrderRepository {
             }
 
             if let Some(expired_id) = expired_reservation {
-                tx.commit().await.map_err(map_db_error)?;
-                return Err(CommerceError::ReservationExpired(expired_id));
+                // Commit the expiry bookkeeping, then surface the error.
+                return Ok(UpdateOutcome {
+                    order: Self::load_order_in_tx(tx, id).await?,
+                    post_commit_error: Some(CommerceError::ReservationExpired(expired_id)),
+                });
             }
 
             match ship {
@@ -1051,7 +1271,7 @@ impl PgOrderRepository {
                 ShipMode::All => {
                     for reservation_id in reservation_ids {
                         match inventory_repo
-                            .confirm_reservation_in_tx_with_now(&mut tx, reservation_id, now)
+                            .confirm_reservation_in_tx_with_now(tx, reservation_id, now)
                             .await?
                         {
                             ReservationConfirmOutcome::Confirmed => {}
@@ -1067,7 +1287,7 @@ impl PgOrderRepository {
                         let mut remaining = Decimal::from(delta.delta);
                         let open = inventory_repo
                             .list_open_reservations_for_sku_in_tx(
-                                &mut tx,
+                                tx,
                                 "order",
                                 &id.to_string(),
                                 &delta.sku,
@@ -1080,7 +1300,7 @@ impl PgOrderRepository {
                             let take = remaining.min(reserved_qty);
                             match inventory_repo
                                 .confirm_reservation_quantity_in_tx_with_now(
-                                    &mut tx,
+                                    tx,
                                     reservation_id,
                                     take,
                                     now,
@@ -1099,8 +1319,11 @@ impl PgOrderRepository {
             }
 
             if let Some(expired_id) = expired_reservation {
-                tx.commit().await.map_err(map_db_error)?;
-                return Err(CommerceError::ReservationExpired(expired_id));
+                // Commit the expiry bookkeeping, then surface the error.
+                return Ok(UpdateOutcome {
+                    order: Self::load_order_in_tx(tx, id).await?,
+                    post_commit_error: Some(CommerceError::ReservationExpired(expired_id)),
+                });
             }
 
             for delta in line_deltas.iter().filter(|d| d.delta > 0) {
@@ -1115,8 +1338,8 @@ impl PgOrderRepository {
             }
         }
 
-        let new_tracking = input.tracking_number.or(tracking_number);
-        let new_notes = input.notes.or(notes);
+        let new_tracking = input.tracking_number.clone().or(tracking_number);
+        let new_notes = input.notes.clone().or(notes);
         let new_shipping = shipping_address_json.or(shipping_address);
         let new_billing = billing_address_json.or(billing_address);
 
@@ -1153,12 +1376,12 @@ impl PgOrderRepository {
 
         if matches!(input.status, Some(OrderStatus::Cancelled)) {
             let reservation_ids = inventory_repo
-                .list_reservation_ids_by_reference_in_tx(&mut tx, "order", &id.to_string())
+                .list_reservation_ids_by_reference_in_tx(tx, "order", &id.to_string())
                 .await?;
             for reservation_id in reservation_ids {
-                inventory_repo.release_reservation_in_tx(&mut tx, reservation_id).await?;
+                inventory_repo.release_reservation_in_tx(tx, reservation_id).await?;
             }
-            backorder_repo.cancel_backorders_for_order_in_tx(&mut tx, id).await?;
+            backorder_repo.cancel_backorders_for_order_in_tx(tx, id).await?;
         }
 
         append_kernel_event_tx(
@@ -1183,9 +1406,7 @@ impl PgOrderRepository {
         )
         .await?;
 
-        tx.commit().await.map_err(map_db_error)?;
-
-        self.get_async(id).await?.ok_or(CommerceError::OrderNotFound(id))
+        Ok(UpdateOutcome { order: Self::load_order_in_tx(tx, id).await?, post_commit_error: None })
     }
 
     /// List orders (async)
@@ -1266,54 +1487,26 @@ impl PgOrderRepository {
 
     /// Delete an order (async)
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM orders WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        Ok(())
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        self.delete_in_tx(&mut tx, id).await?;
+        tx.commit().await.map_err(map_db_error)
     }
 
     /// Add item to order (async)
+    ///
+    /// Only allowed before fulfilment (`pending`/`confirmed`/`processing`).
+    /// The line is reserved/backordered through the same stock-policy path as
+    /// creation and the total is re-derived, all in one transaction.
     pub async fn add_item_async(&self, order_id: Uuid, item: CreateOrderItem) -> Result<OrderItem> {
         validate_required_uuid("order.id", order_id)?;
         Self::validate_order_item_input(&item)?;
 
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let discount = item.discount.unwrap_or(Decimal::ZERO);
         let tax = item.tax_amount.unwrap_or(Decimal::ZERO);
         let total = OrderItem::calculate_total(item.quantity, item.unit_price, discount, tax);
-
-        sqlx::query(
-            r#"
-            INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
-                                     quantity, unit_price, discount, tax_amount, total, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            "#,
-        )
-        .bind(id)
-        .bind(order_id)
-        .bind(item.product_id.into_uuid())
-        .bind(item.variant_id)
-        .bind(&item.sku)
-        .bind(&item.name)
-        .bind(item.quantity)
-        .bind(item.unit_price)
-        .bind(discount)
-        .bind(tax)
-        .bind(total)
-        .bind(now)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        self.update_order_total_tx(&mut tx, order_id).await?;
-        tx.commit().await.map_err(map_db_error)?;
-
-        Ok(OrderItem {
+        let order_item = OrderItem {
             id: OrderItemId::from(id),
             order_id: OrderId::from(order_id),
             product_id: item.product_id,
@@ -1326,12 +1519,81 @@ impl PgOrderRepository {
             discount,
             tax_amount: tax,
             total,
-        })
+        };
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let (status, customer_id) = Self::load_status_and_customer_in_tx(&mut tx, order_id).await?;
+        ensure_lines_mutable(order_id, status)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
+                                     quantity, unit_price, discount, tax_amount, total, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            "#,
+        )
+        .bind(id)
+        .bind(order_id)
+        .bind(order_item.product_id.into_uuid())
+        .bind(order_item.variant_id)
+        .bind(&order_item.sku)
+        .bind(&order_item.name)
+        .bind(order_item.quantity)
+        .bind(order_item.unit_price)
+        .bind(discount)
+        .bind(tax)
+        .bind(total)
+        .bind(now)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        // Same stock-policy path as creation; a line added later takes the
+        // default policy (`AllowBackorder`).
+        self.reserve_line_stock_in_tx(
+            &mut tx,
+            order_id,
+            customer_id,
+            &order_item,
+            StockPolicy::default(),
+        )
+        .await?;
+
+        Self::update_order_total_tx(&mut tx, order_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+
+        Ok(order_item)
     }
 
     /// Remove item from order (async)
+    ///
+    /// Only allowed before fulfilment. Releases the line's reservation and
+    /// cancels its backorder in the same transaction as the delete.
     pub async fn remove_item_async(&self, order_id: Uuid, item_id: Uuid) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let (status, _customer_id) =
+            Self::load_status_and_customer_in_tx(&mut tx, order_id).await?;
+        ensure_lines_mutable(order_id, status)?;
+
+        let line: Option<(String, i32)> =
+            sqlx::query_as("SELECT sku, quantity FROM order_items WHERE id = $1 AND order_id = $2")
+                .bind(item_id)
+                .bind(order_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let Some((sku, quantity)) = line else {
+            return Err(CommerceError::ValidationError(format!(
+                "Order item {item_id} does not belong to order {order_id}"
+            )));
+        };
+
+        self.release_line_reservations_in_tx(&mut tx, order_id, &sku, Decimal::from(quantity))
+            .await?;
+        PgBackorderRepository::new(self.pool.clone())
+            .cancel_backorders_for_order_line_in_tx(&mut tx, order_id, item_id)
+            .await?;
+
         sqlx::query("DELETE FROM order_items WHERE id = $1 AND order_id = $2")
             .bind(item_id)
             .bind(order_id)
@@ -1339,7 +1601,7 @@ impl PgOrderRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.update_order_total_tx(&mut tx, order_id).await?;
+        Self::update_order_total_tx(&mut tx, order_id).await?;
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(())
@@ -1445,149 +1707,32 @@ impl PgOrderRepository {
     }
 
     /// Update multiple orders in a batch atomically (async)
+    ///
+    /// Every row goes through the SAME in-transaction path as a single
+    /// `update_async` (shipment planning, reservation confirm/release,
+    /// backorder cancel, outbox event, `PartiallyShipped` rejection), sharing
+    /// one commit: batch == N single updates, all or nothing.
     pub async fn update_batch_atomic_async(
         &self,
         updates: Vec<(Uuid, UpdateOrder)>,
     ) -> Result<Vec<Order>> {
         validate_batch_size(&updates)?;
+        if updates.is_empty() {
+            return Ok(vec![]);
+        }
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut orders = Vec::with_capacity(updates.len());
-        let now = Utc::now();
 
-        for (id, input) in updates {
-            // Get existing order
-            let existing_row =
-                sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1 FOR UPDATE")
-                    .bind(id)
-                    .fetch_optional(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?
-                    .ok_or(CommerceError::OrderNotFound(id))?;
-
-            let existing_items =
-                sqlx::query_as::<_, OrderItemRow>("SELECT * FROM order_items WHERE order_id = $1")
-                    .bind(id)
-                    .fetch_all(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-
-            let existing = Self::row_to_order(
-                existing_row,
-                existing_items.into_iter().map(Self::row_to_item).collect(),
-            )?;
-            let expected_version = existing.version;
-
-            let new_status = input.status.unwrap_or(existing.status);
-            let new_payment_status = input.payment_status.unwrap_or(existing.payment_status);
-            let new_fulfillment_status =
-                input.fulfillment_status.unwrap_or(existing.fulfillment_status);
-            let new_tracking = input.tracking_number.or(existing.tracking_number);
-            let new_notes = input.notes.or(existing.notes);
-            let new_shipping = input.shipping_address.clone().or(existing.shipping_address);
-            let new_billing = input.billing_address.clone().or(existing.billing_address);
-
-            if !existing.status.can_transition_to(new_status) {
-                if new_status == OrderStatus::Cancelled {
-                    return Err(CommerceError::OrderCannotBeCancelled(existing.status.to_string()));
-                }
-
-                return Err(CommerceError::InvalidOrderStatusTransition {
-                    from: existing.status.to_string(),
-                    to: new_status.to_string(),
-                });
+        for (id, input) in &updates {
+            let mode = Self::ship_mode_for_update(input)?;
+            let outcome = self.apply_update_in_tx(&mut tx, *id, input, mode).await?;
+            if let Some(err) = outcome.post_commit_error {
+                // An atomic batch cannot commit part of itself: dropping `tx`
+                // rolls every row back; the reservation is still expired by
+                // time and is re-expired on retry.
+                return Err(err);
             }
-
-            if new_status == OrderStatus::Refunded
-                && !matches!(
-                    new_payment_status,
-                    PaymentStatus::Paid
-                        | PaymentStatus::PartiallyPaid
-                        | PaymentStatus::Refunded
-                        | PaymentStatus::PartiallyRefunded
-                )
-            {
-                return Err(CommerceError::OrderCannotBeRefunded(new_payment_status.to_string()));
-            }
-
-            if let Some(address) = &input.shipping_address {
-                Self::validate_address_input(address, "order.shipping_address")?;
-            }
-            if let Some(address) = &input.billing_address {
-                Self::validate_address_input(address, "order.billing_address")?;
-            }
-
-            let shipping_json = new_shipping
-                .as_ref()
-                .map(|a| {
-                    serde_json::to_value(a).map_err(|e| {
-                        CommerceError::DatabaseError(format!(
-                            "Failed to serialize order.shipping_address: {}",
-                            e
-                        ))
-                    })
-                })
-                .transpose()?;
-            let billing_json = new_billing
-                .as_ref()
-                .map(|a| {
-                    serde_json::to_value(a).map_err(|e| {
-                        CommerceError::DatabaseError(format!(
-                            "Failed to serialize order.billing_address: {}",
-                            e
-                        ))
-                    })
-                })
-                .transpose()?;
-
-            let result = sqlx::query(
-                r#"
-                UPDATE orders
-                SET status = $1, payment_status = $2, fulfillment_status = $3,
-                    tracking_number = $4, notes = $5, shipping_address = $6,
-                    billing_address = $7, updated_at = $8, version = version + 1
-                WHERE id = $9 AND version = $10
-                "#,
-            )
-            .bind(new_status.to_string())
-            .bind(new_payment_status.to_string())
-            .bind(new_fulfillment_status.to_string())
-            .bind(&new_tracking)
-            .bind(&new_notes)
-            .bind(&shipping_json)
-            .bind(&billing_json)
-            .bind(now)
-            .bind(id)
-            .bind(expected_version)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            if result.rows_affected() == 0 {
-                return Err(CommerceError::VersionConflict {
-                    entity: "order".to_string(),
-                    id: id.to_string(),
-                    expected_version,
-                });
-            }
-
-            // Fetch updated order
-            let updated_row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1")
-                .bind(id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-
-            let items =
-                sqlx::query_as::<_, OrderItemRow>("SELECT * FROM order_items WHERE order_id = $1")
-                    .bind(id)
-                    .fetch_all(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-
-            orders.push(Self::row_to_order(
-                updated_row,
-                items.into_iter().map(Self::row_to_item).collect(),
-            )?);
+            orders.push(outcome.order);
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -1614,19 +1759,11 @@ impl PgOrderRepository {
         validate_batch_size(&ids)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        // Delete order items first (foreign key constraint)
-        sqlx::query("DELETE FROM order_items WHERE order_id = ANY($1)")
-            .bind(&ids)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-        // Delete orders
-        sqlx::query("DELETE FROM orders WHERE id = ANY($1)")
-            .bind(&ids)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        // Same per-order path as a single delete (status predicate,
+        // reservation release, backorder cancel), one commit.
+        for id in &ids {
+            self.delete_in_tx(&mut tx, *id).await?;
+        }
 
         tx.commit().await.map_err(map_db_error)?;
         Ok(())

@@ -42,7 +42,23 @@ async fn postgres_async_x402_payment_intent_smoke() {
 
     let payer = format!("0xpayer-{}", Uuid::new_v4().as_simple());
     let payee = format!("0xpayee-{}", Uuid::new_v4().as_simple());
-    let cart_id = Uuid::new_v4();
+    // Intents for a cart must match the cart's grand total, so use a real cart.
+    let cart = commerce
+        .carts()
+        .create(stateset_core::CreateCart {
+            currency: Some(stateset_core::CurrencyCode::USD),
+            items: Some(vec![stateset_core::AddCartItem {
+                sku: "SKU-X402-SMOKE".to_string(),
+                name: "x402 smoke item".to_string(),
+                quantity: 1,
+                unit_price: rust_decimal::Decimal::new(200, 2),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        })
+        .await
+        .expect("create cart");
+    let cart_id: Uuid = cart.id.into();
 
     let intent = x402
         .create_intent(CreateX402PaymentIntent {
@@ -104,7 +120,7 @@ async fn postgres_async_x402_payment_intent_smoke() {
             cart_id,
             &payer,
             &payee,
-            dec!(12.50),
+            dec!(2.00),
             X402Network::SetChain,
             X402Asset::Usdc,
         )
@@ -123,8 +139,10 @@ async fn postgres_async_x402_payment_intent_smoke() {
         x402.mark_sequenced(intent.id, 42, Uuid::new_v4()).await.expect("mark intent sequenced");
     assert_eq!(sequenced.status, X402IntentStatus::Sequenced);
 
-    let settled =
-        x402.mark_settled(intent.id, "0xsettled-hash", 123_456).await.expect("mark intent settled");
+    let settled = x402
+        .mark_settled(intent.id, &format!("0xsettled-{}", Uuid::new_v4().as_simple()), 123_456)
+        .await
+        .expect("mark intent settled");
     assert_eq!(settled.status, X402IntentStatus::Settled);
 }
 

@@ -24,6 +24,7 @@
 //! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
 
+use chrono::{DateTime, Utc};
 use stateset_core::{
     BatchResult, ChangeSerialStatus, CreateSerialNumber, CreateSerialNumbersBulk, MoveSerial,
     ReserveSerialNumber, Result, SerialFilter, SerialHistory, SerialHistoryFilter,
@@ -203,6 +204,19 @@ impl Serials {
         self.db.serials().release_quarantine(id)
     }
 
+    /// Quarantine every `Available`/`Reserved` serial in a lot (open
+    /// reservations are closed); serials in other statuses are untouched.
+    /// Returns the number of serials quarantined.
+    pub fn quarantine_for_lot(&self, lot_id: Uuid, reason: &str) -> Result<u64> {
+        self.db.serials().quarantine_for_lot(lot_id, reason)
+    }
+
+    /// Return every `Quarantined` serial in a lot to `Available`. Returns the
+    /// number of serials released.
+    pub fn release_quarantine_for_lot(&self, lot_id: Uuid) -> Result<u64> {
+        self.db.serials().release_quarantine_for_lot(lot_id)
+    }
+
     /// Scrap a serial.
     pub fn scrap(&self, id: Uuid, reason: &str) -> Result<SerialNumber> {
         self.db.serials().scrap(id, reason)
@@ -244,8 +258,23 @@ impl Serials {
     }
 
     /// Confirm a reservation (finalize the allocation).
+    ///
+    /// The serial stays `Reserved`; the reservation is closed by the sale or
+    /// shipment that consumes it (or by [`Self::release_reservation`]).
     pub fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()> {
         self.db.serials().confirm_reservation(reservation_id)
+    }
+
+    /// Fetch a reservation by id.
+    pub fn get_reservation(&self, reservation_id: Uuid) -> Result<Option<SerialReservation>> {
+        self.db.serials().get_reservation(reservation_id)
+    }
+
+    /// Sweep reservations that expired before `now` without being confirmed,
+    /// released or consumed, returning their serials to `Available`. Returns
+    /// the number of serials returned to stock. Safe to run on a schedule.
+    pub fn release_expired_reservations(&self, now: DateTime<Utc>) -> Result<u64> {
+        self.db.serials().release_expired_reservations(now)
     }
 
     // ========================================================================

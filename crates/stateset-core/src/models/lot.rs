@@ -65,6 +65,39 @@ impl Default for LotStatus {
     }
 }
 
+impl LotStatus {
+    /// Whether a lot may move from `self` to `next` through the guarded
+    /// workflow operations (`quarantine`, `release_quarantine`, `expire_lots`,
+    /// `consume`).
+    ///
+    /// The graph is deliberately conservative:
+    ///
+    /// * `Active` is the only sellable state and may go anywhere.
+    /// * `Quarantine` / `OnHold` are reversible blocks: back to `Active`, or
+    ///   onward to a terminal disposition. `OnHold` may also escalate to
+    ///   `Quarantine`.
+    /// * `Expired` and `Recalled` may only be disposed of (`Scrapped`) or, for
+    ///   `Expired`, recalled.
+    /// * `Consumed` and `Scrapped` are terminal.
+    ///
+    /// `update()` deliberately bypasses this table: it is the administrative
+    /// override for data repair.
+    #[must_use]
+    pub const fn can_transition_to(self, next: Self) -> bool {
+        match self {
+            Self::Active => !matches!(next, Self::Active),
+            Self::Quarantine => matches!(next, Self::Active | Self::Scrapped | Self::Recalled),
+            Self::OnHold => matches!(
+                next,
+                Self::Active | Self::Quarantine | Self::Scrapped | Self::Recalled | Self::Expired
+            ),
+            Self::Expired => matches!(next, Self::Scrapped | Self::Recalled),
+            Self::Recalled => matches!(next, Self::Scrapped),
+            Self::Consumed | Self::Scrapped => false,
+        }
+    }
+}
+
 impl std::str::FromStr for LotStatus {
     type Err = String;
 
@@ -495,10 +528,28 @@ impl Lot {
         self.quantity_remaining - self.quantity_reserved - self.quantity_quarantined
     }
 
-    /// Check if lot is expired
+    /// Check if lot is expired (relative to the wall clock)
     #[must_use]
     pub fn is_expired(&self) -> bool {
-        if let Some(exp) = self.expiration_date { Utc::now() > exp } else { false }
+        self.is_expired_at(Utc::now())
+    }
+
+    /// Check if lot is expired as of `now`.
+    ///
+    /// A lot with no `expiration_date` never expires. The comparison is strict:
+    /// a lot is still good *at* its expiration instant and expired after it.
+    #[must_use]
+    pub fn is_expired_at(&self, now: DateTime<Utc>) -> bool {
+        self.expiration_date.is_some_and(|exp| now > exp)
+    }
+
+    /// Whether units may leave this lot as of `now`: the lot must be `Active`
+    /// *and* unexpired. Status alone is not enough — `expire_lots` is a sweeper
+    /// that may not have run yet, so a lot whose `expiration_date` has passed
+    /// is refused even while its status still reads `Active`.
+    #[must_use]
+    pub fn consumable_at(&self, now: DateTime<Utc>) -> bool {
+        self.status == LotStatus::Active && !self.is_expired_at(now)
     }
 
     /// Check if lot is expiring soon (within days)
@@ -512,16 +563,30 @@ impl Lot {
         }
     }
 
-    /// Check if lot can be consumed
+    /// Check if lot can be consumed (relative to the wall clock)
     #[must_use]
     pub fn can_consume(&self, quantity: Decimal) -> bool {
-        self.status == LotStatus::Active && self.quantity_available() >= quantity
+        self.can_consume_at(quantity, Utc::now())
     }
 
-    /// Check if lot can be reserved
+    /// Check if `quantity` can be consumed from this lot as of `now`:
+    /// `Active`, unexpired, and enough unreserved/unquarantined units.
+    #[must_use]
+    pub fn can_consume_at(&self, quantity: Decimal, now: DateTime<Utc>) -> bool {
+        self.consumable_at(now) && self.quantity_available() >= quantity
+    }
+
+    /// Check if lot can be reserved (relative to the wall clock)
     #[must_use]
     pub fn can_reserve(&self, quantity: Decimal) -> bool {
-        self.status == LotStatus::Active && self.quantity_available() >= quantity
+        self.can_reserve_at(quantity, Utc::now())
+    }
+
+    /// Check if `quantity` can be reserved from this lot as of `now`; same
+    /// preconditions as [`Self::can_consume_at`].
+    #[must_use]
+    pub fn can_reserve_at(&self, quantity: Decimal, now: DateTime<Utc>) -> bool {
+        self.consumable_at(now) && self.quantity_available() >= quantity
     }
 
     /// Get days until expiration
@@ -666,6 +731,62 @@ mod tests {
         let mut lot = create_test_lot();
         lot.status = LotStatus::OnHold;
         assert!(!lot.can_reserve(dec!(1)));
+    }
+
+    #[test]
+    fn can_consume_and_reserve_refuse_expired_lot_regardless_of_status() {
+        let mut lot = create_test_lot();
+        lot.expiration_date = Some(Utc::now() - chrono::Duration::days(1));
+        assert_eq!(lot.status, LotStatus::Active, "status alone would allow it");
+        assert!(!lot.can_consume(dec!(1)));
+        assert!(!lot.can_reserve(dec!(1)));
+        assert!(!lot.consumable_at(Utc::now()));
+
+        // The same lot evaluated *before* its expiry instant is fine.
+        let earlier = Utc::now() - chrono::Duration::days(2);
+        assert!(lot.can_consume_at(dec!(1), earlier));
+        assert!(lot.can_reserve_at(dec!(1), earlier));
+        assert!(lot.consumable_at(earlier));
+    }
+
+    #[test]
+    fn is_expired_at_is_strict_and_none_safe() {
+        let mut lot = create_test_lot();
+        assert!(!lot.is_expired_at(Utc::now()));
+        let exp = Utc::now();
+        lot.expiration_date = Some(exp);
+        assert!(!lot.is_expired_at(exp), "still good at the instant itself");
+        assert!(lot.is_expired_at(exp + chrono::Duration::seconds(1)));
+    }
+
+    // ============================================================================
+    // Status transitions
+    // ============================================================================
+
+    #[test]
+    fn lot_status_transitions_are_exhaustive_and_conservative() {
+        use LotStatus::*;
+        let all = [Active, Quarantine, Expired, Consumed, OnHold, Recalled, Scrapped];
+        // Workflow guards used by the repositories.
+        assert!(Active.can_transition_to(Quarantine));
+        assert!(OnHold.can_transition_to(Quarantine));
+        assert!(Quarantine.can_transition_to(Active));
+        assert!(Active.can_transition_to(Expired));
+        // Nothing resurrects a terminal lot.
+        for next in all {
+            assert!(!Consumed.can_transition_to(next), "consumed -> {next}");
+            assert!(!Scrapped.can_transition_to(next), "scrapped -> {next}");
+        }
+        // Blocked stock must be released (or disposed of) through its own
+        // workflow, never laundered straight back to Active.
+        for from in [Expired, Recalled] {
+            assert!(!from.can_transition_to(Active), "{from} -> active");
+            assert!(!from.can_transition_to(Quarantine), "{from} -> quarantine");
+        }
+        // Self-transitions are never allowed (double quarantine / double release).
+        for s in all {
+            assert!(!s.can_transition_to(s), "{s} -> {s}");
+        }
     }
 
     // ============================================================================

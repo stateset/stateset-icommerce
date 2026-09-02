@@ -145,8 +145,18 @@ impl PgA2ARepository {
             QuoteStatus::Pending => {
                 matches!(next, QuoteStatus::Quoted | QuoteStatus::Rejected | QuoteStatus::Expired)
             }
+            // `Purchased` is reachable from `Quoted` as well as `Accepted`:
+            // `create_purchase_async` consumes a `Quoted` quote directly (the
+            // buyer's purchase is its acceptance), so the transition table
+            // must agree with what the purchase path actually does.
             QuoteStatus::Quoted => {
-                matches!(next, QuoteStatus::Accepted | QuoteStatus::Rejected | QuoteStatus::Expired)
+                matches!(
+                    next,
+                    QuoteStatus::Accepted
+                        | QuoteStatus::Rejected
+                        | QuoteStatus::Expired
+                        | QuoteStatus::Purchased
+                )
             }
             QuoteStatus::Accepted => matches!(next, QuoteStatus::Purchased),
             QuoteStatus::Rejected | QuoteStatus::Expired | QuoteStatus::Purchased => false,
@@ -495,6 +505,35 @@ impl PgA2ARepository {
         }
     }
 
+    /// Load a quote with `FOR UPDATE` inside the caller's transaction.
+    async fn get_quote_for_update(
+        tx: &mut sqlx::PgConnection,
+        id: Uuid,
+    ) -> Result<Option<SkillQuote>> {
+        let row =
+            sqlx::query_as::<_, QuoteRow>("SELECT * FROM a2a_quotes WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx)
+                .await
+                .map_err(map_db_error)?;
+        row.map(Self::row_to_quote).transpose()
+    }
+
+    /// Load a purchase with `FOR UPDATE` inside the caller's transaction.
+    async fn get_purchase_for_update(
+        tx: &mut sqlx::PgConnection,
+        id: Uuid,
+    ) -> Result<Option<A2APurchase>> {
+        let row = sqlx::query_as::<_, PurchaseRow>(
+            "SELECT * FROM a2a_purchases WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(tx)
+        .await
+        .map_err(map_db_error)?;
+        row.map(Self::row_to_purchase).transpose()
+    }
+
     pub async fn create_quote_async(&self, input: CreateA2AQuote) -> Result<SkillQuote> {
         self.validate_quote_input(&input)?;
 
@@ -585,7 +624,14 @@ impl PgA2ARepository {
         id: Uuid,
         status: QuoteStatus,
     ) -> Result<SkillQuote> {
-        let existing = self.get_quote_async(id).await?.ok_or(CommerceError::NotFound)?;
+        // Lock the row (`FOR UPDATE`), validate and write in ONE transaction,
+        // with the UPDATE conditional on the status we validated against.
+        // Previously the read ran on the pool and the UPDATE carried no status
+        // predicate, so two racing transitions both validated against the same
+        // snapshot and the last writer won.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let existing =
+            Self::get_quote_for_update(tx.as_mut(), id).await?.ok_or(CommerceError::NotFound)?;
 
         if !Self::is_valid_quote_status_transition(existing.status, status) {
             return Err(CommerceError::ValidationError(format!(
@@ -598,14 +644,24 @@ impl PgA2ARepository {
             return Ok(existing);
         }
 
-        sqlx::query("UPDATE a2a_quotes SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(status.to_string())
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let affected = sqlx::query(
+            "UPDATE a2a_quotes SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4",
+        )
+        .bind(status.to_string())
+        .bind(Utc::now())
+        .bind(id)
+        .bind(existing.status.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if affected != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "a2a quote {id} changed status concurrently; cannot move to {status:?}"
+            )));
+        }
 
+        tx.commit().await.map_err(map_db_error)?;
         self.get_quote_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -823,7 +879,12 @@ impl PgA2ARepository {
         id: Uuid,
         status: PurchaseStatus,
     ) -> Result<A2APurchase> {
-        let existing = self.get_purchase_async(id).await?.ok_or(CommerceError::NotFound)?;
+        // Same shape as `update_quote_status_async`: row lock + conditional
+        // UPDATE, so a seller's `Completed` racing a buyer's `Cancelled` from
+        // the same `Shipped` snapshot has exactly one winner.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let existing =
+            Self::get_purchase_for_update(tx.as_mut(), id).await?.ok_or(CommerceError::NotFound)?;
 
         if !Self::is_valid_purchase_status_transition(existing.status, status) {
             return Err(CommerceError::ValidationError(format!(
@@ -836,14 +897,24 @@ impl PgA2ARepository {
             return Ok(existing);
         }
 
-        sqlx::query("UPDATE a2a_purchases SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(status.to_string())
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let affected = sqlx::query(
+            "UPDATE a2a_purchases SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4",
+        )
+        .bind(status.to_string())
+        .bind(Utc::now())
+        .bind(id)
+        .bind(existing.status.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if affected != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "a2a purchase {id} changed status concurrently; cannot move to {status:?}"
+            )));
+        }
 
+        tx.commit().await.map_err(map_db_error)?;
         self.get_purchase_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -877,31 +948,44 @@ impl PgA2ARepository {
             });
         }
 
-        let existing =
-            self.get_purchase_async(purchase_id).await?.ok_or(CommerceError::NotFound)?;
-        if matches!(existing.status, PurchaseStatus::Cancelled | PurchaseStatus::Disputed) {
-            return Err(CommerceError::ValidationError(
-                "cannot confirm delivery for cancelled purchase".to_string(),
-            ));
-        }
-        if !matches!(
-            existing.status,
-            PurchaseStatus::Shipped | PurchaseStatus::Delivered | PurchaseStatus::Completed
-        ) {
-            return Err(CommerceError::ValidationError(
-                "purchase must be shipped before confirming delivery".to_string(),
-            ));
+        // Confirming delivery is a ONE-SHOT `Shipped | Delivered -> Completed`
+        // transition. It used to be repeatable from `Completed` (rewriting the
+        // delivery signature and rating each time) and its UPDATE carried no
+        // status predicate, so a confirm racing a cancel could resurrect a
+        // cancelled purchase to `Completed`. The rating/feedback are recorded
+        // with the confirmation and cannot be revised through this path.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let existing = Self::get_purchase_for_update(tx.as_mut(), purchase_id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
+        match existing.status {
+            PurchaseStatus::Shipped | PurchaseStatus::Delivered => {}
+            PurchaseStatus::Completed => {
+                return Err(CommerceError::Conflict(format!(
+                    "delivery already confirmed for purchase {purchase_id}"
+                )));
+            }
+            PurchaseStatus::Cancelled | PurchaseStatus::Disputed => {
+                return Err(CommerceError::ValidationError(
+                    "cannot confirm delivery for cancelled purchase".to_string(),
+                ));
+            }
+            _ => {
+                return Err(CommerceError::ValidationError(
+                    "purchase must be shipped before confirming delivery".to_string(),
+                ));
+            }
         }
 
         let now = Utc::now();
         let delivered_at = existing.delivered_at.unwrap_or(now);
         let rating = rating.map(|value| value as i16);
 
-        sqlx::query(
+        let affected = sqlx::query(
             "UPDATE a2a_purchases
                  SET status = $1, delivered_at = $2, delivery_confirmed_at = $3, delivery_confirmation_signature = $4,
                      buyer_rating = COALESCE($5, buyer_rating), buyer_feedback = COALESCE($6, buyer_feedback), updated_at = $7
-                 WHERE id = $8",
+                 WHERE id = $8 AND status = $9",
         )
         .bind(PurchaseStatus::Completed.to_string())
         .bind(delivered_at)
@@ -911,10 +995,18 @@ impl PgA2ARepository {
         .bind(feedback)
         .bind(now)
         .bind(purchase_id)
-        .execute(&self.pool)
+        .bind(existing.status.to_string())
+        .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        if affected != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "a2a purchase {purchase_id} changed status concurrently; cannot confirm delivery"
+            )));
+        }
 
+        tx.commit().await.map_err(map_db_error)?;
         self.get_purchase_async(purchase_id).await?.ok_or(CommerceError::NotFound)
     }
 

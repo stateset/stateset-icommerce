@@ -13,8 +13,9 @@ use stateset_core::traits::QualityRepository;
 use stateset_core::{
     CommerceError, CreateDefectCode, CreateInspection, CreateNonConformance, CreateQualityHold,
     DefectCode, Inspection, InspectionFilter, InspectionItem, InspectionResult, InspectionStatus,
-    NcrStatus, NonConformance, NonConformanceFilter, QualityHold, QualityHoldFilter,
-    RecordInspectionResult, ReleaseQualityHold, Result, UpdateInspection, UpdateNonConformance,
+    LotStatus, LotTransactionType, NcrStatus, NonConformance, NonConformanceFilter, QualityHold,
+    QualityHoldFilter, RecordInspectionResult, ReleaseQualityHold, Result, UpdateInspection,
+    UpdateNonConformance,
 };
 use uuid::Uuid;
 
@@ -265,6 +266,141 @@ impl SqliteQualityRepository {
                 "created_at",
             )?,
         })
+    }
+
+    /// Load the inspection header + items on `conn` (used inside transactions).
+    fn load_inspection_on(
+        &self,
+        conn: &rusqlite::Connection,
+        id: Uuid,
+    ) -> Result<Option<Inspection>> {
+        let result = conn.query_row(
+            "SELECT * FROM inspections WHERE id = ?",
+            [id.to_string()],
+            Self::row_to_inspection,
+        );
+        match result {
+            Ok(mut inspection) => {
+                inspection.items = self.load_inspection_items(conn, id)?;
+                Ok(Some(inspection))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(map_db_error(e)),
+        }
+    }
+
+    /// Place the lot selected by `where_sql` (`id = ?` or `lot_number = ?`)
+    /// into quarantine on the caller's transaction, mirroring
+    /// `SqliteLotRepository::quarantine`: only `Active`/`OnHold` lots move, every
+    /// unreserved unit is quarantined, and a `Quarantined` lot transaction is
+    /// written. Lots that are missing, already quarantined, or terminal are
+    /// left untouched — a failed inspection must never fail to complete because
+    /// the lot has already been dealt with.
+    fn quarantine_lot_on(
+        conn: &rusqlite::Connection,
+        where_sql: &str,
+        key: &str,
+        reason: &str,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<()> {
+        let row: Option<(String, String, String, String, String)> = conn
+            .query_row(
+                &format!(
+                    "SELECT id, status, quantity_remaining, quantity_reserved, quantity_quarantined
+                     FROM lots WHERE {where_sql}"
+                ),
+                [key],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                e => Err(map_db_error(e)),
+            })?;
+        let Some((lot_id, status, remaining, reserved, quarantined)) = row else {
+            return Ok(());
+        };
+        let status: LotStatus = parse_enum_row(&status, "lot", "status").map_err(map_db_error)?;
+        if !status.can_transition_to(LotStatus::Quarantine) {
+            return Ok(());
+        }
+        let remaining =
+            parse_decimal_row(&remaining, "lot", "quantity_remaining").map_err(map_db_error)?;
+        let reserved =
+            parse_decimal_row(&reserved, "lot", "quantity_reserved").map_err(map_db_error)?;
+        let quarantined =
+            parse_decimal_row(&quarantined, "lot", "quantity_quarantined").map_err(map_db_error)?;
+        let available = (remaining - reserved - quarantined).max(Decimal::ZERO);
+
+        let updated = conn
+            .execute(
+                "UPDATE lots SET status = ?, quantity_quarantined = ?, updated_at = ?
+                 WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    LotStatus::Quarantine.to_string(),
+                    available.to_string(),
+                    now.to_rfc3339(),
+                    &lot_id,
+                    status.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+        if updated != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot quarantine lot {lot_id}: status changed concurrently"
+            )));
+        }
+        conn.execute(
+            "INSERT INTO lot_transactions (id, lot_id, transaction_type, quantity, reference_type,
+                                           reference_id, reason, created_at)
+             VALUES (?, ?, ?, ?, 'quarantine', ?, ?, ?)",
+            rusqlite::params![
+                Uuid::new_v4().to_string(),
+                &lot_id,
+                LotTransactionType::Quarantined.to_string(),
+                available.to_string(),
+                &lot_id,
+                reason,
+                now.to_rfc3339(),
+            ],
+        )
+        .map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Quarantine every lot a failed/partially-failed inspection implicates:
+    /// the header's lot when `reference_type = "lot"`, plus each lot named on
+    /// an item whose result is `Fail`.
+    fn quarantine_failed_lots_on(
+        conn: &rusqlite::Connection,
+        inspection: &Inspection,
+        overall: InspectionStatus,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<()> {
+        let reason = format!("Inspection {} completed as {overall}", inspection.inspection_number);
+        if overall == InspectionStatus::Failed && inspection.reference_type == "lot" {
+            Self::quarantine_lot_on(
+                conn,
+                "id = ?",
+                &inspection.reference_id.to_string(),
+                &reason,
+                now,
+            )?;
+        }
+        if matches!(overall, InspectionStatus::Failed | InspectionStatus::PartialPass) {
+            let mut seen = std::collections::HashSet::new();
+            for item in &inspection.items {
+                if item.result != InspectionResult::Fail {
+                    continue;
+                }
+                if let Some(lot_number) = &item.lot_number {
+                    if seen.insert(lot_number.clone()) {
+                        Self::quarantine_lot_on(conn, "lot_number = ?", lot_number, &reason, now)?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn load_inspection_items(
@@ -558,44 +694,95 @@ impl QualityRepository for SqliteQualityRepository {
     }
 
     fn start_inspection(&self, id: Uuid) -> Result<Inspection> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
-        conn.execute(
-            "UPDATE inspections SET status = ?, started_at = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![
-                InspectionStatus::InProgress.to_string(),
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+        let inspection = self.load_inspection_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
+        if !inspection.can_start() {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot start inspection {}: status is {} (must be pending or scheduled)",
+                inspection.inspection_number, inspection.status
+            )));
+        }
 
-        self.get_inspection(id)?.ok_or(CommerceError::NotFound)
+        // Status-conditional so a concurrent start cannot re-stamp started_at.
+        let updated = tx
+            .execute(
+                "UPDATE inspections SET status = ?, started_at = ?, updated_at = ?
+                 WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    InspectionStatus::InProgress.to_string(),
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                    inspection.status.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+        if updated != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot start inspection {}: status changed concurrently",
+                inspection.inspection_number
+            )));
+        }
+
+        let started = self.load_inspection_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(started)
     }
 
     fn complete_inspection(&self, id: Uuid) -> Result<Inspection> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
-        // Get inspection and calculate overall status
-        let inspection = self.get_inspection(id)?.ok_or(CommerceError::NotFound)?;
+        let inspection = self.load_inspection_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
+        if !inspection.can_complete() {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot complete inspection {}: status is {} (must be in_progress)",
+                inspection.inspection_number, inspection.status
+            )));
+        }
+        if !inspection.all_items_inspected() {
+            let pending =
+                inspection.items.iter().filter(|i| i.result == InspectionResult::Pending).count();
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot complete inspection {}: {pending} item(s) still pending a result",
+                inspection.inspection_number
+            )));
+        }
 
+        // Every item has a result, so this is Passed / PartialPass / Failed.
         let overall_status = inspection.calculate_overall_result();
 
-        conn.execute(
-            "UPDATE inspections SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![
-                overall_status.to_string(),
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+        let updated = tx
+            .execute(
+                "UPDATE inspections SET status = ?, completed_at = ?, updated_at = ?
+                 WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    overall_status.to_string(),
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                    InspectionStatus::InProgress.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+        if updated != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot complete inspection {}: status changed concurrently",
+                inspection.inspection_number
+            )));
+        }
 
-        self.get_inspection(id)?.ok_or(CommerceError::NotFound)
+        // A failed inspection blocks the inspected stock atomically with the
+        // verdict: the lot(s) go to quarantine in this same transaction.
+        Self::quarantine_failed_lots_on(&tx, &inspection, overall_status, now)?;
+
+        let completed = self.load_inspection_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(completed)
     }
 
     fn record_inspection_result(&self, input: RecordInspectionResult) -> Result<InspectionItem> {
@@ -605,12 +792,15 @@ impl QualityRepository for SqliteQualityRepository {
             ));
         }
 
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
         // The passed + failed counts cannot exceed the quantity inspected: you
         // cannot pass or fail more units than the inspection item covers.
-        let inspected_raw: String = conn
+        // Read, validate and write happen on one transaction so a concurrent
+        // edit of the item cannot slip between them.
+        let inspected_raw: String = tx
             .query_row(
                 "SELECT quantity_inspected FROM inspection_items WHERE id = ?",
                 [input.item_id.to_string()],
@@ -634,7 +824,7 @@ impl QualityRepository for SqliteQualityRepository {
         let measurements_json =
             input.measurements.map(|m| serde_json::to_string(&m).unwrap_or_default());
 
-        conn.execute(
+        tx.execute(
             "UPDATE inspection_items SET quantity_passed = ?, quantity_failed = ?, result = ?,
                      defect_codes = ?, measurements = ?, notes = ?
              WHERE id = ?",
@@ -651,18 +841,21 @@ impl QualityRepository for SqliteQualityRepository {
         .map_err(map_db_error)?;
 
         // Also update the inspection's updated_at
-        conn.execute(
+        tx.execute(
             "UPDATE inspections SET updated_at = ? WHERE id = (SELECT inspection_id FROM inspection_items WHERE id = ?)",
             rusqlite::params![now.to_rfc3339(), input.item_id.to_string()],
         )
         .map_err(map_db_error)?;
 
-        conn.query_row(
-            "SELECT * FROM inspection_items WHERE id = ?",
-            [input.item_id.to_string()],
-            Self::row_to_inspection_item,
-        )
-        .map_err(map_db_error)
+        let item = tx
+            .query_row(
+                "SELECT * FROM inspection_items WHERE id = ?",
+                [input.item_id.to_string()],
+                Self::row_to_inspection_item,
+            )
+            .map_err(map_db_error)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(item)
     }
 
     fn get_inspection_items(&self, inspection_id: Uuid) -> Result<Vec<InspectionItem>> {
@@ -1122,18 +1315,28 @@ impl QualityRepository for SqliteQualityRepository {
         let conn = self.conn()?;
         let now = Utc::now();
 
-        conn.execute(
-            "UPDATE quality_holds SET released_by = ?, release_notes = ?, released_at = ? WHERE id = ?",
-            rusqlite::params![
-                &input.released_by,
-                &input.release_notes,
-                now.to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_hold(id)?.ok_or(CommerceError::NotFound)
+        // Only an unreleased hold can be released: the first release's
+        // audit trail (who / when / notes) must never be overwritten.
+        let updated = conn
+            .execute(
+                "UPDATE quality_holds SET released_by = ?, release_notes = ?, released_at = ?
+                 WHERE id = ? AND released_at IS NULL",
+                rusqlite::params![
+                    &input.released_by,
+                    &input.release_notes,
+                    now.to_rfc3339(),
+                    id.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+        let hold = self.get_hold(id)?.ok_or(CommerceError::NotFound)?;
+        if updated != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Quality hold {id} was already released at {}",
+                hold.released_at.map(|d| d.to_rfc3339()).unwrap_or_default()
+            )));
+        }
+        Ok(hold)
     }
 
     fn get_active_holds_for_sku(&self, sku: &str) -> Result<Vec<QualityHold>> {
@@ -1556,6 +1759,277 @@ mod tests {
 
         let by_cat = repo.list_defect_codes(Some("cosmetic")).expect("by cat");
         assert!(by_cat.iter().any(|c| c.category == "cosmetic"));
+    }
+
+    // ========================================================================
+    // Q1/Q2: inspection outcome → lot quarantine; guarded transitions
+    // ========================================================================
+
+    use crate::sqlite::lots::SqliteLotRepository;
+    use stateset_core::{
+        CreateLot, InspectionResult, InspectionStatus, LotRepository, LotStatus,
+        LotTransactionType, RecordInspectionResult, ReleaseQualityHold,
+    };
+
+    fn fresh_db() -> SqliteDatabase {
+        SqliteDatabase::in_memory().expect("in-memory")
+    }
+
+    fn make_lot(lots: &SqliteLotRepository, sku: &str) -> stateset_core::Lot {
+        lots.create(CreateLot { sku: sku.into(), quantity: dec!(100), ..Default::default() })
+            .expect("create lot")
+    }
+
+    /// Inspection whose header references `lot` (`reference_type = "lot"`) and
+    /// whose single item carries the lot number.
+    fn inspection_for_lot(repo: &SqliteQualityRepository, lot: &stateset_core::Lot) -> Inspection {
+        repo.create_inspection(CreateInspection {
+            inspection_type: InspectionType::Incoming,
+            reference_type: "lot".into(),
+            reference_id: lot.id,
+            inspector_id: Some("qa".into()),
+            scheduled_at: None,
+            notes: None,
+            items: vec![CreateInspectionItem {
+                sku: lot.sku.clone(),
+                lot_number: Some(lot.lot_number.clone()),
+                serial_number: None,
+                quantity_to_inspect: dec!(10),
+            }],
+        })
+        .expect("create inspection")
+    }
+
+    fn record(repo: &SqliteQualityRepository, item_id: Uuid, result: InspectionResult) {
+        let (passed, failed) = match result {
+            InspectionResult::Pass => (dec!(10), dec!(0)),
+            _ => (dec!(0), dec!(10)),
+        };
+        repo.record_inspection_result(RecordInspectionResult {
+            item_id,
+            quantity_passed: passed,
+            quantity_failed: failed,
+            result,
+            defect_codes: vec![],
+            measurements: None,
+            notes: None,
+        })
+        .expect("record");
+    }
+
+    fn assert_validation_mentions(err: &CommerceError, needles: &[&str]) {
+        match err {
+            CommerceError::ValidationError(msg) => {
+                for needle in needles {
+                    assert!(msg.contains(needle), "expected {needle:?} in {msg:?}");
+                }
+            }
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
+    }
+
+    /// Q1: a failed inspection must quarantine the inspected lot in the same
+    /// transaction — previously the lot stayed Active and sellable.
+    #[test]
+    fn failed_inspection_quarantines_referenced_lot() {
+        let db = fresh_db();
+        let (lots, repo) = (db.lots(), db.quality());
+        let lot = make_lot(&lots, "SKU-Q1");
+        let insp = inspection_for_lot(&repo, &lot);
+        repo.start_inspection(insp.id).expect("start");
+        record(&repo, insp.items[0].id, InspectionResult::Fail);
+
+        let done = repo.complete_inspection(insp.id).expect("complete");
+        assert_eq!(done.status, InspectionStatus::Failed);
+        assert!(done.completed_at.is_some());
+
+        let after = lots.get(lot.id).expect("ok").expect("found");
+        assert_eq!(after.status, LotStatus::Quarantine, "failed lot must be blocked");
+        assert_eq!(after.quantity_quarantined, dec!(100));
+        let txns = lots.get_transactions(lot.id, 10).expect("txns");
+        let q = txns
+            .iter()
+            .find(|t| t.transaction_type == LotTransactionType::Quarantined)
+            .expect("quarantine transaction recorded");
+        assert!(q.reason.as_deref().unwrap_or("").contains(&insp.inspection_number));
+        // And it is genuinely blocked for stock movement.
+        assert!(
+            lots.reserve(stateset_core::ReserveLot {
+                lot_id: lot.id,
+                quantity: dec!(1),
+                reference_type: "order".into(),
+                reference_id: Uuid::new_v4(),
+                expires_in_seconds: None,
+            })
+            .is_err()
+        );
+    }
+
+    /// Items may name a lot the header does not reference (e.g. a receipt
+    /// inspection spanning several lots); each failing lot is quarantined.
+    #[test]
+    fn failed_inspection_quarantines_lots_named_on_items() {
+        let db = fresh_db();
+        let (lots, repo) = (db.lots(), db.quality());
+        let bad = make_lot(&lots, "SKU-Q1I");
+        let good = make_lot(&lots, "SKU-Q1I");
+        let insp = repo
+            .create_inspection(CreateInspection {
+                inspection_type: InspectionType::Receiving,
+                reference_type: "receipt".into(),
+                reference_id: Uuid::new_v4(),
+                inspector_id: None,
+                scheduled_at: None,
+                notes: None,
+                items: vec![
+                    CreateInspectionItem {
+                        sku: "SKU-Q1I".into(),
+                        lot_number: Some(bad.lot_number.clone()),
+                        serial_number: None,
+                        quantity_to_inspect: dec!(10),
+                    },
+                    CreateInspectionItem {
+                        sku: "SKU-Q1I".into(),
+                        lot_number: Some(good.lot_number.clone()),
+                        serial_number: None,
+                        quantity_to_inspect: dec!(10),
+                    },
+                ],
+            })
+            .expect("create");
+        repo.start_inspection(insp.id).expect("start");
+        record(&repo, insp.items[0].id, InspectionResult::Fail);
+        record(&repo, insp.items[1].id, InspectionResult::Pass);
+        let done = repo.complete_inspection(insp.id).expect("complete");
+        assert_eq!(done.status, InspectionStatus::PartialPass);
+        assert_eq!(lots.get(bad.id).unwrap().unwrap().status, LotStatus::Quarantine);
+        assert_eq!(lots.get(good.id).unwrap().unwrap().status, LotStatus::Active);
+    }
+
+    #[test]
+    fn passed_inspection_leaves_lot_active() {
+        let db = fresh_db();
+        let (lots, repo) = (db.lots(), db.quality());
+        let lot = make_lot(&lots, "SKU-Q1P");
+        let insp = inspection_for_lot(&repo, &lot);
+        repo.start_inspection(insp.id).expect("start");
+        record(&repo, insp.items[0].id, InspectionResult::Pass);
+        let done = repo.complete_inspection(insp.id).expect("complete");
+        assert_eq!(done.status, InspectionStatus::Passed);
+        assert_eq!(lots.get(lot.id).unwrap().unwrap().status, LotStatus::Active);
+    }
+
+    /// A lot already in quarantine (or in a terminal state) is left alone; the
+    /// inspection still completes.
+    #[test]
+    fn failed_inspection_is_idempotent_on_already_quarantined_lot() {
+        let db = fresh_db();
+        let (lots, repo) = (db.lots(), db.quality());
+        let lot = make_lot(&lots, "SKU-Q1Q");
+        lots.quarantine(lot.id, "earlier").expect("quarantine");
+        let insp = inspection_for_lot(&repo, &lot);
+        repo.start_inspection(insp.id).expect("start");
+        record(&repo, insp.items[0].id, InspectionResult::Fail);
+        let done = repo.complete_inspection(insp.id).expect("complete");
+        assert_eq!(done.status, InspectionStatus::Failed);
+        let after = lots.get(lot.id).unwrap().unwrap();
+        assert_eq!(after.status, LotStatus::Quarantine);
+        assert_eq!(after.quantity_quarantined, dec!(100), "count untouched");
+    }
+
+    /// Q2: `start` only from Pending/Scheduled; `complete` only from
+    /// `InProgress` and only once every item has a result.
+    #[test]
+    fn start_inspection_refuses_non_startable_status() {
+        let repo = fresh_repo();
+        let insp = make_inspection(&repo);
+        let started = repo.start_inspection(insp.id).expect("first start");
+        assert_eq!(started.status, InspectionStatus::InProgress);
+        let first_started_at = started.started_at.expect("started_at");
+
+        let err = repo.start_inspection(insp.id).expect_err("already in progress");
+        assert_validation_mentions(&err, &[&insp.inspection_number, "in_progress"]);
+        let again = repo.get_inspection(insp.id).unwrap().unwrap();
+        assert_eq!(again.started_at, Some(first_started_at), "started_at must not move");
+
+        record(&repo, insp.items[0].id, InspectionResult::Pass);
+        repo.complete_inspection(insp.id).expect("complete");
+        let err = repo.start_inspection(insp.id).expect_err("cannot restart a passed inspection");
+        assert_validation_mentions(&err, &["passed"]);
+        assert!(matches!(
+            repo.start_inspection(Uuid::new_v4()).expect_err("unknown"),
+            CommerceError::NotFound
+        ));
+    }
+
+    #[test]
+    fn complete_inspection_refuses_pending_items_and_wrong_status() {
+        let repo = fresh_repo();
+        let insp = make_inspection(&repo);
+
+        // Not started yet.
+        let err = repo.complete_inspection(insp.id).expect_err("pending inspection");
+        assert_validation_mentions(&err, &[&insp.inspection_number, "pending"]);
+
+        repo.start_inspection(insp.id).expect("start");
+        // Started, but the item has no result: previously this wrote
+        // status=in_progress AND completed_at=now.
+        let err = repo.complete_inspection(insp.id).expect_err("item still pending");
+        assert_validation_mentions(&err, &[&insp.inspection_number, "pending"]);
+        let mid = repo.get_inspection(insp.id).unwrap().unwrap();
+        assert_eq!(mid.status, InspectionStatus::InProgress);
+        assert!(mid.completed_at.is_none(), "must not stamp completed_at");
+
+        record(&repo, insp.items[0].id, InspectionResult::Pass);
+        let done = repo.complete_inspection(insp.id).expect("complete");
+        assert_eq!(done.status, InspectionStatus::Passed);
+        let err = repo.complete_inspection(insp.id).expect_err("already complete");
+        assert_validation_mentions(&err, &["passed"]);
+        assert!(matches!(
+            repo.complete_inspection(Uuid::new_v4()).expect_err("unknown"),
+            CommerceError::NotFound
+        ));
+    }
+
+    #[test]
+    fn release_hold_only_releases_once() {
+        let repo = fresh_repo();
+        let hold = repo
+            .create_hold(CreateQualityHold {
+                sku: "HOLD-R".into(),
+                quantity: dec!(1),
+                reason: "r".into(),
+                placed_by: "qa".into(),
+                ..Default::default()
+            })
+            .expect("hold");
+        let released = repo
+            .release_hold(
+                hold.id,
+                ReleaseQualityHold { released_by: "qa-1".into(), release_notes: None },
+            )
+            .expect("release");
+        let released_at = released.released_at.expect("released_at");
+        assert_eq!(released.released_by.as_deref(), Some("qa-1"));
+
+        let err = repo
+            .release_hold(
+                hold.id,
+                ReleaseQualityHold { released_by: "qa-2".into(), release_notes: None },
+            )
+            .expect_err("re-release must be refused");
+        assert_validation_mentions(&err, &["already released"]);
+        let after = repo.get_hold(hold.id).unwrap().unwrap();
+        assert_eq!(after.released_by.as_deref(), Some("qa-1"), "first release wins");
+        assert_eq!(after.released_at, Some(released_at));
+        assert!(matches!(
+            repo.release_hold(
+                Uuid::new_v4(),
+                ReleaseQualityHold { released_by: "x".into(), release_notes: None }
+            )
+            .expect_err("unknown"),
+            CommerceError::NotFound
+        ));
     }
 
     #[test]

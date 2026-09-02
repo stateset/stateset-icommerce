@@ -157,6 +157,96 @@ impl PgSerialRepository {
         }
     }
 
+    /// Load a serial inside a transaction with `FOR UPDATE`, so every
+    /// status decision below is made against a row no concurrent writer can
+    /// change until we commit. Missing rows map to `NotFound`.
+    async fn load_for_update(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        id: Uuid,
+    ) -> Result<SerialNumber> {
+        let row =
+            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        row.map(Self::row_to_serial).transpose()?.ok_or(CommerceError::NotFound)
+    }
+
+    /// Load a reservation inside a transaction with `FOR UPDATE`.
+    async fn load_reservation_for_update(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        id: Uuid,
+    ) -> Result<SerialReservation> {
+        let row = sqlx::query_as::<_, SerialReservationRow>(
+            "SELECT * FROM serial_reservations WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        row.map(Self::row_to_reservation).ok_or(CommerceError::NotFound)
+    }
+
+    /// Close every open reservation on a serial (released/consumed/swept all
+    /// look the same in the store: `released_at` set, `active_key` cleared so
+    /// the unique backstop index frees the slot).
+    async fn close_open_reservations(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        serial_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<u64> {
+        let result = sqlx::query(
+            "UPDATE serial_reservations SET released_at = $1, active_key = NULL
+             WHERE serial_id = $2 AND released_at IS NULL",
+        )
+        .bind(now)
+        .bind(serial_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        Ok(result.rows_affected())
+    }
+
+    /// Move `serial` to `to` — the ONE place a status is written.
+    ///
+    /// Checks the state machine ([`SerialStatus::allowed_transitions`]), then
+    /// writes `status` conditionally on the status the caller observed
+    /// (`WHERE id = $3 AND status = $4`) so a concurrent writer that got there
+    /// first is detected instead of overwritten (the caller holds the row
+    /// lock from [`Self::load_for_update`], so in practice this is belt and
+    /// braces). Leaving `Reserved` consumes any open reservation in the same
+    /// transaction. Callers needing extra columns update them afterwards
+    /// under the same lock.
+    async fn write_transition(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        serial: &SerialNumber,
+        to: SerialStatus,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        serial.ensure_can_transition_to(to)?;
+        let result = sqlx::query(
+            "UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4",
+        )
+        .bind(to.to_string())
+        .bind(now)
+        .bind(serial.id)
+        .bind(serial.status.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if result.rows_affected() != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "Serial {} ({}) changed concurrently while moving from {} to {}",
+                serial.serial, serial.id, serial.status, to
+            )));
+        }
+        if serial.status == SerialStatus::Reserved {
+            Self::close_open_reservations(tx, serial.id, now).await?;
+        }
+        Ok(())
+    }
+
     fn generate_serial(prefix: Option<&str>) -> String {
         let unique_part = Uuid::new_v4().to_string().replace('-', "").to_uppercase();
         let short = &unique_part[..12];
@@ -333,9 +423,22 @@ impl PgSerialRepository {
     }
 
     pub async fn update_async(&self, id: Uuid, input: UpdateSerialNumber) -> Result<SerialNumber> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        sqlx::query(
+        let serial = Self::load_for_update(&mut tx, id).await?;
+
+        // A status change through `update` is a state-machine transition like
+        // any other; a same-status "change" is a no-op.
+        let status_change = match input.status {
+            Some(to) if to != serial.status => {
+                serial.ensure_can_transition_to(to)?;
+                Some(to)
+            }
+            _ => None,
+        };
+
+        let result = sqlx::query(
             r#"
             UPDATE serial_numbers SET
                 status = COALESCE($1, status),
@@ -345,10 +448,10 @@ impl PgSerialRepository {
                 notes = COALESCE($5, notes),
                 attributes = COALESCE($6, attributes),
                 updated_at = $7
-            WHERE id = $8
+            WHERE id = $8 AND status = $9
             "#,
         )
-        .bind(input.status.map(|s| s.to_string()))
+        .bind(status_change.map(|s| s.to_string()))
         .bind(input.location_id)
         .bind(input.lot_id)
         .bind(input.warranty_id)
@@ -356,9 +459,40 @@ impl PgSerialRepository {
         .bind(input.attributes)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .bind(serial.status.to_string())
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        if result.rows_affected() != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "Serial {} ({}) changed concurrently during update",
+                serial.serial, serial.id
+            )));
+        }
+
+        if let Some(to) = status_change {
+            if serial.status == SerialStatus::Reserved {
+                Self::close_open_reservations(&mut tx, serial.id, now).await?;
+            }
+            self.record_history_tx(
+                &mut tx,
+                id,
+                SerialEventType::StatusChanged,
+                None,
+                None,
+                serial.status,
+                to,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await?;
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -498,30 +632,22 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row =
-            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-                .bind(input.serial_id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row)?;
+        let serial = Self::load_for_update(&mut tx, input.serial_id).await?;
+
+        Self::write_transition(&mut tx, &serial, input.new_status, now).await?;
 
         sqlx::query(
             r#"
             UPDATE serial_numbers SET
-                status = $1,
-                current_location_id = COALESCE($2, current_location_id),
-                current_owner_id = COALESCE($3, current_owner_id),
-                current_owner_type = COALESCE($4, current_owner_type),
-                updated_at = $5
-            WHERE id = $6
+                current_location_id = COALESCE($1, current_location_id),
+                current_owner_id = COALESCE($2, current_owner_id),
+                current_owner_type = COALESCE($3, current_owner_type)
+            WHERE id = $4
             "#,
         )
-        .bind(input.new_status.to_string())
         .bind(input.location_id)
         .bind(input.owner_id)
         .bind(&input.owner_type)
-        .bind(now)
         .bind(input.serial_id)
         .execute(tx.as_mut())
         .await
@@ -553,39 +679,59 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row =
-            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-                .bind(input.serial_id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row)?;
+        // Row lock: two concurrent reservations of one unit serialize here, and
+        // the loser sees `reserved` and is refused below.
+        let mut serial = Self::load_for_update(&mut tx, input.serial_id).await?;
 
-        if serial.status != SerialStatus::Available {
-            return Err(CommerceError::ValidationError(format!(
-                "Serial is not available for reservation, current status: {}",
-                serial.status
-            )));
+        // Lazy expiry: a serial still `Reserved` by an expired, unconfirmed
+        // reservation is returned to stock in-line so the sweeper is not on the
+        // critical path of the next order.
+        if serial.status == SerialStatus::Reserved {
+            let stale = sqlx::query_as::<_, SerialReservationRow>(
+                r#"
+                SELECT * FROM serial_reservations
+                WHERE serial_id = $1 AND released_at IS NULL AND confirmed_at IS NULL
+                  AND expires_at IS NOT NULL AND expires_at <= $2
+                ORDER BY reserved_at DESC LIMIT 1
+                "#,
+            )
+            .bind(input.serial_id)
+            .bind(now)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .map(Self::row_to_reservation);
+            if let Some(stale) = stale {
+                Self::write_transition(&mut tx, &serial, SerialStatus::Available, now).await?;
+                self.record_history_tx(
+                    &mut tx,
+                    serial.id,
+                    SerialEventType::Released,
+                    Some(&stale.reference_type),
+                    Some(stale.reference_id),
+                    SerialStatus::Reserved,
+                    SerialStatus::Available,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some("reservation expired"),
+                )
+                .await?;
+                serial.status = SerialStatus::Available;
+            } else {
+                return Err(CommerceError::Conflict(format!(
+                    "Serial {} ({}) already has an open reservation",
+                    serial.serial, serial.id
+                )));
+            }
         }
+        serial.ensure_can_transition_to(SerialStatus::Reserved)?;
 
-        let existing: (i64,) = sqlx::query_as(
-            r#"
-            SELECT COUNT(*) FROM serial_reservations
-            WHERE serial_id = $1 AND released_at IS NULL AND confirmed_at IS NULL
-              AND (expires_at IS NULL OR expires_at > $2)
-            "#,
-        )
-        .bind(input.serial_id)
-        .bind(now)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        if existing.0 > 0 {
-            return Err(CommerceError::ValidationError(
-                "Serial already has an active reservation".to_string(),
-            ));
-        }
+        // Legacy rows (pre-lifecycle reservations that were never consumed)
+        // must not hold the backstop key against this new reservation.
+        Self::close_open_reservations(&mut tx, serial.id, now).await?;
 
         let id = Uuid::new_v4();
         let expires_at = input.expires_in_seconds.map(|secs| now + chrono::Duration::seconds(secs));
@@ -594,8 +740,8 @@ impl PgSerialRepository {
             r#"
             INSERT INTO serial_reservations (
                 id, serial_id, reference_type, reference_id, reserved_by,
-                reserved_at, expires_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+                reserved_at, expires_at, active_key
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
             "#,
         )
         .bind(id)
@@ -605,17 +751,12 @@ impl PgSerialRepository {
         .bind(&input.reserved_by)
         .bind(now)
         .bind(expires_at)
+        .bind(input.serial_id.to_string())
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        sqlx::query("UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(SerialStatus::Reserved.to_string())
-            .bind(now)
-            .bind(input.serial_id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        Self::write_transition(&mut tx, &serial, SerialStatus::Reserved, now).await?;
 
         self.record_history_tx(
             &mut tx,
@@ -653,35 +794,40 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let reservation_row = sqlx::query_as::<_, SerialReservationRow>(
-            "SELECT * FROM serial_reservations WHERE id = $1",
-        )
-        .bind(reservation_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-        let reservation = Self::row_to_reservation(reservation_row);
-
-        if reservation.released_at.is_some() || reservation.confirmed_at.is_some() {
-            return Err(CommerceError::ValidationError(
-                "Reservation is already released or confirmed".to_string(),
-            ));
+        let reservation = Self::load_reservation_for_update(&mut tx, reservation_id).await?;
+        if reservation.released_at.is_some() {
+            return Err(CommerceError::Conflict(format!(
+                "Reservation {reservation_id} is already closed (released, consumed or expired)"
+            )));
         }
 
-        sqlx::query("UPDATE serial_reservations SET released_at = $1 WHERE id = $2")
-            .bind(now)
-            .bind(reservation_id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        // The reservation may only be released while it still holds the serial.
+        // Once the unit shipped or sold the reservation was consumed; releasing
+        // it now must not flip a shipped unit back to `available`.
+        let serial = Self::load_for_update(&mut tx, reservation.serial_id).await?;
+        if serial.status != SerialStatus::Reserved {
+            return Err(CommerceError::Conflict(format!(
+                "Reservation {reservation_id} cannot be released: serial {} ({}) is {}",
+                serial.serial, serial.id, serial.status
+            )));
+        }
 
-        sqlx::query("UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(SerialStatus::Available.to_string())
-            .bind(now)
-            .bind(reservation.serial_id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let result = sqlx::query(
+            "UPDATE serial_reservations SET released_at = $1, active_key = NULL
+             WHERE id = $2 AND released_at IS NULL",
+        )
+        .bind(now)
+        .bind(reservation_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if result.rows_affected() != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "Reservation {reservation_id} was closed concurrently"
+            )));
+        }
+
+        Self::write_transition(&mut tx, &serial, SerialStatus::Available, now).await?;
 
         self.record_history_tx(
             &mut tx,
@@ -706,34 +852,124 @@ impl PgSerialRepository {
     }
 
     pub async fn confirm_reservation_async(&self, reservation_id: Uuid) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let reservation = sqlx::query_as::<_, SerialReservationRow>(
+        let reservation = Self::load_reservation_for_update(&mut tx, reservation_id).await?;
+        if reservation.released_at.is_some() {
+            return Err(CommerceError::Conflict(format!(
+                "Reservation {reservation_id} is already closed (released, consumed or expired)"
+            )));
+        }
+        if reservation.confirmed_at.is_some() {
+            return Ok(()); // Already confirmed — idempotent.
+        }
+        if reservation.expires_at.is_some_and(|expires| now > expires) {
+            return Err(CommerceError::Conflict(format!(
+                "Reservation {reservation_id} expired at {:?} and cannot be confirmed",
+                reservation.expires_at
+            )));
+        }
+
+        let serial = Self::load_for_update(&mut tx, reservation.serial_id).await?;
+        if serial.status != SerialStatus::Reserved {
+            return Err(CommerceError::Conflict(format!(
+                "Reservation {reservation_id} cannot be confirmed: serial {} ({}) is {}",
+                serial.serial, serial.id, serial.status
+            )));
+        }
+
+        let result = sqlx::query(
+            "UPDATE serial_reservations SET confirmed_at = $1
+             WHERE id = $2 AND released_at IS NULL AND confirmed_at IS NULL",
+        )
+        .bind(now)
+        .bind(reservation_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if result.rows_affected() != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "Reservation {reservation_id} changed concurrently"
+            )));
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(())
+    }
+
+    pub async fn get_reservation_async(
+        &self,
+        reservation_id: Uuid,
+    ) -> Result<Option<SerialReservation>> {
+        let row = sqlx::query_as::<_, SerialReservationRow>(
             "SELECT * FROM serial_reservations WHERE id = $1",
         )
         .bind(reservation_id)
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await
         .map_err(map_db_error)?;
+        Ok(row.map(Self::row_to_reservation))
+    }
 
-        if reservation.released_at.is_some() {
-            return Err(CommerceError::ValidationError(
-                "Reservation has been released".to_string(),
-            ));
-        }
+    pub async fn release_expired_reservations_async(&self, now: DateTime<Utc>) -> Result<u64> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        if reservation.confirmed_at.is_some() {
-            return Ok(());
-        }
+        let expired: Vec<SerialReservation> = sqlx::query_as::<_, SerialReservationRow>(
+            r#"
+            SELECT * FROM serial_reservations
+            WHERE released_at IS NULL AND confirmed_at IS NULL
+              AND expires_at IS NOT NULL AND expires_at <= $1
+            ORDER BY reserved_at ASC
+            FOR UPDATE SKIP LOCKED
+            "#,
+        )
+        .bind(now)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .into_iter()
+        .map(Self::row_to_reservation)
+        .collect();
 
-        sqlx::query("UPDATE serial_reservations SET confirmed_at = $1 WHERE id = $2")
+        let mut returned_to_stock = 0u64;
+        for reservation in expired {
+            sqlx::query(
+                "UPDATE serial_reservations SET released_at = $1, active_key = NULL
+                 WHERE id = $2 AND released_at IS NULL",
+            )
             .bind(now)
-            .bind(reservation_id)
-            .execute(&self.pool)
+            .bind(reservation.id)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
-        Ok(())
+            let serial = Self::load_for_update(&mut tx, reservation.serial_id).await?;
+            if serial.status != SerialStatus::Reserved {
+                continue; // The unit already moved on; only the stale row needed closing.
+            }
+            Self::write_transition(&mut tx, &serial, SerialStatus::Available, now).await?;
+            self.record_history_tx(
+                &mut tx,
+                serial.id,
+                SerialEventType::Released,
+                Some(&reservation.reference_type),
+                Some(reservation.reference_id),
+                SerialStatus::Reserved,
+                SerialStatus::Available,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("reservation expired"),
+            )
+            .await?;
+            returned_to_stock += 1;
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(returned_to_stock)
     }
 
     pub async fn move_serial_async(&self, input: MoveSerial) -> Result<SerialNumber> {
@@ -787,28 +1023,15 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row =
-            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-                .bind(input.serial_id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row)?;
+        let serial = Self::load_for_update(&mut tx, input.serial_id).await?;
+
+        Self::write_transition(&mut tx, &serial, SerialStatus::Transferred, now).await?;
 
         sqlx::query(
-            r#"
-            UPDATE serial_numbers SET
-                current_owner_id = $1,
-                current_owner_type = $2,
-                status = $3,
-                updated_at = $4
-            WHERE id = $5
-            "#,
+            "UPDATE serial_numbers SET current_owner_id = $1, current_owner_type = $2 WHERE id = $3",
         )
         .bind(input.new_owner_id)
         .bind(&input.new_owner_type)
-        .bind(SerialStatus::Transferred.to_string())
-        .bind(now)
         .bind(input.serial_id)
         .execute(tx.as_mut())
         .await
@@ -845,26 +1068,21 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row =
-            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-                .bind(id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row)?;
+        let serial = Self::load_for_update(&mut tx, id).await?;
+
+        // Selling consumes the open reservation (write_transition closes it
+        // when leaving `Reserved`).
+        Self::write_transition(&mut tx, &serial, SerialStatus::Sold, now).await?;
 
         sqlx::query(
             r#"
             UPDATE serial_numbers SET
-                status = $1,
-                current_owner_id = $2,
+                current_owner_id = $1,
                 current_owner_type = 'customer',
-                sold_at = $3,
-                updated_at = $3
-            WHERE id = $4
+                sold_at = $2
+            WHERE id = $3
             "#,
         )
-        .bind(SerialStatus::Sold.to_string())
         .bind(customer_id)
         .bind(now)
         .bind(id)
@@ -898,21 +1116,10 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row =
-            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-                .bind(id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row)?;
+        let serial = Self::load_for_update(&mut tx, id).await?;
 
-        sqlx::query("UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(SerialStatus::Shipped.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        // Shipping consumes the open reservation (see write_transition).
+        Self::write_transition(&mut tx, &serial, SerialStatus::Shipped, now).await?;
 
         self.record_history_tx(
             &mut tx,
@@ -940,21 +1147,17 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row =
-            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-                .bind(id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row)?;
+        let serial = Self::load_for_update(&mut tx, id).await?;
 
-        sqlx::query("UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(SerialStatus::Returned.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        Self::write_transition(&mut tx, &serial, SerialStatus::Returned, now).await?;
+
+        sqlx::query(
+            "UPDATE serial_numbers SET current_owner_id = NULL, current_owner_type = NULL WHERE id = $1",
+        )
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
         self.record_history_tx(
             &mut tx,
@@ -1018,21 +1221,9 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row =
-            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-                .bind(id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row)?;
+        let serial = Self::load_for_update(&mut tx, id).await?;
 
-        sqlx::query("UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(SerialStatus::Quarantined.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        Self::write_transition(&mut tx, &serial, SerialStatus::Quarantined, now).await?;
 
         self.record_history_tx(
             &mut tx,
@@ -1060,25 +1251,15 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row =
-            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-                .bind(id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row)?;
-
+        let serial = Self::load_for_update(&mut tx, id).await?;
         if serial.status != SerialStatus::Quarantined {
-            return Err(CommerceError::ValidationError("Serial is not quarantined".to_string()));
+            return Err(CommerceError::Conflict(format!(
+                "Serial {} ({}) is not quarantined (status: {}); cannot release to available",
+                serial.serial, serial.id, serial.status
+            )));
         }
 
-        sqlx::query("UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(SerialStatus::Available.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        Self::write_transition(&mut tx, &serial, SerialStatus::Available, now).await?;
 
         self.record_history_tx(
             &mut tx,
@@ -1102,31 +1283,104 @@ impl PgSerialRepository {
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    pub async fn quarantine_for_lot_async(&self, lot_id: Uuid, reason: &str) -> Result<u64> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let now = Utc::now();
+
+        let rows = sqlx::query_as::<_, SerialRow>(
+            r#"
+            SELECT * FROM serial_numbers
+            WHERE lot_id = $1 AND status IN ($2, $3)
+            ORDER BY created_at ASC
+            FOR UPDATE
+            "#,
+        )
+        .bind(lot_id)
+        .bind(SerialStatus::Available.to_string())
+        .bind(SerialStatus::Reserved.to_string())
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let mut count = 0u64;
+        for row in rows {
+            let serial = Self::row_to_serial(row)?;
+            Self::write_transition(&mut tx, &serial, SerialStatus::Quarantined, now).await?;
+            self.record_history_tx(
+                &mut tx,
+                serial.id,
+                SerialEventType::Quarantined,
+                Some("lot"),
+                Some(lot_id),
+                serial.status,
+                SerialStatus::Quarantined,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(reason),
+            )
+            .await?;
+            count += 1;
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(count)
+    }
+
+    pub async fn release_quarantine_for_lot_async(&self, lot_id: Uuid) -> Result<u64> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let now = Utc::now();
+
+        let rows = sqlx::query_as::<_, SerialRow>(
+            r#"
+            SELECT * FROM serial_numbers
+            WHERE lot_id = $1 AND status = $2
+            ORDER BY created_at ASC
+            FOR UPDATE
+            "#,
+        )
+        .bind(lot_id)
+        .bind(SerialStatus::Quarantined.to_string())
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let mut count = 0u64;
+        for row in rows {
+            let serial = Self::row_to_serial(row)?;
+            Self::write_transition(&mut tx, &serial, SerialStatus::Available, now).await?;
+            self.record_history_tx(
+                &mut tx,
+                serial.id,
+                SerialEventType::QuarantineReleased,
+                Some("lot"),
+                Some(lot_id),
+                SerialStatus::Quarantined,
+                SerialStatus::Available,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await?;
+            count += 1;
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(count)
+    }
+
     pub async fn scrap_async(&self, id: Uuid, reason: &str) -> Result<SerialNumber> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row =
-            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-                .bind(id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row)?;
+        let serial = Self::load_for_update(&mut tx, id).await?;
 
-        if !serial.can_scrap() {
-            return Err(CommerceError::ValidationError(
-                "Serial cannot be scrapped in current state".to_string(),
-            ));
-        }
-
-        sqlx::query("UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(SerialStatus::Scrapped.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        Self::write_transition(&mut tx, &serial, SerialStatus::Scrapped, now).await?;
 
         self.record_history_tx(
             &mut tx,
@@ -1559,6 +1813,22 @@ impl SerialRepository for PgSerialRepository {
 
     fn scrap(&self, id: Uuid, reason: &str) -> Result<SerialNumber> {
         block_on(self.scrap_async(id, reason))
+    }
+
+    fn get_reservation(&self, reservation_id: Uuid) -> Result<Option<SerialReservation>> {
+        block_on(self.get_reservation_async(reservation_id))
+    }
+
+    fn release_expired_reservations(&self, now: DateTime<Utc>) -> Result<u64> {
+        block_on(self.release_expired_reservations_async(now))
+    }
+
+    fn quarantine_for_lot(&self, lot_id: Uuid, reason: &str) -> Result<u64> {
+        block_on(self.quarantine_for_lot_async(lot_id, reason))
+    }
+
+    fn release_quarantine_for_lot(&self, lot_id: Uuid) -> Result<u64> {
+        block_on(self.release_quarantine_for_lot_async(lot_id))
     }
 
     fn get_history(

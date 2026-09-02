@@ -656,6 +656,339 @@ impl TaxSettings {
 }
 
 // ============================================================================
+// Shared calculation helpers
+// ============================================================================
+
+impl TaxExemption {
+    /// Whether this exemption may be honoured on `transaction_date`: it must
+    /// be active, **verified**, and inside its validity window.
+    #[must_use]
+    pub fn is_effective_on(&self, transaction_date: NaiveDate) -> bool {
+        self.active
+            && self.verified
+            && self.effective_from <= transaction_date
+            && self.expires_at.is_none_or(|expires| expires >= transaction_date)
+    }
+
+    /// Whether this exemption covers `category` (an empty category list
+    /// covers every category).
+    #[must_use]
+    pub fn covers_category(&self, category: ProductTaxCategory) -> bool {
+        self.exempt_categories.is_empty() || self.exempt_categories.contains(&category)
+    }
+
+    /// Whether this exemption covers `jurisdiction_id` (an empty jurisdiction
+    /// list covers every jurisdiction).
+    #[must_use]
+    pub fn covers_jurisdiction(&self, jurisdiction_id: Uuid) -> bool {
+        self.jurisdiction_ids.is_empty() || self.jurisdiction_ids.contains(&jurisdiction_id)
+    }
+}
+
+/// Round `parts` to `decimal_places` so that they sum EXACTLY to
+/// `total.round(decimal_places)`, allocating the rounding residue by largest
+/// remainder. Returns `(rounded_total, rounded_parts)`.
+///
+/// Both tax engines use this to round per line (and per rate within a line)
+/// while keeping `sum(lines) == total_tax` — three `$1.11` lines at 8.25%
+/// each round to `$0.09`, and the total is `$0.27`, never `$0.28`.
+#[must_use]
+pub fn allocate_rounded(
+    total: Decimal,
+    parts: &[Decimal],
+    decimal_places: u32,
+    strategy: RoundingStrategy,
+) -> (Decimal, Vec<Decimal>) {
+    let rounded_total = total.round_dp_with_strategy(decimal_places, strategy);
+    if parts.is_empty() {
+        return (rounded_total, Vec::new());
+    }
+    let mut rounded: Vec<Decimal> =
+        parts.iter().map(|p| p.round_dp_with_strategy(decimal_places, strategy)).collect();
+    let unit = Decimal::new(1, decimal_places);
+    let mut residue = rounded_total - rounded.iter().sum::<Decimal>();
+    if residue.is_zero() {
+        return (rounded_total, rounded);
+    }
+    // Order parts by how much rounding took from (or gave to) them, and
+    // nudge the most deserving ones one minor unit at a time.
+    let mut order: Vec<usize> = (0..parts.len()).collect();
+    let remainders: Vec<Decimal> = parts.iter().zip(&rounded).map(|(p, r)| p - r).collect();
+    if residue > Decimal::ZERO {
+        order.sort_by(|a, b| remainders[*b].cmp(&remainders[*a]));
+    } else {
+        order.sort_by(|a, b| remainders[*a].cmp(&remainders[*b]));
+    }
+    let step = if residue > Decimal::ZERO { unit } else { -unit };
+    let mut cursor = 0usize;
+    while !residue.is_zero() && cursor < order.len() * 1000 {
+        let idx = order[cursor % order.len()];
+        rounded[idx] += step;
+        residue -= step;
+        cursor += 1;
+    }
+    (rounded_total, rounded)
+}
+
+/// Accumulates a tax calculation line by line, rounding **per line** (and
+/// allocating each line's rounded tax across its rates by largest remainder)
+/// so that `sum(line_item_taxes) == total_tax` and
+/// `sum(tax_breakdown) == total_tax` hold exactly. Both storage backends
+/// feed this with the rates they resolved, so the arithmetic agrees by
+/// construction.
+#[derive(Debug)]
+pub struct TaxAccumulator {
+    /// Sum of (non-negative) line amounts.
+    pub subtotal: Decimal,
+    /// Sum of rounded line taxes plus rounded shipping tax.
+    pub total_tax: Decimal,
+    /// Rounded shipping tax.
+    pub shipping_tax: Decimal,
+    /// One entry per line item, in request order.
+    pub line_item_taxes: Vec<LineItemTax>,
+    /// Per (jurisdiction, tax type) totals, in first-seen order.
+    pub tax_breakdown: Vec<TaxBreakdown>,
+    /// Whether any exemption removed tax from any line.
+    pub exemptions_applied: bool,
+    jurisdictions: std::collections::HashMap<Uuid, JurisdictionSummary>,
+    decimal_places: u32,
+    strategy: RoundingStrategy,
+}
+
+/// One rate's share of a base amount, before rounding.
+struct RateShare {
+    index: usize,
+    taxable_amount: Decimal,
+    raw_tax: Decimal,
+}
+
+impl TaxAccumulator {
+    /// Start a calculation rounding to `decimal_places` with `strategy`.
+    #[must_use]
+    pub fn new(decimal_places: u32, strategy: RoundingStrategy) -> Self {
+        Self {
+            subtotal: Decimal::ZERO,
+            total_tax: Decimal::ZERO,
+            shipping_tax: Decimal::ZERO,
+            line_item_taxes: Vec::new(),
+            tax_breakdown: Vec::new(),
+            exemptions_applied: false,
+            jurisdictions: std::collections::HashMap::new(),
+            decimal_places,
+            strategy,
+        }
+    }
+
+    /// A line that owes no tax.
+    pub fn push_exempt_line(&mut self, line_item_id: &str, line_amount: Decimal, reason: &str) {
+        self.subtotal += line_amount;
+        self.line_item_taxes.push(LineItemTax {
+            line_item_id: line_item_id.to_string(),
+            taxable_amount: line_amount,
+            tax_amount: Decimal::ZERO,
+            effective_rate: Decimal::ZERO,
+            is_exempt: true,
+            exemption_reason: Some(reason.to_string()),
+            tax_details: Vec::new(),
+        });
+    }
+
+    /// Tax `line_amount` with `rates` (already sorted by priority, each with
+    /// its jurisdiction). Returns the line's rounded tax.
+    pub fn add_taxed_line(
+        &mut self,
+        line_item_id: &str,
+        line_amount: Decimal,
+        rates: &[(&TaxRate, &TaxJurisdiction)],
+    ) -> Decimal {
+        self.subtotal += line_amount;
+        let (line_tax, allocated) = self.apply_rates(line_amount, rates);
+        let tax_details = allocated
+            .iter()
+            .map(|(share, amount)| {
+                let (rate, jurisdiction) = rates[share.index];
+                TaxDetail {
+                    tax_type: rate.tax_type,
+                    jurisdiction_name: jurisdiction.name.clone(),
+                    rate: rate.rate,
+                    amount: *amount,
+                }
+            })
+            .collect();
+        let effective_rate =
+            if line_amount.is_zero() { Decimal::ZERO } else { line_tax / line_amount };
+        self.total_tax += line_tax;
+        self.line_item_taxes.push(LineItemTax {
+            line_item_id: line_item_id.to_string(),
+            taxable_amount: line_amount,
+            tax_amount: line_tax,
+            effective_rate,
+            is_exempt: false,
+            exemption_reason: None,
+            tax_details,
+        });
+        line_tax
+    }
+
+    /// Tax `shipping_amount` with `rates`. Returns the rounded shipping tax.
+    pub fn add_shipping(
+        &mut self,
+        shipping_amount: Decimal,
+        rates: &[(&TaxRate, &TaxJurisdiction)],
+    ) -> Decimal {
+        let (shipping_tax, _) = self.apply_rates(shipping_amount, rates);
+        self.shipping_tax += shipping_tax;
+        self.total_tax += shipping_tax;
+        shipping_tax
+    }
+
+    /// Apply `rates` to `base`, round the sum once, allocate it across the
+    /// rates, and fold the allocation into the breakdown and jurisdiction
+    /// summaries. Returns the rounded total and the per-rate allocation.
+    fn apply_rates(
+        &mut self,
+        base: Decimal,
+        rates: &[(&TaxRate, &TaxJurisdiction)],
+    ) -> (Decimal, Vec<(RateShare, Decimal)>) {
+        let shares = rate_shares(base, rates.iter().map(|(rate, _)| *rate));
+        let raw: Vec<Decimal> = shares.iter().map(|s| s.raw_tax).collect();
+        let raw_total: Decimal = raw.iter().sum();
+        let (rounded_total, rounded) =
+            allocate_rounded(raw_total, &raw, self.decimal_places, self.strategy);
+
+        let allocated: Vec<(RateShare, Decimal)> = shares.into_iter().zip(rounded).collect();
+        for (share, amount) in &allocated {
+            let (rate, jurisdiction) = rates[share.index];
+            let summary =
+                self.jurisdictions.entry(jurisdiction.id).or_insert_with(|| JurisdictionSummary {
+                    id: jurisdiction.id,
+                    name: jurisdiction.name.clone(),
+                    code: jurisdiction.code.clone(),
+                    level: jurisdiction.level,
+                    total_rate: Decimal::ZERO,
+                    total_tax: Decimal::ZERO,
+                });
+            summary.total_rate += rate.rate;
+            summary.total_tax += *amount;
+
+            if let Some(existing) = self
+                .tax_breakdown
+                .iter_mut()
+                .find(|b| b.jurisdiction_id == jurisdiction.id && b.tax_type == rate.tax_type)
+            {
+                existing.taxable_amount += share.taxable_amount;
+                existing.tax_amount += *amount;
+            } else {
+                self.tax_breakdown.push(TaxBreakdown {
+                    jurisdiction_id: jurisdiction.id,
+                    jurisdiction_name: jurisdiction.name.clone(),
+                    tax_type: rate.tax_type,
+                    rate_name: rate.name.clone(),
+                    rate: rate.rate,
+                    taxable_amount: share.taxable_amount,
+                    tax_amount: *amount,
+                    is_compound: rate.is_compound,
+                });
+            }
+        }
+        (rounded_total, allocated)
+    }
+
+    /// Produce the result. `total = subtotal + total_tax + shipping`.
+    #[must_use]
+    pub fn finish(
+        self,
+        shipping_amount: Option<Decimal>,
+        now: DateTime<Utc>,
+    ) -> TaxCalculationResult {
+        // Emit jurisdictions in a stable order (by code, then id) rather than
+        // the HashMap's iteration order, which varies run-to-run and between
+        // the SQLite and Postgres backends — the tax result must be
+        // deterministic.
+        let mut jurisdictions: Vec<JurisdictionSummary> =
+            self.jurisdictions.into_values().collect();
+        jurisdictions.sort_by(|a, b| a.code.cmp(&b.code).then_with(|| a.id.cmp(&b.id)));
+
+        let total = self.subtotal + self.total_tax + shipping_amount.unwrap_or_default();
+        TaxCalculationResult {
+            id: Uuid::new_v4(),
+            total_tax: self.total_tax,
+            subtotal: self.subtotal,
+            total,
+            shipping_tax: self.shipping_tax,
+            tax_breakdown: self.tax_breakdown,
+            line_item_taxes: self.line_item_taxes,
+            exemptions_applied: self.exemptions_applied,
+            exemption_details: None,
+            jurisdictions,
+            calculated_at: now,
+            is_estimate: true,
+        }
+    }
+}
+
+/// Each rate's unrounded share of `base`, honouring thresholds, fixed
+/// amounts and compounding (a compound rate taxes the base plus the tax
+/// accumulated so far).
+fn rate_shares<'a>(base: Decimal, rates: impl Iterator<Item = &'a TaxRate>) -> Vec<RateShare> {
+    let mut shares = Vec::new();
+    let mut tax_so_far = Decimal::ZERO;
+    for (index, rate) in rates.enumerate() {
+        if base <= Decimal::ZERO {
+            continue;
+        }
+        if rate.threshold_min.is_some_and(|min| base < min) {
+            continue;
+        }
+        let capped_base = match rate.threshold_max {
+            Some(max) if base > max => max,
+            _ => base,
+        };
+        if capped_base <= Decimal::ZERO {
+            continue;
+        }
+        let taxable_amount = if rate.fixed_amount.is_none() && rate.is_compound {
+            capped_base + tax_so_far
+        } else {
+            capped_base
+        };
+        let raw_tax = rate.fixed_amount.map_or_else(|| taxable_amount * rate.rate, |fixed| fixed);
+        tax_so_far += raw_tax;
+        shares.push(RateShare { index, taxable_amount, raw_tax });
+    }
+    shares
+}
+
+/// Split the rates applicable to a line into those still owed and those
+/// removed by a customer exemption covering `category`.
+///
+/// An effective exemption with no jurisdiction restriction removes every
+/// rate; one restricted to jurisdictions removes only the rates of those
+/// jurisdictions. Returns `(remaining rate indexes, any_exempted)`.
+#[must_use]
+pub fn rates_after_exemptions(
+    rates: &[(&TaxRate, &TaxJurisdiction)],
+    exemptions: &[TaxExemption],
+    category: ProductTaxCategory,
+) -> (Vec<usize>, bool) {
+    let covering: Vec<&TaxExemption> =
+        exemptions.iter().filter(|e| e.covers_category(category)).collect();
+    if covering.is_empty() {
+        return ((0..rates.len()).collect(), false);
+    }
+    let mut remaining = Vec::with_capacity(rates.len());
+    let mut any_exempted = false;
+    for (index, (rate, _)) in rates.iter().enumerate() {
+        if covering.iter().any(|e| e.covers_jurisdiction(rate.jurisdiction_id)) {
+            any_exempted = true;
+        } else {
+            remaining.push(index);
+        }
+    }
+    (remaining, any_exempted)
+}
+
+// ============================================================================
 // Create/Update DTOs
 // ============================================================================
 

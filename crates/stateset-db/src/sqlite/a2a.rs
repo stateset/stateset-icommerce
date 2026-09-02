@@ -158,8 +158,18 @@ impl SqliteA2ARepository {
             QuoteStatus::Pending => {
                 matches!(next, QuoteStatus::Quoted | QuoteStatus::Rejected | QuoteStatus::Expired)
             }
+            // `Purchased` is reachable from `Quoted` as well as `Accepted`:
+            // `create_purchase` consumes a `Quoted` quote directly (the buyer's
+            // purchase is its acceptance), so the transition table must agree
+            // with what the purchase path actually does.
             QuoteStatus::Quoted => {
-                matches!(next, QuoteStatus::Accepted | QuoteStatus::Rejected | QuoteStatus::Expired)
+                matches!(
+                    next,
+                    QuoteStatus::Accepted
+                        | QuoteStatus::Rejected
+                        | QuoteStatus::Expired
+                        | QuoteStatus::Purchased
+                )
             }
             QuoteStatus::Accepted => matches!(next, QuoteStatus::Purchased),
             QuoteStatus::Rejected | QuoteStatus::Expired | QuoteStatus::Purchased => false,
@@ -571,6 +581,18 @@ impl SqliteA2ARepository {
         raw.unwrap_or_default()
     }
 
+    fn get_quote_on(conn: &rusqlite::Connection, id: Uuid) -> Result<Option<SkillQuote>> {
+        let mut stmt =
+            conn.prepare("SELECT * FROM a2a_quotes WHERE id = ?").map_err(map_db_error)?;
+        stmt.query_row([id.to_string()], Self::row_to_quote).optional().map_err(map_db_error)
+    }
+
+    fn get_purchase_on(conn: &rusqlite::Connection, id: Uuid) -> Result<Option<A2APurchase>> {
+        let mut stmt =
+            conn.prepare("SELECT * FROM a2a_purchases WHERE id = ?").map_err(map_db_error)?;
+        stmt.query_row([id.to_string()], Self::row_to_purchase).optional().map_err(map_db_error)
+    }
+
     fn ensure_quote_for_purchase(
         &self,
         conn: &rusqlite::Connection,
@@ -702,9 +724,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
 
     fn get_quote(&self, id: Uuid) -> Result<Option<SkillQuote>> {
         let conn = self.conn()?;
-        let mut stmt =
-            conn.prepare("SELECT * FROM a2a_quotes WHERE id = ?").map_err(map_db_error)?;
-        stmt.query_row([id.to_string()], Self::row_to_quote).optional().map_err(map_db_error)
+        Self::get_quote_on(&conn, id)
     }
 
     fn get_quote_by_number(&self, quote_number: &str) -> Result<Option<SkillQuote>> {
@@ -717,7 +737,15 @@ impl A2ACommerceRepository for SqliteA2ARepository {
     }
 
     fn update_quote_status(&self, id: Uuid, status: QuoteStatus) -> Result<SkillQuote> {
-        let existing = self.get_quote(id)?.ok_or(CommerceError::NotFound)?;
+        // Read, validate and write inside ONE `BEGIN IMMEDIATE` transaction,
+        // and make the UPDATE conditional on the status we validated against.
+        // Previously the read ran on a pooled connection and the UPDATE
+        // carried no status predicate, so two racing transitions (e.g. accept
+        // vs. reject) both validated against the same snapshot and the last
+        // writer won.
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let existing = Self::get_quote_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
 
         if !Self::is_valid_quote_status_transition(existing.status, status) {
             return Err(CommerceError::ValidationError(format!(
@@ -730,19 +758,27 @@ impl A2ACommerceRepository for SqliteA2ARepository {
             return Ok(existing);
         }
 
-        let affected = self
-            .conn()?
+        let affected = tx
             .execute(
-                "UPDATE a2a_quotes SET status = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![status.to_string(), Utc::now().to_rfc3339(), id.to_string(),],
+                "UPDATE a2a_quotes SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    status.to_string(),
+                    Utc::now().to_rfc3339(),
+                    id.to_string(),
+                    existing.status.to_string(),
+                ],
             )
             .map_err(map_db_error)?;
 
-        if affected == 0 {
-            return Err(CommerceError::NotFound);
+        if affected != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "a2a quote {id} changed status concurrently; cannot move to {status:?}"
+            )));
         }
 
-        self.get_quote(id)?.ok_or(CommerceError::NotFound)
+        let updated = Self::get_quote_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(updated)
     }
 
     fn list_quotes(&self, filter: SkillQuoteFilter) -> Result<Vec<SkillQuote>> {
@@ -908,9 +944,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
 
     fn get_purchase(&self, id: Uuid) -> Result<Option<A2APurchase>> {
         let conn = self.conn()?;
-        let mut stmt =
-            conn.prepare("SELECT * FROM a2a_purchases WHERE id = ?").map_err(map_db_error)?;
-        stmt.query_row([id.to_string()], Self::row_to_purchase).optional().map_err(map_db_error)
+        Self::get_purchase_on(&conn, id)
     }
 
     fn get_purchase_by_number(&self, purchase_number: &str) -> Result<Option<A2APurchase>> {
@@ -922,7 +956,12 @@ impl A2ACommerceRepository for SqliteA2ARepository {
     }
 
     fn update_purchase_status(&self, id: Uuid, status: PurchaseStatus) -> Result<A2APurchase> {
-        let existing = self.get_purchase(id)?.ok_or(CommerceError::NotFound)?;
+        // Same shape as `update_quote_status`: one IMMEDIATE transaction and a
+        // conditional UPDATE, so a seller's `Completed` racing a buyer's
+        // `Cancelled` from the same `Shipped` snapshot has exactly one winner.
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let existing = Self::get_purchase_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
 
         if !Self::is_valid_purchase_status_transition(existing.status, status) {
             return Err(CommerceError::ValidationError(format!(
@@ -935,19 +974,27 @@ impl A2ACommerceRepository for SqliteA2ARepository {
             return Ok(existing);
         }
 
-        let affected = self
-            .conn()?
+        let affected = tx
             .execute(
-                "UPDATE a2a_purchases SET status = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![status.to_string(), Utc::now().to_rfc3339(), id.to_string(),],
+                "UPDATE a2a_purchases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    status.to_string(),
+                    Utc::now().to_rfc3339(),
+                    id.to_string(),
+                    existing.status.to_string(),
+                ],
             )
             .map_err(map_db_error)?;
 
-        if affected == 0 {
-            return Err(CommerceError::NotFound);
+        if affected != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "a2a purchase {id} changed status concurrently; cannot move to {status:?}"
+            )));
         }
 
-        self.get_purchase(id)?.ok_or(CommerceError::NotFound)
+        let updated = Self::get_purchase_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(updated)
     }
 
     fn link_purchase_to_order(&self, purchase_id: Uuid, order_id: Uuid) -> Result<A2APurchase> {
@@ -984,32 +1031,44 @@ impl A2ACommerceRepository for SqliteA2ARepository {
             });
         }
 
-        let existing = self.get_purchase(purchase_id)?.ok_or(CommerceError::NotFound)?;
-        if matches!(existing.status, PurchaseStatus::Cancelled | PurchaseStatus::Disputed) {
-            return Err(CommerceError::ValidationError(
-                "cannot confirm delivery for cancelled purchase".to_string(),
-            ));
-        }
-        if !matches!(
-            existing.status,
-            PurchaseStatus::Shipped | PurchaseStatus::Delivered | PurchaseStatus::Completed
-        ) {
-            return Err(CommerceError::ValidationError(
-                "purchase must be shipped before confirming delivery".to_string(),
-            ));
+        // Confirming delivery is a ONE-SHOT `Shipped | Delivered -> Completed`
+        // transition. It used to be repeatable from `Completed` (rewriting the
+        // delivery signature and rating each time) and its UPDATE carried no
+        // status predicate, so a confirm racing a cancel could resurrect a
+        // cancelled purchase to `Completed`. The rating/feedback are recorded
+        // with the confirmation and cannot be revised through this path.
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let existing = Self::get_purchase_on(&tx, purchase_id)?.ok_or(CommerceError::NotFound)?;
+        match existing.status {
+            PurchaseStatus::Shipped | PurchaseStatus::Delivered => {}
+            PurchaseStatus::Completed => {
+                return Err(CommerceError::Conflict(format!(
+                    "delivery already confirmed for purchase {purchase_id}"
+                )));
+            }
+            PurchaseStatus::Cancelled | PurchaseStatus::Disputed => {
+                return Err(CommerceError::ValidationError(
+                    "cannot confirm delivery for cancelled purchase".to_string(),
+                ));
+            }
+            _ => {
+                return Err(CommerceError::ValidationError(
+                    "purchase must be shipped before confirming delivery".to_string(),
+                ));
+            }
         }
 
         let now = Utc::now();
         let now_str = now.to_rfc3339();
         let delivered_at = existing.delivered_at.unwrap_or(now);
 
-        let conn = self.conn()?;
-        let update_result = conn
+        let affected = tx
             .execute(
                 "UPDATE a2a_purchases
                  SET status = ?, delivered_at = ?, delivery_confirmed_at = ?, delivery_confirmation_signature = ?,
                      buyer_rating = COALESCE(?, buyer_rating), buyer_feedback = COALESCE(?, buyer_feedback), updated_at = ?
-                 WHERE id = ?",
+                 WHERE id = ? AND status = ?",
                 rusqlite::params![
                     PurchaseStatus::Completed.to_string(),
                     delivered_at.to_rfc3339(),
@@ -1019,15 +1078,20 @@ impl A2ACommerceRepository for SqliteA2ARepository {
                     feedback,
                     now_str,
                     purchase_id.to_string(),
+                    existing.status.to_string(),
                 ],
             )
             .map_err(map_db_error)?;
 
-        if update_result == 0 {
-            return Err(CommerceError::NotFound);
+        if affected != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "a2a purchase {purchase_id} changed status concurrently; cannot confirm delivery"
+            )));
         }
 
-        self.get_purchase(purchase_id)?.ok_or(CommerceError::NotFound)
+        let updated = Self::get_purchase_on(&tx, purchase_id)?.ok_or(CommerceError::NotFound)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(updated)
     }
 
     fn list_purchases(&self, filter: A2APurchaseFilter) -> Result<Vec<A2APurchase>> {

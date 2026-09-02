@@ -11,7 +11,7 @@ use stateset_core::{
     PaymentStatus, PromotionType, Result, SetCartPayment, SetCartShipping, SetCartX402Payment,
     ShippingRate, UpdateCart, UpdateCartItem, X402Asset, X402AwaitingSettlementData,
     X402CheckoutResult, X402IntentCreatedData, X402IntentStatus, X402Network,
-    X402PaymentRequiredData, validate_batch_size, validate_email, validate_phone,
+    X402PaymentRequiredData, validate_batch_size, validate_email, validate_phone, validate_price,
     validate_required_text,
 };
 use uuid::Uuid;
@@ -422,50 +422,121 @@ impl PgCartRepository {
     }
 
     async fn update_cart_totals_async(&self, cart_id: Uuid) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        self.update_cart_totals_in_tx(&mut tx, cart_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Lock the cart row for the rest of `tx` so concurrent item mutations on
+    /// the same cart serialize instead of each computing a subtotal that
+    /// misses the other's line (lost update). `NO KEY UPDATE`, like checkout,
+    /// so rows referencing `carts(id)` can still be inserted.
+    async fn lock_cart_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        cart_id: Uuid,
+    ) -> Result<CartRow> {
+        sqlx::query_as("SELECT * FROM carts WHERE id = $1 FOR NO KEY UPDATE")
+            .bind(cart_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)
+    }
+
+    /// Recompute the cart's subtotal, discount and grand total from its
+    /// current lines, holding the cart row lock. Shared by every item
+    /// mutation and by `recalculate`, so all of them agree.
+    async fn update_cart_totals_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        cart_id: Uuid,
+    ) -> Result<()> {
+        let row = Self::lock_cart_in_tx(tx, cart_id).await?;
+
         // Calculate subtotal from pre-tax line amounts to avoid double-counting tax.
         let subtotal: Decimal = sqlx::query_scalar(
             "SELECT COALESCE(SUM((quantity * unit_price) - discount_amount), 0) FROM cart_items WHERE cart_id = $1",
         )
         .bind(cart_id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-
-        // Get current tax, shipping, and discount
-        let row: (Decimal, Decimal, Decimal) = sqlx::query_as(
-            "SELECT tax_amount, shipping_amount, discount_amount FROM carts WHERE id = $1",
-        )
-        .bind(cart_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        let (tax_amount, shipping_amount, discount_amount) = row;
 
         // Round the subtotal to the currency minor unit explicitly (rather than
         // relying on the DECIMAL(12,2) column to coerce), so the rounding
         // strategy matches the SQLite backend exactly.
         let subtotal = subtotal.round_dp(2);
 
-        // Clamp at zero: a discount larger than subtotal + tax + shipping must
-        // not produce a negative total (which would charge the buyer a negative
-        // amount at checkout).
-        let grand_total = (subtotal + tax_amount + shipping_amount - discount_amount)
-            .round_dp(2)
-            .max(Decimal::ZERO);
+        let item_rows: Vec<CartItemRow> =
+            sqlx::query_as("SELECT * FROM cart_items WHERE cart_id = $1 ORDER BY created_at")
+                .bind(cart_id)
+                .fetch_all(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let mut cart = row.into_cart(item_rows.into_iter().map(Into::into).collect())?;
+        cart.subtotal = subtotal;
+
+        // The discount is derived from the cart as it is NOW, never a frozen
+        // snapshot: a coupon is re-validated and re-priced against the new
+        // contents, and any discount is capped at what the cart can cover.
+        let derived = self.derive_discount(&cart).await?;
+        let grand_total = derived.grand_total(&cart);
 
         sqlx::query(
-            "UPDATE carts SET subtotal = $1, grand_total = $2, updated_at = $3 WHERE id = $4",
+            "UPDATE carts SET subtotal = $1, discount_amount = $2, discount_description = $3,
+             grand_total = $4, updated_at = $5 WHERE id = $6",
         )
         .bind(subtotal)
+        .bind(derived.amount)
+        .bind(&derived.description)
         .bind(grand_total)
         .bind(Utc::now())
         .bind(cart_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
         Ok(())
+    }
+
+    /// Price the discount `cart` should carry right now.
+    ///
+    /// With a coupon on the cart, the coupon and its promotion are re-validated
+    /// against the current contents (window, status, usage limits, conditions
+    /// such as a minimum subtotal) and the discount re-priced from them. A
+    /// coupon that no longer qualifies stays on the cart — so it revives on its
+    /// own when the cart qualifies again — but contributes no discount, and the
+    /// cart's `discount_description` says why; checkout refuses the cart while
+    /// it is in that state (see [`DerivedDiscount::coupon_error`]).
+    ///
+    /// Promotion types this path cannot price (bundles, tiers, ...) keep the
+    /// discount recorded by full promotion evaluation. Every discount, coupon
+    /// or manual, is capped at `subtotal + tax + shipping` so the cart never
+    /// hands an order a discount larger than the order can absorb. Mirrors the
+    /// SQLite twin.
+    async fn derive_discount(&self, cart: &Cart) -> Result<DerivedDiscount> {
+        let Some(code) = cart.coupon_code.as_deref() else {
+            return Ok(DerivedDiscount::capped(cart, cart.discount_amount, None));
+        };
+        let promo_repo = PgPromotionRepository::new(self.pool.clone());
+        match promo_repo.validate_coupon_for_cart_async(cart, code, Utc::now()).await {
+            Ok((_coupon, promotion)) => {
+                let amount = match promotion.promotion_type {
+                    PromotionType::PercentageOff | PromotionType::FixedAmountOff => {
+                        coupon_discount_amount(&promotion, cart)
+                    }
+                    _ => cart.discount_amount,
+                };
+                Ok(DerivedDiscount::capped(cart, amount, Some(promotion.name)))
+            }
+            Err(CommerceError::ValidationError(reason)) => Ok(DerivedDiscount {
+                amount: Decimal::ZERO,
+                description: Some(format!("Coupon {code} not applied: {reason}")),
+                coupon_error: Some(reason),
+            }),
+            Err(other) => Err(other),
+        }
     }
 
     async fn finalize_x402_checkout_async(&self, cart_id: Uuid) -> Result<X402CheckoutResult> {
@@ -793,38 +864,10 @@ impl PgCartRepository {
 
     pub async fn add_item_async(&self, cart_id: Uuid, item: AddCartItem) -> Result<CartItem> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        // Serialize with other mutations of this cart before touching its lines.
+        Self::lock_cart_in_tx(&mut tx, cart_id).await?;
         let result = self.add_item_internal(&mut tx, cart_id, item).await?;
-
-        // Update cart totals
-        let subtotal: Decimal = sqlx::query_scalar(
-            "SELECT COALESCE(SUM((quantity * unit_price) - discount_amount), 0) FROM cart_items WHERE cart_id = $1",
-        )
-        .bind(cart_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        let (tax, shipping, discount): (Decimal, Decimal, Decimal) = sqlx::query_as(
-            "SELECT tax_amount, shipping_amount, discount_amount FROM carts WHERE id = $1",
-        )
-        .bind(cart_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        let grand_total = (subtotal + tax + shipping - discount).max(Decimal::ZERO);
-
-        sqlx::query(
-            "UPDATE carts SET subtotal = $1, grand_total = $2, updated_at = $3 WHERE id = $4",
-        )
-        .bind(subtotal)
-        .bind(grand_total)
-        .bind(Utc::now())
-        .bind(cart_id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
+        self.update_cart_totals_in_tx(&mut tx, cart_id).await?;
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(result)
@@ -835,6 +878,8 @@ impl PgCartRepository {
         item_id: Uuid,
         input: UpdateCartItem,
     ) -> Result<CartItem> {
+        validate_update_cart_item(&input)?;
+
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
@@ -844,6 +889,8 @@ impl PgCartRepository {
             .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+        // Serialize with other mutations of this cart before touching its lines.
+        Self::lock_cart_in_tx(&mut tx, cart_id).await?;
 
         // Update item fields
         if let Some(qty) = input.quantity {
@@ -903,35 +950,7 @@ impl PgCartRepository {
             .await
             .map_err(map_db_error)?;
 
-        // Update cart totals
-        let subtotal: Decimal = sqlx::query_scalar(
-            "SELECT COALESCE(SUM((quantity * unit_price) - discount_amount), 0) FROM cart_items WHERE cart_id = $1",
-        )
-        .bind(cart_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        let (cart_tax, shipping, discount_cart): (Decimal, Decimal, Decimal) = sqlx::query_as(
-            "SELECT tax_amount, shipping_amount, discount_amount FROM carts WHERE id = $1",
-        )
-        .bind(cart_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        let grand_total = (subtotal + cart_tax + shipping - discount_cart).max(Decimal::ZERO);
-
-        sqlx::query(
-            "UPDATE carts SET subtotal = $1, grand_total = $2, updated_at = $3 WHERE id = $4",
-        )
-        .bind(subtotal)
-        .bind(grand_total)
-        .bind(now)
-        .bind(cart_id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        self.update_cart_totals_in_tx(&mut tx, cart_id).await?;
 
         // Fetch updated item
         let item: CartItemRow = sqlx::query_as("SELECT * FROM cart_items WHERE id = $1")
@@ -955,41 +974,16 @@ impl PgCartRepository {
             .await
             .map_err(map_db_error)?;
 
+        // Serialize with other mutations of this cart before touching its lines.
+        Self::lock_cart_in_tx(&mut tx, cart_id).await?;
+
         sqlx::query("DELETE FROM cart_items WHERE id = $1")
             .bind(item_id)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
-        // Update cart totals
-        let subtotal: Decimal = sqlx::query_scalar(
-            "SELECT COALESCE(SUM((quantity * unit_price) - discount_amount), 0) FROM cart_items WHERE cart_id = $1",
-        )
-        .bind(cart_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        let (tax, shipping, discount): (Decimal, Decimal, Decimal) = sqlx::query_as(
-            "SELECT tax_amount, shipping_amount, discount_amount FROM carts WHERE id = $1",
-        )
-        .bind(cart_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        let grand_total = (subtotal + tax + shipping - discount).max(Decimal::ZERO);
-
-        sqlx::query(
-            "UPDATE carts SET subtotal = $1, grand_total = $2, updated_at = $3 WHERE id = $4",
-        )
-        .bind(subtotal)
-        .bind(grand_total)
-        .bind(Utc::now())
-        .bind(cart_id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        self.update_cart_totals_in_tx(&mut tx, cart_id).await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -1003,20 +997,15 @@ impl PgCartRepository {
     pub async fn clear_items_async(&self, cart_id: Uuid) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        Self::lock_cart_in_tx(&mut tx, cart_id).await?;
+
         sqlx::query("DELETE FROM cart_items WHERE cart_id = $1")
             .bind(cart_id)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
-        sqlx::query(
-            "UPDATE carts SET subtotal = 0, grand_total = 0, updated_at = $1 WHERE id = $2",
-        )
-        .bind(Utc::now())
-        .bind(cart_id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        self.update_cart_totals_in_tx(&mut tx, cart_id).await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -1414,9 +1403,18 @@ impl PgCartRepository {
                 cart.status
             )));
         }
+        if let Some(expired_at) = cart.expires_at.filter(|_| cart.is_expired()) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cart expired at {}",
+                expired_at.to_rfc3339()
+            )));
+        }
         if !cart.is_ready_for_checkout() {
             return Err(CommerceError::ValidationError("Cart is not ready for checkout".into()));
         }
+        // Never hand the order a discount it cannot absorb (see `cap_discount`).
+        let mut cart = cart;
+        cart.discount_amount = cap_discount(&cart, cart.discount_amount);
         let customer_id = if let Some(id) = cart.customer_id {
             id
         } else {
@@ -1477,7 +1475,7 @@ impl PgCartRepository {
                 .map_err(map_db_error)?;
 
         let items: Vec<CartItem> = item_rows.into_iter().map(Into::into).collect();
-        let cart = row.into_cart(items)?;
+        let mut cart = row.into_cart(items)?;
 
         // Idempotent checkout: if already completed, return the existing order reference.
         if cart.status == CartStatus::Completed {
@@ -1502,11 +1500,33 @@ impl PgCartRepository {
             )));
         }
 
+        if let Some(expired_at) = cart.expires_at.filter(|_| cart.is_expired()) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cart expired at {}",
+                expired_at.to_rfc3339()
+            )));
+        }
+
         if !cart.is_ready_for_checkout() {
             return Err(CommerceError::ValidationError(
                 "Cart is not ready for checkout - ensure items, customer info, and shipping address are set".to_string(),
             ));
         }
+
+        // Re-validate the coupon and re-derive the discount inside the
+        // checkout transaction: the minted order's discount is always one the
+        // coupon grants RIGHT NOW (not a snapshot from `apply_discount`), a
+        // coupon that stopped qualifying since it was applied refuses the
+        // checkout, and no discount ever exceeds what the order can absorb.
+        let derived = self.derive_discount(&cart).await?;
+        if let Some(reason) = derived.coupon_error {
+            return Err(CommerceError::ValidationError(format!(
+                "Coupon {} is no longer valid: {reason}",
+                cart.coupon_code.as_deref().unwrap_or_default()
+            )));
+        }
+        cart.discount_amount = derived.amount;
+        cart.grand_total = derived.grand_total(&cart);
 
         let customer_id = Self::resolve_customer_id_in_tx(tx, &cart).await?;
         let order_items = Self::order_items_from_cart(&cart);
@@ -1570,23 +1590,35 @@ impl PgCartRepository {
             order.id,
         )
         .await?;
+        // Automatic (no-code) promotions are consumed here too: evaluation is
+        // read-only, so this is the only place their usage advances.
+        PgPromotionRepository::consume_cart_promotions_in_tx(
+            tx,
+            &cart,
+            Some(CustomerId::from(customer_id)),
+            order.id,
+        )
+        .await?;
 
         let now = Utc::now();
         let cart_update = if x402_settled {
             r#"UPDATE carts SET
                 status = 'completed', order_id = $1, order_number = $2,
                 payment_status = 'captured', x402_status = 'settled',
-                completed_at = $3, updated_at = $4, customer_id = $5
+                completed_at = $3, updated_at = $4, customer_id = $5,
+                discount_amount = $7, grand_total = $8
             WHERE id = $6"#
         } else if mark_paid {
             r#"UPDATE carts SET
                 status = 'completed', order_id = $1, order_number = $2,
-                payment_status = 'captured', completed_at = $3, updated_at = $4, customer_id = $5
+                payment_status = 'captured', completed_at = $3, updated_at = $4, customer_id = $5,
+                discount_amount = $7, grand_total = $8
             WHERE id = $6"#
         } else {
             r#"UPDATE carts SET
                 status = 'completed', order_id = $1, order_number = $2,
-                completed_at = $3, updated_at = $4, customer_id = $5
+                completed_at = $3, updated_at = $4, customer_id = $5,
+                discount_amount = $7, grand_total = $8
             WHERE id = $6"#
         };
         sqlx::query(cart_update)
@@ -1596,6 +1628,8 @@ impl PgCartRepository {
             .bind(now)
             .bind(customer_id)
             .bind(id)
+            .bind(cart.discount_amount)
+            .bind(cart.grand_total)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -2281,5 +2315,64 @@ pub(crate) fn coupon_discount_amount(promotion: &stateset_core::Promotion, cart:
         }
         _ => Decimal::ZERO, // Other types are priced by full promotion evaluation
     };
-    raw.max(Decimal::ZERO).round_dp(u32::from(cart.currency.decimal_places()))
+    cap_discount(cart, raw).round_dp(u32::from(cart.currency.decimal_places()))
+}
+
+/// Outcome of [`PgCartRepository::derive_discount`].
+#[derive(Debug, Clone)]
+pub(crate) struct DerivedDiscount {
+    /// Discount the cart carries, capped at what the cart can cover.
+    pub(crate) amount: Decimal,
+    /// `discount_description` to store (`None` keeps the stored one).
+    pub(crate) description: Option<String>,
+    /// Why the cart's coupon no longer qualifies, if it does not.
+    pub(crate) coupon_error: Option<String>,
+}
+
+impl DerivedDiscount {
+    fn capped(cart: &Cart, amount: Decimal, description: Option<String>) -> Self {
+        Self {
+            amount: cap_discount(cart, amount),
+            description: description.or_else(|| cart.discount_description.clone()),
+            coupon_error: None,
+        }
+    }
+
+    /// `subtotal + tax + shipping - amount`, which the cap keeps non-negative.
+    fn grand_total(&self, cart: &Cart) -> Decimal {
+        (cart.subtotal + cart.tax_amount + cart.shipping_amount - self.amount)
+            .round_dp(2)
+            .max(Decimal::ZERO)
+    }
+}
+
+/// Clamp a discount into `[0, subtotal + tax + shipping]` so the order minted
+/// from the cart can never have a negative total.
+pub(crate) fn cap_discount(cart: &Cart, amount: Decimal) -> Decimal {
+    let coverable = (cart.subtotal + cart.tax_amount + cart.shipping_amount).max(Decimal::ZERO);
+    amount.max(Decimal::ZERO).min(coverable)
+}
+
+/// Reject a cart-item update that would store a non-positive quantity, a
+/// negative price or a negative line discount. Quantity 0 is NOT a silent
+/// remove: callers must use `remove_item`. Mirrors the SQLite twin.
+pub(crate) fn validate_update_cart_item(input: &UpdateCartItem) -> Result<()> {
+    if let Some(quantity) = input.quantity {
+        if quantity < 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Item quantity must be positive, got {quantity}; remove the item instead"
+            )));
+        }
+    }
+    if let Some(unit_price) = input.unit_price {
+        validate_price(unit_price)?;
+    }
+    if let Some(discount) = input.discount_amount {
+        if discount < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(format!(
+                "Item discount must not be negative, got {discount}"
+            )));
+        }
+    }
+    Ok(())
 }

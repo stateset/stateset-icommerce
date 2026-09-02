@@ -416,24 +416,30 @@ impl Subscriptions {
 
     /// Get subscriptions due for billing.
     ///
-    /// Returns subscriptions where `next_billing_date` is on or before the
-    /// specified date.
+    /// Returns `Active` subscriptions whose `next_billing_date` is on or
+    /// before `before`, plus `Trial` subscriptions whose trial has ended by
+    /// then (their `next_billing_date` is the trial end) — billing the first
+    /// post-trial cycle is what moves them to `Active`
+    /// (see [`Self::create_billing_cycle`] / `mark_cycle_paid`). Trials used
+    /// to be filtered out here, so a trial subscription was never billed.
     pub fn get_due_for_billing(&self, before: DateTime<Utc>) -> Result<Vec<Subscription>> {
-        let subs = self.list(SubscriptionFilter {
-            status: Some(stateset_core::SubscriptionStatus::Active),
-            ..Default::default()
-        })?;
+        use stateset_core::SubscriptionStatus;
 
-        Ok(subs
-            .into_iter()
-            .filter(|s| {
-                if let Some(next_billing) = s.next_billing_date {
-                    next_billing <= before
-                } else {
-                    false
+        let mut due = Vec::new();
+        for status in [SubscriptionStatus::Active, SubscriptionStatus::Trial] {
+            let subs =
+                self.list(SubscriptionFilter { status: Some(status), ..Default::default() })?;
+            due.extend(subs.into_iter().filter(|s| {
+                match s.status {
+                    SubscriptionStatus::Trial => s
+                        .next_billing_date
+                        .or(s.trial_ends_at)
+                        .is_some_and(|trial_end| trial_end <= before),
+                    _ => s.next_billing_date.is_some_and(|next| next <= before),
                 }
-            })
-            .collect())
+            }));
+        }
+        Ok(due)
     }
 
     /// Get subscriptions with trials ending soon.

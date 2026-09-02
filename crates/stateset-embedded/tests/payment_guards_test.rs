@@ -399,7 +399,11 @@ fn legal_transition_requires_action_round_trip() {
 #[test]
 fn legal_transition_completed_to_disputed_and_back() {
     let commerce = commerce();
-    let paid = completed_payment(&commerce, None, dec!(50.00));
+    // Against a real order, so the dispute's effect on capture capacity is
+    // observable: a disputed capture is contested money, not a settled loss,
+    // and must keep consuming its slice of the order total (D1).
+    let order_id = order_totalling(&commerce, dec!(50.00));
+    let paid = completed_payment(&commerce, Some(order_id), dec!(50.00));
 
     let disputed = commerce
         .payments()
@@ -413,9 +417,74 @@ fn legal_transition_completed_to_disputed_and_back() {
         .expect("completed -> disputed");
     assert_eq!(disputed.status, PaymentTransactionStatus::Disputed);
 
+    // While disputed, the order is still fully captured: a fresh full-amount
+    // capture must be refused by the over-capture guard.
+    let err = commerce
+        .payments()
+        .create(CreatePayment {
+            order_id: Some(order_id),
+            payment_method: PaymentMethodType::CreditCard,
+            amount: dec!(50.00),
+            ..Default::default()
+        })
+        .expect_err("a disputed capture still consumes the order total");
+    assert_eq!(
+        err.invariant_code(),
+        Some("commerce.capture.exceeds_order_total"),
+        "expected the over-capture invariant, got {err:?}"
+    );
+
     // The dispute can be resolved in the merchant's favour, or against it.
     let resolved = commerce.payments().mark_completed(paid.id).expect("disputed -> completed");
     assert_eq!(resolved.status, PaymentTransactionStatus::Completed);
+    assert_eq!(commerce.payments().for_order(order_id).expect("list").len(), 1);
+}
+
+#[test]
+fn dispute_resolved_via_update_cannot_double_capture_the_order() {
+    let commerce = commerce();
+    let order_id = order_totalling(&commerce, dec!(100.00));
+    let paid = completed_payment(&commerce, Some(order_id), dec!(100.00));
+
+    commerce
+        .payments()
+        .update(
+            paid.id,
+            UpdatePayment {
+                status: Some(PaymentTransactionStatus::Disputed),
+                ..Default::default()
+            },
+        )
+        .expect("completed -> disputed");
+
+    let second = commerce.payments().create(CreatePayment {
+        order_id: Some(order_id),
+        payment_method: PaymentMethodType::CreditCard,
+        amount: dec!(100.00),
+        ..Default::default()
+    });
+    assert_eq!(
+        second.expect_err("second capture while disputed").invariant_code(),
+        Some("commerce.capture.exceeds_order_total")
+    );
+
+    // Resolving through the generic `update` path (not `mark_completed`).
+    let resolved = commerce
+        .payments()
+        .update(
+            paid.id,
+            UpdatePayment {
+                status: Some(PaymentTransactionStatus::Completed),
+                ..Default::default()
+            },
+        )
+        .expect("disputed -> completed via update");
+    assert_eq!(resolved.status, PaymentTransactionStatus::Completed);
+    assert_eq!(
+        captured_total(&commerce, order_id),
+        dec!(100.00),
+        "total captured must never exceed the order total"
+    );
 }
 
 #[test]

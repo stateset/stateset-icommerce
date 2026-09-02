@@ -234,3 +234,150 @@ fn sqlite_x402_settle_racing_cancel_or_expire_is_serialized() {
         assert_eq!(&stored.status, winners[0], "stored status must match the sole winner");
     }
 }
+
+// ---------------------------------------------------------------------------
+// D3: validity is enforced at sequence/settle, and the sweeper expires
+// Sequenced intents too.
+// ---------------------------------------------------------------------------
+
+fn force_valid_until(db: &SqliteDatabase, id: uuid::Uuid, valid_until: i64) {
+    let conn = db.conn().expect("get sqlite connection");
+    conn.execute(
+        "UPDATE x402_payment_intents SET valid_until = ? WHERE id = ?",
+        rusqlite::params![valid_until, id.to_string()],
+    )
+    .expect("force valid_until");
+}
+
+#[test]
+fn sqlite_x402_settle_after_valid_until_is_refused_and_swept() {
+    let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
+    let repo = db.x402_payment_intents();
+    let intent = create_test_intent(&db);
+    force_status(&db, intent.id, X402IntentStatus::Signed);
+    let sequenced = repo.mark_sequenced(intent.id, 1, uuid::Uuid::new_v4()).expect("sequence");
+    assert_eq!(sequenced.status, X402IntentStatus::Sequenced);
+
+    let past = chrono::Utc::now().timestamp() - 30;
+    force_valid_until(&db, intent.id, past);
+
+    let err = repo.mark_settled(intent.id, "0xlate", 5).expect_err("settle past validity");
+    assert!(
+        matches!(&err, CommerceError::ValidationError(m) if m.contains("expired")),
+        "got {err:?}"
+    );
+    let stored = repo.get(intent.id).expect("get").expect("exists");
+    assert_eq!(stored.status, X402IntentStatus::Sequenced);
+    assert!(stored.tx_hash.is_none());
+
+    let swept = repo.expire_stale_intents().expect("sweep");
+    assert_eq!(swept, 1, "the sequenced intent past validity must be expired by the sweeper");
+    let stored = repo.get(intent.id).expect("get").expect("exists");
+    assert_eq!(stored.status, X402IntentStatus::Expired);
+}
+
+#[test]
+fn sqlite_x402_sequence_after_valid_until_is_refused() {
+    let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
+    let repo = db.x402_payment_intents();
+    let intent = create_test_intent(&db);
+    force_status(&db, intent.id, X402IntentStatus::Signed);
+    force_valid_until(&db, intent.id, chrono::Utc::now().timestamp() - 30);
+
+    let err = repo.mark_sequenced(intent.id, 1, uuid::Uuid::new_v4()).expect_err("expired");
+    assert!(
+        matches!(&err, CommerceError::ValidationError(m) if m.contains("expired")),
+        "got {err:?}"
+    );
+    assert_eq!(repo.get(intent.id).expect("get").expect("exists").status, X402IntentStatus::Signed);
+}
+
+#[test]
+fn sqlite_x402_sweeper_leaves_batched_intents_alone() {
+    let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
+    let repo = db.x402_payment_intents();
+    let intent = create_test_intent(&db);
+    force_status(&db, intent.id, X402IntentStatus::Batched);
+    force_valid_until(&db, intent.id, chrono::Utc::now().timestamp() - 30);
+
+    assert_eq!(repo.expire_stale_intents().expect("sweep"), 0);
+    assert_eq!(
+        repo.get(intent.id).expect("get").expect("exists").status,
+        X402IntentStatus::Batched
+    );
+}
+
+// ---------------------------------------------------------------------------
+// D4: one on-chain tx settles at most one intent
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sqlite_x402_tx_hash_settles_at_most_one_intent() {
+    let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
+    let repo = db.x402_payment_intents();
+    let first = create_test_intent(&db);
+    let second = create_test_intent(&db);
+    force_status(&db, first.id, X402IntentStatus::Sequenced);
+    force_status(&db, second.id, X402IntentStatus::Sequenced);
+
+    repo.mark_settled(first.id, "0xshared", 10).expect("first settle");
+    let err = repo.mark_settled(second.id, "0xshared", 11).expect_err("reused tx_hash");
+    assert!(
+        matches!(&err, CommerceError::Conflict(m) if m.contains("0xshared") && m.contains(&first.id.to_string())),
+        "got {err:?}"
+    );
+    let stored = repo.get(second.id).expect("get").expect("exists");
+    assert_eq!(stored.status, X402IntentStatus::Sequenced);
+    assert!(stored.tx_hash.is_none());
+
+    // The database enforces it too, for writers that bypass the repository.
+    let conn = db.conn().expect("conn");
+    let raw = conn.execute(
+        "UPDATE x402_payment_intents SET tx_hash = '0xshared', tx_hash_key = '0xshared', status = 'settled' WHERE id = ?",
+        [second.id.to_string()],
+    );
+    assert!(raw.is_err(), "unique index on tx_hash_key must reject the duplicate");
+}
+
+// ---------------------------------------------------------------------------
+// D5: batch-created intents carry the same signing metadata as single creates
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sqlite_x402_batch_created_intent_rejects_ed25519_downgrade() {
+    let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
+    let repo = db.x402_payment_intents();
+    let created = repo
+        .create_batch_atomic(vec![CreateX402PaymentIntent {
+            payer_address: "0xpayer-sqlite-batch".to_string(),
+            payee_address: "0xpayee-sqlite-batch".to_string(),
+            amount: 1_000_000,
+            asset: X402Asset::Usdc,
+            network: X402Network::SetChain,
+            ..Default::default()
+        }])
+        .expect("batch create");
+    let intent = created.into_iter().next().expect("one intent");
+
+    assert_eq!(intent.payer_signature_scheme, Some(X402_DEFAULT_SIGNATURE_SCHEME));
+    assert!(intent.signing_hash.is_some(), "batch create must persist the signing hash");
+
+    let mut locally_signed = intent.clone();
+    locally_signed.sign_with_ed25519(&[11u8; 32]).expect("locally sign");
+    let result = repo.sign(
+        intent.id,
+        SignX402PaymentIntent {
+            intent_id: intent.id,
+            signature_scheme: Some(X402SignatureScheme::Ed25519),
+            signature: locally_signed.payer_signature.expect("signature"),
+            public_key: locally_signed.payer_public_key.expect("public key"),
+            signature_bundle: None,
+            public_key_bundle: None,
+        },
+    );
+    assert!(matches!(
+        result,
+        Err(CommerceError::ValidationError(message))
+            if message.contains("ed25519_ml_dsa65") && message.contains("refusing ed25519")
+    ));
+}

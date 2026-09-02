@@ -503,6 +503,12 @@ impl Cart {
             return false;
         }
 
+        // A cart whose `expires_at` has passed is dead even if the expiry
+        // sweep has not flipped its status yet.
+        if self.is_expired() {
+            return false;
+        }
+
         if self.items.is_empty() {
             return false;
         }
@@ -824,6 +830,18 @@ mod tests {
                 "cart in status {status:?} must not be ready for checkout"
             );
         }
+    }
+
+    #[test]
+    fn test_ready_for_checkout_rejects_past_expires_at() {
+        // An Active cart whose expiry has passed (sweep not yet run) is dead.
+        let mut cart = ready_cart_with_status(CartStatus::Active);
+        cart.expires_at = Some(Utc::now() - chrono::Duration::minutes(1));
+        assert!(cart.is_expired());
+        assert!(!cart.is_ready_for_checkout());
+
+        cart.expires_at = Some(Utc::now() + chrono::Duration::minutes(30));
+        assert!(cart.is_ready_for_checkout());
     }
 
     #[test]

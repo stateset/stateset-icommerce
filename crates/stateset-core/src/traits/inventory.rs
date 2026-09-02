@@ -173,6 +173,12 @@ pub trait LotRepository: Send + Sync {
     /// Get expired lots
     fn get_expired_lots(&self) -> Result<Vec<Lot>>;
 
+    /// Sweep `Active` lots whose `expiration_date` is before `now` into
+    /// `Expired`, returning how many were flipped. Idempotent; each call is a
+    /// single status-conditional UPDATE. Consumption paths refuse expired lots
+    /// regardless of whether this sweeper has run.
+    fn expire_lots(&self, now: chrono::DateTime<chrono::Utc>) -> Result<u64>;
+
     /// Get lots with available quantity for SKU
     fn get_available_lots_for_sku(&self, sku: &str) -> Result<Vec<Lot>>;
 
@@ -230,6 +236,14 @@ pub trait SerialRepository: Send + Sync {
     /// Confirm reservation
     fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()>;
 
+    /// Get a reservation by id
+    fn get_reservation(&self, reservation_id: Uuid) -> Result<Option<SerialReservation>>;
+
+    /// Sweep reservations that expired before `now` without being confirmed,
+    /// released or consumed: close each one and return its serial to
+    /// `Available`. Returns the number of serials returned to stock.
+    fn release_expired_reservations(&self, now: chrono::DateTime<chrono::Utc>) -> Result<u64>;
+
     /// Move serial to new location
     fn move_serial(&self, input: MoveSerial) -> Result<SerialNumber>;
 
@@ -258,6 +272,15 @@ pub trait SerialRepository: Send + Sync {
 
     /// Release from quarantine
     fn release_quarantine(&self, id: Uuid) -> Result<SerialNumber>;
+
+    /// Quarantine every `Available`/`Reserved` serial in a lot (open
+    /// reservations are closed). Serials in other statuses are left alone.
+    /// Returns the number of serials quarantined.
+    fn quarantine_for_lot(&self, lot_id: Uuid, reason: &str) -> Result<u64>;
+
+    /// Return every `Quarantined` serial in a lot to `Available`. Returns the
+    /// number of serials released.
+    fn release_quarantine_for_lot(&self, lot_id: Uuid) -> Result<u64>;
 
     /// Scrap serial
     fn scrap(&self, id: Uuid, reason: &str) -> Result<SerialNumber>;

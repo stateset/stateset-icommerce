@@ -17,6 +17,20 @@ use stateset_core::{
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// Derived column values for a new intent row (see `new_intent_row`).
+struct NewIntentRow {
+    id: Uuid,
+    now: chrono::DateTime<Utc>,
+    now_unix: u64,
+    valid_until: u64,
+    nonce: u64,
+    chain_id: u64,
+    token_address: Option<String>,
+    amount_decimal: Decimal,
+    signing_hash: String,
+    signature_scheme: String,
+}
+
 /// SQLite implementation of `X402PaymentIntentRepository`
 #[derive(Debug)]
 pub struct SqliteX402PaymentIntentRepository {
@@ -254,32 +268,17 @@ impl SqliteX402PaymentIntentRepository {
         Ok(updated)
     }
 
-    fn get_next_nonce_in_tx(tx: &rusqlite::Transaction<'_>, payer_address: &str) -> Result<u64> {
-        let max_nonce: Option<i64> = tx
-            .query_row(
-                "SELECT MAX(nonce) FROM x402_payment_intents WHERE payer_address = ?",
-                [payer_address],
-                |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
-
-        Ok(max_nonce.map_or(0, |n| n as u64 + 1))
-    }
-}
-
-impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
-    fn create(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
-        Self::validate_input(&input)?;
-        let mut conn = self.conn()?;
-        let tx =
-            conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(map_db_error)?;
-        let now = Utc::now();
+    /// Build the row for a new `Created` intent exactly the way `create`
+    /// persists it — including `signing_hash` and `payer_signature_scheme`.
+    /// Shared by `create` and `create_batch_atomic` so batch-created intents
+    /// are never "legacy" rows that would accept an ed25519 downgrade.
+    fn new_intent_row(
+        input: &CreateX402PaymentIntent,
+        id: Uuid,
+        now: chrono::DateTime<Utc>,
+        nonce: u64,
+    ) -> NewIntentRow {
         let now_unix = now.timestamp() as u64;
-        let id = Uuid::new_v4();
-        let nonce = match input.nonce {
-            Some(n) => n,
-            None => Self::get_next_nonce_in_tx(&tx, &input.payer_address)?,
-        };
         let validity_seconds = input.validity_seconds.unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
         let valid_until = now_unix + validity_seconds;
 
@@ -288,10 +287,10 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         let chain_id = network.chain_id();
         let token_address = asset.contract_address(network).map(String::from);
 
-        // Calculate decimal amount
         let decimals = asset.decimals();
         let divisor = 10u64.pow(u32::from(decimals));
         let amount_decimal = Decimal::from(input.amount) / Decimal::from(divisor);
+
         let mut signing_intent = X402PaymentIntent::new(
             input.payer_address.clone(),
             input.payee_address.clone(),
@@ -322,7 +321,26 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
                 .collect::<String>()
         );
 
-        tx.execute(
+        NewIntentRow {
+            id,
+            now,
+            now_unix,
+            valid_until,
+            nonce,
+            chain_id,
+            token_address,
+            amount_decimal,
+            signing_hash,
+            signature_scheme: signing_intent.signature_scheme().to_string(),
+        }
+    }
+
+    fn insert_new_intent(
+        conn: &rusqlite::Connection,
+        input: &CreateX402PaymentIntent,
+        row: NewIntentRow,
+    ) -> Result<()> {
+        conn.execute(
             "INSERT INTO x402_payment_intents (
                 id, version, status, payer_address, payee_address, amount, amount_decimal,
                 asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
@@ -330,20 +348,20 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
                 invoice_id, merchant_id, signing_hash, payer_signature_scheme, metadata, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rusqlite::params![
-                id.to_string(),
+                row.id.to_string(),
                 "1.0",
                 X402IntentStatus::Created.to_string(),
                 input.payer_address,
                 input.payee_address,
                 input.amount as i64,
-                amount_decimal.to_string(),
-                asset.to_string().to_lowercase(),
-                network.to_string(),
-                chain_id as i64,
-                token_address,
-                now_unix as i64,
-                valid_until as i64,
-                nonce as i64,
+                row.amount_decimal.to_string(),
+                input.asset.to_string().to_lowercase(),
+                input.network.to_string(),
+                row.chain_id as i64,
+                row.token_address,
+                row.now_unix as i64,
+                row.valid_until as i64,
+                row.nonce as i64,
                 input.idempotency_key,
                 input.resource_uri,
                 input.resource_method,
@@ -352,14 +370,58 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
                 input.order_id.map(|id| id.to_string()),
                 input.invoice_id.map(|id| id.to_string()),
                 input.merchant_id,
-                signing_hash,
-                signing_intent.signature_scheme().to_string(),
+                row.signing_hash,
+                row.signature_scheme,
                 input.metadata,
-                now.to_rfc3339(),
-                now.to_rfc3339(),
+                row.now.to_rfc3339(),
+                row.now.to_rfc3339(),
             ],
         )
         .map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Refuse a transition once the validity window has closed. Settlement
+    /// after `valid_until` is meaningless on-chain (the authorization itself
+    /// carries the deadline), so the intent must end `Expired` instead.
+    fn ensure_not_expired(intent: &X402PaymentIntent, verb: &str) -> Result<()> {
+        let now_unix = Utc::now().timestamp() as u64;
+        if now_unix > intent.valid_until {
+            return Err(CommerceError::ValidationError(format!(
+                "Payment intent has expired (valid_until {}); cannot {verb}",
+                intent.valid_until
+            )));
+        }
+        Ok(())
+    }
+
+    fn get_next_nonce_in_tx(tx: &rusqlite::Transaction<'_>, payer_address: &str) -> Result<u64> {
+        let max_nonce: Option<i64> = tx
+            .query_row(
+                "SELECT MAX(nonce) FROM x402_payment_intents WHERE payer_address = ?",
+                [payer_address],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
+
+        Ok(max_nonce.map_or(0, |n| n as u64 + 1))
+    }
+}
+
+impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
+    fn create(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
+        Self::validate_input(&input)?;
+        let mut conn = self.conn()?;
+        let tx =
+            conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(map_db_error)?;
+        let now = Utc::now();
+        let id = Uuid::new_v4();
+        let nonce = match input.nonce {
+            Some(n) => n,
+            None => Self::get_next_nonce_in_tx(&tx, &input.payer_address)?,
+        };
+        let row = Self::new_intent_row(&input, id, now, nonce);
+        Self::insert_new_intent(&tx, &input, row)?;
 
         tx.commit().map_err(map_db_error)?;
         self.get(id)?.ok_or(CommerceError::NotFound)
@@ -483,7 +545,8 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
     ) -> Result<X402PaymentIntent> {
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-        Self::load_for_transition(&tx, id, &[X402IntentStatus::Signed], "sequence")?;
+        let intent = Self::load_for_transition(&tx, id, &[X402IntentStatus::Signed], "sequence")?;
+        Self::ensure_not_expired(&intent, "sequence")?;
 
         let affected = tx
             .execute(
@@ -513,15 +576,34 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
     ) -> Result<X402PaymentIntent> {
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-        Self::load_for_transition(&tx, id, &[X402IntentStatus::Sequenced], "settle")?;
+        let intent = Self::load_for_transition(&tx, id, &[X402IntentStatus::Sequenced], "settle")?;
+        Self::ensure_not_expired(&intent, "settle")?;
+
+        // One on-chain transaction settles at most one intent. Checked here
+        // (inside the write transaction) for a meaningful error; the unique
+        // index on `tx_hash_key` (migration 082) is the backstop.
+        let already: Option<String> = tx
+            .query_row(
+                "SELECT id FROM x402_payment_intents WHERE tx_hash = ? AND id <> ? LIMIT 1",
+                rusqlite::params![tx_hash, id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_db_error)?;
+        if let Some(other) = already {
+            return Err(CommerceError::Conflict(format!(
+                "tx_hash {tx_hash} already settled intent {other}"
+            )));
+        }
 
         let affected = tx
             .execute(
                 "UPDATE x402_payment_intents SET
-                status = ?, tx_hash = ?, block_number = ?, settled_at = ?, updated_at = ?
+                status = ?, tx_hash = ?, tx_hash_key = ?, block_number = ?, settled_at = ?, updated_at = ?
              WHERE id = ? AND status = ?",
                 rusqlite::params![
                     X402IntentStatus::Settled.to_string(),
+                    tx_hash,
                     tx_hash,
                     block_number as i64,
                     Utc::now().to_rfc3339(),
@@ -776,15 +858,22 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         let conn = self.conn()?;
         let now_unix = Utc::now().timestamp();
 
+        // `Sequenced` intents whose window closed can no longer settle (see
+        // `mark_settled`), so the sweeper expires them too. `Batched` is
+        // deliberately excluded: a batched intent sits inside a published
+        // batch commitment (merkle root + inclusion proof) and its outcome is
+        // decided by that batch's on-chain result via mark_settled/mark_failed,
+        // not by the wall clock.
         let count = conn
             .execute(
                 "UPDATE x402_payment_intents SET status = ?, updated_at = ?
-             WHERE status IN (?, ?) AND valid_until < ?",
+             WHERE status IN (?, ?, ?) AND valid_until < ?",
                 rusqlite::params![
                     X402IntentStatus::Expired.to_string(),
                     Utc::now().to_rfc3339(),
                     X402IntentStatus::Created.to_string(),
                     X402IntentStatus::Signed.to_string(),
+                    X402IntentStatus::Sequenced.to_string(),
                     now_unix,
                 ],
             )
@@ -828,69 +917,24 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         for input in inputs {
             Self::validate_input(&input)?;
             let now = Utc::now();
-            let now_unix = now.timestamp() as u64;
             let id = Uuid::new_v4();
-            let validity_seconds = input.validity_seconds.unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
-            let valid_until = now_unix + validity_seconds;
-
-            let asset = input.asset;
-            let network = input.network;
-            let chain_id = network.chain_id();
-            let token_address = asset.contract_address(network).map(String::from);
-            let decimals = asset.decimals();
-            let divisor = 10u64.pow(u32::from(decimals));
-            let amount_decimal = Decimal::from(input.amount) / Decimal::from(divisor);
-            let payer_address = input.payer_address;
             let nonce = match input.nonce {
                 Some(n) => n,
                 None => {
-                    if let Some(next_nonce) = next_nonce_by_payer.get_mut(&payer_address) {
+                    if let Some(next_nonce) = next_nonce_by_payer.get_mut(&input.payer_address) {
                         let allocated = *next_nonce;
                         *next_nonce += 1;
                         allocated
                     } else {
-                        let next_nonce = Self::get_next_nonce_in_tx(&tx, &payer_address)?;
-                        next_nonce_by_payer.insert(payer_address.clone(), next_nonce + 1);
+                        let next_nonce = Self::get_next_nonce_in_tx(&tx, &input.payer_address)?;
+                        next_nonce_by_payer.insert(input.payer_address.clone(), next_nonce + 1);
                         next_nonce
                     }
                 }
             };
 
-            tx.execute(
-                "INSERT INTO x402_payment_intents (
-                    id, version, status, payer_address, payee_address, amount, amount_decimal,
-                    asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
-                    idempotency_key, resource_uri, resource_method, description, cart_id, order_id,
-                    invoice_id, merchant_id, metadata, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                rusqlite::params![
-                    id.to_string(),
-                    "1.0",
-                    X402IntentStatus::Created.to_string(),
-                    payer_address,
-                    input.payee_address,
-                    input.amount as i64,
-                    amount_decimal.to_string(),
-                    asset.to_string().to_lowercase(),
-                    network.to_string(),
-                    chain_id as i64,
-                    token_address,
-                    now_unix as i64,
-                    valid_until as i64,
-                    nonce as i64,
-                    input.idempotency_key,
-                    input.resource_uri,
-                    input.resource_method,
-                    input.description,
-                    input.cart_id.map(|id| id.to_string()),
-                    input.order_id.map(|id| id.to_string()),
-                    input.invoice_id.map(|id| id.to_string()),
-                    input.merchant_id,
-                    input.metadata,
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                ],
-            ).map_err(map_db_error)?;
+            let row = Self::new_intent_row(&input, id, now, nonce);
+            Self::insert_new_intent(&tx, &input, row)?;
 
             ids.push(id);
         }

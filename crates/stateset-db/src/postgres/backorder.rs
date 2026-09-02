@@ -195,6 +195,45 @@ impl PgBackorderRepository {
         Ok(())
     }
 
+    /// Cancel every open backorder raised for one order line (used when the
+    /// line is removed from its order) and release any stock allocated
+    /// against it. Mirrors the SQLite helper.
+    pub(crate) async fn cancel_backorders_for_order_line_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        order_id: Uuid,
+        order_line_id: Uuid,
+    ) -> Result<()> {
+        let now = Utc::now();
+
+        sqlx::query(
+            "UPDATE backorder_allocations SET status = 'released'
+             WHERE backorder_id IN (
+                 SELECT id FROM backorders WHERE order_id = $1 AND order_line_id = $2
+             )
+               AND status = 'reserved'",
+        )
+        .bind(order_id)
+        .bind(order_line_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            "UPDATE backorders SET status = 'cancelled', updated_at = $1
+             WHERE order_id = $2 AND order_line_id = $3
+               AND status NOT IN ('fulfilled', 'cancelled')",
+        )
+        .bind(now)
+        .bind(order_id)
+        .bind(order_line_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
     fn row_to_fulfillment(row: FulfillmentRow) -> Result<BackorderFulfillment> {
         let FulfillmentRow {
             id,

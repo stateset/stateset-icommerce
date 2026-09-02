@@ -70,6 +70,56 @@ pub struct X402 {
     db: Arc<dyn Database>,
 }
 
+/// Fiat currency a stablecoin asset is pegged to; `None` for volatile assets
+/// that cannot be reconciled against a fiat-priced cart or order.
+const fn asset_fiat_currency(asset: X402Asset) -> Option<stateset_core::CurrencyCode> {
+    match asset {
+        X402Asset::Usdc
+        | X402Asset::Usdt
+        | X402Asset::Dai
+        | X402Asset::SsUsd
+        | X402Asset::WssUsd => Some(stateset_core::CurrencyCode::USD),
+        _ => None,
+    }
+}
+
+/// Check that `input.amount` (in the asset's smallest unit) equals `expected`
+/// in `currency`, the amount the referenced cart/order actually charges.
+pub(crate) fn reconcile_intent_amount(
+    input: &CreateX402PaymentIntent,
+    source: &str,
+    source_id: Uuid,
+    expected: rust_decimal::Decimal,
+    currency: stateset_core::CurrencyCode,
+) -> Result<()> {
+    use stateset_core::{CommerceError, from_smallest_unit};
+
+    let asset_currency = asset_fiat_currency(input.asset).ok_or_else(|| {
+        CommerceError::ValidationError(format!(
+            "x402 asset {} has no fiat peg; cannot reconcile it against {source} {source_id} priced in {}",
+            input.asset,
+            currency.as_str()
+        ))
+    })?;
+    if asset_currency != currency {
+        return Err(CommerceError::ValidationError(format!(
+            "x402 asset {} settles in {} but {source} {source_id} is priced in {}",
+            input.asset,
+            asset_currency.as_str(),
+            currency.as_str()
+        )));
+    }
+    let amount = from_smallest_unit(input.amount, input.asset);
+    if amount != expected {
+        return Err(CommerceError::ValidationError(format!(
+            "x402 intent amount {amount} {} does not match {source} {source_id} total {expected} {}",
+            input.asset,
+            currency.as_str()
+        )));
+    }
+    Ok(())
+}
+
 impl std::fmt::Debug for X402 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("X402").finish_non_exhaustive()
@@ -105,7 +155,33 @@ impl X402 {
     /// })?;
     /// ```
     pub fn create_intent(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
+        self.reconcile_with_source(&input)?;
         self.db.x402_payment_intents().create(input)
+    }
+
+    /// An intent created for a cart or order must be for exactly what that
+    /// cart/order charges. The repository only rejects a zero amount, so the
+    /// accessor reconciles the caller's amount against the cart's
+    /// `grand_total` / the order's `total_amount` (same currency) before the
+    /// intent exists.
+    fn reconcile_with_source(&self, input: &CreateX402PaymentIntent) -> Result<()> {
+        if let Some(cart_id) = input.cart_id {
+            let cart = self.db.carts().get(cart_id.into())?.ok_or_else(|| {
+                stateset_core::CommerceError::ValidationError(format!(
+                    "cart {cart_id} not found; cannot create an x402 intent for it"
+                ))
+            })?;
+            reconcile_intent_amount(input, "cart", cart_id, cart.grand_total, cart.currency)?;
+        }
+        if let Some(order_id) = input.order_id {
+            let order = self.db.orders().get(order_id.into())?.ok_or_else(|| {
+                stateset_core::CommerceError::ValidationError(format!(
+                    "order {order_id} not found; cannot create an x402 intent for it"
+                ))
+            })?;
+            reconcile_intent_amount(input, "order", order_id, order.total_amount, order.currency)?;
+        }
+        Ok(())
     }
 
     /// Get a payment intent by ID
@@ -1020,10 +1096,30 @@ mod tests {
         assert_eq!(verified.trust_level, TrustLevel::Verified);
     }
 
+    fn cart_with_total(commerce: &crate::Commerce, total: rust_decimal::Decimal) -> Uuid {
+        use stateset_core::{AddCartItem, CreateCart};
+        let cart = commerce
+            .carts()
+            .create(CreateCart {
+                currency: Some(CurrencyCode::USD),
+                items: Some(vec![AddCartItem {
+                    sku: "SKU-X402".to_string(),
+                    name: "x402 test item".to_string(),
+                    quantity: 1,
+                    unit_price: total,
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(cart.grand_total, total);
+        cart.id.into()
+    }
+
     #[test]
     fn test_create_and_track_cart_payment() {
         let commerce = setup_commerce();
-        let cart_id = Uuid::new_v4();
+        let cart_id = cart_with_total(&commerce, rust_decimal_macros::dec!(12.50));
 
         let intent = commerce
             .x402()
@@ -1047,6 +1143,116 @@ mod tests {
         let active = commerce.x402().active_intent_for_cart(cart_id).unwrap();
         assert!(active.is_some());
         assert_eq!(active.expect("active intent").id, intent.id);
+    }
+
+    #[test]
+    fn test_cart_payment_amount_must_match_cart_grand_total() {
+        let commerce = setup_commerce();
+        let cart_id = cart_with_total(&commerce, rust_decimal_macros::dec!(12.50));
+
+        let err = commerce
+            .x402()
+            .create_cart_payment(
+                cart_id,
+                "0xPayerCart",
+                "0xPayeeCart",
+                rust_decimal_macros::dec!(1.00),
+                X402Network::SetChain,
+                X402Asset::Usdc,
+            )
+            .expect_err("amount below the cart total must be refused");
+        match err {
+            stateset_core::CommerceError::ValidationError(message) => {
+                let lower = message.to_lowercase();
+                assert!(lower.contains("1.00") || lower.contains("1 usdc"), "{message}");
+                assert!(message.contains("12.50") || message.contains("12.5"), "{message}");
+                assert!(message.contains(&cart_id.to_string()), "{message}");
+            }
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
+        assert!(commerce.x402().intents_for_cart(cart_id).unwrap().is_empty());
+
+        // A volatile asset cannot be reconciled against a USD cart at all.
+        let err = commerce
+            .x402()
+            .create_intent(CreateX402PaymentIntent {
+                payer_address: "0xPayerCart".into(),
+                payee_address: "0xPayeeCart".into(),
+                amount: 1,
+                asset: X402Asset::Eth,
+                network: X402Network::SetChain,
+                cart_id: Some(cart_id),
+                ..Default::default()
+            })
+            .expect_err("ETH has no fiat peg");
+        assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "{err:?}");
+    }
+
+    #[test]
+    fn test_cart_payment_for_unknown_cart_is_refused() {
+        let commerce = setup_commerce();
+        let err = commerce
+            .x402()
+            .create_cart_payment(
+                Uuid::new_v4(),
+                "0xPayerCart",
+                "0xPayeeCart",
+                rust_decimal_macros::dec!(12.50),
+                X402Network::SetChain,
+                X402Asset::Usdc,
+            )
+            .expect_err("unknown cart must be refused");
+        assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "{err:?}");
+    }
+
+    #[test]
+    fn test_order_payment_amount_must_match_order_total() {
+        use stateset_core::{CreateCustomer, CreateOrder, CreateOrderItem, ProductId};
+        let commerce = setup_commerce();
+        let customer = commerce
+            .customers()
+            .create(CreateCustomer {
+                email: "x402-order@example.com".into(),
+                first_name: "X".into(),
+                last_name: "Payer".into(),
+                ..Default::default()
+            })
+            .expect("customer");
+        let order = commerce
+            .orders()
+            .create(CreateOrder {
+                customer_id: customer.id,
+                currency: Some(CurrencyCode::USD),
+                items: vec![CreateOrderItem {
+                    product_id: ProductId::new(),
+                    sku: "SKU-ORD".to_string(),
+                    name: "order item".to_string(),
+                    quantity: 2,
+                    unit_price: rust_decimal_macros::dec!(10.00),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(order.total_amount, rust_decimal_macros::dec!(20.00));
+
+        let make = |amount: u64| CreateX402PaymentIntent {
+            payer_address: "0xPayerOrder".into(),
+            payee_address: "0xPayeeOrder".into(),
+            amount,
+            asset: X402Asset::Usdc,
+            network: X402Network::SetChain,
+            order_id: Some(order.id.into()),
+            ..Default::default()
+        };
+
+        let err = commerce.x402().create_intent(make(19_990_000)).expect_err("short by a cent");
+        assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "{err:?}");
+        assert!(commerce.x402().intents_for_order(order.id.into()).unwrap().is_empty());
+
+        let intent = commerce.x402().create_intent(make(20_000_000)).expect("exact amount");
+        assert_eq!(intent.order_id, Some(order.id.into()));
+        assert_eq!(intent.amount_decimal, rust_decimal_macros::dec!(20));
     }
 
     #[test]

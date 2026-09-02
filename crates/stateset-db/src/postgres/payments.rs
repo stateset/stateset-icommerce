@@ -9,7 +9,7 @@ use sqlx::FromRow;
 use sqlx::postgres::PgPool;
 use stateset_core::{
     BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CurrencyCode,
-    CustomerId, InvoiceId, OrderId, Payment, PaymentFilter, PaymentId, PaymentMethod,
+    CustomerId, InvoiceId, OrderId, OrderStatus, Payment, PaymentFilter, PaymentId, PaymentMethod,
     PaymentMethodType, PaymentRepository, PaymentTransactionStatus, Refund, RefundStatus, Result,
     UpdatePayment, Validate, generate_payment_number, generate_refund_number, validate_batch_size,
 };
@@ -17,18 +17,30 @@ use uuid::Uuid;
 
 /// Payment statuses that hold (or are about to hold) a slice of the order's
 /// total; in-flight captures count so concurrent captures cannot both pass.
+///
+/// `Disputed` is included: a chargeback under dispute is contested money, not a
+/// settled loss — the capture is still on the books (and the dispute may
+/// resolve back to `Completed`), so it must keep consuming its slice of the
+/// order total. Mirrors the SQLite backend exactly.
+pub(crate) const CAPTURING_STATUSES: [PaymentTransactionStatus; 7] = [
+    PaymentTransactionStatus::Pending,
+    PaymentTransactionStatus::Processing,
+    PaymentTransactionStatus::RequiresAction,
+    PaymentTransactionStatus::Completed,
+    PaymentTransactionStatus::PartiallyRefunded,
+    PaymentTransactionStatus::Refunded,
+    PaymentTransactionStatus::Disputed,
+];
+
+/// Whether `status` holds a slice of its order's total (see
+/// [`CAPTURING_STATUSES`]).
+pub(crate) fn is_capturing(status: PaymentTransactionStatus) -> bool {
+    CAPTURING_STATUSES.contains(&status)
+}
+
+/// [`CAPTURING_STATUSES`] as strings, to bind to a `status = ANY($n)` predicate.
 fn capturing_statuses() -> Vec<String> {
-    [
-        PaymentTransactionStatus::Pending,
-        PaymentTransactionStatus::Processing,
-        PaymentTransactionStatus::RequiresAction,
-        PaymentTransactionStatus::Completed,
-        PaymentTransactionStatus::PartiallyRefunded,
-        PaymentTransactionStatus::Refunded,
-    ]
-    .iter()
-    .map(ToString::to_string)
-    .collect()
+    CAPTURING_STATUSES.iter().map(ToString::to_string).collect()
 }
 
 /// Every payment status, so the transition guards below can be derived from the
@@ -90,24 +102,51 @@ fn transition_conflict(
     CommerceError::Conflict(format!("Payment is {current} and cannot transition to {target}"))
 }
 
-/// Over-capture guard: reject when Σ(in-flight + completed captures for the
-/// order, excluding `exclude_payment_id`) + `amount` would exceed
-/// `orders.total_amount`. Locks the order row with `FOR UPDATE` so concurrent
-/// captures for the same order serialize. A payment whose `order_id` does not
-/// resolve to an order has nothing to cap against and passes.
+/// Order-side guards for a capture against `order_id`, all evaluated on ONE
+/// `SELECT ... FOR UPDATE` of the order row (so concurrent captures for the
+/// same order serialize on the row lock):
+///
+/// 1. **order status** — a `Cancelled` or `Refunded` order has no money owed on
+///    it; creating or completing a capturing payment against it would orphan
+///    the captured money (`ValidationError` naming the order status);
+/// 2. **currency** — the payment's currency must equal the order's, otherwise
+///    the capacity sum below would add unlike units (JPY 100 against a USD 100
+///    order used to pass) (`ValidationError` naming both currencies);
+/// 3. **capacity** — reject when Σ(captures for the order in a capturing
+///    status, excluding `exclude_payment_id`) + `amount` would exceed
+///    `orders.total_amount` (`CaptureExceedsOrderTotal`).
+///
+/// A payment whose `order_id` does not resolve to an order has nothing to cap
+/// against and passes. Mirrors the SQLite backend exactly.
 pub(crate) async fn check_order_capture_capacity_pg(
     conn: &mut sqlx::PgConnection,
     order_id: Uuid,
     exclude_payment_id: Option<Uuid>,
     amount: Decimal,
+    payment_currency: CurrencyCode,
 ) -> Result<()> {
-    let total: Option<(Decimal,)> =
-        sqlx::query_as("SELECT total_amount FROM orders WHERE id = $1 FOR UPDATE")
-            .bind(order_id)
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(map_db_error)?;
-    let Some((total,)) = total else { return Ok(()) };
+    let order: Option<(Decimal, String, CurrencyCode)> = sqlx::query_as(
+        "SELECT total_amount, status, currency FROM orders WHERE id = $1 FOR UPDATE",
+    )
+    .bind(order_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    let Some((total, raw_status, order_currency)) = order else { return Ok(()) };
+    let order_status: OrderStatus = raw_status.parse().map_err(|_| {
+        CommerceError::DatabaseError(format!("Invalid order.status '{raw_status}'"))
+    })?;
+
+    if matches!(order_status, OrderStatus::Cancelled | OrderStatus::Refunded) {
+        return Err(CommerceError::ValidationError(format!(
+            "Order {order_id} is {order_status}; a payment cannot be captured against it"
+        )));
+    }
+    if payment_currency != order_currency {
+        return Err(CommerceError::ValidationError(format!(
+            "Payment currency {payment_currency} does not match order {order_id} currency {order_currency}"
+        )));
+    }
 
     let (captured,): (Decimal,) = sqlx::query_as(
         "SELECT COALESCE(SUM(amount), 0) FROM payments \
@@ -129,6 +168,30 @@ pub(crate) async fn check_order_capture_capacity_pg(
         });
     }
     Ok(())
+}
+
+/// Payments for `order_id` still holding captured money: every payment in a
+/// capturing status whose `amount` exceeds its `amount_refunded`. Runs on the
+/// caller's connection so the orders module can consult it inside its own
+/// cancel transaction.
+pub(crate) async fn open_captures_for_order_pg(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+) -> Result<Vec<Payment>> {
+    let rows = sqlx::query_as::<_, PaymentRow>(
+        "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
+         amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+         card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
+         description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
+         FROM payments WHERE order_id = $1 AND status = ANY($2) AND amount > amount_refunded
+         ORDER BY created_at",
+    )
+    .bind(order_id)
+    .bind(capturing_statuses())
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    rows.into_iter().map(PgPaymentRepository::row_to_payment).collect()
 }
 
 #[derive(Debug, Clone)]
@@ -428,13 +491,20 @@ impl PgPaymentRepository {
 
         // Over-capture check and INSERT share one transaction; the guard locks
         // the order row so concurrent captures serialize.
+        let currency = input.currency.unwrap_or(CurrencyCode::USD);
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         if let Some(order_id) = input.order_id {
-            check_order_capture_capacity_pg(tx.as_mut(), order_id.into_uuid(), None, input.amount)
-                .await?;
+            check_order_capture_capacity_pg(
+                tx.as_mut(),
+                order_id.into_uuid(),
+                None,
+                input.amount,
+                currency,
+            )
+            .await?;
         }
 
-        sqlx::query(
+        let inserted = sqlx::query(
             "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,
              payment_method, amount, currency, amount_refunded, external_id, idempotency_key, processor,
              card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
@@ -449,7 +519,7 @@ impl PgPaymentRepository {
         .bind(PaymentTransactionStatus::Pending.to_string())
         .bind(input.payment_method.to_string())
         .bind(input.amount)
-        .bind(input.currency.unwrap_or(CurrencyCode::USD))
+        .bind(currency)
         .bind(Decimal::ZERO)
         .bind(&input.external_id)
         .bind(&input.idempotency_key)
@@ -467,7 +537,23 @@ impl PgPaymentRepository {
         .bind(now)
         .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error);
+
+        // Two callers racing the same idempotency key can both miss the
+        // pre-transaction lookup; the loser's INSERT then trips the UNIQUE index
+        // on `idempotency_key`. That is the idempotent case, not an error: roll
+        // back and return the row the winner wrote.
+        if let Err(err) = inserted {
+            if let (CommerceError::Conflict(_), Some(key)) =
+                (&err, input.idempotency_key.as_deref())
+            {
+                drop(tx);
+                if let Some(existing) = self.get_by_idempotency_key_async(key).await? {
+                    return Ok(existing);
+                }
+            }
+            return Err(err);
+        }
         append_kernel_event_tx(tx.as_mut(), &outbox_event).await?;
         tx.commit().await.map_err(map_db_error)?;
 
@@ -574,6 +660,28 @@ impl PgPaymentRepository {
         let payment = Self::row_to_payment(row)?;
         let current = payment.status;
         let target = input.status.unwrap_or(current);
+        if !payment_transition_allowed(current, target) {
+            return Err(transition_conflict(current, target));
+        }
+
+        // A write that moves the payment from a non-capturing status into a
+        // capturing one re-acquires a slice of the order total, so it gets the
+        // same in-transaction order guards as `mark_completed_async` (capacity,
+        // order status, currency). Today no legal edge does this (every
+        // non-capturing status is terminal), so this is the guard that keeps
+        // `update` honest if the state machine ever grows one.
+        if !is_capturing(current) && is_capturing(target) {
+            if let Some(order_id) = payment.order_id {
+                check_order_capture_capacity_pg(
+                    tx.as_mut(),
+                    order_id.into_uuid(),
+                    Some(id),
+                    payment.amount,
+                    payment.currency,
+                )
+                .await?;
+            }
+        }
 
         let rows = sqlx::query(
             "UPDATE payments SET status = $1, external_id = $2, failure_reason = $3,
@@ -676,6 +784,13 @@ impl PgPaymentRepository {
         self.list_async(PaymentFilter { invoice_id: Some(invoice_id), ..Default::default() }).await
     }
 
+    /// Payments for `order_id` still holding captured money (async); see
+    /// [`PaymentRepository::open_captures_for_order`].
+    pub async fn open_captures_for_order_async(&self, order_id: Uuid) -> Result<Vec<Payment>> {
+        let mut conn = self.pool.acquire().await.map_err(map_db_error)?;
+        open_captures_for_order_pg(conn.as_mut(), order_id).await
+    }
+
     /// Mark payment as processing (async)
     pub async fn mark_processing_async(&self, id: Uuid) -> Result<Payment> {
         self.update_async(
@@ -702,8 +817,13 @@ impl PgPaymentRepository {
         //      that was failed/cancelled while still in flight (and so released
         //      its slice of the total) must not be completed on top of captures
         //      made since.
-        let (raw_status, order_id, amount): (String, Option<Uuid>, Decimal) = sqlx::query_as(
-            "SELECT status, order_id, amount FROM payments WHERE id = $1 FOR UPDATE",
+        let (raw_status, order_id, amount, currency): (
+            String,
+            Option<Uuid>,
+            Decimal,
+            CurrencyCode,
+        ) = sqlx::query_as(
+            "SELECT status, order_id, amount, currency FROM payments WHERE id = $1 FOR UPDATE",
         )
         .bind(id)
         .fetch_optional(tx.as_mut())
@@ -718,7 +838,8 @@ impl PgPaymentRepository {
         }
 
         if let Some(order_id) = order_id {
-            check_order_capture_capacity_pg(tx.as_mut(), order_id, Some(id), amount).await?;
+            check_order_capture_capacity_pg(tx.as_mut(), order_id, Some(id), amount, currency)
+                .await?;
         }
 
         let rows = sqlx::query(
@@ -1334,6 +1455,7 @@ impl PgPaymentRepository {
                     order_id.into_uuid(),
                     None,
                     input.amount,
+                    input.currency.unwrap_or(CurrencyCode::USD),
                 )
                 .await?;
             }
@@ -1488,6 +1610,23 @@ impl PgPaymentRepository {
             // whole atomic batch rather than silently landing.
             let current = payment.status;
             let target = input.status.unwrap_or(current);
+            if !payment_transition_allowed(current, target) {
+                return Err(transition_conflict(current, target));
+            }
+            // Same order guards as the single-row `update_async` when the
+            // write re-acquires a slice of the order total.
+            if !is_capturing(current) && is_capturing(target) {
+                if let Some(order_id) = payment.order_id {
+                    check_order_capture_capacity_pg(
+                        tx.as_mut(),
+                        order_id.into_uuid(),
+                        Some(raw_id),
+                        payment.amount,
+                        payment.currency,
+                    )
+                    .await?;
+                }
+            }
             let rows = sqlx::query(
                 "UPDATE payments SET status = $1, external_id = $2, failure_reason = $3,
                  failure_code = $4, metadata = $5, updated_at = $6
@@ -1637,6 +1776,10 @@ impl PaymentRepository for PgPaymentRepository {
 
     fn for_invoice(&self, invoice_id: InvoiceId) -> Result<Vec<Payment>> {
         super::block_on(self.for_invoice_async(invoice_id.into_uuid()))
+    }
+
+    fn open_captures_for_order(&self, order_id: OrderId) -> Result<Vec<Payment>> {
+        super::block_on(self.open_captures_for_order_async(order_id.into_uuid()))
     }
 
     fn mark_processing(&self, id: PaymentId) -> Result<Payment> {

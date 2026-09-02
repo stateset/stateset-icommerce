@@ -3,7 +3,7 @@
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{Row, params};
+use rusqlite::{OptionalExtension, Row, params};
 use stateset_core::CommerceError;
 use stateset_core::{
     BatchResult, ChangeSerialStatus, CreateSerialNumber, CreateSerialNumbersBulk, LotRepository,
@@ -264,7 +264,7 @@ impl SqliteSerialRepository {
         })
     }
 
-    #[allow(clippy::too_many_arguments, dead_code)]
+    #[allow(clippy::too_many_arguments)]
     fn record_history(
         &self,
         conn: &rusqlite::Connection,
@@ -308,6 +308,90 @@ impl SqliteSerialRepository {
             ],
         )?;
 
+        Ok(())
+    }
+
+    /// Load a serial inside a transaction, mapping a missing row to `NotFound`.
+    fn load_in_tx(tx: &rusqlite::Transaction<'_>, id: Uuid) -> stateset_core::Result<SerialNumber> {
+        tx.query_row(
+            "SELECT * FROM serial_numbers WHERE id = ?",
+            params![id.to_string()],
+            Self::map_serial_row,
+        )
+        .optional()
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)
+    }
+
+    /// Load a reservation inside a transaction, mapping a missing row to `NotFound`.
+    fn load_reservation_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id: Uuid,
+    ) -> stateset_core::Result<SerialReservation> {
+        tx.query_row(
+            "SELECT * FROM serial_reservations WHERE id = ?",
+            params![id.to_string()],
+            Self::map_reservation_row,
+        )
+        .optional()
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)
+    }
+
+    /// Close every open reservation on a serial (released/consumed/swept all
+    /// look the same in the store: `released_at` set, `active_key` cleared so
+    /// the unique backstop index frees the slot).
+    fn close_open_reservations(
+        tx: &rusqlite::Transaction<'_>,
+        serial_id: Uuid,
+        now: &str,
+    ) -> stateset_core::Result<usize> {
+        tx.execute(
+            "UPDATE serial_reservations SET released_at = ?, active_key = NULL
+             WHERE serial_id = ? AND released_at IS NULL",
+            params![now, serial_id.to_string()],
+        )
+        .map_err(map_db_error)
+    }
+
+    /// Move `serial` to `to` — the ONE place a status is written.
+    ///
+    /// Checks the state machine ([`SerialStatus::allowed_transitions`]), then
+    /// writes `status` conditionally on the status the caller observed
+    /// (`WHERE id = ? AND status = ?`) so a concurrent writer that got there
+    /// first is detected instead of overwritten. Leaving `Reserved` consumes
+    /// any open reservation in the same transaction. `extra_set` is appended
+    /// to the `SET` list (leading comma included) with `extra_params` bound
+    /// in order after `status`/`updated_at`.
+    fn write_transition(
+        tx: &rusqlite::Transaction<'_>,
+        serial: &SerialNumber,
+        to: SerialStatus,
+        now: &str,
+        extra_set: &str,
+        extra_params: &[&dyn rusqlite::ToSql],
+    ) -> stateset_core::Result<()> {
+        serial.ensure_can_transition_to(to)?;
+        let sql = format!(
+            "UPDATE serial_numbers SET status = ?, updated_at = ?{extra_set} WHERE id = ? AND status = ?"
+        );
+        let to_str = to.to_string();
+        let id_str = serial.id.to_string();
+        let from_str = serial.status.to_string();
+        let mut bound: Vec<&dyn rusqlite::ToSql> = vec![&to_str, &now];
+        bound.extend_from_slice(extra_params);
+        bound.push(&id_str);
+        bound.push(&from_str);
+        let rows = tx.execute(&sql, bound.as_slice()).map_err(map_db_error)?;
+        if rows != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "Serial {} ({}) changed concurrently while moving from {} to {}",
+                serial.serial, serial.id, serial.status, to
+            )));
+        }
+        if serial.status == SerialStatus::Reserved {
+            Self::close_open_reservations(tx, serial.id, now)?;
+        }
         Ok(())
     }
 
@@ -472,45 +556,90 @@ impl SerialRepository for SqliteSerialRepository {
     fn update(&self, id: Uuid, input: UpdateSerialNumber) -> stateset_core::Result<SerialNumber> {
         let now = Utc::now().to_rfc3339();
 
-        let mut updates = vec!["updated_at = ?".to_string()];
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
-
-        if let Some(status) = &input.status {
-            updates.push("status = ?".to_string());
-            params.push(Box::new(status.to_string()));
-        }
-        if let Some(loc) = input.location_id {
-            updates.push("current_location_id = ?".to_string());
-            params.push(Box::new(loc));
-        }
-        if let Some(lot_id) = &input.lot_id {
-            updates.push("lot_id = ?".to_string());
-            params.push(Box::new(lot_id.to_string()));
-        }
-        if let Some(warranty_id) = &input.warranty_id {
-            updates.push("warranty_id = ?".to_string());
-            params.push(Box::new(warranty_id.to_string()));
-        }
-        if let Some(notes) = &input.notes {
-            updates.push("notes = ?".to_string());
-            params.push(Box::new(notes.clone()));
-        }
-        if let Some(attrs) = &input.attributes {
-            updates.push("attributes = ?".to_string());
-            params.push(Box::new(serde_json::to_string(attrs).unwrap_or_default()));
-        }
-
-        params.push(Box::new(id.to_string()));
-
-        let sql = format!("UPDATE serial_numbers SET {} WHERE id = ?", updates.join(", "));
-
         {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
-                &sql,
-                rusqlite::params_from_iter(params.iter().map(std::convert::AsRef::as_ref)),
-            )
-            .map_err(map_db_error)?;
+            let mut conn =
+                self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+            let serial = Self::load_in_tx(&tx, id)?;
+
+            let mut updates = vec!["updated_at = ?".to_string()];
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.clone())];
+
+            // A status change through `update` is a state-machine transition
+            // like any other; a same-status "change" is a no-op.
+            let status_change = match input.status {
+                Some(to) if to != serial.status => {
+                    serial.ensure_can_transition_to(to)?;
+                    updates.push("status = ?".to_string());
+                    params.push(Box::new(to.to_string()));
+                    Some(to)
+                }
+                _ => None,
+            };
+            if let Some(loc) = input.location_id {
+                updates.push("current_location_id = ?".to_string());
+                params.push(Box::new(loc));
+            }
+            if let Some(lot_id) = &input.lot_id {
+                updates.push("lot_id = ?".to_string());
+                params.push(Box::new(lot_id.to_string()));
+            }
+            if let Some(warranty_id) = &input.warranty_id {
+                updates.push("warranty_id = ?".to_string());
+                params.push(Box::new(warranty_id.to_string()));
+            }
+            if let Some(notes) = &input.notes {
+                updates.push("notes = ?".to_string());
+                params.push(Box::new(notes.clone()));
+            }
+            if let Some(attrs) = &input.attributes {
+                updates.push("attributes = ?".to_string());
+                params.push(Box::new(serde_json::to_string(attrs).unwrap_or_default()));
+            }
+
+            params.push(Box::new(id.to_string()));
+            params.push(Box::new(serial.status.to_string()));
+
+            let sql = format!(
+                "UPDATE serial_numbers SET {} WHERE id = ? AND status = ?",
+                updates.join(", ")
+            );
+            let rows = tx
+                .execute(
+                    &sql,
+                    rusqlite::params_from_iter(params.iter().map(std::convert::AsRef::as_ref)),
+                )
+                .map_err(map_db_error)?;
+            if rows != 1 {
+                return Err(CommerceError::Conflict(format!(
+                    "Serial {} ({}) changed concurrently during update",
+                    serial.serial, serial.id
+                )));
+            }
+
+            if let Some(to) = status_change {
+                if serial.status == SerialStatus::Reserved {
+                    Self::close_open_reservations(&tx, serial.id, &now)?;
+                }
+                self.record_history(
+                    &tx,
+                    &serial,
+                    SerialEventType::StatusChanged,
+                    serial.status,
+                    to,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(map_db_error)?;
+            }
+
+            tx.commit().map_err(map_db_error)?;
         }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
@@ -604,61 +733,34 @@ impl SerialRepository for SqliteSerialRepository {
             let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
             let now = Utc::now().to_rfc3339();
 
-            // Get current serial
-            let serial: SerialNumber = tx
-                .query_row(
-                    "SELECT * FROM serial_numbers WHERE id = ?",
-                    params![input.serial_id.to_string()],
-                    Self::map_serial_row,
-                )
-                .map_err(map_db_error)?;
+            let serial = Self::load_in_tx(&tx, input.serial_id)?;
+            let owner_id = input.owner_id.map(|id| id.to_string());
 
-            let old_status = serial.status;
+            Self::write_transition(
+                &tx,
+                &serial,
+                input.new_status,
+                &now,
+                ", current_location_id = COALESCE(?, current_location_id),
+                   current_owner_id = COALESCE(?, current_owner_id),
+                   current_owner_type = COALESCE(?, current_owner_type)",
+                &[&input.location_id, &owner_id, &input.owner_type],
+            )?;
 
-            // Update serial
-            tx.execute(
-                "UPDATE serial_numbers SET
-                    status = ?,
-                    current_location_id = COALESCE(?, current_location_id),
-                    current_owner_id = COALESCE(?, current_owner_id),
-                    current_owner_type = COALESCE(?, current_owner_type),
-                    updated_at = ?
-                WHERE id = ?",
-                params![
-                    input.new_status.to_string(),
-                    input.location_id,
-                    input.owner_id.map(|id| id.to_string()),
-                    input.owner_type,
-                    now,
-                    input.serial_id.to_string(),
-                ],
-            )
-            .map_err(map_db_error)?;
-
-            // Record history
-            let history_id = Uuid::new_v4();
-            tx.execute(
-                "INSERT INTO serial_history (
-                    id, serial_id, event_type, reference_type, reference_id,
-                    from_status, to_status, from_location_id, to_location_id,
-                    from_owner_id, to_owner_id, performed_by, notes, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                params![
-                    history_id.to_string(),
-                    input.serial_id.to_string(),
-                    SerialEventType::StatusChanged.to_string(),
-                    input.reference_type,
-                    input.reference_id.map(|id| id.to_string()),
-                    old_status.to_string(),
-                    input.new_status.to_string(),
-                    serial.current_location_id,
-                    input.location_id,
-                    serial.current_owner_id.map(|id| id.to_string()),
-                    input.owner_id.map(|id| id.to_string()),
-                    input.performed_by,
-                    input.notes,
-                    now,
-                ],
+            self.record_history(
+                &tx,
+                &serial,
+                SerialEventType::StatusChanged,
+                serial.status,
+                input.new_status,
+                input.reference_type.as_deref(),
+                input.reference_id,
+                serial.current_location_id,
+                input.location_id,
+                serial.current_owner_id,
+                input.owner_id,
+                input.performed_by.as_deref(),
+                input.notes.as_deref(),
             )
             .map_err(map_db_error)?;
 
@@ -673,48 +775,63 @@ impl SerialRepository for SqliteSerialRepository {
         let now = Utc::now();
         let now_str = now.to_rfc3339();
 
-        // Get and validate serial
-        let serial: SerialNumber = tx
-            .query_row(
-                "SELECT * FROM serial_numbers WHERE id = ?",
-                params![input.serial_id.to_string()],
-                Self::map_serial_row,
-            )
-            .map_err(map_db_error)?;
+        let mut serial = Self::load_in_tx(&tx, input.serial_id)?;
 
-        if serial.status != SerialStatus::Available {
-            return Err(CommerceError::ValidationError(format!(
-                "Serial is not available for reservation, current status: {}",
-                serial.status
-            )));
+        // Lazy expiry: a serial still `Reserved` by an expired, unconfirmed
+        // reservation is returned to stock in-line so the sweeper is not on the
+        // critical path of the next order.
+        if serial.status == SerialStatus::Reserved {
+            let stale = tx
+                .query_row(
+                    "SELECT * FROM serial_reservations
+                     WHERE serial_id = ? AND released_at IS NULL AND confirmed_at IS NULL
+                       AND expires_at IS NOT NULL AND expires_at <= ?
+                     ORDER BY reserved_at DESC LIMIT 1",
+                    params![input.serial_id.to_string(), now_str],
+                    Self::map_reservation_row,
+                )
+                .optional()
+                .map_err(map_db_error)?;
+            if let Some(stale) = stale {
+                Self::write_transition(&tx, &serial, SerialStatus::Available, &now_str, "", &[])?;
+                self.record_history(
+                    &tx,
+                    &serial,
+                    SerialEventType::Released,
+                    SerialStatus::Reserved,
+                    SerialStatus::Available,
+                    Some(&stale.reference_type),
+                    Some(stale.reference_id),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some("reservation expired"),
+                )
+                .map_err(map_db_error)?;
+                serial.status = SerialStatus::Available;
+            } else {
+                return Err(CommerceError::Conflict(format!(
+                    "Serial {} ({}) already has an open reservation",
+                    serial.serial, serial.id
+                )));
+            }
         }
+        serial.ensure_can_transition_to(SerialStatus::Reserved)?;
 
-        // Check for existing active reservations
-        let existing: i64 = tx
-            .query_row(
-                "SELECT COUNT(*) FROM serial_reservations
-             WHERE serial_id = ? AND released_at IS NULL AND confirmed_at IS NULL
-             AND (expires_at IS NULL OR expires_at > ?)",
-                params![input.serial_id.to_string(), now_str],
-                |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
-
-        if existing > 0 {
-            return Err(CommerceError::ValidationError(
-                "Serial already has an active reservation".to_string(),
-            ));
-        }
+        // Legacy rows (pre-lifecycle reservations that were never consumed)
+        // must not hold the backstop key against this new reservation.
+        Self::close_open_reservations(&tx, serial.id, &now_str)?;
 
         let id = Uuid::new_v4();
         let expires_at = input.expires_in_seconds.map(|secs| now + chrono::Duration::seconds(secs));
 
-        // Create reservation
         tx.execute(
             "INSERT INTO serial_reservations (
                 id, serial_id, reference_type, reference_id, reserved_by,
-                reserved_at, expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                reserved_at, expires_at, active_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 id.to_string(),
                 input.serial_id.to_string(),
@@ -723,35 +840,27 @@ impl SerialRepository for SqliteSerialRepository {
                 input.reserved_by,
                 now_str,
                 expires_at.map(|dt| dt.to_rfc3339()),
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        // Update serial status
-        tx.execute(
-            "UPDATE serial_numbers SET status = ?, updated_at = ? WHERE id = ?",
-            params![SerialStatus::Reserved.to_string(), now_str, input.serial_id.to_string(),],
-        )
-        .map_err(map_db_error)?;
-
-        // Record history
-        let history_id = Uuid::new_v4();
-        tx.execute(
-            "INSERT INTO serial_history (
-                id, serial_id, event_type, reference_type, reference_id,
-                from_status, to_status, performed_by, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                history_id.to_string(),
                 input.serial_id.to_string(),
-                SerialEventType::Reserved.to_string(),
-                input.reference_type,
-                input.reference_id.to_string(),
-                SerialStatus::Available.to_string(),
-                SerialStatus::Reserved.to_string(),
-                input.reserved_by,
-                now_str,
             ],
+        )
+        .map_err(map_db_error)?;
+
+        Self::write_transition(&tx, &serial, SerialStatus::Reserved, &now_str, "", &[])?;
+
+        self.record_history(
+            &tx,
+            &serial,
+            SerialEventType::Reserved,
+            SerialStatus::Available,
+            SerialStatus::Reserved,
+            Some(&input.reference_type),
+            Some(input.reference_id),
+            None,
+            None,
+            None,
+            None,
+            input.reserved_by.as_deref(),
+            None,
         )
         .map_err(map_db_error)?;
 
@@ -775,52 +884,53 @@ impl SerialRepository for SqliteSerialRepository {
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
-        // Get reservation
-        let reservation: SerialReservation = tx
-            .query_row(
-                "SELECT * FROM serial_reservations WHERE id = ?",
-                params![reservation_id.to_string()],
-                Self::map_reservation_row,
-            )
-            .map_err(map_db_error)?;
-
-        if reservation.released_at.is_some() || reservation.confirmed_at.is_some() {
-            return Err(CommerceError::ValidationError(
-                "Reservation is already released or confirmed".to_string(),
-            ));
+        let reservation = Self::load_reservation_in_tx(&tx, reservation_id)?;
+        if reservation.released_at.is_some() {
+            return Err(CommerceError::Conflict(format!(
+                "Reservation {reservation_id} is already closed (released, consumed or expired)"
+            )));
         }
 
-        // Release reservation
-        tx.execute(
-            "UPDATE serial_reservations SET released_at = ? WHERE id = ?",
-            params![now, reservation_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        // The reservation may only be released while it still holds the serial.
+        // Once the unit shipped or sold the reservation was consumed; releasing
+        // it now must not flip a shipped unit back to `available`.
+        let serial = Self::load_in_tx(&tx, reservation.serial_id)?;
+        if serial.status != SerialStatus::Reserved {
+            return Err(CommerceError::Conflict(format!(
+                "Reservation {reservation_id} cannot be released: serial {} ({}) is {}",
+                serial.serial, serial.id, serial.status
+            )));
+        }
 
-        // Update serial status back to available
-        tx.execute(
-            "UPDATE serial_numbers SET status = ?, updated_at = ? WHERE id = ?",
-            params![SerialStatus::Available.to_string(), now, reservation.serial_id.to_string(),],
-        )
-        .map_err(map_db_error)?;
+        let rows = tx
+            .execute(
+                "UPDATE serial_reservations SET released_at = ?, active_key = NULL
+                 WHERE id = ? AND released_at IS NULL",
+                params![now, reservation_id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        if rows != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "Reservation {reservation_id} was closed concurrently"
+            )));
+        }
 
-        // Record history
-        let history_id = Uuid::new_v4();
-        tx.execute(
-            "INSERT INTO serial_history (
-                id, serial_id, event_type, reference_type, reference_id,
-                from_status, to_status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                history_id.to_string(),
-                reservation.serial_id.to_string(),
-                SerialEventType::Released.to_string(),
-                reservation.reference_type,
-                reservation.reference_id.to_string(),
-                SerialStatus::Reserved.to_string(),
-                SerialStatus::Available.to_string(),
-                now,
-            ],
+        Self::write_transition(&tx, &serial, SerialStatus::Available, &now, "", &[])?;
+
+        self.record_history(
+            &tx,
+            &serial,
+            SerialEventType::Released,
+            SerialStatus::Reserved,
+            SerialStatus::Available,
+            Some(&reservation.reference_type),
+            Some(reservation.reference_id),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .map_err(map_db_error)?;
 
@@ -829,35 +939,123 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn confirm_reservation(&self, reservation_id: Uuid) -> stateset_core::Result<()> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let now = Utc::now().to_rfc3339();
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let now = Utc::now();
 
-        // Get reservation
-        let reservation: SerialReservation = conn
-            .query_row(
-                "SELECT * FROM serial_reservations WHERE id = ?",
-                params![reservation_id.to_string()],
-                Self::map_reservation_row,
+        let reservation = Self::load_reservation_in_tx(&tx, reservation_id)?;
+        if reservation.released_at.is_some() {
+            return Err(CommerceError::Conflict(format!(
+                "Reservation {reservation_id} is already closed (released, consumed or expired)"
+            )));
+        }
+        if reservation.confirmed_at.is_some() {
+            return Ok(()); // Already confirmed — idempotent.
+        }
+        if reservation.expires_at.is_some_and(|expires| now > expires) {
+            return Err(CommerceError::Conflict(format!(
+                "Reservation {reservation_id} expired at {:?} and cannot be confirmed",
+                reservation.expires_at
+            )));
+        }
+
+        let serial = Self::load_in_tx(&tx, reservation.serial_id)?;
+        if serial.status != SerialStatus::Reserved {
+            return Err(CommerceError::Conflict(format!(
+                "Reservation {reservation_id} cannot be confirmed: serial {} ({}) is {}",
+                serial.serial, serial.id, serial.status
+            )));
+        }
+
+        let rows = tx
+            .execute(
+                "UPDATE serial_reservations SET confirmed_at = ?
+                 WHERE id = ? AND released_at IS NULL AND confirmed_at IS NULL",
+                params![now.to_rfc3339(), reservation_id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        if rows != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "Reservation {reservation_id} changed concurrently"
+            )));
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(())
+    }
+
+    fn get_reservation(
+        &self,
+        reservation_id: Uuid,
+    ) -> stateset_core::Result<Option<SerialReservation>> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        conn.query_row(
+            "SELECT * FROM serial_reservations WHERE id = ?",
+            params![reservation_id.to_string()],
+            Self::map_reservation_row,
+        )
+        .optional()
+        .map_err(map_db_error)
+    }
+
+    fn release_expired_reservations(
+        &self,
+        now: chrono::DateTime<Utc>,
+    ) -> stateset_core::Result<u64> {
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let now_str = now.to_rfc3339();
+
+        let expired: Vec<SerialReservation> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT * FROM serial_reservations
+                     WHERE released_at IS NULL AND confirmed_at IS NULL
+                       AND expires_at IS NOT NULL AND expires_at <= ?
+                     ORDER BY reserved_at ASC",
+                )
+                .map_err(map_db_error)?;
+            let rows = stmt
+                .query_map(params![now_str], Self::map_reservation_row)
+                .map_err(map_db_error)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(map_db_error)?
+        };
+
+        let mut returned_to_stock = 0u64;
+        for reservation in expired {
+            tx.execute(
+                "UPDATE serial_reservations SET released_at = ?, active_key = NULL
+                 WHERE id = ? AND released_at IS NULL",
+                params![now_str, reservation.id.to_string()],
             )
             .map_err(map_db_error)?;
 
-        if reservation.released_at.is_some() {
-            return Err(CommerceError::ValidationError(
-                "Reservation has been released".to_string(),
-            ));
+            let serial = Self::load_in_tx(&tx, reservation.serial_id)?;
+            if serial.status != SerialStatus::Reserved {
+                continue; // The unit already moved on; only the stale row needed closing.
+            }
+            Self::write_transition(&tx, &serial, SerialStatus::Available, &now_str, "", &[])?;
+            self.record_history(
+                &tx,
+                &serial,
+                SerialEventType::Released,
+                SerialStatus::Reserved,
+                SerialStatus::Available,
+                Some(&reservation.reference_type),
+                Some(reservation.reference_id),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("reservation expired"),
+            )
+            .map_err(map_db_error)?;
+            returned_to_stock += 1;
         }
 
-        if reservation.confirmed_at.is_some() {
-            return Ok(()); // Already confirmed
-        }
-
-        conn.execute(
-            "UPDATE serial_reservations SET confirmed_at = ? WHERE id = ?",
-            params![now, reservation_id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        Ok(())
+        tx.commit().map_err(map_db_error)?;
+        Ok(returned_to_stock)
     }
 
     fn move_serial(&self, input: MoveSerial) -> stateset_core::Result<SerialNumber> {
@@ -922,53 +1120,32 @@ impl SerialRepository for SqliteSerialRepository {
             let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
             let now = Utc::now().to_rfc3339();
 
-            // Get current serial
-            let serial: SerialNumber = tx
-                .query_row(
-                    "SELECT * FROM serial_numbers WHERE id = ?",
-                    params![input.serial_id.to_string()],
-                    Self::map_serial_row,
-                )
-                .map_err(map_db_error)?;
+            let serial = Self::load_in_tx(&tx, input.serial_id)?;
+            let new_owner = input.new_owner_id.to_string();
 
-            // Update ownership
-            tx.execute(
-                "UPDATE serial_numbers SET
-                    current_owner_id = ?,
-                    current_owner_type = ?,
-                    status = ?,
-                    updated_at = ?
-                WHERE id = ?",
-                params![
-                    input.new_owner_id.to_string(),
-                    input.new_owner_type,
-                    SerialStatus::Transferred.to_string(),
-                    now,
-                    input.serial_id.to_string(),
-                ],
-            )
-            .map_err(map_db_error)?;
+            Self::write_transition(
+                &tx,
+                &serial,
+                SerialStatus::Transferred,
+                &now,
+                ", current_owner_id = ?, current_owner_type = ?",
+                &[&new_owner, &input.new_owner_type],
+            )?;
 
-            // Record history
-            let history_id = Uuid::new_v4();
-            tx.execute(
-                "INSERT INTO serial_history (
-                    id, serial_id, event_type, reference_type, reference_id,
-                    from_status, to_status, from_owner_id, to_owner_id, notes, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                params![
-                    history_id.to_string(),
-                    input.serial_id.to_string(),
-                    SerialEventType::Transferred.to_string(),
-                    input.reference_type,
-                    input.reference_id.map(|id| id.to_string()),
-                    serial.status.to_string(),
-                    SerialStatus::Transferred.to_string(),
-                    serial.current_owner_id.map(|id| id.to_string()),
-                    input.new_owner_id.to_string(),
-                    input.notes,
-                    now,
-                ],
+            self.record_history(
+                &tx,
+                &serial,
+                SerialEventType::Transferred,
+                serial.status,
+                SerialStatus::Transferred,
+                input.reference_type.as_deref(),
+                input.reference_id,
+                None,
+                None,
+                serial.current_owner_id,
+                Some(input.new_owner_id),
+                None,
+                input.notes.as_deref(),
             )
             .map_err(map_db_error)?;
 
@@ -987,55 +1164,36 @@ impl SerialRepository for SqliteSerialRepository {
             let mut conn =
                 self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-            let now = Utc::now();
-            let now_str = now.to_rfc3339();
+            let now = Utc::now().to_rfc3339();
 
-            // Get current serial
-            let serial: SerialNumber = tx
-                .query_row(
-                    "SELECT * FROM serial_numbers WHERE id = ?",
-                    params![id.to_string()],
-                    Self::map_serial_row,
-                )
-                .map_err(map_db_error)?;
+            let serial = Self::load_in_tx(&tx, id)?;
+            let customer = customer_id.to_string();
 
-            // Update serial
-            tx.execute(
-                "UPDATE serial_numbers SET
-                    status = ?,
-                    current_owner_id = ?,
-                    current_owner_type = 'customer',
-                    sold_at = ?,
-                    updated_at = ?
-                WHERE id = ?",
-                params![
-                    SerialStatus::Sold.to_string(),
-                    customer_id.to_string(),
-                    now_str,
-                    now_str,
-                    id.to_string(),
-                ],
-            )
-            .map_err(map_db_error)?;
+            // Selling consumes the open reservation (write_transition closes it
+            // when leaving `Reserved`).
+            Self::write_transition(
+                &tx,
+                &serial,
+                SerialStatus::Sold,
+                &now,
+                ", current_owner_id = ?, current_owner_type = 'customer', sold_at = ?",
+                &[&customer, &now],
+            )?;
 
-            // Record history
-            let history_id = Uuid::new_v4();
-            tx.execute(
-                "INSERT INTO serial_history (
-                    id, serial_id, event_type, reference_type, reference_id,
-                    from_status, to_status, to_owner_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                params![
-                    history_id.to_string(),
-                    id.to_string(),
-                    SerialEventType::Sold.to_string(),
-                    order_id.map(|_| "order"),
-                    order_id.map(|id| id.to_string()),
-                    serial.status.to_string(),
-                    SerialStatus::Sold.to_string(),
-                    customer_id.to_string(),
-                    now_str,
-                ],
+            self.record_history(
+                &tx,
+                &serial,
+                SerialEventType::Sold,
+                serial.status,
+                SerialStatus::Sold,
+                order_id.map(|_| "order"),
+                order_id,
+                None,
+                None,
+                None,
+                Some(customer_id),
+                None,
+                None,
             )
             .map_err(map_db_error)?;
 
@@ -1049,39 +1207,25 @@ impl SerialRepository for SqliteSerialRepository {
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
-        // Get current serial
-        let serial: SerialNumber = tx
-            .query_row(
-                "SELECT * FROM serial_numbers WHERE id = ?",
-                params![id.to_string()],
-                Self::map_serial_row,
-            )
-            .map_err(map_db_error)?;
+        let serial = Self::load_in_tx(&tx, id)?;
 
-        // Update serial
-        tx.execute(
-            "UPDATE serial_numbers SET status = ?, updated_at = ? WHERE id = ?",
-            params![SerialStatus::Shipped.to_string(), now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        // Shipping consumes the open reservation (see write_transition).
+        Self::write_transition(&tx, &serial, SerialStatus::Shipped, &now, "", &[])?;
 
-        // Record history
-        let history_id = Uuid::new_v4();
-        tx.execute(
-            "INSERT INTO serial_history (
-                id, serial_id, event_type, reference_type, reference_id,
-                from_status, to_status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                history_id.to_string(),
-                id.to_string(),
-                SerialEventType::Shipped.to_string(),
-                "shipment",
-                shipment_id.to_string(),
-                serial.status.to_string(),
-                SerialStatus::Shipped.to_string(),
-                now,
-            ],
+        self.record_history(
+            &tx,
+            &serial,
+            SerialEventType::Shipped,
+            serial.status,
+            SerialStatus::Shipped,
+            Some("shipment"),
+            Some(shipment_id),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .map_err(map_db_error)?;
 
@@ -1094,45 +1238,31 @@ impl SerialRepository for SqliteSerialRepository {
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
-        // Get current serial
-        let serial: SerialNumber = tx
-            .query_row(
-                "SELECT * FROM serial_numbers WHERE id = ?",
-                params![id.to_string()],
-                Self::map_serial_row,
-            )
-            .map_err(map_db_error)?;
+        let serial = Self::load_in_tx(&tx, id)?;
 
-        // Update serial
-        tx.execute(
-            "UPDATE serial_numbers SET
-                status = ?,
-                current_owner_id = NULL,
-                current_owner_type = NULL,
-                updated_at = ?
-            WHERE id = ?",
-            params![SerialStatus::Returned.to_string(), now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        Self::write_transition(
+            &tx,
+            &serial,
+            SerialStatus::Returned,
+            &now,
+            ", current_owner_id = NULL, current_owner_type = NULL",
+            &[],
+        )?;
 
-        // Record history
-        let history_id = Uuid::new_v4();
-        tx.execute(
-            "INSERT INTO serial_history (
-                id, serial_id, event_type, reference_type, reference_id,
-                from_status, to_status, from_owner_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                history_id.to_string(),
-                id.to_string(),
-                SerialEventType::Returned.to_string(),
-                "return",
-                return_id.to_string(),
-                serial.status.to_string(),
-                SerialStatus::Returned.to_string(),
-                serial.current_owner_id.map(|id| id.to_string()),
-                now,
-            ],
+        self.record_history(
+            &tx,
+            &serial,
+            SerialEventType::Returned,
+            serial.status,
+            SerialStatus::Returned,
+            Some("return"),
+            Some(return_id),
+            None,
+            None,
+            serial.current_owner_id,
+            None,
+            None,
+            None,
         )
         .map_err(map_db_error)?;
 
@@ -1176,37 +1306,24 @@ impl SerialRepository for SqliteSerialRepository {
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
-        // Get current serial
-        let serial: SerialNumber = tx
-            .query_row(
-                "SELECT * FROM serial_numbers WHERE id = ?",
-                params![id.to_string()],
-                Self::map_serial_row,
-            )
-            .map_err(map_db_error)?;
+        let serial = Self::load_in_tx(&tx, id)?;
 
-        // Update serial
-        tx.execute(
-            "UPDATE serial_numbers SET status = ?, updated_at = ? WHERE id = ?",
-            params![SerialStatus::Quarantined.to_string(), now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        Self::write_transition(&tx, &serial, SerialStatus::Quarantined, &now, "", &[])?;
 
-        // Record history
-        let history_id = Uuid::new_v4();
-        tx.execute(
-            "INSERT INTO serial_history (
-                id, serial_id, event_type, from_status, to_status, notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            params![
-                history_id.to_string(),
-                id.to_string(),
-                SerialEventType::Quarantined.to_string(),
-                serial.status.to_string(),
-                SerialStatus::Quarantined.to_string(),
-                reason,
-                now,
-            ],
+        self.record_history(
+            &tx,
+            &serial,
+            SerialEventType::Quarantined,
+            serial.status,
+            SerialStatus::Quarantined,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(reason),
         )
         .map_err(map_db_error)?;
 
@@ -1219,40 +1336,30 @@ impl SerialRepository for SqliteSerialRepository {
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
-        // Get current serial
-        let serial: SerialNumber = tx
-            .query_row(
-                "SELECT * FROM serial_numbers WHERE id = ?",
-                params![id.to_string()],
-                Self::map_serial_row,
-            )
-            .map_err(map_db_error)?;
-
+        let serial = Self::load_in_tx(&tx, id)?;
         if serial.status != SerialStatus::Quarantined {
-            return Err(CommerceError::ValidationError("Serial is not quarantined".to_string()));
+            return Err(CommerceError::Conflict(format!(
+                "Serial {} ({}) is not quarantined (status: {}); cannot release to available",
+                serial.serial, serial.id, serial.status
+            )));
         }
 
-        // Update serial
-        tx.execute(
-            "UPDATE serial_numbers SET status = ?, updated_at = ? WHERE id = ?",
-            params![SerialStatus::Available.to_string(), now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        Self::write_transition(&tx, &serial, SerialStatus::Available, &now, "", &[])?;
 
-        // Record history
-        let history_id = Uuid::new_v4();
-        tx.execute(
-            "INSERT INTO serial_history (
-                id, serial_id, event_type, from_status, to_status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)",
-            params![
-                history_id.to_string(),
-                id.to_string(),
-                SerialEventType::QuarantineReleased.to_string(),
-                SerialStatus::Quarantined.to_string(),
-                SerialStatus::Available.to_string(),
-                now,
-            ],
+        self.record_history(
+            &tx,
+            &serial,
+            SerialEventType::QuarantineReleased,
+            SerialStatus::Quarantined,
+            SerialStatus::Available,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .map_err(map_db_error)?;
 
@@ -1260,48 +1367,127 @@ impl SerialRepository for SqliteSerialRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
+    fn quarantine_for_lot(&self, lot_id: Uuid, reason: &str) -> stateset_core::Result<u64> {
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let now = Utc::now().to_rfc3339();
+
+        let candidates: Vec<SerialNumber> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT * FROM serial_numbers WHERE lot_id = ? AND status IN (?, ?)
+                     ORDER BY created_at ASC",
+                )
+                .map_err(map_db_error)?;
+            let rows = stmt
+                .query_map(
+                    params![
+                        lot_id.to_string(),
+                        SerialStatus::Available.to_string(),
+                        SerialStatus::Reserved.to_string()
+                    ],
+                    Self::map_serial_row,
+                )
+                .map_err(map_db_error)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(map_db_error)?
+        };
+
+        let mut count = 0u64;
+        for serial in candidates {
+            Self::write_transition(&tx, &serial, SerialStatus::Quarantined, &now, "", &[])?;
+            self.record_history(
+                &tx,
+                &serial,
+                SerialEventType::Quarantined,
+                serial.status,
+                SerialStatus::Quarantined,
+                Some("lot"),
+                Some(lot_id),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(reason),
+            )
+            .map_err(map_db_error)?;
+            count += 1;
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(count)
+    }
+
+    fn release_quarantine_for_lot(&self, lot_id: Uuid) -> stateset_core::Result<u64> {
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let now = Utc::now().to_rfc3339();
+
+        let candidates: Vec<SerialNumber> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT * FROM serial_numbers WHERE lot_id = ? AND status = ?
+                     ORDER BY created_at ASC",
+                )
+                .map_err(map_db_error)?;
+            let rows = stmt
+                .query_map(
+                    params![lot_id.to_string(), SerialStatus::Quarantined.to_string()],
+                    Self::map_serial_row,
+                )
+                .map_err(map_db_error)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(map_db_error)?
+        };
+
+        let mut count = 0u64;
+        for serial in candidates {
+            Self::write_transition(&tx, &serial, SerialStatus::Available, &now, "", &[])?;
+            self.record_history(
+                &tx,
+                &serial,
+                SerialEventType::QuarantineReleased,
+                SerialStatus::Quarantined,
+                SerialStatus::Available,
+                Some("lot"),
+                Some(lot_id),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .map_err(map_db_error)?;
+            count += 1;
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(count)
+    }
+
     fn scrap(&self, id: Uuid, reason: &str) -> stateset_core::Result<SerialNumber> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
-        // Get current serial
-        let serial: SerialNumber = tx
-            .query_row(
-                "SELECT * FROM serial_numbers WHERE id = ?",
-                params![id.to_string()],
-                Self::map_serial_row,
-            )
-            .map_err(map_db_error)?;
+        let serial = Self::load_in_tx(&tx, id)?;
 
-        if !serial.can_scrap() {
-            return Err(CommerceError::ValidationError(
-                "Serial cannot be scrapped in current state".to_string(),
-            ));
-        }
+        Self::write_transition(&tx, &serial, SerialStatus::Scrapped, &now, "", &[])?;
 
-        // Update serial
-        tx.execute(
-            "UPDATE serial_numbers SET status = ?, updated_at = ? WHERE id = ?",
-            params![SerialStatus::Scrapped.to_string(), now, id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        // Record history
-        let history_id = Uuid::new_v4();
-        tx.execute(
-            "INSERT INTO serial_history (
-                id, serial_id, event_type, from_status, to_status, notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            params![
-                history_id.to_string(),
-                id.to_string(),
-                SerialEventType::Scrapped.to_string(),
-                serial.status.to_string(),
-                SerialStatus::Scrapped.to_string(),
-                reason,
-                now,
-            ],
+        self.record_history(
+            &tx,
+            &serial,
+            SerialEventType::Scrapped,
+            serial.status,
+            SerialStatus::Scrapped,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(reason),
         )
         .map_err(map_db_error)?;
 
@@ -1592,11 +1778,27 @@ mod tests {
     use crate::SqliteDatabase;
     use stateset_core::{
         ChangeSerialStatus, CreateSerialNumber, CreateSerialNumbersBulk, ReserveSerialNumber,
-        SerialFilter, SerialRepository, SerialStatus, UpdateSerialNumber,
+        SerialFilter, SerialRepository, SerialStatus, TransferSerialOwnership, UpdateSerialNumber,
     };
 
     fn fresh_repo() -> SqliteSerialRepository {
         SqliteDatabase::in_memory().expect("in-memory").serials()
+    }
+
+    /// A serial repo plus a real lot row (`serials.lot_id` is a foreign key).
+    fn repo_with_lot(sku: &str) -> (SqliteSerialRepository, Uuid) {
+        use stateset_core::{CreateLot, LotRepository};
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let lot = db
+            .lots()
+            .create(CreateLot {
+                sku: sku.into(),
+                lot_number: Some(format!("LOT-{sku}")),
+                quantity: rust_decimal::Decimal::from(10),
+                ..Default::default()
+            })
+            .expect("create lot");
+        (db.serials(), lot.id)
     }
 
     fn make_serial(repo: &SqliteSerialRepository, sku: &str, serial: &str) -> SerialNumber {
@@ -1842,6 +2044,372 @@ mod tests {
         repo.release_reservation(res.id).expect("release");
         let after_release = repo.get(s.id).expect("ok").expect("found");
         assert_eq!(after_release.status, SerialStatus::Available);
+    }
+
+    /// Force a serial into an arbitrary status, bypassing the state machine,
+    /// so tests can start from any point in the state space.
+    fn force_status(repo: &SqliteSerialRepository, id: Uuid, status: SerialStatus) {
+        let conn = repo.pool.get().expect("conn");
+        conn.execute(
+            "UPDATE serial_numbers SET status = ? WHERE id = ?",
+            params![status.to_string(), id.to_string()],
+        )
+        .expect("force status");
+    }
+
+    fn reserve_input(serial_id: Uuid) -> ReserveSerialNumber {
+        ReserveSerialNumber {
+            serial_id,
+            reference_type: "order".into(),
+            reference_id: Uuid::new_v4(),
+            reserved_by: None,
+            expires_in_seconds: None,
+        }
+    }
+
+    // S1: one open reservation per serial ----------------------------------
+
+    #[test]
+    fn reserve_refuses_second_reservation_on_same_serial() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-S1", "S-S1-1");
+        let first = repo.reserve(reserve_input(s.id)).expect("first reserve");
+        let err = repo.reserve(reserve_input(s.id)).expect_err("second reserve must fail");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        // The first reservation still holds the serial.
+        let held = repo.get_reservation(first.id).expect("ok").expect("found");
+        assert!(held.is_open());
+        assert_eq!(repo.get(s.id).unwrap().unwrap().status, SerialStatus::Reserved);
+    }
+
+    #[test]
+    fn reserve_backstop_index_rejects_duplicate_open_reservation() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-S1", "S-S1-2");
+        repo.reserve(reserve_input(s.id)).expect("reserve");
+        // A writer bypassing the repository (raw SQL) still cannot open a second
+        // reservation on the serial: the unique index on `active_key` refuses it.
+        let conn = repo.pool.get().expect("conn");
+        let err = conn
+            .execute(
+                "INSERT INTO serial_reservations (id, serial_id, reference_type, reference_id, reserved_at, active_key)
+                 VALUES (?, ?, 'order', ?, ?, ?)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    s.id.to_string(),
+                    Uuid::new_v4().to_string(),
+                    Utc::now().to_rfc3339(),
+                    s.id.to_string()
+                ],
+            )
+            .expect_err("duplicate open reservation must violate the unique index");
+        assert!(err.to_string().contains("UNIQUE"), "got {err}");
+    }
+
+    // S2: the state machine is enforced by every status write ----------------
+
+    #[test]
+    fn mark_shipped_refuses_scrapped_serial() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-S2", "S-S2-1");
+        repo.scrap(s.id, "crushed").expect("scrap");
+        let err = repo.mark_shipped(s.id, Uuid::new_v4()).expect_err("scrapped cannot ship");
+        match err {
+            CommerceError::Conflict(msg) => {
+                assert!(msg.contains("scrapped") && msg.contains("shipped"), "{msg}");
+            }
+            other => panic!("expected Conflict, got {other:?}"),
+        }
+        assert_eq!(repo.get(s.id).unwrap().unwrap().status, SerialStatus::Scrapped);
+    }
+
+    #[test]
+    fn change_status_accepts_exactly_the_transition_table() {
+        let repo = fresh_repo();
+        for from in SerialStatus::ALL {
+            for to in SerialStatus::ALL {
+                let s = make_serial(&repo, "SKU-SM", &format!("S-SM-{from}-{to}"));
+                force_status(&repo, s.id, from);
+                let result = repo.change_status(ChangeSerialStatus {
+                    serial_id: s.id,
+                    new_status: to,
+                    ..Default::default()
+                });
+                assert_eq!(
+                    result.is_ok(),
+                    from.can_transition_to(to),
+                    "{from} -> {to}: got {result:?}"
+                );
+                let expected = if from.can_transition_to(to) { to } else { from };
+                assert_eq!(repo.get(s.id).unwrap().unwrap().status, expected, "{from} -> {to}");
+                if !from.can_transition_to(to) {
+                    assert!(matches!(result, Err(CommerceError::Conflict(_))), "{from} -> {to}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_status_write_path_enforces_the_table() {
+        // The named mutations must agree with `change_status` on every source
+        // status: a mutation is accepted iff the table lists its target.
+        type Op = (&'static str, SerialStatus, fn(&SqliteSerialRepository, Uuid) -> bool);
+        let ops: [Op; 7] = [
+            ("mark_shipped", SerialStatus::Shipped, |r, id| {
+                r.mark_shipped(id, Uuid::new_v4()).is_ok()
+            }),
+            ("mark_sold", SerialStatus::Sold, |r, id| {
+                r.mark_sold(id, Uuid::new_v4(), None).is_ok()
+            }),
+            ("mark_returned", SerialStatus::Returned, |r, id| {
+                r.mark_returned(id, Uuid::new_v4()).is_ok()
+            }),
+            ("quarantine", SerialStatus::Quarantined, |r, id| r.quarantine(id, "qc").is_ok()),
+            ("release_quarantine", SerialStatus::Available, |r, id| {
+                r.release_quarantine(id).is_ok()
+            }),
+            ("scrap", SerialStatus::Scrapped, |r, id| r.scrap(id, "bin").is_ok()),
+            ("transfer_ownership", SerialStatus::Transferred, |r, id| {
+                r.transfer_ownership(TransferSerialOwnership {
+                    serial_id: id,
+                    new_owner_id: Uuid::new_v4(),
+                    new_owner_type: "partner".into(),
+                    ..Default::default()
+                })
+                .is_ok()
+            }),
+        ];
+        let repo = fresh_repo();
+        for (name, target, op) in ops {
+            for from in SerialStatus::ALL {
+                let s = make_serial(&repo, "SKU-OP", &format!("S-OP-{name}-{from}"));
+                force_status(&repo, s.id, from);
+                let accepted = op(&repo, s.id);
+                let expected = if name == "release_quarantine" {
+                    // release_quarantine is the Quarantined -> Available edge only.
+                    from == SerialStatus::Quarantined
+                } else {
+                    from.can_transition_to(target)
+                };
+                assert_eq!(accepted, expected, "{name} from {from}");
+            }
+        }
+    }
+
+    #[test]
+    fn update_with_status_goes_through_the_state_machine() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-U", "S-U-1");
+        repo.scrap(s.id, "gone").expect("scrap");
+        let err = repo
+            .update(
+                s.id,
+                UpdateSerialNumber { status: Some(SerialStatus::Available), ..Default::default() },
+            )
+            .expect_err("update cannot resurrect a scrapped serial");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        // Non-status updates on a terminal serial are still fine.
+        let updated = repo
+            .update(
+                s.id,
+                UpdateSerialNumber { notes: Some("audited".into()), ..Default::default() },
+            )
+            .expect("notes update");
+        assert_eq!(updated.notes.as_deref(), Some("audited"));
+        assert_eq!(updated.status, SerialStatus::Scrapped);
+    }
+
+    // S3: reservation lifecycle ---------------------------------------------
+
+    #[test]
+    fn mark_sold_closes_open_reservation_and_release_is_refused() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-S3", "S-S3-1");
+        let res = repo.reserve(reserve_input(s.id)).expect("reserve");
+        repo.confirm_reservation(res.id).expect("confirm");
+        let confirmed = repo.get_reservation(res.id).unwrap().unwrap();
+        assert!(confirmed.is_confirmed() && confirmed.is_open());
+        assert_eq!(repo.get(s.id).unwrap().unwrap().status, SerialStatus::Reserved);
+
+        repo.mark_sold(s.id, Uuid::new_v4(), None).expect("sell");
+        let closed = repo.get_reservation(res.id).unwrap().unwrap();
+        assert!(closed.released_at.is_some(), "sale must consume the reservation");
+
+        let err =
+            repo.release_reservation(res.id).expect_err("cannot release a consumed reservation");
+        assert!(
+            matches!(err, CommerceError::Conflict(_) | CommerceError::ValidationError(_)),
+            "got {err:?}"
+        );
+        assert_eq!(
+            repo.get(s.id).unwrap().unwrap().status,
+            SerialStatus::Sold,
+            "release after sale must not flip the serial back to available"
+        );
+    }
+
+    #[test]
+    fn mark_shipped_closes_open_reservation() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-S3", "S-S3-2");
+        let res = repo.reserve(reserve_input(s.id)).expect("reserve");
+        repo.mark_shipped(s.id, Uuid::new_v4()).expect("ship");
+        assert!(repo.get_reservation(res.id).unwrap().unwrap().released_at.is_some());
+        assert!(repo.release_reservation(res.id).is_err());
+        assert_eq!(repo.get(s.id).unwrap().unwrap().status, SerialStatus::Shipped);
+    }
+
+    #[test]
+    fn release_reservation_is_idempotent_guarded_and_returns_serial_to_stock() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-S3", "S-S3-3");
+        let res = repo.reserve(reserve_input(s.id)).expect("reserve");
+        repo.release_reservation(res.id).expect("release");
+        assert_eq!(repo.get(s.id).unwrap().unwrap().status, SerialStatus::Available);
+        assert!(repo.release_reservation(res.id).is_err(), "second release must be refused");
+        // A fresh reservation is possible again.
+        repo.reserve(reserve_input(s.id)).expect("re-reserve");
+    }
+
+    #[test]
+    fn confirm_reservation_is_transactional_and_refuses_closed_or_expired() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-S3", "S-S3-4");
+        let res = repo.reserve(reserve_input(s.id)).expect("reserve");
+        repo.confirm_reservation(res.id).expect("confirm");
+        repo.confirm_reservation(res.id).expect("confirm again is idempotent");
+        repo.release_reservation(res.id).expect("release confirmed (order cancelled)");
+        assert!(repo.confirm_reservation(res.id).is_err(), "cannot confirm a released reservation");
+
+        // Expired, unconfirmed reservations cannot be confirmed.
+        let s2 = make_serial(&repo, "SKU-S3", "S-S3-5");
+        let expired = repo
+            .reserve(ReserveSerialNumber { expires_in_seconds: Some(-1), ..reserve_input(s2.id) })
+            .expect("reserve with past expiry");
+        let err = repo.confirm_reservation(expired.id).expect_err("expired cannot be confirmed");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn release_expired_reservations_returns_serials_to_available() {
+        let repo = fresh_repo();
+        let expired_serial = make_serial(&repo, "SKU-EXP", "S-EXP-1");
+        let live_serial = make_serial(&repo, "SKU-EXP", "S-EXP-2");
+        let confirmed_serial = make_serial(&repo, "SKU-EXP", "S-EXP-3");
+        let expired = repo
+            .reserve(ReserveSerialNumber {
+                expires_in_seconds: Some(-1),
+                ..reserve_input(expired_serial.id)
+            })
+            .expect("reserve expired");
+        let live = repo
+            .reserve(ReserveSerialNumber {
+                expires_in_seconds: Some(3600),
+                ..reserve_input(live_serial.id)
+            })
+            .expect("reserve live");
+        let confirmed = repo
+            .reserve(ReserveSerialNumber {
+                expires_in_seconds: Some(-1),
+                ..reserve_input(confirmed_serial.id)
+            })
+            .expect("reserve to confirm");
+        // Confirm before the expiry could bite (confirmation suppresses expiry).
+        force_status(&repo, confirmed_serial.id, SerialStatus::Reserved);
+        {
+            let conn = repo.pool.get().unwrap();
+            conn.execute(
+                "UPDATE serial_reservations SET confirmed_at = ? WHERE id = ?",
+                params![Utc::now().to_rfc3339(), confirmed.id.to_string()],
+            )
+            .unwrap();
+        }
+
+        let swept = repo.release_expired_reservations(Utc::now()).expect("sweep");
+        assert_eq!(swept, 1);
+        assert_eq!(repo.get(expired_serial.id).unwrap().unwrap().status, SerialStatus::Available);
+        assert!(repo.get_reservation(expired.id).unwrap().unwrap().released_at.is_some());
+        assert_eq!(repo.get(live_serial.id).unwrap().unwrap().status, SerialStatus::Reserved);
+        assert!(repo.get_reservation(live.id).unwrap().unwrap().is_open());
+        assert_eq!(
+            repo.get(confirmed_serial.id).unwrap().unwrap().status,
+            SerialStatus::Reserved,
+            "confirmed reservations never expire"
+        );
+        assert_eq!(repo.release_expired_reservations(Utc::now()).expect("sweep again"), 0);
+    }
+
+    #[test]
+    fn reserve_lazily_expires_a_stale_reservation() {
+        let repo = fresh_repo();
+        let s = make_serial(&repo, "SKU-LAZY", "S-LAZY-1");
+        let stale = repo
+            .reserve(ReserveSerialNumber { expires_in_seconds: Some(-1), ..reserve_input(s.id) })
+            .expect("stale reserve");
+        let fresh = repo.reserve(reserve_input(s.id)).expect("stale reservation is swept in-line");
+        assert_ne!(stale.id, fresh.id);
+        assert!(repo.get_reservation(stale.id).unwrap().unwrap().released_at.is_some());
+        assert!(repo.get_reservation(fresh.id).unwrap().unwrap().is_open());
+        assert_eq!(repo.get(s.id).unwrap().unwrap().status, SerialStatus::Reserved);
+    }
+
+    // S4: lot-level quarantine helpers ---------------------------------------
+
+    #[test]
+    fn quarantine_for_lot_only_touches_available_and_reserved() {
+        let (repo, lot_id) = repo_with_lot("SKU-LOT");
+        let with_lot = |serial: &str, status: SerialStatus| {
+            let s = repo
+                .create(CreateSerialNumber {
+                    serial: Some(serial.into()),
+                    sku: "SKU-LOT".into(),
+                    lot_id: Some(lot_id),
+                    ..Default::default()
+                })
+                .expect("create");
+            force_status(&repo, s.id, status);
+            s.id
+        };
+        let available = with_lot("S-L-AV", SerialStatus::Available);
+        let reserved = with_lot("S-L-RS", SerialStatus::Reserved);
+        let sold = with_lot("S-L-SO", SerialStatus::Sold);
+        let scrapped = with_lot("S-L-SC", SerialStatus::Scrapped);
+        let other_lot = make_serial(&repo, "SKU-LOT", "S-L-OTHER");
+
+        let n = repo.quarantine_for_lot(lot_id, "supplier recall").expect("quarantine lot");
+        assert_eq!(n, 2);
+        for (id, expected) in [
+            (available, SerialStatus::Quarantined),
+            (reserved, SerialStatus::Quarantined),
+            (sold, SerialStatus::Sold),
+            (scrapped, SerialStatus::Scrapped),
+            (other_lot.id, SerialStatus::Available),
+        ] {
+            assert_eq!(repo.get(id).unwrap().unwrap().status, expected);
+        }
+
+        let released = repo.release_quarantine_for_lot(lot_id).expect("release lot");
+        assert_eq!(released, 2);
+        assert_eq!(repo.get(available).unwrap().unwrap().status, SerialStatus::Available);
+        assert_eq!(repo.get(reserved).unwrap().unwrap().status, SerialStatus::Available);
+        assert_eq!(repo.release_quarantine_for_lot(lot_id).expect("nothing left"), 0);
+    }
+
+    #[test]
+    fn quarantine_for_lot_closes_open_reservations() {
+        let (repo, lot_id) = repo_with_lot("SKU-LQ");
+        let s = repo
+            .create(CreateSerialNumber {
+                serial: Some("S-LQ-1".into()),
+                sku: "SKU-LQ".into(),
+                lot_id: Some(lot_id),
+                ..Default::default()
+            })
+            .expect("create");
+        let res = repo.reserve(reserve_input(s.id)).expect("reserve");
+        assert_eq!(repo.quarantine_for_lot(lot_id, "hold").expect("quarantine"), 1);
+        assert!(repo.get_reservation(res.id).unwrap().unwrap().released_at.is_some());
+        assert!(repo.release_reservation(res.id).is_err());
     }
 
     #[test]

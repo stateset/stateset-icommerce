@@ -459,6 +459,16 @@ impl PostgresDatabase {
             "085_order_money_breakdown",
             include_str!("migrations/085_order_money_breakdown.sql"),
         ));
+        // Legacy-safe "one open reservation per serial" backstop.
+        migrations.push((
+            "086_serial_reservation_uniqueness",
+            include_str!("migrations/086_serial_reservation_uniqueness.sql"),
+        ));
+        // Legacy-safe uniqueness for x402 settlement tx hashes.
+        migrations.push((
+            "089_x402_tx_hash_uniqueness",
+            include_str!("migrations/089_x402_tx_hash_uniqueness.sql"),
+        ));
 
         migrations
     }
