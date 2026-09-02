@@ -16,10 +16,10 @@ use chrono::{Datelike, Days, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_embedded::{
-    AccountSubType, Commerce, CommerceError, CreateCustomer, CreateGlPeriod, CreateInventoryItem,
-    CreateJournalEntry, CreateJournalEntryLine, CreateOrder, CreateOrderItem, CreateProduct,
-    CreateProductVariant, CreateTaxRate, JournalEntry, ProductTaxCategory, TaxAddress,
-    TaxCalculationRequest, TaxLineItem, TaxType,
+    Commerce, CommerceError, CreateCustomer, CreateGlPeriod, CreateInventoryItem, CreateJournalEntry,
+    CreateJournalEntryLine, CreateOrder, CreateOrderItem, CreateProduct, CreateProductVariant,
+    CreateTaxRate, JournalEntry, ProductTaxCategory, TaxAddress, TaxCalculationRequest, TaxLineItem,
+    TaxType,
 };
 
 fn main() -> Result<(), CommerceError> {
@@ -56,18 +56,16 @@ fn main() -> Result<(), CommerceError> {
     // Jurisdictions for US states are typically pre-seeded; if not, skip creating.
     if let Some(ca) = commerce.tax().get_jurisdiction_by_code("US-CA")? {
         // Create a CA state sales tax rate if none exist yet for Standard category.
-        let existing = commerce
-            .tax()
-            .list_rates(stateset_embedded::TaxRateFilter {
-                jurisdiction_id: Some(ca.id),
-                product_tax_category: Some(ProductTaxCategory::Standard),
-                ..Default::default()
-            })?;
+        let existing = commerce.tax().list_rates(stateset_embedded::TaxRateFilter {
+            jurisdiction_id: Some(ca.id),
+            product_category: Some(ProductTaxCategory::Standard),
+            ..Default::default()
+        })?;
         if existing.is_empty() {
             let _ = commerce.tax().create_rate(CreateTaxRate {
                 jurisdiction_id: ca.id,
                 tax_type: TaxType::SalesTax,
-                product_tax_category: ProductTaxCategory::Standard,
+                product_category: ProductTaxCategory::Standard,
                 rate: dec!(0.0725), // 7.25%
                 name: "California State Tax".into(),
                 description: Some("CA state sales tax".into()),
@@ -116,7 +114,7 @@ fn main() -> Result<(), CommerceError> {
         line_items: vec![TaxLineItem {
             id: "line-1".into(),
             sku: Some("WIDGET-CA-001".into()),
-            product_id: Some(product.id.into_uuid()),
+            product_id: Some(product.id),
             quantity: dec!(1),
             unit_price: dec!(100.00),
             discount_amount: Decimal::ZERO,
@@ -180,7 +178,9 @@ fn main() -> Result<(), CommerceError> {
         currency: Some(stateset_embedded::CurrencyCode::USD),
         payment_method: stateset_embedded::PaymentMethodType::CreditCard,
         card_brand: Some(stateset_embedded::CardBrand::Visa),
-        last4: Some("4242".into()),
+        card_last4: Some("4242".into()),
+        card_exp_month: Some(12),
+        card_exp_year: Some(2030),
         external_id: None,
         metadata: None,
     })?;
