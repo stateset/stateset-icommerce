@@ -181,8 +181,7 @@ fn main() -> Result<(), CommerceError> {
         card_last4: Some("4242".into()),
         card_exp_month: Some(12),
         card_exp_year: Some(2030),
-        external_id: None,
-        metadata: None,
+        ..Default::default()
     })?;
     let payment = commerce.payments().mark_completed(payment.id)?;
 
