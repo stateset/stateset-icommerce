@@ -368,6 +368,15 @@ pub struct TransitionOrder {
     pub order_id: OrderId,
     pub status: OrderStatus,
     pub payment_status: Option<PaymentStatus>,
+    /// Cancel money rule (mirrors [`UpdateOrder::void_payments`]): a
+    /// transition to [`OrderStatus::Cancelled`] is rejected with
+    /// `commerce.order.captured_money_outstanding` while any payment still
+    /// holds captured money, unless this is `true` — then in-flight payments
+    /// are voided atomically with the cancel and settled money is left for a
+    /// refund. Omitted from the semantic request hash when `false` so
+    /// pre-existing retry keys stay bound.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub void_payments: bool,
 }
 
 /// One order line in a shipment request.

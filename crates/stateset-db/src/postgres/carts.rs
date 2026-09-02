@@ -876,6 +876,12 @@ impl PgCartRepository {
         // Serialize with other mutations of this cart before touching its lines.
         let row = Self::lock_cart_in_tx(&mut tx, cart_id).await?;
         validate_add_item_money(row.currency, &item)?;
+        // A SKU that resolves to the catalogue must still be sellable: an
+        // archived product or a deleted variant cannot be added to a cart.
+        // SKUs that are not in the catalogue stay allowed (ad-hoc lines).
+        super::products::variant_is_purchasable_with_conn_pg(tx.as_mut(), &item.sku)
+            .await?
+            .ensure_sellable(&item.sku)?;
         let result = self.add_item_internal(&mut tx, cart_id, item).await?;
         self.update_cart_totals_in_tx(&mut tx, cart_id).await?;
         tx.commit().await.map_err(map_db_error)?;

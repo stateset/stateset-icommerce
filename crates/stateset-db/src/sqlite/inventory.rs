@@ -11,12 +11,13 @@ use crate::KernelOutboxEvent;
 use chrono::{DateTime, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use stateset_core::{
     AdjustInventory, BatchResult, CommerceError, CreateInventoryItem, InventoryBalance,
     InventoryFilter, InventoryItem, InventoryRepository, InventoryReservation,
     InventoryTransaction, LocationStock, ReservationStatus, ReserveInventory, Result, StockLevel,
-    TransactionType, validate_batch_size, validate_quantity, validate_sku,
+    TransactionType, Validate, validate_batch_size, validate_quantity, validate_sku,
 };
 use std::cell::Cell;
 use uuid::Uuid;
@@ -91,30 +92,59 @@ impl SqliteInventoryRepository {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn expire_reservation_in_tx(
+    /// Move `delta` units into (positive) or out of (negative) the allocated
+    /// bucket of one balance, recomputing `quantity_available` from the exact
+    /// `Decimal` values read in this transaction. Returns the new `version`.
+    ///
+    /// All balance arithmetic happens in Rust: the columns are TEXT decimals,
+    /// and an SQL expression such as `quantity_allocated - ?` would coerce
+    /// both operands to IEEE-754 floats (`0.3 - 0.2 = 0.09999…`), corrupting
+    /// fractional balances. The optimistic `version` guard proves the row was
+    /// not changed between the read and the write.
+    fn apply_allocation_delta_in_tx(
         conn: &rusqlite::Connection,
-        reservation_id: Uuid,
         item_id: i64,
         location_id: i32,
-        quantity: Decimal,
+        delta: Decimal,
         now: DateTime<Utc>,
-    ) -> Result<()> {
-        let current_version: i32 = conn
+    ) -> Result<i32> {
+        let (on_hand_str, allocated_str, current_version): (String, String, i32) = conn
             .query_row(
-                "SELECT version FROM inventory_balances WHERE item_id = ? AND location_id = ?",
+                "SELECT quantity_on_hand, quantity_allocated, version FROM inventory_balances
+                 WHERE item_id = ? AND location_id = ?",
                 rusqlite::params![item_id, location_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .map_err(map_db_error)?;
+        let on_hand = parse_decimal_strict(&on_hand_str, "inventory_balance", "quantity_on_hand")?;
+        let allocated =
+            parse_decimal_strict(&allocated_str, "inventory_balance", "quantity_allocated")?;
+
+        let mut new_allocated = allocated + delta;
+        if new_allocated < Decimal::ZERO {
+            // Only reachable on a balance that drifted before the sweeper /
+            // exact-arithmetic fixes: releasing more than is recorded as
+            // allocated. Clamp so the release can still complete; the
+            // remaining drift is visible as allocated == 0 with open holds.
+            tracing::warn!(
+                item_id,
+                location_id,
+                %allocated,
+                %delta,
+                "inventory_balance.quantity_allocated would go negative; clamping to zero"
+            );
+            new_allocated = Decimal::ZERO;
+        }
+        let new_available = on_hand - new_allocated;
 
         let rows_affected = conn
             .execute(
-                "UPDATE inventory_balances SET quantity_allocated = quantity_allocated - ?,
-                 quantity_available = quantity_available + ?, version = version + 1, updated_at = ?
+                "UPDATE inventory_balances SET quantity_allocated = ?, quantity_available = ?,
+                 version = version + 1, updated_at = ?
                  WHERE item_id = ? AND location_id = ? AND version = ?",
                 rusqlite::params![
-                    quantity.to_string(),
-                    quantity.to_string(),
+                    new_allocated.to_string(),
+                    new_available.to_string(),
                     now.to_rfc3339(),
                     item_id,
                     location_id,
@@ -130,6 +160,18 @@ impl SqliteInventoryRepository {
                 expected_version: current_version,
             });
         }
+        Ok(current_version + 1)
+    }
+
+    fn expire_reservation_in_tx(
+        conn: &rusqlite::Connection,
+        reservation_id: Uuid,
+        item_id: i64,
+        location_id: i32,
+        quantity: Decimal,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        Self::apply_allocation_delta_in_tx(conn, item_id, location_id, -quantity, now)?;
 
         conn.execute(
             "UPDATE inventory_reservations SET status = 'expired' WHERE id = ?",
@@ -137,6 +179,281 @@ impl SqliteInventoryRepository {
         )
         .map_err(map_db_error)?;
 
+        Ok(())
+    }
+
+    /// Sweep up to `limit` expired open reservations across every item and
+    /// location (the per-item lazy expiry only runs on traffic). Rows are
+    /// taken oldest-expiry first so repeated calls drain a backlog in order.
+    pub(crate) fn expire_reservations_in_tx(
+        conn: &rusqlite::Connection,
+        now: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<u64> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, item_id, location_id, quantity FROM inventory_reservations
+                 WHERE status IN ('pending', 'confirmed', 'allocated')
+                   AND expires_at IS NOT NULL AND expires_at < ?
+                 ORDER BY expires_at, id
+                 LIMIT ?",
+            )
+            .map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(rusqlite::params![now.to_rfc3339(), i64::from(limit)], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i32>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+
+        let mut expired = 0u64;
+        for (id_str, item_id, location_id, qty_str) in rows {
+            let reservation_id = parse_uuid(&id_str, "inventory_reservation", "id")?;
+            let quantity = parse_decimal_strict(&qty_str, "inventory_reservation", "quantity")?;
+            Self::expire_reservation_in_tx(
+                conn,
+                reservation_id,
+                item_id,
+                location_id,
+                quantity,
+                now,
+            )?;
+            expired += 1;
+        }
+        Ok(expired)
+    }
+
+    /// Take `quantity` units straight out of available stock (on-hand and
+    /// available both go down, allocated is untouched) and write a `shipment`
+    /// ledger row. `InsufficientStock` when available does not cover it.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn consume_available_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        item_id: i64,
+        location_id: i32,
+        quantity: Decimal,
+        reference_type: &str,
+        reference_id: &str,
+        reason: &str,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        validate_quantity(quantity)?;
+        let (on_hand_str, allocated_str, current_version): (String, String, i32) = tx
+            .query_row(
+                "SELECT quantity_on_hand, quantity_allocated, version FROM inventory_balances
+                 WHERE item_id = ? AND location_id = ?",
+                rusqlite::params![item_id, location_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(map_db_error)?
+            .ok_or_else(|| CommerceError::InsufficientStock {
+                sku: format!("item:{item_id}"),
+                requested: quantity.to_string(),
+                available: "0".to_string(),
+            })?;
+        let on_hand = parse_decimal_strict(&on_hand_str, "inventory_balance", "quantity_on_hand")?;
+        let allocated =
+            parse_decimal_strict(&allocated_str, "inventory_balance", "quantity_allocated")?;
+        let available = on_hand - allocated;
+        if available < quantity {
+            return Err(CommerceError::InsufficientStock {
+                sku: format!("item:{item_id}"),
+                requested: quantity.to_string(),
+                available: available.to_string(),
+            });
+        }
+        let new_on_hand = on_hand - quantity;
+        let rows_affected = tx
+            .execute(
+                "UPDATE inventory_balances SET quantity_on_hand = ?, quantity_available = ?,
+                 version = version + 1, updated_at = ?
+                 WHERE item_id = ? AND location_id = ? AND version = ?",
+                rusqlite::params![
+                    new_on_hand.to_string(),
+                    (new_on_hand - allocated).to_string(),
+                    now.to_rfc3339(),
+                    item_id,
+                    location_id,
+                    current_version
+                ],
+            )
+            .map_err(map_db_error)?;
+        if rows_affected == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "inventory_balance".to_string(),
+                id: format!("{item_id}:{location_id}"),
+                expected_version: current_version,
+            });
+        }
+        tx.execute(
+            "INSERT INTO inventory_transactions (item_id, location_id, transaction_type, quantity, reference_type, reference_id, reason, created_at)
+             VALUES (?, ?, 'shipment', ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                item_id,
+                location_id,
+                (-quantity).to_string(),
+                reference_type,
+                reference_id,
+                reason,
+                now.to_rfc3339(),
+            ],
+        )
+        .map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Consume `quantity` units of an open reservation: the units leave both
+    /// `quantity_on_hand` and `quantity_allocated` (so `quantity_available`
+    /// is unchanged), a `shipment` ledger row is written, and the reservation
+    /// is marked `fulfilled` when fully consumed (otherwise its quantity is
+    /// reduced and it stays open for the remainder). Used by backorder
+    /// fulfilment. Errors if the reservation is not open or too small.
+    pub(crate) fn fulfil_reservation_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        reservation_id: Uuid,
+        quantity: Decimal,
+        reason: &str,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        validate_quantity(quantity)?;
+        let res = tx
+            .query_row(
+                "SELECT item_id, location_id, quantity, status, reference_type, reference_id
+                 FROM inventory_reservations WHERE id = ?",
+                [reservation_id.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i32>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::ReservationNotFound(reservation_id))?;
+        let (item_id, location_id, reserved_str, status_str, reference_type, reference_id) = res;
+        let reserved = parse_decimal_strict(&reserved_str, "inventory_reservation", "quantity")?;
+        let status: ReservationStatus = status_str.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid inventory_reservation.status '{status_str}': {e}"
+            ))
+        })?;
+        if !status.holds_stock() {
+            return Err(CommerceError::Conflict(format!(
+                "inventory reservation {reservation_id} is {status}; only an open reservation can be fulfilled"
+            )));
+        }
+        if quantity > reserved {
+            return Err(CommerceError::InsufficientStock {
+                sku: format!("reservation:{reservation_id}"),
+                requested: quantity.to_string(),
+                available: reserved.to_string(),
+            });
+        }
+
+        let (on_hand_str, allocated_str, current_version): (String, String, i32) = tx
+            .query_row(
+                "SELECT quantity_on_hand, quantity_allocated, version FROM inventory_balances
+                 WHERE item_id = ? AND location_id = ?",
+                rusqlite::params![item_id, location_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(map_db_error)?;
+        let on_hand = parse_decimal_strict(&on_hand_str, "inventory_balance", "quantity_on_hand")?;
+        let allocated =
+            parse_decimal_strict(&allocated_str, "inventory_balance", "quantity_allocated")?;
+        let new_on_hand = on_hand - quantity;
+        let new_allocated = (allocated - quantity).max(Decimal::ZERO);
+        if new_on_hand < Decimal::ZERO {
+            return Err(CommerceError::InsufficientStock {
+                sku: format!("item:{item_id}"),
+                requested: quantity.to_string(),
+                available: on_hand.to_string(),
+            });
+        }
+        let new_available = new_on_hand - new_allocated;
+        let rows_affected = tx
+            .execute(
+                "UPDATE inventory_balances SET quantity_on_hand = ?, quantity_allocated = ?,
+                 quantity_available = ?, version = version + 1, updated_at = ?
+                 WHERE item_id = ? AND location_id = ? AND version = ?",
+                rusqlite::params![
+                    new_on_hand.to_string(),
+                    new_allocated.to_string(),
+                    new_available.to_string(),
+                    now.to_rfc3339(),
+                    item_id,
+                    location_id,
+                    current_version
+                ],
+            )
+            .map_err(map_db_error)?;
+        if rows_affected == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "inventory_balance".to_string(),
+                id: format!("{item_id}:{location_id}"),
+                expected_version: current_version,
+            });
+        }
+
+        if quantity == reserved {
+            tx.execute(
+                "UPDATE inventory_reservations SET status = 'fulfilled' WHERE id = ?",
+                [reservation_id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        } else {
+            tx.execute(
+                "UPDATE inventory_reservations SET quantity = ? WHERE id = ?",
+                rusqlite::params![(reserved - quantity).to_string(), reservation_id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        }
+
+        tx.execute(
+            "INSERT INTO inventory_transactions (item_id, location_id, transaction_type, quantity, reference_type, reference_id, reason, created_at)
+             VALUES (?, ?, 'shipment', ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                item_id,
+                location_id,
+                (-quantity).to_string(),
+                reference_type,
+                reference_id,
+                reason,
+                now.to_rfc3339(),
+            ],
+        )
+        .map_err(map_db_error)?;
+
+        append_kernel_event_tx(
+            tx,
+            &KernelOutboxEvent::domain(
+                "inventory.reservation_fulfilled.v1",
+                "inventory_reservation",
+                reservation_id.to_string(),
+                serde_json::json!({
+                    "reservation_id": reservation_id.to_string(),
+                    "item_id": item_id,
+                    "location_id": location_id,
+                    "quantity": quantity.to_string(),
+                    "remaining_quantity": (reserved - quantity).to_string(),
+                    "balance_version": current_version + 1,
+                }),
+                None,
+            ),
+        )
+        .map_err(map_db_error)?;
         Ok(())
     }
 
@@ -469,35 +786,10 @@ impl SqliteInventoryRepository {
             [reservation_id.to_string()],
         )?;
 
-        let current_version: i32 = tx.query_row(
-            "SELECT version FROM inventory_balances WHERE item_id = ? AND location_id = ?",
-            rusqlite::params![item_id, location_id],
-            |row| row.get(0),
-        )?;
-
-        let rows_affected = tx.execute(
-            "UPDATE inventory_balances SET quantity_allocated = quantity_allocated - ?,
-             quantity_available = quantity_available + ?, version = version + 1, updated_at = ?
-             WHERE item_id = ? AND location_id = ? AND version = ?",
-            rusqlite::params![
-                quantity.to_string(),
-                quantity.to_string(),
-                now.to_rfc3339(),
-                item_id,
-                location_id,
-                current_version
-            ],
-        )?;
-
-        if rows_affected == 0 {
-            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                CommerceError::VersionConflict {
-                    entity: "inventory_balance".to_string(),
-                    id: format!("{item_id}:{location_id}"),
-                    expected_version: current_version,
-                },
-            )));
-        }
+        // Exact `Decimal` arithmetic (see `apply_allocation_delta_in_tx`).
+        let new_version =
+            Self::apply_allocation_delta_in_tx(tx, item_id, location_id, -quantity, now)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
         append_kernel_event_tx(
             tx,
@@ -511,7 +803,7 @@ impl SqliteInventoryRepository {
                     "location_id": location_id,
                     "quantity": quantity.to_string(),
                     "status": ReservationStatus::Released.to_string(),
-                    "balance_version": current_version + 1,
+                    "balance_version": new_version,
                 }),
                 None,
             ),
@@ -637,7 +929,7 @@ impl SqliteInventoryRepository {
         rows.collect()
     }
 
-    /// [`Self::list_open_reservations_for_sku_in_tx`] restricted to LEGACY rows
+    /// The open-reservations-by-SKU lookup restricted to LEGACY rows
     /// (created before migration 080, so not keyed to an order line). The
     /// orders module uses this as the fallback after the line-keyed lookup so
     /// a SKU-based release can never take another line's keyed hold.
@@ -1140,15 +1432,8 @@ impl InventoryRepository for SqliteInventoryRepository {
     }
 
     fn adjust(&self, input: AdjustInventory) -> Result<InventoryTransaction> {
-        // Validate SKU format
-        validate_sku(&input.sku)?;
-
-        // Validate that adjustment quantity is not zero
-        if input.quantity.is_zero() {
-            return Err(CommerceError::ValidationError(
-                "Adjustment quantity cannot be zero".into(),
-            ));
-        }
+        // SKU format, non-zero quantity, non-blank reason, positive location.
+        input.validate()?;
 
         // Clone values needed in the closure
         let sku = input.sku.clone();
@@ -1464,6 +1749,18 @@ impl InventoryRepository for SqliteInventoryRepository {
         Ok(reservations)
     }
 
+    fn expire_reservations(&self, now: DateTime<Utc>, limit: u32) -> Result<u64> {
+        if limit == 0 {
+            return Ok(0);
+        }
+        with_inventory_retry(|| {
+            with_immediate_transaction(&self.pool, |tx| {
+                Self::expire_reservations_in_tx(tx, now, limit)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+            })
+        })
+    }
+
     fn list(&self, filter: InventoryFilter) -> Result<Vec<InventoryItem>> {
         let conn = self.conn()?;
         let mut sql = "SELECT * FROM inventory_items WHERE 1=1".to_string();
@@ -1523,29 +1820,41 @@ impl InventoryRepository for SqliteInventoryRepository {
             let conn = self.conn()?;
             let mut stmt = conn
                 .prepare(
-                    "SELECT i.sku, b.quantity_available, b.reorder_point
+                    "SELECT i.sku, b.quantity_available, b.reorder_point, b.safety_stock
                      FROM inventory_items i
                      JOIN inventory_balances b ON i.id = b.item_id
                      WHERE b.reorder_point IS NOT NULL
-                     AND i.is_active = 1",
+                     AND i.is_active = 1
+                     ORDER BY i.sku",
                 )
                 .map_err(map_db_error)?;
 
             stmt.query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
             })
             .map_err(map_db_error)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(map_db_error)?
         };
 
+        // Threshold = reorder_point + safety_stock (the buffer that must stay
+        // untouched), matching `InventoryBalance::reorder_threshold`.
         let mut skus: Vec<String> = Vec::new();
-        for (sku, available, reorder_point) in candidates {
+        for (sku, available, reorder_point, safety_stock) in candidates {
             let available =
                 parse_decimal_strict(&available, "inventory_balance", "quantity_available")?;
             let reorder_point =
                 parse_decimal_strict(&reorder_point, "inventory_balance", "reorder_point")?;
-            if available < reorder_point && !skus.contains(&sku) {
+            let safety_stock = safety_stock
+                .map(|v| parse_decimal_strict(&v, "inventory_balance", "safety_stock"))
+                .transpose()?
+                .unwrap_or(Decimal::ZERO);
+            if available < reorder_point + safety_stock && !skus.contains(&sku) {
                 skus.push(sku);
             }
         }
@@ -1775,12 +2084,7 @@ impl InventoryRepository for SqliteInventoryRepository {
         let now = Utc::now();
 
         for input in adjustments {
-            validate_sku(&input.sku)?;
-            if input.quantity.is_zero() {
-                return Err(CommerceError::ValidationError(
-                    "Adjustment quantity cannot be zero".into(),
-                ));
-            }
+            input.validate()?;
             // Get item directly with this connection
             let item = tx
                 .query_row("SELECT * FROM inventory_items WHERE sku = ?", [&input.sku], |row| {
@@ -2181,14 +2485,16 @@ mod tests {
             // f64, so a CAST-AS-REAL comparison would wrongly skip the reorder.
             conn.execute(
                 "UPDATE inventory_balances
-                 SET quantity_available = '9.999999999999999999', reorder_point = '10'
+                 SET quantity_available = '9.999999999999999999', reorder_point = '10',
+                     safety_stock = NULL
                  WHERE item_id = ?1",
                 rusqlite::params![below.id],
             )
             .expect("update below");
             conn.execute(
                 "UPDATE inventory_balances
-                 SET quantity_available = '10.000000000000000001', reorder_point = '10'
+                 SET quantity_available = '10.000000000000000001', reorder_point = '10',
+                     safety_stock = NULL
                  WHERE item_id = ?1",
                 rusqlite::params![above.id],
             )

@@ -39,6 +39,17 @@ pub(crate) struct SetReturnDispositionRequest {
     /// `quarantine` bin is used when one exists.
     pub bin_id: Option<i32>,
     pub disposition_by: Option<String>,
+    /// Lot the received units belong to; restocked/quarantined units are
+    /// restored to it in the same transaction.
+    #[serde(default)]
+    #[schema(value_type = Option<String>, format = "uuid")]
+    pub lot_id: Option<uuid::Uuid>,
+    /// Serial numbers physically received (count must equal the item
+    /// quantity); each is marked `returned` and moved to the disposition's
+    /// target status.
+    #[serde(default)]
+    #[schema(value_type = Vec<String>)]
+    pub serial_ids: Vec<uuid::Uuid>,
 }
 
 /// A return line item with its disposition.
@@ -55,6 +66,8 @@ pub(crate) struct ReturnItemResponse {
     pub disposition: Option<String>,
     pub disposition_at: Option<String>,
     pub disposition_by: Option<String>,
+    pub lot_id: Option<String>,
+    pub serial_ids: Vec<String>,
 }
 
 impl From<stateset_core::ReturnItem> for ReturnItemResponse {
@@ -71,6 +84,8 @@ impl From<stateset_core::ReturnItem> for ReturnItemResponse {
             disposition: i.disposition.map(|d| d.to_string()),
             disposition_at: i.disposition_at.map(|d| d.to_rfc3339()),
             disposition_by: i.disposition_by,
+            lot_id: i.lot_id.map(|id| id.to_string()),
+            serial_ids: i.serial_ids.iter().map(ToString::to_string).collect(),
         }
     }
 }
@@ -87,8 +102,8 @@ impl From<stateset_core::ReturnItem> for ReturnItemResponse {
         ("item_id" = String, Path, description = "Return item ID (UUID)"),
     ),
     responses(
-        (status = 200, description = "Disposition recorded; stock effect applied", body = ReturnItemResponse),
-        (status = 400, description = "Invalid disposition / stock effect rejected", body = ErrorBody),
+        (status = 200, description = "Disposition recorded; stock, serial and lot effects applied", body = ReturnItemResponse),
+        (status = 400, description = "Invalid disposition / stock, serial or lot effect rejected", body = ErrorBody),
         (status = 403, description = "Return not yet received", body = ErrorBody),
         (status = 404, description = "Return not found", body = ErrorBody),
         (status = 409, description = "Item already dispositioned", body = ErrorBody),
@@ -113,6 +128,8 @@ pub(crate) async fn set_item_disposition(
             warehouse_id: req.warehouse_id,
             bin_id: req.bin_id,
             disposition_by: req.disposition_by,
+            lot_id: req.lot_id,
+            serial_ids: req.serial_ids,
         },
     )?;
     Ok(Json(ReturnItemResponse::from(item)))

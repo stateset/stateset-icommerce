@@ -238,6 +238,8 @@ pub use backorder::Backorders;
 pub use bom::Bom;
 pub use carts::Carts;
 pub use channels::Channels;
+#[cfg(feature = "sqlite")]
+pub use commerce::kernel::KernelAudit;
 pub use commerce::{Commerce, CommerceBackend, CommerceBuilder, CommerceHealth};
 pub use companies::Companies;
 pub use cost_accounting::CostAccounting;

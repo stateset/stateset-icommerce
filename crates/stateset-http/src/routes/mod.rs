@@ -24,6 +24,7 @@ pub mod integration_field_mappings;
 pub mod integration_mappings;
 pub mod inventory;
 pub mod invoices;
+pub mod kernel;
 pub mod lots;
 pub mod loyalty;
 pub mod negotiations;
@@ -160,6 +161,7 @@ fn v1_router() -> Router<AppState> {
         .merge(topology_snapshots::router())
         .merge(stock_snapshots::router())
         .merge(reports::router())
+        .merge(kernel::router())
         .merge(prepayments::router())
         .merge(purchase_orders::router())
         .merge(general_ledger::router())

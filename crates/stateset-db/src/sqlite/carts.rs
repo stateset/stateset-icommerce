@@ -799,6 +799,11 @@ impl CartRepository for SqliteCartRepository {
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let currency = Self::cart_currency_with_conn(&tx, cart_id)?;
         validate_add_item_money(currency, &item)?;
+        // A SKU that resolves to the catalogue must still be sellable: an
+        // archived product or a deleted variant cannot be added to a cart.
+        // SKUs that are not in the catalogue stay allowed (ad-hoc lines).
+        super::products::variant_is_purchasable_with_conn(&tx, &item.sku)?
+            .ensure_sellable(&item.sku)?;
         let result = self.add_item_internal(&tx, cart_id, item)?;
         self.update_cart_totals(&tx, cart_id)?;
         tx.commit().map_err(map_db_error)?;
@@ -2456,6 +2461,83 @@ mod tests {
             unit_price: price,
             ..Default::default()
         }
+    }
+
+    /// A cart line whose SKU resolves to the catalogue must be sellable:
+    /// archiving the product (or soft-deleting the variant) withdraws it from
+    /// sale immediately, while SKUs that are not in the catalogue stay
+    /// addable so ad-hoc lines keep working.
+    #[test]
+    fn add_item_refuses_a_sku_withdrawn_from_the_catalogue() {
+        use stateset_core::{
+            CreateProduct, CreateProductVariant, ProductRepository, ProductStatus, UpdateProduct,
+        };
+
+        let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+        let (carts, products) = (db.carts(), db.products());
+        let product = products
+            .create(CreateProduct {
+                name: "Catalogue widget".into(),
+                variants: Some(vec![CreateProductVariant {
+                    sku: "SKU-CATALOGUE".into(),
+                    price: dec!(10.00),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .expect("create product");
+        products
+            .update(
+                product.id,
+                UpdateProduct { status: Some(ProductStatus::Active), ..Default::default() },
+            )
+            .expect("activate");
+
+        let cart = carts.create(CreateCart::default()).expect("cart");
+        carts
+            .add_item(cart.id, add_item("SKU-CATALOGUE", 1, dec!(10.00)))
+            .expect("an active catalogue SKU is sellable");
+        // A SKU the catalogue has never heard of is an ad-hoc line, still fine.
+        carts.add_item(cart.id, add_item("SKU-ADHOC", 1, dec!(3.00))).expect("ad-hoc line");
+
+        // A second product, withdrawn before anything references it. (Archiving
+        // the first one is refused precisely because the cart above holds it.)
+        let withdrawn = products
+            .create(CreateProduct {
+                name: "Withdrawn widget".into(),
+                variants: Some(vec![CreateProductVariant {
+                    sku: "SKU-WITHDRAWN".into(),
+                    price: dec!(10.00),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .expect("create second product");
+        products
+            .update(
+                withdrawn.id,
+                UpdateProduct { status: Some(ProductStatus::Active), ..Default::default() },
+            )
+            .expect("activate");
+        products
+            .update(
+                withdrawn.id,
+                UpdateProduct { status: Some(ProductStatus::Archived), ..Default::default() },
+            )
+            .expect("archive");
+
+        let err = carts
+            .add_item(cart.id, add_item("SKU-WITHDRAWN", 1, dec!(10.00)))
+            .expect_err("an archived product must not be addable");
+        match &err {
+            CommerceError::ValidationError(message) => {
+                assert!(message.contains("SKU-WITHDRAWN"), "{message}");
+                assert!(message.contains("not purchasable"), "{message}");
+            }
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
+        // The ad-hoc SKU is unaffected.
+        carts.add_item(cart.id, add_item("SKU-ADHOC", 1, dec!(3.00))).expect("ad-hoc still fine");
     }
 
     #[test]

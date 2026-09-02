@@ -74,8 +74,9 @@ pub mod store;
 
 // Re-exports for convenience
 pub use builtins::{
-    BillingTickJob, EventRetentionJob, FnTraceabilitySweeper, LowStockAlertJob,
-    SubscriptionRenewalJob, TraceabilitySweepJob, TraceabilitySweeper, WebhookRetryJob,
+    BillingTickJob, EventRetentionJob, FnReservationSweeper, FnTraceabilitySweeper,
+    LowStockAlertJob, ReservationSweepJob, ReservationSweeper, SubscriptionRenewalJob,
+    TraceabilitySweepJob, TraceabilitySweeper, WebhookRetryJob,
 };
 pub use context::JobContext;
 pub use error::JobError;

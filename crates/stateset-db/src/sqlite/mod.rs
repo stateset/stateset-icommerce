@@ -916,7 +916,7 @@ pub(crate) fn map_db_error(e: rusqlite::Error) -> CommerceError {
                 rusqlite::ErrorCode::ConstraintViolation => {
                     let msg = e.to_string();
                     if msg.contains("UNIQUE") {
-                        CommerceError::Conflict(msg)
+                        map_unique_constraint_message(&msg)
                     } else {
                         CommerceError::ValidationError(msg)
                     }
@@ -932,6 +932,63 @@ pub(crate) fn map_db_error(e: rusqlite::Error) -> CommerceError {
             }
         }
         _ => CommerceError::DatabaseError(e.to_string()),
+    }
+}
+
+/// Map a SQLite `UNIQUE constraint failed: <table>.<column>` message onto the
+/// typed conflict the repositories promise for that column.
+///
+/// The pre-checks in the product / customer repositories normally surface
+/// these conflicts before the INSERT; this mapping is the backstop for the
+/// window between check and write (and for writers that skip the check) so a
+/// raced duplicate is still a `DuplicateSlug` / `DuplicateSku` /
+/// `EmailAlreadyExists` rather than an untyped `Conflict`.
+pub(crate) fn map_unique_constraint_message(msg: &str) -> CommerceError {
+    let column =
+        msg.rsplit_once("UNIQUE constraint failed:").map(|(_, rest)| rest.trim()).unwrap_or("");
+    if column.starts_with("products.slug") {
+        CommerceError::DuplicateSlug(column.to_string())
+    } else if column.starts_with("product_variants.sku") {
+        CommerceError::DuplicateSku(column.to_string())
+    } else if column.starts_with("customers.email") {
+        CommerceError::EmailAlreadyExists(column.to_string())
+    } else {
+        CommerceError::Conflict(msg.to_string())
+    }
+}
+
+#[cfg(test)]
+mod unique_constraint_mapping_tests {
+    use super::map_unique_constraint_message;
+    use stateset_core::CommerceError;
+
+    #[test]
+    fn maps_product_slug_to_duplicate_slug() {
+        let err = map_unique_constraint_message("UNIQUE constraint failed: products.slug");
+        assert!(matches!(err, CommerceError::DuplicateSlug(_)), "{err:?}");
+    }
+
+    #[test]
+    fn maps_variant_sku_to_duplicate_sku() {
+        let err = map_unique_constraint_message("UNIQUE constraint failed: product_variants.sku");
+        assert!(matches!(err, CommerceError::DuplicateSku(_)), "{err:?}");
+    }
+
+    #[test]
+    fn maps_customer_email_and_email_key_to_email_already_exists() {
+        for msg in [
+            "UNIQUE constraint failed: customers.email",
+            "UNIQUE constraint failed: customers.email_key",
+        ] {
+            let err = map_unique_constraint_message(msg);
+            assert!(matches!(err, CommerceError::EmailAlreadyExists(_)), "{err:?}");
+        }
+    }
+
+    #[test]
+    fn unknown_unique_stays_untyped_conflict() {
+        let err = map_unique_constraint_message("UNIQUE constraint failed: orders.order_number");
+        assert!(matches!(err, CommerceError::Conflict(_)), "{err:?}");
     }
 }
 

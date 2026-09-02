@@ -20,8 +20,23 @@ pub trait CustomerRepository: Send + Sync {
     /// List customers with filter
     fn list(&self, filter: CustomerFilter) -> Result<Vec<Customer>>;
 
-    /// Delete a customer (soft delete)
+    /// Delete a customer (soft delete).
+    ///
+    /// Marks the account `Deleted` and replaces its e-mail with a tombstone
+    /// (`deleted+<id>@invalid`) so the real address can be registered again.
+    /// Refuses with [`CommerceError::Conflict`](crate::CommerceError::Conflict)
+    /// while the customer still has open orders (pending / confirmed /
+    /// processing / partially shipped). Deleting an already-deleted or unknown
+    /// customer is a no-op.
     fn delete(&self, id: CustomerId) -> Result<()>;
+
+    /// Anonymise a customer (GDPR erasure).
+    ///
+    /// Performs [`Self::delete`] and additionally scrubs every PII column:
+    /// names become `Deleted`, phone / metadata / tags are cleared, all
+    /// addresses are removed and both default-address pointers are reset.
+    /// Returns the scrubbed record. Same open-order guard as `delete`.
+    fn anonymize(&self, id: CustomerId) -> Result<Customer>;
 
     /// Add address for customer
     fn add_address(&self, input: CreateCustomerAddress) -> Result<CustomerAddress>;

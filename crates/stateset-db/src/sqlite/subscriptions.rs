@@ -760,7 +760,7 @@ impl SqliteSubscriptionRepository {
     }
 
     /// Read-only view of the subscriptions due for billing at `before`
-    /// (see [`Self::DUE_FOR_BILLING_WHERE`]). Never leases anything.
+    /// (see the `DUE_FOR_BILLING_WHERE` predicate). Never leases anything.
     pub fn get_due_for_billing(
         &self,
         before: DateTime<Utc>,

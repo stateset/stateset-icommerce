@@ -474,16 +474,33 @@ impl PostgresDatabase {
             "087_reservation_order_line",
             include_str!("migrations/087_reservation_order_line.sql"),
         ));
+        // Lot/serial traceability columns on return_items.
+        migrations.push((
+            "088_return_idempotency_and_traceability",
+            include_str!("migrations/088_return_idempotency_and_traceability.sql"),
+        ));
         // Legacy-safe uniqueness for x402 settlement tx hashes.
         migrations.push((
             "089_x402_tx_hash_uniqueness",
             include_str!("migrations/089_x402_tx_hash_uniqueness.sql"),
+        ));
+        // Non-negative CHECK on inventory balances (NOT VALID → legacy-safe)
+        // and `reservation_id` on backorder allocations.
+        migrations.push((
+            "090_inventory_balance_guards",
+            include_str!("migrations/090_inventory_balance_guards.sql"),
         ));
         // Nullable billing-worker lease columns on subscriptions so due
         // subscriptions are claimed atomically before they are billed.
         migrations.push((
             "091_billing_claim_lease",
             include_str!("migrations/091_billing_claim_lease.sql"),
+        ));
+        // Legacy-safe, case-insensitive e-mail uniqueness for live customers
+        // (keyed column; deleted accounts release their address).
+        migrations.push((
+            "092_customer_email_key",
+            include_str!("migrations/092_customer_email_key.sql"),
         ));
         // Durable, tenant-scoped A2A credit terms and agent messaging
         // (previously process-local state in the HTTP routes).

@@ -63,6 +63,55 @@ pub enum CustomerStatus {
     Deleted,
 }
 
+impl CustomerStatus {
+    /// Whether an account may move from `self` to `next`.
+    ///
+    /// | from        | to                                 |
+    /// |-------------|------------------------------------|
+    /// | `Active`    | `Inactive`, `Suspended`, `Deleted` |
+    /// | `Inactive`  | `Active`, `Suspended`, `Deleted`   |
+    /// | `Suspended` | `Active`, `Inactive`, `Deleted`    |
+    /// | `Deleted`   | (terminal)                         |
+    ///
+    /// A same-state transition is always allowed. `Deleted` is terminal: the
+    /// account's e-mail slot has been released for re-registration and its PII
+    /// may have been scrubbed, so a plain status update can never resurrect it.
+    #[must_use]
+    pub const fn can_transition_to(self, next: Self) -> bool {
+        match (self, next) {
+            (Self::Active, Self::Active)
+            | (Self::Inactive, Self::Inactive)
+            | (Self::Suspended, Self::Suspended)
+            | (Self::Deleted, Self::Deleted) => true,
+            (Self::Active | Self::Inactive | Self::Suspended, _) => true,
+            (Self::Deleted, _) => false,
+        }
+    }
+
+    /// Whether this status is terminal (no outgoing transitions).
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Deleted)
+    }
+
+    /// Validate a transition, returning a typed error when it is not allowed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::CommerceError::Conflict`] naming both states when
+    /// [`Self::can_transition_to`] is false (a deleted account is a conflict
+    /// with the request, not a malformed request).
+    pub fn ensure_can_transition_to(self, next: Self) -> Result<()> {
+        if self.can_transition_to(next) {
+            Ok(())
+        } else {
+            Err(crate::CommerceError::Conflict(format!(
+                "customer status cannot transition from {self} to {next}"
+            )))
+        }
+    }
+}
+
 /// Address type enumeration
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Display, EnumString,
@@ -75,6 +124,40 @@ pub enum AddressType {
     Billing,
     #[default]
     Both,
+}
+
+impl AddressType {
+    /// Whether an address of this type can serve as the shipping default.
+    #[must_use]
+    pub const fn covers_shipping(self) -> bool {
+        match self {
+            Self::Shipping | Self::Both => true,
+            Self::Billing => false,
+        }
+    }
+
+    /// Whether an address of this type can serve as the billing default.
+    #[must_use]
+    pub const fn covers_billing(self) -> bool {
+        match self {
+            Self::Billing | Self::Both => true,
+            Self::Shipping => false,
+        }
+    }
+
+    /// Whether an address of type `self` may be made the default for `role`.
+    ///
+    /// A `Both` address can be the default for either role; a `Shipping`
+    /// address can only be the shipping default (and vice versa). Making an
+    /// address the default for `Both` requires the address itself to be `Both`.
+    #[must_use]
+    pub const fn can_default_for(self, role: Self) -> bool {
+        match role {
+            Self::Shipping => self.covers_shipping(),
+            Self::Billing => self.covers_billing(),
+            Self::Both => self.covers_shipping() && self.covers_billing(),
+        }
+    }
 }
 
 /// Input for creating a customer
@@ -169,6 +252,33 @@ pub struct CustomerFilter {
 }
 
 impl Customer {
+    /// Canonical form of an e-mail address for storage and lookup.
+    ///
+    /// Trims surrounding whitespace and lower-cases the whole address. Local
+    /// parts are case-insensitive at every mainstream provider, and treating
+    /// `Alice@Example.com` and `alice@example.com` as two accounts produced
+    /// duplicate customers and let one address bypass the uniqueness rule.
+    #[must_use]
+    pub fn normalize_email(email: &str) -> String {
+        email.trim().to_ascii_lowercase()
+    }
+
+    /// The tombstone e-mail written to a deleted / anonymised account.
+    ///
+    /// Releases the real address for re-registration while keeping the
+    /// column non-null and unique (`deleted+<customer id>@invalid`; `.invalid`
+    /// is the RFC 2606 reserved TLD so the address can never be delivered).
+    #[must_use]
+    pub fn tombstone_email(id: CustomerId) -> String {
+        format!("deleted+{id}@invalid")
+    }
+
+    /// Whether the stored e-mail is a deletion tombstone.
+    #[must_use]
+    pub fn is_tombstone_email(email: &str) -> bool {
+        email.starts_with("deleted+") && email.ends_with("@invalid")
+    }
+
     /// Get full name
     #[must_use]
     pub fn full_name(&self) -> String {
@@ -323,6 +433,50 @@ mod tests {
 
         let deserialized: CustomerStatus = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, status);
+    }
+
+    #[test]
+    fn customer_status_transition_table_is_exhaustive() {
+        use CustomerStatus::{Active, Deleted, Inactive, Suspended};
+        let all = [Active, Inactive, Suspended, Deleted];
+        for from in all {
+            for to in all {
+                let expected = from != Deleted || to == Deleted;
+                assert_eq!(from.can_transition_to(to), expected, "{from} -> {to}");
+                assert_eq!(from.ensure_can_transition_to(to).is_ok(), expected, "{from} -> {to}");
+            }
+        }
+        assert!(Deleted.is_terminal());
+        assert!(!Suspended.is_terminal());
+        assert!(matches!(
+            Deleted.ensure_can_transition_to(Active),
+            Err(crate::CommerceError::Conflict(_))
+        ));
+    }
+
+    #[test]
+    fn email_normalisation_and_tombstones() {
+        assert_eq!(Customer::normalize_email("  Alice@Example.COM "), "alice@example.com");
+        let id = CustomerId::new();
+        let tombstone = Customer::tombstone_email(id);
+        assert_eq!(tombstone, format!("deleted+{id}@invalid"));
+        assert!(Customer::is_tombstone_email(&tombstone));
+        assert!(!Customer::is_tombstone_email("alice@example.com"));
+    }
+
+    #[test]
+    fn address_type_coverage_is_exhaustive() {
+        use AddressType::{Billing, Both, Shipping};
+        assert!(Shipping.covers_shipping() && !Shipping.covers_billing());
+        assert!(!Billing.covers_shipping() && Billing.covers_billing());
+        assert!(Both.covers_shipping() && Both.covers_billing());
+        assert!(
+            Both.can_default_for(Shipping)
+                && Both.can_default_for(Billing)
+                && Both.can_default_for(Both)
+        );
+        assert!(Shipping.can_default_for(Shipping) && !Shipping.can_default_for(Billing));
+        assert!(!Shipping.can_default_for(Both) && !Billing.can_default_for(Both));
     }
 
     // ============================================================================

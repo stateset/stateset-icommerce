@@ -207,6 +207,13 @@ pub(crate) async fn update_customer(
             "Invalid status: {e}. Valid values: active, inactive, suspended"
         ))
     })?;
+    // `deleted` is terminal and carries its own guards (open orders, e-mail
+    // tombstone); it is only reachable through DELETE /customers/{id}.
+    if status == Some(CustomerStatus::Deleted) {
+        return Err(HttpError::BadRequest(
+            "Invalid status: 'deleted' cannot be set via update; use DELETE /customers/{id}. Valid values: active, inactive, suspended".to_string(),
+        ));
+    }
 
     let input = UpdateCustomer {
         email: req.email,
@@ -539,6 +546,63 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn update_customer_status_deleted_returns_400() {
+        let (app, state) = app_with_state();
+        let id = state
+            .run_blocking(None, |commerce| {
+                Ok(commerce
+                    .customers()
+                    .create(stateset_core::CreateCustomer {
+                        email: "terminal@example.com".into(),
+                        first_name: "T".into(),
+                        last_name: "M".into(),
+                        ..Default::default()
+                    })?
+                    .id)
+            })
+            .await
+            .expect("create");
+        let resp = app
+            .oneshot(
+                Request::patch(format!("/customers/{id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"deleted"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn deleted_customer_cannot_be_reactivated_via_update() {
+        let (app, state) = app_with_state();
+        let id = state
+            .run_blocking(None, |commerce| {
+                let c = commerce.customers().create(stateset_core::CreateCustomer {
+                    email: "zombie@example.com".into(),
+                    first_name: "Z".into(),
+                    last_name: "M".into(),
+                    ..Default::default()
+                })?;
+                commerce.customers().delete(c.id)?;
+                Ok(c.id)
+            })
+            .await
+            .expect("create+delete");
+        let resp = app
+            .oneshot(
+                Request::patch(format!("/customers/{id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"active"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]

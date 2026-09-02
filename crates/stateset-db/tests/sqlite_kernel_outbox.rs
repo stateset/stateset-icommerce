@@ -1333,7 +1333,7 @@ fn transition_order_command(
             delegated_by: Some("user-1".into()),
             capabilities: vec!["orders.transition".into()],
         },
-        TransitionOrder { order_id, status, payment_status: None },
+        TransitionOrder { order_id, status, payment_status: None, void_payments: false },
     );
     command.store_id = Some("store-1".into());
     command.policy_version = Some("commerce-policy-1".into());

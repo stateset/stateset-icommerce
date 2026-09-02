@@ -194,6 +194,104 @@ pub(crate) async fn open_captures_for_order_pg(
     rows.into_iter().map(PgPaymentRepository::row_to_payment).collect()
 }
 
+/// Money still refundable on `payment`, on the caller's connection: the
+/// payment's remaining balance minus every in-flight (`pending`/`processing`)
+/// refund, exactly as `create_refund_async` reserves it. Zero when the payment
+/// is not in a refundable status.
+pub(crate) async fn refundable_remaining_pg(
+    conn: &mut sqlx::PgConnection,
+    payment: &Payment,
+) -> Result<Decimal> {
+    if !payment.status.is_refundable() {
+        return Ok(Decimal::ZERO);
+    }
+    let in_flight: Decimal = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(amount), 0) FROM refunds \
+         WHERE payment_id = $1 AND status IN ($2, $3)",
+    )
+    .bind(payment.id.into_uuid())
+    .bind(RefundStatus::Pending.to_string())
+    .bind(RefundStatus::Processing.to_string())
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    Ok((payment.refundable_remaining() - in_flight).max(Decimal::ZERO))
+}
+
+/// Create a `pending` refund of `amount` against `payment` on the caller's
+/// connection/transaction, returning the refund id. The in-transaction twin of
+/// [`PgPaymentRepository::create_refund_async`] for callers (the returns
+/// module) that must settle a refund in the SAME commit as their own state
+/// change. The caller must already hold the payment row lock (`FOR UPDATE`).
+/// `idempotency_key` is honoured inside the transaction: an existing refund
+/// with the key is returned as-is.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn create_refund_pg_tx(
+    conn: &mut sqlx::PgConnection,
+    payment: &Payment,
+    amount: Decimal,
+    reason: Option<&str>,
+    idempotency_key: Option<&str>,
+    notes: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<Uuid> {
+    if let Some(key) = idempotency_key {
+        let existing: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM refunds WHERE idempotency_key = $1")
+                .bind(key)
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_db_error)?;
+        if let Some(id) = existing {
+            return Ok(id);
+        }
+    }
+    let mut reserved = payment.clone();
+    reserved.amount_refunded +=
+        payment.refundable_remaining() - refundable_remaining_pg(conn, payment).await?;
+    let refund_amount = reserved.validate_refund(Some(amount))?;
+
+    let id = Uuid::new_v4();
+    let refund_number = generate_refund_number();
+    sqlx::query(
+        "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason, external_id, idempotency_key, notes, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11)",
+    )
+    .bind(id)
+    .bind(&refund_number)
+    .bind(payment.id.into_uuid())
+    .bind(RefundStatus::Pending.to_string())
+    .bind(refund_amount)
+    .bind(payment.currency)
+    .bind(reason)
+    .bind(idempotency_key)
+    .bind(notes)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    append_kernel_event_tx(
+        conn,
+        &KernelOutboxEvent::domain(
+            "payments.refund_created.v1",
+            "refund",
+            id.to_string(),
+            serde_json::json!({
+                "refund_id": id.to_string(),
+                "refund_number": refund_number,
+                "payment_id": payment.id.to_string(),
+                "amount": refund_amount.to_string(),
+                "currency": payment.currency.as_str(),
+                "status": RefundStatus::Pending.to_string(),
+            }),
+            idempotency_key.map(str::to_string),
+        ),
+    )
+    .await?;
+    Ok(id)
+}
+
 /// Statuses a payment can be voided from when its order is force-cancelled:
 /// money that is in flight but not yet captured.
 const IN_FLIGHT_STATUSES: [PaymentTransactionStatus; 3] = [

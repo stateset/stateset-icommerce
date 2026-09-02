@@ -10,7 +10,38 @@ use stateset_core::{
     ReserveInventory, ResolveA2ADispute, SettleX402Intent, ShipOrderCommand,
     SubmitA2ADisputeEvidence, TransitionOrder, TransitionReturn,
 };
-use stateset_db::sqlite::SqliteKernelExecutor;
+use stateset_db::kernel_outbox::{KernelAuditCheckpoint, KernelAuditVerification};
+use stateset_db::sqlite::{SqliteKernelExecutor, SqliteKernelOutboxRepository};
+
+/// Read-only access to the kernel receipt audit chain.
+///
+/// Every governed command seals its receipt into an append-only hash chain;
+/// this accessor recomputes that chain and mints portable checkpoints that
+/// can be retained outside the database to make later rewrites detectable.
+#[derive(Debug)]
+pub struct KernelAudit {
+    outbox: SqliteKernelOutboxRepository,
+}
+
+impl KernelAudit {
+    /// Recompute every receipt link and report the first broken position.
+    pub fn verify_chain(&self) -> Result<KernelAuditVerification, CommerceError> {
+        self.outbox.verify_audit_chain()
+    }
+
+    /// Mint a portable checkpoint of the current chain head.
+    pub fn checkpoint(&self) -> Result<KernelAuditCheckpoint, CommerceError> {
+        self.outbox.audit_checkpoint()
+    }
+
+    /// Verify an externally retained checkpoint against the local chain.
+    pub fn verify_checkpoint(
+        &self,
+        checkpoint: &KernelAuditCheckpoint,
+    ) -> Result<bool, CommerceError> {
+        self.outbox.verify_audit_checkpoint(checkpoint)
+    }
+}
 
 fn decode_command<T: DeserializeOwned>(
     command: Value,
@@ -41,6 +72,18 @@ impl Commerce {
                 "the synchronous kernel executor requires a SQLite commerce instance".into(),
             )
         })
+    }
+
+    /// Read-only access to the kernel receipt audit chain.
+    pub fn kernel_audit(&self) -> Result<KernelAudit, CommerceError> {
+        self.sqlite_db
+            .as_ref()
+            .map(|database| KernelAudit { outbox: database.kernel_outbox() })
+            .ok_or_else(|| {
+                CommerceError::Internal(
+                    "the kernel audit chain requires a SQLite commerce instance".into(),
+                )
+            })
     }
 
     /// Execute one of the versioned, high-risk commerce commands and return
@@ -160,6 +203,32 @@ mod tests {
 
         assert_eq!(receipt.status, ExecutionStatus::Previewed);
         assert_eq!(commerce.payments().count(Default::default()).expect("count payments"), 0);
+    }
+
+    #[test]
+    fn kernel_audit_accessor_verifies_and_checkpoints_the_receipt_chain() {
+        let commerce = Commerce::in_memory().expect("in-memory commerce");
+        let policy = KernelPolicy::new("test-policy")
+            .allow("payments.create", KernelCommandPolicy::requiring(["payments.create"]));
+        let empty = commerce.kernel_audit().expect("audit").verify_chain().expect("verify");
+        assert!(empty.valid);
+        assert_eq!(empty.entries, 0);
+
+        let command = payment_command();
+        commerce
+            .execute_kernel_command(
+                serde_json::to_value(&command).expect("serialize command"),
+                policy,
+            )
+            .expect("execute preview");
+        let audit = commerce.kernel_audit().expect("audit");
+        let verification = audit.verify_chain().expect("verify");
+        assert!(verification.valid);
+        assert_eq!(verification.entries, 1);
+        let checkpoint = audit.checkpoint().expect("checkpoint");
+        assert_eq!(checkpoint.entries, 1);
+        assert_eq!(checkpoint.head_hash, verification.head_hash);
+        assert!(audit.verify_checkpoint(&checkpoint).expect("verify checkpoint"));
     }
 
     #[test]

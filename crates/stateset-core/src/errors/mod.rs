@@ -593,6 +593,23 @@ pub enum CommerceError {
     /// Operation not permitted.
     #[error("Operation not permitted: {0}")]
     NotPermitted(String),
+
+    /// A durable kernel receipt failed audit-chain verification during replay.
+    ///
+    /// Stable code: `kernel.receipt_tampered`. The receipt stored under the
+    /// idempotency key no longer matches the sealed audit-log entry it claims
+    /// (`audit_hash`), so the executor refuses to replay it as authoritative.
+    #[error(
+        "kernel.receipt_tampered: receipt for idempotency key {idempotency_key} does not match \
+         its sealed audit entry ({})",
+        audit_hash.as_deref().unwrap_or("unsealed")
+    )]
+    KernelReceiptTampered {
+        /// Idempotency key whose materialized receipt failed verification.
+        idempotency_key: String,
+        /// Audit hash the materialized receipt claimed, if any.
+        audit_hash: Option<String>,
+    },
 }
 
 /// Result type alias for commerce operations.
@@ -711,6 +728,7 @@ impl CommerceError {
             Self::Conflict(_)
             | Self::OptimisticLockFailure
             | Self::VersionConflict { .. }
+            | Self::KernelReceiptTampered { .. }
             | Self::DuplicateSku(_)
             | Self::DuplicateSlug(_)
             | Self::EmailAlreadyExists(_) => true,

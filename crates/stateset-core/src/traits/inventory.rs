@@ -42,10 +42,26 @@ pub trait InventoryRepository: Send + Sync {
         reference_id: &str,
     ) -> Result<Vec<InventoryReservation>>;
 
+    /// Sweep up to `limit` open reservations whose `expires_at` is before
+    /// `now`: flip each to `expired` and hand its units back to the balance
+    /// (`quantity_allocated` down, `quantity_available` up), all in one
+    /// transaction per call. Returns how many were expired; call again while
+    /// the result equals `limit` to drain a large backlog.
+    ///
+    /// `reserve`, `release_reservation` and `confirm_reservation` also expire
+    /// stale reservations lazily on the `(item, location)` they touch, so this
+    /// sweeper only has to catch balances nobody is touching — without it
+    /// `quantity_allocated` on an idle SKU would keep counting holds that
+    /// timed out long ago. Idempotent; schedule it (e.g. via
+    /// `stateset_jobs::ReservationSweepJob`).
+    fn expire_reservations(&self, now: chrono::DateTime<chrono::Utc>, limit: u32) -> Result<u64>;
+
     /// List inventory items with filter
     fn list(&self, filter: InventoryFilter) -> Result<Vec<InventoryItem>>;
 
-    /// Get items below reorder point
+    /// Get items whose available quantity is below their reorder threshold
+    /// (`reorder_point + safety_stock`) at any location. Balances without a
+    /// `reorder_point` never need reordering; each SKU appears once.
     fn get_reorder_needed(&self) -> Result<Vec<StockLevel>>;
 
     /// Record transaction

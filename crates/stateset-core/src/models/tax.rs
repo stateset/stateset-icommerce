@@ -270,8 +270,11 @@ pub struct TaxJurisdiction {
     pub updated_at: DateTime<Utc>,
 }
 
-/// Level of tax jurisdiction
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// Level of tax jurisdiction.
+///
+/// Ordered broadest-first (country before state before city); tax breakdowns
+/// are presented and summed in this order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum JurisdictionLevel {
@@ -858,9 +861,23 @@ pub fn compute_tax(
     acc.finish(now)
 }
 
+/// Order the rates that apply to a line: by explicit priority, then broadest
+/// jurisdiction first, then by jurisdiction code and rate name.
+///
+/// The order is what the customer sees in `tax_details` and what the
+/// largest-remainder allocation walks, so it must not depend on anything
+/// random. Rate ids are the last resort only when two rates are otherwise
+/// indistinguishable; ordering on them alone made the breakdown vary between
+/// runs.
 fn sorted_by_priority(mut rates: Vec<&ResolvedTaxRate>) -> Vec<&ResolvedTaxRate> {
     rates.sort_by(|a, b| {
-        a.rate.priority.cmp(&b.rate.priority).then_with(|| a.rate.id.cmp(&b.rate.id))
+        a.rate
+            .priority
+            .cmp(&b.rate.priority)
+            .then_with(|| a.jurisdiction.level.cmp(&b.jurisdiction.level))
+            .then_with(|| a.jurisdiction.code.cmp(&b.jurisdiction.code))
+            .then_with(|| a.rate.name.cmp(&b.rate.name))
+            .then_with(|| a.rate.id.cmp(&b.rate.id))
     });
     rates
 }
@@ -1872,6 +1889,44 @@ mod tests {
         assert_eq!(details, vec![dec!(0.73), dec!(0.10)]);
         assert_eq!(res.jurisdictions.len(), 2);
         assert_eq!(res.jurisdictions.iter().map(|j| j.total_tax).sum::<Decimal>(), dec!(0.83));
+    }
+
+    /// The rate order that drives `tax_details` (and the largest-remainder
+    /// allocation) must not depend on the order rates arrive in, nor on their
+    /// randomly generated ids. Tie-breaking on `rate.id` alone made this vary
+    /// between runs.
+    #[test]
+    fn compute_tax_rate_order_is_stable_regardless_of_input_order() {
+        let state = jur("ZZ-CA");
+        let city = jur("ZZ-CA-LA");
+        let req = request(vec![line("a", dec!(10), dec!(1))]);
+
+        let forward = compute_tax(
+            &req,
+            &inputs(vec![rate(&state, dec!(0.0725)), rate(&city, dec!(0.01))], vec![]),
+            Utc::now(),
+        );
+        // Same two rates, supplied the other way round and with fresh ids.
+        let reversed = compute_tax(
+            &req,
+            &inputs(vec![rate(&city, dec!(0.01)), rate(&state, dec!(0.0725))], vec![]),
+            Utc::now(),
+        );
+
+        let amounts = |r: &TaxCalculationResult| -> Vec<Decimal> {
+            r.line_item_taxes[0].tax_details.iter().map(|d| d.amount).collect()
+        };
+        let names = |r: &TaxCalculationResult| -> Vec<String> {
+            r.line_item_taxes[0].tax_details.iter().map(|d| d.jurisdiction_name.clone()).collect()
+        };
+        assert_eq!(amounts(&forward), vec![dec!(0.73), dec!(0.10)]);
+        assert_eq!(amounts(&reversed), amounts(&forward), "amount order must not depend on input");
+        assert_eq!(
+            names(&reversed),
+            names(&forward),
+            "jurisdiction order must not depend on input"
+        );
+        assert_eq!(forward.total_tax, reversed.total_tax);
     }
 
     #[test]

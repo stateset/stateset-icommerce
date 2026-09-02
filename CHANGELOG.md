@@ -6,11 +6,15 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
-Fourth engine round: the tax engine is one pure computation shared by both
-backends, carts price against the catalog and re-derive every coupon type,
-orders and payments agree on money at cancel and delete, lots cascade to
-serials and inventory, billing is claim-based, and the agentic rails persist
-their credit and messaging state.
+Fourth and fifth engine rounds. The tax engine is one pure computation
+shared by both backends; carts price against the catalog and re-derive every
+coupon type; orders and payments agree on money at cancel and delete; lots
+cascade to serials and inventory; billing is claim-based; the agentic rails
+persist their credit and messaging state. Round five then settles returns
+money and stock, makes inventory adjustment transactional and its
+reservations swept, guards the product and customer lifecycle, and moves the
+kernel onto one shared guard, replay and receipt layer with verified
+replays.
 
 ### ⚠️ Behaviour change
 - **Tax exemptions must be verified** (`verify_exemption`) before they
@@ -44,6 +48,66 @@ their credit and messaging state.
   dispute.** A second x402 intent for a cart or order with an open or
   settled intent is a conflict. `/a2a/credit` and `/a2a/messages` now
   persist per tenant (migrations 086 / 093); enum fields are snake_case.
+- **Kernel executor (round 5)**: the kernel's own `orders.transition`
+  cancel path now enforces the order money rule — a cancel while payments
+  hold captured money is a sealed `commerce.order.captured_money_outstanding`
+  rejection unless the payload sets `void_payments: true` (new field;
+  omitted from the request hash when false), which voids in-flight payments
+  atomically and reports settled money on the `orders.updated.v1` event.
+  **Replay verifies integrity**: a stored receipt is recomputed against its
+  sealed audit-log entry before it is replayed; a tampered, rebound, or
+  unsealed row fails with `CommerceError::KernelReceiptTampered`
+  (`kernel.receipt_tampered`) instead of replaying as authoritative. The
+  envelope guard chain gains `kernel.actor_mismatch` (self-delegated agent
+  or self-approved command). Postgres `orders.ship` now seals a
+  `commerce.reservation_expired` rejection (rolled back to a savepoint,
+  committed, retry key bound) when a hold expires mid-shipment instead of
+  failing the call; the `payments.create` key-mismatch guard records policy
+  evidence on both backends; rejection receipts for loaded aggregates carry
+  `aggregate_id`. Postgres advisory locks use distinct namespaces for
+  idempotency keys, product slugs, product SKUs and inventory SKUs.
+  `Commerce::kernel_audit()` and `GET /api/v1/kernel/audit`
+  (`/checkpoint`) expose audit-chain verification and checkpoints.
+- **Returns settle money and stock (round 5).** A return's
+  `refund_amount` is capped at the sum of its line refunds, refused when
+  negative, and frozen once the return is terminal; completing a return
+  creates the payment refund in the same transaction, splitting it across
+  captures and reporting any uncovered remainder (store-credit refunds are
+  recorded but not settled through payments). Line refunds are the
+  proportional share of what was actually charged, so line discounts are
+  honoured. A return can no longer be rejected after its stock was
+  dispositioned, so the over-return claim is kept and units cannot be
+  restocked twice. Dispositions now move serials (returned to available,
+  quarantined, or scrapped) and restore lot on-hand; completion requires
+  every received item to be dispositioned unless written off; quarantine
+  without bins holds stock at the warehouse instead of doing nothing.
+  Return creation is idempotent at the database (migrations 081 / 088):
+  the same key replays the original and a different payload conflicts, and
+  concurrent full returns on one line admit exactly one.
+- **Inventory adjustments are transactional on Postgres (round 5)**, with
+  the balance locked, the ledger row written in the same transaction, a
+  retry wrapper, auto-created balances, and `receipt` recorded for positive
+  adjustments as on SQLite. SQLite release and expiry compute in decimal
+  instead of float SQL, so fractional holds round-trip exactly. Expired
+  reservations are swept by `InventoryRepository::expire_reservations` and
+  a `ReservationSweepJob` builtin, so allocated stock no longer drifts on
+  idle SKUs. **Backorder allocations now reserve real stock**: allocating
+  can fail with `InsufficientStock`, cancelling releases the reservation on
+  both backends, fulfilment decrements on-hand, and `auto_allocate_inventory`
+  is implemented. Reorder thresholds include `safety_stock`, and Postgres no
+  longer lists a SKU once per location. Balances are guarded against going
+  negative by a Postgres `CHECK` and SQLite triggers (migrations 083 / 090).
+- **Products and customers (round 5).** Archiving or deleting a product or
+  variant is refused while an open order, active cart line, or reservation
+  references its SKU. Postgres `delete_variant` is a soft delete and
+  `get_variants` filters inactive rows, matching SQLite. Customer email is
+  normalised and unique case-insensitively (migrations 085 / 092), so
+  `find_or_create` cannot duplicate an identity; deleting a customer
+  releases the address for re-registration and is terminal, and
+  `anonymize` scrubs personally identifying data. Postgres product creation
+  with variants is one transaction, keyset pagination works on Postgres for
+  products and customers, product status follows an exhaustive state
+  machine, and variant prices are validated for currency scale.
 - **Warehouse**: put-aways are validated and capped at the received
   quantity; `complete_wave` refuses while picks are open; a receipt line
   expecting zero accepts a blind receipt; `delete_location` returns a

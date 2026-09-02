@@ -634,9 +634,9 @@ mod tests {
     #[tokio::test]
     async fn add_item_refuses_client_price_that_differs_from_catalog() {
         use rust_decimal_macros::dec;
-        use stateset_core::{CreateProduct, CreateProductVariant};
+        use stateset_core::{CreateProduct, CreateProductVariant, ProductStatus, UpdateProduct};
         let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
-        state
+        let product = state
             .commerce()
             .products()
             .create(CreateProduct {
@@ -649,6 +649,15 @@ mod tests {
                 ..Default::default()
             })
             .expect("create product");
+        // Only a published product is sellable, so put it on sale before pricing.
+        state
+            .commerce()
+            .products()
+            .update(
+                product.id,
+                UpdateProduct { status: Some(ProductStatus::Active), ..Default::default() },
+            )
+            .expect("publish product");
         let app = router().with_state(state);
         let resp = app
             .clone()

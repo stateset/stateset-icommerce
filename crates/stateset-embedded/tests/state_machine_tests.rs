@@ -444,6 +444,23 @@ fn test_backorder_allocation_and_fulfillment() {
         })
         .expect("Failed to create backorder");
 
+    // Fulfilling from inventory consumes real stock, so the backorder can only
+    // be filled once the goods actually arrive.
+    let starved = commerce.backorder().fulfill_backorder(stateset_embedded::FulfillBackorder {
+        backorder_id: backorder.id,
+        quantity: dec!(2),
+        source_type: FulfillmentSourceType::Inventory,
+        source_id: None,
+        notes: None,
+        fulfilled_by: None,
+    });
+    assert!(
+        matches!(starved, Err(stateset_embedded::CommerceError::InsufficientStock { .. })),
+        "fulfilling from empty inventory must be refused, got {starved:?}"
+    );
+
+    commerce.inventory().adjust("SKU-001", dec!(2), "stock arrived").expect("receive stock");
+
     let backorder = commerce
         .backorder()
         .fulfill_backorder(stateset_embedded::FulfillBackorder {
@@ -456,4 +473,6 @@ fn test_backorder_allocation_and_fulfillment() {
         })
         .expect("Failed to fulfill backorder");
     assert_eq!(backorder.quantity_remaining, dec!(0));
+    let stock = commerce.inventory().get_stock("SKU-001").expect("stock").expect("item exists");
+    assert_eq!(stock.total_on_hand, dec!(0), "fulfilment consumed the received units");
 }

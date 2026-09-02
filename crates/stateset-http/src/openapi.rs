@@ -353,6 +353,9 @@ use crate::state::AppState;
         crate::routes::reports::transaction_cogs,
         crate::routes::reports::close_the_books,
         crate::routes::reports::consumption,
+        // kernel
+        crate::routes::kernel::verify_audit_chain,
+        crate::routes::kernel::audit_checkpoint,
         // carts
         crate::routes::carts::create,
         crate::routes::carts::list,
@@ -724,6 +727,7 @@ use crate::state::AppState;
         (name = "production_batches", description = "Production batch tracking"),
         (name = "purgatory", description = "Quarantined record review"),
         (name = "reports", description = "Computed business reports"),
+        (name = "kernel", description = "Kernel receipt audit chain verification and checkpoints"),
         (name = "stock_snapshots", description = "Point-in-time inventory snapshots"),
         (name = "supplier_skus", description = "Supplier SKU catalog"),
         (name = "topology_snapshots", description = "Network topology snapshots"),

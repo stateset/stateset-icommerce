@@ -1,8 +1,8 @@
 //! Customer operations
 
 use stateset_core::{
-    AddressType, CreateCustomer, CreateCustomerAddress, Customer, CustomerAddress, CustomerFilter,
-    CustomerId, Result, UpdateCustomer, Validate,
+    AddressType, CommerceError, CreateCustomer, CreateCustomerAddress, Customer, CustomerAddress,
+    CustomerFilter, CustomerId, Result, UpdateCustomer, Validate,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;
@@ -160,8 +160,39 @@ impl Customers {
     }
 
     /// Delete a customer (soft delete).
+    ///
+    /// The account is marked `Deleted`, its e-mail is replaced by a tombstone
+    /// so the address can be registered again, and the status can never be
+    /// changed back. Refused with a conflict while the customer has open
+    /// orders.
     pub fn delete(&self, id: CustomerId) -> Result<()> {
         self.db.customers().delete(id)
+    }
+
+    /// Anonymise a customer (GDPR erasure): [`Self::delete`] plus scrubbing of
+    /// every PII column and removal of all addresses. Returns the scrubbed
+    /// record.
+    pub fn anonymize(&self, id: CustomerId) -> Result<Customer> {
+        #[cfg(feature = "events")]
+        let previous = self.db.customers().get(id)?;
+
+        let scrubbed = self.db.customers().anonymize(id)?;
+
+        #[cfg(feature = "events")]
+        {
+            if let Some(previous) = previous {
+                if previous.status != scrubbed.status {
+                    self.emit(CommerceEvent::CustomerStatusChanged {
+                        customer_id: scrubbed.id,
+                        from_status: previous.status,
+                        to_status: scrubbed.status,
+                        timestamp: scrubbed.updated_at,
+                    });
+                }
+            }
+        }
+
+        Ok(scrubbed)
     }
 
     /// Add an address for a customer.
@@ -215,11 +246,20 @@ impl Customers {
     }
 
     /// Find or create a customer by email.
+    ///
+    /// The lookup is case-insensitive and ignores deleted accounts. If two
+    /// callers race on the same new address, the loser's create fails with
+    /// `EmailAlreadyExists` and the winner's record is returned instead.
     pub fn find_or_create(&self, input: CreateCustomer) -> Result<Customer> {
         if let Some(customer) = self.get_by_email(&input.email)? {
-            Ok(customer)
-        } else {
-            self.create(input)
+            return Ok(customer);
+        }
+        match self.create(input.clone()) {
+            Ok(customer) => Ok(customer),
+            Err(CommerceError::EmailAlreadyExists(_)) => self
+                .get_by_email(&input.email)?
+                .ok_or_else(|| CommerceError::EmailAlreadyExists(input.email)),
+            Err(e) => Err(e),
         }
     }
 }

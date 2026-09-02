@@ -1,3 +1,4 @@
+use crate::kernel::SealedAuditEntry;
 use crate::kernel_outbox::{
     KernelAuditCheckpoint, KernelAuditVerification, KernelOutboxEvent, KernelOutboxHealth,
     KernelReceiptRecord, audit_checkpoint_hash_is_valid, build_audit_checkpoint,
@@ -436,19 +437,21 @@ impl PgKernelOutboxRepository {
         let expected_hash = checkpoint.head_hash.as_deref().ok_or_else(|| {
             CommerceError::ValidationError("non-empty checkpoint is missing head_hash".into())
         })?;
-        let Ok(expected_sequence) = i64::try_from(checkpoint.entries) else {
+        // Address the entry by ordinal position, not by `sequence` value: a
+        // rolled-back append still consumes a BIGSERIAL value, so the chain
+        // may legitimately contain gaps.
+        let Ok(offset) = i64::try_from(checkpoint.entries - 1) else {
             return Ok(false);
         };
         let local_hash = sqlx::query_scalar::<_, String>(
             "SELECT audit_hash FROM kernel_receipt_audit_log
-             WHERE sequence = $1 AND audit_hash = $2",
+             ORDER BY sequence OFFSET $1 LIMIT 1",
         )
-        .bind(expected_sequence)
-        .bind(expected_hash)
+        .bind(offset)
         .fetch_optional(&self.pool)
         .await
         .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-        Ok(local_hash == checkpoint.head_hash)
+        Ok(local_hash.as_deref() == Some(expected_hash))
     }
 }
 
@@ -587,4 +590,29 @@ pub(crate) async fn append_kernel_receipt_tx(
     .await
     .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
     Ok(audit_hash)
+}
+
+/// Load the sealed audit-log entry a materialized receipt claims through its
+/// `audit_hash`, for replay verification.
+pub(crate) async fn sealed_audit_entry_tx(
+    tx: &mut sqlx::PgConnection,
+    existing: &KernelReceiptRecord,
+) -> Result<Option<SealedAuditEntry>> {
+    let Some(audit_hash) = existing.receipt.get("audit_hash").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    sqlx::query_as::<_, (Option<String>, String)>(
+        "SELECT previous_audit_hash, request_hash FROM kernel_receipt_audit_log
+         WHERE audit_hash = $1",
+    )
+    .bind(audit_hash)
+    .fetch_optional(tx)
+    .await
+    .map(|row| {
+        row.map(|(previous_audit_hash, request_hash)| SealedAuditEntry {
+            previous_audit_hash,
+            request_hash,
+        })
+    })
+    .map_err(|error| CommerceError::DatabaseError(error.to_string()))
 }

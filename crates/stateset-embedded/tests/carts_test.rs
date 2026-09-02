@@ -1430,7 +1430,7 @@ fn test_full_checkout_flow() {
 /// `unit_price` that disagrees is refused; ad-hoc lines keep their price.
 #[test]
 fn test_add_item_refuses_client_price_that_differs_from_catalog() {
-    use stateset_embedded::{CreateProduct, CreateProductVariant};
+    use stateset_embedded::{CreateProduct, CreateProductVariant, ProductStatus, UpdateProduct};
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let sku = format!("CAT-{}", Uuid::new_v4().simple());
     let product = commerce
@@ -1445,6 +1445,14 @@ fn test_add_item_refuses_client_price_that_differs_from_catalog() {
             ..Default::default()
         })
         .expect("create product");
+    // Only a published product is sellable, so put it on sale before pricing.
+    commerce
+        .products()
+        .update(
+            product.id,
+            UpdateProduct { status: Some(ProductStatus::Active), ..Default::default() },
+        )
+        .expect("publish product");
     let cart = create_test_cart(&commerce);
 
     let line = |price| AddCartItem {

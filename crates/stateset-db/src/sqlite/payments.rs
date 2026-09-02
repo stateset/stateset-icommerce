@@ -9,7 +9,7 @@ use super::{
 use crate::KernelOutboxEvent;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{Row, params};
+use rusqlite::{OptionalExtension, Row, params};
 use stateset_core::{
     BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CurrencyCode,
     CustomerId, InvoiceId, OrderId, OrderStatus, Payment, PaymentFilter, PaymentId, PaymentMethod,
@@ -248,6 +248,100 @@ pub(crate) fn open_captures_for_order_conn(
         }
     }
     Ok(open)
+}
+
+/// Money still refundable on `payment`, on the caller's transaction: the
+/// payment's remaining balance minus every in-flight (`pending`/`processing`)
+/// refund, exactly as `create_refund` reserves it. Zero when the payment is
+/// not in a refundable status.
+pub(crate) fn refundable_remaining_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    payment: &Payment,
+) -> rusqlite::Result<rust_decimal::Decimal> {
+    if !payment.status.is_refundable() {
+        return Ok(rust_decimal::Decimal::ZERO);
+    }
+    let mut in_flight = rust_decimal::Decimal::ZERO;
+    let mut stmt = tx.prepare(
+        "SELECT amount FROM refunds WHERE payment_id = ? AND status IN ('pending', 'processing')",
+    )?;
+    let rows = stmt.query_map([payment.id.to_string()], |row| {
+        let amount: String = row.get(0)?;
+        parse_decimal_row(&amount, "refund", "amount")
+    })?;
+    for row in rows {
+        in_flight += row?;
+    }
+    Ok((payment.refundable_remaining() - in_flight).max(rust_decimal::Decimal::ZERO))
+}
+
+/// Create a `pending` refund of `amount` against `payment` on the caller's
+/// transaction, returning the refund id. The in-transaction twin of
+/// [`PaymentRepository::create_refund`] for callers (the returns module) that
+/// must settle a refund in the SAME commit as their own state change. Applies
+/// the same rules: refundable status, positive amount, and `amount` within the
+/// remaining balance net of in-flight refunds. `idempotency_key` is honoured
+/// inside the transaction: an existing refund with the key is returned as-is.
+pub(crate) fn create_refund_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    payment: &Payment,
+    amount: rust_decimal::Decimal,
+    reason: Option<&str>,
+    idempotency_key: Option<&str>,
+    notes: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<Uuid> {
+    if let Some(key) = idempotency_key {
+        let existing: Option<String> = tx
+            .query_row("SELECT id FROM refunds WHERE idempotency_key = ?", [key], |row| row.get(0))
+            .optional()?;
+        if let Some(id) = existing {
+            return parse_uuid_row(&id, "refund", "id");
+        }
+    }
+    let smuggle = |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
+    let mut reserved = payment.clone();
+    reserved.amount_refunded +=
+        payment.refundable_remaining() - refundable_remaining_in_tx(tx, payment)?;
+    let refund_amount = reserved.validate_refund(Some(amount)).map_err(smuggle)?;
+
+    let id = Uuid::new_v4();
+    let refund_number = generate_refund_number();
+    tx.execute(
+        "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason, external_id, idempotency_key, notes, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+        params![
+            id.to_string(),
+            refund_number,
+            payment.id.to_string(),
+            RefundStatus::Pending.to_string(),
+            refund_amount.to_string(),
+            payment.currency,
+            reason,
+            idempotency_key,
+            notes,
+            now.to_rfc3339(),
+            now.to_rfc3339(),
+        ],
+    )?;
+    append_kernel_event_tx(
+        tx,
+        &KernelOutboxEvent::domain(
+            "payments.refund_created.v1",
+            "refund",
+            id.to_string(),
+            serde_json::json!({
+                "refund_id": id.to_string(),
+                "refund_number": refund_number,
+                "payment_id": payment.id.to_string(),
+                "amount": refund_amount.to_string(),
+                "currency": payment.currency.as_str(),
+                "status": RefundStatus::Pending.to_string(),
+            }),
+            idempotency_key.map(str::to_string),
+        ),
+    )?;
+    Ok(id)
 }
 
 /// Statuses a payment can be voided from when its order is force-cancelled:

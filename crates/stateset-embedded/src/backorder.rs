@@ -150,6 +150,13 @@ impl Backorders {
 
     /// Fulfill a backorder (partial or complete).
     ///
+    /// Stock is consumed for the fulfilled units: open allocations first
+    /// (their reservations are fulfilled, decrementing on-hand), then — when
+    /// `source_type` is `Inventory` and the SKU has an inventory item — the
+    /// remainder straight from available stock. Fulfilling from a purchase
+    /// order, transfer or production run does not touch on-hand stock for
+    /// the unallocated remainder (the units ship straight through).
+    ///
     /// # Example
     ///
     /// ```rust,ignore
@@ -187,7 +194,11 @@ impl Backorders {
 
     /// Allocate inventory to a backorder.
     ///
-    /// Reserves inventory for the backorder until it can be fulfilled.
+    /// Creates a real inventory reservation (`backorder:<id>`) for the units,
+    /// so they leave `quantity_available` and cannot be taken by a cart or
+    /// order. Fails with `InsufficientStock` when the SKU's location does not
+    /// have the units, and with a validation error when the quantity exceeds
+    /// what is still unallocated on the backorder.
     pub fn allocate_backorder(&self, input: AllocateBackorder) -> Result<BackorderAllocation> {
         self.db.backorder().allocate_backorder(input)
     }
@@ -197,7 +208,8 @@ impl Backorders {
         self.db.backorder().get_allocations(backorder_id)
     }
 
-    /// Release an allocation.
+    /// Release an allocation, handing its reserved units back to available
+    /// stock. Idempotent for an allocation that is no longer open.
     pub fn release_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
         self.db.backorder().release_allocation(allocation_id)
     }
@@ -207,14 +219,16 @@ impl Backorders {
         self.db.backorder().confirm_allocation(allocation_id)
     }
 
-    /// Expire old allocations past their expiration date.
+    /// Expire allocations past their expiration date, releasing their
+    /// inventory reservations. Returns how many were expired.
     pub fn expire_allocations(&self) -> Result<u32> {
         self.db.backorder().expire_allocations()
     }
 
-    /// Automatically allocate available inventory to pending backorders.
-    ///
-    /// Allocates in priority order (critical first, then by oldest date).
+    /// Automatically allocate available inventory to open backorders of a
+    /// SKU, in priority order (critical first, then oldest first), each up
+    /// to what is still available at its source location. Returns the
+    /// allocations created (empty when nothing is available or open).
     pub fn auto_allocate_inventory(&self, sku: &str) -> Result<Vec<BackorderAllocation>> {
         self.db.backorder().auto_allocate_inventory(sku)
     }

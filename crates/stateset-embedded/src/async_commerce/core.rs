@@ -317,6 +317,16 @@ impl AsyncInventory {
         self.db.inventory().list_reservations_by_reference_async(reference_type, reference_id).await
     }
 
+    /// Sweep up to `limit` reservations that expired before `now` (see
+    /// `Inventory::expire_reservations`).
+    pub async fn expire_reservations(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+        limit: u32,
+    ) -> Result<u64> {
+        self.db.inventory().expire_reservations_async(now, limit).await
+    }
+
     /// List inventory items.
     pub async fn list(&self, filter: InventoryFilter) -> Result<Vec<InventoryItem>> {
         self.db.inventory().list_async(filter).await
@@ -382,6 +392,11 @@ impl AsyncCustomers {
     /// Delete a customer.
     pub async fn delete(&self, id: Uuid) -> Result<()> {
         self.db.customers().delete_async(id.into()).await
+    }
+
+    /// Anonymise a customer (soft delete plus PII scrub).
+    pub async fn anonymize(&self, id: Uuid) -> Result<Customer> {
+        self.db.customers().anonymize_async(id.into()).await
     }
 
     /// Add an address to a customer.
