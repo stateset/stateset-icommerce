@@ -18,8 +18,7 @@ use rust_decimal_macros::dec;
 use stateset_embedded::{
     Commerce, CommerceError, CreateCustomer, CreateGlPeriod, CreateInventoryItem, CreateJournalEntry,
     CreateJournalEntryLine, CreateOrder, CreateOrderItem, CreateProduct, CreateProductVariant,
-    CreateTaxRate, JournalEntry, ProductTaxCategory, TaxAddress, TaxCalculationRequest, TaxLineItem,
-    TaxType,
+    JournalEntry, ProductTaxCategory, TaxAddress, TaxCalculationRequest, TaxLineItem,
 };
 
 fn main() -> Result<(), CommerceError> {
@@ -211,26 +210,30 @@ fn main() -> Result<(), CommerceError> {
     let tax_liability = order_tax_total;
     let revenue_credit = captured - tax_liability;
 
+    let mut lines = vec![
+        // Debit Cash for the captured amount
+        CreateJournalEntryLine::debit(cash_acct.id, captured, Some("Cash received".into())),
+        // Credit Sales Revenue for the net (pre-tax) revenue
+        CreateJournalEntryLine::credit(
+            revenue_acct.id,
+            revenue_credit,
+            Some("Sales revenue".into()),
+        ),
+    ];
+    if tax_liability > Decimal::ZERO {
+        // Credit Accounts Payable as a stand-in for Sales Tax Payable (only when non-zero)
+        lines.push(CreateJournalEntryLine::credit(
+            ap_acct.id,
+            tax_liability,
+            Some("Sales tax payable".into()),
+        ));
+    }
+
     let entry = commerce.general_ledger().create_journal_entry(CreateJournalEntry {
         entry_date: today,
         entry_type: None,
         description: format!("Sale {} (payment {})", order.order_number, payment.id),
-        lines: vec![
-            // Debit Cash for the captured amount
-            CreateJournalEntryLine::debit(cash_acct.id, captured, Some("Cash received".into())),
-            // Credit Sales Revenue for the net (pre-tax) revenue
-            CreateJournalEntryLine::credit(
-                revenue_acct.id,
-                revenue_credit,
-                Some("Sales revenue".into()),
-            ),
-            // Credit Accounts Payable as a stand-in for Sales Tax Payable
-            CreateJournalEntryLine::credit(
-                ap_acct.id,
-                tax_liability,
-                Some("Sales tax payable".into()),
-            ),
-        ],
+        lines,
         source_document_type: Some("order".into()),
         source_document_id: Some(order.id.into_uuid()),
         auto_post: Some(false),
