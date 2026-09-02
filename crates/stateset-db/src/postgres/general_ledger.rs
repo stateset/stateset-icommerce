@@ -633,7 +633,10 @@ impl PgGeneralLedgerRepository {
         let row = sqlx::query_as::<_, PeriodRow>(
             "SELECT id, period_name, fiscal_year, period_number, start_date, end_date,
                     status, closed_at, closed_by, locked_at, locked_by, created_at, updated_at
-             FROM gl_periods WHERE start_date <= $1 AND end_date >= $1",
+             FROM gl_periods
+             WHERE start_date <= $1 AND end_date >= $1 AND status = 'open'
+             ORDER BY start_date DESC, period_number DESC
+             LIMIT 1",
         )
         .bind(date)
         .fetch_optional(&self.pool)
@@ -1106,7 +1109,10 @@ impl PgGeneralLedgerRepository {
         }
 
         let period: Option<(Uuid, String)> = sqlx::query_as(
-            "SELECT id, status FROM gl_periods WHERE start_date <= $1 AND end_date >= $1",
+            "SELECT id, status FROM gl_periods
+             WHERE start_date <= $1 AND end_date >= $1 AND status = 'open'
+             ORDER BY start_date DESC, period_number DESC
+             LIMIT 1",
         )
         .bind(input.entry_date)
         .fetch_optional(tx.as_mut())
