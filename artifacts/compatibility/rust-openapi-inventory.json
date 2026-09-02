@@ -7,9 +7,9 @@
   "openapiVersion": "3.1.0",
   "title": "StateSet Commerce API",
   "version": "1.0.4",
-  "totalPaths": 326,
-  "totalOperations": 442,
-  "totalSchemas": 430,
+  "totalPaths": 329,
+  "totalOperations": 445,
+  "totalSchemas": 432,
   "totalTags": 61,
   "methods": [
     {
@@ -18,7 +18,7 @@
     },
     {
       "name": "GET",
-      "count": 175
+      "count": 177
     },
     {
       "name": "PATCH",
@@ -26,7 +26,7 @@
     },
     {
       "name": "POST",
-      "count": 219
+      "count": 220
     },
     {
       "name": "PUT",
@@ -37,7 +37,7 @@
     {
       "name": "a2a",
       "description": "Agent-to-agent messaging and credit terms",
-      "count": 8
+      "count": 11
     },
     {
       "name": "accounts_payable",
@@ -522,6 +522,7 @@
     "CreateWorkOrderRequest",
     "CreateWorkOrderTaskRequest",
     "CreditAmountRequest",
+    "CreditEntryResponse",
     "CreditTermsResponse",
     "CustomerListResponse",
     "CustomerResponse",
@@ -543,6 +544,7 @@
     "ErrorDetail",
     "ExchangeRateListResponse",
     "ExchangeRateResponse",
+    "FailMessageRequest",
     "FieldMappingListResponse",
     "FieldMappingResponse",
     "FixedAssetListResponse",
@@ -810,6 +812,15 @@
       "summary": "`POST /api/v1/a2a/credit/:id/charge`"
     },
     {
+      "path": "/api/v1/a2a/credit/{id}/entries",
+      "method": "GET",
+      "operationId": "list_entries",
+      "tags": [
+        "a2a"
+      ],
+      "summary": "`GET /api/v1/a2a/credit/:id/entries`"
+    },
+    {
       "path": "/api/v1/a2a/credit/{id}/payment",
       "method": "POST",
       "operationId": "record_payment",
@@ -837,6 +848,15 @@
       "summary": "`POST /api/v1/a2a/messages`"
     },
     {
+      "path": "/api/v1/a2a/messages/{id}",
+      "method": "GET",
+      "operationId": "get_message",
+      "tags": [
+        "a2a"
+      ],
+      "summary": "`GET /api/v1/a2a/messages/:id`"
+    },
+    {
       "path": "/api/v1/a2a/messages/{id}/acknowledge",
       "method": "POST",
       "operationId": "acknowledge_message",
@@ -844,6 +864,15 @@
         "a2a"
       ],
       "summary": "`POST /api/v1/a2a/messages/:id/acknowledge`"
+    },
+    {
+      "path": "/api/v1/a2a/messages/{id}/fail",
+      "method": "POST",
+      "operationId": "fail_message",
+      "tags": [
+        "a2a"
+      ],
+      "summary": "`POST /api/v1/a2a/messages/:id/fail`"
     },
     {
       "path": "/api/v1/activity-logs",
