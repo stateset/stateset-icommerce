@@ -51,6 +51,7 @@ fn main() -> Result<(), CommerceError> {
     // 3) Configure tax (enable and add a simple CA state rate if not present)
     // Default TaxSettings enable tax with half_up rounding; persist them.
     let _ = commerce.tax().update_settings(stateset_embedded::TaxSettings::default())?;
+    println!("✓ Tax settings updated");
 
     // Ensure a CA state jurisdiction exists and a 7.25% sales tax rate applies.
     // Jurisdictions for US states are typically pre-seeded; if not, skip creating.
@@ -78,6 +79,8 @@ fn main() -> Result<(), CommerceError> {
                 effective_to: None,
             })?;
             println!("✓ Created CA state tax rate: 7.25%");
+        } else {
+            println!("✓ CA tax rate present ({} rate(s))", existing.len());
         }
     } else {
         println!("! US-CA jurisdiction not found; proceeding without non-zero tax");
@@ -90,6 +93,7 @@ fn main() -> Result<(), CommerceError> {
         last_name: "L".into(),
         ..Default::default()
     })?;
+    println!("✓ Customer created: {}", customer.email);
     let product = commerce.products().create(CreateProduct {
         name: "Widget".into(),
         description: Some("A simple demo widget".into()),
@@ -101,6 +105,7 @@ fn main() -> Result<(), CommerceError> {
         }]),
         ..Default::default()
     })?;
+    println!("✓ Product created: {}", product.name);
     // Track inventory for the SKU and stock 10 units
     let _ = commerce.inventory().create_item(CreateInventoryItem {
         sku: "WIDGET-CA-001".into(),
@@ -108,6 +113,7 @@ fn main() -> Result<(), CommerceError> {
         initial_quantity: Some(dec!(10)),
         ..Default::default()
     })?;
+    println!("✓ Inventory item created: WIDGET-CA-001 (10 units)");
 
     // 5) Calculate tax for a single-line purchase shipping to CA
     let tax_result = commerce.tax().calculate(TaxCalculationRequest {
@@ -137,6 +143,7 @@ fn main() -> Result<(), CommerceError> {
         transaction_date: Some(today),
         prices_include_tax: false,
     })?;
+    println!("✓ Tax calculated: total_tax=${}", tax_result.total_tax);
 
     let line_tax = tax_result
         .line_item_taxes
@@ -169,6 +176,7 @@ fn main() -> Result<(), CommerceError> {
         currency: Some(stateset_embedded::CurrencyCode::USD),
         ..Default::default()
     })?;
+    println!("✓ Order created: {} (total ${})", order.order_number, order.total_amount);
 
     // 7) Record a payment capture using the kernel's real API
     let payment = commerce.payments().create(stateset_embedded::CreatePayment {
@@ -184,6 +192,7 @@ fn main() -> Result<(), CommerceError> {
         ..Default::default()
     })?;
     let payment = commerce.payments().mark_completed(payment.id)?;
+    println!("✓ Payment captured: {} amount=${}", payment.id, payment.amount);
 
     // 8) Post a balanced journal for the sale (Cash debit, Revenue + Tax Payable credit)
     // Accounts come from the default chart:
@@ -237,6 +246,7 @@ fn main() -> Result<(), CommerceError> {
     })?;
     let posted: JournalEntry =
         commerce.general_ledger().post_journal_entry(entry.id, "demo")?;
+    println!("✓ Journal posted: {}", posted.entry_number);
 
     // 9) Print outputs
     println!("\n--- Result ---");
