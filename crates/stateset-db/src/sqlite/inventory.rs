@@ -637,7 +637,7 @@ impl SqliteInventoryRepository {
         rows.collect()
     }
 
-    /// [`Self::list_open_reservations_for_sku_in_tx`] restricted to LEGACY rows
+    /// [`Self::list_open_legacy_reservations_for_sku_in_tx`] restricted to LEGACY rows
     /// (created before migration 080, so not keyed to an order line). The
     /// orders module uses this as the fallback after the line-keyed lookup so
     /// a SKU-based release can never take another line's keyed hold.
