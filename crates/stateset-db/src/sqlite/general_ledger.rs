@@ -891,7 +891,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         match conn.query_row(
             "SELECT id, period_name, fiscal_year, period_number, start_date, end_date,
                     status, closed_at, closed_by, locked_at, locked_by, created_at, updated_at
-             FROM gl_periods WHERE start_date <= ?1 AND end_date >= ?1",
+             FROM gl_periods
+             WHERE start_date <= ?1 AND end_date >= ?1 AND status = 'open'
+             ORDER BY start_date DESC, period_number DESC
+             LIMIT 1",
             params![date.to_string()],
             Self::map_period_row,
         ) {
@@ -2573,6 +2576,39 @@ mod tests {
             })
             .expect("create period");
         repo.open_period(p.id).expect("open period")
+    }
+
+    #[test]
+    fn get_period_for_date_prefers_open_when_overlapping() {
+        let repo = fresh_repo();
+        // Two overlapping periods around mid-July 2026.
+        let p1 = repo
+            .create_period(CreateGlPeriod {
+                period_name: "2026-07 A".into(),
+                fiscal_year: 2026,
+                period_number: 7,
+                start_date: NaiveDate::from_ymd_opt(2026, 7, 1).expect("date"),
+                end_date: NaiveDate::from_ymd_opt(2026, 7, 31).expect("date"),
+            })
+            .expect("create p1");
+        let p2 = repo
+            .create_period(CreateGlPeriod {
+                period_name: "2026-07 B".into(),
+                fiscal_year: 2026,
+                period_number: 70,
+                start_date: NaiveDate::from_ymd_opt(2026, 7, 10).expect("date"),
+                end_date: NaiveDate::from_ymd_opt(2026, 7, 20).expect("date"),
+            })
+            .expect("create p2");
+        // Open p1, open then close p2 — both cover the date, only p1 is open.
+        let p1 = repo.open_period(p1.id).expect("open p1");
+        let p2 = repo.open_period(p2.id).expect("open p2");
+        let _ = repo.close_period(p2.id, "tester").expect("close p2");
+
+        let date = NaiveDate::from_ymd_opt(2026, 7, 15).expect("date");
+        let selected = repo.get_period_for_date(date).expect("lookup").expect("some");
+        assert_eq!(selected.id, p1.id, "must select the open period covering the date");
+        assert!(selected.can_post(), "selected period is open");
     }
 
     #[test]
