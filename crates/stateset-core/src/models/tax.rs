@@ -991,7 +991,9 @@ impl TaxAccumulator {
         let (line_tax, allocated) = self.apply_rates(line_amount, rates);
         let net = if self.inclusive { line_amount - line_tax } else { line_amount };
         self.subtotal += net;
-        let tax_details = allocated
+        // Build per-rate details and sort them by a stable key so output is deterministic
+        // even when the underlying rate order differs across platforms (e.g., under Miri).
+        let mut tax_details: Vec<TaxDetail> = allocated
             .iter()
             .map(|(share, amount)| {
                 let resolved = rates[share.index];
@@ -1003,6 +1005,11 @@ impl TaxAccumulator {
                 }
             })
             .collect();
+        tax_details.sort_by(|a, b| {
+            a.jurisdiction_name
+                .cmp(&b.jurisdiction_name)
+                .then_with(|| a.tax_type.to_string().cmp(&b.tax_type.to_string()))
+        });
         let effective_rate = if net.is_zero() { Decimal::ZERO } else { line_tax / net };
         self.total_tax += line_tax;
         self.line_item_taxes.push(LineItemTax {
