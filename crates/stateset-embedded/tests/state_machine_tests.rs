@@ -320,13 +320,34 @@ fn test_serial_number_state_machine() {
         commerce.serials().get(serial.id).expect("Failed to get serial").expect("Serial not found");
     assert_eq!(serial.status, SerialStatus::Reserved);
 
+    // A second order cannot take the same unit.
+    let err = commerce
+        .serials()
+        .reserve(ReserveSerialNumber {
+            serial_id: serial.id,
+            reference_type: "order".into(),
+            reference_id: Uuid::new_v4(),
+            ..Default::default()
+        })
+        .expect_err("a reserved serial cannot be reserved again");
+    assert!(matches!(err, stateset_embedded::CommerceError::Conflict(_)), "got {err:?}");
+
     commerce
         .serials()
         .confirm_reservation(reservation.id)
         .expect("Failed to confirm serial reservation");
+    // Confirmation strengthens the hold; the serial stays reserved and the
+    // reservation stays open until the sale consumes it.
     let serial =
         commerce.serials().get(serial.id).expect("Failed to get serial").expect("Serial not found");
     assert_eq!(serial.status, SerialStatus::Reserved);
+    let confirmed = commerce
+        .serials()
+        .get_reservation(reservation.id)
+        .expect("get reservation")
+        .expect("reservation exists");
+    assert!(confirmed.is_confirmed());
+    assert!(confirmed.is_open());
 
     let customer_id = create_test_customer(&commerce);
     let serial = commerce
@@ -334,6 +355,28 @@ fn test_serial_number_state_machine() {
         .mark_sold(serial.id, customer_id, None)
         .expect("Failed to mark serial as sold");
     assert_eq!(serial.status, SerialStatus::Sold);
+
+    // The sale consumed the reservation: releasing it afterwards must not flip
+    // the sold unit back to available.
+    let consumed = commerce
+        .serials()
+        .get_reservation(reservation.id)
+        .expect("get reservation")
+        .expect("reservation exists");
+    assert!(consumed.released_at.is_some(), "sale must close the reservation");
+    assert!(commerce.serials().release_reservation(reservation.id).is_err());
+    let serial =
+        commerce.serials().get(serial.id).expect("Failed to get serial").expect("Serial not found");
+    assert_eq!(serial.status, SerialStatus::Sold);
+
+    // Terminal statuses are enforced: a scrapped unit cannot be shipped.
+    let scrapped = commerce.serials().scrap(serials[1].id, "crushed").expect("scrap");
+    assert_eq!(scrapped.status, SerialStatus::Scrapped);
+    let err = commerce
+        .serials()
+        .mark_shipped(serials[1].id, Uuid::new_v4())
+        .expect_err("scrapped serial cannot ship");
+    assert!(matches!(err, stateset_embedded::CommerceError::Conflict(_)), "got {err:?}");
 }
 
 #[test]

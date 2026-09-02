@@ -691,6 +691,28 @@ impl SqliteTaxRepository {
     }
 
     /// Create a new exemption
+    /// Mark an exemption certificate as verified (or revoke verification).
+    /// Only verified exemptions are honoured by tax calculation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommerceError::NotFound`] if no exemption has `id`.
+    pub fn verify_exemption(&self, id: Uuid, verified: bool) -> Result<TaxExemption> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let now = Utc::now();
+        let verified_at = if verified { Some(now.to_rfc3339()) } else { None };
+        let changed = conn
+            .execute(
+                "UPDATE tax_exemptions SET verified = ?1, verified_at = ?2, updated_at = ?3 WHERE id = ?4",
+                rusqlite::params![i32::from(verified), verified_at, now.to_rfc3339(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        if changed == 0 {
+            return Err(CommerceError::NotFound);
+        }
+        self.get_exemption(id)?.ok_or(CommerceError::NotFound)
+    }
+
     pub fn create_exemption(&self, input: CreateTaxExemption) -> Result<TaxExemption> {
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -1244,6 +1266,10 @@ impl TaxRepository for SqliteTaxRepository {
 
     fn get_customer_exemptions(&self, customer_id: Uuid) -> Result<Vec<TaxExemption>> {
         Self::get_customer_exemptions(self, customer_id)
+    }
+
+    fn verify_exemption(&self, id: Uuid, verified: bool) -> Result<TaxExemption> {
+        Self::verify_exemption(self, id, verified)
     }
 
     fn get_settings(&self) -> Result<TaxSettings> {

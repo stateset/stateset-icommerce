@@ -52,6 +52,11 @@ async fn create_order(db: &PostgresDatabase, customer_id: CustomerId) -> statese
                 unit_price: dec!(10.00),
                 ..Default::default()
             }],
+            // Order-level money must survive line mutations: the total is
+            // `lines + tax + shipping - discount`, never the bare line sum.
+            tax_amount: Some(dec!(0.80)),
+            shipping_amount: Some(dec!(4.00)),
+            discount_amount: Some(dec!(1.00)),
             ..Default::default()
         })
         .await
@@ -67,6 +72,8 @@ async fn postgres_order_item_changes_increment_version_and_total() {
 
     let customer = create_customer(&db, &format!("version-{}@example.com", Uuid::new_v4())).await;
     let order = create_order(&db, customer.id).await;
+    assert_eq!(order.total_amount, dec!(13.80), "10 + 0.80 + 4 - 1");
+    assert_eq!(order.total_amount, order.calculate_total());
     let initial_version = order.version;
 
     let added_item = db
@@ -88,6 +95,7 @@ async fn postgres_order_item_changes_increment_version_and_total() {
         db.orders().get_async(order.id.into()).await.expect("get order").expect("order exists");
 
     assert_eq!(after_add.version, initial_version + 1);
+    assert_eq!(after_add.total_amount, dec!(23.80), "10 + 10 + 0.80 + 4 - 1");
     assert_eq!(after_add.total_amount, after_add.calculate_total());
 
     db.orders()
@@ -103,6 +111,7 @@ async fn postgres_order_item_changes_increment_version_and_total() {
         .expect("order exists");
 
     assert_eq!(after_remove.version, initial_version + 2);
+    assert_eq!(after_remove.total_amount, dec!(13.80), "order-level money still carried");
     assert_eq!(after_remove.total_amount, after_remove.calculate_total());
 }
 

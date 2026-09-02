@@ -97,6 +97,33 @@ impl BillingInterval {
     }
 }
 
+/// Schedule for a subscription resuming at `now` from a pause that began at
+/// `paused_at`, given the paid-through date it had then (`period_end`).
+///
+/// Returns `(next_billing_date, status, trial_ends_at override)`: the paid
+/// remainder `period_end - paused_at` (never negative — an overdue
+/// subscription resumes due now) is added to `now`, so pausing never forfeits
+/// paid time nor drifts the billing anchor; a subscription paused mid-trial
+/// resumes into `Trial` with its trial end moved by the same amount,
+/// otherwise `Active`. Both storage backends use this.
+#[must_use]
+pub fn resumed_schedule(
+    now: DateTime<Utc>,
+    paused_at: Option<DateTime<Utc>>,
+    period_end: DateTime<Utc>,
+    trial_ends_at: Option<DateTime<Utc>>,
+) -> (DateTime<Utc>, SubscriptionStatus, Option<DateTime<Utc>>) {
+    let paused_at = paused_at.unwrap_or(now);
+    let remainder = (period_end - paused_at).max(chrono::Duration::zero());
+    let next_billing_date = now + remainder;
+    let in_trial = trial_ends_at.is_some_and(|t| t > paused_at);
+    if in_trial {
+        (next_billing_date, SubscriptionStatus::Trial, Some(next_billing_date))
+    } else {
+        (next_billing_date, SubscriptionStatus::Active, None)
+    }
+}
+
 /// Status of a subscription
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
@@ -1037,6 +1064,23 @@ pub fn generate_plan_code(name: &str) -> String {
 }
 
 impl Subscription {
+    /// `(subtotal, discount, total)` for one billing cycle, rounded to the
+    /// currency's minor unit (banker's rounding, as the cart does) so
+    /// `19.99 x 15%` yields a chargeable `3.00` discount rather than `2.9985`.
+    /// The discount never exceeds the subtotal.
+    #[must_use]
+    pub fn billing_cycle_amounts(&self) -> (Decimal, Decimal, Decimal) {
+        let dp = u32::from(self.currency.decimal_places());
+        let subtotal = self.calculate_total().round_dp(dp);
+        let discount = (self.discount_amount.unwrap_or(Decimal::ZERO)
+            + (self.discount_percent.unwrap_or(Decimal::ZERO) * subtotal))
+            .round_dp(dp)
+            .min(subtotal)
+            .max(Decimal::ZERO);
+        let total = (subtotal - discount).max(Decimal::ZERO);
+        (subtotal, discount, total)
+    }
+
     /// Check if subscription is in an active billing state
     #[must_use]
     pub const fn is_active(&self) -> bool {

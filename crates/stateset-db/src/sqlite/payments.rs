@@ -11,29 +11,40 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Row, params};
 use stateset_core::{
-    BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CustomerId,
-    InvoiceId, OrderId, Payment, PaymentFilter, PaymentId, PaymentMethod, PaymentRepository,
-    PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment, Validate,
-    generate_payment_number, generate_refund_number, validate_batch_size,
+    BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CurrencyCode,
+    CustomerId, InvoiceId, OrderId, OrderStatus, Payment, PaymentFilter, PaymentId, PaymentMethod,
+    PaymentRepository, PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment,
+    Validate, generate_payment_number, generate_refund_number, validate_batch_size,
 };
 use uuid::Uuid;
 
 /// Payment statuses that hold (or are about to hold) a slice of the order's
 /// total: in-flight captures count as well as completed ones so two concurrent
 /// captures cannot each pass the check against the same stale balance.
+///
+/// `Disputed` is included: a chargeback under dispute is contested money, not a
+/// settled loss — the capture is still on the books (and the dispute may
+/// resolve back to `Completed`), so it must keep consuming its slice of the
+/// order total. Mirrored exactly in the Postgres backend.
+pub(crate) const CAPTURING_STATUSES: [PaymentTransactionStatus; 7] = [
+    PaymentTransactionStatus::Pending,
+    PaymentTransactionStatus::Processing,
+    PaymentTransactionStatus::RequiresAction,
+    PaymentTransactionStatus::Completed,
+    PaymentTransactionStatus::PartiallyRefunded,
+    PaymentTransactionStatus::Refunded,
+    PaymentTransactionStatus::Disputed,
+];
+
+/// Whether `status` holds a slice of its order's total (see
+/// [`CAPTURING_STATUSES`]).
+pub(crate) fn is_capturing(status: PaymentTransactionStatus) -> bool {
+    CAPTURING_STATUSES.contains(&status)
+}
+
+/// SQL `IN (...)` body listing [`CAPTURING_STATUSES`].
 fn capturing_statuses() -> String {
-    [
-        PaymentTransactionStatus::Pending,
-        PaymentTransactionStatus::Processing,
-        PaymentTransactionStatus::RequiresAction,
-        PaymentTransactionStatus::Completed,
-        PaymentTransactionStatus::PartiallyRefunded,
-        PaymentTransactionStatus::Refunded,
-    ]
-    .iter()
-    .map(|s| format!("'{s}'"))
-    .collect::<Vec<_>>()
-    .join(", ")
+    CAPTURING_STATUSES.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>().join(", ")
 }
 
 /// Every payment status, so the transition guards below can be derived from the
@@ -103,29 +114,57 @@ fn domain_err(error: CommerceError) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(error))
 }
 
-/// Over-capture guard: reject when Σ(in-flight + completed captures for the
-/// order, excluding `exclude_payment_id`) + `amount` would exceed
-/// `orders.total_amount`. Must run inside the caller's IMMEDIATE transaction
-/// so concurrent captures serialize on the write lock. A payment whose
-/// `order_id` does not resolve to an order (standalone / external reference)
-/// has nothing to cap against and passes.
+/// Order-side guards for a capture against `order_id`, all evaluated on ONE
+/// read of the order row inside the caller's IMMEDIATE transaction (so
+/// concurrent captures serialize on the write lock):
+///
+/// 1. **order status** — a `Cancelled` or `Refunded` order has no money owed on
+///    it; creating or completing a capturing payment against it would orphan
+///    the captured money (`ValidationError` naming the order status);
+/// 2. **currency** — the payment's currency must equal the order's, otherwise
+///    the capacity sum below would add unlike units (JPY 100 against a USD 100
+///    order used to pass) (`ValidationError` naming both currencies);
+/// 3. **capacity** — reject when Σ(captures for the order in a capturing
+///    status, excluding `exclude_payment_id`) + `amount` would exceed
+///    `orders.total_amount` (`CaptureExceedsOrderTotal`).
+///
+/// A payment whose `order_id` does not resolve to an order (standalone /
+/// external reference) has nothing to cap against and passes.
 ///
 /// `amount` / `total_amount` are TEXT money columns, so the sum is done in
-/// `Decimal` in Rust rather than in SQL.
+/// `Decimal` in Rust rather than in SQL. Mirrored exactly in the Postgres
+/// backend.
 pub(crate) fn check_order_capture_capacity_tx(
     tx: &rusqlite::Transaction<'_>,
     order_id: &str,
     exclude_payment_id: Option<&str>,
     amount: rust_decimal::Decimal,
+    payment_currency: CurrencyCode,
 ) -> std::result::Result<(), rusqlite::Error> {
-    let total =
-        match tx.query_row("SELECT total_amount FROM orders WHERE id = ?", [order_id], |row| {
-            row.get::<_, String>(0)
-        }) {
-            Ok(total) => parse_decimal_row(&total, "order", "total_amount")?,
-            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
-            Err(e) => return Err(e),
-        };
+    let (total, order_status, order_currency) = match tx.query_row(
+        "SELECT total_amount, status, currency FROM orders WHERE id = ?",
+        [order_id],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+    ) {
+        Ok((total, status, currency)) => (
+            parse_decimal_row(&total, "order", "total_amount")?,
+            parse_enum_row::<OrderStatus>(&status, "order", "status")?,
+            parse_enum_row::<CurrencyCode>(&currency, "order", "currency")?,
+        ),
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+        Err(e) => return Err(e),
+    };
+
+    if matches!(order_status, OrderStatus::Cancelled | OrderStatus::Refunded) {
+        return Err(domain_err(CommerceError::ValidationError(format!(
+            "Order {order_id} is {order_status}; a payment cannot be captured against it"
+        ))));
+    }
+    if payment_currency != order_currency {
+        return Err(domain_err(CommerceError::ValidationError(format!(
+            "Payment currency {payment_currency} does not match order {order_id} currency {order_currency}"
+        ))));
+    }
 
     let sql = format!(
         "SELECT id, amount FROM payments WHERE order_id = ? AND status IN ({})",
@@ -154,6 +193,30 @@ pub(crate) fn check_order_capture_capacity_tx(
         )));
     }
     Ok(())
+}
+
+/// Payments for `order_id` still holding captured money: every payment in a
+/// capturing status whose `amount` exceeds its `amount_refunded`. Runs on the
+/// caller's connection/transaction so the orders module can consult it inside
+/// its own cancel transaction. TEXT money columns are compared in `Decimal`.
+pub(crate) fn open_captures_for_order_conn(
+    conn: &rusqlite::Connection,
+    order_id: &str,
+) -> std::result::Result<Vec<Payment>, rusqlite::Error> {
+    let sql = format!(
+        "SELECT * FROM payments WHERE order_id = ? AND status IN ({}) ORDER BY created_at",
+        capturing_statuses()
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([order_id], SqlitePaymentRepository::row_to_payment)?;
+    let mut open = Vec::new();
+    for row in rows {
+        let payment = row?;
+        if payment.amount > payment.amount_refunded {
+            open.push(payment);
+        }
+    }
+    Ok(open)
 }
 
 #[derive(Debug)]
@@ -407,9 +470,16 @@ impl PaymentRepository for SqlitePaymentRepository {
 
         // The over-capture check and the INSERT share one IMMEDIATE transaction
         // (same pattern as `create_refund`'s over-refund guard).
-        with_immediate_transaction(&self.pool, |tx| {
+        let currency = input.currency.unwrap_or_default();
+        let inserted = with_immediate_transaction(&self.pool, |tx| {
             if let Some(order_id) = input.order_id {
-                check_order_capture_capacity_tx(tx, &order_id.to_string(), None, input.amount)?;
+                check_order_capture_capacity_tx(
+                    tx,
+                    &order_id.to_string(),
+                    None,
+                    input.amount,
+                    currency,
+                )?;
             }
             tx.execute(
                 "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,
@@ -446,7 +516,20 @@ impl PaymentRepository for SqlitePaymentRepository {
             )?;
             append_kernel_event_tx(tx, &outbox_event)?;
             Ok(())
-        })?;
+        });
+
+        // Two callers racing the same idempotency key can both miss the
+        // pre-transaction lookup; the loser's INSERT then trips the UNIQUE index
+        // on `idempotency_key`. That is the idempotent case, not an error:
+        // return the row the winner wrote.
+        if let (Err(CommerceError::Conflict(_)), Some(key)) =
+            (&inserted, input.idempotency_key.as_deref())
+        {
+            if let Some(existing) = self.get_by_idempotency_key(key)? {
+                return Ok(existing);
+            }
+        }
+        inserted?;
 
         self.get(PaymentId::from(id))?.ok_or(CommerceError::NotFound)
     }
@@ -516,6 +599,27 @@ impl PaymentRepository for SqlitePaymentRepository {
                 })?;
             let current = payment.status;
             let target = input.status.unwrap_or(current);
+            if !payment_transition_allowed(current, target) {
+                return Err(domain_err(transition_conflict(current, target)));
+            }
+
+            // A write that moves the payment from a non-capturing status into a
+            // capturing one re-acquires a slice of the order total, so it gets
+            // the same in-transaction order guards as `mark_completed`
+            // (capacity, order status, currency). Today no legal edge does this
+            // (every non-capturing status is terminal), so this is the guard
+            // that keeps `update` honest if the state machine ever grows one.
+            if !is_capturing(current) && is_capturing(target) {
+                if let Some(order_id) = payment.order_id {
+                    check_order_capture_capacity_tx(
+                        tx,
+                        &order_id.to_string(),
+                        Some(&id.to_string()),
+                        payment.amount,
+                        payment.currency,
+                    )?;
+                }
+            }
 
             let sql = format!(
                 "UPDATE payments SET status = ?, external_id = ?, failure_reason = ?,
@@ -591,6 +695,11 @@ impl PaymentRepository for SqlitePaymentRepository {
         self.list(PaymentFilter { invoice_id: Some(invoice_id.into()), ..Default::default() })
     }
 
+    fn open_captures_for_order(&self, order_id: OrderId) -> Result<Vec<Payment>> {
+        let conn = self.conn()?;
+        open_captures_for_order_conn(&conn, &order_id.to_string()).map_err(map_db_error)
+    }
+
     fn mark_processing(&self, id: PaymentId) -> Result<Payment> {
         self.update(
             id,
@@ -615,11 +724,16 @@ impl PaymentRepository for SqlitePaymentRepository {
             //      payment that was failed/cancelled while still in flight (and
             //      so released its slice of the total) must not be completed on
             //      top of captures made since.
-            let (raw_status, order_id, raw_amount): (String, Option<String>, String) = tx
+            let (raw_status, order_id, raw_amount, currency): (
+                String,
+                Option<String>,
+                String,
+                CurrencyCode,
+            ) = tx
                 .query_row(
-                    "SELECT status, order_id, amount FROM payments WHERE id = ?",
+                    "SELECT status, order_id, amount, currency FROM payments WHERE id = ?",
                     [id.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                 )
                 .map_err(|e| match e {
                     rusqlite::Error::QueryReturnedNoRows => domain_err(CommerceError::NotFound),
@@ -633,7 +747,13 @@ impl PaymentRepository for SqlitePaymentRepository {
 
             if let Some(order_id) = order_id {
                 let amount = parse_decimal_row(&raw_amount, "payment", "amount")?;
-                check_order_capture_capacity_tx(tx, &order_id, Some(&id.to_string()), amount)?;
+                check_order_capture_capacity_tx(
+                    tx,
+                    &order_id,
+                    Some(&id.to_string()),
+                    amount,
+                    currency,
+                )?;
             }
 
             let sql = format!(
@@ -1129,8 +1249,14 @@ impl PaymentRepository for SqlitePaymentRepository {
             let payment_number = generate_payment_number();
 
             if let Some(order_id) = input.order_id {
-                check_order_capture_capacity_tx(&tx, &order_id.to_string(), None, input.amount)
-                    .map_err(map_db_error)?;
+                check_order_capture_capacity_tx(
+                    &tx,
+                    &order_id.to_string(),
+                    None,
+                    input.amount,
+                    input.currency.unwrap_or_default(),
+                )
+                .map_err(map_db_error)?;
             }
 
             tx.execute(
@@ -1279,6 +1405,23 @@ impl PaymentRepository for SqlitePaymentRepository {
             // atomic batch rather than silently landing.
             let current = payment.status;
             let target = input.status.unwrap_or(current);
+            if !payment_transition_allowed(current, target) {
+                return Err(transition_conflict(current, target));
+            }
+            // Same order guards as the single-row `update` when the write
+            // re-acquires a slice of the order total.
+            if !is_capturing(current) && is_capturing(target) {
+                if let Some(order_id) = payment.order_id {
+                    check_order_capture_capacity_tx(
+                        &tx,
+                        &order_id.to_string(),
+                        Some(&id.to_string()),
+                        payment.amount,
+                        payment.currency,
+                    )
+                    .map_err(map_db_error)?;
+                }
+            }
             let sql = format!(
                 "UPDATE payments SET status = ?, external_id = ?, failure_reason = ?,
                  failure_code = ?, metadata = ?, updated_at = ? WHERE id = ? AND status IN ({})",

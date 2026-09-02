@@ -123,6 +123,15 @@ impl Payments {
         self.db.payments().for_invoice(invoice_id.into())
     }
 
+    /// Payments for an order that are still holding captured money: every
+    /// payment in a capturing status (pending / processing / `requires_action` /
+    /// completed / `partially_refunded` / disputed) whose amount exceeds what has
+    /// been refunded. An empty result means nothing is outstanding and the
+    /// order can be cancelled without stranding a capture.
+    pub fn open_captures_for_order(&self, order_id: OrderId) -> Result<Vec<Payment>> {
+        self.db.payments().open_captures_for_order(order_id)
+    }
+
     /// Mark payment as processing
     pub fn mark_processing(&self, id: PaymentId) -> Result<Payment> {
         self.db.payments().mark_processing(id)

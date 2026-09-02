@@ -391,6 +391,102 @@ impl std::fmt::Display for CouponStatus {
     }
 }
 
+impl CouponCode {
+    /// Why this coupon cannot be redeemed at `now`, if it cannot: its own
+    /// status, validity window and total usage limit. Per-customer limits
+    /// need the usage ledger and are checked by the repository.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason the coupon is not redeemable.
+    pub fn redeemability_at(&self, now: DateTime<Utc>) -> std::result::Result<(), String> {
+        if self.status != CouponStatus::Active {
+            return Err(format!("Coupon is not active (status: {})", self.status));
+        }
+        if self.starts_at.is_some_and(|s| s > now) {
+            return Err("Coupon has not started yet".to_string());
+        }
+        if self.ends_at.is_some_and(|e| e < now) {
+            return Err("Coupon has expired".to_string());
+        }
+        if self.usage_limit.is_some_and(|l| self.usage_count >= l) {
+            return Err("Coupon usage limit reached".to_string());
+        }
+        Ok(())
+    }
+}
+
+/// Validate that `coupon` (which activates `promotion`) may be redeemed
+/// against the cart described by `request` at `now`.
+///
+/// This is the single source of truth shared by both storage backends'
+/// cart `apply_discount` paths and by promotion evaluation: coupon status /
+/// window / usage limit, promotion status / window / usage limit, and the
+/// promotion's conditions (e.g. minimum subtotal), evaluated fail-closed.
+/// Per-customer usage limits are enforced by the repository against the
+/// usage ledger.
+///
+/// # Errors
+///
+/// [`CommerceError::ValidationError`] naming the first failed check.
+pub fn validate_coupon_redemption(
+    coupon: &CouponCode,
+    promotion: &Promotion,
+    request: &ApplyPromotionsRequest,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    if coupon.promotion_id != promotion.id {
+        return Err(CommerceError::ValidationError(
+            "Coupon does not belong to this promotion".to_string(),
+        ));
+    }
+    coupon.redeemability_at(now).map_err(CommerceError::ValidationError)?;
+    promotion.redeemability_at(now).map_err(CommerceError::ValidationError)?;
+    if let Some(reason) = promotion.check_conditions(request)? {
+        return Err(CommerceError::ValidationError(format!(
+            "Promotion conditions not met: {reason}"
+        )));
+    }
+    Ok(())
+}
+
+impl ApplyPromotionsRequest {
+    /// Build an evaluation request from a persisted cart, redeeming
+    /// `coupon_code`.
+    ///
+    /// `is_first_order` is set to `false` because the cart alone cannot prove
+    /// otherwise; a first-order condition therefore refuses (fail-closed)
+    /// unless the caller overrides it.
+    #[must_use]
+    pub fn from_cart(cart: &crate::models::Cart, coupon_code: &str) -> Self {
+        Self {
+            cart_id: Some(cart.id),
+            customer_id: cart.customer_id,
+            coupon_codes: vec![coupon_code.to_string()],
+            line_items: cart
+                .items
+                .iter()
+                .map(|item| PromotionLineItem {
+                    id: item.id.to_string(),
+                    product_id: item.product_id,
+                    variant_id: item.variant_id,
+                    sku: Some(item.sku.clone()),
+                    category_ids: Vec::new(),
+                    quantity: item.quantity,
+                    unit_price: item.unit_price,
+                    line_total: item.unit_price * Decimal::from(item.quantity),
+                })
+                .collect(),
+            subtotal: cart.subtotal,
+            shipping_amount: cart.shipping_amount,
+            shipping_country: cart.shipping_address.as_ref().map(|a| a.country.clone()),
+            shipping_state: cart.shipping_address.as_ref().and_then(|a| a.state.clone()),
+            currency: cart.currency,
+            is_first_order: false,
+        }
+    }
+}
+
 impl std::str::FromStr for CouponStatus {
     type Err = String;
 
@@ -741,29 +837,44 @@ impl Promotion {
     /// Check if promotion is currently active
     #[must_use]
     pub fn is_active(&self) -> bool {
+        self.is_active_at(Utc::now())
+    }
+
+    /// Check if promotion is active at `now` (status, validity window and
+    /// total usage limit).
+    #[must_use]
+    pub fn is_active_at(&self, now: DateTime<Utc>) -> bool {
+        self.redeemability_at(now).is_ok()
+    }
+
+    /// Why this promotion cannot be redeemed at `now`, if it cannot.
+    ///
+    /// The `Ok` branch means the promotion is `Active`, inside its validity
+    /// window, and under its total usage limit. The `Err` branch carries a
+    /// merchant-readable reason; it is deliberately a plain string so callers
+    /// can wrap it in whichever error/rejection shape they use.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason the promotion is not redeemable.
+    pub fn redeemability_at(&self, now: DateTime<Utc>) -> std::result::Result<(), String> {
         if self.status != PromotionStatus::Active {
-            return false;
+            return Err(format!("Promotion is not active (status: {})", self.status));
         }
-
-        let now = Utc::now();
         if now < self.starts_at {
-            return false;
+            return Err("Promotion has not started yet".to_string());
         }
-
         if let Some(ends_at) = self.ends_at {
             if now > ends_at {
-                return false;
+                return Err("Promotion has expired".to_string());
             }
         }
-
-        // Check usage limits
         if let Some(limit) = self.total_usage_limit {
             if self.usage_count >= limit {
-                return false;
+                return Err("Promotion usage limit reached".to_string());
             }
         }
-
-        true
+        Ok(())
     }
 
     /// Get human-readable discount description
@@ -1146,6 +1257,375 @@ impl Promotion {
 
         Ok(None)
     }
+}
+
+// ============================================================================
+// Shared evaluation engine
+// ============================================================================
+
+/// Per-customer usage counts for candidate promotions, keyed by promotion id.
+///
+/// Storage backends look these up (from the usage ledger) before handing the
+/// candidates to [`evaluate_promotions`], which keeps the evaluator pure and
+/// identical across backends.
+pub type CustomerUsageCounts = std::collections::HashMap<PromotionId, i64>;
+
+impl CreatePromotion {
+    /// Validate the discount configuration before it is persisted.
+    ///
+    /// Buy X Get Y quantities must be at least 1 — `buy + get` is the size of
+    /// one qualifying set and is used as a divisor during evaluation, so a
+    /// zero would divide by zero (and a promotion that "buys 0" is
+    /// meaningless anyway).
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::ValidationError`] naming the offending field.
+    pub fn validate(&self) -> Result<()> {
+        if self.buy_quantity.is_some_and(|q| q < 1) {
+            return Err(CommerceError::ValidationError("buy_quantity must be at least 1".into()));
+        }
+        if self.get_quantity.is_some_and(|q| q < 1) {
+            return Err(CommerceError::ValidationError("get_quantity must be at least 1".into()));
+        }
+        if self.promotion_type == PromotionType::BuyXGetY
+            && (self.buy_quantity.is_none() || self.get_quantity.is_none())
+        {
+            return Err(CommerceError::ValidationError(
+                "Buy X Get Y promotions require buy_quantity and get_quantity of at least 1".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Promotion {
+    /// Line items of `request` that belong to this promotion's bundle.
+    fn bundle_items<'a>(
+        &'a self,
+        request: &'a ApplyPromotionsRequest,
+    ) -> impl Iterator<Item = &'a PromotionLineItem> + 'a {
+        request.line_items.iter().filter(move |item| {
+            item.product_id.is_some_and(|p| {
+                self.bundle_product_ids.as_ref().is_some_and(|ids| ids.contains(&p))
+            })
+        })
+    }
+
+    /// The discount this promotion grants on `request`, given that
+    /// `already_discounted` of the subtotal has been consumed by promotions
+    /// applied before it. Pure; rounded to the request currency's minor unit
+    /// with the same (banker's) rounding the cart uses for its totals.
+    ///
+    /// Zero means "does not apply" (an incomplete bundle, too few items for a
+    /// Buy X Get Y set, nothing in scope, ...).
+    #[must_use]
+    pub fn calculate_discount(
+        &self,
+        request: &ApplyPromotionsRequest,
+        already_discounted: Decimal,
+    ) -> Decimal {
+        // When the promotion scopes to specific products, the discount base is
+        // the eligible line items' worth, not the whole subtotal. A scoped
+        // promotion with no line-item data cannot verify eligibility and
+        // fails closed (zero base).
+        let scoped = self.has_product_scoping();
+        let (eligible_subtotal, eligible_qty) = if scoped {
+            request
+                .line_items
+                .iter()
+                .filter(|item| self.item_in_scope(item))
+                .fold((Decimal::ZERO, 0i32), |(total, qty), item| {
+                    (total + item.line_total, qty.saturating_add(item.quantity))
+                })
+        } else {
+            (
+                request.subtotal,
+                request.line_items.iter().map(|i| i.quantity).fold(0i32, i32::saturating_add),
+            )
+        };
+        let remaining = (request.subtotal - already_discounted).max(Decimal::ZERO);
+        let applicable_amount = eligible_subtotal.min(remaining).max(Decimal::ZERO);
+
+        let discount = match self.promotion_type {
+            PromotionType::PercentageOff | PromotionType::FirstOrderDiscount => {
+                self.percentage_off.map_or(Decimal::ZERO, |pct| applicable_amount * pct)
+            }
+            PromotionType::FixedAmountOff => {
+                let fixed = self.fixed_amount_off.unwrap_or(Decimal::ZERO);
+                // A scoped fixed discount cannot exceed the eligible items'
+                // worth; unscoped keeps its historical whole-order semantics.
+                if scoped { fixed.min(applicable_amount) } else { fixed }
+            }
+            PromotionType::FreeShipping => request.shipping_amount,
+            PromotionType::TieredDiscount => self
+                .tiers
+                .as_deref()
+                .map_or(Decimal::ZERO, |tiers| tiered_discount(tiers, applicable_amount)),
+            PromotionType::BuyXGetY => {
+                // Simplified BOGO over in-scope quantities: every full set of
+                // `buy + get` items earns `get` items at the average price
+                // discounted by `get_discount_percent`.
+                match (self.buy_quantity, self.get_quantity, self.get_discount_percent) {
+                    (Some(buy), Some(get), Some(discount_pct)) if buy >= 1 && get >= 1 => {
+                        let set_size = buy.saturating_add(get);
+                        let sets = eligible_qty / set_size;
+                        if sets > 0 && eligible_qty > 0 {
+                            let avg_price = eligible_subtotal / Decimal::from(eligible_qty);
+                            avg_price * Decimal::from(sets.saturating_mul(get)) * discount_pct
+                        } else {
+                            Decimal::ZERO
+                        }
+                    }
+                    _ => Decimal::ZERO,
+                }
+            }
+            PromotionType::BundleDiscount => {
+                let amount = self.bundle_discount.unwrap_or(Decimal::ZERO);
+                match self.bundle_product_ids.as_deref() {
+                    // No bundle composition configured: a plain fixed
+                    // whole-order discount (historical semantics).
+                    None | Some([]) => amount,
+                    // The bundle must be COMPLETE — every bundle product in
+                    // the cart — and the discount is bounded by the worth of
+                    // the bundle lines themselves.
+                    Some(bundle) => {
+                        let complete = bundle.iter().all(|product| {
+                            request.line_items.iter().any(|item| item.product_id == Some(*product))
+                        });
+                        if complete {
+                            let bundle_value: Decimal =
+                                self.bundle_items(request).map(|item| item.line_total).sum();
+                            amount.min(bundle_value).min(remaining)
+                        } else {
+                            Decimal::ZERO
+                        }
+                    }
+                }
+            }
+            _ => Decimal::ZERO,
+        };
+
+        // An item-value discount can never exceed the worth of the items it
+        // applies to — this is what keeps a discount scoped to a set of items
+        // from bleeding into out-of-scope value. It also fails safe on a
+        // misconfigured percentage (>100%). FreeShipping is a shipping
+        // discount, not an item discount, and is exempt; FixedAmountOff and
+        // BundleDiscount are bounded/whole-order by design.
+        let discount = match self.promotion_type {
+            PromotionType::FreeShipping
+            | PromotionType::FixedAmountOff
+            | PromotionType::BundleDiscount => discount,
+            _ => discount.min(applicable_amount),
+        };
+
+        let discount = self.max_discount_amount.map_or(discount, |max| discount.min(max));
+
+        discount.max(Decimal::ZERO).round_dp(u32::from(request.currency.decimal_places()))
+    }
+}
+
+/// Highest applicable tier's discount on `amount`.
+fn tiered_discount(tiers: &[DiscountTier], amount: Decimal) -> Decimal {
+    let mut applicable_tier: Option<&DiscountTier> = None;
+
+    for tier in tiers {
+        if amount >= tier.min_value {
+            if let Some(max) = tier.max_value {
+                if amount <= max {
+                    applicable_tier = Some(tier);
+                }
+            } else {
+                let is_better = match applicable_tier {
+                    Some(current) => tier.min_value > current.min_value,
+                    None => true,
+                };
+                if is_better {
+                    applicable_tier = Some(tier);
+                }
+            }
+        }
+    }
+
+    if let Some(tier) = applicable_tier {
+        if let Some(pct) = tier.percentage_off {
+            return amount * pct;
+        }
+        if let Some(fixed) = tier.fixed_amount_off {
+            return fixed;
+        }
+    }
+
+    Decimal::ZERO
+}
+
+/// Evaluate `candidates` (promotions with the coupon code that reached them,
+/// if any) against `request`, filling `result`.
+///
+/// This is THE promotion evaluator: both storage backends resolve their
+/// candidates (active automatic promotions, coupon-linked promotions) and
+/// per-customer usage counts, then delegate here, so stacking, eligibility,
+/// conditions, limits and discount math agree by construction.
+///
+/// Rules, in order, per candidate (priority ascending, each promotion
+/// considered at most once):
+/// - the promotion must be active inside its validity window;
+/// - customer targeting (fail-closed for groups the request cannot resolve);
+/// - stacking: once an **Exclusive** promotion has applied nothing else
+///   applies, and an Exclusive promotion cannot apply once anything else has —
+///   order-independent;
+/// - conditions (fail-closed, see [`Promotion::check_conditions`]);
+/// - total and per-customer usage limits (from `customer_usage`);
+/// - the discount must be positive.
+///
+/// Totals are capped at the subtotal / shipping amount.
+///
+/// # Errors
+///
+/// Propagates a misconfigured condition value.
+pub fn evaluate_promotions(
+    request: &ApplyPromotionsRequest,
+    candidates: Vec<(Promotion, Option<String>)>,
+    customer_usage: &CustomerUsageCounts,
+    result: &mut ApplyPromotionsResult,
+) -> Result<()> {
+    result.original_subtotal = request.subtotal;
+    result.original_shipping = request.shipping_amount;
+
+    // A promotion is considered at most once per cart: a `Both`-trigger
+    // promotion is reachable both automatically and by coupon, and the same
+    // coupon code can be passed twice. Coupon-carrying entries are expected
+    // first so a redemption keeps its coupon attribution.
+    let mut seen: std::collections::HashSet<PromotionId> = std::collections::HashSet::new();
+    let mut candidates: Vec<(Promotion, Option<String>)> =
+        candidates.into_iter().filter(|(promo, _)| seen.insert(promo.id)).collect();
+    candidates.sort_by_key(|(p, _)| p.priority);
+
+    let mut total_discount = Decimal::ZERO;
+    let mut shipping_discount = Decimal::ZERO;
+    let mut has_exclusive = false;
+
+    for (promo, coupon_code) in candidates {
+        let mut reject = |reason: String, reason_code: RejectionReason| {
+            result.rejected_promotions.push(RejectedPromotion {
+                promotion_id: Some(promo.id),
+                coupon_code: coupon_code.clone(),
+                reason,
+                reason_code,
+            });
+        };
+
+        // The promotion itself must be active and inside its validity
+        // window — coupon-linked promotions bypass the is_active list
+        // filter, so a coupon on a draft/expired promotion lands here.
+        if !promo.is_active() {
+            reject("Promotion is not active".into(), RejectionReason::Expired);
+            continue;
+        }
+
+        // Customer targeting: when the promotion lists eligible customers
+        // (and no groups, which the request cannot resolve), only those
+        // customers — identified, not anonymous — may use it.
+        if !promo.eligible_customer_ids.is_empty()
+            && promo.eligible_customer_groups.is_empty()
+            && !request.customer_id.is_some_and(|c| promo.eligible_customer_ids.contains(&c))
+        {
+            reject(
+                "Customer is not eligible for this promotion".into(),
+                RejectionReason::CustomerNotEligible,
+            );
+            continue;
+        }
+
+        // Customer-group targeting cannot be resolved from a cart pricing
+        // request, so a group-restricted promotion fails CLOSED rather than
+        // applying to everyone. An explicitly listed eligible customer is
+        // verifiable and still gets through.
+        if !promo.eligible_customer_groups.is_empty()
+            && !request.customer_id.is_some_and(|c| promo.eligible_customer_ids.contains(&c))
+        {
+            reject(
+                "Promotion is limited to customer groups that cannot be verified here".into(),
+                RejectionReason::CustomerNotEligible,
+            );
+            continue;
+        }
+
+        // Stacking. An Exclusive promotion stands alone in BOTH directions:
+        // nothing applies after it, and it does not apply after anything.
+        if has_exclusive
+            || (promo.stacking == StackingBehavior::Exclusive
+                && !result.applied_promotions.is_empty())
+        {
+            reject("Cannot combine with other promotions".into(), RejectionReason::NotStackable);
+            continue;
+        }
+
+        // Conditions fail CLOSED: one that cannot be proven from the request
+        // refuses the promotion instead of applying it by default.
+        if let Some(reason) = promo.check_conditions(request)? {
+            reject(
+                format!("Promotion conditions not met: {reason}"),
+                RejectionReason::MinimumNotMet,
+            );
+            continue;
+        }
+
+        if promo.total_usage_limit.is_some_and(|limit| promo.usage_count >= limit) {
+            reject("Promotion usage limit reached".into(), RejectionReason::UsageLimitReached);
+            continue;
+        }
+
+        // Per-customer usage limit (record_usage re-checks this
+        // transactionally; here it produces a friendly rejection).
+        if let (Some(limit), Some(_)) = (promo.per_customer_limit, request.customer_id) {
+            let used = customer_usage.get(&promo.id).copied().unwrap_or(0);
+            if used >= i64::from(limit) {
+                reject(
+                    "Per-customer usage limit reached".into(),
+                    RejectionReason::UsageLimitReached,
+                );
+                continue;
+            }
+        }
+
+        let discount = promo.calculate_discount(request, total_discount);
+        if discount <= Decimal::ZERO {
+            continue;
+        }
+
+        if promo.target == PromotionTarget::Shipping {
+            shipping_discount += discount;
+        } else {
+            total_discount += discount;
+        }
+
+        if promo.stacking == StackingBehavior::Exclusive {
+            has_exclusive = true;
+        }
+
+        result.applied_promotions.push(AppliedPromotion {
+            promotion_id: promo.id,
+            promotion_code: promo.code.clone(),
+            promotion_name: promo.name.clone(),
+            coupon_code,
+            discount_amount: discount,
+            discount_type: promo.promotion_type,
+            target: promo.target,
+            description: promo.discount_description(),
+        });
+    }
+
+    let shipping_discount = shipping_discount.min(request.shipping_amount);
+    let total_discount = total_discount.min(request.subtotal);
+
+    result.total_discount = total_discount;
+    result.discounted_subtotal = request.subtotal - total_discount;
+    result.shipping_discount = shipping_discount;
+    result.final_shipping = request.shipping_amount - shipping_discount;
+    result.grand_total = result.discounted_subtotal + result.final_shipping;
+
+    Ok(())
 }
 
 impl Default for ApplyPromotionsResult {

@@ -6,10 +6,57 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
-Closes the four critical money defects at the top of the engine report card,
-plus several defects of the same class found alongside them.
+## [1.28.5] - 2026-09-01
+
+Closes every open finding on the engine report card — the four critical money
+defects and the three high-severity ones — and then a third round from a
+deeper re-audit of orders, carts, payments, growth, traceability and agentic
+commerce, on both storage backends.
 
 ### ⚠️ Behaviour change
+- **Coupon discounts are re-derived, never frozen.** Changing a cart's
+  contents re-validates its coupon and re-prices the discount; a coupon that
+  no longer qualifies contributes nothing and checkout refuses the cart
+  until it qualifies again or the coupon is removed. Checkout re-validates
+  inside the order transaction, caps every discount at what the cart can
+  cover, and refuses expired carts. Cart item quantities must be positive.
+- **Lots and serials enforce their state machines.** Confirming a lot
+  reservation requires an Active, unexpired lot, so quarantined or expired
+  stock can no longer ship; quarantine and release are guarded transitions;
+  expired lots are swept to Expired; lot picking is now FEFO (earliest
+  expiry first) instead of newest-first. Serial `ship`/`sell`/`return`/
+  `quarantine`/`change_status` follow one exhaustive transition table
+  (a scrapped serial can no longer be shipped), reservations close when the
+  serial ships or sells, and stale reservations are swept back to stock. A
+  failed quality inspection quarantines the lot it inspected in the same
+  transaction.
+- **Order line edits are guarded.** Adding or removing lines is only allowed
+  before fulfilment, reserves or releases stock like a single create does,
+  and keeps `total_amount = lines + tax + shipping − discount`. Order-level
+  money is validated on create and a negative total is refused.
+- **Promotion evaluation no longer consumes usage.** Re-pricing a cart is
+  read-only; coupon and automatic-promotion usage advance once, at
+  checkout, in the order transaction. An Exclusive promotion now blocks
+  every other promotion regardless of evaluation order.
+- **x402 intents cannot settle after `valid_until`,** and the sweeper also
+  expires sequenced intents. A payment whose currency differs from its order
+  is refused, as is any new capture against a cancelled or refunded order.
+- **Coupons are validated when applied and consumed at checkout.** The cart
+  layer applied any coupon whose code resolved, with no check of coupon or
+  promotion status, start/end window, usage limits, per-customer limits or
+  promotion conditions such as a minimum subtotal, and checkout never
+  recorded usage, so a single-use or expired coupon applied indefinitely.
+  Such coupons are now refused with a message naming the reason, checkout
+  increments usage inside the order transaction and rejects the order if
+  the coupon was exhausted after it was applied, and percentage discounts
+  are rounded to the currency's minor unit. A coupon entered in lowercase
+  is consumed too: the cart now stores the canonical uppercased code.
+- **Lot merge and split only accept Active lots.** Merging a quarantined,
+  on-hold, expired, recalled or scrapped lot with an active one produced a
+  new Active lot containing the blocked units. Sources that are not
+  Active, carry quarantined or reserved quantity, have nothing remaining
+  or appear twice are now refused; blocked stock must be released through
+  its own workflow first.
 - **Promotion conditions now fail closed.** Unhandled condition types
   (customer group, email domain, payment method, cart contents) previously
   evaluated to true, so a gated promotion applied to every cart. Promotions
@@ -19,6 +66,47 @@ plus several defects of the same class found alongside them.
   and `eligible_customer_groups`, which is now enforced too.
 
 ### Fixed
+- **a2a purchase and quote transitions are atomic** (one transaction,
+  status-conditional update, loser gets a conflict), and delivery can be
+  confirmed once, from a shipped purchase only.
+- **One on-chain transaction settles one x402 intent.** A legacy-safe
+  unique index on `tx_hash` (migrations 082 / 089) plus an explicit check
+  in `mark_settled`. Batch-created intents now persist the same signing
+  hash and signature scheme as single creates, and an intent created for a
+  cart or order must match its total in the same currency.
+- **One serial, one open reservation.** Postgres `reserve` now locks the
+  serial row and writes its status conditionally; a legacy-safe unique key
+  (migrations 079 / 086) backstops it at the database.
+- **Disputed payments still count as captured**, so a chargeback can no
+  longer free order capture capacity and let a second full capture through;
+  `update` rechecks capacity whenever it moves a payment into a capturing
+  status. A concurrent duplicate idempotency key returns the existing
+  payment instead of a unique-violation error.
+- **Batch order status updates perform the same side effects as single
+  updates** (shipment planning, reservation confirm/release, backorder
+  cancel, outbox event); deleting an order releases its reservations and
+  backorders in the same transaction.
+- **Trial subscriptions bill when the trial ends** (Trial → Active
+  atomically with the first cycle). Pausing records the paid remainder and
+  resuming restores it, so a paused subscription neither loses paid days
+  nor drifts its billing anchor.
+- **Promotion and billing rounding is exact**: promotion discounts and
+  billing-cycle amounts round to the currency's minor unit. Buy-X-get-Y
+  refuses zero quantities instead of dividing by zero, and bundle
+  promotions require the full bundle. The tax repository gains
+  `verify_exemption`; the per-line tax allocator and verified/dated/
+  jurisdiction-scoped exemption checks are present in `stateset-core` but
+  are **not yet wired into either tax engine** — that lands in the next
+  release.
+- **Concurrent cart item adds on Postgres no longer lose an update**: the
+  cart row is locked for the duration of each item mutation.
+- **x402 intent transitions and a2a quote purchase are atomic.** On
+  SQLite every x402 status change read on one pooled connection and wrote
+  unconditionally on another, so a settle racing a cancel or expire let
+  both win; on Postgres `mark_failed`, `mark_expired` and `cancel` had the
+  same gap. Two buyers could purchase one a2a quote on both backends. Each
+  transition now runs in one transaction with a status-conditional update,
+  and the loser receives a conflict.
 - **Payments can no longer be captured twice.** `cancel` and `update`
   bypassed the payment state machine: cancelling a completed payment
   succeeded, freed its captured amount, and let a second full-amount

@@ -1633,25 +1633,12 @@ impl Commerce {
         // Recalculate cart totals
         self.carts().recalculate(cart_id)?;
 
-        // Record promotion usage for tracking
-        for applied in &result.applied_promotions {
-            // Look up coupon_id if a coupon code was used
-            let coupon_id = if let Some(ref code) = applied.coupon_code {
-                self.promotions().get_coupon_by_code(code)?.map(|c| c.id)
-            } else {
-                None
-            };
-
-            let _ = self.promotions().record_usage(
-                applied.promotion_id,
-                coupon_id,
-                cart.customer_id,
-                None, // order_id - will be set when order is created
-                Some(cart_id),
-                applied.discount_amount,
-                cart.currency.as_str(),
-            );
-        }
+        // Evaluation is read-only: usage is NOT consumed here. Re-pricing a
+        // cart (every add/remove re-evaluates) must not burn
+        // `total_usage_limit`, and an abandoned cart must leave the ledger
+        // untouched. Usage is consumed exactly once, at checkout, inside the
+        // order transaction (`consume_cart_coupon_in_tx` for the coupon and
+        // `consume_cart_promotions_in_tx` for automatic promotions).
 
         Ok(result)
     }

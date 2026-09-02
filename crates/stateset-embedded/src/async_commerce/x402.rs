@@ -1,6 +1,7 @@
 //! Agentic commerce accessors: x402 payment intents, A2A quotes and purchases, agent cards.
 
 use super::*;
+use stateset_core::CommerceError;
 
 /// Async x402 and A2A operations.
 pub struct AsyncX402 {
@@ -18,7 +19,42 @@ impl AsyncX402 {
 
     /// Create a new x402 payment intent.
     pub async fn create_intent(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
+        self.reconcile_with_source(&input).await?;
         self.db.x402_payment_intents().create_async(input).await
+    }
+
+    /// Mirror of the sync accessor: an intent for a cart/order must be for
+    /// exactly the cart `grand_total` / order `total_amount` in that currency.
+    async fn reconcile_with_source(&self, input: &CreateX402PaymentIntent) -> Result<()> {
+        if let Some(cart_id) = input.cart_id {
+            let cart = self.db.carts().get_async(cart_id).await?.ok_or_else(|| {
+                CommerceError::ValidationError(format!(
+                    "cart {cart_id} not found; cannot create an x402 intent for it"
+                ))
+            })?;
+            crate::x402::reconcile_intent_amount(
+                input,
+                "cart",
+                cart_id,
+                cart.grand_total,
+                cart.currency,
+            )?;
+        }
+        if let Some(order_id) = input.order_id {
+            let order = self.db.orders().get_async(order_id).await?.ok_or_else(|| {
+                CommerceError::ValidationError(format!(
+                    "order {order_id} not found; cannot create an x402 intent for it"
+                ))
+            })?;
+            crate::x402::reconcile_intent_amount(
+                input,
+                "order",
+                order_id,
+                order.total_amount,
+                order.currency,
+            )?;
+        }
+        Ok(())
     }
 
     /// Get a payment intent by ID.

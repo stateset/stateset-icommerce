@@ -12,7 +12,7 @@ use stateset_core::{
     Result, SkipBillingCycle, Subscription, SubscriptionEvent, SubscriptionEventType,
     SubscriptionFilter, SubscriptionId, SubscriptionItem, SubscriptionPlan, SubscriptionPlanFilter,
     SubscriptionPlanItem, SubscriptionRepository, SubscriptionStatus, UpdateSubscription,
-    UpdateSubscriptionPlan, generate_plan_code, generate_subscription_number,
+    UpdateSubscriptionPlan, generate_plan_code, generate_subscription_number, resumed_schedule,
 };
 use uuid::Uuid;
 
@@ -869,11 +869,18 @@ impl SqliteSubscriptionRepository {
 
             let now = Utc::now();
 
+            // `next_billing_date` is cleared so the billing poll skips the
+            // subscription, but the paid-through date is RETAINED in
+            // `current_period_end`: `current_period_end - paused_at` is the
+            // paid time the customer still owns, and `resume_subscription`
+            // gives it back instead of starting a fresh interval from the
+            // resume date.
             tx.execute(
                 "UPDATE subscriptions SET
                     status = 'paused',
                     paused_at = ?1,
                     resume_at = ?2,
+                    current_period_end = COALESCE(next_billing_date, current_period_end),
                     next_billing_date = NULL,
                     updated_at = ?3
                  WHERE id = ?4",
@@ -901,9 +908,16 @@ impl SqliteSubscriptionRepository {
         self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
+    /// Resume a paused subscription, restoring the paid time that was left
+    /// when it was paused.
+    ///
+    /// Paying on Jan 1 (monthly), pausing on Jan 10 and resuming on Jan 20
+    /// used to reset the period to `[Jan 20, Feb 19]` — 12 paid days lost and
+    /// the billing anchor drifted by the pause. Now the remainder
+    /// (`current_period_end - paused_at`, 21 days here) is carried over:
+    /// the next bill falls on `now + remainder` (Feb 10). A subscription paused
+    /// mid-trial resumes into its trial with the same carry-over.
     pub fn resume_subscription(&self, id: SubscriptionId) -> Result<Subscription> {
-        let sub = self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
-
         // Guard, write and audit in ONE transaction (see `pause_subscription`).
         with_immediate_transaction(&self.pool, |tx| {
             let status = Self::locked_subscription_status(tx, id).map_err(Self::tx_err)?;
@@ -913,32 +927,42 @@ impl SqliteSubscriptionRepository {
                 ))));
             }
 
+            let (paused_at_raw, period_end_raw, trial_ends_raw): (
+                Option<String>,
+                String,
+                Option<String>,
+            ) = tx.query_row(
+                "SELECT paused_at, current_period_end, trial_ends_at
+                 FROM subscriptions WHERE id = ?1",
+                rusqlite::params![id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            let paused_at = parse_datetime_opt_row(paused_at_raw, "subscription", "paused_at")?;
+            let period_end =
+                parse_datetime_row(&period_end_raw, "subscription", "current_period_end")?;
+            let trial_ends_at =
+                parse_datetime_opt_row(trial_ends_raw, "subscription", "trial_ends_at")?;
+
             let now = Utc::now();
-
-            // Calculate new billing dates
-            let interval_days = if sub.billing_interval == BillingInterval::Custom {
-                i64::from(sub.custom_interval_days.unwrap_or(30))
-            } else {
-                sub.billing_interval.days()
-            };
-
-            let new_period_end = now + Duration::days(interval_days);
+            let (next_billing_date, resumed_status, new_trial_end) =
+                resumed_schedule(now, paused_at, period_end, trial_ends_at);
 
             tx.execute(
                 "UPDATE subscriptions SET
-                    status = 'active',
+                    status = ?1,
                     paused_at = NULL,
                     resume_at = NULL,
-                    current_period_start = ?1,
-                    current_period_end = ?2,
+                    current_period_start = ?2,
+                    current_period_end = ?3,
                     next_billing_date = ?3,
-                    updated_at = ?4
+                    trial_ends_at = COALESCE(?4, trial_ends_at),
+                    updated_at = ?2
                  WHERE id = ?5",
                 rusqlite::params![
+                    resumed_status.to_string(),
                     now.to_rfc3339(),
-                    new_period_end.to_rfc3339(),
-                    new_period_end.to_rfc3339(),
-                    now.to_rfc3339(),
+                    next_billing_date.to_rfc3339(),
+                    new_trial_end.map(|d| d.to_rfc3339()),
                     id.to_string(),
                 ],
             )?;
@@ -948,7 +972,7 @@ impl SqliteSubscriptionRepository {
                 id,
                 SubscriptionEventType::Resumed,
                 "Subscription resumed",
-                None,
+                Some(serde_json::json!({ "next_billing_date": next_billing_date.to_rfc3339() })),
                 None,
             )
             .map_err(Self::tx_err)?;
@@ -1026,14 +1050,14 @@ impl SqliteSubscriptionRepository {
 
         let reason = input.reason.unwrap_or_else(|| "Customer skipped billing cycle".to_string());
 
-        let interval_days = if sub.billing_interval == BillingInterval::Custom {
-            i64::from(sub.custom_interval_days.unwrap_or(30))
-        } else {
-            sub.billing_interval.days()
-        };
-
-        let new_billing_date =
-            sub.next_billing_date.unwrap_or(sub.current_period_end) + Duration::days(interval_days);
+        // Skip exactly one interval with the same calendar arithmetic the paid
+        // path uses (`advance`), so a monthly subscription skipped in February
+        // stays on its day of month instead of drifting by the 30-day
+        // approximation of `days()`.
+        let new_billing_date = sub.billing_interval.advance(
+            sub.next_billing_date.unwrap_or(sub.current_period_end),
+            sub.custom_interval_days,
+        );
 
         // Guard, write and audit in ONE transaction: two concurrent skips used
         // to read the same `next_billing_date` and each push it out by a full
@@ -1227,6 +1251,11 @@ impl SqliteSubscriptionRepository {
     // Billing Cycles
     // ========================================================================
 
+    /// Create a billing cycle. When the subscription is in trial and the cycle
+    /// bills a period that starts at or after `trial_ends_at`, the subscription
+    /// becomes `Active` in the SAME transaction — billing a trial is what ends
+    /// it. (A trial's own initial cycle starts before the trial ends and does
+    /// not activate.)
     pub fn create_billing_cycle(&self, input: CreateBillingCycle) -> Result<BillingCycle> {
         let CreateBillingCycle { subscription_id, cycle_number, period_start, period_end } = input;
         // Get subscription first (uses its own connection)
@@ -1235,21 +1264,13 @@ impl SqliteSubscriptionRepository {
             .ok_or(stateset_core::CommerceError::NotFound)?;
 
         let id = Uuid::new_v4();
-        let subtotal = sub.calculate_total();
-        let discount = sub.discount_amount.unwrap_or(Decimal::ZERO)
-            + (sub.discount_percent.unwrap_or(Decimal::ZERO) * subtotal);
-        let total = (subtotal - discount).max(Decimal::ZERO);
+        let (subtotal, discount, total) = sub.billing_cycle_amounts();
         let currency = sub.currency;
 
-        // Insert billing cycle - connection scoped to this block
-        {
-            let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-            })?;
-
+        with_immediate_transaction(&self.pool, |tx| {
             let now = Utc::now();
 
-            conn.execute(
+            tx.execute(
                 "INSERT INTO billing_cycles (
                     id, subscription_id, cycle_number, status,
                     period_start, period_end,
@@ -1275,19 +1296,60 @@ impl SqliteSubscriptionRepository {
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                 ],
-            )
-            // A duplicate `(subscription_id, cycle_number)` trips the unique
-            // index on `cycle_key` and maps to `Conflict` — the backstop that
-            // stops a billing worker creating a second cycle for a period it
-            // has already billed.
-            .map_err(map_db_error)?;
-        } // Connection dropped here
+            )?;
+
+            self.activate_if_trial_elapsed_with_tx(tx, subscription_id, period_start, now)
+                .map_err(Self::tx_err)?;
+
+            Ok(())
+        })
+        // A duplicate `(subscription_id, cycle_number)` trips the unique
+        // index on `cycle_key` and maps to `Conflict` — the backstop that
+        // stops a billing worker creating a second cycle for a period it
+        // has already billed.
+        ?;
 
         self.get_billing_cycle(id)?.ok_or_else(|| {
             stateset_core::CommerceError::DatabaseError(
                 "Failed to retrieve created billing cycle".into(),
             )
         })
+    }
+
+    /// `Trial -> Active` once the billing clock reaches `trial_ends_at`:
+    /// a conditional UPDATE, so it is idempotent and cannot revive any other
+    /// status. Returns whether the transition happened (and was audited).
+    fn activate_if_trial_elapsed_with_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        subscription_id: SubscriptionId,
+        as_of: chrono::DateTime<Utc>,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<bool> {
+        let rows = tx
+            .execute(
+                "UPDATE subscriptions SET status = 'active', updated_at = ?1
+                 WHERE id = ?2 AND status = 'trial'
+                   AND (trial_ends_at IS NULL OR datetime(trial_ends_at) <= datetime(?3))",
+                rusqlite::params![
+                    now.to_rfc3339(),
+                    subscription_id.to_string(),
+                    as_of.to_rfc3339()
+                ],
+            )
+            .map_err(map_db_error)?;
+        if rows == 0 {
+            return Ok(false);
+        }
+        self.record_event_with_conn(
+            tx,
+            subscription_id,
+            SubscriptionEventType::Activated,
+            "Trial ended; subscription activated",
+            None,
+            Some("system"),
+        )?;
+        Ok(true)
     }
 
     pub fn get_billing_cycle(&self, id: Uuid) -> Result<Option<BillingCycle>> {
@@ -1548,6 +1610,9 @@ impl SqliteSubscriptionRepository {
                 ],
             )
             .map_err(map_db_error)?;
+            // The paid cycle carried the clock to `period_end`; a trial whose
+            // end has been reached is over.
+            self.activate_if_trial_elapsed_with_tx(tx, subscription_id, period_end, now)?;
         } else {
             tx.execute(
                 "UPDATE subscriptions SET

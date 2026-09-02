@@ -2,6 +2,7 @@
 //!
 //! Models for individual unit tracking via serial numbers.
 
+use crate::errors::CommerceError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
@@ -72,6 +73,130 @@ pub enum SerialStatus {
 impl Default for SerialStatus {
     fn default() -> Self {
         Self::Available
+    }
+}
+
+impl SerialStatus {
+    /// Every status, in declaration order. Used by the transition table tests
+    /// and by callers that need to enumerate the state space.
+    pub const ALL: [Self; 13] = [
+        Self::InProduction,
+        Self::Available,
+        Self::Reserved,
+        Self::Shipped,
+        Self::Sold,
+        Self::Returned,
+        Self::InService,
+        Self::InWarranty,
+        Self::Quarantined,
+        Self::Scrapped,
+        Self::Recalled,
+        Self::Lost,
+        Self::Transferred,
+    ];
+
+    /// The statuses a serial in `self` may move to.
+    ///
+    /// This is THE serial state machine. Every repository mutation that writes
+    /// `serial_numbers.status` (`change_status`, `update`, `reserve`,
+    /// `release_reservation`, `mark_sold`, `mark_shipped`, `mark_returned`,
+    /// `quarantine`, `release_quarantine`, `scrap`, `transfer_ownership`, the
+    /// lot-level bulk helpers) consults it and refuses anything not listed
+    /// here, so a scrapped unit can never be shipped and a sold unit can never
+    /// be re-reserved. The match is exhaustive on purpose: adding a status
+    /// forces a decision about its edges.
+    ///
+    /// A status never lists itself — a self-transition is a no-op the caller
+    /// almost certainly did not intend, and it is refused like any other
+    /// invalid edge.
+    #[must_use]
+    pub const fn allowed_transitions(self) -> &'static [Self] {
+        match self {
+            Self::InProduction => &[Self::Available, Self::Quarantined, Self::Scrapped, Self::Lost],
+            Self::Available => &[
+                Self::Reserved,
+                Self::Shipped,
+                Self::Sold,
+                Self::InService,
+                Self::Quarantined,
+                Self::Scrapped,
+                Self::Recalled,
+                Self::Lost,
+                Self::Transferred,
+            ],
+            Self::Reserved => &[
+                Self::Available,
+                Self::Shipped,
+                Self::Sold,
+                Self::Quarantined,
+                Self::Scrapped,
+                Self::Recalled,
+                Self::Lost,
+            ],
+            Self::Shipped => &[
+                Self::Sold,
+                Self::Returned,
+                Self::InService,
+                Self::InWarranty,
+                Self::Recalled,
+                Self::Lost,
+                Self::Transferred,
+            ],
+            Self::Sold => &[
+                Self::Returned,
+                Self::InService,
+                Self::InWarranty,
+                Self::Recalled,
+                Self::Lost,
+                Self::Transferred,
+            ],
+            Self::Returned => &[
+                Self::Available,
+                Self::InService,
+                Self::Quarantined,
+                Self::Scrapped,
+                Self::Recalled,
+                Self::Lost,
+            ],
+            Self::InService => &[
+                Self::Available,
+                Self::Shipped,
+                Self::Sold,
+                Self::Quarantined,
+                Self::Scrapped,
+                Self::Lost,
+            ],
+            Self::InWarranty => &[
+                Self::Shipped,
+                Self::Sold,
+                Self::Returned,
+                Self::InService,
+                Self::Scrapped,
+                Self::Lost,
+            ],
+            Self::Quarantined => {
+                &[Self::Available, Self::InService, Self::Scrapped, Self::Recalled, Self::Lost]
+            }
+            Self::Scrapped => &[],
+            Self::Recalled => {
+                &[Self::Available, Self::Returned, Self::Quarantined, Self::Scrapped, Self::Lost]
+            }
+            Self::Lost => &[Self::Available, Self::Scrapped],
+            Self::Transferred => &[Self::Returned, Self::Lost],
+        }
+    }
+
+    /// Whether a serial in `self` may move to `to` (see
+    /// [`Self::allowed_transitions`]).
+    #[must_use]
+    pub fn can_transition_to(self, to: Self) -> bool {
+        self.allowed_transitions().contains(&to)
+    }
+
+    /// Whether no transition leaves this status.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        self.allowed_transitions().is_empty()
     }
 }
 
@@ -399,25 +524,50 @@ impl SerialNumber {
     /// Check if serial can be reserved
     #[must_use]
     pub fn can_reserve(&self) -> bool {
-        self.status == SerialStatus::Available
+        self.can_transition_to(SerialStatus::Reserved)
     }
 
     /// Check if serial can be shipped
     #[must_use]
-    pub const fn can_ship(&self) -> bool {
-        matches!(self.status, SerialStatus::Available | SerialStatus::Reserved)
+    pub fn can_ship(&self) -> bool {
+        self.can_transition_to(SerialStatus::Shipped)
     }
 
     /// Check if serial can be returned
     #[must_use]
-    pub const fn can_return(&self) -> bool {
-        matches!(self.status, SerialStatus::Sold | SerialStatus::Shipped)
+    pub fn can_return(&self) -> bool {
+        self.can_transition_to(SerialStatus::Returned)
     }
 
     /// Check if serial can be scrapped
     #[must_use]
-    pub const fn can_scrap(&self) -> bool {
-        !matches!(self.status, SerialStatus::Sold | SerialStatus::Shipped | SerialStatus::Scrapped)
+    pub fn can_scrap(&self) -> bool {
+        self.can_transition_to(SerialStatus::Scrapped)
+    }
+
+    /// Whether this serial's status may move to `to` under the serial state
+    /// machine ([`SerialStatus::allowed_transitions`]).
+    #[must_use]
+    pub fn can_transition_to(&self, to: SerialStatus) -> bool {
+        self.status.can_transition_to(to)
+    }
+
+    /// Refuse an invalid transition with a [`CommerceError::Conflict`] naming
+    /// the serial, its current status and the requested one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommerceError::Conflict`] when the state machine does not
+    /// allow `status -> to`.
+    pub fn ensure_can_transition_to(&self, to: SerialStatus) -> Result<(), CommerceError> {
+        if self.can_transition_to(to) {
+            Ok(())
+        } else {
+            Err(CommerceError::Conflict(format!(
+                "Serial {} ({}) cannot transition from {} to {}",
+                self.serial, self.id, self.status, to
+            )))
+        }
     }
 
     /// Check if serial has been activated
@@ -440,10 +590,22 @@ impl SerialNumber {
 }
 
 impl SerialReservation {
-    /// Check if reservation is active
+    /// Check if reservation is active: it still holds the serial.
+    ///
+    /// A reservation is opened by `reserve`, optionally confirmed, and closed
+    /// (`released_at` set) by an explicit release, by the sale/shipment that
+    /// consumes it, or by the expiry sweeper. Confirmation does NOT close it —
+    /// a confirmed reservation is the strongest hold there is.
     #[must_use]
     pub fn is_active(&self) -> bool {
-        self.released_at.is_none() && self.confirmed_at.is_none() && !self.is_expired()
+        self.released_at.is_none() && !self.is_expired()
+    }
+
+    /// Whether the reservation is still open in the store (not yet released,
+    /// consumed or swept), regardless of expiry.
+    #[must_use]
+    pub const fn is_open(&self) -> bool {
+        self.released_at.is_none()
     }
 
     /// Check if reservation has expired
@@ -472,21 +634,7 @@ mod tests {
     // Test Helpers
     // ============================================================================
 
-    const ALL_STATUSES: [SerialStatus; 13] = [
-        SerialStatus::InProduction,
-        SerialStatus::Available,
-        SerialStatus::Reserved,
-        SerialStatus::Shipped,
-        SerialStatus::Sold,
-        SerialStatus::Returned,
-        SerialStatus::InService,
-        SerialStatus::InWarranty,
-        SerialStatus::Quarantined,
-        SerialStatus::Scrapped,
-        SerialStatus::Recalled,
-        SerialStatus::Lost,
-        SerialStatus::Transferred,
-    ];
+    const ALL_STATUSES: [SerialStatus; 13] = SerialStatus::ALL;
 
     fn create_test_serial(status: SerialStatus) -> SerialNumber {
         let now = Utc::now();
@@ -548,32 +696,116 @@ mod tests {
     }
 
     #[test]
-    fn can_ship_from_available_or_reserved_only() {
+    fn can_ship_matches_transition_table() {
         for status in ALL_STATUSES {
             let serial = create_test_serial(status);
-            let expected = matches!(status, SerialStatus::Available | SerialStatus::Reserved);
+            let expected = matches!(
+                status,
+                SerialStatus::Available
+                    | SerialStatus::Reserved
+                    | SerialStatus::InService
+                    | SerialStatus::InWarranty
+            );
             assert_eq!(serial.can_ship(), expected, "status {status}");
         }
     }
 
     #[test]
-    fn can_return_only_from_sold_or_shipped() {
+    fn can_return_matches_transition_table() {
         for status in ALL_STATUSES {
             let serial = create_test_serial(status);
-            let expected = matches!(status, SerialStatus::Sold | SerialStatus::Shipped);
+            let expected = matches!(
+                status,
+                SerialStatus::Sold
+                    | SerialStatus::Shipped
+                    | SerialStatus::InWarranty
+                    | SerialStatus::Recalled
+                    | SerialStatus::Transferred
+            );
             assert_eq!(serial.can_return(), expected, "status {status}");
         }
     }
 
     #[test]
-    fn can_scrap_excludes_sold_shipped_scrapped() {
+    fn can_scrap_excludes_customer_owned_and_terminal() {
         for status in ALL_STATUSES {
             let serial = create_test_serial(status);
             let expected = !matches!(
                 status,
-                SerialStatus::Sold | SerialStatus::Shipped | SerialStatus::Scrapped
+                SerialStatus::Sold
+                    | SerialStatus::Shipped
+                    | SerialStatus::Scrapped
+                    | SerialStatus::Transferred
             );
             assert_eq!(serial.can_scrap(), expected, "status {status}");
+        }
+    }
+
+    // ============================================================================
+    // Transition table invariants
+    // ============================================================================
+
+    #[test]
+    fn no_status_transitions_to_itself() {
+        for status in ALL_STATUSES {
+            assert!(!status.can_transition_to(status), "{status} lists itself");
+        }
+    }
+
+    #[test]
+    fn scrapped_is_the_only_terminal_status() {
+        for status in ALL_STATUSES {
+            assert_eq!(status.is_terminal(), status == SerialStatus::Scrapped, "{status}");
+        }
+    }
+
+    #[test]
+    fn scrapped_cannot_ship_sell_or_reserve() {
+        let scrapped = create_test_serial(SerialStatus::Scrapped);
+        assert!(!scrapped.can_ship());
+        assert!(!scrapped.can_reserve());
+        assert!(!scrapped.can_transition_to(SerialStatus::Sold));
+        let err = scrapped.ensure_can_transition_to(SerialStatus::Shipped).unwrap_err();
+        match err {
+            CommerceError::Conflict(msg) => {
+                assert!(msg.contains("scrapped"), "{msg}");
+                assert!(msg.contains("shipped"), "{msg}");
+                assert!(msg.contains("SN-0001"), "{msg}");
+            }
+            other => panic!("expected Conflict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_non_terminal_status_can_reach_available_or_scrapped_eventually() {
+        // Reachability: from any status, a path exists to `Scrapped` (write-off)
+        // so no unit is stuck in a limbo status forever.
+        for start in ALL_STATUSES {
+            let mut seen = vec![start];
+            let mut frontier = vec![start];
+            while let Some(s) = frontier.pop() {
+                for &next in s.allowed_transitions() {
+                    if !seen.contains(&next) {
+                        seen.push(next);
+                        frontier.push(next);
+                    }
+                }
+            }
+            assert!(seen.contains(&SerialStatus::Scrapped), "{start} cannot reach scrapped");
+        }
+    }
+
+    #[test]
+    fn ensure_can_transition_to_accepts_listed_edges() {
+        for from in ALL_STATUSES {
+            for to in ALL_STATUSES {
+                let serial = create_test_serial(from);
+                assert_eq!(
+                    serial.ensure_can_transition_to(to).is_ok(),
+                    from.can_transition_to(to),
+                    "{from} -> {to}"
+                );
+            }
         }
     }
 
@@ -633,11 +865,15 @@ mod tests {
     }
 
     #[test]
-    fn confirmed_reservation_is_not_active_but_confirmed() {
+    fn confirmed_reservation_stays_active_until_closed() {
         let mut res = create_test_reservation();
         res.confirmed_at = Some(Utc::now());
-        assert!(!res.is_active());
+        assert!(res.is_active());
+        assert!(res.is_open());
         assert!(res.is_confirmed());
+        res.released_at = Some(Utc::now());
+        assert!(!res.is_active());
+        assert!(!res.is_open());
     }
 
     #[test]

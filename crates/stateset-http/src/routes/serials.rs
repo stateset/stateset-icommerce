@@ -227,7 +227,7 @@ pub(crate) async fn reserve(
 #[utoipa::path(post, operation_id = "serials_release_reservation",
     path = "/api/v1/serials/reservations/{reservation_id}/release", tag = "serials",
     params(("reservation_id" = String, Path, description = "Reservation ID")),
-    responses((status = 204), (status = 404, body = ErrorBody)))]
+    responses((status = 204), (status = 404, body = ErrorBody), (status = 409, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
 pub(crate) async fn release_reservation(
     State(state): State<AppState>,
@@ -395,6 +395,79 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(json_body(resp).await["status"], "scrapped");
+    }
+
+    #[tokio::test]
+    async fn ship_refuses_scrapped_serial_with_409() {
+        let app = app();
+        let serial = create_serial(&app).await;
+        let id = serial["id"].as_str().unwrap().to_string();
+
+        let resp = post_json(
+            &app,
+            &format!("/serials/{id}/scrap"),
+            serde_json::json!({ "reason": "damaged beyond repair" }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = post_json(
+            &app,
+            &format!("/serials/{id}/ship"),
+            serde_json::json!({ "shipment_id": Uuid::new_v4().to_string() }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+        let body = json_body(resp).await;
+        let msg = body.to_string();
+        assert!(msg.contains("scrapped") && msg.contains("shipped"), "{msg}");
+
+        let resp = app
+            .oneshot(Request::get(format!("/serials/{id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(json_body(resp).await["status"], "scrapped");
+    }
+
+    #[tokio::test]
+    async fn release_after_ship_is_refused_and_serial_stays_shipped() {
+        let app = app();
+        let serial = create_serial(&app).await;
+        let id = serial["id"].as_str().unwrap().to_string();
+
+        let resp = post_json(
+            &app,
+            &format!("/serials/{id}/reserve"),
+            serde_json::json!({
+                "reference_type": "order",
+                "reference_id": Uuid::new_v4().to_string()
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let reservation_id = json_body(resp).await["reservation_id"].as_str().unwrap().to_string();
+
+        let resp = post_json(
+            &app,
+            &format!("/serials/{id}/ship"),
+            serde_json::json!({ "shipment_id": Uuid::new_v4().to_string() }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = post_json(
+            &app,
+            &format!("/serials/reservations/{reservation_id}/release"),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+        let resp = app
+            .oneshot(Request::get(format!("/serials/{id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(json_body(resp).await["status"], "shipped");
     }
 
     #[tokio::test]

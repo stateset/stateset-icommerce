@@ -29,6 +29,14 @@ pub trait PaymentRepository: Send + Sync {
     /// Get payments for an invoice
     fn for_invoice(&self, invoice_id: InvoiceId) -> Result<Vec<Payment>>;
 
+    /// Payments for `order_id` that are still holding captured money: every
+    /// payment in a capturing status (pending / processing / `requires_action` /
+    /// completed / `partially_refunded` / disputed) whose `amount` exceeds its
+    /// `amount_refunded`. An empty result means nothing is outstanding and the
+    /// order can be cancelled without stranding a capture; the orders module is
+    /// expected to consult this before cancelling an order.
+    fn open_captures_for_order(&self, order_id: OrderId) -> Result<Vec<Payment>>;
+
     // Status transitions
     /// Mark payment as processing
     fn mark_processing(&self, id: PaymentId) -> Result<Payment>;
@@ -260,6 +268,9 @@ pub trait TaxRepository: Send + Sync {
     fn get_exemption(&self, id: Uuid) -> Result<Option<TaxExemption>>;
     /// Get all exemptions for a customer
     fn get_customer_exemptions(&self, customer_id: Uuid) -> Result<Vec<TaxExemption>>;
+    /// Mark an exemption certificate as verified (or revoke verification).
+    /// Only verified exemptions are honoured by [`Self::calculate_tax`].
+    fn verify_exemption(&self, id: Uuid, verified: bool) -> Result<TaxExemption>;
 
     /// Get tax settings
     fn get_settings(&self) -> Result<TaxSettings>;

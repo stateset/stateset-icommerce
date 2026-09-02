@@ -682,6 +682,32 @@ impl PgTaxRepository {
         row.map(Self::row_to_exemption).transpose()
     }
 
+    /// Mark an exemption certificate as verified (or revoke verification).
+    /// Only verified exemptions are honoured by tax calculation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommerceError::NotFound`] if no exemption has `id`.
+    pub async fn verify_exemption_async(&self, id: Uuid, verified: bool) -> Result<TaxExemption> {
+        let now = Utc::now();
+        let verified_at = if verified { Some(now) } else { None };
+        let changed = sqlx::query(
+            "UPDATE tax_exemptions SET verified = $1, verified_at = $2, updated_at = $3 WHERE id = $4",
+        )
+        .bind(verified)
+        .bind(verified_at)
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if changed == 0 {
+            return Err(CommerceError::NotFound);
+        }
+        self.get_exemption_async(id).await?.ok_or(CommerceError::NotFound)
+    }
+
     pub async fn get_customer_exemptions_async(
         &self,
         customer_id: Uuid,
@@ -1158,6 +1184,10 @@ impl TaxRepository for PgTaxRepository {
 
     fn get_customer_exemptions(&self, customer_id: Uuid) -> Result<Vec<TaxExemption>> {
         super::block_on(self.get_customer_exemptions_async(customer_id))
+    }
+
+    fn verify_exemption(&self, id: Uuid, verified: bool) -> Result<TaxExemption> {
+        super::block_on(self.verify_exemption_async(id, verified))
     }
 
     fn get_settings(&self) -> Result<TaxSettings> {

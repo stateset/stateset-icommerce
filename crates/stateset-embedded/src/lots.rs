@@ -376,9 +376,21 @@ impl Lots {
         self.db.lots().get_expired_lots()
     }
 
+    /// Sweep `Active` lots whose `expiration_date` has passed into `Expired`,
+    /// returning how many were flipped. Idempotent — run it from a scheduler.
+    ///
+    /// Consumption paths (`consume`, `reserve`, `confirm_reservation`, FEFO
+    /// picking) refuse expired lots regardless of whether this has run; the
+    /// sweeper only makes the status column agree with the calendar.
+    pub fn expire_lots(&self) -> Result<u64> {
+        self.db.lots().expire_lots(chrono::Utc::now())
+    }
+
     /// Get lots with available quantity for a SKU.
     ///
-    /// Returns lots ordered by production date (FIFO).
+    /// Returns lots in FEFO order (soonest `expiration_date` first, unexpiring
+    /// lots last, oldest first within a tie). Expired, non-active and fully
+    /// reserved/quarantined lots are excluded.
     pub fn get_available_lots_for_sku(&self, sku: &str) -> Result<Vec<Lot>> {
         self.db.lots().get_available_lots_for_sku(sku)
     }

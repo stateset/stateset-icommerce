@@ -357,28 +357,27 @@ impl SqliteCartRepository {
         // matching the Postgres DECIMAL(12,2) columns and the order pipeline.
         let subtotal = subtotal.round_dp(2);
 
-        // Get current tax and shipping
-        let (tax, shipping, discount): (String, String, String) = conn
-            .query_row(
-                "SELECT tax_amount, shipping_amount, discount_amount FROM carts WHERE id = ?",
-                [cart_id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .map_err(map_db_error)?;
+        // Persist the subtotal first so the cart loaded below (and handed to
+        // coupon validation) reflects the new contents.
+        conn.execute(
+            "UPDATE carts SET subtotal = ?, updated_at = ? WHERE id = ?",
+            rusqlite::params![subtotal.to_string(), Utc::now().to_rfc3339(), cart_id.to_string()],
+        )
+        .map_err(map_db_error)?;
+        let cart = Self::load_cart_with_conn(conn, cart_id)?.ok_or(CommerceError::NotFound)?;
 
-        // Calculate grand total, clamped at zero: a discount larger than
-        // subtotal + tax + shipping must not produce a negative total (which
-        // would charge the buyer a negative amount at checkout).
-        let tax_dec = parse_decimal_err(&tax, "cart", "tax_amount")?;
-        let shipping_dec = parse_decimal_err(&shipping, "cart", "shipping_amount")?;
-        let discount_dec = parse_decimal_err(&discount, "cart", "discount_amount")?;
-        let grand_total =
-            (subtotal + tax_dec + shipping_dec - discount_dec).round_dp(2).max(Decimal::ZERO);
+        // The discount is derived from the cart as it is NOW, never a frozen
+        // snapshot: a coupon is re-validated and re-priced against the new
+        // contents, and any discount is capped at what the cart can cover.
+        let derived = self.derive_discount(conn, &cart)?;
+        let grand_total = derived.grand_total(&cart);
 
         conn.execute(
-            "UPDATE carts SET subtotal = ?, grand_total = ?, updated_at = ? WHERE id = ?",
+            "UPDATE carts SET discount_amount = ?, discount_description = ?, grand_total = ?,
+             updated_at = ? WHERE id = ?",
             rusqlite::params![
-                subtotal.to_string(),
+                derived.amount.to_string(),
+                derived.description,
                 grand_total.to_string(),
                 Utc::now().to_rfc3339(),
                 cart_id.to_string()
@@ -388,6 +387,82 @@ impl SqliteCartRepository {
 
         Ok(())
     }
+
+    /// Price the discount `cart` should carry right now.
+    ///
+    /// With a coupon on the cart, the coupon and its promotion are re-validated
+    /// against the current contents (window, status, usage limits, conditions
+    /// such as a minimum subtotal) and the discount re-priced from them. A
+    /// coupon that no longer qualifies stays on the cart — so it revives on its
+    /// own when the cart qualifies again — but contributes no discount, and the
+    /// cart's `discount_description` says why; checkout refuses the cart while
+    /// it is in that state (see [`DerivedDiscount::coupon_error`]).
+    ///
+    /// Promotion types this path cannot price (bundles, tiers, ...) keep the
+    /// discount recorded by full promotion evaluation. Every discount, coupon
+    /// or manual, is capped at `subtotal + tax + shipping` so the cart never
+    /// hands an order a discount larger than the order can absorb.
+    fn derive_discount(&self, conn: &rusqlite::Connection, cart: &Cart) -> Result<DerivedDiscount> {
+        let Some(code) = cart.coupon_code.as_deref() else {
+            return Ok(DerivedDiscount::capped(cart, cart.discount_amount, None));
+        };
+        // Validate on the caller's connection: this runs inside cart-mutation
+        // and checkout transactions, and a second pooled connection would
+        // deadlock a size-1 pool (and read outside the transaction).
+        let promo_repo = SqlitePromotionRepository::new(self.pool.clone());
+        match promo_repo.validate_coupon_for_cart_with_conn(conn, cart, code, Utc::now()) {
+            Ok((_coupon, promotion)) => {
+                let amount = match promotion.promotion_type {
+                    PromotionType::PercentageOff | PromotionType::FixedAmountOff => {
+                        coupon_discount_amount(&promotion, cart)
+                    }
+                    _ => cart.discount_amount,
+                };
+                Ok(DerivedDiscount::capped(cart, amount, Some(promotion.name)))
+            }
+            Err(CommerceError::ValidationError(reason)) => Ok(DerivedDiscount {
+                amount: Decimal::ZERO,
+                description: Some(format!("Coupon {code} not applied: {reason}")),
+                coupon_error: Some(reason),
+            }),
+            Err(other) => Err(other),
+        }
+    }
+}
+
+/// Outcome of [`SqliteCartRepository::derive_discount`].
+#[derive(Debug, Clone)]
+pub(crate) struct DerivedDiscount {
+    /// Discount the cart carries, capped at what the cart can cover.
+    pub(crate) amount: Decimal,
+    /// `discount_description` to store (`None` keeps the stored one).
+    pub(crate) description: Option<String>,
+    /// Why the cart's coupon no longer qualifies, if it does not.
+    pub(crate) coupon_error: Option<String>,
+}
+
+impl DerivedDiscount {
+    fn capped(cart: &Cart, amount: Decimal, description: Option<String>) -> Self {
+        Self {
+            amount: cap_discount(cart, amount),
+            description: description.or_else(|| cart.discount_description.clone()),
+            coupon_error: None,
+        }
+    }
+
+    /// `subtotal + tax + shipping - amount`, which the cap keeps non-negative.
+    fn grand_total(&self, cart: &Cart) -> Decimal {
+        (cart.subtotal + cart.tax_amount + cart.shipping_amount - self.amount)
+            .round_dp(2)
+            .max(Decimal::ZERO)
+    }
+}
+
+/// Clamp a discount into `[0, subtotal + tax + shipping]` so the order minted
+/// from the cart can never have a negative total.
+pub(crate) fn cap_discount(cart: &Cart, amount: Decimal) -> Decimal {
+    let coverable = (cart.subtotal + cart.tax_amount + cart.shipping_amount).max(Decimal::ZERO);
+    amount.max(Decimal::ZERO).min(coverable)
 }
 
 impl CartRepository for SqliteCartRepository {
@@ -703,6 +778,8 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn update_item(&self, item_id: Uuid, input: UpdateCartItem) -> Result<CartItem> {
+        validate_update_cart_item(&input)?;
+
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
@@ -1152,34 +1229,17 @@ impl CartRepository for SqliteCartRepository {
         // Get the cart first to calculate discount
         let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
 
-        // Look up the coupon and its promotion
+        // Resolve the coupon and its promotion, and refuse anything that is
+        // not redeemable right now: inactive/expired/exhausted coupon,
+        // draft/paused/expired/exhausted promotion, unmet conditions (e.g.
+        // minimum subtotal), or a per-customer limit already reached. The
+        // checks live in `stateset-core` + the promotions repo so both
+        // backends and promotion evaluation agree.
         let promo_repo = SqlitePromotionRepository::new(self.pool.clone());
-        let coupon = promo_repo.get_coupon_by_code(coupon_code)?.ok_or_else(|| {
-            CommerceError::ValidationError(format!("Invalid coupon code: {coupon_code}"))
-        })?;
+        let (_coupon, promotion) =
+            promo_repo.validate_coupon_for_cart(&cart, coupon_code, Utc::now())?;
 
-        let promotion = promo_repo
-            .get(coupon.promotion_id)?
-            .ok_or_else(|| CommerceError::ValidationError("Promotion not found".into()))?;
-
-        // Calculate the discount based on promotion type
-        let subtotal = cart.subtotal;
-        let discount_amount = match promotion.promotion_type {
-            PromotionType::PercentageOff => {
-                let percentage = promotion.percentage_off.unwrap_or(Decimal::ZERO);
-                let discount = subtotal * percentage;
-                // Apply max discount cap if set
-                if let Some(max) = promotion.max_discount_amount {
-                    discount.min(max)
-                } else {
-                    discount
-                }
-            }
-            PromotionType::FixedAmountOff => {
-                promotion.fixed_amount_off.unwrap_or(Decimal::ZERO).min(subtotal)
-            }
-            _ => Decimal::ZERO, // Other types not fully implemented
-        };
+        let discount_amount = coupon_discount_amount(&promotion, &cart);
 
         let discount_description = Some(promotion.name);
 
@@ -1189,7 +1249,9 @@ impl CartRepository for SqliteCartRepository {
             conn.execute(
                 "UPDATE carts SET coupon_code = ?, discount_amount = ?, discount_description = ?, updated_at = ? WHERE id = ?",
                 rusqlite::params![
-                    coupon_code,
+                    // Persist the canonical (uppercased) code: checkout consumes
+                    // the coupon by this value and codes are stored uppercased.
+                    coupon_code.to_uppercase(),
                     discount_amount.to_string(),
                     discount_description,
                     Utc::now().to_rfc3339(),
@@ -1880,11 +1942,21 @@ impl SqliteCartRepository {
                 )),
             )));
         }
+        if let Some(expired_at) = cart.expires_at.filter(|_| cart.is_expired()) {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                CommerceError::ValidationError(format!(
+                    "Cart expired at {}",
+                    expired_at.to_rfc3339()
+                )),
+            )));
+        }
         if !cart.is_ready_for_checkout() {
             return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                 CommerceError::ValidationError("Cart is not ready for checkout".into()),
             )));
         }
+        // Never hand the order a discount it cannot absorb (see `cap_discount`).
+        cart.discount_amount = cap_discount(&cart, cart.discount_amount);
         let customer_id = if let Some(id) = cart.customer_id {
             id
         } else {
@@ -1989,6 +2061,15 @@ impl SqliteCartRepository {
             )));
         }
 
+        if let Some(expired_at) = cart.expires_at.filter(|_| cart.is_expired()) {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                CommerceError::ValidationError(format!(
+                    "Cart expired at {}",
+                    expired_at.to_rfc3339()
+                )),
+            )));
+        }
+
         if !cart.is_ready_for_checkout() {
             return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                 CommerceError::ValidationError(
@@ -1996,6 +2077,25 @@ impl SqliteCartRepository {
                 ),
             )));
         }
+
+        // Re-validate the coupon and re-derive the discount inside the
+        // checkout transaction: the minted order's discount is always one the
+        // coupon grants RIGHT NOW (not a snapshot from `apply_discount`), a
+        // coupon that stopped qualifying since it was applied refuses the
+        // checkout, and no discount ever exceeds what the order can absorb.
+        let derived = self
+            .derive_discount(tx, &cart)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        if let Some(reason) = derived.coupon_error {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                CommerceError::ValidationError(format!(
+                    "Coupon {} is no longer valid: {reason}",
+                    cart.coupon_code.as_deref().unwrap_or_default()
+                )),
+            )));
+        }
+        cart.discount_amount = derived.amount;
+        cart.grand_total = derived.grand_total(&cart);
 
         let customer_id = Self::resolve_customer_id_in_tx(tx, &cart)?;
         let order_items: Vec<CreateOrderItem> = cart
@@ -2074,17 +2174,38 @@ impl SqliteCartRepository {
             order.version += 1;
         }
 
+        // Consume the cart's coupon in the same transaction as the order:
+        // usage counters advance under their limits, and a coupon exhausted
+        // since it was applied fails the checkout instead of being honoured.
+        SqlitePromotionRepository::consume_cart_coupon_in_tx(
+            tx,
+            &cart,
+            Some(customer_id),
+            order.id,
+        )?;
+        // Automatic (no-code) promotions are consumed here too: evaluation is
+        // read-only, so this is the only place their usage advances.
+        SqlitePromotionRepository::consume_cart_promotions_in_tx(
+            tx,
+            &cart,
+            Some(customer_id),
+            order.id,
+        )?;
+
         let completed_at = Utc::now();
         if x402_settled {
             tx.execute(
                 "UPDATE carts SET
                     status = 'completed', order_id = ?, order_number = ?,
                     payment_status = 'captured', x402_status = 'settled',
+                    discount_amount = ?, grand_total = ?,
                     completed_at = ?, updated_at = ?, customer_id = ?
                  WHERE id = ?",
                 rusqlite::params![
                     order.id.to_string(),
                     &order.order_number,
+                    cart.discount_amount.to_string(),
+                    cart.grand_total.to_string(),
                     completed_at.to_rfc3339(),
                     completed_at.to_rfc3339(),
                     customer_id.to_string(),
@@ -2094,10 +2215,13 @@ impl SqliteCartRepository {
         } else if mark_paid {
             tx.execute(
                 "UPDATE carts SET status = 'completed', order_id = ?, order_number = ?,
-                 payment_status = 'captured', completed_at = ?, updated_at = ?, customer_id = ? WHERE id = ?",
+                 payment_status = 'captured', discount_amount = ?, grand_total = ?,
+                 completed_at = ?, updated_at = ?, customer_id = ? WHERE id = ?",
                 rusqlite::params![
                     order.id.to_string(),
                     &order.order_number,
+                    cart.discount_amount.to_string(),
+                    cart.grand_total.to_string(),
                     completed_at.to_rfc3339(),
                     completed_at.to_rfc3339(),
                     customer_id.to_string(),
@@ -2107,10 +2231,13 @@ impl SqliteCartRepository {
         } else {
             tx.execute(
                 "UPDATE carts SET status = 'completed', order_id = ?, order_number = ?,
+                 discount_amount = ?, grand_total = ?,
                  completed_at = ?, updated_at = ?, customer_id = ? WHERE id = ?",
                 rusqlite::params![
                     order.id.to_string(),
                     &order.order_number,
+                    cart.discount_amount.to_string(),
+                    cart.grand_total.to_string(),
                     completed_at.to_rfc3339(),
                     completed_at.to_rfc3339(),
                     customer_id.to_string(),
@@ -2128,6 +2255,49 @@ impl SqliteCartRepository {
             currency: cart.currency,
         })
     }
+}
+
+/// Order-level discount a coupon-activated promotion grants on `cart`,
+/// rounded to the cart currency's precision so the cart's money math stays on
+/// minor-unit boundaries (percentage-off with an optional cap, or a fixed
+/// amount never exceeding the subtotal).
+pub(crate) fn coupon_discount_amount(promotion: &stateset_core::Promotion, cart: &Cart) -> Decimal {
+    let subtotal = cart.subtotal;
+    let raw = match promotion.promotion_type {
+        PromotionType::PercentageOff => {
+            let discount = subtotal * promotion.percentage_off.unwrap_or(Decimal::ZERO);
+            promotion.max_discount_amount.map_or(discount, |max| discount.min(max))
+        }
+        PromotionType::FixedAmountOff => {
+            promotion.fixed_amount_off.unwrap_or(Decimal::ZERO).min(subtotal)
+        }
+        _ => Decimal::ZERO, // Other types are priced by full promotion evaluation
+    };
+    cap_discount(cart, raw).round_dp(u32::from(cart.currency.decimal_places()))
+}
+
+/// Reject a cart-item update that would store a non-positive quantity, a
+/// negative price or a negative line discount. Quantity 0 is NOT a silent
+/// remove: callers must use `remove_item`.
+pub(crate) fn validate_update_cart_item(input: &UpdateCartItem) -> Result<()> {
+    if let Some(quantity) = input.quantity {
+        if quantity < 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Item quantity must be positive, got {quantity}; remove the item instead"
+            )));
+        }
+    }
+    if let Some(unit_price) = input.unit_price {
+        validate_price(unit_price)?;
+    }
+    if let Some(discount) = input.discount_amount {
+        if discount < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(format!(
+                "Item discount must not be negative, got {discount}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn split_customer_name(name: Option<&str>) -> (String, String) {
@@ -2547,5 +2717,682 @@ mod tests {
         let ids: Vec<CartId> = abandoned.iter().map(|c| c.id).collect();
         assert!(ids.contains(&to_abandon.id));
         assert!(!ids.contains(&active.id));
+    }
+
+    // ------------------------------------------------------------------
+    // Coupon validation at the cart layer
+    // ------------------------------------------------------------------
+
+    mod coupon_validation {
+        use super::*;
+        use crate::sqlite::SqlitePromotionRepository;
+        use chrono::{Duration, Utc};
+        use stateset_core::{
+            ConditionOperator, ConditionType, CouponCode, CreateCouponCode, CreatePromotion,
+            CreatePromotionCondition, OrderRepository, Promotion, PromotionStatus, PromotionTarget,
+            PromotionTrigger, PromotionType, StackingBehavior, UpdatePromotion,
+        };
+
+        struct Fixture {
+            db: SqliteDatabase,
+            carts: SqliteCartRepository,
+            promos: SqlitePromotionRepository,
+        }
+
+        fn fixture() -> Fixture {
+            let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+            let carts = db.carts();
+            let promos = db.promotions();
+            Fixture { db, carts, promos }
+        }
+
+        /// A 10%-off coupon-triggered promotion, ACTIVE unless the caller
+        /// changes it, with a coupon `code` attached.
+        fn active_promo_with_coupon(
+            f: &Fixture,
+            code: &str,
+            coupon: CreateCouponCode,
+        ) -> (Promotion, CouponCode) {
+            let promo = f
+                .promos
+                .create(CreatePromotion {
+                    code: Some(format!("{code}-PROMO")),
+                    name: format!("{code} promo"),
+                    promotion_type: PromotionType::PercentageOff,
+                    trigger: PromotionTrigger::CouponCode,
+                    target: PromotionTarget::Order,
+                    stacking: StackingBehavior::Stackable,
+                    percentage_off: Some(dec!(0.10)),
+                    ..Default::default()
+                })
+                .expect("create promo");
+            let promo = f.promos.activate(promo.id).expect("activate");
+            let coupon = f
+                .promos
+                .create_coupon(CreateCouponCode {
+                    promotion_id: promo.id,
+                    code: code.into(),
+                    ..coupon
+                })
+                .expect("create coupon");
+            (promo, coupon)
+        }
+
+        fn coupon_input() -> CreateCouponCode {
+            CreateCouponCode {
+                promotion_id: stateset_core::PromotionId::new(),
+                code: String::new(),
+                usage_limit: None,
+                per_customer_limit: None,
+                starts_at: None,
+                ends_at: None,
+                metadata: None,
+            }
+        }
+
+        fn cart_with_subtotal(f: &Fixture, subtotal: Decimal) -> Cart {
+            let cart = f.carts.create(CreateCart::default()).expect("create cart");
+            f.carts.add_item(cart.id, add_item("SKU-CPN", 1, subtotal)).expect("add item");
+            f.carts.get(cart.id).expect("ok").expect("found")
+        }
+
+        fn assert_refused(result: Result<Cart>, expected_fragment: &str) {
+            match result {
+                Err(CommerceError::ValidationError(msg)) => assert!(
+                    msg.to_lowercase().contains(&expected_fragment.to_lowercase()),
+                    "expected a ValidationError mentioning {expected_fragment:?}, got {msg:?}"
+                ),
+                Err(other) => panic!("expected ValidationError, got {other:?}"),
+                Ok(cart) => panic!(
+                    "coupon must be refused, but it applied a discount of {} to cart {}",
+                    cart.discount_amount, cart.id
+                ),
+            }
+        }
+
+        #[test]
+        fn valid_coupon_still_applies() {
+            let f = fixture();
+            active_promo_with_coupon(&f, "VALID10", coupon_input());
+            let cart = cart_with_subtotal(&f, dec!(100));
+            let cart = f.carts.apply_discount(cart.id, "VALID10").expect("valid coupon applies");
+            assert_eq!(cart.discount_amount, dec!(10));
+            assert_eq!(cart.grand_total, dec!(90));
+            assert_eq!(cart.coupon_code.as_deref(), Some("VALID10"));
+        }
+
+        #[test]
+        fn draft_promotion_is_refused() {
+            let f = fixture();
+            let (promo, _) = active_promo_with_coupon(&f, "DRAFT10", coupon_input());
+            f.promos
+                .update(
+                    promo.id,
+                    UpdatePromotion { status: Some(PromotionStatus::Draft), ..Default::default() },
+                )
+                .expect("set draft");
+            let cart = cart_with_subtotal(&f, dec!(100));
+            assert_refused(f.carts.apply_discount(cart.id, "DRAFT10"), "not active");
+        }
+
+        #[test]
+        fn paused_promotion_is_refused() {
+            let f = fixture();
+            let (promo, _) = active_promo_with_coupon(&f, "PAUSED10", coupon_input());
+            f.promos.deactivate(promo.id).expect("pause");
+            let cart = cart_with_subtotal(&f, dec!(100));
+            assert_refused(f.carts.apply_discount(cart.id, "PAUSED10"), "not active");
+        }
+
+        #[test]
+        fn expired_promotion_window_is_refused() {
+            let f = fixture();
+            let (promo, _) = active_promo_with_coupon(&f, "EXPIRED10", coupon_input());
+            f.promos
+                .update(
+                    promo.id,
+                    UpdatePromotion {
+                        starts_at: Some(Utc::now() - Duration::days(30)),
+                        ends_at: Some(Utc::now() - Duration::days(1)),
+                        ..Default::default()
+                    },
+                )
+                .expect("expire window");
+            let cart = cart_with_subtotal(&f, dec!(100));
+            assert_refused(f.carts.apply_discount(cart.id, "EXPIRED10"), "expired");
+        }
+
+        #[test]
+        fn not_yet_started_promotion_is_refused() {
+            let f = fixture();
+            let (promo, _) = active_promo_with_coupon(&f, "FUTURE10", coupon_input());
+            f.promos
+                .update(
+                    promo.id,
+                    UpdatePromotion {
+                        starts_at: Some(Utc::now() + Duration::days(1)),
+                        ..Default::default()
+                    },
+                )
+                .expect("future window");
+            let cart = cart_with_subtotal(&f, dec!(100));
+            assert_refused(f.carts.apply_discount(cart.id, "FUTURE10"), "not started");
+        }
+
+        #[test]
+        fn disabled_coupon_is_refused() {
+            let f = fixture();
+            let (_, coupon) = active_promo_with_coupon(&f, "DISABLED10", coupon_input());
+            f.db.promotions()
+                .set_coupon_status(coupon.id, stateset_core::CouponStatus::Disabled)
+                .expect("disable coupon");
+            let cart = cart_with_subtotal(&f, dec!(100));
+            assert_refused(f.carts.apply_discount(cart.id, "DISABLED10"), "coupon is not active");
+        }
+
+        #[test]
+        fn expired_coupon_window_is_refused() {
+            let f = fixture();
+            active_promo_with_coupon(
+                &f,
+                "OLDCODE10",
+                CreateCouponCode {
+                    ends_at: Some(Utc::now() - Duration::hours(1)),
+                    ..coupon_input()
+                },
+            );
+            let cart = cart_with_subtotal(&f, dec!(100));
+            assert_refused(f.carts.apply_discount(cart.id, "OLDCODE10"), "expired");
+        }
+
+        #[test]
+        fn coupon_at_usage_limit_is_refused() {
+            let f = fixture();
+            let (promo, coupon) = active_promo_with_coupon(
+                &f,
+                "ONCE10",
+                CreateCouponCode { usage_limit: Some(1), ..coupon_input() },
+            );
+            // Burn the single use.
+            f.promos
+                .record_usage(promo.id, Some(coupon.id), None, None, None, dec!(10), "USD")
+                .expect("first redemption");
+            let cart = cart_with_subtotal(&f, dec!(100));
+            assert_refused(f.carts.apply_discount(cart.id, "ONCE10"), "usage limit");
+        }
+
+        #[test]
+        fn promotion_at_total_usage_limit_is_refused() {
+            let f = fixture();
+            let (promo, _) = active_promo_with_coupon(&f, "PROMOCAP10", coupon_input());
+            f.promos
+                .update(
+                    promo.id,
+                    UpdatePromotion { total_usage_limit: Some(1), ..Default::default() },
+                )
+                .expect("cap");
+            f.promos.record_usage(promo.id, None, None, None, None, dec!(10), "USD").expect("use");
+            let cart = cart_with_subtotal(&f, dec!(100));
+            assert_refused(f.carts.apply_discount(cart.id, "PROMOCAP10"), "usage limit");
+        }
+
+        #[test]
+        fn per_customer_coupon_limit_is_refused_for_that_customer_only() {
+            use stateset_core::{CreateCustomer, CustomerRepository as _};
+            let f = fixture();
+            let customers = f.db.customers();
+            let mk = |email: &str| {
+                customers
+                    .create(CreateCustomer {
+                        email: email.into(),
+                        first_name: "Test".into(),
+                        last_name: "Customer".into(),
+                        ..Default::default()
+                    })
+                    .expect("customer")
+                    .id
+            };
+            let alice = mk("alice@example.com");
+            let bob = mk("bob@example.com");
+            let (promo, coupon) = active_promo_with_coupon(
+                &f,
+                "PERCUST10",
+                CreateCouponCode { per_customer_limit: Some(1), ..coupon_input() },
+            );
+            f.promos
+                .record_usage(promo.id, Some(coupon.id), Some(alice), None, None, dec!(10), "USD")
+                .expect("alice used it once");
+
+            let alice_cart = f
+                .carts
+                .create(CreateCart { customer_id: Some(alice), ..Default::default() })
+                .expect("cart");
+            f.carts.add_item(alice_cart.id, add_item("SKU-A", 1, dec!(100))).expect("add");
+            assert_refused(f.carts.apply_discount(alice_cart.id, "PERCUST10"), "per-customer");
+
+            let bob_cart = f
+                .carts
+                .create(CreateCart { customer_id: Some(bob), ..Default::default() })
+                .expect("cart");
+            f.carts.add_item(bob_cart.id, add_item("SKU-B", 1, dec!(100))).expect("add");
+            let bob_cart = f.carts.apply_discount(bob_cart.id, "PERCUST10").expect("bob is fine");
+            assert_eq!(bob_cart.discount_amount, dec!(10));
+        }
+
+        #[test]
+        fn minimum_subtotal_condition_not_met_is_refused() {
+            let f = fixture();
+            let promo = f
+                .promos
+                .create(CreatePromotion {
+                    code: Some("MIN50-PROMO".into()),
+                    name: "min 50".into(),
+                    promotion_type: PromotionType::PercentageOff,
+                    trigger: PromotionTrigger::CouponCode,
+                    target: PromotionTarget::Order,
+                    stacking: StackingBehavior::Stackable,
+                    percentage_off: Some(dec!(0.10)),
+                    conditions: Some(vec![CreatePromotionCondition {
+                        condition_type: ConditionType::MinimumSubtotal,
+                        operator: ConditionOperator::GreaterThanOrEqual,
+                        value: "50".into(),
+                        is_required: true,
+                    }]),
+                    ..Default::default()
+                })
+                .expect("create promo");
+            f.promos.activate(promo.id).expect("activate");
+            f.promos
+                .create_coupon(CreateCouponCode {
+                    promotion_id: promo.id,
+                    code: "MIN50".into(),
+                    ..coupon_input()
+                })
+                .expect("coupon");
+
+            let small = cart_with_subtotal(&f, dec!(20));
+            assert_refused(f.carts.apply_discount(small.id, "MIN50"), "conditions not met");
+
+            let big = cart_with_subtotal(&f, dec!(80));
+            let big = f.carts.apply_discount(big.id, "MIN50").expect("meets minimum");
+            assert_eq!(big.discount_amount, dec!(8));
+        }
+
+        #[test]
+        fn discount_is_rounded_to_currency_precision() {
+            let f = fixture();
+            active_promo_with_coupon(&f, "ROUND10", coupon_input());
+            // 10% of 33.33 = 3.333 — must land on a cent boundary.
+            let cart = cart_with_subtotal(&f, dec!(33.33));
+            let cart = f.carts.apply_discount(cart.id, "ROUND10").expect("applies");
+            assert_eq!(cart.discount_amount, dec!(3.33));
+            assert_eq!(cart.grand_total, dec!(30.00));
+        }
+
+        /// Checkout must consume the coupon: usage counters move and a usage
+        /// A coupon typed in lowercase is honoured by `apply_discount` (codes
+        /// are stored uppercased and looked up uppercased), so checkout must
+        /// consume it too. Previously the cart kept the raw string and the
+        /// consume lookup missed, leaving a single-use coupon reusable forever.
+        #[test]
+        fn checkout_consumes_coupon_applied_in_lowercase() {
+            let f = fixture();
+            let (_promo, coupon) = active_promo_with_coupon(
+                &f,
+                "CASE10",
+                CreateCouponCode { usage_limit: Some(1), ..coupon_input() },
+            );
+            let cart = checkoutable_cart(&f.carts);
+            let applied = f.carts.apply_discount(cart.id, "case10").expect("applies");
+            assert_eq!(
+                applied.coupon_code.as_deref(),
+                Some("CASE10"),
+                "cart stores canonical code"
+            );
+            f.carts.complete(cart.id).expect("checkout");
+
+            let coupon_after = f.promos.get_coupon(coupon.id).expect("ok").expect("coupon");
+            assert_eq!(
+                coupon_after.usage_count, 1,
+                "lowercase entry must still consume the coupon"
+            );
+            let other = cart_with_subtotal(&f, dec!(100));
+            assert_refused(f.carts.apply_discount(other.id, "case10"), "usage limit");
+        }
+
+        /// ledger row is written referencing the minted order.
+        #[test]
+        fn checkout_records_coupon_usage() {
+            let f = fixture();
+            let (promo, coupon) = active_promo_with_coupon(
+                &f,
+                "CHECKOUT10",
+                CreateCouponCode { usage_limit: Some(1), ..coupon_input() },
+            );
+            let cart = checkoutable_cart(&f.carts);
+            f.carts.apply_discount(cart.id, "CHECKOUT10").expect("applies");
+            let result = f.carts.complete(cart.id).expect("checkout");
+
+            let coupon_after = f.promos.get_coupon(coupon.id).expect("ok").expect("coupon");
+            assert_eq!(coupon_after.usage_count, 1, "coupon usage_count must advance at checkout");
+            let promo_after = f.promos.get(promo.id).expect("ok").expect("promo");
+            assert_eq!(
+                promo_after.usage_count, 1,
+                "promotion usage_count must advance at checkout"
+            );
+
+            let ledger = f.promos.usage_for_cart(cart.id).expect("ledger");
+            assert_eq!(ledger.len(), 1, "exactly one usage row per checkout");
+            assert_eq!(ledger[0].coupon_id, Some(coupon.id));
+            assert_eq!(ledger[0].order_id, Some(result.order_id));
+
+            // Idempotent re-complete must not double count.
+            f.carts.complete(cart.id).expect("idempotent checkout");
+            let coupon_after = f.promos.get_coupon(coupon.id).expect("ok").expect("coupon");
+            assert_eq!(coupon_after.usage_count, 1);
+
+            // The single-use coupon is now spent for everyone else.
+            let other = cart_with_subtotal(&f, dec!(100));
+            assert_refused(f.carts.apply_discount(other.id, "CHECKOUT10"), "usage limit");
+        }
+
+        /// A coupon that was valid when applied but is exhausted by the time
+        /// the cart checks out must not be honoured.
+        #[test]
+        fn checkout_refuses_coupon_exhausted_since_apply() {
+            let f = fixture();
+            let (promo, coupon) = active_promo_with_coupon(
+                &f,
+                "RACE10",
+                CreateCouponCode { usage_limit: Some(1), ..coupon_input() },
+            );
+            let cart = checkoutable_cart(&f.carts);
+            f.carts.apply_discount(cart.id, "RACE10").expect("applies while still available");
+            // Someone else consumes the last use before this cart checks out.
+            f.promos
+                .record_usage(promo.id, Some(coupon.id), None, None, None, dec!(1), "USD")
+                .expect("other redemption");
+
+            let err = f.carts.complete(cart.id).expect_err("checkout must refuse the spent coupon");
+            assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert_eq!(cart.status, CartStatus::Active, "failed checkout must roll back");
+        }
+
+        /// A percentage promotion with a minimum-subtotal condition attached to
+        /// a coupon `code`.
+        fn pct_promo_with_minimum(f: &Fixture, code: &str, pct: Decimal, minimum: Decimal) {
+            let promo = f
+                .promos
+                .create(CreatePromotion {
+                    code: Some(format!("{code}-PROMO")),
+                    name: format!("{code} promo"),
+                    promotion_type: PromotionType::PercentageOff,
+                    trigger: PromotionTrigger::CouponCode,
+                    target: PromotionTarget::Order,
+                    stacking: StackingBehavior::Stackable,
+                    percentage_off: Some(pct),
+                    conditions: Some(vec![CreatePromotionCondition {
+                        condition_type: ConditionType::MinimumSubtotal,
+                        operator: ConditionOperator::GreaterThanOrEqual,
+                        value: minimum.to_string(),
+                        is_required: true,
+                    }]),
+                    ..Default::default()
+                })
+                .expect("create promo");
+            f.promos.activate(promo.id).expect("activate");
+            f.promos
+                .create_coupon(CreateCouponCode {
+                    promotion_id: promo.id,
+                    code: code.into(),
+                    ..coupon_input()
+                })
+                .expect("coupon");
+        }
+
+        /// The coupon discount must track the cart, not the subtotal at the
+        /// moment the coupon was applied: "20% off orders of $100+" on a cart
+        /// reduced to $30 no longer qualifies, and re-qualifies when the cart
+        /// grows back.
+        #[test]
+        fn coupon_discount_is_re_derived_when_cart_contents_change() {
+            let f = fixture();
+            pct_promo_with_minimum(&f, "TWENTY100", dec!(0.20), dec!(100));
+            let cart = checkoutable_cart(&f.carts);
+            let item = f.carts.add_item(cart.id, add_item("SKU-BIG", 1, dec!(90))).expect("add");
+            let cart = f.carts.apply_discount(cart.id, "TWENTY100").expect("applies at $100");
+            assert_eq!(cart.discount_amount, dec!(20));
+            assert_eq!(cart.grand_total, dec!(80));
+
+            // Drop to $30: the coupon stays on the cart but no longer qualifies.
+            f.carts
+                .update_item(
+                    item.id,
+                    UpdateCartItem { unit_price: Some(dec!(20)), ..Default::default() },
+                )
+                .expect("reprice");
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert_eq!(cart.subtotal, dec!(30));
+            assert_eq!(cart.discount_amount, dec!(0), "frozen discount must be re-derived");
+            assert_eq!(cart.grand_total, dec!(30));
+            assert_eq!(cart.coupon_code.as_deref(), Some("TWENTY100"), "coupon is kept");
+            let description = cart.discount_description.clone().unwrap_or_default();
+            assert!(
+                description.contains("not applied") && description.contains("TWENTY100"),
+                "returned cart must say why the discount is zero: {description:?}"
+            );
+
+            // Checkout refuses the non-qualifying coupon instead of minting a
+            // stale discount (or silently dropping it).
+            let err = f.carts.complete(cart.id).expect_err("must refuse");
+            match err {
+                CommerceError::ValidationError(msg) => assert!(
+                    msg.contains("TWENTY100") && msg.to_lowercase().contains("conditions not met"),
+                    "reason must name the coupon and the failed check: {msg}"
+                ),
+                other => panic!("expected ValidationError, got {other:?}"),
+            }
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert_eq!(cart.status, CartStatus::Active);
+
+            // Grow back past the minimum: the discount comes back on its own.
+            f.carts.add_item(cart.id, add_item("SKU-MORE", 1, dec!(70))).expect("add");
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert_eq!(cart.subtotal, dec!(100));
+            assert_eq!(cart.discount_amount, dec!(20));
+            assert_eq!(cart.discount_description.as_deref(), Some("TWENTY100 promo"));
+            assert_eq!(cart.grand_total, dec!(80));
+
+            // Removing a line re-derives too.
+            f.carts.remove_item(item.id).expect("remove");
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert_eq!(cart.subtotal, dec!(80));
+            assert_eq!(cart.discount_amount, dec!(0));
+        }
+
+        /// A promotion paused (or a coupon window closed) between apply and
+        /// checkout must not be honoured at checkout.
+        #[test]
+        fn checkout_refuses_coupon_paused_since_apply() {
+            let f = fixture();
+            let (promo, _) = active_promo_with_coupon(&f, "PAUSED10", coupon_input());
+            let cart = checkoutable_cart(&f.carts);
+            let cart = f.carts.apply_discount(cart.id, "PAUSED10").expect("applies");
+            assert_eq!(cart.discount_amount, dec!(1));
+            f.promos
+                .update(
+                    promo.id,
+                    UpdatePromotion { status: Some(PromotionStatus::Paused), ..Default::default() },
+                )
+                .expect("pause");
+
+            let err = f.carts.complete(cart.id).expect_err("must refuse the paused promotion");
+            match err {
+                CommerceError::ValidationError(msg) => assert!(
+                    msg.contains("PAUSED10") && msg.to_lowercase().contains("not active"),
+                    "got {msg}"
+                ),
+                other => panic!("expected ValidationError, got {other:?}"),
+            }
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert_eq!(cart.status, CartStatus::Active, "failed checkout must roll back");
+            assert!(f.promos.usage_for_cart(cart.id).expect("ledger").is_empty());
+        }
+
+        /// A fixed-amount coupon larger than the cart can cover is capped so the
+        /// discount never exceeds lines + tax + shipping.
+        #[test]
+        fn fixed_amount_coupon_is_capped_at_coverable_amount() {
+            let f = fixture();
+            let promo = f
+                .promos
+                .create(CreatePromotion {
+                    code: Some("FIFTY-PROMO".into()),
+                    name: "fifty off".into(),
+                    promotion_type: PromotionType::FixedAmountOff,
+                    trigger: PromotionTrigger::CouponCode,
+                    target: PromotionTarget::Order,
+                    stacking: StackingBehavior::Stackable,
+                    fixed_amount_off: Some(dec!(50)),
+                    ..Default::default()
+                })
+                .expect("promo");
+            f.promos.activate(promo.id).expect("activate");
+            f.promos
+                .create_coupon(CreateCouponCode {
+                    promotion_id: promo.id,
+                    code: "FIFTY".into(),
+                    ..coupon_input()
+                })
+                .expect("coupon");
+            let cart = checkoutable_cart(&f.carts); // $10 of lines
+            let cart = f.carts.apply_discount(cart.id, "FIFTY").expect("applies");
+            assert_eq!(cart.discount_amount, dec!(10));
+            assert_eq!(cart.grand_total, dec!(0));
+
+            let result = f.carts.complete(cart.id).expect("checkout");
+            let order = f.db.orders().get(result.order_id).expect("ok").expect("order");
+            assert_eq!(order.discount_amount, dec!(10));
+            assert_eq!(order.total_amount, dec!(0));
+            assert_eq!(result.total_charged, dec!(0));
+        }
+
+        /// End-to-end money parity: the minted order carries exactly the cart's
+        /// tax, shipping and (currently valid) discount, and its total equals
+        /// the cart grand total = lines + tax + shipping - discount.
+        #[test]
+        fn checkout_order_money_matches_cart_grand_total() {
+            let f = fixture();
+            active_promo_with_coupon(&f, "PARITY10", coupon_input());
+            let cart = checkoutable_cart(&f.carts);
+            f.carts.add_item(cart.id, add_item("SKU-2", 3, dec!(19.99))).expect("add");
+            f.carts.set_tax(cart.id, dec!(5.25)).expect("tax");
+            f.carts
+                .set_shipping(
+                    cart.id,
+                    SetCartShipping {
+                        shipping_address: addr(),
+                        shipping_method: Some("ground".into()),
+                        shipping_carrier: None,
+                        shipping_amount: Some(dec!(7.50)),
+                    },
+                )
+                .expect("shipping");
+            let cart = f.carts.apply_discount(cart.id, "PARITY10").expect("applies");
+            assert_eq!(cart.subtotal, dec!(69.97));
+            assert_eq!(cart.discount_amount, dec!(7.00)); // 10% of 69.97, rounded
+            let expected_total = dec!(69.97) + dec!(5.25) + dec!(7.50) - dec!(7.00);
+            assert_eq!(cart.grand_total, expected_total);
+
+            let result = f.carts.complete(cart.id).expect("checkout");
+            assert_eq!(result.total_charged, expected_total);
+            let order = f.db.orders().get(result.order_id).expect("ok").expect("order");
+            assert_eq!(order.tax_amount, cart.tax_amount);
+            assert_eq!(order.shipping_amount, cart.shipping_amount);
+            assert_eq!(order.discount_amount, cart.discount_amount);
+            assert_eq!(order.total_amount, cart.grand_total);
+            let lines: Decimal = order.items.iter().map(|i| i.total).sum();
+            assert_eq!(
+                order.total_amount,
+                lines + order.tax_amount + order.shipping_amount - order.discount_amount
+            );
+        }
+
+        /// A manual (non-coupon) discount larger than the cart is capped at
+        /// checkout so the order never has a negative total.
+        #[test]
+        fn checkout_caps_manual_discount_at_coverable_amount() {
+            let f = fixture();
+            let cart = checkoutable_cart(&f.carts); // $10 of lines
+            f.carts
+                .update(
+                    cart.id,
+                    UpdateCart { discount_amount: Some(dec!(100)), ..Default::default() },
+                )
+                .expect("oversized manual discount");
+            let cart = f.carts.recalculate(cart.id).expect("recalc");
+            assert_eq!(cart.discount_amount, dec!(10), "stored discount capped");
+            assert_eq!(cart.grand_total, dec!(0));
+
+            let result = f.carts.complete(cart.id).expect("checkout");
+            let order = f.db.orders().get(result.order_id).expect("ok").expect("order");
+            assert_eq!(order.discount_amount, dec!(10));
+            assert_eq!(order.total_amount, dec!(0));
+        }
+
+        /// An active cart whose `expires_at` has passed must not check out.
+        #[test]
+        fn checkout_refuses_cart_past_expires_at() {
+            let f = fixture();
+            let cart = checkoutable_cart(&f.carts);
+            f.db.pool()
+                .get()
+                .expect("conn")
+                .execute(
+                    "UPDATE carts SET expires_at = ? WHERE id = ?",
+                    rusqlite::params![
+                        (Utc::now() - Duration::minutes(5)).to_rfc3339(),
+                        cart.id.to_string()
+                    ],
+                )
+                .expect("backdate expiry");
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert_eq!(cart.status, CartStatus::Active);
+            assert!(cart.is_expired());
+            assert!(!cart.is_ready_for_checkout());
+
+            let err = f.carts.complete(cart.id).expect_err("expired cart must not check out");
+            match err {
+                CommerceError::ValidationError(msg) => {
+                    assert!(msg.to_lowercase().contains("expired"), "got {msg}");
+                }
+                other => panic!("expected ValidationError, got {other:?}"),
+            }
+            assert_eq!(f.db.orders().list(Default::default()).expect("orders").len(), 0);
+        }
+
+        /// `update_item` must refuse a non-positive quantity rather than store
+        /// a zero/negative line (quantity 0 is not a silent remove).
+        #[test]
+        fn update_item_rejects_non_positive_quantity() {
+            let f = fixture();
+            let cart = checkoutable_cart(&f.carts);
+            let item = cart.items[0].clone();
+            for qty in [0, -1] {
+                let err = f
+                    .carts
+                    .update_item(
+                        item.id,
+                        UpdateCartItem { quantity: Some(qty), ..Default::default() },
+                    )
+                    .expect_err("non-positive quantity must be refused");
+                assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+            }
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert_eq!(cart.items.len(), 1);
+            assert_eq!(cart.items[0].quantity, 1);
+            assert_eq!(cart.subtotal, dec!(10));
+        }
     }
 }

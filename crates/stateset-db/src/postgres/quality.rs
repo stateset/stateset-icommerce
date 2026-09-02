@@ -4,16 +4,23 @@ use super::map_db_error;
 use chrono::Utc;
 use rust_decimal::Decimal;
 use sqlx::FromRow;
+use sqlx::Postgres;
 use sqlx::postgres::PgPool;
 use stateset_core::traits::QualityRepository;
 use stateset_core::{
     CommerceError, CreateDefectCode, CreateInspection, CreateNonConformance, CreateQualityHold,
     DefectCode, Inspection, InspectionFilter, InspectionItem, InspectionResult, InspectionStatus,
-    InspectionType, NcrStatus, NonConformance, NonConformanceFilter, QualityHold,
-    QualityHoldFilter, RecordInspectionResult, ReleaseQualityHold, Result, UpdateInspection,
-    UpdateNonConformance,
+    InspectionType, LotStatus, LotTransactionType, NcrStatus, NonConformance, NonConformanceFilter,
+    QualityHold, QualityHoldFilter, RecordInspectionResult, ReleaseQualityHold, Result,
+    UpdateInspection, UpdateNonConformance,
 };
 use uuid::Uuid;
+
+/// How a failed inspection identifies the lot to quarantine.
+enum LotKey {
+    Id(Uuid),
+    Number(String),
+}
 
 #[derive(Debug, Clone)]
 pub struct PgQualityRepository {
@@ -116,11 +123,15 @@ impl PgQualityRepository {
     }
 
     fn generate_inspection_number() -> String {
-        format!("INS-{}", Utc::now().format("%Y%m%d%H%M%S"))
+        // Millisecond timestamp + UUID suffix so concurrent inspection creation
+        // cannot collide on the UNIQUE constraint (mirrors the SQLite backend).
+        let suffix = &Uuid::new_v4().simple().to_string()[..8];
+        format!("INS-{}-{suffix}", Utc::now().format("%Y%m%d%H%M%S%3f"))
     }
 
     fn generate_ncr_number() -> String {
-        format!("NCR-{}", Utc::now().format("%Y%m%d%H%M%S"))
+        let suffix = &Uuid::new_v4().simple().to_string()[..8];
+        format!("NCR-{}-{suffix}", Utc::now().format("%Y%m%d%H%M%S%3f"))
     }
 
     fn row_to_inspection(row: InspectionRow, items: Vec<InspectionItem>) -> Result<Inspection> {
@@ -404,6 +415,142 @@ impl PgQualityRepository {
         self.load_inspection_items_async(inspection_id).await
     }
 
+    /// Load the inspection header (row-locked) + items on `tx`.
+    async fn load_inspection_for_update(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        id: Uuid,
+    ) -> Result<Option<Inspection>> {
+        let row = sqlx::query_as::<_, InspectionRow>(
+            "SELECT id, inspection_number, inspection_type, reference_type, reference_id, status, inspector_id,
+                    scheduled_at, started_at, completed_at, notes, created_at, updated_at
+             FROM inspections WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        let Some(row) = row else { return Ok(None) };
+        let items = sqlx::query_as::<_, InspectionItemRow>(
+            "SELECT id, inspection_id, sku, lot_number, serial_number, quantity_inspected, quantity_passed,
+                    quantity_failed, defect_codes, measurements, result, notes, created_at
+             FROM inspection_items WHERE inspection_id = $1",
+        )
+        .bind(id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .into_iter()
+        .map(Self::row_to_inspection_item)
+        .collect::<Result<Vec<_>>>()?;
+        Ok(Some(Self::row_to_inspection(row, items)?))
+    }
+
+    /// Place the lot selected by `key` into quarantine on the caller's
+    /// transaction, mirroring `PgLotRepository::quarantine_async`: only
+    /// `Active`/`OnHold` lots move, every unreserved unit is quarantined, and a
+    /// `Quarantined` lot transaction is written. Lots that are missing, already
+    /// quarantined, or terminal are left untouched — a failed inspection must
+    /// never fail to complete because the lot has already been dealt with.
+    async fn quarantine_lot_on(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        key: LotKey,
+        reason: &str,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<()> {
+        const BY_ID: &str =
+            "SELECT id, status, quantity_remaining, quantity_reserved, quantity_quarantined
+             FROM lots WHERE id = $1 FOR UPDATE";
+        const BY_NUMBER: &str =
+            "SELECT id, status, quantity_remaining, quantity_reserved, quantity_quarantined
+             FROM lots WHERE lot_number = $1 FOR UPDATE";
+        let row: Option<(Uuid, String, Decimal, Decimal, Decimal)> = match key {
+            LotKey::Id(id) => sqlx::query_as(BY_ID).bind(id).fetch_optional(tx.as_mut()).await,
+            LotKey::Number(n) => {
+                sqlx::query_as(BY_NUMBER).bind(n).fetch_optional(tx.as_mut()).await
+            }
+        }
+        .map_err(map_db_error)?;
+        let Some((lot_id, status, remaining, reserved, quarantined)) = row else {
+            return Ok(());
+        };
+        let status: LotStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid lot.status '{status}': {e}"))
+        })?;
+        if !status.can_transition_to(LotStatus::Quarantine) {
+            return Ok(());
+        }
+        let available = (remaining - reserved - quarantined).max(Decimal::ZERO);
+
+        let updated = sqlx::query(
+            "UPDATE lots SET status = $1, quantity_quarantined = $2, updated_at = $3
+             WHERE id = $4 AND status = $5",
+        )
+        .bind(LotStatus::Quarantine.to_string())
+        .bind(available)
+        .bind(now)
+        .bind(lot_id)
+        .bind(status.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if updated != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot quarantine lot {lot_id}: status changed concurrently"
+            )));
+        }
+        sqlx::query(
+            "INSERT INTO lot_transactions (id, lot_id, transaction_type, quantity, reference_type,
+                                           reference_id, reason, created_at)
+             VALUES ($1, $2, $3, $4, 'quarantine', $2, $5, $6)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(lot_id)
+        .bind(LotTransactionType::Quarantined.to_string())
+        .bind(available)
+        .bind(reason)
+        .bind(now)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Quarantine every lot a failed/partially-failed inspection implicates:
+    /// the header's lot when `reference_type = "lot"`, plus each lot named on
+    /// an item whose result is `Fail`.
+    async fn quarantine_failed_lots_on(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        inspection: &Inspection,
+        overall: InspectionStatus,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<()> {
+        let reason = format!("Inspection {} completed as {overall}", inspection.inspection_number);
+        if overall == InspectionStatus::Failed && inspection.reference_type == "lot" {
+            Self::quarantine_lot_on(tx, LotKey::Id(inspection.reference_id), &reason, now).await?;
+        }
+        if matches!(overall, InspectionStatus::Failed | InspectionStatus::PartialPass) {
+            let mut seen = std::collections::HashSet::new();
+            for item in &inspection.items {
+                if item.result != InspectionResult::Fail {
+                    continue;
+                }
+                if let Some(lot_number) = &item.lot_number {
+                    if seen.insert(lot_number.clone()) {
+                        Self::quarantine_lot_on(
+                            tx,
+                            LotKey::Number(lot_number.clone()),
+                            &reason,
+                            now,
+                        )
+                        .await?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     // ========================================================================
     // Inspection operations
     // ========================================================================
@@ -659,38 +806,97 @@ impl PgQualityRepository {
     }
 
     pub async fn start_inspection_async(&self, id: Uuid) -> Result<Inspection> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
-        sqlx::query(
-            "UPDATE inspections SET status = $1, started_at = $2, updated_at = $3 WHERE id = $4",
+
+        let inspection =
+            Self::load_inspection_for_update(&mut tx, id).await?.ok_or(CommerceError::NotFound)?;
+        if !inspection.can_start() {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot start inspection {}: status is {} (must be pending or scheduled)",
+                inspection.inspection_number, inspection.status
+            )));
+        }
+
+        // Status-conditional so a concurrent start cannot re-stamp started_at.
+        let updated = sqlx::query(
+            "UPDATE inspections SET status = $1, started_at = $2, updated_at = $3
+             WHERE id = $4 AND status = $5",
         )
         .bind(InspectionStatus::InProgress.to_string())
         .bind(now)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .bind(inspection.status.to_string())
+        .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        if updated != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot start inspection {}: status changed concurrently",
+                inspection.inspection_number
+            )));
+        }
 
-        self.get_inspection_async(id).await?.ok_or(CommerceError::NotFound)
+        let started =
+            Self::load_inspection_for_update(&mut tx, id).await?.ok_or(CommerceError::NotFound)?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(started)
     }
 
     pub async fn complete_inspection_async(&self, id: Uuid) -> Result<Inspection> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
-        let inspection = self.get_inspection_async(id).await?.ok_or(CommerceError::NotFound)?;
+
+        let inspection =
+            Self::load_inspection_for_update(&mut tx, id).await?.ok_or(CommerceError::NotFound)?;
+        if !inspection.can_complete() {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot complete inspection {}: status is {} (must be in_progress)",
+                inspection.inspection_number, inspection.status
+            )));
+        }
+        if !inspection.all_items_inspected() {
+            let pending =
+                inspection.items.iter().filter(|i| i.result == InspectionResult::Pending).count();
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot complete inspection {}: {pending} item(s) still pending a result",
+                inspection.inspection_number
+            )));
+        }
+
+        // Every item has a result, so this is Passed / PartialPass / Failed.
         let overall_status = inspection.calculate_overall_result();
 
-        sqlx::query(
-            "UPDATE inspections SET status = $1, completed_at = $2, updated_at = $3 WHERE id = $4",
+        let updated = sqlx::query(
+            "UPDATE inspections SET status = $1, completed_at = $2, updated_at = $3
+             WHERE id = $4 AND status = $5",
         )
         .bind(overall_status.to_string())
         .bind(now)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .bind(InspectionStatus::InProgress.to_string())
+        .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        if updated != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot complete inspection {}: status changed concurrently",
+                inspection.inspection_number
+            )));
+        }
 
-        self.get_inspection_async(id).await?.ok_or(CommerceError::NotFound)
+        // A failed inspection blocks the inspected stock atomically with the
+        // verdict: the lot(s) go to quarantine in this same transaction.
+        Self::quarantine_failed_lots_on(&mut tx, &inspection, overall_status, now).await?;
+
+        let completed =
+            Self::load_inspection_for_update(&mut tx, id).await?.ok_or(CommerceError::NotFound)?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(completed)
     }
 
     pub async fn record_inspection_result_async(
@@ -703,14 +909,19 @@ impl PgQualityRepository {
             ));
         }
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         // The passed + failed counts cannot exceed the quantity inspected.
-        let quantity_inspected: Decimal =
-            sqlx::query_scalar("SELECT quantity_inspected FROM inspection_items WHERE id = $1")
-                .bind(input.item_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(map_db_error)?
-                .ok_or(CommerceError::NotFound)?;
+        // Read, validate and write happen on one transaction with the item
+        // row locked, so a concurrent edit cannot slip between them.
+        let quantity_inspected: Decimal = sqlx::query_scalar(
+            "SELECT quantity_inspected FROM inspection_items WHERE id = $1 FOR UPDATE",
+        )
+        .bind(input.item_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
         if input.quantity_passed + input.quantity_failed > quantity_inspected {
             return Err(CommerceError::ValidationError(format!(
                 "Inspection result exceeds inspected quantity: {} passed + {} failed > {} inspected",
@@ -737,7 +948,17 @@ impl PgQualityRepository {
         .bind(measurements)
         .bind(input.notes)
         .bind(input.item_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            "UPDATE inspections SET updated_at = $1
+             WHERE id = (SELECT inspection_id FROM inspection_items WHERE id = $2)",
+        )
+        .bind(Utc::now())
+        .bind(input.item_id)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -747,9 +968,10 @@ impl PgQualityRepository {
              FROM inspection_items WHERE id = $1",
         )
         .bind(input.item_id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
 
         Self::row_to_inspection_item(row)
     }
@@ -1126,8 +1348,11 @@ impl PgQualityRepository {
         input: ReleaseQualityHold,
     ) -> Result<QualityHold> {
         let now = Utc::now();
-        sqlx::query(
-            "UPDATE quality_holds SET released_by = $1, release_notes = $2, released_at = $3 WHERE id = $4",
+        // Only an unreleased hold can be released: the first release's
+        // audit trail (who / when / notes) must never be overwritten.
+        let updated = sqlx::query(
+            "UPDATE quality_holds SET released_by = $1, release_notes = $2, released_at = $3
+             WHERE id = $4 AND released_at IS NULL",
         )
         .bind(&input.released_by)
         .bind(&input.release_notes)
@@ -1135,9 +1360,17 @@ impl PgQualityRepository {
         .bind(id)
         .execute(&self.pool)
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
 
-        self.get_hold_async(id).await?.ok_or(CommerceError::NotFound)
+        let hold = self.get_hold_async(id).await?.ok_or(CommerceError::NotFound)?;
+        if updated != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Quality hold {id} was already released at {}",
+                hold.released_at.map(|d| d.to_rfc3339()).unwrap_or_default()
+            )));
+        }
+        Ok(hold)
     }
 
     pub async fn get_active_holds_for_sku_async(&self, sku: &str) -> Result<Vec<QualityHold>> {

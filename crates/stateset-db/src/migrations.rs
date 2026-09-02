@@ -389,6 +389,18 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         // Order-level tax/shipping/discount so checkout can carry what the
         // customer is actually charged (see the migration for the failure).
         ("078_order_money_breakdown", include_str!("../migrations/078_order_money_breakdown.sql")),
+        // Legacy-safe "one open reservation per serial": a nullable
+        // `active_key` (= serial_id while open) + unique index, the DB backstop
+        // behind the locked, status-conditional `reserve`.
+        (
+            "079_serial_reservation_uniqueness",
+            include_str!("../migrations/079_serial_reservation_uniqueness.sql"),
+        ),
+        // Legacy-safe uniqueness for x402 settlement tx hashes.
+        (
+            "082_x402_tx_hash_uniqueness",
+            include_str!("../migrations/082_x402_tx_hash_uniqueness.sql"),
+        ),
     ]
 }
 

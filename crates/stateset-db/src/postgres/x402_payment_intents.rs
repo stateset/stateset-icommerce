@@ -14,6 +14,21 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use uuid::Uuid;
 
+/// Derived column values for a new intent row (see `new_intent_row`).
+struct NewIntentRow {
+    id: Uuid,
+    now: DateTime<Utc>,
+    amount: i64,
+    amount_decimal: Decimal,
+    chain_id: i64,
+    token_address: Option<String>,
+    created_at_unix: i64,
+    valid_until: i64,
+    nonce: i64,
+    signing_hash: String,
+    signature_scheme: String,
+}
+
 /// PostgreSQL x402 payment intent repository
 #[derive(Debug, Clone)]
 pub struct PgX402PaymentIntentRepository {
@@ -275,6 +290,140 @@ impl PgX402PaymentIntentRepository {
         Ok(())
     }
 
+    /// Build the row for a new `Created` intent exactly the way `create_async`
+    /// persists it — including `signing_hash` and `payer_signature_scheme`.
+    /// Shared by `create_async` and `create_batch_atomic_async` so
+    /// batch-created intents are never "legacy" rows that would accept an
+    /// ed25519 downgrade.
+    fn new_intent_row(
+        input: &CreateX402PaymentIntent,
+        id: Uuid,
+        now: DateTime<Utc>,
+        nonce: u64,
+    ) -> Result<NewIntentRow> {
+        let now_unix = now.timestamp() as u64;
+        let validity_seconds = input.validity_seconds.unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
+        let valid_until = now_unix + validity_seconds;
+
+        let asset = input.asset;
+        let network = input.network;
+        let chain_id = network.chain_id();
+        let token_address = asset.contract_address(network).map(String::from);
+        let decimals = asset.decimals();
+        let divisor = 10u64.pow(decimals as u32);
+        let amount_decimal = Decimal::from(input.amount) / Decimal::from(divisor);
+
+        let mut signing_intent = X402PaymentIntent::new(
+            input.payer_address.clone(),
+            input.payee_address.clone(),
+            input.amount,
+            asset,
+            network,
+        )
+        .with_validity(validity_seconds)
+        .with_nonce(nonce);
+        if let Some(signature_scheme) = input.signature_scheme {
+            signing_intent.payer_signature_scheme = Some(signature_scheme);
+        }
+        signing_intent.id = id;
+        signing_intent.created_at = now;
+        signing_intent.updated_at = now;
+        signing_intent.created_at_unix = now_unix;
+        signing_intent.valid_until = valid_until;
+        signing_intent.chain_id = chain_id;
+        signing_intent.token_address = token_address.clone();
+        signing_intent.resource_uri = input.resource_uri.clone();
+        signing_intent.resource_method = input.resource_method.clone();
+        let signing_hash = format!(
+            "0x{}",
+            signing_intent
+                .sequencer_signing_hash()
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>()
+        );
+
+        Ok(NewIntentRow {
+            id,
+            now,
+            amount: Self::to_i64(input.amount, "x402 amount")?,
+            amount_decimal,
+            chain_id: Self::to_i64(chain_id, "x402 chain_id")?,
+            token_address,
+            created_at_unix: Self::to_i64(now_unix, "x402 created_at_unix")?,
+            valid_until: Self::to_i64(valid_until, "x402 valid_until")?,
+            nonce: Self::to_i64(nonce, "x402 nonce")?,
+            signing_hash,
+            signature_scheme: signing_intent.signature_scheme().to_string(),
+        })
+    }
+
+    async fn insert_new_intent(
+        conn: &mut sqlx::PgConnection,
+        input: &CreateX402PaymentIntent,
+        row: NewIntentRow,
+    ) -> std::result::Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO x402_payment_intents (
+                id, version, status, payer_address, payee_address, amount, amount_decimal,
+                asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
+                idempotency_key, resource_uri, resource_method, description, cart_id, order_id,
+                invoice_id, merchant_id, signing_hash, payer_signature_scheme, metadata, created_at, updated_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7,
+                $8, $9, $10, $11, $12, $13, $14,
+                $15, $16, $17, $18, $19, $20,
+                $21, $22, $23, $24, $25, $26, $27
+            )
+            "#,
+        )
+        .bind(row.id)
+        .bind("1.0")
+        .bind(X402IntentStatus::Created.to_string())
+        .bind(&input.payer_address)
+        .bind(&input.payee_address)
+        .bind(row.amount)
+        .bind(row.amount_decimal)
+        .bind(input.asset.to_string().to_lowercase())
+        .bind(input.network.to_string())
+        .bind(row.chain_id)
+        .bind(row.token_address)
+        .bind(row.created_at_unix)
+        .bind(row.valid_until)
+        .bind(row.nonce)
+        .bind(input.idempotency_key.clone())
+        .bind(input.resource_uri.clone())
+        .bind(input.resource_method.clone())
+        .bind(input.description.clone())
+        .bind(input.cart_id)
+        .bind(input.order_id)
+        .bind(input.invoice_id)
+        .bind(input.merchant_id.clone())
+        .bind(row.signing_hash)
+        .bind(row.signature_scheme)
+        .bind(input.metadata.clone())
+        .bind(row.now)
+        .bind(row.now)
+        .execute(conn)
+        .await
+        .map(|_| ())
+    }
+
+    /// Refuse a transition once the validity window has closed. Settlement
+    /// after `valid_until` is meaningless on-chain (the authorization itself
+    /// carries the deadline), so the intent must end `Expired` instead.
+    fn ensure_not_expired(intent: &X402PaymentIntent, verb: &str) -> Result<()> {
+        let now_unix = Utc::now().timestamp() as u64;
+        if now_unix > intent.valid_until {
+            return Err(CommerceError::ValidationError(format!(
+                "Payment intent has expired (valid_until {}); cannot {verb}",
+                intent.valid_until
+            )));
+        }
+        Ok(())
+    }
+
     pub async fn create_async(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
         Self::validate_input(&input)?;
         let auto_nonce = input.nonce.is_none();
@@ -282,19 +431,7 @@ impl PgX402PaymentIntentRepository {
 
         for attempt in 0..attempts {
             let now = Utc::now();
-            let now_unix = now.timestamp() as u64;
             let id = Uuid::new_v4();
-            let validity_seconds = input.validity_seconds.unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
-            let valid_until = now_unix + validity_seconds;
-
-            let asset = input.asset;
-            let network = input.network;
-            let chain_id = network.chain_id();
-            let token_address = asset.contract_address(network).map(String::from);
-            let decimals = asset.decimals();
-            let divisor = 10u64.pow(decimals as u32);
-            let amount_decimal = Decimal::from(input.amount) / Decimal::from(divisor);
-
             let mut tx = self.pool.begin().await.map_err(map_db_error)?;
             if auto_nonce {
                 Self::lock_payer_nonce_space_tx(&mut tx, &input.payer_address).await?;
@@ -303,83 +440,11 @@ impl PgX402PaymentIntentRepository {
                 Some(n) => n,
                 None => Self::get_next_nonce_in_tx(&mut tx, &input.payer_address).await?,
             };
-            let mut signing_intent = X402PaymentIntent::new(
-                input.payer_address.clone(),
-                input.payee_address.clone(),
-                input.amount,
-                asset,
-                network,
-            )
-            .with_validity(validity_seconds)
-            .with_nonce(nonce);
-            if let Some(signature_scheme) = input.signature_scheme {
-                signing_intent.payer_signature_scheme = Some(signature_scheme);
-            }
-            signing_intent.id = id;
-            signing_intent.created_at = now;
-            signing_intent.updated_at = now;
-            signing_intent.created_at_unix = now_unix;
-            signing_intent.valid_until = valid_until;
-            signing_intent.chain_id = chain_id;
-            signing_intent.token_address = token_address.clone();
-            signing_intent.resource_uri = input.resource_uri.clone();
-            signing_intent.resource_method = input.resource_method.clone();
-            let signing_hash = format!(
-                "0x{}",
-                signing_intent
-                    .sequencer_signing_hash()
-                    .iter()
-                    .map(|b| format!("{:02x}", b))
-                    .collect::<String>()
-            );
-
-            let insert_result = sqlx::query(
-                r#"
-                INSERT INTO x402_payment_intents (
-                    id, version, status, payer_address, payee_address, amount, amount_decimal,
-                    asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
-                    idempotency_key, resource_uri, resource_method, description, cart_id, order_id,
-                    invoice_id, merchant_id, signing_hash, payer_signature_scheme, metadata, created_at, updated_at
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7,
-                    $8, $9, $10, $11, $12, $13, $14,
-                    $15, $16, $17, $18, $19, $20,
-                    $21, $22, $23, $24, $25, $26, $27
-                )
-                "#,
-            )
-            .bind(id)
-            .bind("1.0")
-            .bind(X402IntentStatus::Created.to_string())
-            .bind(&input.payer_address)
-            .bind(&input.payee_address)
-            .bind(Self::to_i64(input.amount, "x402 amount")?)
-            .bind(amount_decimal)
-            .bind(asset.to_string().to_lowercase())
-            .bind(network.to_string())
-            .bind(Self::to_i64(chain_id, "x402 chain_id")?)
-            .bind(token_address)
-            .bind(Self::to_i64(now_unix, "x402 created_at_unix")?)
-            .bind(Self::to_i64(valid_until, "x402 valid_until")?)
-            .bind(Self::to_i64(nonce, "x402 nonce")?)
-            .bind(input.idempotency_key.clone())
-            .bind(input.resource_uri.clone())
-            .bind(input.resource_method.clone())
-            .bind(input.description.clone())
-            .bind(input.cart_id)
-            .bind(input.order_id)
-            .bind(input.invoice_id)
-            .bind(input.merchant_id.clone())
-            .bind(signing_hash)
-            .bind(signing_intent.signature_scheme().to_string())
-            .bind(input.metadata.clone())
-            .bind(now)
-            .bind(now)
-            .execute(tx.as_mut())
-            .await;
+            let row = Self::new_intent_row(&input, id, now, nonce)?;
+            let insert_result = Self::insert_new_intent(tx.as_mut(), &input, row).await;
 
             match insert_result {
-                Ok(_) => {
+                Ok(()) => {
                     tx.commit().await.map_err(map_db_error)?;
                     return self.get_async(id).await?.ok_or(CommerceError::NotFound);
                 }
@@ -426,6 +491,51 @@ impl PgX402PaymentIntentRepository {
         .map_err(map_db_error)?;
 
         row.map(Self::row_to_intent).transpose()
+    }
+
+    /// Statuses from which an intent may still move (anything else is terminal).
+    const NON_TERMINAL: [X402IntentStatus; 4] = [
+        X402IntentStatus::Created,
+        X402IntentStatus::Signed,
+        X402IntentStatus::Sequenced,
+        X402IntentStatus::Batched,
+    ];
+
+    /// Load the intent with `FOR UPDATE` inside `tx` and check it is in one of
+    /// the statuses `verb` may start from.
+    async fn load_for_transition(
+        tx: &mut sqlx::PgConnection,
+        id: Uuid,
+        allowed: &[X402IntentStatus],
+        verb: &str,
+    ) -> Result<X402PaymentIntent> {
+        let row = sqlx::query_as::<_, IntentRow>(
+            "SELECT * FROM x402_payment_intents WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(tx)
+        .await
+        .map_err(map_db_error)?;
+        let intent = row.map(Self::row_to_intent).transpose()?.ok_or(CommerceError::NotFound)?;
+        if !allowed.contains(&intent.status) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot {verb} intent in {} status",
+                intent.status
+            )));
+        }
+        Ok(intent)
+    }
+
+    /// The conditional UPDATE (`WHERE id AND status = <expected>`) must hit
+    /// exactly one row; zero means the status moved underneath us.
+    fn check_transition(id: Uuid, affected: u64, verb: &str) -> Result<()> {
+        if affected == 1 {
+            Ok(())
+        } else {
+            Err(CommerceError::Conflict(format!(
+                "x402 payment intent {id} changed status concurrently; cannot {verb}"
+            )))
+        }
     }
 
     pub async fn sign_async(
@@ -532,25 +642,13 @@ impl PgX402PaymentIntentRepository {
         batch_id: Uuid,
     ) -> Result<X402PaymentIntent> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let row = sqlx::query_as::<_, IntentRow>(
-            "SELECT * FROM x402_payment_intents WHERE id = $1 FOR UPDATE",
-        )
-        .bind(id)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let intent =
+            Self::load_for_transition(tx.as_mut(), id, &[X402IntentStatus::Signed], "sequence")
+                .await?;
+        Self::ensure_not_expired(&intent, "sequence")?;
 
-        let intent = row.map(Self::row_to_intent).transpose()?.ok_or(CommerceError::NotFound)?;
-
-        if intent.status != X402IntentStatus::Signed {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot sequence intent in {} status",
-                intent.status
-            )));
-        }
-
-        sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, sequence_number = $2, batch_id = $3, sequenced_at = $4, updated_at = $5 WHERE id = $6",
+        let affected = sqlx::query(
+            "UPDATE x402_payment_intents SET status = $1, sequence_number = $2, batch_id = $3, sequenced_at = $4, updated_at = $5 WHERE id = $6 AND status = $7",
         )
         .bind(X402IntentStatus::Sequenced.to_string())
         .bind(Self::to_i64(sequence_number, "x402 sequence_number")?)
@@ -558,9 +656,12 @@ impl PgX402PaymentIntentRepository {
         .bind(Utc::now())
         .bind(Utc::now())
         .bind(id)
+        .bind(X402IntentStatus::Signed.to_string())
         .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        Self::check_transition(id, affected, "sequence")?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -574,24 +675,31 @@ impl PgX402PaymentIntentRepository {
         block_number: u64,
     ) -> Result<X402PaymentIntent> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let row = sqlx::query_as::<_, IntentRow>(
-            "SELECT * FROM x402_payment_intents WHERE id = $1 FOR UPDATE",
+        let intent =
+            Self::load_for_transition(tx.as_mut(), id, &[X402IntentStatus::Sequenced], "settle")
+                .await?;
+        Self::ensure_not_expired(&intent, "settle")?;
+
+        // One on-chain transaction settles at most one intent. Checked here
+        // (inside the transaction) for a meaningful error; the unique index on
+        // `tx_hash_key` (migration 089) is the backstop for concurrent settles
+        // of different intents with the same hash.
+        let already: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM x402_payment_intents WHERE tx_hash = $1 AND id <> $2 LIMIT 1",
         )
+        .bind(tx_hash)
         .bind(id)
         .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-
-        let intent = row.map(Self::row_to_intent).transpose()?.ok_or(CommerceError::NotFound)?;
-        if intent.status != X402IntentStatus::Sequenced {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot settle intent in {} status",
-                intent.status
+        if let Some(other) = already {
+            return Err(CommerceError::Conflict(format!(
+                "tx_hash {tx_hash} already settled intent {other}"
             )));
         }
 
-        sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, tx_hash = $2, block_number = $3, settled_at = $4, updated_at = $5 WHERE id = $6",
+        let affected = sqlx::query(
+            "UPDATE x402_payment_intents SET status = $1, tx_hash = $2, tx_hash_key = $2, block_number = $3, settled_at = $4, updated_at = $5 WHERE id = $6 AND status = $7",
         )
         .bind(X402IntentStatus::Settled.to_string())
         .bind(tx_hash)
@@ -599,9 +707,12 @@ impl PgX402PaymentIntentRepository {
         .bind(Utc::now())
         .bind(Utc::now())
         .bind(id)
+        .bind(X402IntentStatus::Sequenced.to_string())
         .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        Self::check_transition(id, affected, "settle")?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -609,51 +720,78 @@ impl PgX402PaymentIntentRepository {
     }
 
     pub async fn mark_failed_async(&self, id: Uuid, reason: &str) -> Result<X402PaymentIntent> {
-        let intent = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let intent =
+            Self::load_for_transition(tx.as_mut(), id, &Self::NON_TERMINAL, "fail").await?;
+        let expected = intent.status;
         let metadata = Self::merge_failure_reason(intent.metadata, reason);
 
-        sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, metadata = $2, updated_at = $3 WHERE id = $4",
+        let affected = sqlx::query(
+            "UPDATE x402_payment_intents SET status = $1, metadata = $2, updated_at = $3 WHERE id = $4 AND status = $5",
         )
         .bind(X402IntentStatus::Failed.to_string())
         .bind(metadata)
         .bind(Utc::now())
         .bind(id)
-        .execute(&self.pool)
+        .bind(expected.to_string())
+        .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        Self::check_transition(id, affected, "fail")?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn mark_expired_async(&self, id: Uuid) -> Result<X402PaymentIntent> {
-        sqlx::query("UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(X402IntentStatus::Expired.to_string())
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let intent =
+            Self::load_for_transition(tx.as_mut(), id, &Self::NON_TERMINAL, "expire").await?;
+
+        let affected = sqlx::query(
+            "UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4",
+        )
+        .bind(X402IntentStatus::Expired.to_string())
+        .bind(Utc::now())
+        .bind(id)
+        .bind(intent.status.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        Self::check_transition(id, affected, "expire")?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn cancel_async(&self, id: Uuid) -> Result<X402PaymentIntent> {
-        let intent = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
-        if !matches!(intent.status, X402IntentStatus::Created | X402IntentStatus::Signed) {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot cancel intent in {} status",
-                intent.status
-            )));
-        }
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let intent = Self::load_for_transition(
+            tx.as_mut(),
+            id,
+            &[X402IntentStatus::Created, X402IntentStatus::Signed],
+            "cancel",
+        )
+        .await?;
 
-        sqlx::query("UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(X402IntentStatus::Cancelled.to_string())
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let affected = sqlx::query(
+            "UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4",
+        )
+        .bind(X402IntentStatus::Cancelled.to_string())
+        .bind(Utc::now())
+        .bind(id)
+        .bind(intent.status.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        Self::check_transition(id, affected, "cancel")?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -822,13 +960,19 @@ impl PgX402PaymentIntentRepository {
     pub async fn expire_stale_intents_async(&self) -> Result<u64> {
         let now_unix = Utc::now().timestamp();
 
+        // `Sequenced` intents whose window closed can no longer settle (see
+        // `mark_settled_async`), so the sweeper expires them too. `Batched` is
+        // deliberately excluded: a batched intent sits inside a published
+        // batch commitment and its outcome is decided by that batch's on-chain
+        // result via mark_settled/mark_failed, not by the wall clock.
         let result = sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE status IN ($3, $4) AND valid_until < $5",
+            "UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE status IN ($3, $4, $5) AND valid_until < $6",
         )
         .bind(X402IntentStatus::Expired.to_string())
         .bind(Utc::now())
         .bind(X402IntentStatus::Created.to_string())
         .bind(X402IntentStatus::Signed.to_string())
+        .bind(X402IntentStatus::Sequenced.to_string())
         .bind(now_unix)
         .execute(&self.pool)
         .await
@@ -871,84 +1015,29 @@ impl PgX402PaymentIntentRepository {
         for input in inputs {
             Self::validate_input(&input)?;
             let now = Utc::now();
-            let now_unix = now.timestamp() as u64;
             let id = Uuid::new_v4();
-            let validity_seconds = input.validity_seconds.unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
-            let valid_until = now_unix + validity_seconds;
-
-            let payer_address = input.payer_address;
             let nonce = match input.nonce {
                 Some(n) => n,
                 None => {
-                    if let Some(next_nonce) = next_nonce_by_payer.get_mut(&payer_address) {
+                    if let Some(next_nonce) = next_nonce_by_payer.get_mut(&input.payer_address) {
                         let allocated = *next_nonce;
                         *next_nonce += 1;
                         allocated
                     } else {
-                        if !locked_payers.contains(&payer_address) {
-                            Self::lock_payer_nonce_space_tx(&mut tx, &payer_address).await?;
-                            locked_payers.insert(payer_address.clone());
+                        if !locked_payers.contains(&input.payer_address) {
+                            Self::lock_payer_nonce_space_tx(&mut tx, &input.payer_address).await?;
+                            locked_payers.insert(input.payer_address.clone());
                         }
                         let next_nonce =
-                            Self::get_next_nonce_in_tx(&mut tx, &payer_address).await?;
-                        next_nonce_by_payer.insert(payer_address.clone(), next_nonce + 1);
+                            Self::get_next_nonce_in_tx(&mut tx, &input.payer_address).await?;
+                        next_nonce_by_payer.insert(input.payer_address.clone(), next_nonce + 1);
                         next_nonce
                     }
                 }
             };
 
-            let asset = input.asset;
-            let network = input.network;
-            let chain_id = network.chain_id();
-            let token_address = asset.contract_address(network).map(String::from);
-
-            let decimals = asset.decimals();
-            let divisor = 10u64.pow(decimals as u32);
-            let amount_decimal = Decimal::from(input.amount) / Decimal::from(divisor);
-
-            sqlx::query(
-                r#"
-                INSERT INTO x402_payment_intents (
-                    id, version, status, payer_address, payee_address, amount, amount_decimal,
-                    asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
-                    idempotency_key, resource_uri, resource_method, description, cart_id, order_id,
-                    invoice_id, merchant_id, metadata, created_at, updated_at
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7,
-                    $8, $9, $10, $11, $12, $13, $14,
-                    $15, $16, $17, $18, $19, $20,
-                    $21, $22, $23, $24, $25
-                )
-                "#,
-            )
-            .bind(id)
-            .bind("1.0")
-            .bind(X402IntentStatus::Created.to_string())
-            .bind(&payer_address)
-            .bind(&input.payee_address)
-            .bind(Self::to_i64(input.amount, "x402 amount")?)
-            .bind(amount_decimal)
-            .bind(asset.to_string().to_lowercase())
-            .bind(network.to_string())
-            .bind(Self::to_i64(chain_id, "x402 chain_id")?)
-            .bind(token_address)
-            .bind(Self::to_i64(now_unix, "x402 created_at_unix")?)
-            .bind(Self::to_i64(valid_until, "x402 valid_until")?)
-            .bind(Self::to_i64(nonce, "x402 nonce")?)
-            .bind(input.idempotency_key)
-            .bind(input.resource_uri)
-            .bind(input.resource_method)
-            .bind(input.description)
-            .bind(input.cart_id)
-            .bind(input.order_id)
-            .bind(input.invoice_id)
-            .bind(input.merchant_id)
-            .bind(input.metadata)
-            .bind(now)
-            .bind(now)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+            let row = Self::new_intent_row(&input, id, now, nonce)?;
+            Self::insert_new_intent(tx.as_mut(), &input, row).await.map_err(map_db_error)?;
 
             ids.push(id);
         }

@@ -222,6 +222,34 @@ pub(crate) fn cancel_backorders_for_order_in_tx(
     Ok(())
 }
 
+/// Cancel every open backorder raised for one order line (used when the line
+/// is removed from its order) and release any stock allocated against it.
+pub(crate) fn cancel_backorders_for_order_line_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    order_id: Uuid,
+    order_line_id: Uuid,
+) -> std::result::Result<(), rusqlite::Error> {
+    let now = Utc::now();
+
+    tx.execute(
+        "UPDATE backorder_allocations SET status = 'released'
+         WHERE backorder_id IN (
+             SELECT id FROM backorders WHERE order_id = ? AND order_line_id = ?
+         )
+           AND status = 'reserved'",
+        [order_id.to_string(), order_line_id.to_string()],
+    )?;
+
+    tx.execute(
+        "UPDATE backorders SET status = 'cancelled', updated_at = ?
+         WHERE order_id = ? AND order_line_id = ?
+           AND status NOT IN ('fulfilled', 'cancelled')",
+        [now.to_rfc3339(), order_id.to_string(), order_line_id.to_string()],
+    )?;
+
+    Ok(())
+}
+
 impl BackorderRepository for SqliteBackorderRepository {
     fn create_backorder(&self, input: CreateBackorder) -> Result<Backorder> {
         let id = Uuid::new_v4();

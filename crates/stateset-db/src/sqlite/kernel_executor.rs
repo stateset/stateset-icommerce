@@ -535,7 +535,13 @@ impl SqliteKernelExecutor {
             }
 
             if let Some(order_id) = input.order_id {
-                check_order_capture_capacity_tx(tx, &order_id.to_string(), None, input.amount)?;
+                check_order_capture_capacity_tx(
+                    tx,
+                    &order_id.to_string(),
+                    None,
+                    input.amount,
+                    input.currency.unwrap_or_default(),
+                )?;
             }
 
             let id = Uuid::new_v4();

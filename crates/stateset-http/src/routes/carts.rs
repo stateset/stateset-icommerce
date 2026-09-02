@@ -369,6 +369,11 @@ pub(crate) async fn update_item(
     Path((_id, item_id)): Path<(CartId, Uuid)>,
     Json(req): Json<UpdateCartItemRequest>,
 ) -> Result<Json<CartItemResponse>, HttpError> {
+    if let Some(quantity) = req.quantity.filter(|q| *q < 1) {
+        return Err(HttpError::BadRequest(format!(
+            "quantity must be at least 1, got {quantity}; delete the item to remove it"
+        )));
+    }
     let tid = tenant_id_from_headers(&headers);
     let c = state.commerce_for_tenant(tid.as_deref())?;
     let input = stateset_core::UpdateCartItem {

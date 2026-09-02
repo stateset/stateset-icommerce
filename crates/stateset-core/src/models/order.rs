@@ -128,6 +128,28 @@ impl OrderStatus {
             Self::Cancelled | Self::Refunded => false,
         }
     }
+
+    /// Whether lines may still be added to / removed from an order in this
+    /// status.
+    ///
+    /// Line changes are a pre-fulfilment operation: once any unit has shipped
+    /// (`PartiallyShipped`, `Shipped`, `Delivered`) the lines are the record of
+    /// what left the warehouse, and `Cancelled`/`Refunded` orders are closed.
+    #[must_use]
+    pub const fn allows_line_changes(self) -> bool {
+        matches!(self, Self::Pending | Self::Confirmed | Self::Processing)
+    }
+
+    /// Whether an order in this status may be deleted outright.
+    ///
+    /// Orders that have shipped (or later: delivered, refunded) are fulfilment
+    /// and financial records and must be cancelled/refunded through the state
+    /// machine rather than erased. Pre-fulfilment and cancelled orders can be
+    /// deleted; deletion releases their reservations and backorders.
+    #[must_use]
+    pub const fn allows_delete(self) -> bool {
+        !matches!(self, Self::PartiallyShipped | Self::Shipped | Self::Delivered | Self::Refunded)
+    }
 }
 
 /// Payment status enumeration.
@@ -347,10 +369,26 @@ pub struct OrderFilter {
 }
 
 impl Order {
-    /// Calculate total from items
+    /// Sum of the stored line totals (`Σ items[].total`), before any
+    /// order-level money.
+    #[must_use]
+    pub fn line_subtotal(&self) -> Decimal {
+        self.items.iter().map(|item| item.total).sum()
+    }
+
+    /// What the customer is charged, derived from the lines and the
+    /// order-level money: `Σ line totals + tax_amount + shipping_amount -
+    /// discount_amount`.
+    ///
+    /// This is the one footing rule every backend writes `total_amount` with
+    /// (on create, `add_item` and `remove_item`), so
+    /// `order.total_amount == order.calculate_total()` is an invariant of a
+    /// persisted order. It used to return the bare line sum, which silently
+    /// disagreed with `total_amount` on any order carrying tax, shipping or a
+    /// discount.
     #[must_use]
     pub fn calculate_total(&self) -> Decimal {
-        self.items.iter().map(|item| item.total).sum()
+        self.line_subtotal() + self.tax_amount + self.shipping_amount - self.discount_amount
     }
 
     /// Check if order can be cancelled
@@ -414,15 +452,14 @@ impl CreateOrder {
         self.currency.unwrap_or_default()
     }
 
-    /// Reject any line money amount carrying more decimal places than the
-    /// order's currency allows (invariant M1,
-    /// `commerce.money.scale_exceeds_currency`).
+    /// Reject any money amount carrying more decimal places than the order's
+    /// currency allows (invariant M1, `commerce.money.scale_exceeds_currency`).
     ///
     /// Covers every monetary field on the create request: each line's
-    /// `unit_price`, `discount` and `tax_amount`. `CreateOrder` itself carries
-    /// no order-level money field — the order total is derived from the lines
-    /// and rounded to the currency minor unit — so guarding the lines guards
-    /// the whole request.
+    /// `unit_price`, `discount` and `tax_amount`, plus the order-level
+    /// `tax_amount`, `shipping_amount` and `discount_amount` that checkout
+    /// carries over from the cart and that land in `total_amount` as
+    /// `lines + tax + shipping - discount`.
     ///
     /// Scale is significant scale: `10.9900` is accepted for USD, `10.999` is
     /// not. See [`validate_money_scale`].
@@ -443,6 +480,83 @@ impl CreateOrder {
             if let Some(tax) = item.tax_amount {
                 validate_money_scale(currency, tax)?;
             }
+        }
+        for amount in
+            [self.tax_amount, self.shipping_amount, self.discount_amount].into_iter().flatten()
+        {
+            validate_money_scale(currency, amount)?;
+        }
+        Ok(())
+    }
+
+    /// Sum of the line totals this request would store, each rounded by
+    /// [`OrderItem::calculate_total`] exactly as the backends store them.
+    #[must_use]
+    pub fn line_subtotal(&self) -> Decimal {
+        self.items
+            .iter()
+            .map(|item| {
+                OrderItem::calculate_total(
+                    item.quantity,
+                    item.unit_price,
+                    item.discount.unwrap_or_default(),
+                    item.tax_amount.unwrap_or_default(),
+                )
+            })
+            .sum()
+    }
+
+    /// The `total_amount` this request would store:
+    /// `line_subtotal + tax_amount + shipping_amount - discount_amount`.
+    #[must_use]
+    pub fn expected_total(&self) -> Decimal {
+        self.line_subtotal()
+            + self.tax_amount.unwrap_or_default()
+            + self.shipping_amount.unwrap_or_default()
+            - self.discount_amount.unwrap_or_default()
+    }
+
+    /// Validate the order-level money fields.
+    ///
+    /// `tax_amount`, `shipping_amount` and `discount_amount` must each be
+    /// non-negative, and the resulting total (`lines + tax + shipping -
+    /// discount`) must not be negative — an over-discount is refused rather
+    /// than clamped, so a persisted order never carries a total that disagrees
+    /// with its parts. Scale is checked separately by
+    /// [`CreateOrder::validate_money_scale`].
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::InvalidInput`] naming the negative field, or
+    /// [`CommerceError::ValidationError`] when the total would go negative.
+    ///
+    /// [`CommerceError::InvalidInput`]: crate::CommerceError::InvalidInput
+    /// [`CommerceError::ValidationError`]: crate::CommerceError::ValidationError
+    pub fn validate_order_level_money(&self) -> Result<()> {
+        for (field, amount) in [
+            ("order.tax_amount", self.tax_amount),
+            ("order.shipping_amount", self.shipping_amount),
+            ("order.discount_amount", self.discount_amount),
+        ] {
+            if let Some(amount) = amount
+                && amount < Decimal::ZERO
+            {
+                return Err(crate::CommerceError::InvalidInput {
+                    field: field.to_string(),
+                    message: "must not be negative".into(),
+                });
+            }
+        }
+        let total = self.expected_total();
+        if total < Decimal::ZERO {
+            return Err(crate::CommerceError::ValidationError(format!(
+                "Order total cannot be negative: lines {} + tax {} + shipping {} - discount {} = {}",
+                self.line_subtotal(),
+                self.tax_amount.unwrap_or_default(),
+                self.shipping_amount.unwrap_or_default(),
+                self.discount_amount.unwrap_or_default(),
+                total
+            )));
         }
         Ok(())
     }
@@ -471,9 +585,11 @@ impl Validate for CreateOrder {
     ///
     /// Requires a non-nil customer, at least one line item, and validates each
     /// item. Currency consistency is enforced at the item level where prices
-    /// share the order's single currency. Finally every line money amount is
-    /// checked against the order currency's minor units
-    /// ([`CreateOrder::validate_money_scale`]).
+    /// share the order's single currency. Every money amount (line and
+    /// order-level) is then checked against the order currency's minor units
+    /// ([`CreateOrder::validate_money_scale`]) and the order-level amounts
+    /// must be non-negative with a non-negative resulting total
+    /// ([`CreateOrder::validate_order_level_money`]).
     fn validate(&self) -> Result<()> {
         ValidationBuilder::new()
             .uuid_not_nil("customer_id", self.customer_id.into_uuid())
@@ -485,6 +601,7 @@ impl Validate for CreateOrder {
         }
 
         self.validate_money_scale()?;
+        self.validate_order_level_money()?;
 
         Ok(())
     }
@@ -573,7 +690,17 @@ mod tests {
         let order = create_test_order(OrderStatus::Pending, PaymentStatus::Pending);
         let calculated = order.calculate_total();
         let expected: Decimal = order.items.iter().map(|i| i.total).sum();
-        assert_eq!(calculated, expected);
+        assert_eq!(calculated, expected, "no order-level money: total is the line sum");
+    }
+
+    #[test]
+    fn test_order_calculate_total_includes_order_level_money() {
+        let mut order = create_test_order(OrderStatus::Pending, PaymentStatus::Pending);
+        let lines = order.line_subtotal();
+        order.tax_amount = dec!(1.50);
+        order.shipping_amount = dec!(5.00);
+        order.discount_amount = dec!(2.00);
+        assert_eq!(order.calculate_total(), lines + dec!(1.50) + dec!(5.00) - dec!(2.00));
     }
 
     #[test]
@@ -581,6 +708,99 @@ mod tests {
         let mut order = create_test_order(OrderStatus::Pending, PaymentStatus::Pending);
         order.items.clear();
         assert_eq!(order.calculate_total(), dec!(0));
+        order.shipping_amount = dec!(5.00);
+        assert_eq!(order.calculate_total(), dec!(5.00), "shipping alone still counts");
+    }
+
+    #[test]
+    fn create_order_rejects_negative_order_level_money() {
+        let base = CreateOrder {
+            customer_id: CustomerId::new(),
+            items: vec![CreateOrderItem {
+                product_id: ProductId::new(),
+                sku: "SKU".into(),
+                name: "Widget".into(),
+                quantity: 1,
+                unit_price: dec!(10.00),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        for (tax, shipping, discount) in [
+            (Some(dec!(-0.01)), None, None),
+            (None, Some(dec!(-1)), None),
+            (None, None, Some(dec!(-1))),
+        ] {
+            let input = CreateOrder {
+                tax_amount: tax,
+                shipping_amount: shipping,
+                discount_amount: discount,
+                ..base.clone()
+            };
+            assert!(
+                matches!(
+                    input.validate_order_level_money(),
+                    Err(crate::CommerceError::InvalidInput { .. })
+                ),
+                "{tax:?} {shipping:?} {discount:?}"
+            );
+            assert!(input.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn create_order_refuses_negative_total_but_allows_zero() {
+        let mut input = CreateOrder {
+            customer_id: CustomerId::new(),
+            items: vec![CreateOrderItem {
+                product_id: ProductId::new(),
+                sku: "SKU".into(),
+                name: "Widget".into(),
+                quantity: 1,
+                unit_price: dec!(10.00),
+                ..Default::default()
+            }],
+            shipping_amount: Some(dec!(2.00)),
+            discount_amount: Some(dec!(12.01)),
+            ..Default::default()
+        };
+        assert_eq!(input.expected_total(), dec!(-0.01));
+        assert!(matches!(
+            input.validate_order_level_money(),
+            Err(crate::CommerceError::ValidationError(_))
+        ));
+        input.discount_amount = Some(dec!(12.00));
+        assert_eq!(input.expected_total(), Decimal::ZERO);
+        input.validate_order_level_money().expect("zero total is allowed");
+    }
+
+    #[test]
+    fn create_order_money_scale_covers_order_level_amounts() {
+        let base = CreateOrder {
+            customer_id: CustomerId::new(),
+            items: vec![CreateOrderItem {
+                product_id: ProductId::new(),
+                sku: "SKU".into(),
+                name: "Widget".into(),
+                quantity: 1,
+                unit_price: dec!(10.00),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        for input in [
+            CreateOrder { tax_amount: Some(dec!(1.005)), ..base.clone() },
+            CreateOrder { shipping_amount: Some(dec!(4.999)), ..base.clone() },
+            CreateOrder { discount_amount: Some(dec!(0.001)), ..base.clone() },
+        ] {
+            assert!(matches!(
+                input.validate_money_scale(),
+                Err(crate::CommerceError::MoneyScaleExceedsCurrency { .. })
+            ));
+        }
+        CreateOrder { tax_amount: Some(dec!(1.50)), ..base }
+            .validate_money_scale()
+            .expect("two-scale USD is fine");
     }
 
     #[test]

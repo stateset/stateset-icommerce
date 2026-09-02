@@ -595,8 +595,14 @@ impl PgKernelExecutor {
         }
 
         if let Some(order_id) = input.order_id {
-            check_order_capture_capacity_pg(tx.as_mut(), order_id.into_uuid(), None, input.amount)
-                .await?;
+            check_order_capture_capacity_pg(
+                tx.as_mut(),
+                order_id.into_uuid(),
+                None,
+                input.amount,
+                input.currency.unwrap_or_default(),
+            )
+            .await?;
         }
 
         let id = Uuid::new_v4();
