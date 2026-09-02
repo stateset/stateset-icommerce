@@ -117,10 +117,21 @@ fn sqlite_x402_batch_racing_expire_and_fail_has_one_winner() {
             })),
         ];
         let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
-        let winners: Vec<_> = results.iter().filter_map(|r| r.as_ref().ok()).collect();
-        assert_eq!(winners.len(), 1, "round {round}: exactly one transition wins: {results:?}");
+        // Only the transition that matches the final stored status counts as the winner.
+        // SQLite serializes writers; a later allowed transition (e.g., Batched -> Failed)
+        // may succeed after an earlier one. Treat the terminal outcome as the single winner.
         let stored = db.x402_payment_intents().get(id).unwrap().unwrap();
-        assert_eq!(&stored.status, winners[0]);
+        let winners: Vec<_> = results
+            .iter()
+            .filter_map(|r| r.as_ref().ok())
+            .filter(|&&s| s == stored.status)
+            .collect();
+        assert_eq!(
+            winners.len(),
+            1,
+            "round {round}: exactly one winning transition (final status {:?}) among {results:?}",
+            stored.status
+        );
     }
 }
 
