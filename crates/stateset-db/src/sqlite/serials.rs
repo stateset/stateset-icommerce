@@ -785,11 +785,23 @@ impl SerialRepository for SqliteSerialRepository {
         Ok(serials)
     }
 
+    /// Delete a serial that never moved.
+    ///
+    /// Both checks and all three deletes run inside ONE IMMEDIATE transaction,
+    /// and the status is read on that transaction's connection — matching
+    /// `postgres::delete_async`, which locks the row with `load_for_update`
+    /// before checking it. Reading the status on a second pooled connection
+    /// and deleting in autocommit let a concurrent `reserve` slip between the
+    /// check and the first DELETE: the deletes then wiped a live reservation
+    /// and the unit itself, leaving an order pointing at a serial that no
+    /// longer exists. A failure part-way through the three deletes also used
+    /// to leave a live serial whose history had already been erased.
     fn delete(&self, id: Uuid) -> stateset_core::Result<()> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         // Check if serial can be deleted (only if Available and never used)
-        let serial = self.get(id)?.ok_or(CommerceError::NotFound)?;
+        let serial = Self::load_in_tx(&tx, id)?;
         if serial.status != SerialStatus::Available {
             return Err(CommerceError::ValidationError(
                 "Can only delete serials with 'available' status".to_string(),
@@ -797,7 +809,7 @@ impl SerialRepository for SqliteSerialRepository {
         }
 
         // Check if there's any history beyond creation
-        let history_count: i64 = conn
+        let history_count: i64 = tx
             .query_row(
                 "SELECT COUNT(*) FROM serial_history WHERE serial_id = ? AND event_type != ?",
                 params![id.to_string(), SerialEventType::Created.to_string()],
@@ -812,20 +824,18 @@ impl SerialRepository for SqliteSerialRepository {
         }
 
         // Delete history first
-        conn.execute("DELETE FROM serial_history WHERE serial_id = ?", params![id.to_string()])
+        tx.execute("DELETE FROM serial_history WHERE serial_id = ?", params![id.to_string()])
             .map_err(map_db_error)?;
 
         // Delete reservations
-        conn.execute(
-            "DELETE FROM serial_reservations WHERE serial_id = ?",
-            params![id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        // Delete serial
-        conn.execute("DELETE FROM serial_numbers WHERE id = ?", params![id.to_string()])
+        tx.execute("DELETE FROM serial_reservations WHERE serial_id = ?", params![id.to_string()])
             .map_err(map_db_error)?;
 
+        // Delete serial
+        tx.execute("DELETE FROM serial_numbers WHERE id = ?", params![id.to_string()])
+            .map_err(map_db_error)?;
+
+        tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
@@ -1756,6 +1766,7 @@ impl SerialRepository for SqliteSerialRepository {
         &self,
         inputs: Vec<CreateSerialNumber>,
     ) -> stateset_core::Result<BatchResult<SerialNumber>> {
+        stateset_core::validate_batch_size(&inputs)?;
         let mut result = BatchResult::with_capacity(inputs.len());
 
         for (idx, input) in inputs.into_iter().enumerate() {

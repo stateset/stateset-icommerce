@@ -1223,6 +1223,7 @@ impl ReceivingRepository for SqliteReceivingRepository {
     }
 
     fn create_receipts_batch(&self, inputs: Vec<CreateReceipt>) -> Result<BatchResult<Receipt>> {
+        stateset_core::validate_batch_size(&inputs)?;
         let mut result = BatchResult::new();
 
         for (index, input) in inputs.into_iter().enumerate() {

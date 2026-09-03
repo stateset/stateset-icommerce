@@ -1821,6 +1821,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
     // ========================================================================
 
     fn create_waves_batch(&self, inputs: Vec<CreateWave>) -> Result<BatchResult<Wave>> {
+        stateset_core::validate_batch_size(&inputs)?;
         let mut result = BatchResult::new();
 
         for (index, input) in inputs.into_iter().enumerate() {

@@ -414,7 +414,13 @@ pub trait CreditRepository: Send + Sync {
     /// Get credit hold by ID
     fn get_hold(&self, id: Uuid) -> Result<Option<CreditHold>>;
 
-    /// List credit holds
+    /// List credit holds.
+    ///
+    /// Every populated field of [`CreditHoldFilter`] narrows the result —
+    /// including `hold_type`, so a caller working one queue (high-risk, say) is
+    /// never shown holds of another type. `limit`/`offset` follow the shared
+    /// server-side pagination policy: an absent `limit` means the default page
+    /// size, not an unbounded scan.
     fn list_holds(&self, filter: CreditHoldFilter) -> Result<Vec<CreditHold>>;
 
     /// Release a credit hold
@@ -443,7 +449,21 @@ pub trait CreditRepository: Send + Sync {
     fn withdraw_application(&self, id: Uuid) -> Result<CreditApplication>;
 
     // Transaction operations
-    /// Record a credit transaction
+    /// Record a credit transaction against the customer's credit account.
+    ///
+    /// The row's `running_balance` is derived from the account's
+    /// `current_balance` — reduced by `amount` for `Payment` and `CreditMemo`,
+    /// unchanged otherwise — read under a row lock in the same transaction as
+    /// the insert, so a concurrent charge or payment cannot leave the ledger
+    /// stamped with a balance the account no longer holds. This records the
+    /// ledger row only; it does not itself move the balance.
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::NotFound`](crate::CommerceError::NotFound) if the
+    /// customer has no credit account. There is no balance to derive a running
+    /// balance from, and a ledger entry against an account that does not exist
+    /// is never written.
     fn record_transaction(&self, input: RecordCreditTransaction) -> Result<CreditTransaction>;
 
     /// List credit transactions

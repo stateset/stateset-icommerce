@@ -2595,6 +2595,7 @@ impl LotRepository for SqliteLotRepository {
     }
 
     fn create_batch(&self, inputs: Vec<CreateLot>) -> Result<BatchResult<Lot>> {
+        stateset_core::validate_batch_size(&inputs)?;
         let mut result = BatchResult::with_capacity(inputs.len());
 
         for (index, input) in inputs.into_iter().enumerate() {

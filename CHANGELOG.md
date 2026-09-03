@@ -6,6 +6,59 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+A parity audit of the modules no earlier round had read found five defects,
+three of them money or stock, and one pattern behind all of them: a fix lands
+on a method and stops short of its sibling. This round closes the defects and
+adds a lint that fails the build on the next one.
+
+### Fixed
+- **The Postgres credit ledger stamped balances it did not hold.**
+  `record_transaction` read the balance on one pooled connection and inserted
+  on another, with no transaction and no row lock, so a payment committing in
+  between left the ledger recording a balance the account no longer had — a
+  $4,000 overstatement in the reproduction, with no reconciliation path. It
+  now reads under `FOR UPDATE` inside the transaction that writes. Recording
+  against a customer with no credit account is a typed not-found on both
+  backends rather than a raw constraint error.
+- **A transfer receipt could take in stock it never recorded.** The Postgres
+  receive path ran four autocommit statements and wrote an absolute quantity,
+  so two clerks scanning the same 100-unit receipt both passed the
+  over-receipt check and both wrote 100, leaving 100 units untracked; two
+  concurrent partial receipts lost units instead. It is now one transaction
+  with the line locked, and the write is an increment, so concurrent receipts
+  accumulate.
+- **Deleting a serial could destroy a live reservation.** The SQLite path took
+  no transaction and read the serial's status through a second pooled
+  connection, so a reservation committing in that window was deleted along
+  with the unit and its history. It now reads and deletes inside one write
+  transaction, matching Postgres.
+- **A cancelled transfer order could still take in stock.** The receive path
+  never looked at the order status, so a cancel and a full receipt raced to
+  both succeed, leaving a cancelled order holding received units. Receiving
+  now checks the order status under the same lock that cancelling takes, and
+  exactly one of the two wins.
+- **Two clerks could both cancel the same transfer order.** Both backends read
+  the status on a pooled connection, dropped it, then cancelled in a separate
+  transaction — three of six concurrent cancels won. The status is now read
+  under the write lock, so one wins and the rest are refused.
+- Batch size limits are enforced on SQLite as well as Postgres, so an
+  oversized bulk create is refused instead of starving concurrent writers.
+- SQLite hold listing honours the type filter and pagination offset, so an
+  operator filtering one queue no longer sees every hold of every type.
+
+### Added
+- **A backend transaction parity lint** (`backend_transaction_parity`) reads
+  the repository sources and fails when a method decides on what it read and
+  then writes the same table without holding it: a missing write transaction
+  on either backend, a missing `FOR UPDATE` on Postgres, or a SQLite read
+  through a second pooled connection while a transaction is open. Its
+  safe-exception list is empty, so it fails closed, and a separate test
+  asserts it still parses both backends and still rejects the pre-fix serial
+  delete, so it cannot decay into a no-op. It found two further defects on its
+  first run. The pre-existing violations it reports are tracked for repair
+  rather than blessed.
+
+
 ## [1.29.0] - 2026-09-03
 
 Fourth and fifth engine rounds. The tax engine is one pure computation

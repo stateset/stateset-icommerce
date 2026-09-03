@@ -1346,17 +1346,32 @@ impl PgCreditRepository {
         &self,
         input: RecordCreditTransaction,
     ) -> Result<CreditTransaction> {
+        // The balance read and the ledger insert are ONE transaction with the
+        // account row pinned `FOR UPDATE`, matching the SQLite backend's
+        // `with_immediate_transaction`.
+        //
+        // Previously the `SELECT` ran on the pool (autocommit, no lock) and the
+        // `INSERT` on a second pooled connection, with no `begin()` anywhere in
+        // the method: a payment or charge committing in between left the row
+        // stamped with a balance the account no longer held, so the ledger
+        // overstated the receivable with no reconciliation path.
+        //
+        // A missing account is now `NotFound`. `unwrap_or(Decimal::ZERO)`
+        // masked it, deriving the running balance from an invented zero — and
+        // the two backends disagreed on the same call, SQLite's `query_row`
+        // having always errored.
         let id = Uuid::new_v4();
         let now = Utc::now();
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let current_balance: Decimal = sqlx::query_scalar(
-            "SELECT current_balance FROM credit_accounts WHERE customer_id = $1",
+            "SELECT current_balance FROM credit_accounts WHERE customer_id = $1 FOR UPDATE",
         )
         .bind(input.customer_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?
-        .unwrap_or(Decimal::ZERO);
+        .ok_or(CommerceError::NotFound)?;
 
         let running_balance = match input.transaction_type {
             CreditTransactionType::Payment | CreditTransactionType::CreditMemo => {
@@ -1365,23 +1380,8 @@ impl PgCreditRepository {
             _ => current_balance,
         };
 
-        sqlx::query(
-            "INSERT INTO credit_transactions (id, customer_id, transaction_type, amount,
-                running_balance, reference_type, reference_id, notes, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-        )
-        .bind(id)
-        .bind(input.customer_id)
-        .bind(input.transaction_type.to_string())
-        .bind(input.amount)
-        .bind(running_balance)
-        .bind(input.reference_type.clone())
-        .bind(input.reference_id)
-        .bind(input.notes.clone())
-        .bind(now)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        Self::insert_transaction_tx(&mut tx, id, &input, running_balance, now).await?;
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(CreditTransaction {
             id,
