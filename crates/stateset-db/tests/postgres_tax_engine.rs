@@ -40,6 +40,15 @@ async fn connect() -> Option<PostgresDatabase> {
 /// Two letters drawn from a UUID gave only 256 possibilities, so tests
 /// collided and one test's country-level rate leaked into another's
 /// calculation. `country_code` is plain TEXT, so a longer code is fine.
+/// Tax settings are ONE row per database, and these tests share a database
+/// and run in parallel. Two of them change the settings (inclusive pricing,
+/// and disabling tax altogether), which every concurrent calculation would
+/// otherwise observe — a disabled window makes an unrelated test see zero
+/// tax and an empty breakdown. Calculating tests take the shared side of this
+/// lock; the two that mutate settings take the exclusive side.
+static SETTINGS: std::sync::LazyLock<tokio::sync::RwLock<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::RwLock::new(()));
+
 fn unique_country() -> String {
     Uuid::new_v4()
         .to_string()
@@ -151,6 +160,7 @@ fn request(country: &str, state: &str, prices: &[Decimal]) -> TaxCalculationRequ
 
 #[tokio::test]
 async fn postgres_calculate_tax_rounds_per_line_and_sums_exactly() {
+    let _settings = SETTINGS.read().await;
     let Some(db) = connect().await else { return };
     let repo = db.tax();
     let country = unique_country();
@@ -171,6 +181,7 @@ async fn postgres_calculate_tax_rounds_per_line_and_sums_exactly() {
 
 #[tokio::test]
 async fn postgres_calculate_tax_backs_out_inclusive_prices() {
+    let _settings = SETTINGS.write().await;
     let Some(db) = connect().await else { return };
     let repo = db.tax();
     let country = unique_country();
@@ -201,6 +212,7 @@ async fn postgres_calculate_tax_backs_out_inclusive_prices() {
 
 #[tokio::test]
 async fn postgres_calculate_tax_ignores_unverified_exemption() {
+    let _settings = SETTINGS.read().await;
     let Some(db) = connect().await else { return };
     let repo = db.tax();
     let country = unique_country();
@@ -228,6 +240,7 @@ async fn postgres_calculate_tax_ignores_unverified_exemption() {
 
 #[tokio::test]
 async fn postgres_calculate_tax_ignores_exemption_outside_window_at_transaction_date() {
+    let _settings = SETTINGS.read().await;
     let Some(db) = connect().await else { return };
     let repo = db.tax();
     let country = unique_country();
@@ -254,6 +267,7 @@ async fn postgres_calculate_tax_ignores_exemption_outside_window_at_transaction_
 
 #[tokio::test]
 async fn postgres_calculate_tax_applies_jurisdiction_scoped_exemption_only_there() {
+    let _settings = SETTINGS.read().await;
     let Some(db) = connect().await else { return };
     let repo = db.tax();
     let country = unique_country();
@@ -285,6 +299,7 @@ async fn postgres_calculate_tax_applies_jurisdiction_scoped_exemption_only_there
 
 #[tokio::test]
 async fn postgres_jurisdiction_codes_are_case_insensitive() {
+    let _settings = SETTINGS.read().await;
     let Some(db) = connect().await else { return };
     let repo = db.tax();
     let country = unique_country();
@@ -320,6 +335,7 @@ async fn postgres_jurisdiction_codes_are_case_insensitive() {
 /// exercised the only step that makes an exemption take effect.
 #[tokio::test]
 async fn postgres_verify_exemption_round_trips_through_calculation() {
+    let _settings = SETTINGS.read().await;
     let Some(db) = connect().await else { return };
     let repo = db.tax();
     let country = unique_country();
@@ -360,6 +376,7 @@ async fn postgres_verify_exemption_round_trips_through_calculation() {
 /// `tax_settings.enabled` was persisted and never read.
 #[tokio::test]
 async fn postgres_calculate_tax_disabled_settings_charge_no_tax() {
+    let _settings = SETTINGS.write().await;
     let Some(db) = connect().await else { return };
     let repo = db.tax();
     let country = unique_country();
@@ -393,6 +410,7 @@ async fn postgres_calculate_tax_disabled_settings_charge_no_tax() {
 /// unreachable on both backends.
 #[tokio::test]
 async fn postgres_calculate_tax_stacks_country_state_and_city_rates() {
+    let _settings = SETTINGS.read().await;
     let Some(db) = connect().await else { return };
     let repo = db.tax();
     let country_code = unique_country();
@@ -450,6 +468,7 @@ async fn postgres_calculate_tax_stacks_country_state_and_city_rates() {
 /// Postgres mirror of `calculate_tax_attributes_each_exemption_separately`.
 #[tokio::test]
 async fn postgres_calculate_tax_attributes_each_exemption_separately() {
+    let _settings = SETTINGS.read().await;
     let Some(db) = connect().await else { return };
     let repo = db.tax();
     let country_code = unique_country();
