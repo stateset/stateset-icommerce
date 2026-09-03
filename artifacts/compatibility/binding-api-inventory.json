@@ -1336,7 +1336,7 @@
       "exportedTypeCount": 73,
       "apiTypeCount": 16,
       "rootAccessorCount": 16,
-      "apiMethodCount": 80,
+      "apiMethodCount": 81,
       "exportedTypes": [
         "AnalyticsAPI",
         "BillOfMaterials",
@@ -1631,6 +1631,10 @@
         {
           "receiver": "ProductsAPI",
           "name": "List"
+        },
+        {
+          "receiver": "ProductsAPI",
+          "name": "Publish"
         },
         {
           "receiver": "PurchaseOrdersAPI",

@@ -35,7 +35,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | Language | Ecosystem | Package | Version | Coverage | Summary |
 | --- | --- | --- | --- | --- | --- |
 | .NET | NuGet | `StateSet.Embedded` | `1.29.0` | `detailed` | 245 API methods |
-| Go | Go modules | `github.com/stateset/stateset-icommerce/bindings/go/stateset` | — | `detailed` | 80 API methods |
+| Go | Go modules | `github.com/stateset/stateset-icommerce/bindings/go/stateset` | — | `detailed` | 81 API methods |
 | Java | Maven | `com.stateset:embedded` | `1.29.0` | `package-manifest` | manifest coverage |
 | Kotlin | Maven | `com.stateset:embedded-kotlin` | `1.29.0` | `package-manifest` | manifest coverage |
 | Node.js | npm | `@stateset/embedded` | `1.29.0` | `detailed` | 6 export entrypoints |
@@ -63,7 +63,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | Exported types | 73 |
 | API types | 16 |
 | Root accessors | 16 |
-| API methods | 80 |
+| API methods | 81 |
 
 ## Go Exported Types
 
@@ -213,6 +213,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `ProductsAPI` | `Create` |
 | `ProductsAPI` | `Get` |
 | `ProductsAPI` | `List` |
+| `ProductsAPI` | `Publish` |
 | `PurchaseOrdersAPI` | `Approve` |
 | `PurchaseOrdersAPI` | `Cancel` |
 | `PurchaseOrdersAPI` | `Create` |
