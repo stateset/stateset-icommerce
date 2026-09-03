@@ -94,7 +94,7 @@
     "version": "napi version"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^2.18.0"
+    "@napi-rs/cli": "^3.8.6"
   },
   "peerDependencies": {
     "@stateset/cli": "^1.30.0"
