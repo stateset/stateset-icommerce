@@ -4082,6 +4082,7 @@ dependencies = [
  "stateset-authz",
  "stateset-core",
  "stateset-embedded",
+ "stateset-jobs",
  "stateset-observability",
  "stateset-primitives",
  "subtle",
@@ -4176,6 +4177,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
