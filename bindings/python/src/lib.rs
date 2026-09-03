@@ -1464,6 +1464,177 @@ impl Products {
 
         Ok(count as u32)
     }
+
+    /// Update a product.
+    ///
+    /// Args:
+    ///     id: Product UUID
+    ///     name: Optional new name
+    ///     slug: Optional new slug
+    ///     description: Optional new description
+    ///     status: Optional new status ("active" | "archived" | "draft")
+    ///
+    /// Returns:
+    ///     Product: The updated product
+    #[pyo3(signature = (id, name=None, slug=None, description=None, status=None))]
+    fn update(
+        &self,
+        id: String,
+        name: Option<String>,
+        slug: Option<String>,
+        description: Option<String>,
+        status: Option<String>,
+    ) -> PyResult<Product> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let status = status
+            .map(|s| s.parse::<stateset_core::ProductStatus>())
+            .transpose()
+            .map_err(|_| PyValueError::new_err("Invalid product status"))?;
+
+        let product = commerce
+            .products()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateProduct {
+                    name,
+                    slug,
+                    description,
+                    status,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update product: {}", e)))?;
+
+        Ok(product.into())
+    }
+
+    /// Activate a product (make it available for purchase).
+    ///
+    /// Args:
+    ///     id: Product UUID
+    ///
+    /// Returns:
+    ///     Product: The activated product
+    fn activate(&self, id: String) -> PyResult<Product> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let product = commerce
+            .products()
+            .activate(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to activate product: {}", e)))?;
+        Ok(product.into())
+    }
+
+    /// Archive a product.
+    ///
+    /// Args:
+    ///     id: Product UUID
+    ///
+    /// Returns:
+    ///     Product: The archived product
+    fn archive(&self, id: String) -> PyResult<Product> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let product = commerce
+            .products()
+            .archive(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to archive product: {}", e)))?;
+        Ok(product.into())
+    }
+
+    /// Add a variant to a product.
+    ///
+    /// Args:
+    ///     product_id: Product UUID
+    ///     input: CreateProductVariantInput
+    ///
+    /// Returns:
+    ///     ProductVariant: The created variant
+    fn add_variant(
+        &self,
+        product_id: String,
+        input: CreateProductVariantInput,
+    ) -> PyResult<ProductVariant> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid: uuid::Uuid =
+            product_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let variant = commerce
+            .products()
+            .add_variant(
+                uuid.into(),
+                stateset_core::CreateProductVariant {
+                    sku: input.sku,
+                    name: input.name,
+                    price: decimal_from_f64(input.price, "variant price")
+                        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
+                    compare_at_price: optional_decimal_from_f64(
+                        input.compare_at_price,
+                        "variant compare at price",
+                    )
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to add variant: {}", e)))?;
+        Ok(variant.into())
+    }
+
+    /// Update a product variant.
+    ///
+    /// Args:
+    ///     id: Variant UUID
+    ///     variant: CreateProductVariantInput (sku/name/price/compare_at_price)
+    ///
+    /// Returns:
+    ///     ProductVariant: The updated variant
+    fn update_variant(
+        &self,
+        id: String,
+        variant: CreateProductVariantInput,
+    ) -> PyResult<ProductVariant> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let updated = commerce
+            .products()
+            .update_variant(
+                uuid,
+                stateset_core::CreateProductVariant {
+                    sku: variant.sku,
+                    name: variant.name,
+                    price: decimal_from_f64(variant.price, "variant price")
+                        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
+                    compare_at_price: optional_decimal_from_f64(
+                        variant.compare_at_price,
+                        "variant compare at price",
+                    )
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update variant: {}", e)))?;
+        Ok(updated.into())
+    }
 }
 
 // ============================================================================
