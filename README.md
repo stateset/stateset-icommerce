@@ -352,7 +352,39 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ## What's New in v1.30.0
 
-**v1.30.0 wires up what was built and guards what was open. Three more
+**v1.30.0 makes one rule structural: hold the row you decided on. A parity
+audit of the modules no earlier round had read found five defects, three of
+them money or stock, and one pattern behind all of them -- a fix lands on a
+method and stops short of its sibling. This release closes the defects and
+adds a lint that fails the build on the next one.**
+
+- **The ledger cannot stamp a balance it does not hold.** Postgres credit
+  `record_transaction` read the balance on one pooled connection and inserted
+  on another, so a payment committing in between left the ledger recording a
+  balance the account no longer had -- $4,000 overstated in the reproduction,
+  with no reconciliation path. It now reads under `FOR UPDATE` inside the
+  transaction that writes.
+- **A transfer receipt cannot take in stock it never records.** The receive
+  path ran four autocommit statements and wrote an absolute quantity, so two
+  clerks scanning the same 100-unit receipt both passed the over-receipt check
+  and both wrote 100, leaving 100 units untracked; concurrent partial receipts
+  lost units outright. Receiving is now one transaction holding the order and
+  the line, and the write is an increment, so receipts accumulate. Cancelling
+  takes the same lock, and receiving checks order status -- a cancelled order
+  can no longer take in stock.
+- **Deleting a serial cannot destroy a live reservation.** The delete read the
+  serial's status through a second pooled connection, so a reservation
+  committing in that window was deleted along with the unit and its history.
+- **The pattern is now enforced, not remembered.** A source-reading lint fails
+  the build when a method decides on what it read and then writes the same
+  table without holding it -- a missing write transaction on either backend, a
+  missing `FOR UPDATE` on Postgres, or a SQLite read through a second pooled
+  connection while a transaction is open. Its safe-exception list is empty, so
+  it fails closed, and a companion test asserts it still rejects the pre-fix
+  serial delete, so it cannot decay into a no-op. It found two further defects
+  on its first run.
+
+**v1.29.0 wires up what was built and guards what was open. Three more
 rounds of verified, both-backend work took every module past the defects a
 seven-part read-only audit found, and closed two patterns that a defect
 list alone would have missed.**
