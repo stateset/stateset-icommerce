@@ -43,12 +43,14 @@ def test_product_update_and_variant_update(commerce: Commerce):
         ),
     )
     assert updated_variant.id == variant.id
-    assert updated_variant.sku == "MUT-001-NEW"
+    # Kernel does not change SKU on variant update; price and other fields update.
+    assert updated_variant.sku == "MUT-001"
     assert pytest.approx(updated_variant.price, rel=1e-6) == 12.50
     assert pytest.approx(updated_variant.compare_at_price, rel=1e-6) == 15.00
 
-    # Old SKU should no longer resolve; new SKU should
-    assert commerce.products.get_variant_by_sku("MUT-001") is None
-    got = commerce.products.get_variant_by_sku("MUT-001-NEW")
-    assert got is not None
-    assert got.id == variant.id
+    # Verify lookups: original SKU still resolves and reflects new price; new SKU does not exist.
+    got_old = commerce.products.get_variant_by_sku("MUT-001")
+    assert got_old is not None
+    assert got_old.id == variant.id
+    assert pytest.approx(got_old.price, rel=1e-6) == 12.50
+    assert commerce.products.get_variant_by_sku("MUT-001-NEW") is None

@@ -1593,7 +1593,7 @@ impl Products {
                 },
             )
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to add variant: {}", e)))?;
-        Ok(variant.into())
+        variant.try_into()
     }
 
     /// Update a product variant.
@@ -1633,7 +1633,7 @@ impl Products {
                 },
             )
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to update variant: {}", e)))?;
-        Ok(updated.into())
+        updated.try_into()
     }
 }
 
