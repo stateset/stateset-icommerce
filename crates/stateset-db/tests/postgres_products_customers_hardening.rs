@@ -454,8 +454,9 @@ async fn pg_email_is_normalised_on_create_lookup_and_update() {
         .expect_err("update collision");
     assert!(matches!(err, CommerceError::EmailAlreadyExists(_)), "{err:?}");
 
-    // get_or_create is case-insensitive too.
-    let same = db
+    // get_or_create is case-insensitive too, and reports that it created
+    // nothing.
+    let (same, created) = db
         .customers()
         .get_or_create_by_email_async(CreateCustomer {
             email: format!("ADA-{t}@EXAMPLE.COM"),
@@ -466,6 +467,7 @@ async fn pg_email_is_normalised_on_create_lookup_and_update() {
         .await
         .expect("get_or_create");
     assert_eq!(same.id, c.id);
+    assert!(!created, "an existing address must not be reported as created");
 }
 
 #[tokio::test]
@@ -777,4 +779,371 @@ async fn pg_add_item_refuses_a_sku_withdrawn_from_the_catalogue() {
     }
 
     db.carts().add_item_async(cart.id.into_uuid(), line(&adhoc)).await.expect("ad-hoc still fine");
+}
+
+// ---------------------------------------------------------------------------
+// Round 6 — Postgres mirrors
+// ---------------------------------------------------------------------------
+
+/// Both shapes a failed input check can take (`ValidationBuilder` reports
+/// per-field `InvalidInput`, ad-hoc checks report `ValidationError`).
+const fn is_rejected_input(err: &CommerceError) -> bool {
+    matches!(err, CommerceError::ValidationError(_) | CommerceError::InvalidInput { .. })
+}
+
+#[tokio::test]
+async fn pg_unpublishing_a_product_is_refused_while_a_cart_holds_its_sku() {
+    let Some(db) = setup_db().await else { return };
+    let t = tag();
+    let sku = format!("SKU-{t}");
+    let product = db.products().create_async(product_input(&t, &[&sku])).await.expect("create");
+    db.products()
+        .update_async(
+            product.id,
+            UpdateProduct { status: Some(ProductStatus::Active), ..Default::default() },
+        )
+        .await
+        .expect("publish");
+
+    let cart_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO carts (id, cart_number, status, created_at, updated_at) VALUES ($1, $2, 'active', NOW(), NOW())",
+    )
+    .bind(cart_id)
+    .bind(format!("C-{t}"))
+    .execute(db.pool())
+    .await
+    .expect("cart");
+    sqlx::query(
+        "INSERT INTO cart_items (id, cart_id, sku, name, quantity, unit_price, total, created_at, updated_at)
+         VALUES ($1, $2, $3, 'x', 1, 1, 1, NOW(), NOW())",
+    )
+    .bind(Uuid::new_v4())
+    .bind(cart_id)
+    .bind(&sku)
+    .execute(db.pool())
+    .await
+    .expect("cart item");
+
+    let err = db
+        .products()
+        .update_async(
+            product.id,
+            UpdateProduct { status: Some(ProductStatus::Draft), ..Default::default() },
+        )
+        .await
+        .expect_err("unpublish must be refused");
+    match err {
+        CommerceError::Conflict(message) => {
+            assert!(message.contains("unpublish"), "{message}");
+            assert!(message.contains("1 active cart line"), "{message}");
+        }
+        other => panic!("expected Conflict, got {other:?}"),
+    }
+    assert_eq!(
+        db.products().get_async(product.id).await.expect("ok").expect("found").status,
+        ProductStatus::Active
+    );
+
+    // Once nothing references the SKU, unpublishing goes through.
+    sqlx::query("UPDATE carts SET status = 'abandoned' WHERE id = $1")
+        .bind(cart_id)
+        .execute(db.pool())
+        .await
+        .expect("abandon");
+    let unpublished = db
+        .products()
+        .update_async(
+            product.id,
+            UpdateProduct { status: Some(ProductStatus::Draft), ..Default::default() },
+        )
+        .await
+        .expect("unpublish");
+    assert_eq!(unpublished.status, ProductStatus::Draft);
+}
+
+#[tokio::test]
+async fn pg_repository_rejects_variant_money_it_cannot_honour() {
+    let Some(db) = setup_db().await else { return };
+    let t = tag();
+    let bad_amounts = [
+        (
+            "negative price",
+            CreateProductVariant { sku: format!("NEG-{t}"), price: dec!(-1), ..Default::default() },
+        ),
+        (
+            "compare-at below price",
+            CreateProductVariant {
+                sku: format!("CMP-{t}"),
+                price: dec!(10),
+                compare_at_price: Some(dec!(5)),
+                ..Default::default()
+            },
+        ),
+        (
+            "scale beyond storage",
+            CreateProductVariant {
+                sku: format!("SCALE-{t}"),
+                price: dec!(1.234567),
+                ..Default::default()
+            },
+        ),
+        (
+            "negative cost",
+            CreateProductVariant {
+                sku: format!("COST-{t}"),
+                price: dec!(1),
+                cost: Some(dec!(-2)),
+                ..Default::default()
+            },
+        ),
+    ];
+
+    for (what, variant) in &bad_amounts {
+        let slug = format!("bad-{}", variant.sku.to_lowercase());
+        let err = db
+            .products()
+            .create_async(CreateProduct {
+                name: "Bad".into(),
+                slug: Some(slug.clone()),
+                variants: Some(vec![variant.clone()]),
+                ..Default::default()
+            })
+            .await
+            .expect_err(what);
+        assert!(is_rejected_input(&err), "{what}: {err:?}");
+        assert!(
+            db.products().get_by_slug_async(&slug).await.expect("ok").is_none(),
+            "{what}: nothing may be written"
+        );
+    }
+
+    let product = db
+        .products()
+        .create_async(product_input(&t, &[&format!("SKU-{t}")]))
+        .await
+        .expect("create");
+    let existing = db.products().get_variants_async(product.id).await.expect("ok").remove(0);
+    for (what, variant) in &bad_amounts {
+        let err = db
+            .products()
+            .add_variant_public_async(product.id, variant.clone())
+            .await
+            .expect_err(what);
+        assert!(is_rejected_input(&err), "add_variant {what}: {err:?}");
+        let err =
+            db.products().update_variant_async(existing.id, variant.clone()).await.expect_err(what);
+        assert!(is_rejected_input(&err), "update_variant {what}: {err:?}");
+    }
+    let reread = db.products().get_variant_async(existing.id).await.expect("ok").expect("found");
+    assert_eq!(reread.price, dec!(19.99));
+}
+
+#[tokio::test]
+async fn pg_price_filtering_paginates_the_filtered_set_and_count_agrees() {
+    let Some(db) = setup_db().await else { return };
+    let t = tag();
+    for (i, price) in [dec!(5), dec!(15), dec!(25), dec!(35)].into_iter().enumerate() {
+        db.products()
+            .create_async(CreateProduct {
+                name: format!("Price {t} {i}"),
+                slug: Some(format!("price-{t}-{i}")),
+                variants: Some(vec![CreateProductVariant {
+                    sku: format!("SKU-{t}-{i}"),
+                    price,
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .await
+            .expect("create");
+    }
+    let filter = |min, max, limit, offset| ProductFilter {
+        search: Some(format!("Price {t} ")),
+        min_price: min,
+        max_price: max,
+        limit,
+        offset,
+        ..Default::default()
+    };
+
+    let page =
+        db.products().list_async(filter(Some(dec!(15)), None, Some(2), None)).await.expect("list");
+    assert_eq!(
+        page.iter().map(|p| p.slug.clone()).collect::<Vec<_>>(),
+        [format!("price-{t}-1"), format!("price-{t}-2")]
+    );
+
+    let banded = db
+        .products()
+        .list_async(filter(Some(dec!(15)), Some(dec!(25)), None, None))
+        .await
+        .expect("list");
+    assert_eq!(
+        banded.iter().map(|p| p.slug.clone()).collect::<Vec<_>>(),
+        [format!("price-{t}-1"), format!("price-{t}-2")]
+    );
+
+    assert_eq!(
+        db.products().count_async(filter(Some(dec!(15)), None, None, None)).await.expect("count"),
+        3
+    );
+    assert_eq!(
+        db.products()
+            .count_async(filter(Some(dec!(15)), Some(dec!(25)), None, None))
+            .await
+            .expect("count"),
+        2
+    );
+
+    let offset_page =
+        db.products().list_async(filter(Some(dec!(15)), None, None, Some(1))).await.expect("list");
+    assert_eq!(
+        offset_page.iter().map(|p| p.slug.clone()).collect::<Vec<_>>(),
+        [format!("price-{t}-2"), format!("price-{t}-3")]
+    );
+}
+
+#[tokio::test]
+async fn pg_find_or_create_under_a_real_task_race_yields_exactly_one_customer() {
+    let Some(db) = setup_db().await else { return };
+    let t = tag();
+    let db = std::sync::Arc::new(db);
+    let email = format!("forc-{t}@example.com");
+
+    let mut handles = Vec::new();
+    for i in 0..8 {
+        let db = std::sync::Arc::clone(&db);
+        let email = if i % 2 == 0 { email.to_uppercase() } else { email.clone() };
+        handles.push(tokio::spawn(async move {
+            db.customers()
+                .get_or_create_by_email_async(CreateCustomer {
+                    email,
+                    first_name: "R".into(),
+                    last_name: "A".into(),
+                    ..Default::default()
+                })
+                .await
+        }));
+    }
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        results.push(handle.await.expect("task"));
+    }
+    for result in &results {
+        assert!(result.is_ok(), "no caller may lose with an error: {result:?}");
+    }
+    assert_eq!(
+        results.iter().filter(|r| r.as_ref().expect("ok").1).count(),
+        1,
+        "exactly one caller may report a creation"
+    );
+    let ids: std::collections::HashSet<CustomerId> =
+        results.iter().map(|r| r.as_ref().expect("ok").0.id).collect();
+    assert_eq!(ids.len(), 1, "every caller must get the same customer");
+    assert_eq!(
+        db.customers()
+            .count_async(CustomerFilter { email: Some(email), ..Default::default() })
+            .await
+            .expect("count"),
+        1
+    );
+}
+
+/// Migration `098_customer_email_key_backfill`: legacy case-duplicates end up
+/// keyed, reachable and predictably re-registerable (Postgres twin of the
+/// SQLite `sqlite_customer_email_key_backfill` suite).
+#[tokio::test]
+async fn pg_legacy_case_duplicate_customers_are_keyed_and_reachable() {
+    let Some(url) = postgres_url() else { return };
+    let db = PostgresDatabase::connect(&url).await.expect("connect");
+    let t = tag();
+    let address = format!("legacy-{t}@example.com");
+    let older = Uuid::new_v4();
+    let newer = Uuid::new_v4();
+
+    sqlx::query(
+        "INSERT INTO customers (id, email, email_key, first_name, last_name, status, tags,
+                                created_at, updated_at)
+         VALUES ($1, $2, NULL, 'Older', 'Account', 'active', '[]'::jsonb,
+                 TIMESTAMPTZ '2020-01-01 00:00:00Z', TIMESTAMPTZ '2020-01-01 00:00:00Z'),
+                ($3, $4, NULL, 'Newer', 'Account', 'active', '[]'::jsonb,
+                 TIMESTAMPTZ '2021-01-01 00:00:00Z', TIMESTAMPTZ '2021-01-01 00:00:00Z')",
+    )
+    .bind(older)
+    .bind(address.to_uppercase())
+    .bind(newer)
+    .bind(&address)
+    .execute(db.pool())
+    .await
+    .expect("install legacy case-duplicates");
+
+    // The defect: both rows are unkeyed, so the `email_key` lookup that
+    // `get_by_email` used to perform resolves nothing at all.
+    let unkeyed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM customers WHERE id = ANY($1) AND email_key IS NULL",
+    )
+    .bind(vec![older, newer])
+    .fetch_one(db.pool())
+    .await
+    .expect("count");
+    assert_eq!(unkeyed, 2, "pre-backfill both legacy rows are unkeyed");
+    let by_key: Option<Uuid> = sqlx::query_scalar("SELECT id FROM customers WHERE email_key = $1")
+        .bind(&address)
+        .fetch_optional(db.pool())
+        .await
+        .expect("lookup");
+    assert!(by_key.is_none(), "pre-backfill the legacy rows are unreachable by key");
+
+    // Re-run the backfill.
+    sqlx::query("DELETE FROM _migrations WHERE name = '098_customer_email_key_backfill'")
+        .execute(db.pool())
+        .await
+        .expect("un-apply");
+    let db = PostgresDatabase::connect(&url).await.expect("re-run migrations");
+
+    let keys: Vec<(Uuid, Option<String>)> = sqlx::query_as(
+        "SELECT id, email_key FROM customers WHERE id = ANY($1) ORDER BY created_at",
+    )
+    .bind(vec![older, newer])
+    .fetch_all(db.pool())
+    .await
+    .expect("keys");
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0].1.as_deref(), Some(address.as_str()), "oldest wins the canonical key");
+    assert_eq!(
+        keys[1].1.as_deref(),
+        Some(Customer::legacy_duplicate_email_key(&address, CustomerId::from(newer)).as_str()),
+        "the newer row is suffixed reversibly"
+    );
+
+    // Both retrievable; the address resolves to the canonical holder.
+    assert!(db.customers().get_async(CustomerId::from(older)).await.expect("ok").is_some());
+    assert!(db.customers().get_async(CustomerId::from(newer)).await.expect("ok").is_some());
+    assert_eq!(
+        db.customers()
+            .get_by_email_async(&address.to_uppercase())
+            .await
+            .expect("ok")
+            .expect("resolves")
+            .id,
+        CustomerId::from(older)
+    );
+
+    // Re-registration is defined: typed conflict, and find-or-create resolves.
+    let registration = CreateCustomer {
+        email: address.clone(),
+        first_name: "New".into(),
+        last_name: "Signup".into(),
+        ..Default::default()
+    };
+    let err = db.customers().create_async(registration.clone()).await.expect_err("taken");
+    assert!(
+        matches!(&err, CommerceError::EmailAlreadyExists(value) if value == &address),
+        "{err:?}"
+    );
+    let (resolved, created) =
+        db.customers().get_or_create_by_email_async(registration).await.expect("get_or_create");
+    assert_eq!(resolved.id, CustomerId::from(older));
+    assert!(!created);
 }

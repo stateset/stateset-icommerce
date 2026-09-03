@@ -401,10 +401,17 @@ pub(crate) async fn remove_item(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// `409` when the cart is no longer active: the shipping charge is money on
+// the cart, and a completed / cancelled / abandoned / expired cart's totals
+// are settled (`Cart::ensure_money_settable`). Kept as a plain comment: a doc
+// comment here becomes the operation's OpenAPI `summary`.
 #[utoipa::path(post, operation_id = "carts_set_shipping", path = "/api/v1/carts/{id}/shipping", tag = "carts",
     request_body = SetCartShippingRequest,
     params(("id" = String, Path, description = "Cart ID")),
-    responses((status = 200, body = CartResponse), (status = 400, body = ErrorBody)))]
+    responses(
+        (status = 200, body = CartResponse),
+        (status = 400, body = ErrorBody),
+        (status = 409, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
 pub(crate) async fn set_shipping(
     State(state): State<AppState>,

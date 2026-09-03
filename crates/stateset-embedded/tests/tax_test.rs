@@ -2,12 +2,212 @@
 
 //! Integration tests for tax calculation features
 
-use chrono::Utc;
+use chrono::{NaiveDate, Utc};
+use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_embedded::{
-    Commerce, CreateTaxJurisdiction, CreateTaxRate, JurisdictionLevel, ProductTaxCategory,
-    TaxAddress, TaxCalculationRequest, TaxLineItem, TaxType,
+    Commerce, CreateCustomer, CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate,
+    ExemptionType, JurisdictionLevel, ProductTaxCategory, TaxAddress, TaxCalculationRequest,
+    TaxLineItem, TaxType,
 };
+use uuid::Uuid;
+
+/// A store with a single 5% jurisdiction and one customer.
+fn store_with_rate() -> (Commerce, Uuid) {
+    let commerce = Commerce::new(":memory:").expect("commerce");
+    let jurisdiction = commerce
+        .tax()
+        .create_jurisdiction(CreateTaxJurisdiction {
+            parent_id: None,
+            name: "Exemption Test State".into(),
+            code: "ZX-ET".into(),
+            level: JurisdictionLevel::State,
+            country_code: "ZX".into(),
+            state_code: Some("ET".into()),
+            county: None,
+            city: None,
+            postal_codes: vec![],
+        })
+        .expect("jurisdiction");
+    commerce
+        .tax()
+        .create_rate(CreateTaxRate {
+            jurisdiction_id: jurisdiction.id,
+            tax_type: TaxType::SalesTax,
+            product_category: ProductTaxCategory::Standard,
+            rate: dec!(0.05),
+            name: "Sales Tax".into(),
+            effective_from: NaiveDate::from_ymd_opt(2020, 1, 1).expect("date"),
+            ..Default::default()
+        })
+        .expect("rate");
+    let customer = commerce
+        .customers()
+        .create(CreateCustomer {
+            email: format!("exempt-{}@example.com", Uuid::new_v4()),
+            first_name: "Ex".into(),
+            last_name: "Empt".into(),
+            ..Default::default()
+        })
+        .expect("customer");
+    (commerce, customer.id.into_uuid())
+}
+
+fn hundred_dollar_request(customer_id: Uuid) -> TaxCalculationRequest {
+    TaxCalculationRequest {
+        line_items: vec![TaxLineItem {
+            id: "item-1".into(),
+            quantity: dec!(1),
+            unit_price: dec!(100),
+            tax_category: ProductTaxCategory::Standard,
+            ..Default::default()
+        }],
+        shipping_address: TaxAddress {
+            country: "ZX".into(),
+            state: Some("ET".into()),
+            ..Default::default()
+        },
+        customer_id: Some(customer_id),
+        ..Default::default()
+    }
+}
+
+/// The exemption lifecycle end to end through the PUBLIC facade: an exemption
+/// can be created there, and — since only verified exemptions are honoured —
+/// verified there too. `verify_exemption` existed on both repositories but was
+/// reachable from neither facade, so an exemption created through the public
+/// API could never be honoured.
+#[test]
+fn tax_exemption_is_honoured_only_after_it_is_verified() {
+    let (commerce, customer_id) = store_with_rate();
+    let request = hundred_dollar_request(customer_id);
+
+    assert_eq!(commerce.tax().calculate(request.clone()).expect("calc").total_tax, dec!(5.00));
+
+    let exemption = commerce
+        .tax()
+        .create_exemption(CreateTaxExemption {
+            customer_id,
+            exemption_type: ExemptionType::Resale,
+            certificate_number: Some("RES-9".into()),
+            issuing_authority: None,
+            jurisdiction_ids: vec![],
+            exempt_categories: vec![],
+            effective_from: Utc::now().date_naive() - chrono::Duration::days(1),
+            expires_at: None,
+            notes: None,
+        })
+        .expect("create exemption");
+    assert!(!exemption.verified, "exemptions are created unverified");
+    assert!(
+        !commerce.tax().customer_is_exempt(customer_id).expect("is exempt"),
+        "an unverified certificate is not an exemption in force"
+    );
+    assert_eq!(
+        commerce.tax().calculate(request.clone()).expect("calc").total_tax,
+        dec!(5.00),
+        "unverified: still taxed"
+    );
+
+    let verified = commerce.tax().verify_exemption(exemption.id, true).expect("verify");
+    assert!(verified.verified && verified.verified_at.is_some());
+    assert!(commerce.tax().customer_is_exempt(customer_id).expect("is exempt"));
+
+    let result = commerce.tax().calculate(request.clone()).expect("calc");
+    assert_eq!(result.total_tax, Decimal::ZERO, "verified: tax drops to zero");
+    assert!(result.exemptions_applied);
+    assert_eq!(result.applied_exemptions.len(), 1);
+    assert_eq!(result.applied_exemptions[0].tax_saved, dec!(5.00));
+
+    // Revoking the verification puts the tax back.
+    commerce.tax().verify_exemption(exemption.id, false).expect("revoke");
+    assert!(!commerce.tax().customer_is_exempt(customer_id).expect("is exempt"));
+    assert_eq!(commerce.tax().calculate(request).expect("calc").total_tax, dec!(5.00));
+}
+
+/// `customer_is_exempt` must agree with the engine. It used to return true for
+/// ANY stored row, so it said "exempt" for unverified, inactive and expired
+/// certificates while the very next calculation charged full tax.
+#[test]
+fn customer_is_exempt_agrees_with_the_engine() {
+    let (commerce, customer_id) = store_with_rate();
+    let today = Utc::now().date_naive();
+
+    // Expired yesterday.
+    let expired = commerce
+        .tax()
+        .create_exemption(CreateTaxExemption {
+            customer_id,
+            exemption_type: ExemptionType::NonProfit,
+            certificate_number: Some("NP-1".into()),
+            issuing_authority: None,
+            jurisdiction_ids: vec![],
+            exempt_categories: vec![],
+            effective_from: today - chrono::Duration::days(30),
+            expires_at: Some(today - chrono::Duration::days(1)),
+            notes: None,
+        })
+        .expect("create exemption");
+    commerce.tax().verify_exemption(expired.id, true).expect("verify");
+
+    assert!(
+        !commerce.tax().customer_is_exempt(customer_id).expect("is exempt"),
+        "an expired certificate is not in force"
+    );
+    assert_eq!(
+        commerce.tax().calculate(hundred_dollar_request(customer_id)).expect("calc").total_tax,
+        dec!(5.00),
+        "and the engine agrees"
+    );
+    // It WAS in force inside its window.
+    assert!(
+        commerce
+            .tax()
+            .customer_is_exempt_on(customer_id, today - chrono::Duration::days(2))
+            .expect("is exempt on")
+    );
+    // The row is still there — the old implementation said "exempt" for it.
+    assert_eq!(commerce.tax().get_customer_exemptions(customer_id).expect("list").len(), 1);
+}
+
+/// Turning tax off in settings must stop tax being charged, and the effective
+/// rate lookup must agree.
+#[test]
+fn disabling_tax_settings_charges_no_tax() {
+    let (commerce, customer_id) = store_with_rate();
+    let address =
+        TaxAddress { country: "ZX".into(), state: Some("ET".into()), ..Default::default() };
+
+    assert_eq!(
+        commerce.tax().calculate(hundred_dollar_request(customer_id)).expect("calc").total_tax,
+        dec!(5.00)
+    );
+    assert_eq!(
+        commerce.tax().get_effective_rate(&address, ProductTaxCategory::Standard).expect("rate"),
+        dec!(0.05)
+    );
+
+    let settings = commerce.tax().set_enabled(false).expect("disable");
+    assert!(!settings.enabled);
+    assert!(!commerce.tax().is_enabled().expect("is enabled"));
+
+    let result = commerce.tax().calculate(hundred_dollar_request(customer_id)).expect("calc");
+    assert_eq!(result.total_tax, Decimal::ZERO, "disabled tax must charge nothing: {result:?}");
+    assert_eq!(result.subtotal, dec!(100));
+    assert_eq!(result.total, dec!(100));
+    assert!(result.tax_breakdown.is_empty());
+    assert_eq!(
+        commerce.tax().get_effective_rate(&address, ProductTaxCategory::Standard).expect("rate"),
+        Decimal::ZERO,
+        "the quoted rate must agree with what is charged"
+    );
+
+    commerce.tax().set_enabled(true).expect("re-enable");
+    assert_eq!(
+        commerce.tax().calculate(hundred_dollar_request(customer_id)).expect("calc").total_tax,
+        dec!(5.00)
+    );
+}
 
 #[test]
 fn test_us_sales_tax_calculation() {

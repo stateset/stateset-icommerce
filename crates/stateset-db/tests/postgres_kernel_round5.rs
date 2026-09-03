@@ -13,16 +13,18 @@ use rust_decimal_macros::dec;
 use serde::Serialize;
 use serde_json::{Value, json};
 use stateset_core::{
-    A2ADisputeResolutionType, ApprovalEvidence, ChargeSubscription, CommandEnvelope, CommerceError,
-    CommitCheckout, ConfirmInventoryReservation, CreateA2AEscrow, CreateCustomer,
-    CreateInventoryItem, CreateOrder, CreateOrderItem, CreatePayment, CreateProduct, CreateRefund,
-    CustomerRepository, DisputeA2AEscrow, ExecutionMode, ExecutionReceipt, ExecutionStatus,
-    FileA2ADispute, FundA2AEscrow, InventoryRepository, KernelCommandPolicy, KernelPolicy,
+    A2ADisputeResolutionType, AccountType, ApprovalEvidence, ChargeSubscription, CommandEnvelope,
+    CommerceError, CommitCheckout, ConfirmInventoryReservation, CreateA2AEscrow, CreateCustomer,
+    CreateGlAccount, CreateGlPeriod, CreateInventoryItem, CreateJournalEntry,
+    CreateJournalEntryLine, CreateOrder, CreateOrderItem, CreatePayment, CreateProduct,
+    CreateRefund, CreateReturn, CreateReturnItem, CreateX402PaymentIntent, CustomerRepository,
+    DisputeA2AEscrow, ExecutionMode, ExecutionReceipt, ExecutionStatus, FileA2ADispute,
+    FundA2AEscrow, InventoryRepository, JournalEntryStatus, KernelCommandPolicy, KernelPolicy,
     KernelPrincipal, OrderRepository, OrderStatus, Payment, PaymentMethodType,
     PaymentTransactionStatus, PostJournalEntry, PrincipalKind, ProductId, RefundA2AEscrow,
     ReleaseA2AEscrow, ReleaseInventoryReservation, ReserveInventory, ResolveA2ADispute,
     RetryDisposition, ReturnStatus, SettleX402Intent, ShipOrderCommand, SubmitA2ADisputeEvidence,
-    TransitionOrder, TransitionReturn,
+    TransitionOrder, TransitionReturn, X402Asset, X402Network,
 };
 use stateset_db::{PostgresDatabase, SqliteDatabase};
 use std::env;
@@ -925,11 +927,495 @@ async fn postgres_preview_envelopes_are_durable_non_mutating_and_replayable_acro
         .await
         .expect("escrow status");
     assert_eq!(escrow_status, "created", "preview never funded the escrow");
+
+    // ---- op kinds the Postgres preview table used to be missing --------
+    // SQLite proved 19 op kinds preview durably and non-mutatingly; Postgres
+    // proved 11. These five close the gap: `a2a.escrow.dispute`,
+    // `a2a.escrow.refund`, `returns.transition`, `ledger.post` and
+    // `x402.settle`.
+
+    let mut fund_live = command(
+        "a2a.escrow.fund",
+        key("r5-fund-live"),
+        FundA2AEscrow { escrow_id: escrow.id.clone() },
+    );
+    fund_live.mode = ExecutionMode::Apply;
+    executor.execute_fund_a2a_escrow_async(&fund_live).await.expect("fund escrow");
+    preview!(
+        execute_dispute_a2a_escrow_async,
+        command(
+            "a2a.escrow.dispute",
+            key("r5-preview-dispute"),
+            DisputeA2AEscrow {
+                escrow_id: escrow.id.clone(),
+                reason: "goods never arrived".into(),
+                category: None
+            }
+        )
+    );
+    preview!(
+        execute_refund_a2a_escrow_async,
+        command(
+            "a2a.escrow.refund",
+            key("r5-preview-escrow-refund"),
+            RefundA2AEscrow { escrow_id: escrow.id.clone(), reason: None }
+        )
+    );
+    let escrow_status: String = sqlx::query_scalar("SELECT status FROM a2a_escrows WHERE id = $1")
+        .bind(&escrow.id)
+        .fetch_one(db.pool())
+        .await
+        .expect("escrow status");
+    assert_eq!(escrow_status, "active", "previews never moved the funded escrow");
+
+    let returnable = order_with_stock(&db, dec!(15.00)).await;
+    processing_order(&db, returnable.id.into_uuid()).await;
+    let mut ship_live = command(
+        "orders.ship",
+        key("r5-return-ship"),
+        ShipOrderCommand { order_id: returnable.id, tracking_number: None, lines: None },
+    );
+    ship_live.mode = ExecutionMode::Apply;
+    executor.execute_ship_order_async(&ship_live).await.expect("ship order");
+    let shipped =
+        db.orders().get_async(returnable.id.into_uuid()).await.expect("get").expect("order");
+    let returned = db
+        .returns()
+        .create_async(CreateReturn {
+            order_id: returnable.id,
+            items: vec![CreateReturnItem {
+                order_item_id: shipped.items[0].id,
+                quantity: 1,
+                condition: None,
+            }],
+            ..Default::default()
+        })
+        .await
+        .expect("create return");
+    preview!(
+        execute_transition_return_async,
+        command(
+            "returns.transition",
+            key("r5-preview-return"),
+            TransitionReturn { return_id: returned.id, status: ReturnStatus::Approved }
+        )
+    );
+    let stored_return = db
+        .returns()
+        .get_async(returned.id.into_uuid())
+        .await
+        .expect("get return")
+        .expect("return exists");
+    assert_eq!(stored_return.status, returned.status, "preview never moved the return");
+    assert_eq!(stored_return.version, returned.version);
+
+    let bytes = suffix.as_bytes();
+    let fiscal_year = 2300 + i32::from(bytes[2]);
+    let gl = db.general_ledger();
+    let period = gl
+        .create_period_async(CreateGlPeriod {
+            period_name: format!("FY{fiscal_year}-preview-{suffix}"),
+            fiscal_year,
+            period_number: 1 + i32::from(bytes[3] % 12),
+            start_date: chrono::NaiveDate::from_ymd_opt(fiscal_year, 1, 1).expect("date"),
+            end_date: chrono::NaiveDate::from_ymd_opt(fiscal_year, 12, 31).expect("date"),
+        })
+        .await
+        .expect("create period");
+    gl.open_period_async(period.id).await.expect("open period");
+    let cash = gl
+        .create_account_async(CreateGlAccount {
+            account_number: format!("1000-preview-{suffix}"),
+            name: "Preview Cash".into(),
+            description: None,
+            account_type: AccountType::Asset,
+            account_sub_type: None,
+            parent_account_id: None,
+            is_header: Some(false),
+            is_posting: Some(true),
+            currency: None,
+        })
+        .await
+        .expect("create cash account");
+    let revenue = gl
+        .create_account_async(CreateGlAccount {
+            account_number: format!("4000-preview-{suffix}"),
+            name: "Preview Revenue".into(),
+            description: None,
+            account_type: AccountType::Revenue,
+            account_sub_type: None,
+            parent_account_id: None,
+            is_header: Some(false),
+            is_posting: Some(true),
+            currency: None,
+        })
+        .await
+        .expect("create revenue account");
+    let entry = gl
+        .create_journal_entry_async(CreateJournalEntry {
+            entry_date: chrono::NaiveDate::from_ymd_opt(fiscal_year, 6, 1).expect("date"),
+            entry_type: None,
+            description: "Draft awaiting a previewed post".into(),
+            lines: vec![
+                CreateJournalEntryLine::debit(cash.id, dec!(30), None),
+                CreateJournalEntryLine::credit(revenue.id, dec!(30), None),
+            ],
+            source_document_type: Some("kernel_command".into()),
+            source_document_id: None,
+            auto_post: Some(false),
+        })
+        .await
+        .expect("create journal entry");
+    preview!(
+        execute_post_journal_entry_async,
+        command(
+            "ledger.post",
+            key("r5-preview-ledger"),
+            PostJournalEntry { journal_entry_id: entry.id, posted_by: "agent:round5".into() }
+        )
+    );
+    let stored_entry =
+        gl.get_journal_entry_async(entry.id).await.expect("get entry").expect("entry exists");
+    assert_eq!(stored_entry.status, JournalEntryStatus::Draft, "preview never posted the entry");
+
+    let intent = db
+        .x402_payment_intents()
+        .create_async(CreateX402PaymentIntent {
+            payer_address: format!("0xpayer-{suffix}"),
+            payee_address: format!("0xpayee-{suffix}"),
+            amount: 1_000_000,
+            asset: X402Asset::Usdc,
+            network: X402Network::SetChain,
+            ..Default::default()
+        })
+        .await
+        .expect("create x402 intent");
+    sqlx::query("UPDATE x402_payment_intents SET status = 'sequenced' WHERE id = $1")
+        .bind(intent.id)
+        .execute(db.pool())
+        .await
+        .expect("sequence intent fixture");
+    preview!(
+        execute_settle_x402_intent_async,
+        command(
+            "x402.settle",
+            key("r5-preview-x402"),
+            SettleX402Intent {
+                intent_id: intent.id,
+                tx_hash: format!("0xpreview-{suffix}"),
+                block_number: 42
+            }
+        )
+    );
+    let intent_status: String =
+        sqlx::query_scalar("SELECT status FROM x402_payment_intents WHERE id = $1")
+            .bind(intent.id)
+            .fetch_one(db.pool())
+            .await
+            .expect("intent status");
+    assert_eq!(intent_status, "sequenced", "preview never settled the intent");
 }
 
 // ---------------------------------------------------------------------------
 // Cross-backend receipt shape: same command → structurally identical receipt
 // ---------------------------------------------------------------------------
+
+/// The complete governed op table: every kernel command kind with a
+/// representative payload and a payload that must be rejected on domain
+/// grounds. It is expanded once per cross-backend check, so an op cannot be
+/// covered by one check and silently forgotten by another.
+///
+/// `$apply` is invoked as
+/// `$apply!(sqlite_method, postgres_method, command_type, payload, domain_rejecting_payload)`.
+macro_rules! for_every_op {
+    ($apply:ident, $future:expr) => {
+        $apply!(
+            execute_create_inventory_item,
+            execute_create_inventory_item_async,
+            "inventory.item.create",
+            CreateInventoryItem { sku: "S".into(), name: "n".into(), ..Default::default() },
+            CreateInventoryItem { sku: "".into(), name: "".into(), ..Default::default() }
+        );
+        $apply!(
+            execute_create_product,
+            execute_create_product_async,
+            "products.create",
+            CreateProduct { name: "P".into(), ..Default::default() },
+            CreateProduct { name: "".into(), ..Default::default() }
+        );
+        $apply!(
+            execute_create_payment,
+            execute_create_payment_async,
+            "payments.create",
+            CreatePayment {
+                amount: dec!(1),
+                payment_method: PaymentMethodType::CreditCard,
+                ..Default::default()
+            },
+            // A zero amount is a legal $0 authorization; a negative one is not.
+            CreatePayment {
+                amount: dec!(-1),
+                payment_method: PaymentMethodType::CreditCard,
+                ..Default::default()
+            }
+        );
+        $apply!(
+            execute_create_refund,
+            execute_create_refund_async,
+            "payments.create_refund",
+            CreateRefund { payment_id: stateset_core::PaymentId::new(), ..Default::default() },
+            CreateRefund { payment_id: stateset_core::PaymentId::new(), ..Default::default() }
+        );
+        $apply!(
+            execute_reserve_inventory,
+            execute_reserve_inventory_async,
+            "inventory.reserve",
+            ReserveInventory {
+                sku: "S".into(),
+                location_id: None,
+                quantity: dec!(1),
+                reference_type: "t".into(),
+                reference_id: "r".into(),
+                expires_in_seconds: None
+            },
+            ReserveInventory {
+                // A SKU that cannot exist, so the domain rejection is stable
+                // on a shared Postgres database other tests have written to.
+                sku: format!("R5-MISSING-{}", Uuid::new_v4()),
+                location_id: None,
+                quantity: dec!(1),
+                reference_type: "t".into(),
+                reference_id: "r".into(),
+                expires_in_seconds: None
+            }
+        );
+        $apply!(
+            execute_confirm_inventory_reservation,
+            execute_confirm_inventory_reservation_async,
+            "inventory.reservation.confirm",
+            ConfirmInventoryReservation { reservation_id: Uuid::new_v4(), quantity: None },
+            ConfirmInventoryReservation { reservation_id: Uuid::new_v4(), quantity: None }
+        );
+        $apply!(
+            execute_release_inventory_reservation,
+            execute_release_inventory_reservation_async,
+            "inventory.reservation.release",
+            ReleaseInventoryReservation { reservation_id: Uuid::new_v4() },
+            ReleaseInventoryReservation { reservation_id: Uuid::new_v4() }
+        );
+        $apply!(
+            execute_transition_order,
+            execute_transition_order_async,
+            "orders.transition",
+            TransitionOrder {
+                order_id: stateset_core::OrderId::new(),
+                status: OrderStatus::Confirmed,
+                payment_status: None,
+                void_payments: false
+            },
+            TransitionOrder {
+                order_id: stateset_core::OrderId::new(),
+                status: OrderStatus::Confirmed,
+                payment_status: None,
+                void_payments: false
+            }
+        );
+        $apply!(
+            execute_ship_order,
+            execute_ship_order_async,
+            "orders.ship",
+            ShipOrderCommand {
+                order_id: stateset_core::OrderId::new(),
+                tracking_number: None,
+                lines: None
+            },
+            ShipOrderCommand {
+                order_id: stateset_core::OrderId::new(),
+                tracking_number: None,
+                lines: None
+            }
+        );
+        $apply!(
+            execute_transition_return,
+            execute_transition_return_async,
+            "returns.transition",
+            TransitionReturn {
+                return_id: stateset_core::ReturnId::new(),
+                status: ReturnStatus::Approved
+            },
+            TransitionReturn {
+                return_id: stateset_core::ReturnId::new(),
+                status: ReturnStatus::Approved
+            }
+        );
+        $apply!(
+            execute_post_journal_entry,
+            execute_post_journal_entry_async,
+            "ledger.post",
+            PostJournalEntry { journal_entry_id: Uuid::new_v4(), posted_by: "u".into() },
+            PostJournalEntry { journal_entry_id: Uuid::new_v4(), posted_by: "u".into() }
+        );
+        $apply!(
+            execute_settle_x402_intent,
+            execute_settle_x402_intent_async,
+            "x402.settle",
+            SettleX402Intent {
+                intent_id: Uuid::new_v4(),
+                tx_hash: "0xabc".into(),
+                block_number: 1
+            },
+            SettleX402Intent {
+                intent_id: Uuid::new_v4(),
+                tx_hash: "0xabc".into(),
+                block_number: 1
+            }
+        );
+        $apply!(
+            execute_commit_checkout,
+            execute_commit_checkout_async,
+            "checkout.commit",
+            CommitCheckout { cart_id: stateset_core::CartId::new() },
+            CommitCheckout { cart_id: stateset_core::CartId::new() }
+        );
+        $apply!(
+            execute_charge_subscription,
+            execute_charge_subscription_async,
+            "subscriptions.charge",
+            ChargeSubscription {
+                billing_cycle_id: Uuid::new_v4(),
+                payment_method: PaymentMethodType::CreditCard,
+                processor: None
+            },
+            ChargeSubscription {
+                billing_cycle_id: Uuid::new_v4(),
+                payment_method: PaymentMethodType::CreditCard,
+                processor: None
+            }
+        );
+        $apply!(
+            execute_create_a2a_escrow,
+            execute_create_a2a_escrow_async,
+            "a2a.escrow.create",
+            CreateA2AEscrow {
+                quote_id: None,
+                payment_id: None,
+                buyer_address: "b".into(),
+                seller_address: "s".into(),
+                amount: dec!(1),
+                asset: "USDC".into(),
+                network: "base".into(),
+                release_conditions: vec![],
+                expires_at: $future,
+                auto_release_after: None,
+                metadata: None
+            },
+            CreateA2AEscrow {
+                quote_id: None,
+                payment_id: None,
+                buyer_address: "b".into(),
+                seller_address: "b".into(),
+                amount: dec!(1),
+                asset: "USDC".into(),
+                network: "base".into(),
+                release_conditions: vec![],
+                expires_at: $future,
+                auto_release_after: None,
+                metadata: None
+            }
+        );
+        $apply!(
+            execute_dispute_a2a_escrow,
+            execute_dispute_a2a_escrow_async,
+            "a2a.escrow.dispute",
+            DisputeA2AEscrow { escrow_id: "e".into(), reason: "r".into(), category: None },
+            DisputeA2AEscrow { escrow_id: "e".into(), reason: "r".into(), category: None }
+        );
+        $apply!(
+            execute_fund_a2a_escrow,
+            execute_fund_a2a_escrow_async,
+            "a2a.escrow.fund",
+            FundA2AEscrow { escrow_id: "e".into() },
+            FundA2AEscrow { escrow_id: "e".into() }
+        );
+        $apply!(
+            execute_release_a2a_escrow,
+            execute_release_a2a_escrow_async,
+            "a2a.escrow.release",
+            ReleaseA2AEscrow { escrow_id: "e".into() },
+            ReleaseA2AEscrow { escrow_id: "e".into() }
+        );
+        $apply!(
+            execute_refund_a2a_escrow,
+            execute_refund_a2a_escrow_async,
+            "a2a.escrow.refund",
+            RefundA2AEscrow { escrow_id: "e".into(), reason: None },
+            RefundA2AEscrow { escrow_id: "e".into(), reason: None }
+        );
+        $apply!(
+            execute_file_a2a_dispute,
+            execute_file_a2a_dispute_async,
+            "a2a.dispute.file",
+            FileA2ADispute {
+                escrow_id: "e".into(),
+                claimant_address: "b".into(),
+                reason: "r".into(),
+                category: "c".into(),
+                evidence_deadline: $future,
+                review_deadline: $future,
+                metadata: None
+            },
+            FileA2ADispute {
+                escrow_id: "e".into(),
+                claimant_address: "b".into(),
+                reason: "r".into(),
+                category: "c".into(),
+                evidence_deadline: $future,
+                review_deadline: $future,
+                metadata: None
+            }
+        );
+        $apply!(
+            execute_submit_a2a_dispute_evidence,
+            execute_submit_a2a_dispute_evidence_async,
+            "a2a.dispute.evidence.submit",
+            SubmitA2ADisputeEvidence {
+                dispute_id: "d".into(),
+                submitted_by: "b".into(),
+                evidence_type: "t".into(),
+                title: "t".into(),
+                description: None,
+                content: "c".into()
+            },
+            SubmitA2ADisputeEvidence {
+                dispute_id: "d".into(),
+                submitted_by: "b".into(),
+                evidence_type: "t".into(),
+                title: "t".into(),
+                description: None,
+                content: "c".into()
+            }
+        );
+        $apply!(
+            execute_resolve_a2a_dispute,
+            execute_resolve_a2a_dispute_async,
+            "a2a.dispute.resolve",
+            ResolveA2ADispute {
+                dispute_id: "d".into(),
+                resolution_type: A2ADisputeResolutionType::FullRefund,
+                buyer_amount: None,
+                seller_amount: None,
+                note: None
+            },
+            ResolveA2ADispute {
+                dispute_id: "d".into(),
+                resolution_type: A2ADisputeResolutionType::FullRefund,
+                buyer_amount: None,
+                seller_amount: None,
+                note: None
+            }
+        );
+    };
+}
 
 fn normalize<T: Serialize>(receipt: &ExecutionReceipt<T>) -> Value {
     let mut value = serde_json::to_value(receipt).expect("serialize receipt");
@@ -956,7 +1442,8 @@ async fn postgres_and_sqlite_seal_structurally_identical_receipts_for_every_op_k
     // elapsed deadline, so the receipt is sealed before any backend SQL runs;
     // the two backends must then agree on every non-volatile field.
     macro_rules! shape {
-        ($lite:ident, $pg:ident, $type:literal, $payload:expr) => {{
+        ($lite:ident, $pg:ident, $type:literal, $payload:expr, $domain:expr) => {{
+            let _ = &$domain;
             let mut command =
                 command($type, format!("r5-shape-{}-{}", $type, Uuid::new_v4()), $payload);
             command.mode = ExecutionMode::Apply;
@@ -968,198 +1455,7 @@ async fn postgres_and_sqlite_seal_structurally_identical_receipts_for_every_op_k
         }};
     }
 
-    shape!(
-        execute_create_inventory_item,
-        execute_create_inventory_item_async,
-        "inventory.item.create",
-        CreateInventoryItem { sku: "S".into(), name: "n".into(), ..Default::default() }
-    );
-    shape!(
-        execute_create_product,
-        execute_create_product_async,
-        "products.create",
-        CreateProduct { name: "P".into(), ..Default::default() }
-    );
-    shape!(
-        execute_create_payment,
-        execute_create_payment_async,
-        "payments.create",
-        CreatePayment {
-            amount: dec!(1),
-            payment_method: PaymentMethodType::CreditCard,
-            ..Default::default()
-        }
-    );
-    shape!(
-        execute_create_refund,
-        execute_create_refund_async,
-        "payments.create_refund",
-        CreateRefund { payment_id: stateset_core::PaymentId::new(), ..Default::default() }
-    );
-    shape!(
-        execute_reserve_inventory,
-        execute_reserve_inventory_async,
-        "inventory.reserve",
-        ReserveInventory {
-            sku: "S".into(),
-            location_id: None,
-            quantity: dec!(1),
-            reference_type: "t".into(),
-            reference_id: "r".into(),
-            expires_in_seconds: None
-        }
-    );
-    shape!(
-        execute_confirm_inventory_reservation,
-        execute_confirm_inventory_reservation_async,
-        "inventory.reservation.confirm",
-        ConfirmInventoryReservation { reservation_id: Uuid::new_v4(), quantity: None }
-    );
-    shape!(
-        execute_release_inventory_reservation,
-        execute_release_inventory_reservation_async,
-        "inventory.reservation.release",
-        ReleaseInventoryReservation { reservation_id: Uuid::new_v4() }
-    );
-    shape!(
-        execute_transition_order,
-        execute_transition_order_async,
-        "orders.transition",
-        TransitionOrder {
-            order_id: stateset_core::OrderId::new(),
-            status: OrderStatus::Confirmed,
-            payment_status: None,
-            void_payments: false
-        }
-    );
-    shape!(
-        execute_ship_order,
-        execute_ship_order_async,
-        "orders.ship",
-        ShipOrderCommand {
-            order_id: stateset_core::OrderId::new(),
-            tracking_number: None,
-            lines: None
-        }
-    );
-    shape!(
-        execute_transition_return,
-        execute_transition_return_async,
-        "returns.transition",
-        TransitionReturn {
-            return_id: stateset_core::ReturnId::new(),
-            status: ReturnStatus::Approved
-        }
-    );
-    shape!(
-        execute_post_journal_entry,
-        execute_post_journal_entry_async,
-        "ledger.post",
-        PostJournalEntry { journal_entry_id: Uuid::new_v4(), posted_by: "u".into() }
-    );
-    shape!(
-        execute_settle_x402_intent,
-        execute_settle_x402_intent_async,
-        "x402.settle",
-        SettleX402Intent { intent_id: Uuid::new_v4(), tx_hash: "0xabc".into(), block_number: 1 }
-    );
-    shape!(
-        execute_commit_checkout,
-        execute_commit_checkout_async,
-        "checkout.commit",
-        CommitCheckout { cart_id: stateset_core::CartId::new() }
-    );
-    shape!(
-        execute_charge_subscription,
-        execute_charge_subscription_async,
-        "subscriptions.charge",
-        ChargeSubscription {
-            billing_cycle_id: Uuid::new_v4(),
-            payment_method: PaymentMethodType::CreditCard,
-            processor: None
-        }
-    );
-    shape!(
-        execute_create_a2a_escrow,
-        execute_create_a2a_escrow_async,
-        "a2a.escrow.create",
-        CreateA2AEscrow {
-            quote_id: None,
-            payment_id: None,
-            buyer_address: "b".into(),
-            seller_address: "s".into(),
-            amount: dec!(1),
-            asset: "USDC".into(),
-            network: "base".into(),
-            release_conditions: vec![],
-            expires_at: future,
-            auto_release_after: None,
-            metadata: None
-        }
-    );
-    shape!(
-        execute_dispute_a2a_escrow,
-        execute_dispute_a2a_escrow_async,
-        "a2a.escrow.dispute",
-        DisputeA2AEscrow { escrow_id: "e".into(), reason: "r".into(), category: None }
-    );
-    shape!(
-        execute_fund_a2a_escrow,
-        execute_fund_a2a_escrow_async,
-        "a2a.escrow.fund",
-        FundA2AEscrow { escrow_id: "e".into() }
-    );
-    shape!(
-        execute_release_a2a_escrow,
-        execute_release_a2a_escrow_async,
-        "a2a.escrow.release",
-        ReleaseA2AEscrow { escrow_id: "e".into() }
-    );
-    shape!(
-        execute_refund_a2a_escrow,
-        execute_refund_a2a_escrow_async,
-        "a2a.escrow.refund",
-        RefundA2AEscrow { escrow_id: "e".into(), reason: None }
-    );
-    shape!(
-        execute_file_a2a_dispute,
-        execute_file_a2a_dispute_async,
-        "a2a.dispute.file",
-        FileA2ADispute {
-            escrow_id: "e".into(),
-            claimant_address: "b".into(),
-            reason: "r".into(),
-            category: "c".into(),
-            evidence_deadline: future,
-            review_deadline: future,
-            metadata: None
-        }
-    );
-    shape!(
-        execute_submit_a2a_dispute_evidence,
-        execute_submit_a2a_dispute_evidence_async,
-        "a2a.dispute.evidence.submit",
-        SubmitA2ADisputeEvidence {
-            dispute_id: "d".into(),
-            submitted_by: "b".into(),
-            evidence_type: "t".into(),
-            title: "t".into(),
-            description: None,
-            content: "c".into()
-        }
-    );
-    shape!(
-        execute_resolve_a2a_dispute,
-        execute_resolve_a2a_dispute_async,
-        "a2a.dispute.resolve",
-        ResolveA2ADispute {
-            dispute_id: "d".into(),
-            resolution_type: A2ADisputeResolutionType::FullRefund,
-            buyer_amount: None,
-            seller_amount: None,
-            note: None
-        }
-    );
+    for_every_op!(shape, future);
 
     // A committed success shape must agree too.
     let pg_order = order_with_stock(&pg, dec!(10.00)).await;
@@ -1214,4 +1510,217 @@ async fn postgres_and_sqlite_seal_structurally_identical_receipts_for_every_op_k
     };
     assert_eq!(strip(&lite_receipt), strip(&pg_receipt));
     assert_eq!(lite_receipt.event_ids.len(), pg_receipt.event_ids.len());
+}
+
+// ---------------------------------------------------------------------------
+// Actor coherence: no principal may approve (or delegate to) itself, on ANY op
+// ---------------------------------------------------------------------------
+
+/// The actor-coherence guard used to live only in `EnvelopeGuard`, which only
+/// six converted ops and the five a2a transitions ran; the other eleven
+/// hand-rolled their guard chain and omitted it, so `products.create`,
+/// `inventory.*`, `returns.transition`, `a2a.escrow.release`,
+/// `subscriptions.charge`, `checkout.commit`, `ledger.post` and `x402.settle`
+/// accepted a self-approving principal. Every op kind now runs the shared
+/// chain, and this table proves it on both backends.
+#[tokio::test]
+async fn postgres_and_sqlite_reject_self_approved_and_self_delegated_commands_for_every_op_kind() {
+    let pg = require_db!();
+    let lite = SqliteDatabase::in_memory().expect("sqlite");
+    let pg_exec = pg.kernel_executor(policy());
+    let lite_exec = lite.kernel_executor(policy());
+    let future = Utc::now() + Duration::hours(1);
+    let approved_at = Utc::now();
+
+    macro_rules! actor_coherence {
+        ($lite:ident, $pg:ident, $type:literal, $payload:expr, $domain:expr) => {{
+            let _ = &$domain;
+            // (a) a principal approving its own command.
+            let mut approved =
+                command($type, format!("r5-selfapp-{}-{}", $type, Uuid::new_v4()), $payload);
+            approved.mode = ExecutionMode::Apply;
+            approved.approval = Some(ApprovalEvidence {
+                approval_id: "self-approval".into(),
+                approved_by: approved.principal.id.clone(),
+                scope: $type.into(),
+                tenant_id: None,
+                store_id: None,
+                idempotency_key: None,
+                approved_at,
+                expires_at: None,
+            });
+            let sqlite_receipt = lite_exec.$lite(&approved).expect("sqlite receipt");
+            let pg_receipt = pg_exec.$pg(&approved).await.expect("pg receipt");
+            assert_eq!(
+                sqlite_receipt.error_code.as_deref(),
+                Some("kernel.actor_mismatch"),
+                "sqlite accepted a self-approved {}",
+                $type
+            );
+            assert_eq!(
+                pg_receipt.error_code.as_deref(),
+                Some("kernel.actor_mismatch"),
+                "postgres accepted a self-approved {}",
+                $type
+            );
+            assert_eq!(sqlite_receipt.status, ExecutionStatus::Rejected);
+            assert_eq!(sqlite_receipt.retry, RetryDisposition::Never);
+            assert_eq!(normalize(&sqlite_receipt), normalize(&pg_receipt), "{}", $type);
+
+            // (b) an agent that delegated authority to itself.
+            let mut delegated =
+                command($type, format!("r5-selfdel-{}-{}", $type, Uuid::new_v4()), $payload);
+            delegated.mode = ExecutionMode::Apply;
+            delegated.principal.delegated_by = Some(delegated.principal.id.clone());
+            let sqlite_receipt = lite_exec.$lite(&delegated).expect("sqlite receipt");
+            let pg_receipt = pg_exec.$pg(&delegated).await.expect("pg receipt");
+            assert_eq!(
+                sqlite_receipt.error_code.as_deref(),
+                Some("kernel.actor_mismatch"),
+                "sqlite accepted a self-delegated {}",
+                $type
+            );
+            assert_eq!(
+                pg_receipt.error_code.as_deref(),
+                Some("kernel.actor_mismatch"),
+                "postgres accepted a self-delegated {}",
+                $type
+            );
+            assert_eq!(normalize(&sqlite_receipt), normalize(&pg_receipt), "{}", $type);
+        }};
+    }
+
+    for_every_op!(actor_coherence, future);
+}
+
+// ---------------------------------------------------------------------------
+// Cross-backend domain rejections: same rejecting command → same receipt
+// ---------------------------------------------------------------------------
+
+/// The receipt-shape proof used to compare only the `kernel.deadline_exceeded`
+/// path, which never reaches backend SQL. This drives every op past the
+/// envelope guard into its own plan/repository checks, so the two backends
+/// must agree on the *domain* rejection code as well as the receipt shape.
+#[tokio::test]
+async fn postgres_and_sqlite_agree_on_domain_rejections_for_every_op_kind() {
+    let pg = require_db!();
+    let lite = SqliteDatabase::in_memory().expect("sqlite");
+    let pg_exec = pg.kernel_executor(policy());
+    let lite_exec = lite.kernel_executor(policy());
+    let future = Utc::now() + Duration::hours(1);
+
+    macro_rules! domain_rejection {
+        ($lite:ident, $pg:ident, $type:literal, $payload:expr, $domain:expr) => {{
+            let _ = &$payload;
+            let mut command =
+                command($type, format!("r5-domain-{}-{}", $type, Uuid::new_v4()), $domain);
+            command.mode = ExecutionMode::Apply;
+            let sqlite_receipt = lite_exec.$lite(&command).expect("sqlite receipt");
+            let pg_receipt = pg_exec.$pg(&command).await.expect("pg receipt");
+            assert_eq!(
+                sqlite_receipt.status,
+                ExecutionStatus::Rejected,
+                "sqlite did not reject {}: {sqlite_receipt:?}",
+                $type
+            );
+            let code = sqlite_receipt.error_code.clone().expect("sqlite rejection code");
+            assert!(
+                !code.starts_with("kernel.deadline"),
+                "{} was rejected by the envelope, not by its domain plan",
+                $type
+            );
+            assert_eq!(
+                pg_receipt.error_code.as_deref(),
+                Some(code.as_str()),
+                "backends disagree on the {} domain rejection",
+                $type
+            );
+            assert_eq!(normalize(&sqlite_receipt), normalize(&pg_receipt), "{}", $type);
+        }};
+    }
+
+    for_every_op!(domain_rejection, future);
+}
+
+/// Postgres twin of `payment_preview_runs_every_check_apply_runs`: a preview
+/// must not answer "Previewed" for a capture that apply would refuse.
+#[tokio::test]
+async fn postgres_payment_preview_runs_every_check_apply_runs() {
+    let db = require_db!();
+    let order = order_with_stock(&db, dec!(100.00)).await;
+
+    let taken = db
+        .payments()
+        .create_async(CreatePayment {
+            order_id: Some(order.id),
+            payment_method: PaymentMethodType::CreditCard,
+            amount: order.total_amount,
+            ..Default::default()
+        })
+        .await
+        .expect("create capture");
+    db.payments().mark_completed_async(taken.id.into_uuid()).await.expect("complete the capture");
+
+    let mut preview = payment_command(key("pg-preview-over-capture"), order.total_amount);
+    preview.payload.order_id = Some(order.id);
+    preview.mode = ExecutionMode::Preview;
+    let error = db
+        .kernel_executor(policy())
+        .execute_create_payment_async(&preview)
+        .await
+        .expect_err("preview must refuse what apply would refuse");
+    assert_eq!(error.invariant_code(), Some("commerce.capture.exceeds_order_total"), "{error:?}");
+
+    let mut apply = preview;
+    apply.command_id = Uuid::new_v4();
+    apply.idempotency_key = key("pg-apply-over-capture");
+    apply.mode = ExecutionMode::Apply;
+    let error = db
+        .kernel_executor(policy())
+        .execute_create_payment_async(&apply)
+        .await
+        .expect_err("apply refuses");
+    assert_eq!(error.invariant_code(), Some("commerce.capture.exceeds_order_total"));
+}
+
+/// `Commerce::kernel_audit()` used to require a SQLite instance, so
+/// `GET /api/v1/kernel/audit` and `/audit/checkpoint` answered 500 on a
+/// Postgres-backed deployment even though Postgres implements the same
+/// verification. Both backends now expose the chain through the erased
+/// [`stateset_db::Database`] seam, which is what `Commerce` asks.
+#[tokio::test]
+async fn both_backends_expose_the_kernel_audit_chain_through_the_database_trait() {
+    let pg = require_db!();
+    let lite = SqliteDatabase::in_memory().expect("sqlite");
+
+    // The chain is verified synchronously on both backends; the Postgres path
+    // bridges to async through the shared runtime, which must not be entered
+    // from a Tokio worker — so callers (including the HTTP handler) run it on
+    // a blocking thread.
+    let checked = tokio::task::spawn_blocking(move || {
+        for (backend, database) in [
+            ("postgres", &pg as &dyn stateset_db::Database),
+            ("sqlite", &lite as &dyn stateset_db::Database),
+        ] {
+            let chain = database
+                .kernel_audit_chain()
+                .unwrap_or_else(|| panic!("{backend} seals receipts but exposes no audit chain"));
+            let verification = chain.verify_chain().expect("verify chain");
+            assert!(verification.valid, "{backend} chain must verify");
+            let checkpoint = chain.checkpoint().expect("mint checkpoint");
+            assert_eq!(checkpoint.contract_version, "1.0");
+            assert!(chain.verify_checkpoint(&checkpoint).expect("verify checkpoint"));
+
+            let mut forged = checkpoint;
+            forged.entries += 1;
+            assert!(
+                !chain.verify_checkpoint(&forged).expect("reject forged checkpoint"),
+                "{backend} accepted a forged checkpoint"
+            );
+        }
+        2_usize
+    })
+    .await
+    .expect("blocking audit verification");
+    assert_eq!(checked, 2, "both backends were verified");
 }

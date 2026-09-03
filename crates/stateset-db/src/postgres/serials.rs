@@ -580,11 +580,16 @@ impl PgSerialRepository {
         Ok(serials)
     }
 
+    /// Delete a serial that never moved.
+    ///
+    /// Only an existing, `Available` serial with no post-creation history may
+    /// be deleted (matching the SQLite backend). The row is locked and the
+    /// checks run inside the same transaction as the three deletes: on the
+    /// pool, a concurrent `reserve` / `mark_sold` between the check and the
+    /// delete would permanently destroy a live serial.
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
-        // Only an existing, Available serial with no post-creation history may be
-        // deleted (matching the SQLite backend). Without these guards Postgres
-        // returned Ok(()) for a missing id and permanently deleted a sold serial.
-        let serial = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let serial = Self::load_for_update(&mut tx, id).await?;
         if serial.status != SerialStatus::Available {
             return Err(CommerceError::ValidationError(
                 "Can only delete serials with 'available' status".to_string(),
@@ -596,7 +601,7 @@ impl PgSerialRepository {
         )
         .bind(id)
         .bind(SerialEventType::Created.to_string())
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -608,22 +613,23 @@ impl PgSerialRepository {
 
         sqlx::query("DELETE FROM serial_history WHERE serial_id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         sqlx::query("DELETE FROM serial_reservations WHERE serial_id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         sqlx::query("DELETE FROM serial_numbers WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
+        tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
 
@@ -1180,38 +1186,62 @@ impl PgSerialRepository {
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Stamp `activated_at` (warranty start) in one transaction.
+    ///
+    /// Idempotent: a serial that is already activated is returned unchanged
+    /// rather than collecting a second `Activated` history row. A scrapped
+    /// unit no longer exists, so it cannot start a warranty; every other
+    /// status may activate (a unit is typically activated after it ships or
+    /// sells, but a distributor may activate stock it still holds).
     pub async fn activate_async(&self, id: Uuid) -> Result<SerialNumber> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        sqlx::query(
-            "UPDATE serial_numbers SET activated_at = $1, updated_at = $1 WHERE id = $2 AND activated_at IS NULL",
+        let serial = Self::load_for_update(&mut tx, id).await?;
+        if serial.status.is_terminal() {
+            return Err(CommerceError::Conflict(format!(
+                "Serial {} ({}) cannot be activated: status is {}",
+                serial.serial, serial.id, serial.status
+            )));
+        }
+        if serial.activated_at.is_some() {
+            return Ok(serial); // Already activated — no second history row.
+        }
+
+        let rows = sqlx::query(
+            "UPDATE serial_numbers SET activated_at = $1, updated_at = $1
+             WHERE id = $2 AND activated_at IS NULL AND status = $3",
         )
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .bind(serial.status.to_string())
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-
-        if let Some(serial) = self.get_async(id).await? {
-            let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-            Self::record_history_tx(
-                &mut tx,
-                id,
-                SerialEventType::Activated,
-                None,
-                None,
-                serial.status,
-                serial.status,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-            .await?;
-            tx.commit().await.map_err(map_db_error)?;
+        if rows.rows_affected() != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "Serial {} ({}) changed concurrently while activating",
+                serial.serial, serial.id
+            )));
         }
+
+        Self::record_history_tx(
+            &mut tx,
+            id,
+            SerialEventType::Activated,
+            None,
+            None,
+            serial.status,
+            serial.status,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }

@@ -8,7 +8,7 @@ use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
     BatchResult, CommerceError, CreateProduct, CreateProductVariant, Product, ProductFilter,
     ProductId, ProductRepository, ProductStatus, ProductType, ProductVariant, Result,
-    UpdateProduct, VariantPurchasability, validate_batch_size, validate_sku,
+    UpdateProduct, Validate, VariantPurchasability, validate_batch_size, validate_sku,
 };
 use uuid::Uuid;
 
@@ -328,7 +328,12 @@ impl PgProductRepository {
         default_if_unset: bool,
         now: DateTime<Utc>,
     ) -> Result<ProductVariant> {
+        // SKU format, amounts and the compare-at relationship. The embedded
+        // facade validates too, but the repository is a public API of its own.
+        // `validate_sku` runs first so a malformed SKU keeps its historical
+        // `ValidationError`.
         validate_sku(&input.sku)?;
+        input.validate()?;
 
         let product_exists: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM products WHERE id = $1)")
@@ -413,9 +418,16 @@ impl PgProductRepository {
         let product_type = input.product_type.unwrap_or_default();
         let attributes = input.attributes.clone().unwrap_or_default();
 
+        // Validate every inline variant (SKU, amounts and the compare-at
+        // relationship) before writing anything, so a bad later variant cannot
+        // leave a half-created product behind and a caller holding the
+        // repository directly cannot store money the catalogue cannot honour.
         if let Some(variants) = &input.variants {
             for variant in variants {
+                // `validate_sku` first so a malformed SKU keeps its historical
+                // `ValidationError`; `validate` then covers the amounts.
                 validate_sku(&variant.sku)?;
+                variant.validate()?;
             }
         }
 
@@ -504,10 +516,14 @@ impl PgProductRepository {
         }
         if let Some(status) = input.status {
             existing.status.ensure_can_transition_to(status)?;
-            if status == ProductStatus::Archived && existing.status != ProductStatus::Archived {
+            // Any move out of `Active` — archiving OR unpublishing back to
+            // `Draft` — withdraws the SKUs from sale, so both need the same
+            // live-reference guard; without it, unpublishing left carts
+            // holding a SKU checkout would still accept.
+            if let Some(action) = existing.status.withdrawal_action(status) {
                 product_reference_counts_pg(conn, id)
                     .await?
-                    .ensure_none("archive", &format!("product {id}"))?;
+                    .ensure_none(action, &format!("product {id}"))?;
             }
         }
 
@@ -764,7 +780,9 @@ impl PgProductRepository {
         id: Uuid,
         input: CreateProductVariant,
     ) -> Result<ProductVariant> {
+        // Same contract as `insert_variant_tx`: SKU, amounts and compare-at.
         validate_sku(&input.sku)?;
+        input.validate()?;
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 

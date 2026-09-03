@@ -59,6 +59,20 @@ fn test_full_commerce_lifecycle() {
         })
         .expect("Failed to create product");
 
+    // `products.create` mints a `Draft` product; publishing it (`Active`) is
+    // what makes its SKU sellable — order lines are held to the same
+    // purchasability rule as cart lines.
+    commerce
+        .products()
+        .update(
+            product.id,
+            stateset_embedded::UpdateProduct {
+                status: Some(stateset_embedded::ProductStatus::Active),
+                ..Default::default()
+            },
+        )
+        .expect("Failed to publish product");
+
     // ========================================================================
     // 3. Create inventory
     // ========================================================================

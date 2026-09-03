@@ -1,8 +1,8 @@
 //! Customer operations
 
 use stateset_core::{
-    AddressType, CommerceError, CreateCustomer, CreateCustomerAddress, Customer, CustomerAddress,
-    CustomerFilter, CustomerId, Result, UpdateCustomer, Validate,
+    AddressType, CreateCustomer, CreateCustomerAddress, Customer, CustomerAddress, CustomerFilter,
+    CustomerId, Result, UpdateCustomer, Validate,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;
@@ -247,19 +247,30 @@ impl Customers {
 
     /// Find or create a customer by email.
     ///
-    /// The lookup is case-insensitive and ignores deleted accounts. If two
-    /// callers race on the same new address, the loser's create fails with
-    /// `EmailAlreadyExists` and the winner's record is returned instead.
+    /// The lookup is case-insensitive and ignores deleted accounts. Atomic:
+    /// the repository resolves and creates in ONE transaction
+    /// ([`stateset_core::CustomerRepository::get_or_create_by_email`]), so two
+    /// callers racing on the same address always end up with the same single
+    /// customer and neither of them ever sees `EmailAlreadyExists`.
+    ///
+    /// A `CustomerCreated` event and the creation metric are emitted only when
+    /// this call is the one that created the record.
     pub fn find_or_create(&self, input: CreateCustomer) -> Result<Customer> {
-        if let Some(customer) = self.get_by_email(&input.email)? {
-            return Ok(customer);
+        // Reject empty/malformed email or empty names before persisting,
+        // exactly as `create` does.
+        input.validate()?;
+        let (customer, created) = self.db.customers().get_or_create_by_email(input)?;
+        if created {
+            self.metrics.record_customer_created(&customer.id.to_string());
+            #[cfg(feature = "events")]
+            {
+                self.emit(CommerceEvent::CustomerCreated {
+                    customer_id: customer.id,
+                    email: customer.email.clone(),
+                    timestamp: customer.created_at,
+                });
+            }
         }
-        match self.create(input.clone()) {
-            Ok(customer) => Ok(customer),
-            Err(CommerceError::EmailAlreadyExists(_)) => self
-                .get_by_email(&input.email)?
-                .ok_or_else(|| CommerceError::EmailAlreadyExists(input.email)),
-            Err(e) => Err(e),
-        }
+        Ok(customer)
     }
 }

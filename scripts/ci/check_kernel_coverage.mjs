@@ -372,7 +372,13 @@ if (
   errors.push('semantic authority/idempotency adversarial eval is missing');
 }
 for (const source of [sqlite, postgres]) {
-  if (!source.includes('use crate::kernel_outbox::semantic_request_hash;')) {
+  // Every governed op now hashes through `CommandRun::prepare`, which calls
+  // the shared `semantic_request_hash` in `src/kernel/run.rs`; an executor
+  // that still imports it directly is equally acceptable.
+  const usesSharedHash =
+    source.includes('use crate::kernel_outbox::semantic_request_hash;') ||
+    source.includes('CommandRun::prepare(');
+  if (!usesSharedHash) {
     errors.push('a database executor is not using the shared semantic request hash');
   }
   if (/fn semantic_request_hash\s*</.test(source)) {

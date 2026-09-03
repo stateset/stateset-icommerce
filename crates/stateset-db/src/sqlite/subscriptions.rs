@@ -1774,6 +1774,12 @@ impl SqliteSubscriptionRepository {
     /// (paused/cancelled leave `next_billing_date` NULL) is never resurrected
     /// into billing. `billing_cycle_count` increments in every case, since the
     /// cycle really did settle.
+    ///
+    /// The subscription's billing lease is RELEASED here: the work the lease
+    /// protected (billing this period) is finished, so the worker's claim is
+    /// over. Leaving it to expire pinned the subscription for the rest of the
+    /// lease even though nothing was billing it, and a retry after an early
+    /// success had to wait the lease out.
     fn advance_subscription_after_paid_cycle_with_tx(
         &self,
         tx: &rusqlite::Transaction<'_>,
@@ -1814,6 +1820,8 @@ impl SqliteSubscriptionRepository {
                     current_period_start = ?1,
                     current_period_end = ?2,
                     next_billing_date = ?2,
+                    billing_lease_owner = NULL,
+                    billing_lease_until = NULL,
                     updated_at = ?3
                  WHERE id = ?4",
                 rusqlite::params![
@@ -1832,6 +1840,8 @@ impl SqliteSubscriptionRepository {
                 "UPDATE subscriptions SET
                     billing_cycle_count = billing_cycle_count + 1,
                     failed_payment_attempts = 0,
+                    billing_lease_owner = NULL,
+                    billing_lease_until = NULL,
                     updated_at = ?1
                  WHERE id = ?2",
                 rusqlite::params![now.to_rfc3339(), subscription_id.to_string()],

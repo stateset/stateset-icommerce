@@ -7,8 +7,8 @@ use stateset_core::CurrencyCode;
 use stateset_core::{CustomerId, OrderId};
 use stateset_embedded::{
     Address, BackorderStatus, Commerce, CreateCart, CreateCustomer, CreateInventoryItem,
-    CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter, OrderStatus,
-    PaymentStatus, ReservationStatus, UpdateOrder,
+    CreateOrder, CreateOrderItem, CreatePayment, FulfillmentStatus, Order, OrderFilter,
+    OrderStatus, PaymentStatus, RemoveOrderItem, ReservationStatus, UpdateOrder,
 };
 use uuid::Uuid;
 
@@ -1676,4 +1676,66 @@ fn test_ship_confirms_reservations() {
         .expect("Failed to load reservations");
     assert!(!reservations.is_empty());
     assert!(reservations.iter().all(|r| r.status == ReservationStatus::Confirmed));
+}
+
+/// The line-removal money guard is reachable through the embedded facade, and
+/// `remove_item_with` is the documented opt-out (see `RemoveOrderItem`).
+#[test]
+fn test_remove_item_refuses_to_strand_captured_money() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let customer_id = create_test_customer(&commerce);
+
+    let order = commerce
+        .orders()
+        .create(CreateOrder {
+            customer_id,
+            items: vec![
+                CreateOrderItem {
+                    product_id: Uuid::new_v4().into(),
+                    sku: "PAID-SKU-A".into(),
+                    name: "Widget A".into(),
+                    quantity: 1,
+                    unit_price: dec!(60.00),
+                    ..Default::default()
+                },
+                CreateOrderItem {
+                    product_id: Uuid::new_v4().into(),
+                    sku: "PAID-SKU-B".into(),
+                    name: "Widget B".into(),
+                    quantity: 1,
+                    unit_price: dec!(40.00),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .expect("create order");
+    assert_eq!(order.total_amount, dec!(100.00));
+
+    let payment = commerce
+        .payments()
+        .create(CreatePayment {
+            order_id: Some(order.id),
+            amount: dec!(50.00),
+            ..Default::default()
+        })
+        .expect("create payment");
+    commerce.payments().mark_completed(payment.id).expect("capture");
+
+    let big = order.items.iter().find(|i| i.total == dec!(60.00)).expect("60.00 line").id;
+    let err = commerce.orders().remove_item(order.id, big).expect_err("refused");
+    assert_eq!(err.invariant_code(), Some("commerce.order.total_below_captured"));
+    assert_eq!(
+        commerce.orders().get(order.id).expect("get").expect("exists").items.len(),
+        2,
+        "the refusal rolls the removal back"
+    );
+
+    commerce
+        .orders()
+        .remove_item_with(order.id, big, RemoveOrderItem { allow_overpayment: true })
+        .expect("explicit opt-in removes the line");
+    let reloaded = commerce.orders().get(order.id).expect("get").expect("exists");
+    assert_eq!(reloaded.items.len(), 1);
+    assert_eq!(reloaded.total_amount, dec!(40.00));
 }

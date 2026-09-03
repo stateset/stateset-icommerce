@@ -304,6 +304,55 @@ async fn postgres_blind_receipt_line_accepts_any_positive_quantity() {
     assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
 }
 
+/// Put `qty` units of `sku` on the shelf at both ledger levels (bin and
+/// warehouse balance) so a pick can take them.
+async fn seed_stock(
+    db: &PostgresDatabase,
+    warehouse_id: i32,
+    location_id: i32,
+    sku: &str,
+    qty: rust_decimal::Decimal,
+) {
+    sqlx::query(
+        "INSERT INTO location_inventory (location_id, sku, quantity_on_hand, quantity_reserved)
+         VALUES ($1, $2, $3, 0)
+         ON CONFLICT (location_id, sku, lot_id) DO UPDATE SET quantity_on_hand = EXCLUDED.quantity_on_hand",
+    )
+    .bind(location_id)
+    .bind(sku)
+    .bind(qty)
+    .execute(db.pool())
+    .await
+    .expect("seed bin");
+    sqlx::query("INSERT INTO inventory_items (sku, name) VALUES ($1, $1) ON CONFLICT DO NOTHING")
+        .bind(sku)
+        .execute(db.pool())
+        .await
+        .expect("seed item");
+    sqlx::query(
+        "INSERT INTO inventory_locations (id, name, code)
+         SELECT id, name, code FROM warehouses WHERE id = $1 ON CONFLICT DO NOTHING",
+    )
+    .bind(warehouse_id)
+    .execute(db.pool())
+    .await
+    .expect("seed inventory location");
+    sqlx::query(
+        "INSERT INTO inventory_balances
+         (item_id, location_id, quantity_on_hand, quantity_allocated, quantity_available)
+         SELECT id, $2, $3, 0, $3 FROM inventory_items WHERE sku = $1
+         ON CONFLICT (item_id, location_id) DO UPDATE SET
+             quantity_on_hand = EXCLUDED.quantity_on_hand,
+             quantity_available = EXCLUDED.quantity_available",
+    )
+    .bind(sku)
+    .bind(warehouse_id)
+    .bind(qty)
+    .execute(db.pool())
+    .await
+    .expect("seed warehouse balance");
+}
+
 // ---------------------------------------------------------------- W2
 
 #[tokio::test]
@@ -347,6 +396,9 @@ async fn postgres_wave_pick_count_and_completion_gate() {
     let w = db.fulfillment().get_wave_async(wave.id.into()).await.expect("get").expect("exists");
     assert_eq!(w.status, WaveStatus::Released);
 
+    // Completing a pick now takes the units out of the bin and allocates them
+    // at warehouse level, so the shelf has to hold them first.
+    seed_stock(&db, wh, loc, "SKU-A", dec!(5)).await;
     db.fulfillment()
         .complete_pick_async(CompletePick {
             pick_id: p1.id,
@@ -449,4 +501,106 @@ async fn postgres_delete_location_guards() {
     let (_, fresh) = seed_warehouse(&db).await;
     db.warehouse().delete_location_async(fresh).await.expect("delete");
     assert!(db.warehouse().get_location_async(fresh).await.expect("get").is_none());
+}
+
+// ---------------------------------------------------------------- W5
+
+/// `delete_location` used to read zero stock and then DELETE with no row lock.
+/// `FOR UPDATE` cannot lock a `location_inventory` row that does not exist yet,
+/// so a concurrent first adjustment for a new SKU inserted its row after the
+/// read and had it cascaded away by the DELETE — both calls reporting success
+/// and the stock silently vanishing.
+///
+/// The fix pins the `locations` row: the delete takes it `FOR UPDATE`, every
+/// stock writer takes it `FOR SHARE`. These two tests hold each lock from the
+/// test's own transaction and assert the other side waits.
+///
+/// The load-bearing half is
+/// `postgres_stock_writes_block_while_a_delete_holds_the_location`: before the
+/// fix the adjustment ignored the delete entirely, inserted its row and then
+/// failed with a raw foreign-key database error (or, once the delete had
+/// committed, had the row cascaded away). The other direction always blocked at
+/// the `DELETE` statement itself; it is pinned here so the ordering cannot
+/// regress.
+#[tokio::test]
+async fn postgres_delete_location_blocks_while_a_stock_writer_holds_the_location() {
+    let Some(db) = connect().await else { return };
+    let (_wh, loc) = seed_warehouse(&db).await;
+
+    // Stand in for a stock writer mid-transaction.
+    let mut writer = db.pool().begin().await.expect("begin");
+    sqlx::query("SELECT id FROM locations WHERE id = $1 FOR SHARE")
+        .bind(loc)
+        .fetch_one(writer.as_mut())
+        .await
+        .expect("hold the location");
+
+    let blocked = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        db.warehouse().delete_location_async(loc),
+    )
+    .await;
+    assert!(
+        blocked.is_err(),
+        "delete_location must wait for the stock writer to finish; it returned {blocked:?}"
+    );
+
+    writer.rollback().await.expect("rollback");
+    // With the writer gone the delete goes through.
+    db.warehouse().delete_location_async(loc).await.expect("delete once nothing holds it");
+    assert!(db.warehouse().get_location_async(loc).await.expect("get").is_none());
+}
+
+#[tokio::test]
+async fn postgres_stock_writes_block_while_a_delete_holds_the_location() {
+    let Some(db) = connect().await else { return };
+    let (_wh, loc) = seed_warehouse(&db).await;
+
+    // Stand in for `delete_location_async` mid-transaction.
+    let mut deleter = db.pool().begin().await.expect("begin");
+    sqlx::query("SELECT id FROM locations WHERE id = $1 FOR UPDATE")
+        .bind(loc)
+        .fetch_one(deleter.as_mut())
+        .await
+        .expect("hold the location");
+
+    let adjust = AdjustLocationInventory {
+        location_id: loc,
+        sku: format!("RACE-{}", Uuid::new_v4().simple()),
+        lot_id: None,
+        quantity: dec!(7),
+        reason: "race".into(),
+        reference_type: None,
+        reference_id: None,
+        performed_by: None,
+    };
+    let blocked = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        db.warehouse().adjust_inventory_async(adjust.clone()),
+    )
+    .await;
+    assert!(
+        blocked.is_err(),
+        "an adjustment must wait for a delete holding the location; it returned {blocked:?}"
+    );
+
+    // Let the "delete" win, and the adjustment must then find no location
+    // rather than writing a row the cascade would swallow.
+    sqlx::query("DELETE FROM locations WHERE id = $1")
+        .bind(loc)
+        .execute(deleter.as_mut())
+        .await
+        .expect("delete");
+    deleter.commit().await.expect("commit");
+
+    let err =
+        db.warehouse().adjust_inventory_async(adjust).await.expect_err("the location is gone");
+    assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
+    let (rows,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM location_inventory WHERE location_id = $1")
+            .bind(loc)
+            .fetch_one(db.pool())
+            .await
+            .expect("count");
+    assert_eq!(rows, 0, "no stock row may survive a deleted location");
 }

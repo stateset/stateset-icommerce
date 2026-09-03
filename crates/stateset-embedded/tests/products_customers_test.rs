@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! Embedded-API coverage for products and customers (previously untested at
 //! this layer): validation at the façade, the product / customer state
 //! machines, live-reference guards, e-mail normalisation, deletion and

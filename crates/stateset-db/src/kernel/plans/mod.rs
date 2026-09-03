@@ -1,9 +1,13 @@
 //! Pure per-operation plans: validation against a backend-provided snapshot
 //! that yields either a typed rejection or the effects to apply.
 
+pub mod catalog;
 pub mod escrow;
+pub mod finance;
+pub mod inventory;
 pub mod orders;
 pub mod payments;
+pub mod returns;
 
 use crate::kernel::envelope::GuardRejection;
 

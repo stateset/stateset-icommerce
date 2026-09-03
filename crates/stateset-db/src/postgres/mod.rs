@@ -508,6 +508,29 @@ impl PostgresDatabase {
             "093_a2a_credit_terms_and_messaging",
             include_str!("migrations/093_a2a_credit_terms_and_messaging.sql"),
         ));
+        // Key the legacy case-duplicate customers 092 had to leave NULL, so
+        // every live account is reachable and re-registration is defined.
+        migrations.push((
+            "098_customer_email_key_backfill",
+            include_str!("migrations/098_customer_email_key_backfill.sql"),
+        ));
+        // Lot parent/child linkage, so a merged lot can be traced back to
+        // every source lot (and its supplier or work order).
+        migrations.push(("100_lot_genealogy", include_str!("migrations/100_lot_genealogy.sql")));
+        // The inventory balance identity
+        // (available = on_hand - allocated) as a NOT VALID CHECK, promoted to
+        // VALID on a clean database. 090 only guaranteed non-negativity.
+        migrations.push((
+            "099_inventory_balance_identity",
+            include_str!("migrations/099_inventory_balance_identity.sql"),
+        ));
+        // One claiming x402 intent per cart / per order, enforced by keyed
+        // columns. The accessor's read-then-create check was a TOCTOU that
+        // let two concurrent creates double-charge one cart.
+        migrations.push((
+            "101_x402_cart_order_claim",
+            include_str!("migrations/101_x402_cart_order_claim.sql"),
+        ));
 
         migrations
     }

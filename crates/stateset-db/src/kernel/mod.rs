@@ -23,31 +23,41 @@
 //!
 //! # Conversion status
 //!
-//! Converted to the shared guard + run + plan layer on both backends:
-//! `orders.transition`, `orders.ship`, `payments.create`,
-//! `payments.create_refund`, `a2a.escrow.create`, `a2a.escrow.fund`.
+//! **Every governed op on both backends** builds a [`run::CommandRun`] and
+//! evaluates [`envelope::EnvelopeGuard`], so all 22 command kinds share one
+//! contract validation, one semantic request hash, one policy evaluation, one
+//! envelope guard chain (including the actor-coherence check that refuses a
+//! self-delegated agent or a self-approved command), one verified replay
+//! resolution, and one receipt factory. `tests/capability_parity_gate.rs`
+//! fails the build if a new op hand-rolls any of that, and compares the
+//! ordered rejection/preview/replay/success sequence of every op across the
+//! two backends so they cannot drift apart.
 //!
-//! Using the shared guard, replay verification and receipt factory (guard
-//! chain + receipt construction de-duplicated; effect planning still inline):
-//! every remaining op.
+//! Effect *planning* is extracted for the ops whose decisions are non-trivial:
 //!
-//! TODO (op-by-op, keep tests green after each):
-//! - `inventory.item.create`, `products.create`: extract uniqueness /
-//!   validation planning into `plans::catalog`.
-//! - `inventory.reserve` / `.confirm` / `.release`: extract the lifecycle
-//!   state machine into `plans::inventory`.
-//! - `returns.transition`: extract the return state machine plan.
-//! - `a2a.escrow.dispute` / `.release` / `.refund`, `a2a.dispute.*`: extract
-//!   the escrow/dispute state machine into `plans::escrow`.
-//! - `subscriptions.charge`, `checkout.commit`, `ledger.post`, `x402.settle`:
-//!   these delegate to repository helpers; wrap their pre-checks as plans.
+//! | plan module | ops |
+//! | --- | --- |
+//! | [`plans::orders`] | `orders.transition`, `orders.ship` |
+//! | [`plans::payments`] | `payments.create`, `payments.create_refund` |
+//! | [`plans::escrow`] | `a2a.escrow.create` / `.fund` / `.dispute` / `.release` / `.refund`, `a2a.dispute.file` / `.evidence.submit` / `.resolve` |
+//! | [`plans::catalog`] | `inventory.item.create`, `products.create` |
+//! | [`plans::inventory`] | `inventory.reserve`, `inventory.reservation.confirm` / `.release` |
+//! | [`plans::returns`] | `returns.transition` |
+//! | [`plans::finance`] | `subscriptions.charge`, `checkout.commit`, `ledger.post`, `x402.settle` |
+//!
+//! TODO: the aggregate state machines behind the escrow/dispute transitions,
+//! the inventory lifecycle and the return lifecycle are still evaluated inline
+//! against backend-loaded rows; only their static payload plans are shared.
+//! Extracting those state machines into `plans::` is the remaining work.
 
+pub mod audit;
 pub mod envelope;
 pub mod plans;
 pub mod receipt;
 pub mod replay;
 pub mod run;
 
+pub use audit::KernelAuditChain;
 pub use envelope::{EnvelopeGuard, GuardRejection, VersionExpectation};
 pub use plans::PlanOutcome;
 pub use replay::{Replay, SealedAuditEntry, resolve_replay, verify_sealed_receipt};

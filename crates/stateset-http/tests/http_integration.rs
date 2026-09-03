@@ -119,7 +119,11 @@ fn seed_customer(state: &AppState) -> String {
     customer.id.to_string()
 }
 
-/// Create a product with a variant directly via the Commerce engine.
+/// Create a product with a variant directly via the Commerce engine, published
+/// (`Active`) so its SKU may be ordered.
+///
+/// `products.create` mints a `Draft` product, and a `Draft` SKU is refused on
+/// order lines exactly as it has always been refused on cart lines.
 fn seed_product(state: &AppState) -> String {
     let product = state
         .commerce()
@@ -134,6 +138,17 @@ fn seed_product(state: &AppState) -> String {
             ..Default::default()
         })
         .unwrap();
+    state
+        .commerce()
+        .products()
+        .update(
+            product.id,
+            stateset_core::UpdateProduct {
+                status: Some(stateset_core::ProductStatus::Active),
+                ..Default::default()
+            },
+        )
+        .expect("publish product");
     product.id.to_string()
 }
 

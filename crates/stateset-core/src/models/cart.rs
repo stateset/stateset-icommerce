@@ -559,6 +559,46 @@ impl Cart {
         if let Some(expires_at) = self.expires_at { Utc::now() > expires_at } else { false }
     }
 
+    /// Guard for money written straight onto the cart — the tax and shipping
+    /// amounts, which do not come from a line and therefore bypass every
+    /// line-level check.
+    ///
+    /// Three things must hold, and none of them held before:
+    ///
+    /// - the cart must still be open (`can_modify`). A completed cart's
+    ///   totals are settled against a minted order and a
+    ///   cancelled/abandoned/expired cart's are dead; re-taxing either one
+    ///   rewrites money nobody will ever collect.
+    /// - the amount must not be negative. A negative tax or shipping charge
+    ///   *lowers* `grand_total`, which is a discount with no coupon, no cap
+    ///   and no audit trail.
+    /// - the amount must be expressible in the cart's currency (invariant M1,
+    ///   `commerce.money.scale_exceeds_currency`): the totals are rounded to
+    ///   the minor unit, so a sub-cent amount silently loses money.
+    ///
+    /// `field` names the amount in the error message (`"tax"`, `"shipping"`).
+    ///
+    /// # Errors
+    ///
+    /// [`crate::CommerceError::Conflict`] when the cart is not modifiable,
+    /// [`crate::CommerceError::ValidationError`] for a negative amount, and
+    /// [`crate::CommerceError::MoneyScaleExceedsCurrency`] for a sub-minor-unit
+    /// amount.
+    pub fn ensure_money_settable(&self, field: &str, amount: Decimal) -> Result<()> {
+        if !self.can_modify() {
+            return Err(crate::errors::CommerceError::Conflict(format!(
+                "Cart {} cannot have its {field} changed in status: {}",
+                self.id, self.status
+            )));
+        }
+        if amount < Decimal::ZERO {
+            return Err(crate::errors::CommerceError::ValidationError(format!(
+                "Cart {field} must not be negative, got {amount}"
+            )));
+        }
+        crate::validation::validate_money_scale(self.currency, amount)
+    }
+
     /// Recalculate totals from items
     pub fn recalculate_totals(&mut self) {
         self.subtotal = self
@@ -799,6 +839,44 @@ mod tests {
             completed_at: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+        }
+    }
+
+    /// Money written straight onto a cart (tax, shipping) is guarded: the
+    /// cart must still be open, the amount must not be negative, and it must
+    /// fit the currency's minor unit.
+    #[test]
+    fn ensure_money_settable_guards_status_sign_and_scale() {
+        let cart = ready_cart_with_status(CartStatus::Active);
+        cart.ensure_money_settable("tax", dec!(1.23)).expect("a real amount on an open cart");
+        cart.ensure_money_settable("tax", Decimal::ZERO).expect("zero clears the amount");
+
+        let err = cart.ensure_money_settable("tax", dec!(-0.01)).expect_err("negative tax");
+        assert!(
+            matches!(&err, crate::errors::CommerceError::ValidationError(m)
+                if m.contains("must not be negative")),
+            "got {err:?}"
+        );
+
+        let err = cart.ensure_money_settable("shipping", dec!(1.234)).expect_err("sub-cent");
+        assert!(
+            matches!(err, crate::errors::CommerceError::MoneyScaleExceedsCurrency { .. }),
+            "got {err:?}"
+        );
+
+        for status in [
+            CartStatus::Completed,
+            CartStatus::Cancelled,
+            CartStatus::Abandoned,
+            CartStatus::Expired,
+            CartStatus::ReadyForPayment,
+            CartStatus::PaymentPending,
+        ] {
+            let cart = ready_cart_with_status(status);
+            let err = cart
+                .ensure_money_settable("tax", dec!(1.00))
+                .expect_err("a cart that is not active must not be re-taxed");
+            assert!(matches!(err, crate::errors::CommerceError::Conflict(_)), "got {err:?}");
         }
     }
 

@@ -349,6 +349,28 @@ pub struct CancelOrder {
     pub void_payments: bool,
 }
 
+/// Input for removing a line from an order.
+///
+/// Money rule (mirrors [`UpdateOrder::void_payments`] on the cancel path):
+/// dropping a line lowers `total_amount`, and the order total is the ceiling
+/// every capture is checked against
+/// (`commerce.capture.exceeds_order_total`). Removing a line while payments
+/// already hold more money than the order would then be worth is refused with
+/// [`crate::CommerceError::OrderTotalBelowCaptured`], so a line removal can
+/// never strand captured funds above the order total.
+///
+/// Set [`Self::allow_overpayment`] to remove the line anyway. Unlike
+/// `void_payments`, nothing is voided or refunded: the caller is asserting it
+/// will settle the resulting overpayment itself (a refund, or a credit note).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RemoveOrderItem {
+    /// Remove the line even though the order's new total would fall below the
+    /// money already captured against it, leaving the order overpaid by the
+    /// difference. The captured payments are left exactly as they are.
+    pub allow_overpayment: bool,
+}
+
 impl From<CancelOrder> for UpdateOrder {
     fn from(input: CancelOrder) -> Self {
         Self {

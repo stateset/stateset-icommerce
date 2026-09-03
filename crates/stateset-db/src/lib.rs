@@ -43,6 +43,7 @@ pub mod error_helpers;
 pub mod http_idempotency;
 pub mod kernel;
 pub mod kernel_outbox;
+pub(crate) mod x402_claim;
 pub use http_idempotency::{HttpIdempotencyRecord, HttpIdempotencyRepository};
 pub use kernel_outbox::{KernelOutboxEvent, KernelReceiptRecord};
 
@@ -443,6 +444,12 @@ pub trait Database: Send + Sync {
     /// one. Backends without durable idempotency support return `None`, in
     /// which case callers fall back to in-memory behavior.
     fn http_idempotency(&self) -> Option<Box<dyn HttpIdempotencyRepository + '_>> {
+        None
+    }
+
+    /// Read-only access to the sealed kernel receipt audit chain, when the
+    /// backend seals one. Backends without a kernel outbox return `None`.
+    fn kernel_audit_chain(&self) -> Option<Box<dyn crate::kernel::KernelAuditChain>> {
         None
     }
 }
@@ -870,6 +877,10 @@ macro_rules! impl_database_accessors {
 
             fn supports_capability(&self, capability: DatabaseCapability) -> bool {
                 impl_database_accessors!(@supports_capability $db_type, capability)
+            }
+
+            fn kernel_audit_chain(&self) -> Option<Box<dyn crate::kernel::KernelAuditChain>> {
+                Some(Box::new(<$db_type>::kernel_outbox(self)))
             }
 
             fn orders(&self) -> Box<dyn OrderRepository + '_> {

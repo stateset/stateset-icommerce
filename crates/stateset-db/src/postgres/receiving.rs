@@ -967,13 +967,20 @@ impl PgReceivingRepository {
         Self::commit_and_read_put_away(tx, id).await
     }
 
-    /// Complete a put-away task and fold its quantity into the receipt.
+    /// Complete a put-away task, move the stock, and fold its quantity into the
+    /// receipt.
     ///
     /// Legal from `Pending`/`Assigned`/`InProgress`. Completing a cancelled task
     /// used to succeed and add its quantity to `receipts.put_away_quantity` for
-    /// stock that was never put away. The status flip and the receipt total are
-    /// one transaction, so the receipt can never quote a total that excludes a
-    /// put-away already marked completed.
+    /// stock that was never put away. The status flip, the stock effect and the
+    /// receipt total are one transaction.
+    ///
+    /// **Stock effect** (mirrors the SQLite backend): the quantity is added to
+    /// the destination location's on-hand and to the warehouse-level balance,
+    /// with an `inventory_movements` receipt row. This is where received goods
+    /// actually enter stock — receiving itself only counts paperwork. The
+    /// guarded UPDATE matches zero rows on a second attempt, so completing twice
+    /// raises a conflict before any stock moves.
     pub async fn complete_put_away_async(&self, input: CompletePutAway) -> Result<PutAway> {
         let now = Utc::now();
         let id = input.put_away_id;
@@ -1020,6 +1027,47 @@ impl PgReceivingRepository {
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+
+        // Stock effect: the units land in the destination bin and in the
+        // warehouse balance.
+        let warehouse_id =
+            super::warehouse::warehouse_of_location_pg(tx.as_mut(), to_location).await?;
+        super::warehouse::ensure_inventory_item_pg(tx.as_mut(), &existing.sku).await?;
+        super::warehouse::apply_location_delta_pg(
+            tx.as_mut(),
+            to_location,
+            &existing.sku,
+            existing.lot_id,
+            existing.quantity,
+            now,
+        )
+        .await?;
+        super::bins::apply_warehouse_delta_pg(
+            tx.as_mut(),
+            warehouse_id,
+            &existing.sku,
+            existing.quantity,
+            Decimal::ZERO,
+            "put-away completed",
+            Some("put_away"),
+            Some(&id.to_string()),
+            now,
+        )
+        .await?;
+        super::warehouse::insert_wms_movement_pg(
+            tx.as_mut(),
+            stateset_core::MovementType::Receipt,
+            existing.from_location_id,
+            Some(to_location),
+            &existing.sku,
+            existing.lot_id,
+            existing.quantity,
+            "put_away",
+            id,
+            existing.assigned_to.as_deref(),
+            now,
+        )
+        .await?;
 
         Self::commit_and_read_put_away(tx, id).await
     }

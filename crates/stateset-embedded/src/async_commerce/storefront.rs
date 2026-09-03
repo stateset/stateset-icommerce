@@ -425,6 +425,21 @@ impl AsyncTax {
         self.db.tax().get_customer_exemptions_async(customer_id).await
     }
 
+    /// Mark an exemption certificate as verified, or revoke that
+    /// verification. Exemptions are created unverified and tax calculation
+    /// honours only verified ones, so this is the step that makes a
+    /// certificate take effect.
+    pub async fn verify_exemption(&self, id: Uuid, verified: bool) -> Result<TaxExemption> {
+        self.db.tax().verify_exemption_async(id, verified).await
+    }
+
+    /// Whether the customer has an exemption tax calculation would honour on
+    /// `date` — active, verified and inside its validity window.
+    pub async fn customer_is_exempt_on(&self, customer_id: Uuid, date: NaiveDate) -> Result<bool> {
+        let exemptions = self.get_customer_exemptions(customer_id).await?;
+        Ok(exemptions.iter().any(|e| e.is_effective_on(date)))
+    }
+
     pub async fn get_settings(&self) -> Result<TaxSettings> {
         self.db.tax().get_settings_async().await
     }

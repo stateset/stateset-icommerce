@@ -1373,34 +1373,63 @@ impl SerialRepository for SqliteSerialRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
+    /// Stamp `activated_at` (warranty start) in one transaction.
+    ///
+    /// Idempotent: a serial that is already activated is returned unchanged
+    /// rather than collecting a second `Activated` history row. A scrapped
+    /// unit no longer exists, so it cannot start a warranty; every other
+    /// status may activate (a unit is typically activated after it ships or
+    /// sells, but a distributor may activate stock it still holds).
     fn activate(&self, id: Uuid) -> stateset_core::Result<SerialNumber> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
-        conn.execute(
-            "UPDATE serial_numbers SET activated_at = ?, updated_at = ? WHERE id = ? AND activated_at IS NULL",
-            params![now, now, id.to_string()],
-        ).map_err(map_db_error)?;
-
-        // Record history
-        if let Some(serial) = self.get(id)? {
-            let history_id = Uuid::new_v4();
-            conn.execute(
-                "INSERT INTO serial_history (
-                    id, serial_id, event_type, from_status, to_status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)",
-                params![
-                    history_id.to_string(),
-                    id.to_string(),
-                    SerialEventType::Activated.to_string(),
-                    serial.status.to_string(),
-                    serial.status.to_string(),
-                    now,
-                ],
-            )
-            .map_err(map_db_error)?;
+        let serial = Self::load_in_tx(&tx, id)?;
+        if serial.status.is_terminal() {
+            return Err(CommerceError::Conflict(format!(
+                "Serial {} ({}) cannot be activated: status is {}",
+                serial.serial, serial.id, serial.status
+            )));
+        }
+        if serial.activated_at.is_some() {
+            return Ok(serial); // Already activated — no second history row.
         }
 
+        // Conditional on the state read above, so two concurrent activations
+        // cannot both write a history row.
+        let rows = tx
+            .execute(
+                "UPDATE serial_numbers SET activated_at = ?, updated_at = ?
+                 WHERE id = ? AND activated_at IS NULL AND status = ?",
+                params![now, now, id.to_string(), serial.status.to_string()],
+            )
+            .map_err(map_db_error)?;
+        if rows != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "Serial {} ({}) changed concurrently while activating",
+                serial.serial, serial.id
+            )));
+        }
+
+        Self::record_history(
+            &tx,
+            &serial,
+            SerialEventType::Activated,
+            serial.status,
+            serial.status,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .map_err(map_db_error)?;
+
+        tx.commit().map_err(map_db_error)?;
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
@@ -2309,6 +2338,65 @@ mod tests {
             .expect("reserve with past expiry");
         let err = repo.confirm_reservation(expired.id).expect_err("expired cannot be confirmed");
         assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+    }
+
+    /// The counterpart to `release_reservation_after_confirm_returns_serial_to_stock`
+    /// on the returns side: a unit that shipped, sold and then came back is
+    /// `Returned`, so the *old* reservation stays consumed (release is
+    /// refused) while a new hold on the returned unit is a fresh reservation
+    /// once it is put back into stock. This is the reason the
+    /// confirmed-but-unshipped release is scoped by the serial's status
+    /// rather than by `confirmed_at`.
+    #[test]
+    fn returned_serial_does_not_reopen_its_consumed_reservation() {
+        let repo = fresh_repo();
+        let serial = make_serial(&repo, "SKU-RET", "SN-RET-1");
+        let res = repo.reserve(reserve_input(serial.id)).expect("reserve");
+        repo.confirm_reservation(res.id).expect("confirm");
+        repo.mark_shipped(serial.id, Uuid::new_v4()).expect("ship");
+        repo.mark_sold(serial.id, Uuid::new_v4(), None).expect("sell");
+        repo.mark_returned(serial.id, Uuid::new_v4()).expect("return");
+        assert_eq!(repo.get(serial.id).unwrap().unwrap().status, SerialStatus::Returned);
+        assert!(
+            matches!(repo.release_reservation(res.id), Err(CommerceError::Conflict(_))),
+            "the shipped reservation stays consumed after the return"
+        );
+
+        // Back into stock, then reservable again on a brand-new reservation.
+        repo.change_status(ChangeSerialStatus {
+            serial_id: serial.id,
+            new_status: SerialStatus::Available,
+            notes: Some("restock".into()),
+            ..Default::default()
+        })
+        .expect("restock");
+        repo.reserve(reserve_input(serial.id)).expect("re-reserve after return");
+    }
+
+    /// `activate` is one transaction, idempotent, and refused on a scrapped
+    /// unit: a destroyed serial cannot start a warranty, and activating twice
+    /// must not stamp a second `Activated` history row.
+    #[test]
+    fn activate_is_transactional_idempotent_and_refuses_scrapped() {
+        let repo = fresh_repo();
+        let serial = make_serial(&repo, "SKU-ACT", "SN-ACT-1");
+        let first = repo.activate(serial.id).expect("activate");
+        let stamped = first.activated_at.expect("activated_at stamped");
+        let again = repo.activate(serial.id).expect("activate again is idempotent");
+        assert_eq!(again.activated_at, Some(stamped), "the original timestamp survives");
+        let activations = repo
+            .get_history(serial.id, SerialHistoryFilter::default())
+            .expect("history")
+            .into_iter()
+            .filter(|h| h.event_type == SerialEventType::Activated)
+            .count();
+        assert_eq!(activations, 1, "exactly one Activated row");
+
+        let scrapped = make_serial(&repo, "SKU-ACT", "SN-ACT-2");
+        repo.scrap(scrapped.id, "crushed").expect("scrap");
+        let err = repo.activate(scrapped.id).expect_err("a scrapped unit cannot activate");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        assert!(repo.get(scrapped.id).unwrap().unwrap().activated_at.is_none());
     }
 
     /// Confirmation commits the reservation row but the unit has not moved,

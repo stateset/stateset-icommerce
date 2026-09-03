@@ -11,8 +11,7 @@ use stateset_core::{
     PaymentStatus, Result, SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate,
     UpdateCart, UpdateCartItem, X402Asset, X402AwaitingSettlementData, X402CheckoutResult,
     X402IntentCreatedData, X402IntentStatus, X402Network, X402PaymentRequiredData,
-    validate_batch_size, validate_email, validate_money_scale, validate_phone, validate_price,
-    validate_required_text,
+    validate_batch_size, validate_email, validate_money_scale, validate_price,
 };
 use uuid::Uuid;
 
@@ -279,6 +278,18 @@ impl PgCartRepository {
         Self { pool }
     }
 
+    /// The customer a guest checkout mints its order for, resolved through
+    /// the customers repository's own get-or-create
+    /// ([`crate::postgres::customers::get_or_create_customer_with_conn_pg`])
+    /// on the checkout's transaction.
+    ///
+    /// It used to open-code the lookup and the INSERT here. That INSERT never
+    /// populated `email_key`, so a customer created by guest checkout was
+    /// unreachable through `get_by_email` (which resolves through the key),
+    /// and the raw-column lookup and `ON CONFLICT (email)` made two guests
+    /// differing only in e-mail case two different customers. Delegating keeps
+    /// guest checkout on exactly the same normalised identity as every other
+    /// way a customer is created.
     async fn resolve_customer_id_in_tx(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         cart: &Cart,
@@ -290,7 +301,6 @@ impl PgCartRepository {
         let email = cart.customer_email.as_deref().ok_or_else(|| {
             CommerceError::ValidationError("Customer ID or email required".to_string())
         })?;
-        validate_email(email)?;
 
         let (first_name, last_name) = cart
             .customer_name
@@ -305,41 +315,21 @@ impl PgCartRepository {
                 (first, last)
             })
             .unwrap_or_else(|| ("Guest".to_string(), "Customer".to_string()));
-        validate_required_text("customer.first_name", &first_name, 100)?;
-        validate_required_text("customer.last_name", &last_name, 100)?;
-        if let Some(phone) = &cart.customer_phone {
-            validate_phone(phone)?;
-        }
 
-        let customer_id = Uuid::new_v4();
-        let now = Utc::now();
-        let inserted: Option<Uuid> = sqlx::query_scalar(
-            r#"INSERT INTO customers
-                (id, email, first_name, last_name, phone, status, accepts_marketing,
-                 email_verified, tags, metadata, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, 'active', false, false, '[]'::jsonb, NULL, $6, $6)
-               ON CONFLICT (email) DO NOTHING
-               RETURNING id"#,
+        let (customer, _created) = super::customers::get_or_create_customer_with_conn_pg(
+            tx.as_mut(),
+            &stateset_core::CreateCustomer {
+                email: email.to_string(),
+                first_name,
+                last_name,
+                phone: cart.customer_phone.clone(),
+                accepts_marketing: None,
+                tags: None,
+                metadata: None,
+            },
         )
-        .bind(customer_id)
-        .bind(email)
-        .bind(&first_name)
-        .bind(&last_name)
-        .bind(&cart.customer_phone)
-        .bind(now)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        if let Some(id) = inserted {
-            return Ok(id);
-        }
-
-        sqlx::query_scalar("SELECT id FROM customers WHERE email = $1")
-            .bind(email)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)
+        .await?;
+        Ok(customer.id.into_uuid())
     }
 
     fn order_items_from_cart(cart: &Cart) -> Vec<CreateOrderItem> {
@@ -606,6 +596,16 @@ impl PgCartRepository {
         if let Some(input_items) = &input.items {
             for item_input in input_items {
                 validate_add_item_money(currency, item_input)?;
+                // Same line guard as `add_item_async`: `create` used to reach
+                // `add_item_internal` directly, so a withdrawn catalogue SKU
+                // (and a client-chosen price) entered the cart unchecked.
+                guard_cart_line_with_conn_pg(
+                    tx.as_mut(),
+                    item_input.variant_id,
+                    &item_input.sku,
+                    item_input.unit_price,
+                )
+                .await?;
                 self.add_item_internal(&mut tx, id, item_input.clone()).await?;
             }
             self.update_cart_totals_in_tx(&mut tx, id).await?;
@@ -876,12 +876,8 @@ impl PgCartRepository {
         // Serialize with other mutations of this cart before touching its lines.
         let row = Self::lock_cart_in_tx(&mut tx, cart_id).await?;
         validate_add_item_money(row.currency, &item)?;
-        // A SKU that resolves to the catalogue must still be sellable: an
-        // archived product or a deleted variant cannot be added to a cart.
-        // SKUs that are not in the catalogue stay allowed (ad-hoc lines).
-        super::products::variant_is_purchasable_with_conn_pg(tx.as_mut(), &item.sku)
-            .await?
-            .ensure_sellable(&item.sku)?;
+        guard_cart_line_with_conn_pg(tx.as_mut(), item.variant_id, &item.sku, item.unit_price)
+            .await?;
         let result = self.add_item_internal(&mut tx, cart_id, item).await?;
         self.update_cart_totals_in_tx(&mut tx, cart_id).await?;
         tx.commit().await.map_err(map_db_error)?;
@@ -908,6 +904,26 @@ impl PgCartRepository {
         // Serialize with other mutations of this cart before touching its lines.
         let row = Self::lock_cart_in_tx(&mut tx, cart_id).await?;
         validate_update_cart_item_money(row.currency, &input)?;
+
+        // Re-run the line guard against the CURRENT catalogue: a line added
+        // while its SKU was sellable must not be grown, or repriced, after the
+        // SKU was withdrawn. Shrinking a line (or removing it) stays allowed
+        // so a cart holding a withdrawn SKU is never stuck.
+        let (line_sku, line_variant_id, line_quantity): (String, Option<Uuid>, i32) =
+            sqlx::query_as("SELECT sku, variant_id, quantity FROM cart_items WHERE id = $1")
+                .bind(item_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if input.quantity.is_some_and(|qty| qty > line_quantity) {
+            super::products::variant_is_purchasable_with_conn_pg(tx.as_mut(), &line_sku)
+                .await?
+                .ensure_sellable(&line_sku)?;
+        }
+        if let Some(unit_price) = input.unit_price {
+            guard_cart_line_with_conn_pg(tx.as_mut(), line_variant_id, &line_sku, unit_price)
+                .await?;
+        }
 
         // Update item fields
         if let Some(qty) = input.quantity {
@@ -1068,10 +1084,21 @@ impl PgCartRepository {
         self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Set the cart's shipping address, method and charge.
+    ///
+    /// The charge is money written straight onto the cart, so it runs the same
+    /// guard as [`Self::set_tax_async`] ([`Cart::ensure_money_settable`]) and
+    /// the write plus the repricing happen in ONE transaction holding the
+    /// cart's row lock. Before this, the UPDATE and `recalculate` were
+    /// separate statements outside any transaction, so a concurrent line
+    /// mutation could reprice between them.
     pub async fn set_shipping_async(&self, id: Uuid, shipping: SetCartShipping) -> Result<Cart> {
         let address_json = serde_json::to_value(&shipping.shipping_address).unwrap_or_default();
         let shipping_amount = shipping.shipping_amount.unwrap_or_default();
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let row = Self::lock_cart_in_tx(&mut tx, id).await?;
+        row.into_cart(Vec::new())?.ensure_money_settable("shipping", shipping_amount)?;
         sqlx::query(
             r#"UPDATE carts SET
                 shipping_address = $1, shipping_method = $2, shipping_carrier = $3,
@@ -1084,11 +1111,14 @@ impl PgCartRepository {
         .bind(shipping_amount)
         .bind(Utc::now())
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        // Reprice inside the same transaction, under the same lock.
+        self.update_cart_totals_in_tx(&mut tx, id).await?;
+        tx.commit().await.map_err(map_db_error)?;
 
-        self.recalculate_async(id).await
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_shipping_rates_async(&self, _id: Uuid) -> Result<Vec<ShippingRate>> {
@@ -1460,6 +1490,16 @@ impl PgCartRepository {
             validate_email(email)?;
             CustomerId::new()
         };
+        // Apply consumes the cart's coupon inside the checkout transaction;
+        // Preview must refuse wherever that consumption would. Read-only, and
+        // against the customer Apply would resolve — not the throwaway id
+        // above, which exists only to shape the order-validation input.
+        let redeemer = preview_customer_id_with_conn_pg(tx.as_mut(), &cart).await?;
+        ensure_cart_coupon_consumable_with_conn_pg(tx.as_mut(), &cart, redeemer).await?;
+        // Apply also consumes the cart's automatic (no-code) promotions, which
+        // carry their own usage limits; Preview must refuse those too.
+        PgPromotionRepository::ensure_cart_promotions_consumable_on(tx.as_mut(), &cart, redeemer)
+            .await?;
         let input = CreateOrder {
             customer_id,
             items: Self::order_items_from_cart(&cart),
@@ -1747,16 +1787,31 @@ impl PgCartRepository {
         self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Set the cart's tax amount.
+    ///
+    /// Guarded by [`Cart::ensure_money_settable`] — non-negative, expressible
+    /// in the cart's currency, and only while the cart is still active — and
+    /// written together with the repricing in ONE transaction holding the
+    /// cart's row lock (`FOR NO KEY UPDATE`), so a concurrent `add_item`
+    /// cannot reprice between the write and the recalculation. Before this the
+    /// amount was unchecked (a negative tax lowered `grand_total`, a completed
+    /// cart could still be re-taxed) and the two statements ran unsynchronized.
     pub async fn set_tax_async(&self, id: Uuid, tax_amount: Decimal) -> Result<Cart> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let row = Self::lock_cart_in_tx(&mut tx, id).await?;
+        row.into_cart(Vec::new())?.ensure_money_settable("tax", tax_amount)?;
         sqlx::query("UPDATE carts SET tax_amount = $1, updated_at = $2 WHERE id = $3")
             .bind(tax_amount)
             .bind(Utc::now())
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+        // Reprice inside the same transaction, under the same lock.
+        self.update_cart_totals_in_tx(&mut tx, id).await?;
+        tx.commit().await.map_err(map_db_error)?;
 
-        self.recalculate_async(id).await
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_abandoned_async(&self) -> Result<Vec<Cart>> {
@@ -1876,10 +1931,20 @@ impl PgCartRepository {
             .await
             .map_err(map_db_error)?;
 
-            // Add initial items if provided
+            // Add initial items if provided, through the same money validation
+            // and line guard `create_async` runs — this batch path used to
+            // insert cart lines unguarded too.
             let mut items = vec![];
             if let Some(input_items) = &input.items {
                 for item_input in input_items {
+                    validate_add_item_money(currency, item_input)?;
+                    guard_cart_line_with_conn_pg(
+                        tx.as_mut(),
+                        item_input.variant_id,
+                        &item_input.sku,
+                        item_input.unit_price,
+                    )
+                    .await?;
                     let item_id = Uuid::new_v4();
                     let requires_shipping = item_input.requires_shipping.unwrap_or(true);
                     let total = CartItem::calculate_total(
@@ -2381,6 +2446,194 @@ pub(crate) fn rescale_tax(
         return Decimal::ZERO;
     }
     (previous_tax * new_subtotal / previous_subtotal).round_dp(2)
+}
+
+/// The catalogue's own price for the line a cart mutation names, if the line
+/// names a catalogue variant. Postgres twin of the SQLite
+/// `catalog_unit_price_with_conn`.
+pub(crate) async fn catalog_unit_price_with_conn_pg(
+    conn: &mut sqlx::PgConnection,
+    variant_id: Option<Uuid>,
+    sku: &str,
+) -> Result<Option<Decimal>> {
+    if let Some(variant_id) = variant_id {
+        let price: Option<Decimal> =
+            sqlx::query_scalar("SELECT price FROM product_variants WHERE id = $1")
+                .bind(variant_id)
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_db_error)?;
+        if price.is_some() {
+            return Ok(price);
+        }
+    }
+    if sku.trim().is_empty() {
+        return Ok(None);
+    }
+    sqlx::query_scalar("SELECT price FROM product_variants WHERE sku = $1")
+        .bind(sku)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(map_db_error)
+}
+
+/// THE guard every path that puts a SKU on a cart line runs, inside that
+/// path's own transaction. Postgres twin of the SQLite
+/// `guard_cart_line_with_conn`; see it for the rules and why both live in the
+/// repositories rather than in the embedded accessor.
+pub(crate) async fn guard_cart_line_with_conn_pg(
+    conn: &mut sqlx::PgConnection,
+    variant_id: Option<Uuid>,
+    sku: &str,
+    unit_price: Decimal,
+) -> Result<()> {
+    super::products::variant_is_purchasable_with_conn_pg(&mut *conn, sku)
+        .await?
+        .ensure_sellable(sku)?;
+    if let Some(catalog) = catalog_unit_price_with_conn_pg(&mut *conn, variant_id, sku).await? {
+        if catalog != unit_price {
+            return Err(CommerceError::ValidationError(format!(
+                "unit_price {unit_price} for SKU '{sku}' does not match the catalog price \
+                 {catalog}; catalog lines are priced from the catalog"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The customer identity Apply would attribute this cart's redemption to,
+/// resolved WITHOUT writing. Postgres twin of the SQLite
+/// `preview_customer_id_with_conn`.
+pub(crate) async fn preview_customer_id_with_conn_pg(
+    conn: &mut sqlx::PgConnection,
+    cart: &Cart,
+) -> Result<Option<CustomerId>> {
+    if let Some(customer_id) = cart.customer_id {
+        return Ok(Some(customer_id));
+    }
+    let Some(email) = cart.customer_email.as_deref() else {
+        return Ok(None);
+    };
+    // Same resolution as the customers repository's `LIVE_CUSTOMER_BY_EMAIL`
+    // (normalised key first, legacy raw column second), id only.
+    let id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM customers \
+         WHERE email_key = $1 OR (status <> 'deleted' AND LOWER(TRIM(email)) = $1) \
+         ORDER BY CASE WHEN email_key = $1 THEN 0 ELSE 1 END, created_at, id \
+         LIMIT 1",
+    )
+    .bind(stateset_core::Customer::normalize_email(email))
+    .fetch_optional(conn)
+    .await
+    .map_err(map_db_error)?;
+    Ok(id.map(CustomerId::from))
+}
+
+/// Read-only twin of the coupon consumption Apply performs
+/// (`PgPromotionRepository::consume_cart_coupon_in_tx`). Postgres twin of the
+/// SQLite `ensure_cart_coupon_consumable_with_conn`; see it for why Preview
+/// needs this and which branches it mirrors.
+pub(crate) async fn ensure_cart_coupon_consumable_with_conn_pg(
+    conn: &mut sqlx::PgConnection,
+    cart: &Cart,
+    customer_id: Option<CustomerId>,
+) -> Result<()> {
+    let Some(code) = cart.coupon_code.as_deref() else {
+        return Ok(());
+    };
+    // Coupon codes are stored uppercased; look up the same way consumption does.
+    let coupon: Option<(Uuid, Uuid)> =
+        sqlx::query_as("SELECT id, promotion_id FROM coupon_codes WHERE code = $1")
+            .bind(code.to_uppercase())
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+    let Some((coupon_id, promotion_id)) = coupon else {
+        return Ok(());
+    };
+
+    let already_recorded: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM promotion_usage WHERE cart_id = $1 AND coupon_id = $2 LIMIT 1",
+    )
+    .bind(cart.id.into_uuid())
+    .bind(coupon_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    if already_recorded.is_some() {
+        return Ok(());
+    }
+
+    if let Some(customer_id) = customer_id {
+        let checks: [(&str, Uuid, &str, &str); 2] = [
+            (
+                "SELECT per_customer_limit FROM promotions WHERE id = $1",
+                promotion_id,
+                "SELECT COUNT(*) FROM promotion_usage WHERE promotion_id = $1 AND customer_id = $2",
+                "Per-customer promotion usage limit reached",
+            ),
+            (
+                "SELECT per_customer_limit FROM coupon_codes WHERE id = $1",
+                coupon_id,
+                "SELECT COUNT(*) FROM promotion_usage WHERE coupon_id = $1 AND customer_id = $2",
+                "Per-customer coupon usage limit reached",
+            ),
+        ];
+        for (limit_sql, id, count_sql, message) in checks {
+            let limit: Option<i32> = sqlx::query_scalar(limit_sql)
+                .bind(id)
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_db_error)?
+                .flatten();
+            let Some(limit) = limit else { continue };
+            let used: i64 = sqlx::query_scalar(count_sql)
+                .bind(id)
+                .bind(customer_id.into_uuid())
+                .fetch_one(&mut *conn)
+                .await
+                .map_err(map_db_error)?;
+            if used >= i64::from(limit) {
+                return Err(CommerceError::ValidationError(message.to_string()));
+            }
+        }
+    }
+
+    // The total limits consumption advances under, checked the way the guarded
+    // UPDATEs check them (`usage_count < limit`).
+    let promotion: Option<(Option<i32>, i32)> =
+        sqlx::query_as("SELECT total_usage_limit, usage_count FROM promotions WHERE id = $1")
+            .bind(promotion_id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+    match promotion {
+        Some((Some(limit), used)) if used >= limit => {
+            return Err(CommerceError::ValidationError(
+                "Promotion not found or usage limit reached".to_string(),
+            ));
+        }
+        Some(_) => {}
+        None => {
+            return Err(CommerceError::ValidationError(
+                "Promotion not found or usage limit reached".to_string(),
+            ));
+        }
+    }
+    let coupon: (Option<i32>, i32) =
+        sqlx::query_as("SELECT usage_limit, usage_count FROM coupon_codes WHERE id = $1")
+            .bind(coupon_id)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+    if let (Some(limit), used) = coupon {
+        if used >= limit {
+            return Err(CommerceError::ValidationError(
+                "Coupon not found or usage limit reached".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Invariant M1 (`commerce.money.scale_exceeds_currency`) for a line being

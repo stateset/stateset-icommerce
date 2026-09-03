@@ -76,15 +76,20 @@ impl CustomerStatus {
     /// A same-state transition is always allowed. `Deleted` is terminal: the
     /// account's e-mail slot has been released for re-registration and its PII
     /// may have been scrubbed, so a plain status update can never resurrect it.
+    ///
+    /// The match is exhaustive on purpose — no wildcard arm — so a new status
+    /// has to be classified here rather than silently inheriting "allowed".
     #[must_use]
     pub const fn can_transition_to(self, next: Self) -> bool {
         match (self, next) {
-            (Self::Active, Self::Active)
-            | (Self::Inactive, Self::Inactive)
-            | (Self::Suspended, Self::Suspended)
-            | (Self::Deleted, Self::Deleted) => true,
-            (Self::Active | Self::Inactive | Self::Suspended, _) => true,
-            (Self::Deleted, _) => false,
+            // Every live status reaches every other status, itself included.
+            (
+                Self::Active | Self::Inactive | Self::Suspended,
+                Self::Active | Self::Inactive | Self::Suspended | Self::Deleted,
+            ) => true,
+            // Deleted is terminal; only the idempotent no-op is allowed.
+            (Self::Deleted, Self::Deleted) => true,
+            (Self::Deleted, Self::Active | Self::Inactive | Self::Suspended) => false,
         }
     }
 
@@ -251,6 +256,16 @@ pub struct CustomerFilter {
     pub after_cursor: Option<(String, String)>,
 }
 
+/// Separates the canonical address from the customer id in the `email_key` of
+/// a legacy case-duplicate account (see
+/// [`Customer::legacy_duplicate_email_key`]).
+///
+/// A space, because [`crate::validate_email`] rejects every address
+/// containing whitespace: no write path can ever produce a key that looks
+/// like one of these, so a suffixed key can never collide with a real
+/// normalised address.
+pub const LEGACY_DUPLICATE_KEY_SEPARATOR: char = ' ';
+
 impl Customer {
     /// Canonical form of an e-mail address for storage and lookup.
     ///
@@ -277,6 +292,39 @@ impl Customer {
     #[must_use]
     pub fn is_tombstone_email(email: &str) -> bool {
         email.starts_with("deleted+") && email.ends_with("@invalid")
+    }
+
+    /// The `email_key` given to a legacy case-duplicate account.
+    ///
+    /// Databases created before case-insensitive e-mail uniqueness could hold
+    /// several live rows whose [`Self::normalize_email`] forms collide.
+    /// Migration `091_customer_email_key_backfill` (Postgres:
+    /// `098_…`) leaves the canonical key with the oldest row of each colliding
+    /// group and gives every newer row `<canonical> <id>` (separated by
+    /// [`LEGACY_DUPLICATE_KEY_SEPARATOR`]). Whitespace is never accepted
+    /// inside an address by [`crate::validate_email`], so a suffixed key can
+    /// never collide with a real normalised address, and the rule is
+    /// reversible via [`Self::canonical_email_of_key`].
+    #[must_use]
+    pub fn legacy_duplicate_email_key(email: &str, id: CustomerId) -> String {
+        format!("{}{LEGACY_DUPLICATE_KEY_SEPARATOR}{id}", Self::normalize_email(email))
+    }
+
+    /// Whether `email_key` is a legacy case-duplicate key rather than a plain
+    /// normalised address.
+    #[must_use]
+    pub fn is_legacy_duplicate_email_key(email_key: &str) -> bool {
+        email_key.contains(LEGACY_DUPLICATE_KEY_SEPARATOR)
+    }
+
+    /// The address an `email_key` was derived from, undoing the legacy
+    /// duplicate suffix when one is present.
+    #[must_use]
+    pub fn canonical_email_of_key(email_key: &str) -> &str {
+        match email_key.split_once(LEGACY_DUPLICATE_KEY_SEPARATOR) {
+            Some((canonical, _)) => canonical,
+            None => email_key,
+        }
     }
 
     /// Get full name
@@ -452,6 +500,24 @@ mod tests {
             Deleted.ensure_can_transition_to(Active),
             Err(crate::CommerceError::Conflict(_))
         ));
+    }
+
+    #[test]
+    fn legacy_duplicate_email_keys_are_reversible_and_unreachable_by_a_real_address() {
+        let id = CustomerId::new();
+        let key = Customer::legacy_duplicate_email_key("  Ada@Example.COM ", id);
+
+        assert_eq!(key, format!("ada@example.com{LEGACY_DUPLICATE_KEY_SEPARATOR}{id}"));
+        assert!(Customer::is_legacy_duplicate_email_key(&key));
+        assert_eq!(Customer::canonical_email_of_key(&key), "ada@example.com");
+
+        // A plain key is left alone.
+        assert!(!Customer::is_legacy_duplicate_email_key("ada@example.com"));
+        assert_eq!(Customer::canonical_email_of_key("ada@example.com"), "ada@example.com");
+
+        // No address a write path could store can look like one of these:
+        // every writer validates, and validation rejects whitespace.
+        assert!(crate::validate_email(&key).is_err());
     }
 
     #[test]

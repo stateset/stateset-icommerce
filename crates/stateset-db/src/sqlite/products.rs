@@ -1,9 +1,9 @@
 //! SQLite product repository implementation
 
 use super::{
-    build_in_clause, escape_like, json1_available, map_db_error, params_refs, parse_datetime_row,
-    parse_decimal_opt_row, parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_json_row,
-    parse_uuid, parse_uuid_row, uuid_params,
+    ConflictValues, build_in_clause, escape_like, json1_available, map_db_error, map_db_error_with,
+    params_refs, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row, parse_enum_row,
+    parse_json_opt_row, parse_json_row, parse_uuid_row, uuid_params,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -11,7 +11,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use stateset_core::{
     BatchResult, CommerceError, CreateProduct, CreateProductVariant, Product, ProductFilter,
-    ProductId, ProductRepository, ProductStatus, ProductVariant, Result, UpdateProduct,
+    ProductId, ProductRepository, ProductStatus, ProductVariant, Result, UpdateProduct, Validate,
     VariantPurchasability, validate_batch_size, validate_sku,
 };
 use uuid::Uuid;
@@ -148,6 +148,20 @@ pub(crate) fn variant_is_purchasable_with_conn(
     } else {
         Ok(VariantPurchasability::ProductNotActive(status))
     }
+}
+
+/// Convert a price-filter bound to the `f64` the SQL predicate compares
+/// against.
+///
+/// Only ever used for a range comparison against `CAST(price AS REAL)`; the
+/// prices themselves are read back as exact `Decimal`s from the TEXT column.
+/// A bound that does not fit a float at all (a `Decimal` whose magnitude
+/// exceeds `f64`) is a bad request rather than a silent `inf`.
+fn price_bound(bound: rust_decimal::Decimal, field: &str) -> Result<f64> {
+    use rust_decimal::prelude::ToPrimitive;
+    bound.to_f64().filter(|value| value.is_finite()).ok_or_else(|| {
+        CommerceError::ValidationError(format!("{field} {bound} is not a comparable amount"))
+    })
 }
 
 /// SQLite implementation of `ProductRepository`
@@ -291,11 +305,18 @@ impl SqliteProductRepository {
         let attributes = input.attributes.clone().unwrap_or_default();
         let seo = input.seo.clone();
 
-        // Validate every inline SKU before touching the database so a bad
-        // second variant cannot leave a half-created product behind.
+        // Validate every inline variant before touching the database so a bad
+        // second variant cannot leave a half-created product behind. The full
+        // `Validate` impl (not just the SKU) runs here so a caller holding the
+        // repository directly cannot store a negative price, a compare-at
+        // price below the price, or an amount finer than
+        // `VARIANT_MONEY_SCALE`.
         if let Some(variants) = &input.variants {
             for variant in variants {
+                // `validate_sku` first so a malformed SKU keeps its historical
+                // `ValidationError`; `validate` then covers the amounts.
                 validate_sku(&variant.sku)?;
+                variant.validate()?;
             }
         }
 
@@ -327,7 +348,7 @@ impl SqliteProductRepository {
                 now.to_rfc3339(),
             ],
         )
-        .map_err(map_db_error)?;
+        .map_err(|e| map_db_error_with(e, ConflictValues::slug(&slug)))?;
 
         // Create variants inline if provided (using the same connection)
         if let Some(variants) = &input.variants {
@@ -373,7 +394,7 @@ impl SqliteProductRepository {
                         now.to_rfc3339(),
                     ],
                 )
-                .map_err(map_db_error)?;
+                .map_err(|e| map_db_error_with(e, ConflictValues::sku(&variant.sku)))?;
             }
         }
 
@@ -444,9 +465,12 @@ impl SqliteProductRepository {
         }
         if let Some(status) = input.status {
             current_status.ensure_can_transition_to(status)?;
-            if status == ProductStatus::Archived && current_status != ProductStatus::Archived {
-                product_reference_counts(tx, id)?
-                    .ensure_none("archive", &format!("product {id}"))?;
+            // Any move out of `Active` — archiving OR unpublishing back to
+            // `Draft` — withdraws the SKUs from sale, so both need the same
+            // live-reference guard; without it, unpublishing left carts
+            // holding a SKU checkout would still accept.
+            if let Some(action) = current_status.withdrawal_action(status) {
+                product_reference_counts(tx, id)?.ensure_none(action, &format!("product {id}"))?;
             }
             updates.push("status = ?");
             params.push(Box::new(status.to_string()));
@@ -469,7 +493,12 @@ impl SqliteProductRepository {
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
 
-        let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+        let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(|e| {
+            map_db_error_with(
+                e,
+                ConflictValues { slug: input.slug.as_deref(), ..ConflictValues::default() },
+            )
+        })?;
         if rows_affected == 0 {
             return Err(CommerceError::VersionConflict {
                 entity: "product".to_string(),
@@ -485,6 +514,89 @@ impl SqliteProductRepository {
                 }
                 e => map_db_error(e),
             })
+    }
+
+    /// Append the shared [`ProductFilter`] predicates — everything except
+    /// ordering and pagination — so `list` and `count` can never disagree
+    /// about what a filter means.
+    ///
+    /// Every predicate is expressed in SQL (including the price range, which
+    /// used to be applied in Rust after loading every matching row), so the
+    /// database can use its indexes and pagination applies to the filtered
+    /// set.
+    fn push_list_filters(
+        sql: &mut String,
+        params: &mut Vec<Box<dyn rusqlite::ToSql>>,
+        filter: &ProductFilter,
+        use_json: bool,
+    ) -> Result<()> {
+        if let Some(status) = filter.status {
+            sql.push_str(" AND status = ?");
+            params.push(Box::new(status.to_string()));
+        } else {
+            sql.push_str(" AND status != 'archived'");
+        }
+        if let Some(product_type) = filter.product_type {
+            sql.push_str(" AND product_type = ?");
+            params.push(Box::new(product_type.to_string()));
+        }
+        if let Some(search) = &filter.search {
+            sql.push_str(" AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')");
+            let escaped = format!("%{}%", escape_like(search));
+            params.push(Box::new(escaped.clone()));
+            params.push(Box::new(escaped));
+        }
+        if let Some(category) = &filter.category {
+            if use_json {
+                sql.push_str(
+                    " AND EXISTS (SELECT 1 FROM json_each(attributes) attr \
+                     WHERE (json_extract(attr.value, '$.name') = 'category' \
+                        OR json_extract(attr.value, '$.group') = 'category') \
+                       AND json_extract(attr.value, '$.value') = ?)",
+                );
+                params.push(Box::new(category.clone()));
+            } else {
+                sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
+                params.push(Box::new(format!("%\"name\":\"category\",\"value\":\"{category}\"%")));
+                params.push(Box::new(format!("%\"value\":\"{category}\",\"group\":\"category\"%")));
+            }
+        }
+        // Price range, filtered in SQL exactly as the Postgres backend does.
+        //
+        // `price` is exact TEXT on this backend, so the *predicate* casts to
+        // REAL. That is a range comparison only — no money value is ever read
+        // back through the cast — and both sides go through the same
+        // `Decimal -> f64` rounding, so a bound equal to a stored price still
+        // matches. `CreateProductVariant::validate` caps amounts at
+        // `VARIANT_MONEY_SCALE` (4 dp), well inside the range where that
+        // rounding is order-preserving.
+        if filter.min_price.is_some() || filter.max_price.is_some() {
+            sql.push_str(
+                " AND EXISTS (SELECT 1 FROM product_variants pv_price \
+                 WHERE pv_price.product_id = products.id AND pv_price.is_active = 1",
+            );
+            if let Some(min_price) = filter.min_price {
+                sql.push_str(" AND CAST(pv_price.price AS REAL) >= ?");
+                params.push(Box::new(price_bound(min_price, "min_price")?));
+            }
+            if let Some(max_price) = filter.max_price {
+                sql.push_str(" AND CAST(pv_price.price AS REAL) <= ?");
+                params.push(Box::new(price_bound(max_price, "max_price")?));
+            }
+            sql.push(')');
+        }
+        if let Some(in_stock) = filter.in_stock {
+            let stock_clause = if in_stock { "EXISTS" } else { "NOT EXISTS" };
+            sql.push_str(&format!(
+                " AND {stock_clause} (SELECT 1 FROM product_variants pv_stock \
+                 JOIN inventory_items ii ON ii.sku = pv_stock.sku \
+                 JOIN inventory_balances ib ON ib.item_id = ii.id \
+                 WHERE pv_stock.product_id = products.id \
+                   AND pv_stock.is_active = 1 \
+                   AND CAST(ib.quantity_available AS REAL) > 0)"
+            ));
+        }
+        Ok(())
     }
 
     /// Archive one product on an open transaction, refusing while live
@@ -558,68 +670,14 @@ impl ProductRepository for SqliteProductRepository {
     }
 
     fn list(&self, filter: ProductFilter) -> Result<Vec<Product>> {
-        let ProductFilter {
-            status,
-            product_type,
-            search,
-            category,
-            min_price,
-            max_price,
-            in_stock,
-            limit,
-            offset,
-            after_cursor,
-        } = filter;
         let conn = self.conn()?;
         let use_json = json1_available(&conn);
         let mut sql = "SELECT * FROM products WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
-
-        if let Some(status) = status {
-            sql.push_str(" AND status = ?");
-            params.push(Box::new(status.to_string()));
-        } else {
-            sql.push_str(" AND status != 'archived'");
-        }
-        if let Some(product_type) = product_type {
-            sql.push_str(" AND product_type = ?");
-            params.push(Box::new(product_type.to_string()));
-        }
-        if let Some(search) = search {
-            sql.push_str(" AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')");
-            let escaped = format!("%{}%", escape_like(&search));
-            params.push(Box::new(escaped.clone()));
-            params.push(Box::new(escaped));
-        }
-        if let Some(category) = category {
-            if use_json {
-                sql.push_str(
-                    " AND EXISTS (SELECT 1 FROM json_each(attributes) attr \
-                     WHERE (json_extract(attr.value, '$.name') = 'category' \
-                        OR json_extract(attr.value, '$.group') = 'category') \
-                       AND json_extract(attr.value, '$.value') = ?)",
-                );
-                params.push(Box::new(category));
-            } else {
-                sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
-                params.push(Box::new(format!("%\"name\":\"category\",\"value\":\"{category}\"%")));
-                params.push(Box::new(format!("%\"value\":\"{category}\",\"group\":\"category\"%")));
-            }
-        }
-        if let Some(in_stock) = in_stock {
-            let stock_clause = if in_stock { "EXISTS" } else { "NOT EXISTS" };
-            sql.push_str(&format!(
-                " AND {stock_clause} (SELECT 1 FROM product_variants pv_stock \
-                 JOIN inventory_items ii ON ii.sku = pv_stock.sku \
-                 JOIN inventory_balances ib ON ib.item_id = ii.id \
-                 WHERE pv_stock.product_id = products.id \
-                   AND pv_stock.is_active = 1 \
-                   AND CAST(ib.quantity_available AS REAL) > 0)"
-            ));
-        }
+        Self::push_list_filters(&mut sql, &mut params, &filter, use_json)?;
 
         // Keyset cursor: (name, id) for stable ASC ordering
-        if let Some((cursor_name, cursor_id)) = &after_cursor {
+        if let Some((cursor_name, cursor_id)) = &filter.after_cursor {
             sql.push_str(" AND (name > ? OR (name = ? AND id > ?))");
             params.push(Box::new(cursor_name.clone()));
             params.push(Box::new(cursor_name.clone()));
@@ -628,14 +686,13 @@ impl ProductRepository for SqliteProductRepository {
 
         sql.push_str(" ORDER BY name ASC, id ASC");
 
-        let apply_price_filter = min_price.is_some() || max_price.is_some();
-        if !apply_price_filter {
-            // Offset pagination applies only in non-cursor mode; the helper emits
-            // `LIMIT -1 OFFSET n` when an offset is set without a limit (SQLite
-            // rejects a bare OFFSET).
-            let page_offset = if after_cursor.is_none() { offset } else { None };
-            crate::sqlite::append_limit_offset(&mut sql, limit, page_offset);
-        }
+        // Offset pagination applies only in non-cursor mode — the cursor
+        // already encodes the position, and re-applying the offset on top of
+        // it skipped a whole page. The helper emits `LIMIT -1 OFFSET n` when
+        // an offset is set without a limit, because SQLite rejects a bare
+        // OFFSET.
+        let page_offset = if filter.after_cursor.is_none() { filter.offset } else { None };
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, page_offset);
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
@@ -646,43 +703,6 @@ impl ProductRepository for SqliteProductRepository {
             .map_err(map_db_error)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(map_db_error)?;
-
-        if apply_price_filter {
-            let min_price = min_price.as_ref();
-            let max_price = max_price.as_ref();
-            let mut filtered = Vec::with_capacity(products.len());
-            for product in products {
-                let variants = self.get_variants(product.id)?;
-                let mut matches = false;
-                for variant in variants {
-                    if !variant.is_active {
-                        continue;
-                    }
-                    if let Some(min) = min_price {
-                        if variant.price < *min {
-                            continue;
-                        }
-                    }
-                    if let Some(max) = max_price {
-                        if variant.price > *max {
-                            continue;
-                        }
-                    }
-                    matches = true;
-                    break;
-                }
-                if matches {
-                    filtered.push(product);
-                }
-            }
-            if let Some(offset) = offset {
-                filtered = filtered.into_iter().skip(offset as usize).collect();
-            }
-            if let Some(limit) = limit {
-                filtered.truncate(limit as usize);
-            }
-            return Ok(filtered);
-        }
 
         Ok(products)
     }
@@ -700,8 +720,12 @@ impl ProductRepository for SqliteProductRepository {
         product_id: ProductId,
         variant: CreateProductVariant,
     ) -> Result<ProductVariant> {
-        // Validate SKU format
+        // Validate SKU format, amounts and the compare-at relationship. The
+        // embedded facade validates too, but the repository is a public API of
+        // its own and must not accept money it cannot honour. `validate_sku`
+        // runs first so a malformed SKU keeps its historical `ValidationError`.
         validate_sku(&variant.sku)?;
+        variant.validate()?;
 
         let mut conn = self.conn()?;
         let id = Uuid::new_v4();
@@ -761,7 +785,7 @@ impl ProductRepository for SqliteProductRepository {
                 now.to_rfc3339(),
             ],
         )
-        .map_err(map_db_error)?;
+        .map_err(|e| map_db_error_with(e, ConflictValues::sku(&sku)))?;
 
         tx.commit().map_err(map_db_error)?;
 
@@ -815,7 +839,9 @@ impl ProductRepository for SqliteProductRepository {
     }
 
     fn update_variant(&self, id: Uuid, variant: CreateProductVariant) -> Result<ProductVariant> {
+        // Same contract as `add_variant`: SKU, amounts and compare-at.
         validate_sku(&variant.sku)?;
+        variant.validate()?;
 
         let mut conn = self.conn()?;
         let now = Utc::now();
@@ -869,7 +895,7 @@ impl ProductRepository for SqliteProductRepository {
                 current_version,
             ],
         )
-        .map_err(map_db_error)?;
+        .map_err(|e| map_db_error_with(e, ConflictValues::sku(&variant.sku)))?;
         if rows_affected == 0 {
             return Err(CommerceError::VersionConflict {
                 entity: "product_variant".to_string(),
@@ -940,111 +966,19 @@ impl ProductRepository for SqliteProductRepository {
     }
 
     fn count(&self, filter: ProductFilter) -> Result<u64> {
-        let ProductFilter {
-            status,
-            product_type,
-            search,
-            category,
-            min_price,
-            max_price,
-            in_stock,
-            limit: _,
-            offset: _,
-            after_cursor: _,
-        } = filter;
-
         let conn = self.conn()?;
         let use_json = json1_available(&conn);
-        let mut sql = "SELECT id FROM products WHERE 1=1".to_string();
+        let mut sql = "SELECT COUNT(*) FROM products WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
-
-        if let Some(status) = status {
-            sql.push_str(" AND status = ?");
-            params.push(Box::new(status.to_string()));
-        } else {
-            sql.push_str(" AND status != 'archived'");
-        }
-        if let Some(product_type) = product_type {
-            sql.push_str(" AND product_type = ?");
-            params.push(Box::new(product_type.to_string()));
-        }
-        if let Some(search) = search {
-            sql.push_str(" AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')");
-            let escaped = format!("%{}%", escape_like(&search));
-            params.push(Box::new(escaped.clone()));
-            params.push(Box::new(escaped));
-        }
-        if let Some(category) = category {
-            if use_json {
-                sql.push_str(
-                    " AND EXISTS (SELECT 1 FROM json_each(attributes) attr \
-                     WHERE (json_extract(attr.value, '$.name') = 'category' \
-                        OR json_extract(attr.value, '$.group') = 'category') \
-                       AND json_extract(attr.value, '$.value') = ?)",
-                );
-                params.push(Box::new(category));
-            } else {
-                sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
-                params.push(Box::new(format!("%\"name\":\"category\",\"value\":\"{category}\"%")));
-                params.push(Box::new(format!("%\"value\":\"{category}\",\"group\":\"category\"%")));
-            }
-        }
-        if let Some(in_stock) = in_stock {
-            let stock_clause = if in_stock { "EXISTS" } else { "NOT EXISTS" };
-            sql.push_str(&format!(
-                " AND {stock_clause} (SELECT 1 FROM product_variants pv_stock \
-                 JOIN inventory_items ii ON ii.sku = pv_stock.sku \
-                 JOIN inventory_balances ib ON ib.item_id = ii.id \
-                 WHERE pv_stock.product_id = products.id \
-                   AND pv_stock.is_active = 1 \
-                   AND CAST(ib.quantity_available AS REAL) > 0)"
-            ));
-        }
+        // Same predicates as `list` (pagination excluded), counted in SQL
+        // instead of by loading every id and its variants.
+        Self::push_list_filters(&mut sql, &mut params, &filter, use_json)?;
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
-        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let ids = stmt
-            .query_map(params_refs.as_slice(), |row| row.get::<_, String>(0))
-            .map_err(map_db_error)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(map_db_error)?
-            .into_iter()
-            .map(|id_str| parse_uuid(&id_str, "product", "id").map(ProductId::from))
-            .collect::<Result<Vec<_>>>()?;
-
-        if min_price.is_some() || max_price.is_some() {
-            let min_price = min_price.as_ref();
-            let max_price = max_price.as_ref();
-            let mut count = 0u64;
-            for id in ids {
-                let variants = self.get_variants(id)?;
-                let mut matches = false;
-                for variant in variants {
-                    if !variant.is_active {
-                        continue;
-                    }
-                    if let Some(min) = min_price {
-                        if variant.price < *min {
-                            continue;
-                        }
-                    }
-                    if let Some(max) = max_price {
-                        if variant.price > *max {
-                            continue;
-                        }
-                    }
-                    matches = true;
-                    break;
-                }
-                if matches {
-                    count += 1;
-                }
-            }
-            return Ok(count);
-        }
-
-        Ok(ids.len() as u64)
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
+        Ok(u64::try_from(count).unwrap_or_default())
     }
 
     // === Batch Operations ===

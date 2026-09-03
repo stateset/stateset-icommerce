@@ -3,7 +3,10 @@
 use super::PlanOutcome;
 use crate::kernel::envelope::GuardRejection;
 use chrono::{DateTime, Utc};
-use stateset_core::{A2AEscrow, A2AEscrowStatus, CreateA2AEscrow};
+use stateset_core::{
+    A2ADisputeResolutionType, A2AEscrow, A2AEscrowStatus, CreateA2AEscrow, DisputeA2AEscrow,
+    FileA2ADispute, ResolveA2ADispute, SubmitA2ADisputeEvidence,
+};
 
 const VALIDATION: &str = "commerce.a2a.escrow.validation_failed";
 
@@ -73,4 +76,113 @@ pub fn plan_fund_escrow(escrow: Option<A2AEscrow>, now: DateTime<Utc>) -> PlanOu
     escrow.funded_at = Some(now);
     escrow.updated_at = now;
     PlanOutcome::Proceed(escrow)
+}
+
+const DISPUTE_VALIDATION: &str = "commerce.a2a.dispute.validation_failed";
+
+/// Static payload checks for `a2a.escrow.dispute`.
+#[must_use]
+pub fn dispute_escrow_guard(input: &DisputeA2AEscrow) -> Option<GuardRejection> {
+    escrow_id_guard(&input.escrow_id).or_else(|| {
+        input
+            .reason
+            .trim()
+            .is_empty()
+            .then(|| GuardRejection::never(VALIDATION, "dispute reason is required"))
+    })
+}
+
+/// Static payload checks for `a2a.escrow.release` and `a2a.escrow.refund`.
+#[must_use]
+pub fn escrow_settlement_guard(escrow_id: &str) -> Option<GuardRejection> {
+    escrow_id_guard(escrow_id)
+}
+
+/// Static payload checks for `a2a.dispute.file`. `controls_claimant` is the
+/// backend-independent answer to "does the principal (or its delegator)
+/// control the claimant address?".
+#[must_use]
+pub fn file_dispute_guard(
+    input: &FileA2ADispute,
+    now: DateTime<Utc>,
+    controls_claimant: bool,
+) -> Option<GuardRejection> {
+    if let Some(rejection) = escrow_id_guard(&input.escrow_id) {
+        return Some(rejection);
+    }
+    if input.reason.trim().is_empty()
+        || input.category.trim().is_empty()
+        || input.claimant_address.trim().is_empty()
+    {
+        return Some(GuardRejection::never(
+            DISPUTE_VALIDATION,
+            "claimant_address, reason, and category are required",
+        ));
+    }
+    if input.evidence_deadline <= now || input.review_deadline <= input.evidence_deadline {
+        return Some(GuardRejection::never(
+            "commerce.a2a.dispute.invalid_deadlines",
+            "evidence_deadline must be in the future and precede review_deadline",
+        ));
+    }
+    (!controls_claimant).then(|| {
+        GuardRejection::never(
+            "kernel.actor_mismatch",
+            "principal or delegator must control the claimant address",
+        )
+    })
+}
+
+/// Static payload checks for `a2a.dispute.evidence.submit`.
+#[must_use]
+pub fn submit_evidence_guard(
+    input: &SubmitA2ADisputeEvidence,
+    controls_submitter: bool,
+) -> Option<GuardRejection> {
+    if let Some(rejection) = escrow_id_guard(&input.dispute_id) {
+        return Some(rejection);
+    }
+    if input.submitted_by.trim().is_empty()
+        || input.evidence_type.trim().is_empty()
+        || input.title.trim().is_empty()
+        || input.content.is_empty()
+    {
+        return Some(GuardRejection::never(
+            "commerce.a2a.dispute.evidence.validation_failed",
+            "submitted_by, evidence_type, title, and content are required",
+        ));
+    }
+    if input.title.len() > 256 || input.content.len() > 1_048_576 {
+        return Some(GuardRejection::never(
+            "commerce.a2a.dispute.evidence.too_large",
+            "evidence title is limited to 256 bytes and content to 1 MiB",
+        ));
+    }
+    (!controls_submitter).then(|| {
+        GuardRejection::never(
+            "kernel.actor_mismatch",
+            "principal or delegator must control the evidence submitter address",
+        )
+    })
+}
+
+/// Static payload checks for `a2a.dispute.resolve`.
+#[must_use]
+pub fn resolve_dispute_guard(input: &ResolveA2ADispute) -> Option<GuardRejection> {
+    if let Some(rejection) = escrow_id_guard(&input.dispute_id) {
+        return Some(rejection);
+    }
+    if input.note.as_ref().is_some_and(|note| note.len() > 2_000) {
+        return Some(GuardRejection::never(
+            "commerce.a2a.dispute.resolution_note_too_large",
+            "resolution note is limited to 2000 bytes",
+        ));
+    }
+    let is_split = input.resolution_type == A2ADisputeResolutionType::Split;
+    (is_split != (input.buyer_amount.is_some() && input.seller_amount.is_some())).then(|| {
+        GuardRejection::never(
+            "commerce.a2a.dispute.invalid_allocations",
+            "split requires both exact allocations; other outcomes forbid allocations",
+        )
+    })
 }

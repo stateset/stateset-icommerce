@@ -29,6 +29,23 @@ fn to_sql_err(e: CommerceError) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(e))
 }
 
+/// Whether a transaction-propagated error is [`CommerceError::InsufficientStock`].
+///
+/// The reserve path wraps its `CommerceError` in
+/// `rusqlite::Error::ToSqlConversionFailure` so it can travel out of a
+/// closure that must return `rusqlite::Error`; unwrap it again so
+/// `auto_allocate_inventory` can skip one starved candidate instead of
+/// failing the whole batch.
+fn is_insufficient_stock(error: &rusqlite::Error) -> bool {
+    match error {
+        rusqlite::Error::ToSqlConversionFailure(boxed) => matches!(
+            (**boxed).downcast_ref::<CommerceError>(),
+            Some(CommerceError::InsufficientStock { .. })
+        ),
+        _ => false,
+    }
+}
+
 /// An open allocation row as needed by the release/consume paths.
 struct OpenAllocation {
     id: Uuid,
@@ -1076,16 +1093,18 @@ impl BackorderRepository for SqliteBackorderRepository {
                 if take <= Decimal::ZERO {
                     continue;
                 }
-                created.push(allocate_in_tx(
-                    tx,
-                    backorder_id,
-                    sku,
-                    take,
-                    location_id,
-                    None,
-                    None,
-                    now,
-                )?);
+                // The read above happens inside a BEGIN IMMEDIATE write
+                // transaction, so no concurrent writer can take the units
+                // between it and the reserve. Skip rather than abort anyway,
+                // for parity with Postgres and because a legacy drifted
+                // balance can still refuse the reserve: one candidate losing
+                // its allocation must not cost every other backorder of this
+                // SKU theirs.
+                match allocate_in_tx(tx, backorder_id, sku, take, location_id, None, None, now) {
+                    Ok(allocation) => created.push(allocation),
+                    Err(e) if is_insufficient_stock(&e) => continue,
+                    Err(e) => return Err(e),
+                }
             }
             Ok(created)
         })

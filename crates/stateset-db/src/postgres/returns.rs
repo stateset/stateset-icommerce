@@ -229,6 +229,29 @@ async fn load_return_pg(conn: &mut PgConnection, id: Uuid, lock: bool) -> Result
     }
 }
 
+/// Delete a return and its items on the caller's connection, refusing any
+/// return outside the early no-effect window (see [`Return::check_deletable`]).
+///
+/// A missing return is a no-op, matching the previous "delete what is there"
+/// contract for batch deletes.
+async fn delete_return_pg(conn: &mut PgConnection, id: Uuid) -> Result<()> {
+    let Some(existing) = load_return_pg(conn, id, true).await? else {
+        return Ok(());
+    };
+    existing.check_deletable()?;
+    sqlx::query("DELETE FROM return_items WHERE return_id = $1")
+        .bind(id)
+        .execute(&mut *conn)
+        .await
+        .map_err(map_db_error)?;
+    sqlx::query("DELETE FROM returns WHERE id = $1")
+        .bind(id)
+        .execute(&mut *conn)
+        .await
+        .map_err(map_db_error)?;
+    Ok(())
+}
+
 /// Whether `existing` is the return that `input` describes (same order, same
 /// lines), so an idempotent replay can be told apart from key reuse.
 fn same_return_request(existing: &Return, input: &CreateReturn) -> bool {
@@ -1359,19 +1382,15 @@ impl PgReturnRepository {
         Ok(count.0 as u64)
     }
 
-    /// Delete a return and its items in one transaction (async)
+    /// Delete a return and its items in one transaction (async).
+    ///
+    /// Guarded by [`Return::check_deletable`] exactly like the SQLite backend:
+    /// only a `requested` or `approved` return with no dispositioned item may
+    /// be deleted. The header row is locked `FOR UPDATE` before the guard so a
+    /// concurrent transition or disposition cannot slip past it.
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        sqlx::query("DELETE FROM return_items WHERE return_id = $1")
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-        sqlx::query("DELETE FROM returns WHERE id = $1")
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        delete_return_pg(tx.as_mut(), id).await?;
         tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
@@ -1481,16 +1500,11 @@ impl PgReturnRepository {
 
         let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        sqlx::query("DELETE FROM return_items WHERE return_id = ANY($1)")
-            .bind(&raw_ids)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-        sqlx::query("DELETE FROM returns WHERE id = ANY($1)")
-            .bind(&raw_ids)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        // Every id runs through the same deletability guard as the single
+        // delete; one refusal rolls the whole batch back.
+        for id in raw_ids {
+            delete_return_pg(tx.as_mut(), id).await?;
+        }
         tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }

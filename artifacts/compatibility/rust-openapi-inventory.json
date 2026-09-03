@@ -7,9 +7,9 @@
   "openapiVersion": "3.1.0",
   "title": "StateSet Commerce API",
   "version": "1.0.4",
-  "totalPaths": 331,
-  "totalOperations": 447,
-  "totalSchemas": 434,
+  "totalPaths": 340,
+  "totalOperations": 457,
+  "totalSchemas": 441,
   "totalTags": 62,
   "methods": [
     {
@@ -18,7 +18,7 @@
     },
     {
       "name": "GET",
-      "count": 179
+      "count": 184
     },
     {
       "name": "PATCH",
@@ -26,7 +26,7 @@
     },
     {
       "name": "POST",
-      "count": 220
+      "count": 225
     },
     {
       "name": "PUT",
@@ -157,7 +157,7 @@
     {
       "name": "lots",
       "description": "Lot/batch tracking: creation, consumption, reservations, quarantine, and expiry queries",
-      "count": 9
+      "count": 10
     },
     {
       "name": "loyalty",
@@ -475,6 +475,7 @@
     "CreateInspectionItemRequest",
     "CreateInspectionRequest",
     "CreateIntegrationMappingRequest",
+    "CreateIntentRequest",
     "CreateInvoiceRequest",
     "CreateJournalEntryLineRequest",
     "CreateJournalEntryRequest",
@@ -549,6 +550,7 @@
     "ErrorDetail",
     "ExchangeRateListResponse",
     "ExchangeRateResponse",
+    "FailIntentRequest",
     "FailMessageRequest",
     "FieldMappingListResponse",
     "FieldMappingResponse",
@@ -575,6 +577,7 @@
     "InspectionResponse",
     "IntegrationMappingListResponse",
     "IntegrationMappingResponse",
+    "IntentResponse",
     "InventoryAdjustRequest",
     "InventoryAgingRequest",
     "InventoryAgingResponse",
@@ -596,6 +599,8 @@
     "LocationResponse",
     "LockChannelRequest",
     "LockPeriodRequest",
+    "LotGenealogyLinkResponse",
+    "LotGenealogyResponse",
     "LotListResponse",
     "LotReservationResponse",
     "LotResponse",
@@ -707,6 +712,7 @@
     "SetExchangeRateRequest",
     "SetReturnDispositionRequest",
     "SetStatusRequest",
+    "SettleIntentRequest",
     "ShipOrderLineRequest",
     "ShipOrderRequest",
     "ShipSerialRequest",
@@ -716,6 +722,7 @@
     "ShipmentResponse",
     "ShippingZoneListResponse",
     "ShippingZoneResponse",
+    "SignIntentRequest",
     "SnapshotLineResponse",
     "SnapshotListResponse",
     "SnapshotResponse",
@@ -2442,6 +2449,15 @@
       "path": "/api/v1/lots/{id}/consume",
       "method": "POST",
       "operationId": "lots_consume",
+      "tags": [
+        "lots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/lots/{id}/genealogy",
+      "method": "GET",
+      "operationId": "lots_genealogy",
       "tags": [
         "lots"
       ],
@@ -4759,6 +4775,87 @@
         "work_orders"
       ],
       "summary": ""
+    },
+    {
+      "path": "/api/v1/x402/carts/{cart_id}/intents",
+      "method": "GET",
+      "operationId": "x402_intents_for_cart",
+      "tags": [
+        "x402"
+      ],
+      "summary": "`GET /api/v1/x402/carts/{cart_id}/intents` — every intent for one cart."
+    },
+    {
+      "path": "/api/v1/x402/intents",
+      "method": "GET",
+      "operationId": "x402_list_intents",
+      "tags": [
+        "x402"
+      ],
+      "summary": "`GET /api/v1/x402/intents` — list payment intents."
+    },
+    {
+      "path": "/api/v1/x402/intents",
+      "method": "POST",
+      "operationId": "x402_create_intent",
+      "tags": [
+        "x402"
+      ],
+      "summary": "`POST /api/v1/x402/intents` — create (and claim) a payment intent."
+    },
+    {
+      "path": "/api/v1/x402/intents/{id}",
+      "method": "GET",
+      "operationId": "x402_get_intent",
+      "tags": [
+        "x402"
+      ],
+      "summary": "`GET /api/v1/x402/intents/{id}` — read one payment intent."
+    },
+    {
+      "path": "/api/v1/x402/intents/{id}/cancel",
+      "method": "POST",
+      "operationId": "x402_cancel_intent",
+      "tags": [
+        "x402"
+      ],
+      "summary": "`POST /api/v1/x402/intents/{id}/cancel` — release the cart/order claim."
+    },
+    {
+      "path": "/api/v1/x402/intents/{id}/fail",
+      "method": "POST",
+      "operationId": "x402_fail_intent",
+      "tags": [
+        "x402"
+      ],
+      "summary": "`POST /api/v1/x402/intents/{id}/fail` — record a settlement failure."
+    },
+    {
+      "path": "/api/v1/x402/intents/{id}/settle",
+      "method": "POST",
+      "operationId": "x402_settle_intent",
+      "tags": [
+        "x402"
+      ],
+      "summary": "`POST /api/v1/x402/intents/{id}/settle` — record an on-chain settlement."
+    },
+    {
+      "path": "/api/v1/x402/intents/{id}/sign",
+      "method": "POST",
+      "operationId": "x402_sign_intent",
+      "tags": [
+        "x402"
+      ],
+      "summary": "`POST /api/v1/x402/intents/{id}/sign` — attach the payer authorization."
+    },
+    {
+      "path": "/api/v1/x402/orders/{order_id}/intents",
+      "method": "GET",
+      "operationId": "x402_intents_for_order",
+      "tags": [
+        "x402"
+      ],
+      "summary": "`GET /api/v1/x402/orders/{order_id}/intents` — every intent for one order."
     },
     {
       "path": "/health",

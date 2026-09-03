@@ -24,8 +24,9 @@ use rust_decimal_macros::dec;
 use stateset_core::{
     CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
     CreatePayment, CreateRefund, CurrencyCode, CustomerId, CustomerRepository, InventoryRepository,
-    OrderId, OrderRepository, OrderStatus, Payment, PaymentMethodType, PaymentRepository,
-    PaymentTransactionStatus, ProductId, UpdateOrder, UpdatePayment,
+    OrderId, OrderItemId, OrderRepository, OrderStatus, Payment, PaymentMethodType,
+    PaymentRepository, PaymentTransactionStatus, ProductId, RemoveOrderItem, UpdateOrder,
+    UpdatePayment,
 };
 use stateset_db::SqliteDatabase;
 use std::sync::{Arc, Barrier};
@@ -773,4 +774,164 @@ fn update_batch_atomic_refuses_refund_by_status_flip() {
         .expect_err("batch refused");
     assert_validation_mentioning(&err, "complete_refund");
     assert_eq!(status(&db, p.id), PaymentTransactionStatus::Completed);
+}
+
+// ============================================================================
+// D6 — a line removal must not drop the order total below captured money
+//
+// `remove_item` gated only on the order status, so dropping a line lowered
+// `total_amount` under money already captured against the order — exactly the
+// state the cancel guard and `check_order_capture_capacity` exist to prevent.
+// The order was left permanently over-captured and could never be cancelled or
+// deleted cleanly.
+// ============================================================================
+
+/// A two-line order (1 × 60.00 + 1 × 40.00 = 100.00) in `Pending`, returned
+/// with its line ids in creation order.
+fn two_line_order(db: &SqliteDatabase) -> (OrderId, OrderItemId, OrderItemId) {
+    let customer_id = customer(db);
+    let mut skus = Vec::new();
+    for price in ["60", "40"] {
+        let sku = format!("LINE-{price}-{}", Uuid::new_v4());
+        db.inventory()
+            .create_item(CreateInventoryItem {
+                sku: sku.clone(),
+                name: sku.clone(),
+                initial_quantity: Some(dec!(10)),
+                ..Default::default()
+            })
+            .expect("create inventory item");
+        skus.push(sku);
+    }
+    let order = db
+        .orders()
+        .create(CreateOrder {
+            customer_id,
+            items: vec![
+                CreateOrderItem {
+                    product_id: ProductId::new(),
+                    sku: skus[0].clone(),
+                    name: skus[0].clone(),
+                    quantity: 1,
+                    unit_price: dec!(60.00),
+                    ..Default::default()
+                },
+                CreateOrderItem {
+                    product_id: ProductId::new(),
+                    sku: skus[1].clone(),
+                    name: skus[1].clone(),
+                    quantity: 1,
+                    unit_price: dec!(40.00),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .expect("create order");
+    assert_eq!(order.total_amount, dec!(100.00));
+    let big = order.items.iter().find(|i| i.total == dec!(60.00)).expect("60.00 line").id;
+    let small = order.items.iter().find(|i| i.total == dec!(40.00)).expect("40.00 line").id;
+    (order.id, big, small)
+}
+
+fn total_of(db: &SqliteDatabase, order_id: OrderId) -> Decimal {
+    db.orders().get(order_id).expect("get order").expect("order exists").total_amount
+}
+
+#[test]
+fn removing_a_line_that_would_strand_captured_money_is_refused() {
+    let db = db();
+    let (order_id, big, _small) = two_line_order(&db);
+    completed_payment(&db, Some(order_id), dec!(50.00));
+
+    // Dropping the 60.00 line would leave a 40.00 order carrying a 50.00
+    // capture.
+    let err = db.orders().remove_item(order_id, big).expect_err("refused");
+    match &err {
+        CommerceError::OrderTotalBelowCaptured { order_id: id, new_total, captured, currency } => {
+            assert_eq!(*id, order_id.into_uuid());
+            // Exact decimal strings, compared as decimals: SQLite stores money
+            // as TEXT and Postgres as NUMERIC(19,4), so the scale differs.
+            assert_eq!(new_total.parse::<Decimal>().expect("decimal"), dec!(40.00));
+            assert_eq!(captured.parse::<Decimal>().expect("decimal"), dec!(50.00));
+            assert_eq!(currency, "USD");
+        }
+        other => panic!("expected OrderTotalBelowCaptured, got {other:?}"),
+    }
+    assert_eq!(err.invariant_code(), Some("commerce.order.total_below_captured"));
+
+    // The refusal rolls the whole mutation back: line, total and reservation
+    // all survive.
+    let order = db.orders().get(order_id).expect("get").expect("exists");
+    assert_eq!(order.items.len(), 2, "the line must still be there");
+    assert_eq!(order.total_amount, dec!(100.00));
+    assert_eq!(
+        db.payments().open_captures_for_order(order_id).expect("open").len(),
+        1,
+        "the capture is untouched"
+    );
+}
+
+#[test]
+fn removing_a_line_the_captures_still_cover_is_allowed() {
+    let db = db();
+    let (order_id, _big, small) = two_line_order(&db);
+    completed_payment(&db, Some(order_id), dec!(50.00));
+
+    // Dropping the 40.00 line leaves a 60.00 order, still above the 50.00
+    // capture.
+    db.orders().remove_item(order_id, small).expect("removal within capture cover");
+    assert_eq!(total_of(&db, order_id), dec!(60.00));
+}
+
+#[test]
+fn an_in_flight_capture_blocks_a_line_removal_too() {
+    let db = db();
+    let (order_id, big, _small) = two_line_order(&db);
+    // Never completed: a pending authorization is still a capturing status and
+    // holds its slice of the total.
+    payment(&db, Some(order_id), dec!(50.00));
+
+    let err = db.orders().remove_item(order_id, big).expect_err("refused");
+    assert_eq!(err.invariant_code(), Some("commerce.order.total_below_captured"));
+    assert_eq!(total_of(&db, order_id), dec!(100.00));
+}
+
+#[test]
+fn a_refunded_capture_no_longer_blocks_a_line_removal() {
+    let db = db();
+    let (order_id, big, _small) = two_line_order(&db);
+    let p = completed_payment(&db, Some(order_id), dec!(50.00));
+    let refund = db
+        .payments()
+        .create_refund(CreateRefund { payment_id: p.id, amount: None, ..Default::default() })
+        .expect("full refund");
+    db.payments().complete_refund(refund.id).expect("complete refund");
+
+    db.orders().remove_item(order_id, big).expect("fully refunded money holds nothing");
+    assert_eq!(total_of(&db, order_id), dec!(40.00));
+}
+
+#[test]
+fn allow_overpayment_removes_the_line_and_leaves_the_order_overpaid() {
+    let db = db();
+    let (order_id, big, _small) = two_line_order(&db);
+    completed_payment(&db, Some(order_id), dec!(50.00));
+
+    db.orders()
+        .remove_item_with(order_id, big, RemoveOrderItem { allow_overpayment: true })
+        .expect("explicit opt-in removes the line");
+    assert_eq!(total_of(&db, order_id), dec!(40.00));
+    // Nothing was voided or refunded: the overpayment is the caller's to settle.
+    let open = db.payments().open_captures_for_order(order_id).expect("open");
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].amount - open[0].amount_refunded, dec!(50.00));
+}
+
+#[test]
+fn a_line_removal_on_an_unpaid_order_is_unaffected() {
+    let db = db();
+    let (order_id, big, _small) = two_line_order(&db);
+    db.orders().remove_item(order_id, big).expect("no captures, no guard");
+    assert_eq!(total_of(&db, order_id), dec!(40.00));
 }

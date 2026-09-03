@@ -16,9 +16,9 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | OpenAPI version | `3.1.0` |
 | API title | StateSet Commerce API |
 | API version | `1.0.4` |
-| Paths | 331 |
-| Operations | 447 |
-| Schemas | 434 |
+| Paths | 340 |
+| Operations | 457 |
+| Schemas | 441 |
 | Tags | 62 |
 
 ## Method Counts
@@ -26,9 +26,9 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | Method | Operations |
 | --- | --- |
 | DELETE | 25 |
-| GET | 179 |
+| GET | 184 |
 | PATCH | 10 |
-| POST | 220 |
+| POST | 225 |
 | PUT | 13 |
 
 ## Tag Counts
@@ -59,7 +59,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `inventory` | 3 | Stock and inventory management |
 | `invoices` | 5 | Invoice management |
 | `kernel` | 2 | Kernel receipt audit chain verification and checkpoints |
-| `lots` | 9 | Lot/batch tracking: creation, consumption, reservations, quarantine, and expiry queries |
+| `lots` | 10 | Lot/batch tracking: creation, consumption, reservations, quarantine, and expiry queries |
 | `loyalty` | 4 | Loyalty program management |
 | `negotiations` | 5 | Agent-to-agent price negotiation |
 | `orders` | 5 | Order lifecycle management |
@@ -287,6 +287,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `POST` | `/api/v1/lots` | `lots` | `lots_create` | — |
 | `GET` | `/api/v1/lots/{id}` | `lots` | `lots_get_one` | — |
 | `POST` | `/api/v1/lots/{id}/consume` | `lots` | `lots_consume` | — |
+| `GET` | `/api/v1/lots/{id}/genealogy` | `lots` | `lots_genealogy` | — |
 | `POST` | `/api/v1/lots/{id}/quarantine` | `lots` | `lots_quarantine` | — |
 | `POST` | `/api/v1/lots/{id}/release-quarantine` | `lots` | `lots_release_quarantine` | — |
 | `POST` | `/api/v1/lots/{id}/reserve` | `lots` | `lots_reserve` | — |
@@ -546,6 +547,15 @@ expired credits, and insufficient balance. |
 | `POST` | `/api/v1/work-orders/{id}/tasks` | `work_orders` | `work_orders_add_task` | — |
 | `POST` | `/api/v1/work-orders/tasks/{task_id}/complete` | `work_orders` | `work_orders_complete_task` | — |
 | `POST` | `/api/v1/work-orders/tasks/{task_id}/start` | `work_orders` | `work_orders_start_task` | — |
+| `GET` | `/api/v1/x402/carts/{cart_id}/intents` | `x402` | `x402_intents_for_cart` | `GET /api/v1/x402/carts/{cart_id}/intents` — every intent for one cart. |
+| `GET` | `/api/v1/x402/intents` | `x402` | `x402_list_intents` | `GET /api/v1/x402/intents` — list payment intents. |
+| `POST` | `/api/v1/x402/intents` | `x402` | `x402_create_intent` | `POST /api/v1/x402/intents` — create (and claim) a payment intent. |
+| `GET` | `/api/v1/x402/intents/{id}` | `x402` | `x402_get_intent` | `GET /api/v1/x402/intents/{id}` — read one payment intent. |
+| `POST` | `/api/v1/x402/intents/{id}/cancel` | `x402` | `x402_cancel_intent` | `POST /api/v1/x402/intents/{id}/cancel` — release the cart/order claim. |
+| `POST` | `/api/v1/x402/intents/{id}/fail` | `x402` | `x402_fail_intent` | `POST /api/v1/x402/intents/{id}/fail` — record a settlement failure. |
+| `POST` | `/api/v1/x402/intents/{id}/settle` | `x402` | `x402_settle_intent` | `POST /api/v1/x402/intents/{id}/settle` — record an on-chain settlement. |
+| `POST` | `/api/v1/x402/intents/{id}/sign` | `x402` | `x402_sign_intent` | `POST /api/v1/x402/intents/{id}/sign` — attach the payer authorization. |
+| `GET` | `/api/v1/x402/orders/{order_id}/intents` | `x402` | `x402_intents_for_order` | `GET /api/v1/x402/orders/{order_id}/intents` — every intent for one order. |
 | `GET` | `/health` | `health` | `health` | `GET /health` — simple liveness probe. |
 | `GET` | `/health/deep` | `health` | `deep_health` | `GET /health/deep` — deep health check with DB connectivity and metrics. |
 | `GET` | `/health/ready` | `health` | `readiness` | `GET /health/ready` — readiness probe that checks DB connectivity. |

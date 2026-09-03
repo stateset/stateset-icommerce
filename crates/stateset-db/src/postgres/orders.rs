@@ -17,10 +17,10 @@ use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
     Address, BatchResult, CartId, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem,
     CurrencyCode, CustomerId, FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem,
-    OrderItemId, OrderRepository, OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result,
-    ShipOrder, ShipmentLineInput, StockPolicy, UpdateOrder, validate_batch_size,
-    validate_currency_code, validate_postal_code, validate_price, validate_required_text,
-    validate_required_uuid, validate_sku,
+    OrderItemId, OrderRepository, OrderStatus, PaymentStatus, ProductId, RemoveOrderItem,
+    ReserveInventory, Result, ShipOrder, ShipmentLineInput, StockPolicy, UpdateOrder,
+    validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
+    validate_required_text, validate_required_uuid, validate_sku,
 };
 use uuid::Uuid;
 
@@ -77,6 +77,68 @@ fn ensure_lines_mutable(id: Uuid, status: OrderStatus) -> Result<()> {
              lines may only be added or removed before fulfilment (pending, confirmed, processing)"
         )))
     }
+}
+
+/// Refuse an order-line mutation that would leave the order's `total_amount`
+/// below the money already captured against it. Postgres twin of the SQLite
+/// `ensure_total_covers_captures_in_tx`.
+///
+/// The order total is the ceiling every capture is checked against
+/// (`check_order_capture_capacity_pg`, invariant
+/// `commerce.capture.exceeds_order_total`); lowering it below the captures
+/// breaks the same invariant from the other side and strands captured money.
+/// Called AFTER the line change and `update_order_total_tx`, on the same
+/// transaction, so it reads the total the order would actually commit with;
+/// returning `Err` rolls the whole mutation back.
+async fn ensure_total_covers_captures_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: Uuid,
+    allow_overpayment: bool,
+) -> Result<()> {
+    if allow_overpayment {
+        return Ok(());
+    }
+    let open = open_captures_for_order_pg(tx.as_mut(), id).await?;
+    if open.is_empty() {
+        return Ok(());
+    }
+    let captured: Decimal = open.iter().map(|p| p.amount - p.amount_refunded).sum();
+    let (new_total, currency): (Decimal, String) =
+        sqlx::query_as("SELECT total_amount, currency FROM orders WHERE id = $1")
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+    if captured > new_total {
+        return Err(CommerceError::OrderTotalBelowCaptured {
+            order_id: id,
+            new_total: new_total.to_string(),
+            captured: captured.to_string(),
+            currency,
+        });
+    }
+    Ok(())
+}
+
+/// Refuse an order line whose SKU has been withdrawn from the catalogue.
+/// Postgres twin of the SQLite `ensure_lines_purchasable_in_tx`.
+///
+/// Runs inside the order-creating transaction, exactly as
+/// `carts.rs::add_item_internal` does for cart lines, so an archived product or
+/// a soft-deleted variant cannot reach an order through `create`,
+/// `create_from_cart` (checkout), the batch creators or `add_item`. A SKU that
+/// is not in the catalogue at all is allowed through
+/// (`VariantPurchasability::NotInCatalog`) so ad-hoc lines keep working.
+async fn ensure_lines_purchasable_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    items: &[CreateOrderItem],
+) -> Result<()> {
+    for item in items {
+        super::products::variant_is_purchasable_with_conn_pg(tx.as_mut(), &item.sku)
+            .await?
+            .ensure_sellable(&item.sku)?;
+    }
+    Ok(())
 }
 
 /// Refuse deletion of an order that has money against it (see the SQLite
@@ -253,11 +315,16 @@ impl PgOrderRepository {
         Ok(())
     }
 
+    /// Everything `create_in_tx` would refuse, evaluated without writing: the
+    /// checkout PREVIEW path calls this so a preview never succeeds where the
+    /// apply would fail.
     pub(crate) async fn validate_create_order_in_tx(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         input: &CreateOrder,
     ) -> Result<()> {
         Self::validate_order_input(input)?;
+        // Same catalogue guard the write path applies.
+        ensure_lines_purchasable_in_tx(tx, &input.items).await?;
         if input.stock_policy.allows_backorder() {
             return Ok(());
         }
@@ -625,6 +692,12 @@ impl PgOrderRepository {
             let items = item_rows.into_iter().map(Self::row_to_item).collect();
             return Self::row_to_order(row, items);
         }
+
+        // Catalogue guard for every line, in the order-creating transaction.
+        // Deliberately AFTER the idempotent-checkout early return above: a
+        // replayed checkout must still resolve to the order it already minted,
+        // even if a SKU has been withdrawn since.
+        ensure_lines_purchasable_in_tx(tx, &input.items).await?;
 
         // Insert order items
         let mut items = Vec::new();
@@ -1674,6 +1747,11 @@ impl PgOrderRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let (status, customer_id) = Self::load_status_and_customer_in_tx(&mut tx, order_id).await?;
         ensure_lines_mutable(order_id, status)?;
+        // Same catalogue guard as creation: a withdrawn SKU cannot enter an
+        // order through the back door of `add_item` either.
+        super::products::variant_is_purchasable_with_conn_pg(tx.as_mut(), &order_item.sku)
+            .await?
+            .ensure_sellable(&order_item.sku)?;
 
         sqlx::query(
             r#"
@@ -1720,7 +1798,21 @@ impl PgOrderRepository {
     ///
     /// Only allowed before fulfilment. Releases the line's reservation and
     /// cancels its backorder in the same transaction as the delete.
+    ///
+    /// Subject to the money rule of [`RemoveOrderItem`]; use
+    /// [`Self::remove_item_with_async`] to opt out.
     pub async fn remove_item_async(&self, order_id: Uuid, item_id: Uuid) -> Result<()> {
+        self.remove_item_with_async(order_id, item_id, RemoveOrderItem::default()).await
+    }
+
+    /// [`Self::remove_item_async`] with explicit handling of the order's
+    /// captured money (see [`RemoveOrderItem::allow_overpayment`]).
+    pub async fn remove_item_with_async(
+        &self,
+        order_id: Uuid,
+        item_id: Uuid,
+        input: RemoveOrderItem,
+    ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let (status, _customer_id) =
             Self::load_status_and_customer_in_tx(&mut tx, order_id).await?;
@@ -1761,6 +1853,11 @@ impl PgOrderRepository {
             .map_err(map_db_error)?;
 
         Self::update_order_total_tx(&mut tx, order_id).await?;
+        // Money guard, on the recomputed total: dropping this line must not
+        // leave the order worth less than the money already captured against
+        // it. `Err` here rolls back the delete, the reservation release and the
+        // backorder cancellation together.
+        ensure_total_covers_captures_in_tx(&mut tx, order_id, input.allow_overpayment).await?;
         Self::append_line_event_tx(&mut tx, "orders.item_removed.v1", order_id, &removed).await?;
         tx.commit().await.map_err(map_db_error)?;
 
@@ -1988,8 +2085,17 @@ impl OrderRepository for PgOrderRepository {
         super::block_on(self.add_item_async(order_id.into_uuid(), item))
     }
 
-    fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()> {
-        super::block_on(self.remove_item_async(order_id.into_uuid(), item_id.into_uuid()))
+    fn remove_item_with(
+        &self,
+        order_id: OrderId,
+        item_id: OrderItemId,
+        input: RemoveOrderItem,
+    ) -> Result<()> {
+        super::block_on(self.remove_item_with_async(
+            order_id.into_uuid(),
+            item_id.into_uuid(),
+            input,
+        ))
     }
 
     fn count(&self, filter: OrderFilter) -> Result<u64> {

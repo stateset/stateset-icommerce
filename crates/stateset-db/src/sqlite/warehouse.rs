@@ -10,7 +10,7 @@ use crate::sqlite::{
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
@@ -21,6 +21,157 @@ use stateset_core::{
     MoveInventory, MovementFilter, MovementType, RecordCycleCountLine, Result, UpdateLocation,
     UpdateWarehouse, UpdateZone, Warehouse, WarehouseFilter, WarehouseRepository, Zone,
 };
+
+// ============================================================================
+// WMS stock ledger (shared by receiving and fulfillment)
+// ============================================================================
+//
+// Warehouse documents used to be pure paperwork: completing a put-away, a pick
+// or a ship moved no stock anywhere, while return dispositions *did*, so the
+// warehouse was half-ledgered. These helpers are the missing half. Each is
+// applied on the caller's transaction — the same one that writes the document's
+// status — so the movement and the status flip commit or roll back together,
+// and the status guard (`WHERE status IN (...)` matching zero rows on a second
+// attempt) is what makes completing twice a no-op rather than a double count.
+//
+// Levels:
+// - `location_inventory` (bin level) is the WMS's own ledger: put-away adds to
+//   the destination bin, a pick takes from the source bin.
+// - `inventory_balances` (warehouse level, via
+//   [`super::bins::apply_warehouse_delta_tx`]) mirrors it: a put-away is the
+//   only producer of received stock, a pick allocates it (off the shelf, still
+//   in the building) and a ship consumes exactly what the picks allocated. The
+//   WMS pair pick/ship is therefore self-balancing.
+
+/// `location_inventory.lot_id` is `NOT NULL` and stores `''` for lot-less rows.
+fn location_lot_key(lot_id: Option<Uuid>) -> String {
+    lot_id.map_or_else(String::new, |id| id.to_string())
+}
+
+/// Add `delta` units of `sku` to a location's on-hand, creating the row on
+/// first use. A negative delta is refused when the bin does not hold enough
+/// unreserved stock (`InsufficientStock`).
+pub(crate) fn apply_location_delta_tx(
+    tx: &rusqlite::Transaction<'_>,
+    location_id: i32,
+    sku: &str,
+    lot_id: Option<Uuid>,
+    delta: Decimal,
+    now: &str,
+) -> rusqlite::Result<()> {
+    if delta.is_zero() {
+        return Ok(());
+    }
+    let lot_key = location_lot_key(lot_id);
+    let current: Option<(String, String)> = tx
+        .query_row(
+            "SELECT quantity_on_hand, quantity_reserved FROM location_inventory
+             WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
+            params![location_id, sku, lot_key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let (on_hand, reserved) = match &current {
+        Some((oh, res)) => (
+            parse_decimal_strict(oh, "location_inventory", "quantity_on_hand")
+                .map_err(super::bins::smuggle)?,
+            parse_decimal_strict(res, "location_inventory", "quantity_reserved")
+                .map_err(super::bins::smuggle)?,
+        ),
+        None => (Decimal::ZERO, Decimal::ZERO),
+    };
+    let new_on_hand = on_hand + delta;
+    if new_on_hand < reserved {
+        return Err(super::bins::smuggle(CommerceError::InsufficientStock {
+            sku: sku.to_string(),
+            requested: delta.abs().to_string(),
+            available: (on_hand - reserved).to_string(),
+        }));
+    }
+    if current.is_some() {
+        tx.execute(
+            "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
+             WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
+            params![new_on_hand.to_string(), now, location_id, sku, lot_key],
+        )?;
+    } else {
+        tx.execute(
+            "INSERT INTO location_inventory
+             (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
+             VALUES (?1, ?2, ?3, ?4, '0', ?5)",
+            params![location_id, sku, lot_key, new_on_hand.to_string(), now],
+        )?;
+    }
+    Ok(())
+}
+
+/// Record a WMS movement in the `inventory_movements` audit trail.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn insert_wms_movement_tx(
+    tx: &rusqlite::Transaction<'_>,
+    movement_type: MovementType,
+    from_location_id: Option<i32>,
+    to_location_id: Option<i32>,
+    sku: &str,
+    lot_id: Option<Uuid>,
+    quantity: Decimal,
+    reference_type: &str,
+    reference_id: &str,
+    performed_by: Option<&str>,
+    now: &str,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO inventory_movements
+         (id, movement_type, from_location_id, to_location_id, sku, lot_id, quantity,
+          reference_type, reference_id, reason, performed_by, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            Uuid::new_v4().to_string(),
+            movement_type.to_string(),
+            from_location_id,
+            to_location_id,
+            sku,
+            lot_id.map(|id| id.to_string()),
+            quantity.to_string(),
+            reference_type,
+            reference_id,
+            format!("{movement_type} {reference_type} {reference_id}"),
+            performed_by,
+            now,
+        ],
+    )?;
+    Ok(())
+}
+
+/// The warehouse a location belongs to.
+pub(crate) fn warehouse_of_location_tx(
+    tx: &rusqlite::Transaction<'_>,
+    location_id: i32,
+) -> rusqlite::Result<i32> {
+    tx.query_row("SELECT warehouse_id FROM locations WHERE id = ?1", params![location_id], |row| {
+        row.get(0)
+    })
+    .optional()?
+    .ok_or_else(|| {
+        super::bins::smuggle(CommerceError::ValidationError(format!(
+            "Location {location_id} does not exist"
+        )))
+    })
+}
+
+/// Ensure an `inventory_items` master row exists for `sku`.
+///
+/// `apply_warehouse_delta_tx` refuses to stock an unknown SKU, but a receipt
+/// legitimately introduces one: the goods are physically on the dock. Creating
+/// the master row here keeps a put-away from failing on a SKU that only the
+/// receipt knows about.
+pub(crate) fn ensure_inventory_item_tx(
+    tx: &rusqlite::Transaction<'_>,
+    sku: &str,
+) -> rusqlite::Result<()> {
+    tx.execute("INSERT OR IGNORE INTO inventory_items (sku, name) VALUES (?1, ?1)", params![sku])?;
+    Ok(())
+}
 
 /// SQLite warehouse repository
 #[derive(Debug)]

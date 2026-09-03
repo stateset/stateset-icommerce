@@ -5,12 +5,11 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
 use stateset_core::{
-    CommerceError, CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, ProductTaxCategory,
-    ResolvedTaxRate, Result, TaxAddress, TaxCalculationRequest, TaxCalculationResult,
-    TaxComputationInputs, TaxExemption, TaxJurisdiction, TaxJurisdictionFilter, TaxRate,
-    TaxRateFilter, TaxRepository, TaxSettings, compute_tax,
+    CommerceError, CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, JurisdictionLevel,
+    ProductTaxCategory, ResolvedTaxRate, Result, TaxAddress, TaxCalculationRequest,
+    TaxCalculationResult, TaxComputationInputs, TaxExemption, TaxJurisdiction,
+    TaxJurisdictionFilter, TaxRate, TaxRateFilter, TaxRepository, TaxSettings, compute_tax,
 };
-use std::collections::HashMap;
 use uuid::Uuid;
 
 use super::{
@@ -24,6 +23,12 @@ use super::{
 fn normalize_code(code: &str) -> String {
     code.trim().to_ascii_uppercase()
 }
+
+/// How many active jurisdictions of a country are scanned when resolving the
+/// local (below-state) ones for an address. Bounded so a country with a large
+/// local-tax table can never turn one tax calculation into an unbounded scan;
+/// this is the list endpoint's own maximum page size.
+const LOCAL_JURISDICTION_SCAN_LIMIT: u32 = 1000;
 
 /// SQLite tax repository
 #[derive(Debug)]
@@ -449,6 +454,50 @@ impl SqliteTaxRepository {
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(map_db_error)
     }
 
+    /// Every jurisdiction that levies tax on `address`.
+    ///
+    /// Country and state are resolved by the `COUNTRY` / `COUNTRY-STATE`
+    /// code convention. Below the state there is no code convention — a city
+    /// or transit district is identified by the address itself — so
+    /// `County`, `City`, `District` and `Special` jurisdictions are matched by
+    /// [`TaxJurisdiction::covers_address`] against the address's city and
+    /// postal code. Without this, US local sales tax was unreachable: only
+    /// country and state rates could ever resolve.
+    ///
+    /// At most `LOCAL_JURISDICTION_SCAN_LIMIT` (1000) active local jurisdictions
+    /// per country are considered, so the scan is bounded.
+    pub fn jurisdictions_for_address(&self, address: &TaxAddress) -> Result<Vec<TaxJurisdiction>> {
+        let mut resolved: Vec<TaxJurisdiction> = Vec::new();
+
+        if let Some(country) = self.get_jurisdiction_by_code(&address.country)? {
+            resolved.push(country);
+        }
+
+        if let Some(state) = &address.state {
+            let state_code = format!("{}-{}", address.country, state);
+            if let Some(state_jurisdiction) = self.get_jurisdiction_by_code(&state_code)? {
+                resolved.push(state_jurisdiction);
+            }
+        }
+
+        let locals = self.list_jurisdictions(TaxJurisdictionFilter {
+            country_code: Some(address.country.clone()),
+            active_only: true,
+            limit: Some(LOCAL_JURISDICTION_SCAN_LIMIT),
+            ..Default::default()
+        })?;
+        for jurisdiction in locals {
+            if jurisdiction.level > JurisdictionLevel::State
+                && jurisdiction.covers_address(address)
+                && !resolved.iter().any(|j| j.id == jurisdiction.id)
+            {
+                resolved.push(jurisdiction);
+            }
+        }
+
+        Ok(resolved)
+    }
+
     /// Get rates for a jurisdiction and product category
     pub fn get_rates_for_address(
         &self,
@@ -456,21 +505,8 @@ impl SqliteTaxRepository {
         category: ProductTaxCategory,
         date: NaiveDate,
     ) -> Result<Vec<TaxRate>> {
-        // Find applicable jurisdictions (country, state, etc.)
-        let mut jurisdiction_ids = Vec::new();
-
-        // Get country jurisdiction
-        if let Some(country) = self.get_jurisdiction_by_code(&address.country)? {
-            jurisdiction_ids.push(country.id);
-        }
-
-        // Get state jurisdiction if applicable
-        if let Some(state) = &address.state {
-            let state_code = format!("{}-{}", address.country, state);
-            if let Some(state_jurisdiction) = self.get_jurisdiction_by_code(&state_code)? {
-                jurisdiction_ids.push(state_jurisdiction.id);
-            }
-        }
+        let jurisdiction_ids: Vec<Uuid> =
+            self.jurisdictions_for_address(address)?.into_iter().map(|j| j.id).collect();
 
         if jurisdiction_ids.is_empty() {
             return Ok(Vec::new());
@@ -945,24 +981,23 @@ impl SqliteTaxRepository {
         categories.sort_by_key(|c| c.as_str());
         categories.dedup();
 
-        let mut jurisdictions: HashMap<Uuid, TaxJurisdiction> = HashMap::new();
+        // Resolve the address's jurisdictions ONCE (not once per category):
+        // the address does not change between categories, and the local-level
+        // resolution scans the country's jurisdictions.
+        let jurisdictions = self.jurisdictions_for_address(&request.shipping_address)?;
         let mut rates = Vec::new();
         for category in categories {
-            for rate in
-                self.get_rates_for_address(&request.shipping_address, category, transaction_date)?
-            {
-                let jurisdiction = match jurisdictions.get(&rate.jurisdiction_id) {
-                    Some(jurisdiction) => jurisdiction.clone(),
-                    None => {
-                        let Some(jurisdiction) = self.get_jurisdiction(rate.jurisdiction_id)?
-                        else {
-                            continue;
-                        };
-                        jurisdictions.insert(jurisdiction.id, jurisdiction.clone());
-                        jurisdiction
-                    }
+            for jurisdiction in &jurisdictions {
+                let filter = TaxRateFilter {
+                    jurisdiction_id: Some(jurisdiction.id),
+                    product_category: Some(category),
+                    active_only: true,
+                    effective_date: Some(transaction_date),
+                    ..Default::default()
                 };
-                rates.push(ResolvedTaxRate { rate, jurisdiction });
+                for rate in self.list_rates(filter)? {
+                    rates.push(ResolvedTaxRate { rate, jurisdiction: jurisdiction.clone() });
+                }
             }
         }
 
@@ -1652,6 +1687,192 @@ mod tests {
         assert!(res.exemptions_applied);
         assert!(!res.line_item_taxes[0].is_exempt);
         assert_eq!(res.jurisdictions.iter().map(|j| j.code.as_str()).collect::<Vec<_>>(), ["ZZ"]);
+    }
+
+    /// `tax_settings.enabled = false` must actually turn tax off. The engine
+    /// read every other setting and ignored this one, so a store that had
+    /// disabled tax still charged it.
+    #[test]
+    fn calculate_tax_disabled_settings_charge_no_tax() {
+        let repo = fresh_repo();
+        let j = make_state_jur(&repo, "DS");
+        make_rate(&repo, j.id, dec!(0.05));
+        let mut request = single_item_request("ZZ", "DS", dec!(100));
+        request.shipping_amount = Some(dec!(10));
+
+        let on = repo.calculate_tax(request.clone()).expect("calc");
+        assert_eq!(on.total_tax, dec!(5.50), "sanity: enabled charges tax");
+
+        let mut settings = repo.get_settings().expect("settings");
+        settings.enabled = false;
+        let stored = repo.update_settings(settings).expect("update settings");
+        assert!(!stored.enabled, "the flag must persist");
+
+        let off = repo.calculate_tax(request).expect("calc");
+        assert_eq!(off.total_tax, Decimal::ZERO, "disabled tax must charge nothing: {off:?}");
+        assert_eq!(off.shipping_tax, Decimal::ZERO);
+        assert!(off.tax_breakdown.is_empty());
+        assert!(off.jurisdictions.is_empty());
+        assert_eq!(off.subtotal, dec!(100));
+        assert_eq!(off.total, dec!(110));
+    }
+
+    /// County/City/District/Special jurisdictions were unreachable: resolution
+    /// only ever looked up the country code and `COUNTRY-STATE`, so US local
+    /// sales tax could never apply and the engine's jurisdiction-level
+    /// tie-break was dead code.
+    #[test]
+    fn calculate_tax_stacks_country_state_and_city_rates() {
+        let repo = fresh_repo();
+        let country = repo
+            .create_jurisdiction(CreateTaxJurisdiction {
+                parent_id: None,
+                name: "ZZ Country".into(),
+                code: "ZZ".into(),
+                level: JurisdictionLevel::Country,
+                country_code: "ZZ".into(),
+                state_code: None,
+                county: None,
+                city: None,
+                postal_codes: vec![],
+            })
+            .expect("country");
+        make_rate(&repo, country.id, dec!(0.01));
+        let state = make_state_jur(&repo, "TX"); // ZZ-TX
+        make_rate(&repo, state.id, dec!(0.0625));
+        let city = repo
+            .create_jurisdiction(CreateTaxJurisdiction {
+                parent_id: Some(state.id),
+                name: "Austin".into(),
+                code: "ZZ-TX-AUS".into(),
+                level: JurisdictionLevel::City,
+                country_code: "ZZ".into(),
+                state_code: Some("TX".into()),
+                county: Some("Travis".into()),
+                city: Some("Austin".into()),
+                postal_codes: vec!["787*".into()],
+            })
+            .expect("city");
+        make_rate(&repo, city.id, dec!(0.02));
+        // A different city in the same state must not be picked up.
+        let other = repo
+            .create_jurisdiction(CreateTaxJurisdiction {
+                parent_id: Some(state.id),
+                name: "Dallas".into(),
+                code: "ZZ-TX-DAL".into(),
+                level: JurisdictionLevel::City,
+                country_code: "ZZ".into(),
+                state_code: Some("TX".into()),
+                county: None,
+                city: Some("Dallas".into()),
+                postal_codes: vec![],
+            })
+            .expect("other city");
+        make_rate(&repo, other.id, dec!(0.05));
+
+        let mut request = single_item_request("ZZ", "TX", dec!(100));
+        request.shipping_address.city = Some("austin".into());
+        request.shipping_address.postal_code = Some("78701".into());
+
+        let res = repo.calculate_tax(request.clone()).expect("calc");
+        assert_eq!(res.total_tax, dec!(9.25), "1% + 6.25% + 2% must all apply: {res:?}");
+        let codes: Vec<&str> = res.jurisdictions.iter().map(|j| j.code.as_str()).collect();
+        assert_eq!(codes, vec!["ZZ", "ZZ-TX", "ZZ-TX-AUS"]);
+
+        // The breakdown is presented broadest-jurisdiction-first, which is
+        // also the order the rounding residue was allocated in — NOT
+        // alphabetical by jurisdiction name (Austin would come first).
+        let names: Vec<&str> = res.line_item_taxes[0]
+            .tax_details
+            .iter()
+            .map(|d| d.jurisdiction_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["ZZ Country", "TX Test State", "Austin"]);
+
+        // An address in another city of the same state gets country + state
+        // only; an address with no city or postal code gets no local tax at
+        // all rather than every local rate in the state.
+        let mut dallas = request;
+        dallas.shipping_address.city = Some("Dallas".into());
+        dallas.shipping_address.postal_code = None;
+        let res = repo.calculate_tax(dallas).expect("calc");
+        assert_eq!(res.total_tax, dec!(12.25), "1% + 6.25% + Dallas 5%");
+
+        let bare = single_item_request("ZZ", "TX", dec!(100));
+        let res = repo.calculate_tax(bare).expect("calc");
+        assert_eq!(res.total_tax, dec!(7.25), "no city/postal on the address: state only");
+    }
+
+    /// An exemption reaches tax only once it is verified, and revoking the
+    /// verification puts the tax back. `verify_exemption` had no caller
+    /// outside the repository, so this lifecycle was unreachable in practice.
+    #[test]
+    fn verify_exemption_round_trips_through_calculation() {
+        let db = fresh_db();
+        let repo = db.tax();
+        let j = make_state_jur(&repo, "VR");
+        make_rate(&repo, j.id, dec!(0.05));
+        let customer = make_customer(&db);
+        let exemption = make_exemption(&repo, customer, vec![], (2026, 1, 1), None);
+        assert!(!exemption.verified && exemption.verified_at.is_none());
+
+        let mut request = single_item_request("ZZ", "VR", dec!(100));
+        request.customer_id = Some(customer);
+        assert_eq!(repo.calculate_tax(request.clone()).expect("calc").total_tax, dec!(5.00));
+
+        let verified = repo.verify_exemption(exemption.id, true).expect("verify");
+        assert!(verified.verified && verified.verified_at.is_some());
+        assert_eq!(repo.calculate_tax(request.clone()).expect("calc").total_tax, Decimal::ZERO);
+
+        let revoked = repo.verify_exemption(exemption.id, false).expect("revoke");
+        assert!(!revoked.verified && revoked.verified_at.is_none());
+        assert_eq!(repo.calculate_tax(request).expect("calc").total_tax, dec!(5.00));
+
+        assert!(matches!(
+            repo.verify_exemption(Uuid::new_v4(), true),
+            Err(stateset_core::CommerceError::NotFound)
+        ));
+    }
+
+    /// Two certificates on one cart are reported as two, each with the tax it
+    /// saved. Crediting the whole saving to whichever exemption was listed
+    /// first put one certificate's money on another's number.
+    #[test]
+    fn calculate_tax_attributes_each_exemption_separately() {
+        let db = fresh_db();
+        let repo = db.tax();
+        let country = repo
+            .create_jurisdiction(CreateTaxJurisdiction {
+                parent_id: None,
+                name: "ZZ Country".into(),
+                code: "ZZ".into(),
+                level: JurisdictionLevel::Country,
+                country_code: "ZZ".into(),
+                state_code: None,
+                county: None,
+                city: None,
+                postal_codes: vec![],
+            })
+            .expect("country");
+        make_rate(&repo, country.id, dec!(0.05));
+        let state = make_state_jur(&repo, "AE");
+        make_rate(&repo, state.id, dec!(0.03));
+        let customer = make_customer(&db);
+        let federal = make_exemption(&repo, customer, vec![country.id], (2026, 1, 1), None);
+        let local = make_exemption(&repo, customer, vec![state.id], (2026, 1, 1), None);
+        repo.verify_exemption(federal.id, true).expect("verify");
+        repo.verify_exemption(local.id, true).expect("verify");
+
+        let mut request = single_item_request("ZZ", "AE", dec!(100));
+        request.customer_id = Some(customer);
+        let res = repo.calculate_tax(request).expect("calc");
+
+        assert_eq!(res.total_tax, Decimal::ZERO);
+        assert_eq!(res.applied_exemptions.len(), 2, "two certificates, two entries: {res:?}");
+        let saved: Vec<(Uuid, Decimal)> =
+            res.applied_exemptions.iter().map(|d| (d.exemption_id, d.tax_saved)).collect();
+        assert!(saved.contains(&(federal.id, dec!(5.00))), "{saved:?}");
+        assert!(saved.contains(&(local.id, dec!(3.00))), "{saved:?}");
     }
 
     #[test]

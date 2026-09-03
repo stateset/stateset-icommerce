@@ -3,8 +3,8 @@
 use rust_decimal::prelude::ToPrimitive;
 use stateset_core::{
     CancelOrder, CartId, CreateOrder, CreateOrderItem, CustomerId, Order, OrderFilter, OrderId,
-    OrderItem, OrderItemId, OrderStatus, PaymentStatus, Result, ShipOrder, ShipmentLineInput,
-    UpdateOrder,
+    OrderItem, OrderItemId, OrderStatus, PaymentStatus, RemoveOrderItem, Result, ShipOrder,
+    ShipmentLineInput, UpdateOrder,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;
@@ -308,7 +308,26 @@ impl Orders {
     /// reservation and cancels its backorder in the same transaction as the
     /// delete, then re-derives the order total.
     pub fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()> {
-        self.db.orders().remove_item(order_id, item_id)?;
+        self.remove_item_with(order_id, item_id, RemoveOrderItem::default())
+    }
+
+    /// Remove an item from an order with explicit handling of the order's
+    /// captured money.
+    ///
+    /// Removing a line lowers the order total, and the order total is the
+    /// ceiling every capture is checked against. By default the removal is
+    /// refused with [`stateset_core::CommerceError::OrderTotalBelowCaptured`]
+    /// when the order's new total would fall below the money already captured
+    /// against it, so a line removal can never strand captured funds. Pass
+    /// [`RemoveOrderItem::allow_overpayment`] to remove it anyway and settle
+    /// the resulting overpayment separately.
+    pub fn remove_item_with(
+        &self,
+        order_id: OrderId,
+        item_id: OrderItemId,
+        input: RemoveOrderItem,
+    ) -> Result<()> {
+        self.db.orders().remove_item_with(order_id, item_id, input)?;
         #[cfg(feature = "events")]
         {
             self.emit(CommerceEvent::OrderItemRemoved { order_id, item_id, timestamp: Utc::now() });

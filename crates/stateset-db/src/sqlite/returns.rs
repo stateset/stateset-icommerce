@@ -16,9 +16,15 @@
 //!   Line refunds are the proportional share of `order_items.total` (so line
 //!   discounts and tax are honoured), not `unit_price * quantity`.
 //! - **Status guards**: every status write goes through
-//!   [`Return::check_transition`]: no rejecting/cancelling after units were
-//!   restocked or quarantined, no completing with undispositioned items unless
-//!   explicitly written off.
+//!   [`Return::check_transition`]: no rejecting/cancelling after ANY item was
+//!   dispositioned (scrapped and returned-to-vendor goods are gone, so the
+//!   claim must stand just as it must for restocked ones), no completing with
+//!   undispositioned items unless explicitly written off.
+//! - **Delete window**: a return is a claim on its order line, so deletion is
+//!   refused outside the early no-effect window (`requested`/`approved`, no
+//!   disposition) — see [`Return::check_deletable`]. Without that guard,
+//!   deleting a completed, restocked, refunded return made the same units
+//!   returnable and refundable again while the stock stayed on the shelf.
 //! - **Completion settles**: completing a return creates `pending` payment
 //!   refunds against the order's captured payments in the same transaction
 //!   (unless `refund_method` settles out of band).
@@ -598,6 +604,22 @@ fn apply_update_tx(
     Ok(ret)
 }
 
+/// Delete a return and its items on the caller's transaction, refusing any
+/// return outside the early no-effect window (see [`Return::check_deletable`]).
+///
+/// A missing return is a no-op, matching the previous "delete what is there"
+/// contract for batch deletes.
+fn delete_return_tx(tx: &rusqlite::Transaction<'_>, id: Uuid) -> rusqlite::Result<()> {
+    let id_str = id.to_string();
+    let Some(existing) = load_return_conn(tx, &id_str)? else {
+        return Ok(());
+    };
+    existing.check_deletable().map_err(smuggle)?;
+    tx.execute("DELETE FROM return_items WHERE return_id = ?1", [&id_str])?;
+    tx.execute("DELETE FROM returns WHERE id = ?1", [&id_str])?;
+    Ok(())
+}
+
 /// Transition every received serial for a return line: `returned` first
 /// (owner cleared), then the disposition's target status, with a history row
 /// for each hop. Runs on the caller's transaction; SQL is local to the returns
@@ -937,14 +959,16 @@ impl SqliteReturnRepository {
         Ok(items_by_id)
     }
 
-    /// Delete a return and its items
+    /// Delete a return and its items.
+    ///
+    /// Guarded by [`Return::check_deletable`]: only a `requested` or `approved`
+    /// return with no dispositioned item may be deleted. The guard and the
+    /// DELETEs share the `IMMEDIATE` write transaction, so a disposition or a
+    /// status change landing between them cannot be deleted out from under.
     fn delete(&self, id: Uuid) -> Result<()> {
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-
-        tx.execute("DELETE FROM return_items WHERE return_id = ?", [id.to_string()])
-            .map_err(map_db_error)?;
-        tx.execute("DELETE FROM returns WHERE id = ?", [id.to_string()]).map_err(map_db_error)?;
+        delete_return_tx(&tx, id).map_err(map_db_error)?;
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
@@ -1384,18 +1408,11 @@ impl ReturnRepository for SqliteReturnRepository {
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
-        let raw_ids: Vec<Uuid> = ids.iter().map(|id| (*id).into()).collect();
-        let placeholders = build_in_clause(ids.len());
-        let params = uuid_params(&raw_ids);
-        let params_refs = params_refs(&params);
-
-        // Delete return items first
-        let sql = format!("DELETE FROM return_items WHERE return_id IN ({placeholders})");
-        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
-
-        // Delete returns
-        let sql = format!("DELETE FROM returns WHERE id IN ({placeholders})");
-        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+        // Every id runs through the same deletability guard as the single
+        // delete; one refusal rolls the whole batch back.
+        for id in &ids {
+            delete_return_tx(&tx, (*id).into()).map_err(map_db_error)?;
+        }
 
         tx.commit().map_err(map_db_error)?;
         Ok(())

@@ -616,3 +616,50 @@ pub(crate) async fn sealed_audit_entry_tx(
     })
     .map_err(|error| CommerceError::DatabaseError(error.to_string()))
 }
+
+/// Drive one audit-chain future to completion for a synchronous caller.
+///
+/// [`super::block_on`] refuses to run inside *any* Tokio context, including the
+/// blocking pool that an async caller correctly hands this work to
+/// (`tokio::task::spawn_blocking` threads still carry a runtime handle). This
+/// instead spawns onto the shared runtime and waits on a plain channel, which
+/// is safe from a blocking-pool thread and from a thread with no runtime at
+/// all. It must not be called from an async worker, whose thread it would
+/// block — see the [`crate::kernel::KernelAuditChain`] impl below.
+fn drive_audit<T: Send + 'static>(
+    future: impl std::future::Future<Output = Result<T>> + Send + 'static,
+) -> Result<T> {
+    let runtime = super::shared_runtime()?;
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    runtime.spawn(async move {
+        let _ = sender.send(future.await);
+    });
+    receiver.recv().map_err(|error| {
+        CommerceError::DatabaseError(format!("kernel audit chain task failed: {error}"))
+    })?
+}
+
+/// Synchronous audit-chain access for callers holding an erased
+/// [`crate::Database`], so a Postgres-backed `Commerce` verifies and
+/// checkpoints the same receipt chain a SQLite one does.
+///
+/// Each call drives the async implementation on the shared runtime, so it must
+/// run on a blocking thread rather than an async worker; the HTTP handlers use
+/// `AppState::run_blocking` for exactly that reason.
+impl crate::kernel::KernelAuditChain for PgKernelOutboxRepository {
+    fn verify_chain(&self) -> Result<KernelAuditVerification> {
+        let repository = self.clone();
+        drive_audit(async move { repository.verify_audit_chain_async().await })
+    }
+
+    fn checkpoint(&self) -> Result<KernelAuditCheckpoint> {
+        let repository = self.clone();
+        drive_audit(async move { repository.audit_checkpoint_async().await })
+    }
+
+    fn verify_checkpoint(&self, checkpoint: &KernelAuditCheckpoint) -> Result<bool> {
+        let repository = self.clone();
+        let checkpoint = checkpoint.clone();
+        drive_audit(async move { repository.verify_audit_checkpoint_async(&checkpoint).await })
+    }
+}

@@ -13,9 +13,9 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_core::{
-    CreateCustomer, CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, CurrencyCode,
-    ExemptionType, JurisdictionLevel, ProductTaxCategory, TaxAddress, TaxCalculationMethod,
-    TaxCalculationRequest, TaxJurisdictionFilter, TaxLineItem, TaxType,
+    CommerceError, CreateCustomer, CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate,
+    CurrencyCode, ExemptionType, JurisdictionLevel, ProductTaxCategory, TaxAddress,
+    TaxCalculationMethod, TaxCalculationRequest, TaxJurisdictionFilter, TaxLineItem, TaxType,
 };
 use stateset_db::PostgresDatabase;
 use stateset_db::postgres::PgTaxRepository;
@@ -35,13 +35,18 @@ async fn connect() -> Option<PostgresDatabase> {
 
 /// A per-run country code so rates from other test binaries on the shared
 /// database never stack onto ours (letters only, outside real ISO codes).
+/// A country code no other test in this process or this database will use.
+///
+/// Two letters drawn from a UUID gave only 256 possibilities, so tests
+/// collided and one test's country-level rate leaked into another's
+/// calculation. `country_code` is plain TEXT, so a longer code is fine.
 fn unique_country() -> String {
     Uuid::new_v4()
         .to_string()
         .chars()
-        .filter(|c| c.is_ascii_hexdigit())
-        .take(2)
-        .map(|c| char::from(b'G' + (c.to_digit(16).unwrap_or(0) as u8)))
+        .filter(char::is_ascii_hexdigit)
+        .take(6)
+        .map(|c| char::from(b'G' + u8::try_from(c.to_digit(16).unwrap_or(0)).unwrap_or(0)))
         .collect()
 }
 
@@ -308,4 +313,166 @@ async fn postgres_jurisdiction_codes_are_case_insensitive() {
         let res = repo.calculate_tax_async(request(c, s, &[dec!(10)])).await.expect("calc");
         assert_eq!(res.total_tax, dec!(1.00), "address {c}/{s} must resolve");
     }
+}
+
+/// Postgres mirror of `verify_exemption_round_trips_through_calculation`.
+/// `verify_exemption_async` had no caller outside the repository, so nothing
+/// exercised the only step that makes an exemption take effect.
+#[tokio::test]
+async fn postgres_verify_exemption_round_trips_through_calculation() {
+    let Some(db) = connect().await else { return };
+    let repo = db.tax();
+    let country = unique_country();
+    let j = make_jurisdiction(&repo, &country, Some("VR")).await;
+    make_rate(&repo, j.id, dec!(0.05)).await;
+    let customer = make_customer(&db).await;
+    let exemption =
+        make_exemption(&repo, customer, vec![], NaiveDate::from_ymd_opt(2026, 1, 1).expect("date"))
+            .await;
+    assert!(!exemption.verified && exemption.verified_at.is_none());
+
+    let mut req = request(&country, "VR", &[dec!(100)]);
+    req.customer_id = Some(customer);
+    assert_eq!(
+        repo.calculate_tax_async(req.clone()).await.expect("calc").total_tax,
+        dec!(5.00),
+        "unverified exemption must not apply"
+    );
+
+    let verified = repo.verify_exemption_async(exemption.id, true).await.expect("verify");
+    assert!(verified.verified && verified.verified_at.is_some());
+    let res = repo.calculate_tax_async(req.clone()).await.expect("calc");
+    assert_eq!(res.total_tax, Decimal::ZERO);
+    assert_eq!(res.applied_exemptions.len(), 1);
+    assert_eq!(res.applied_exemptions[0].tax_saved, dec!(5.00));
+
+    let revoked = repo.verify_exemption_async(exemption.id, false).await.expect("revoke");
+    assert!(!revoked.verified && revoked.verified_at.is_none());
+    assert_eq!(repo.calculate_tax_async(req).await.expect("calc").total_tax, dec!(5.00));
+
+    assert!(matches!(
+        repo.verify_exemption_async(Uuid::new_v4(), true).await,
+        Err(CommerceError::NotFound)
+    ));
+}
+
+/// Postgres mirror of `calculate_tax_disabled_settings_charge_no_tax`.
+/// `tax_settings.enabled` was persisted and never read.
+#[tokio::test]
+async fn postgres_calculate_tax_disabled_settings_charge_no_tax() {
+    let Some(db) = connect().await else { return };
+    let repo = db.tax();
+    let country = unique_country();
+    let j = make_jurisdiction(&repo, &country, Some("DS")).await;
+    make_rate(&repo, j.id, dec!(0.05)).await;
+    let mut req = request(&country, "DS", &[dec!(100)]);
+    req.shipping_amount = Some(dec!(10));
+
+    assert_eq!(repo.calculate_tax_async(req.clone()).await.expect("calc").total_tax, dec!(5.50));
+
+    // Settings are a shared singleton row, so restore them afterwards.
+    let original = repo.get_settings_async().await.expect("settings");
+    let mut disabled = original.clone();
+    disabled.enabled = false;
+    let stored = repo.update_settings_async(disabled).await.expect("disable");
+    assert!(!stored.enabled, "the flag must persist");
+    let res = repo.calculate_tax_async(req).await;
+    repo.update_settings_async(original).await.expect("restore settings");
+
+    let res = res.expect("calc");
+    assert_eq!(res.total_tax, Decimal::ZERO, "disabled tax must charge nothing: {res:?}");
+    assert_eq!(res.shipping_tax, Decimal::ZERO);
+    assert!(res.tax_breakdown.is_empty());
+    assert!(res.jurisdictions.is_empty());
+    assert_eq!(res.subtotal, dec!(100));
+    assert_eq!(res.total, dec!(110));
+}
+
+/// Postgres mirror of `calculate_tax_stacks_country_state_and_city_rates`.
+/// Only country and `COUNTRY-STATE` codes ever resolved, so US local tax was
+/// unreachable on both backends.
+#[tokio::test]
+async fn postgres_calculate_tax_stacks_country_state_and_city_rates() {
+    let Some(db) = connect().await else { return };
+    let repo = db.tax();
+    let country_code = unique_country();
+
+    let country = make_jurisdiction(&repo, &country_code, None).await;
+    make_rate(&repo, country.id, dec!(0.01)).await;
+    let state = make_jurisdiction(&repo, &country_code, Some("TX")).await;
+    make_rate(&repo, state.id, dec!(0.0625)).await;
+    let city = repo
+        .create_jurisdiction_async(CreateTaxJurisdiction {
+            parent_id: Some(state.id),
+            name: "Austin".into(),
+            code: format!("{country_code}-TX-AUS"),
+            level: JurisdictionLevel::City,
+            country_code: country_code.clone(),
+            state_code: Some("TX".into()),
+            county: Some("Travis".into()),
+            city: Some("Austin".into()),
+            postal_codes: vec!["787*".into()],
+        })
+        .await
+        .expect("city");
+    make_rate(&repo, city.id, dec!(0.02)).await;
+    let other = repo
+        .create_jurisdiction_async(CreateTaxJurisdiction {
+            parent_id: Some(state.id),
+            name: "Dallas".into(),
+            code: format!("{country_code}-TX-DAL"),
+            level: JurisdictionLevel::City,
+            country_code: country_code.clone(),
+            state_code: Some("TX".into()),
+            county: None,
+            city: Some("Dallas".into()),
+            postal_codes: vec![],
+        })
+        .await
+        .expect("other city");
+    make_rate(&repo, other.id, dec!(0.05)).await;
+
+    let mut req = request(&country_code, "TX", &[dec!(100)]);
+    req.shipping_address.city = Some("austin".into());
+    req.shipping_address.postal_code = Some("78701".into());
+    let res = repo.calculate_tax_async(req.clone()).await.expect("calc");
+    assert_eq!(res.total_tax, dec!(9.25), "1% + 6.25% + 2% must all apply: {res:?}");
+    let names: Vec<&str> =
+        res.line_item_taxes[0].tax_details.iter().map(|d| d.jurisdiction_name.as_str()).collect();
+    assert_eq!(names.len(), 3);
+    assert_eq!(names[2], "Austin", "breakdown is broadest-first, not alphabetical: {names:?}");
+
+    let bare = request(&country_code, "TX", &[dec!(100)]);
+    let res = repo.calculate_tax_async(bare).await.expect("calc");
+    assert_eq!(res.total_tax, dec!(7.25), "no city/postal on the address: state only");
+}
+
+/// Postgres mirror of `calculate_tax_attributes_each_exemption_separately`.
+#[tokio::test]
+async fn postgres_calculate_tax_attributes_each_exemption_separately() {
+    let Some(db) = connect().await else { return };
+    let repo = db.tax();
+    let country_code = unique_country();
+    let country = make_jurisdiction(&repo, &country_code, None).await;
+    make_rate(&repo, country.id, dec!(0.05)).await;
+    let state = make_jurisdiction(&repo, &country_code, Some("AE")).await;
+    make_rate(&repo, state.id, dec!(0.03)).await;
+
+    let customer = make_customer(&db).await;
+    let from = NaiveDate::from_ymd_opt(2026, 1, 1).expect("date");
+    let federal = make_exemption(&repo, customer, vec![country.id], from).await;
+    let local = make_exemption(&repo, customer, vec![state.id], from).await;
+    repo.verify_exemption_async(federal.id, true).await.expect("verify");
+    repo.verify_exemption_async(local.id, true).await.expect("verify");
+
+    let mut req = request(&country_code, "AE", &[dec!(100)]);
+    req.customer_id = Some(customer);
+    let res = repo.calculate_tax_async(req).await.expect("calc");
+
+    assert_eq!(res.total_tax, Decimal::ZERO);
+    assert_eq!(res.applied_exemptions.len(), 2, "two certificates, two entries: {res:?}");
+    let saved: Vec<(Uuid, Decimal)> =
+        res.applied_exemptions.iter().map(|d| (d.exemption_id, d.tax_saved)).collect();
+    assert!(saved.contains(&(federal.id, dec!(5.00))), "{saved:?}");
+    assert!(saved.contains(&(local.id, dec!(3.00))), "{saved:?}");
 }

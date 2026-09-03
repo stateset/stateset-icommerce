@@ -16,6 +16,7 @@ use crate::error::HttpError;
 use crate::middleware::{self, AuthzConfig, BearerAuthBinding, RateLimitConfig};
 use crate::routes::{self, DEFAULT_REQUEST_BODY_LIMIT_BYTES};
 use crate::state::{AppState, IpCidr, MetricsHeaderLimits};
+use crate::sweeps::{SweepConfig, spawn_background_sweeps};
 
 /// Default bind address.
 const DEFAULT_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 3000);
@@ -142,6 +143,7 @@ pub struct ServerBuilder {
     allow_unauthenticated: bool,
     rate_limit: Option<RateLimitConfig>,
     require_idempotency_keys: bool,
+    background_sweeps: Option<SweepConfig>,
 }
 
 impl fmt::Debug for ServerBuilder {
@@ -167,6 +169,7 @@ impl fmt::Debug for ServerBuilder {
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("rate_limit", &self.rate_limit)
             .field("require_idempotency_keys", &self.require_idempotency_keys)
+            .field("background_sweeps", &self.background_sweeps)
             .finish()
     }
 }
@@ -271,7 +274,39 @@ impl ServerBuilder {
             // Secure-by-default: money-moving create endpoints require an
             // Idempotency-Key header (HTTP 428 when missing).
             require_idempotency_keys: true,
+            // Correct-by-default: the engine only expires inventory holds,
+            // backorder allocations, lots and lot/serial reservations lazily,
+            // when traffic touches the same rows. Without a scheduler an idle
+            // SKU keeps counting holds that timed out long ago, so the server
+            // runs both built-in sweeps unless an operator turns them off.
+            background_sweeps: Some(SweepConfig::default()),
         }
+    }
+
+    /// Override how the built-in stock and traceability sweeps are scheduled.
+    #[must_use]
+    pub const fn with_background_sweeps(mut self, config: SweepConfig) -> Self {
+        self.background_sweeps = Some(config);
+        self
+    }
+
+    /// Do not run the built-in sweeps in this process.
+    ///
+    /// Use this when a separate worker owns them (they are idempotent, but
+    /// running them everywhere is wasted work), or when embedding the router
+    /// in a host that schedules its own jobs. Expired holds are then only
+    /// reclaimed lazily, by traffic on the same SKU, or by
+    /// `POST /api/v1/inventory/sweeps/run`.
+    #[must_use]
+    pub const fn without_background_sweeps(mut self) -> Self {
+        self.background_sweeps = None;
+        self
+    }
+
+    /// How the built-in sweeps are scheduled, if at all.
+    #[must_use]
+    pub const fn background_sweeps(&self) -> Option<SweepConfig> {
+        self.background_sweeps
     }
 
     /// Create a new server builder and apply `/metrics` network policy from environment.
@@ -929,6 +964,43 @@ impl ServerBuilder {
             return Err(HttpError::BadRequest(format!("Refusing to start: {message}")));
         }
 
+        // Start the built-in sweeps alongside the listener. They run on their
+        // own OS thread (blocking repository calls must not sit on an axum
+        // worker); the handle is held for the lifetime of `serve` and stops
+        // the loop when the server returns.
+        let sweeps = match self.background_sweeps {
+            Some(config) => match spawn_background_sweeps(&self.state.commerce_arc(), config) {
+                Ok(handle) => {
+                    tracing::info!(
+                        reservation_interval_secs = config.reservation_interval.as_secs(),
+                        traceability_interval_secs = config.traceability_interval.as_secs(),
+                        "Background inventory and traceability sweeps started"
+                    );
+                    if self.state.tenant_db_dir().is_some() {
+                        tracing::warn!(
+                            "Per-tenant database routing is enabled: the background sweeps run \
+                             against the DEFAULT engine only. Sweep a tenant database with \
+                             POST /api/v1/inventory/sweeps/run and its x-tenant-id header."
+                        );
+                    }
+                    Some(handle)
+                }
+                Err(err) => {
+                    return Err(HttpError::InternalError(format!(
+                        "Refusing to start: background sweeps could not be scheduled: {err}"
+                    )));
+                }
+            },
+            None => {
+                tracing::warn!(
+                    "Background sweeps are disabled: expired inventory holds, backorder \
+                     allocations and lot/serial reservations are only reclaimed by traffic on \
+                     the same rows, or by POST /api/v1/inventory/sweeps/run"
+                );
+                None
+            }
+        };
+
         let app = self.build();
 
         tracing::info!("StateSet HTTP listening on {addr}");
@@ -1016,9 +1088,15 @@ impl ServerBuilder {
             .await
             .map_err(|e| HttpError::InternalError(format!("Failed to bind: {e}")))?;
 
-        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-            .await
-            .map_err(|e| HttpError::InternalError(format!("Server error: {e}")))?;
+        let outcome =
+            axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+                .await
+                .map_err(|e| HttpError::InternalError(format!("Server error: {e}")));
+
+        if let Some(sweeps) = sweeps {
+            sweeps.shutdown().await;
+        }
+        outcome?;
 
         Ok(())
     }
@@ -1053,6 +1131,24 @@ mod tests {
         assert_eq!(builder.max_request_body_bytes, DEFAULT_REQUEST_BODY_LIMIT_BYTES);
         assert!(builder.authz_config.is_none());
         assert!(!builder.trust_actor_headers_for_authz);
+    }
+
+    #[test]
+    fn builder_runs_background_sweeps_by_default() {
+        // The engine only reclaims expired holds lazily, so the sweeps must be
+        // on unless an operator turns them off.
+        let builder = ServerBuilder::new(test_commerce());
+        assert!(builder.background_sweeps().is_some(), "sweeps must default to on");
+        assert!(
+            ServerBuilder::new(test_commerce())
+                .without_background_sweeps()
+                .background_sweeps()
+                .is_none()
+        );
+        let custom = SweepConfig::default()
+            .with_intervals(std::time::Duration::from_secs(5), std::time::Duration::from_secs(7));
+        let builder = ServerBuilder::new(test_commerce()).with_background_sweeps(custom);
+        assert_eq!(builder.background_sweeps(), Some(custom));
     }
 
     #[test]

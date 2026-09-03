@@ -1223,3 +1223,646 @@ async fn postgres_remove_discount_recovers_from_not_applied_state() {
     let result = carts.complete_async(id).await.expect("checks out without the coupon");
     assert_eq!(result.total_charged, dec!(30));
 }
+
+// ============================================================================
+// Round 6: the cart line guard on every path, guarded/atomic cart money,
+// preview↔apply consumption parity, and guest-checkout customer identity
+// ============================================================================
+
+/// A catalogued, sellable SKU: an `Active` product with one active variant at
+/// `price`. `products.create` mints a `Draft` product, so publishing is a
+/// separate step.
+async fn catalogue_sku(
+    db: &PostgresDatabase,
+    price: Decimal,
+) -> (stateset_core::ProductId, String) {
+    let tag = Uuid::new_v4().simple().to_string();
+    let sku = format!("CAT-{}", &tag[..12]);
+    let product = db
+        .products()
+        .create_async(stateset_core::CreateProduct {
+            name: format!("Product {sku}"),
+            slug: Some(format!("product-{}", &tag[..12])),
+            variants: Some(vec![stateset_core::CreateProductVariant {
+                sku: sku.clone(),
+                price,
+                ..Default::default()
+            }]),
+            ..Default::default()
+        })
+        .await
+        .expect("create product");
+    db.products()
+        .update_async(
+            product.id,
+            stateset_core::UpdateProduct {
+                status: Some(stateset_core::ProductStatus::Active),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("publish product");
+    (product.id, sku)
+}
+
+async fn archive_product(db: &PostgresDatabase, product_id: stateset_core::ProductId) {
+    db.products()
+        .update_async(
+            product_id,
+            stateset_core::UpdateProduct {
+                status: Some(stateset_core::ProductStatus::Archived),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("archive product");
+}
+
+fn catalogue_line(sku: &str, quantity: i32, unit_price: Decimal) -> AddCartItem {
+    AddCartItem {
+        sku: sku.to_string(),
+        name: sku.to_string(),
+        quantity,
+        unit_price,
+        ..Default::default()
+    }
+}
+
+fn assert_not_purchasable(err: &CommerceError, sku: &str) {
+    match err {
+        CommerceError::ValidationError(msg) => {
+            assert!(msg.contains(sku), "expected {sku:?} named in {msg:?}");
+            assert!(
+                msg.contains("not purchasable") || msg.contains("no longer available"),
+                "expected a purchasability reason in {msg:?}"
+            );
+        }
+        other => panic!("expected ValidationError, got {other:?}"),
+    }
+}
+
+/// `create_async` with `items` reaches `add_item_internal` directly, so it used
+/// to skip the purchasability guard `add_item_async` runs.
+#[tokio::test]
+async fn postgres_create_with_items_refuses_a_sku_withdrawn_from_the_catalogue() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let carts = db.carts();
+    let (product_id, sku) = catalogue_sku(&db, dec!(10.00)).await;
+    archive_product(&db, product_id).await;
+
+    let err = carts
+        .create_async(CreateCart {
+            items: Some(vec![catalogue_line(&sku, 1, dec!(10.00))]),
+            ..Default::default()
+        })
+        .await
+        .expect_err("a withdrawn SKU must not enter a cart at creation time");
+    assert_not_purchasable(&err, &sku);
+
+    // A live catalogue SKU and an ad-hoc SKU both still create fine.
+    let (_, live) = catalogue_sku(&db, dec!(4.00)).await;
+    let cart = carts
+        .create_async(CreateCart {
+            items: Some(vec![
+                catalogue_line(&live, 1, dec!(4.00)),
+                catalogue_line(&unique("SKU-ADHOC"), 2, dec!(3.00)),
+            ]),
+            ..Default::default()
+        })
+        .await
+        .expect("create with sellable lines");
+    let cart = carts.get_async(cart.id.into_uuid()).await.expect("ok").expect("found");
+    assert_eq!(cart.items.len(), 2);
+    assert_eq!(cart.subtotal, dec!(10.00));
+}
+
+/// Raising the quantity of a line whose SKU has since been withdrawn must be
+/// refused; shrinking it must not.
+#[tokio::test]
+async fn postgres_update_item_refuses_raising_quantity_on_a_withdrawn_sku() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let carts = db.carts();
+    let (_product_id, sku) = catalogue_sku(&db, dec!(10.00)).await;
+    let cart = carts.create_async(CreateCart::default()).await.expect("cart");
+    let id = cart.id.into_uuid();
+    let item = carts
+        .add_item_async(id, catalogue_line(&sku, 2, dec!(10.00)))
+        .await
+        .expect("add while sellable");
+
+    // Withdraw the variant out from under the live cart line. The repository
+    // refuses to soft-delete a variant a cart still holds, so this stands in
+    // for the withdrawal happening first, elsewhere.
+    sqlx::query("UPDATE product_variants SET is_active = false WHERE sku = $1")
+        .bind(&sku)
+        .execute(db.pool())
+        .await
+        .expect("withdraw the variant");
+
+    let err = carts
+        .update_item_async(item.id, UpdateCartItem { quantity: Some(5), ..Default::default() })
+        .await
+        .expect_err("must not grow a line on a withdrawn SKU");
+    assert_not_purchasable(&err, &sku);
+    let cart = carts.get_async(id).await.expect("ok").expect("found");
+    assert_eq!(cart.items[0].quantity, 2, "the refused update must roll back");
+
+    // Shrinking still works: the customer can back out of a dead line.
+    carts
+        .update_item_async(item.id, UpdateCartItem { quantity: Some(1), ..Default::default() })
+        .await
+        .expect("shrinking a withdrawn line is allowed");
+    let cart = carts.get_async(id).await.expect("ok").expect("found");
+    assert_eq!(cart.items[0].quantity, 1);
+    carts.remove_item_async(item.id).await.expect("removing is allowed");
+}
+
+/// Catalogue lines are priced from the CATALOGUE on every repository path, not
+/// from the client. This used to live only in the embedded accessor, so the
+/// whole async Postgres API priced from the client.
+#[tokio::test]
+async fn postgres_cart_lines_are_priced_from_the_catalogue_not_the_client() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let carts = db.carts();
+    let (_product_id, sku) = catalogue_sku(&db, dec!(25.00)).await;
+    let expect_price_refusal = |err: &CommerceError| match err {
+        CommerceError::ValidationError(msg) => {
+            assert!(msg.contains(&sku), "{msg}");
+            assert!(msg.contains("catalog price"), "{msg}");
+        }
+        other => panic!("expected ValidationError, got {other:?}"),
+    };
+
+    let err = carts
+        .create_async(CreateCart {
+            items: Some(vec![catalogue_line(&sku, 1, dec!(1.00))]),
+            ..Default::default()
+        })
+        .await
+        .expect_err("create must not price a catalogue line from the client");
+    expect_price_refusal(&err);
+
+    let cart = carts.create_async(CreateCart::default()).await.expect("cart");
+    let id = cart.id.into_uuid();
+    let err = carts
+        .add_item_async(id, catalogue_line(&sku, 1, dec!(1.00)))
+        .await
+        .expect_err("add_item must not price a catalogue line from the client");
+    expect_price_refusal(&err);
+
+    let item = carts
+        .add_item_async(id, catalogue_line(&sku, 1, dec!(25.00)))
+        .await
+        .expect("catalog price");
+    carts.add_item_async(id, line("SKU-ADHOC", 1, dec!(7.77))).await.expect("ad-hoc line");
+
+    let err = carts
+        .update_item_async(
+            item.id,
+            UpdateCartItem { unit_price: Some(dec!(0.01)), ..Default::default() },
+        )
+        .await
+        .expect_err("update_item must not reprice a catalogue line");
+    expect_price_refusal(&err);
+    let cart = carts.get_async(id).await.expect("ok").expect("found");
+    assert_eq!(cart.subtotal, dec!(32.77));
+}
+
+/// `set_tax_async` writes money straight onto the cart: it must reject a
+/// negative amount, a sub-cent amount, and any cart that is no longer active.
+#[tokio::test]
+async fn postgres_set_tax_refuses_negative_sub_cent_and_inactive_carts() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let carts = db.carts();
+    let cart = cart_with_subtotal(&carts, dec!(100.00)).await;
+    let id = cart.id.into_uuid();
+
+    let err = carts.set_tax_async(id, dec!(-5.00)).await.expect_err("negative tax");
+    assert!(
+        matches!(&err, CommerceError::ValidationError(m) if m.contains("must not be negative")),
+        "got {err:?}"
+    );
+    let err = carts.set_tax_async(id, dec!(0.005)).await.expect_err("sub-cent tax");
+    assert!(matches!(err, CommerceError::MoneyScaleExceedsCurrency { .. }), "got {err:?}");
+
+    let stored = carts.get_async(id).await.expect("ok").expect("found");
+    assert_eq!(stored.tax_amount, dec!(0), "a refused set_tax must not write");
+    assert_eq!(stored.grand_total, dec!(100.00));
+
+    let taxed = carts.set_tax_async(id, dec!(8.25)).await.expect("a real tax amount");
+    assert_eq!(taxed.tax_amount, dec!(8.25));
+    assert_eq!(taxed.grand_total, dec!(108.25));
+
+    carts.cancel_async(id).await.expect("cancel");
+    let err = carts.set_tax_async(id, dec!(1.00)).await.expect_err("cancelled cart");
+    assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+    assert_eq!(carts.get_async(id).await.expect("ok").expect("found").tax_amount, dec!(8.25));
+}
+
+/// A completed cart's totals are settled against a minted order.
+#[tokio::test]
+async fn postgres_set_tax_refuses_a_completed_cart() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let carts = db.carts();
+    let cart = checkoutable_cart(&carts).await;
+    let id = cart.id.into_uuid();
+    let result = carts.complete_async(id).await.expect("checkout");
+    let err = carts.set_tax_async(id, dec!(999.00)).await.expect_err("completed cart");
+    assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+    let cart = carts.get_async(id).await.expect("ok").expect("found");
+    assert_eq!(cart.tax_amount, dec!(0));
+    assert_eq!(cart.grand_total, result.total_charged);
+}
+
+/// `set_shipping_async` carries the same money guard as `set_tax_async`.
+#[tokio::test]
+async fn postgres_set_shipping_refuses_negative_and_sub_cent_amounts() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let carts = db.carts();
+    let cart = cart_with_subtotal(&carts, dec!(50.00)).await;
+    let id = cart.id.into_uuid();
+    let shipping = |amount: Decimal| SetCartShipping {
+        shipping_address: test_address(),
+        shipping_method: Some("Ground".into()),
+        shipping_carrier: Some("USPS".into()),
+        shipping_amount: Some(amount),
+    };
+
+    let err =
+        carts.set_shipping_async(id, shipping(dec!(-1.00))).await.expect_err("negative shipping");
+    assert!(
+        matches!(&err, CommerceError::ValidationError(m) if m.contains("must not be negative")),
+        "got {err:?}"
+    );
+    let err =
+        carts.set_shipping_async(id, shipping(dec!(1.005))).await.expect_err("sub-cent shipping");
+    assert!(matches!(err, CommerceError::MoneyScaleExceedsCurrency { .. }), "got {err:?}");
+
+    let stored = carts.get_async(id).await.expect("ok").expect("found");
+    assert_eq!(stored.shipping_amount, dec!(0), "a refused set_shipping must not write");
+    assert!(stored.shipping_method.is_none(), "nor may it write the method");
+
+    let shipped = carts.set_shipping_async(id, shipping(dec!(6.50))).await.expect("real amount");
+    assert_eq!(shipped.shipping_amount, dec!(6.50));
+    assert_eq!(shipped.grand_total, dec!(56.50));
+
+    carts.abandon_async(id).await.expect("abandon");
+    let err = carts.set_shipping_async(id, shipping(dec!(1.00))).await.expect_err("abandoned cart");
+    assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+}
+
+/// `set_tax` racing concurrent `add_item` calls must land on top of a
+/// consistent subtotal, never on a half-computed one: both take the cart row
+/// lock, and each writes its amount and reprices in ONE transaction.
+#[tokio::test]
+async fn postgres_concurrent_set_tax_and_add_item_keep_the_cart_consistent() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let carts = db.carts();
+    let cart = carts.create_async(CreateCart::default()).await.expect("create");
+    let id = cart.id.into_uuid();
+    carts.add_item_async(id, line("SKU-SEED", 1, dec!(10.00))).await.expect("seed line");
+
+    const ADDS: i64 = 8;
+    let mut handles = Vec::new();
+    for n in 0..ADDS {
+        let carts = db.carts();
+        handles.push(tokio::spawn(async move {
+            carts.add_item_async(id, line("SKU-RACE", 1, Decimal::from(n + 1))).await.expect("add");
+        }));
+    }
+    let taxer = db.carts();
+    handles.push(tokio::spawn(async move {
+        taxer.set_tax_async(id, dec!(3.00)).await.expect("set tax");
+    }));
+    for handle in handles {
+        handle.await.expect("join");
+    }
+
+    let cart = carts.get_async(id).await.expect("ok").expect("found");
+    let expected_subtotal = dec!(10.00) + Decimal::from(ADDS * (ADDS + 1) / 2);
+    assert_eq!(cart.subtotal, expected_subtotal, "a concurrent add was lost");
+    // The tax lands somewhere between the amount set and that amount carried
+    // up to the final subtotal (`rescale_tax` follows the lines it was
+    // computed on), but it is always present and always priced into the
+    // stored grand total.
+    assert!(cart.tax_amount >= dec!(3.00), "the tax was lost: {}", cart.tax_amount);
+    assert_eq!(
+        cart.grand_total,
+        cart.subtotal + cart.tax_amount + cart.shipping_amount - cart.discount_amount,
+        "grand_total must agree with the parts it is made of"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Preview ↔ Apply consumption parity (through the kernel, the public path)
+// ---------------------------------------------------------------------------
+
+fn checkout_policy() -> stateset_core::KernelPolicy {
+    stateset_core::KernelPolicy::new("cart-round6").allow(
+        "checkout.commit",
+        stateset_core::KernelCommandPolicy::requiring(["checkout.commit"]),
+    )
+}
+
+fn checkout_command(
+    cart_id: stateset_core::CartId,
+    mode: stateset_core::ExecutionMode,
+) -> stateset_core::CommandEnvelope<stateset_core::CommitCheckout> {
+    let mut command = stateset_core::CommandEnvelope::preview(
+        "checkout.commit",
+        format!("cart-round6-{}", Uuid::new_v4()),
+        stateset_core::KernelPrincipal {
+            id: "agent:round6".into(),
+            kind: stateset_core::PrincipalKind::Agent,
+            tenant_id: Some("tenant-1".into()),
+            delegated_by: Some("user-1".into()),
+            capabilities: vec!["checkout.commit".into()],
+        },
+        stateset_core::CommitCheckout { cart_id },
+    );
+    command.store_id = Some("store-1".into());
+    command.policy_version = Some("cart-round6".into());
+    command.mode = mode;
+    command
+}
+
+/// Preview and Apply must agree. Apply consumes the cart's coupon
+/// (`consume_cart_coupon_in_tx`), and the per-customer limits it enforces are
+/// checked against the customer Apply RESOLVES from the guest cart's e-mail —
+/// not the `customer_id` on the cart, which is `None`. Preview never exercised
+/// that consumption at all, so an exhausted coupon sailed through Preview and
+/// then failed Apply.
+#[tokio::test]
+async fn postgres_preview_and_apply_agree_on_a_coupon_exhausted_for_the_customer() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let (carts, promos) = (db.carts(), db.promotions());
+    let code = unique("PERCUST");
+    let (_promo, coupon) = active_promo_with_coupon(&promos, &code, |c| CreateCouponCode {
+        per_customer_limit: Some(1),
+        ..c
+    })
+    .await;
+
+    // The guest cart's e-mail already belongs to a customer who has spent
+    // their one redemption of this coupon.
+    let email = format!("{}@example.com", unique("percust").to_lowercase());
+    let existing = db
+        .customers()
+        .create_async(CreateCustomer {
+            email: email.clone(),
+            first_name: "Ada".into(),
+            last_name: "Lovelace".into(),
+            ..Default::default()
+        })
+        .await
+        .expect("customer");
+    promos
+        .record_usage_async(
+            coupon.promotion_id,
+            Some(coupon.id),
+            Some(existing.id),
+            None,
+            None,
+            dec!(1),
+            "USD",
+        )
+        .await
+        .expect("their earlier redemption");
+
+    let cart = checkoutable_cart(&carts).await;
+    let id = cart.id.into_uuid();
+    carts
+        .update_async(id, UpdateCart { customer_email: Some(email.clone()), ..Default::default() })
+        .await
+        .expect("guest cart carries the e-mail");
+    let cart = carts.get_async(id).await.expect("ok").expect("found");
+    assert!(cart.customer_id.is_none(), "guest cart: identity comes from the e-mail");
+    carts.apply_discount_async(id, &code).await.expect("applies to the anonymous cart");
+
+    let executor = db.kernel_executor(checkout_policy());
+    let previewed = executor
+        .execute_commit_checkout_async(&checkout_command(
+            cart.id,
+            stateset_core::ExecutionMode::Preview,
+        ))
+        .await
+        .expect("preview returns a receipt");
+    assert_eq!(
+        previewed.status,
+        stateset_core::ExecutionStatus::Rejected,
+        "preview must refuse what apply refuses: {:?}",
+        previewed.error_message
+    );
+    let preview_message = previewed.error_message.clone().unwrap_or_default();
+    assert!(
+        preview_message.contains("Per-customer coupon usage limit reached"),
+        "preview said {preview_message:?}"
+    );
+
+    let applied = executor
+        .execute_commit_checkout_async(&checkout_command(
+            cart.id,
+            stateset_core::ExecutionMode::Apply,
+        ))
+        .await
+        .expect("apply returns a receipt");
+    assert_eq!(applied.status, stateset_core::ExecutionStatus::Rejected);
+    assert_eq!(
+        applied.error_message.unwrap_or_default(),
+        preview_message,
+        "preview and apply must refuse identically"
+    );
+    assert_eq!(
+        carts.get_async(id).await.expect("ok").expect("found").status,
+        CartStatus::Active,
+        "neither preview nor the failed apply may advance the cart"
+    );
+}
+
+/// Preview accepts a cart whose coupon is still redeemable and writes nothing:
+/// the coupon is consumed exactly once, by Apply.
+#[tokio::test]
+async fn postgres_preview_does_not_consume_the_coupon() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let (carts, promos) = (db.carts(), db.promotions());
+    let code = unique("PREVIEWOK");
+    let (promo, coupon) = active_promo_with_coupon(&promos, &code, |c| CreateCouponCode {
+        usage_limit: Some(1),
+        ..c
+    })
+    .await;
+    let cart = checkoutable_cart(&carts).await;
+    let id = cart.id.into_uuid();
+    carts.apply_discount_async(id, &code).await.expect("applies");
+
+    let executor = db.kernel_executor(checkout_policy());
+    let previewed = executor
+        .execute_commit_checkout_async(&checkout_command(
+            cart.id,
+            stateset_core::ExecutionMode::Preview,
+        ))
+        .await
+        .expect("preview");
+    assert_eq!(
+        previewed.status,
+        stateset_core::ExecutionStatus::Previewed,
+        "{:?}",
+        previewed.error_message
+    );
+    assert_eq!(
+        promos.get_coupon_async(coupon.id).await.expect("ok").expect("coupon").usage_count,
+        0,
+        "preview must not consume the coupon"
+    );
+    assert_eq!(promos.get_async(promo.id).await.expect("ok").expect("promo").usage_count, 0);
+
+    let applied = executor
+        .execute_commit_checkout_async(&checkout_command(
+            cart.id,
+            stateset_core::ExecutionMode::Apply,
+        ))
+        .await
+        .expect("apply");
+    assert_eq!(applied.status, stateset_core::ExecutionStatus::Succeeded);
+    assert_eq!(
+        promos.get_coupon_async(coupon.id).await.expect("ok").expect("coupon").usage_count,
+        1
+    );
+}
+
+/// Guest checkout mints its customer through the customers repository's
+/// get-or-create, so the row carries the normalised `email_key` and is
+/// retrievable by e-mail afterwards. It used to open-code an INSERT that never
+/// set the key (and an `ON CONFLICT (email)` on the raw column), so the
+/// customer was unreachable by e-mail and two guests differing only in case
+/// became two customers.
+#[tokio::test]
+async fn postgres_guest_checkout_customer_is_retrievable_by_email_case_insensitively() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let carts = db.carts();
+    let local = unique("guest").to_lowercase();
+    let mixed_case = format!("Guest.{local}@Example.COM");
+    let normalised = mixed_case.to_lowercase();
+
+    let guest_cart = |email: String| {
+        let carts = db.carts();
+        async move {
+            let cart = checkoutable_cart(&carts).await;
+            let id = cart.id.into_uuid();
+            carts
+                .update_async(id, UpdateCart { customer_email: Some(email), ..Default::default() })
+                .await
+                .expect("guest e-mail");
+            id
+        }
+    };
+
+    let first = guest_cart(mixed_case.clone()).await;
+    carts.complete_async(first).await.expect("guest checkout");
+
+    let created = db
+        .customers()
+        .get_by_email_async(&normalised)
+        .await
+        .expect("ok")
+        .expect("a guest-checkout customer must be retrievable by e-mail");
+    assert_eq!(created.email, normalised, "stored normalised");
+    assert_eq!(
+        db.customers()
+            .get_by_email_async(&mixed_case.to_uppercase())
+            .await
+            .expect("ok")
+            .map(|c| c.id),
+        Some(created.id),
+        "lookup is case-insensitive"
+    );
+
+    // A second guest whose address differs only in case is the SAME customer.
+    let second = guest_cart(format!("guest.{local}@EXAMPLE.com")).await;
+    carts.complete_async(second).await.expect("second guest checkout");
+    let second_cart = carts.get_async(second).await.expect("ok").expect("found");
+    assert_eq!(
+        second_cart.customer_id,
+        Some(created.id),
+        "case-differing guests must resolve to one customer"
+    );
+}
+
+/// `create_batch_atomic_async` is a third path that puts SKUs on cart lines,
+/// and it inserted them unguarded too.
+#[tokio::test]
+async fn postgres_create_batch_atomic_refuses_a_sku_withdrawn_from_the_catalogue() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let carts = db.carts();
+    let (_live_id, live) = catalogue_sku(&db, dec!(5.00)).await;
+    let (gone_id, gone) = catalogue_sku(&db, dec!(10.00)).await;
+    archive_product(&db, gone_id).await;
+
+    let err = carts
+        .create_batch_atomic_async(vec![
+            CreateCart {
+                items: Some(vec![catalogue_line(&live, 1, dec!(5.00))]),
+                ..Default::default()
+            },
+            CreateCart {
+                items: Some(vec![catalogue_line(&gone, 1, dec!(10.00))]),
+                ..Default::default()
+            },
+        ])
+        .await
+        .expect_err("a withdrawn SKU must not enter a cart through the batch path");
+    assert_not_purchasable(&err, &gone);
+
+    // A batch line priced away from the catalogue is refused too.
+    let err = carts
+        .create_batch_atomic_async(vec![CreateCart {
+            items: Some(vec![catalogue_line(&live, 1, dec!(1.00))]),
+            ..Default::default()
+        }])
+        .await
+        .expect_err("batch lines are priced from the catalogue");
+    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+    let created = carts
+        .create_batch_atomic_async(vec![CreateCart {
+            items: Some(vec![catalogue_line(&live, 2, dec!(5.00))]),
+            ..Default::default()
+        }])
+        .await
+        .expect("sellable, catalogue-priced lines still batch-create");
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].subtotal, dec!(10.00));
+}

@@ -12,7 +12,6 @@ use stateset_core::{
     TaxComputationInputs, TaxExemption, TaxJurisdiction, TaxJurisdictionFilter, TaxRate,
     TaxRateFilter, TaxRepository, TaxSettings, TaxType, compute_tax,
 };
-use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Upper-case, trimmed form of a jurisdiction/country/state code — the
@@ -20,6 +19,12 @@ use uuid::Uuid;
 fn normalize_code(code: &str) -> String {
     code.trim().to_ascii_uppercase()
 }
+
+/// How many active jurisdictions of a country are scanned when resolving the
+/// local (below-state) ones for an address. Bounded so a country with a large
+/// local-tax table can never turn one tax calculation into an unbounded scan;
+/// this is the list endpoint's own maximum page size.
+const LOCAL_JURISDICTION_SCAN_LIMIT: u32 = 1000;
 
 /// PostgreSQL tax repository
 #[derive(Debug, Clone)]
@@ -600,16 +605,24 @@ impl PgTaxRepository {
         Ok(rates)
     }
 
-    pub async fn get_rates_for_address_async(
+    /// Every jurisdiction that levies tax on `address` (mirrors the SQLite
+    /// backend).
+    ///
+    /// Country and state are resolved by the `COUNTRY` / `COUNTRY-STATE` code
+    /// convention. Below the state there is no code convention, so `County`,
+    /// `City`, `District` and `Special` jurisdictions are matched by
+    /// [`TaxJurisdiction::covers_address`] against the address's city and
+    /// postal code — without this, US local sales tax was unreachable. At
+    /// most `LOCAL_JURISDICTION_SCAN_LIMIT` (1000) active jurisdictions per
+    /// country are scanned.
+    pub async fn jurisdictions_for_address_async(
         &self,
         address: &TaxAddress,
-        category: ProductTaxCategory,
-        date: NaiveDate,
-    ) -> Result<Vec<TaxRate>> {
-        let mut jurisdiction_ids = Vec::new();
+    ) -> Result<Vec<TaxJurisdiction>> {
+        let mut resolved: Vec<TaxJurisdiction> = Vec::new();
 
         if let Some(country) = self.get_jurisdiction_by_code_async(&address.country).await? {
-            jurisdiction_ids.push(country.id);
+            resolved.push(country);
         }
 
         if let Some(state) = &address.state {
@@ -617,9 +630,42 @@ impl PgTaxRepository {
             if let Some(state_jurisdiction) =
                 self.get_jurisdiction_by_code_async(&state_code).await?
             {
-                jurisdiction_ids.push(state_jurisdiction.id);
+                resolved.push(state_jurisdiction);
             }
         }
+
+        let locals = self
+            .list_jurisdictions_async(TaxJurisdictionFilter {
+                country_code: Some(address.country.clone()),
+                active_only: true,
+                limit: Some(LOCAL_JURISDICTION_SCAN_LIMIT),
+                ..Default::default()
+            })
+            .await?;
+        for jurisdiction in locals {
+            if jurisdiction.level > JurisdictionLevel::State
+                && jurisdiction.covers_address(address)
+                && !resolved.iter().any(|j| j.id == jurisdiction.id)
+            {
+                resolved.push(jurisdiction);
+            }
+        }
+
+        Ok(resolved)
+    }
+
+    pub async fn get_rates_for_address_async(
+        &self,
+        address: &TaxAddress,
+        category: ProductTaxCategory,
+        date: NaiveDate,
+    ) -> Result<Vec<TaxRate>> {
+        let jurisdiction_ids: Vec<Uuid> = self
+            .jurisdictions_for_address_async(address)
+            .await?
+            .into_iter()
+            .map(|j| j.id)
+            .collect();
 
         if jurisdiction_ids.is_empty() {
             return Ok(Vec::new());
@@ -866,26 +912,23 @@ impl PgTaxRepository {
         categories.sort_by_key(|c| c.as_str());
         categories.dedup();
 
-        let mut jurisdictions: HashMap<Uuid, TaxJurisdiction> = HashMap::new();
+        // Resolve the address's jurisdictions ONCE (not once per category):
+        // the address does not change between categories, and the local-level
+        // resolution scans the country's jurisdictions.
+        let jurisdictions = self.jurisdictions_for_address_async(&request.shipping_address).await?;
         let mut rates = Vec::new();
         for category in categories {
-            for rate in self
-                .get_rates_for_address_async(&request.shipping_address, category, transaction_date)
-                .await?
-            {
-                let jurisdiction = match jurisdictions.get(&rate.jurisdiction_id) {
-                    Some(jurisdiction) => jurisdiction.clone(),
-                    None => {
-                        let Some(jurisdiction) =
-                            self.get_jurisdiction_async(rate.jurisdiction_id).await?
-                        else {
-                            continue;
-                        };
-                        jurisdictions.insert(jurisdiction.id, jurisdiction.clone());
-                        jurisdiction
-                    }
+            for jurisdiction in &jurisdictions {
+                let filter = TaxRateFilter {
+                    jurisdiction_id: Some(jurisdiction.id),
+                    product_category: Some(category),
+                    active_only: true,
+                    effective_date: Some(transaction_date),
+                    ..Default::default()
                 };
-                rates.push(ResolvedTaxRate { rate, jurisdiction });
+                for rate in self.list_rates_async(filter).await? {
+                    rates.push(ResolvedTaxRate { rate, jurisdiction: jurisdiction.clone() });
+                }
             }
         }
 

@@ -687,3 +687,17 @@ pub(crate) fn sealed_audit_entry_tx(
     )
     .optional()
 }
+
+impl crate::kernel::KernelAuditChain for SqliteKernelOutboxRepository {
+    fn verify_chain(&self) -> Result<KernelAuditVerification> {
+        Self::verify_audit_chain(self)
+    }
+
+    fn checkpoint(&self) -> Result<KernelAuditCheckpoint> {
+        Self::audit_checkpoint(self)
+    }
+
+    fn verify_checkpoint(&self, checkpoint: &KernelAuditCheckpoint) -> Result<bool> {
+        Self::verify_audit_checkpoint(self, checkpoint)
+    }
+}

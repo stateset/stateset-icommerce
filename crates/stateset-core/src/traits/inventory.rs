@@ -147,10 +147,26 @@ pub trait LotRepository: Send + Sync {
     /// Transfer lot between locations
     fn transfer(&self, input: TransferLot) -> Result<LotTransaction>;
 
-    /// Split a lot into two
+    /// Split `quantity` unreserved units off an `Active` lot into a new one.
+    ///
+    /// The placement rows move with the units, so both lots stay in step with
+    /// `inventory_balances` (nothing enters or leaves the location, it is
+    /// merely re-attributed) and the child is consumable like any other lot.
+    /// A `split` edge is recorded in the genealogy, so the child traces back
+    /// to the parent's receipt — see [`Self::get_lot_parents`].
     fn split(&self, input: SplitLot) -> Result<Lot>;
 
-    /// Merge multiple lots into one
+    /// Merge two or more unreserved, unquarantined `Active` lots of the same
+    /// SKU into one; the sources become `Consumed`.
+    ///
+    /// The sources' placements move onto the target, so the lot/inventory
+    /// invariant survives the merge and the merged lot is consumable.
+    ///
+    /// Provenance: the merged row keeps only the `supplier_lot` / `supplier_id`
+    /// / `work_order_id` / `purchase_order_id` that *every* source agrees on —
+    /// inheriting the first source's would fabricate an attribution for the
+    /// rest. One `merge` genealogy edge per source records the full picture,
+    /// and [`Self::trace`] walks it back to every original receipt.
     fn merge(&self, input: MergeLots) -> Result<Lot>;
 
     /// Quarantine a lot
@@ -171,6 +187,19 @@ pub trait LotRepository: Send + Sync {
 
     /// Get all locations for a lot
     fn get_lot_locations(&self, lot_id: Uuid) -> Result<Vec<LotLocation>>;
+
+    // Genealogy operations
+    /// The lots this lot was derived from: the parent of a `split`, or every
+    /// source of a `merge`. Empty for a lot created by a receipt.
+    ///
+    /// A merged lot has many parents and a single `lots` row cannot carry
+    /// their provenance, so the linkage is stored separately; `trace` walks it
+    /// transitively to reach the original receipts.
+    fn get_lot_parents(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>>;
+
+    /// The lots derived from this lot: split children, and the merge target it
+    /// was consumed into.
+    fn get_lot_children(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>>;
 
     // Certificate operations
     /// Add certificate to lot
@@ -206,7 +235,13 @@ pub trait LotRepository: Send + Sync {
     /// Get lots with available quantity for SKU
     fn get_available_lots_for_sku(&self, sku: &str) -> Result<Vec<Lot>>;
 
-    /// Trace lot (upstream and downstream)
+    /// Trace a lot upstream and downstream.
+    ///
+    /// Upstream is the lot's own receipt documents *plus* every ancestor
+    /// reached transitively through the genealogy graph and that ancestor's
+    /// receipt documents, so a merged or repeatedly-split lot resolves to all
+    /// of its origins. Downstream is the lot's consumption and shipment
+    /// transactions.
     fn trace(&self, lot_id: Uuid) -> Result<TraceabilityResult>;
 
     /// Count lots

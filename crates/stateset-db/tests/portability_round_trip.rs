@@ -102,7 +102,10 @@ fn seed(db: &SqliteDatabase) {
 
     // --- products --------------------------------------------------------
     for (name, sku, price) in [("Widget", "WID-1", dec!(19.99)), ("Gadget", "GAD-1", dec!(49.50))] {
-        db.products()
+        // Only a published product is sellable, and this fixture goes on to
+        // build orders from these SKUs.
+        let product = db
+            .products()
             .create(CreateProduct {
                 name: name.into(),
                 slug: Some(name.to_lowercase()),
@@ -117,6 +120,15 @@ fn seed(db: &SqliteDatabase) {
                 }]),
             })
             .expect("create product");
+        db.products()
+            .update(
+                product.id,
+                stateset_core::UpdateProduct {
+                    status: Some(stateset_core::ProductStatus::Active),
+                    ..Default::default()
+                },
+            )
+            .expect("publish product");
     }
 
     // --- inventory -------------------------------------------------------

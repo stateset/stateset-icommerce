@@ -92,6 +92,43 @@ impl SqliteInventoryRepository {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
+    /// Sum the units still held by open reservations on one balance,
+    /// optionally ignoring the reservation currently being settled.
+    ///
+    /// The quantities are TEXT decimals, so SQL's float `SUM()` is unsafe
+    /// here; the rows are parsed and added as exact `Decimal`s. This is the
+    /// ground truth `quantity_allocated` is supposed to mirror, and what the
+    /// repair path below rebuilds it from.
+    fn open_reservation_units_in_tx(
+        conn: &rusqlite::Connection,
+        item_id: i64,
+        location_id: i32,
+        settling: Option<Uuid>,
+    ) -> Result<Decimal> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, quantity FROM inventory_reservations
+                 WHERE item_id = ? AND location_id = ?
+                   AND status IN ('pending', 'confirmed', 'allocated')",
+            )
+            .map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(rusqlite::params![item_id, location_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(map_db_error)?;
+        let settling = settling.map(|id| id.to_string());
+        let mut total = Decimal::ZERO;
+        for row in rows {
+            let (id, quantity) = row.map_err(map_db_error)?;
+            if settling.as_deref() == Some(id.as_str()) {
+                continue;
+            }
+            total += parse_decimal_strict(&quantity, "inventory_reservation", "quantity")?;
+        }
+        Ok(total)
+    }
+
     /// Move `delta` units into (positive) or out of (negative) the allocated
     /// bucket of one balance, recomputing `quantity_available` from the exact
     /// `Decimal` values read in this transaction. Returns the new `version`.
@@ -101,12 +138,17 @@ impl SqliteInventoryRepository {
     /// both operands to IEEE-754 floats (`0.3 - 0.2 = 0.09999…`), corrupting
     /// fractional balances. The optimistic `version` guard proves the row was
     /// not changed between the read and the write.
+    ///
+    /// `settling` names the reservation this delta belongs to, so a drifted
+    /// row can be REPAIRED (not merely clamped) from the reservations that
+    /// remain open — see the drift branch below.
     fn apply_allocation_delta_in_tx(
         conn: &rusqlite::Connection,
         item_id: i64,
         location_id: i32,
         delta: Decimal,
         now: DateTime<Utc>,
+        settling: Option<Uuid>,
     ) -> Result<i32> {
         let (on_hand_str, allocated_str, current_version): (String, String, i32) = conn
             .query_row(
@@ -124,16 +166,26 @@ impl SqliteInventoryRepository {
         if new_allocated < Decimal::ZERO {
             // Only reachable on a balance that drifted before the sweeper /
             // exact-arithmetic fixes: releasing more than is recorded as
-            // allocated. Clamp so the release can still complete; the
-            // remaining drift is visible as allocated == 0 with open holds.
+            // allocated. REPAIR the row instead of clamping to zero and
+            // leaving the drift in place: `quantity_allocated` is supposed to
+            // mirror the open reservations, so rebuild it from them (ignoring
+            // the one being settled, whose status may be flipped before or
+            // after this call). A clamp to zero would leave `allocated == 0`
+            // with live holds outstanding — the exact state that lets the
+            // next reserve oversell.
+            let repaired =
+                Self::open_reservation_units_in_tx(conn, item_id, location_id, settling)?
+                    .max(Decimal::ZERO);
             tracing::warn!(
                 item_id,
                 location_id,
                 %allocated,
                 %delta,
-                "inventory_balance.quantity_allocated would go negative; clamping to zero"
+                %repaired,
+                "inventory_balance.quantity_allocated drifted below its open reservations; \
+                 repairing from the reservation ledger"
             );
-            new_allocated = Decimal::ZERO;
+            new_allocated = repaired;
         }
         let new_available = on_hand - new_allocated;
 
@@ -171,7 +223,14 @@ impl SqliteInventoryRepository {
         quantity: Decimal,
         now: DateTime<Utc>,
     ) -> Result<()> {
-        Self::apply_allocation_delta_in_tx(conn, item_id, location_id, -quantity, now)?;
+        Self::apply_allocation_delta_in_tx(
+            conn,
+            item_id,
+            location_id,
+            -quantity,
+            now,
+            Some(reservation_id),
+        )?;
 
         conn.execute(
             "UPDATE inventory_reservations SET status = 'expired' WHERE id = ?",
@@ -787,9 +846,15 @@ impl SqliteInventoryRepository {
         )?;
 
         // Exact `Decimal` arithmetic (see `apply_allocation_delta_in_tx`).
-        let new_version =
-            Self::apply_allocation_delta_in_tx(tx, item_id, location_id, -quantity, now)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        let new_version = Self::apply_allocation_delta_in_tx(
+            tx,
+            item_id,
+            location_id,
+            -quantity,
+            now,
+            Some(reservation_id),
+        )
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
         append_kernel_event_tx(
             tx,

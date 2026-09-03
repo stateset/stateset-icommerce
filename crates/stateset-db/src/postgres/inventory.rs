@@ -42,7 +42,7 @@ fn should_retry_pg_inventory_error(err: &CommerceError) -> bool {
 /// so a failed attempt has rolled back completely) with exponential backoff
 /// and jitter when it lost an optimistic-lock race or a serialization
 /// conflict.
-async fn with_pg_inventory_retry<T, F, Fut>(mut operation: F) -> Result<T>
+pub(crate) async fn with_pg_inventory_retry<T, F, Fut>(mut operation: F) -> Result<T>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
@@ -189,16 +189,44 @@ impl PgInventoryRepository {
         })
     }
 
+    /// Units still held by open reservations on one balance, ignoring the
+    /// reservation currently being settled. Ground truth for
+    /// `quantity_allocated`, and what the repair path below rebuilds it from.
+    async fn open_reservation_units_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        item_id: i64,
+        location_id: i32,
+        settling: Option<Uuid>,
+    ) -> Result<Decimal> {
+        let held: Option<Decimal> = sqlx::query_scalar(
+            "SELECT SUM(quantity) FROM inventory_reservations
+             WHERE item_id = $1 AND location_id = $2
+               AND status IN ('pending', 'confirmed', 'allocated')
+               AND ($3::uuid IS NULL OR id <> $3)",
+        )
+        .bind(item_id)
+        .bind(location_id)
+        .bind(settling)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        Ok(held.unwrap_or(Decimal::ZERO))
+    }
+
     /// Hand `quantity` allocated units back to the balance: `quantity_allocated`
     /// down, `quantity_available` up, under `FOR UPDATE` on the balance row so
     /// concurrent releases/reserves serialize instead of tripping the
     /// optimistic `version` guard spuriously. Returns the new `version`.
+    ///
+    /// `settling` names the reservation these units belong to, so a drifted
+    /// row can be REPAIRED from the reservations that remain open.
     async fn release_allocated_units_in_tx(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         item_id: i64,
         location_id: i32,
         quantity: Decimal,
         now: DateTime<Utc>,
+        settling: Option<Uuid>,
     ) -> Result<i32> {
         let (allocated, current_version): (Decimal, i32) = sqlx::query_as(
             "SELECT quantity_allocated, version FROM inventory_balances
@@ -211,31 +239,39 @@ impl PgInventoryRepository {
         .map_err(map_db_error)?;
 
         // A balance that drifted before the sweeper existed may record fewer
-        // allocated units than its open reservations hold; clamp at zero so
-        // the release still completes (the CHECK constraint would otherwise
-        // reject the write).
-        let release = quantity.min(allocated).max(Decimal::ZERO);
-        if release != quantity {
+        // allocated units than its open reservations hold. REPAIR the row
+        // rather than only clamping at zero: `quantity_allocated` is supposed
+        // to mirror the open reservations, so rebuild it from them. Clamping
+        // alone would leave `allocated == 0` with live holds outstanding —
+        // the exact state that lets the next reserve oversell.
+        let mut new_allocated = allocated - quantity;
+        if new_allocated < Decimal::ZERO {
+            let repaired = Self::open_reservation_units_in_tx(tx, item_id, location_id, settling)
+                .await?
+                .max(Decimal::ZERO);
             tracing::warn!(
                 item_id,
                 location_id,
                 %allocated,
                 %quantity,
-                "inventory_balance.quantity_allocated would go negative; clamping to zero"
+                %repaired,
+                "inventory_balance.quantity_allocated drifted below its open reservations; \
+                 repairing from the reservation ledger"
             );
+            new_allocated = repaired;
         }
 
         let result = sqlx::query(
             r#"
             UPDATE inventory_balances
-            SET quantity_allocated = quantity_allocated - $1,
-                quantity_available = quantity_on_hand - (quantity_allocated - $1),
+            SET quantity_allocated = $1,
+                quantity_available = quantity_on_hand - $1,
                 version = version + 1,
                 updated_at = $2
             WHERE item_id = $3 AND location_id = $4 AND version = $5
             "#,
         )
-        .bind(release)
+        .bind(new_allocated)
         .bind(now)
         .bind(item_id)
         .bind(location_id)
@@ -637,7 +673,15 @@ impl PgInventoryRepository {
         quantity: Decimal,
         now: DateTime<Utc>,
     ) -> Result<()> {
-        Self::release_allocated_units_in_tx(tx, item_id, location_id, quantity, now).await?;
+        Self::release_allocated_units_in_tx(
+            tx,
+            item_id,
+            location_id,
+            quantity,
+            now,
+            Some(reservation_id),
+        )
+        .await?;
 
         sqlx::query("UPDATE inventory_reservations SET status = 'expired' WHERE id = $1")
             .bind(reservation_id)
@@ -899,6 +943,7 @@ impl PgInventoryRepository {
             res.location_id,
             res.quantity,
             now,
+            Some(reservation_id),
         )
         .await?;
 

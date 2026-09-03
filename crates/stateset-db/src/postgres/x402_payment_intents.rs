@@ -1,6 +1,7 @@
 //! PostgreSQL implementation of x402 payment intent repository
 
 use super::{block_on, map_db_error};
+use crate::x402_claim::{CLAIMING_STATUS_SQL, duplicate_claim_error, is_claim_key_violation};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
@@ -369,12 +370,14 @@ impl PgX402PaymentIntentRepository {
                 id, version, status, payer_address, payee_address, amount, amount_decimal,
                 asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
                 idempotency_key, resource_uri, resource_method, description, cart_id, order_id,
-                invoice_id, merchant_id, signing_hash, payer_signature_scheme, metadata, created_at, updated_at
+                invoice_id, merchant_id, signing_hash, payer_signature_scheme, metadata, created_at, updated_at,
+                cart_claim_key, order_claim_key
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7,
                 $8, $9, $10, $11, $12, $13, $14,
                 $15, $16, $17, $18, $19, $20,
-                $21, $22, $23, $24, $25, $26, $27
+                $21, $22, $23, $24, $25, $26, $27,
+                $28, $29
             )
             "#,
         )
@@ -405,9 +408,28 @@ impl PgX402PaymentIntentRepository {
         .bind(input.metadata.clone())
         .bind(row.now)
         .bind(row.now)
+        // New intents are `created`, which claims the cart/order.
+        .bind(input.cart_id.map(|id| id.to_string()))
+        .bind(input.order_id.map(|id| id.to_string()))
         .execute(conn)
         .await
         .map(|_| ())
+    }
+
+    /// The first intent still claiming `column = value`, if any.
+    async fn claiming_intent_in_tx(
+        conn: &mut sqlx::PgConnection,
+        column: &'static str,
+        value: Uuid,
+    ) -> Result<Option<(Uuid, String)>> {
+        sqlx::query_as::<_, (Uuid, String)>(&format!(
+            "SELECT id, status FROM x402_payment_intents
+             WHERE {column} = $1 AND status IN {CLAIMING_STATUS_SQL} LIMIT 1"
+        ))
+        .bind(value)
+        .fetch_optional(conn)
+        .await
+        .map_err(map_db_error)
     }
 
     /// Refuse a transition once the validity window has closed. Settlement
@@ -440,6 +462,34 @@ impl PgX402PaymentIntentRepository {
                 Some(n) => n,
                 None => Self::get_next_nonce_in_tx(&mut tx, &input.payer_address).await?,
             };
+            // In-transaction duplicate-claim guard. The accessor's `for_cart` /
+            // `for_order` read followed by `create` is two statements: two
+            // concurrent creates for one cart both passed it. This re-check,
+            // with the claim-key unique indexes (migration 101) as the
+            // backstop for the interleaving that beats it, makes the second
+            // one lose with a conflict naming the intent that won.
+            if let Some(cart_id) = input.cart_id
+                && let Some((existing_id, status)) =
+                    Self::claiming_intent_in_tx(tx.as_mut(), "cart_id", cart_id).await?
+            {
+                return Err(duplicate_claim_error(
+                    "cart",
+                    cart_id,
+                    &existing_id.to_string(),
+                    &status,
+                ));
+            }
+            if let Some(order_id) = input.order_id
+                && let Some((existing_id, status)) =
+                    Self::claiming_intent_in_tx(tx.as_mut(), "order_id", order_id).await?
+            {
+                return Err(duplicate_claim_error(
+                    "order",
+                    order_id,
+                    &existing_id.to_string(),
+                    &status,
+                ));
+            }
             let row = Self::new_intent_row(&input, id, now, nonce)?;
             let insert_result = Self::insert_new_intent(tx.as_mut(), &input, row).await;
 
@@ -457,6 +507,12 @@ impl PgX402PaymentIntentRepository {
                         ) =>
                 {
                     continue;
+                }
+                Err(err) if is_claim_key_violation(&err.to_string()) => {
+                    return Err(CommerceError::Conflict(
+                        "cart or order already has a claiming x402 payment intent; reuse or cancel it instead of creating another"
+                            .into(),
+                    ));
                 }
                 Err(err) => return Err(map_db_error(err)),
             }
@@ -772,7 +828,7 @@ impl PgX402PaymentIntentRepository {
         let metadata = Self::merge_failure_reason(intent.metadata, reason);
 
         let affected = sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, metadata = $2, updated_at = $3 WHERE id = $4 AND status = $5",
+            "UPDATE x402_payment_intents SET status = $1, metadata = $2, updated_at = $3, cart_claim_key = NULL, order_claim_key = NULL WHERE id = $4 AND status = $5",
         )
         .bind(X402IntentStatus::Failed.to_string())
         .bind(metadata)
@@ -796,7 +852,7 @@ impl PgX402PaymentIntentRepository {
             Self::load_for_transition(tx.as_mut(), id, &Self::NON_TERMINAL, "expire").await?;
 
         let affected = sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4",
+            "UPDATE x402_payment_intents SET status = $1, updated_at = $2, cart_claim_key = NULL, order_claim_key = NULL WHERE id = $3 AND status = $4",
         )
         .bind(X402IntentStatus::Expired.to_string())
         .bind(Utc::now())
@@ -824,7 +880,7 @@ impl PgX402PaymentIntentRepository {
         .await?;
 
         let affected = sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4",
+            "UPDATE x402_payment_intents SET status = $1, updated_at = $2, cart_claim_key = NULL, order_claim_key = NULL WHERE id = $3 AND status = $4",
         )
         .bind(X402IntentStatus::Cancelled.to_string())
         .bind(Utc::now())
@@ -1011,7 +1067,7 @@ impl PgX402PaymentIntentRepository {
         // batch commitment and its outcome is decided by that batch's on-chain
         // result via mark_settled/mark_failed, not by the wall clock.
         let result = sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE status IN ($3, $4, $5) AND valid_until < $6",
+            "UPDATE x402_payment_intents SET status = $1, updated_at = $2, cart_claim_key = NULL, order_claim_key = NULL WHERE status IN ($3, $4, $5) AND valid_until < $6",
         )
         .bind(X402IntentStatus::Expired.to_string())
         .bind(Utc::now())

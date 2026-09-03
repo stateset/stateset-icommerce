@@ -13,6 +13,99 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+/// Resolve one *live* customer from a normalised e-mail address (`$1`).
+///
+/// Postgres twin of the SQLite `LIVE_CUSTOMER_BY_EMAIL`. The primary match is
+/// on `email_key`; legacy case-duplicate rows carry a suffixed key (see
+/// migration `098_customer_email_key_backfill`), so when no row owns the
+/// canonical key the lookup falls back to the raw `email` column — that keeps
+/// every legacy account reachable by its own address, and stops
+/// `find_or_create` from falling through to an INSERT that the legacy raw
+/// `UNIQUE(email)` constraint from migration 001 would refuse forever.
+///
+/// Ties are broken deterministically: exact key owner first, then oldest.
+/// Deleted rows never match (NULL key, tombstone e-mail).
+const LIVE_CUSTOMER_BY_EMAIL: &str = "SELECT * FROM customers \
+     WHERE email_key = $1 OR (status <> 'deleted' AND LOWER(TRIM(email)) = $1) \
+     ORDER BY CASE WHEN email_key = $1 THEN 0 ELSE 1 END, created_at, id \
+     LIMIT 1";
+
+/// Get the live customer owning `input.email`, creating one if there is none,
+/// using an existing connection so the whole thing runs inside the caller's
+/// transaction. Returns `(customer, created)`.
+///
+/// Postgres twin of the SQLite `get_or_create_customer_with_conn`, and the
+/// canonical entry point for any writer that needs "the customer for this
+/// address" — guest checkout above all. Going through it (rather than a raw
+/// `INSERT INTO customers`) is what guarantees the address is normalised, that
+/// `email_key` is populated, and that the account stays reachable by
+/// [`CustomerRepository::get_by_email`] afterwards.
+///
+/// Safe under concurrency without any extra locking: the insert is
+/// conflict-tolerant on EVERY unique constraint (the `email_key` index and the
+/// legacy raw `UNIQUE(email)` from migration 001, which a legacy
+/// case-duplicate can still trip) and the loser re-reads the winner on the
+/// same connection.
+///
+/// # Errors
+///
+/// Validation failures on the input, and database errors. A caller that loses
+/// the race never sees `EmailAlreadyExists`; it gets the winner's record.
+pub(crate) async fn get_or_create_customer_with_conn_pg(
+    conn: &mut PgConnection,
+    input: &CreateCustomer,
+) -> Result<(Customer, bool)> {
+    PgCustomerRepository::validate_customer_input(input)?;
+
+    let id = CustomerId::new();
+    let now = Utc::now();
+    let email = Customer::normalize_email(&input.email);
+    let tags = input.tags.clone().unwrap_or_default();
+    let accepts_marketing = input.accepts_marketing.unwrap_or(false);
+
+    let tags_json = serde_json::to_value(&tags).unwrap_or_default();
+    let metadata_json = input.metadata.clone();
+
+    let inserted: Option<CustomerRow> = sqlx::query_as(
+        r#"
+        INSERT INTO customers (id, email, email_key, first_name, last_name, phone, status,
+                               accepts_marketing, email_verified, tags, metadata,
+                               created_at, updated_at)
+        VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT DO NOTHING
+        RETURNING *
+        "#,
+    )
+    .bind(id.into_uuid())
+    .bind(&email)
+    .bind(&input.first_name)
+    .bind(&input.last_name)
+    .bind(&input.phone)
+    .bind("active")
+    .bind(accepts_marketing)
+    .bind(false)
+    .bind(&tags_json)
+    .bind(&metadata_json)
+    .bind(now)
+    .bind(now)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+
+    if let Some(row) = inserted {
+        return Ok((PgCustomerRepository::row_to_customer(row)?, true));
+    }
+
+    // Conflict: return the existing live customer row.
+    let row = sqlx::query_as::<_, CustomerRow>(LIVE_CUSTOMER_BY_EMAIL)
+        .bind(&email)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::EmailAlreadyExists(email))?;
+    Ok((PgCustomerRepository::row_to_customer(row)?, false))
+}
+
 /// PostgreSQL implementation of `CustomerRepository`
 #[derive(Debug, Clone)]
 pub struct PgCustomerRepository {
@@ -169,7 +262,13 @@ impl PgCustomerRepository {
     ) -> Result<bool> {
         let exclude = exclude.map(|id| id.into_uuid()).unwrap_or(Uuid::nil());
         sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM customers WHERE email_key = $1 AND id <> $2)",
+            // Mirrors `LIVE_CUSTOMER_BY_EMAIL`: a legacy case-duplicate holds
+            // the address in its raw `email` column under a suffixed key, and
+            // the legacy raw `UNIQUE(email)` would reject the write anyway —
+            // so report it as taken and return the typed error instead.
+            "SELECT EXISTS(SELECT 1 FROM customers \
+             WHERE id <> $2 \
+               AND (email_key = $1 OR (status <> 'deleted' AND LOWER(TRIM(email)) = $1)))",
         )
         .bind(email_key)
         .bind(exclude)
@@ -462,58 +561,20 @@ impl PgCustomerRepository {
 
     /// Get a customer by email, creating one if it doesn't exist.
     ///
-    /// Safe under concurrency: the insert races on the `email_key` unique
-    /// index and the loser reads the winner's row.
-    pub async fn get_or_create_by_email_async(&self, input: CreateCustomer) -> Result<Customer> {
-        Self::validate_customer_input(&input)?;
-
-        let id = CustomerId::new();
-        let now = Utc::now();
-        let email = Customer::normalize_email(&input.email);
-        let tags = input.tags.clone().unwrap_or_default();
-        let accepts_marketing = input.accepts_marketing.unwrap_or(false);
-
-        let tags_json = serde_json::to_value(&tags).unwrap_or_default();
-        let metadata_json = input.metadata.clone();
-
-        let inserted: Option<CustomerRow> = sqlx::query_as(
-            r#"
-            INSERT INTO customers (id, email, email_key, first_name, last_name, phone, status,
-                                   accepts_marketing, email_verified, tags, metadata,
-                                   created_at, updated_at)
-            VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            ON CONFLICT (email_key) DO NOTHING
-            RETURNING *
-            "#,
-        )
-        .bind(id.into_uuid())
-        .bind(&email)
-        .bind(&input.first_name)
-        .bind(&input.last_name)
-        .bind(&input.phone)
-        .bind("active")
-        .bind(accepts_marketing)
-        .bind(false)
-        .bind(&tags_json)
-        .bind(&metadata_json)
-        .bind(now)
-        .bind(now)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        if let Some(row) = inserted {
-            return Self::row_to_customer(row);
-        }
-
-        // Conflict: return the existing live customer row.
-        let row = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE email_key = $1")
-            .bind(&email)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        Self::row_to_customer(row)
+    /// Returns `(customer, created)`. Safe under concurrency: the insert is
+    /// conflict-tolerant on EVERY unique constraint (the `email_key` index and
+    /// the legacy raw `UNIQUE(email)` from migration 001, which a legacy
+    /// case-duplicate can still trip), and the loser re-reads the winner
+    /// inside the same transaction rather than through a second pool
+    /// checkout that might see a different snapshot.
+    pub async fn get_or_create_by_email_async(
+        &self,
+        input: CreateCustomer,
+    ) -> Result<(Customer, bool)> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let resolved = get_or_create_customer_with_conn_pg(tx.as_mut(), &input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(resolved)
     }
 
     /// Create a new customer (async)
@@ -541,12 +602,11 @@ impl PgCustomerRepository {
 
     /// Get a live customer by (case-insensitive) email (async)
     pub async fn get_by_email_async(&self, email: &str) -> Result<Option<Customer>> {
-        let result =
-            sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE email_key = $1")
-                .bind(Customer::normalize_email(email))
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(map_db_error)?;
+        let result = sqlx::query_as::<_, CustomerRow>(LIVE_CUSTOMER_BY_EMAIL)
+            .bind(Customer::normalize_email(email))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         match result {
             Some(row) => Ok(Some(Self::row_to_customer(row)?)),
@@ -1078,6 +1138,10 @@ impl CustomerRepository for PgCustomerRepository {
 
     fn get_by_email(&self, email: &str) -> Result<Option<Customer>> {
         super::block_on(self.get_by_email_async(email))
+    }
+
+    fn get_or_create_by_email(&self, input: CreateCustomer) -> Result<(Customer, bool)> {
+        super::block_on(self.get_or_create_by_email_async(input))
     }
 
     fn update(&self, id: CustomerId, input: UpdateCustomer) -> Result<Customer> {

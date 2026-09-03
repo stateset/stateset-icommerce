@@ -535,6 +535,101 @@ impl PgPromotionRepository {
 
     /// Per-customer usage counts (from the ledger) for every candidate that
     /// carries a per-customer limit, on `executor`.
+    /// Read-only twin of [`Self::consume_cart_promotions_in_tx`] for the
+    /// cart's AUTOMATIC (no-code) promotions: refuses exactly what
+    /// consumption would refuse, and writes nothing. Postgres twin of the
+    /// SQLite `ensure_cart_promotions_consumable_with_conn`.
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::ValidationError`] naming the first promotion that
+    /// could not be recorded.
+    pub(crate) async fn ensure_cart_promotions_consumable_on(
+        conn: &mut sqlx::PgConnection,
+        cart: &Cart,
+        customer_id: Option<CustomerId>,
+    ) -> Result<()> {
+        let mut request = ApplyPromotionsRequest::from_cart(cart, "");
+        request.coupon_codes = cart.coupon_code.iter().map(|c| c.to_uppercase()).collect();
+        request.customer_id = customer_id.or(cart.customer_id);
+
+        let candidates =
+            Self::candidate_promotions_on(conn, &request, Utc::now(), &mut Vec::new()).await?;
+        let customer_usage = match request.customer_id {
+            Some(customer_id) => {
+                Self::customer_usage_counts_on(conn, &candidates, customer_id).await?
+            }
+            None => CustomerUsageCounts::new(),
+        };
+
+        let mut result = ApplyPromotionsResult::default();
+        evaluate_promotions(&request, candidates, &customer_usage, &mut result)?;
+
+        for applied in &result.applied_promotions {
+            if applied.coupon_code.is_some() {
+                // The cart's coupon is covered by
+                // `ensure_cart_coupon_consumable_with_conn_pg`.
+                continue;
+            }
+            // Consumption links an existing (cart, promotion) row rather than
+            // counting again, so an already-recorded promotion cannot fail.
+            let already: Option<Uuid> = sqlx::query_scalar(
+                "SELECT id FROM promotion_usage
+                 WHERE cart_id = $1 AND promotion_id = $2 AND coupon_id IS NULL LIMIT 1",
+            )
+            .bind(cart.id.into_uuid())
+            .bind(applied.promotion_id.into_uuid())
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+            if already.is_some() {
+                continue;
+            }
+
+            let room: Option<i32> = sqlx::query_scalar(
+                "SELECT 1 FROM promotions
+                 WHERE id = $1 AND (total_usage_limit IS NULL OR usage_count < total_usage_limit)",
+            )
+            .bind(applied.promotion_id.into_uuid())
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+            if room.is_none() {
+                return Err(CommerceError::ValidationError(
+                    "Promotion not found or usage limit reached".to_string(),
+                ));
+            }
+
+            if let Some(customer_id) = request.customer_id {
+                let limit: Option<i32> =
+                    sqlx::query_scalar("SELECT per_customer_limit FROM promotions WHERE id = $1")
+                        .bind(applied.promotion_id.into_uuid())
+                        .fetch_optional(&mut *conn)
+                        .await
+                        .map_err(map_db_error)?
+                        .flatten();
+                if let Some(limit) = limit {
+                    let used: i64 = sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM promotion_usage
+                         WHERE promotion_id = $1 AND customer_id = $2",
+                    )
+                    .bind(applied.promotion_id.into_uuid())
+                    .bind(customer_id.into_uuid())
+                    .fetch_one(&mut *conn)
+                    .await
+                    .map_err(map_db_error)?;
+                    if used >= i64::from(limit) {
+                        return Err(CommerceError::ValidationError(
+                            "Per-customer usage limit reached".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     async fn customer_usage_counts_on(
         conn: &mut sqlx::PgConnection,
         candidates: &[(Promotion, Option<String>)],

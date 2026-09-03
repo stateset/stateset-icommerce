@@ -14,10 +14,12 @@ use rust_decimal_macros::dec;
 use stateset_core::{
     CommerceError, CreateCustomer, CreateOrder, CreateOrderItem, CreatePayment, CreateRefund,
     CurrencyCode, CustomerId, OrderStatus, Payment, PaymentFilter, PaymentMethodType,
-    PaymentTransactionStatus, ProductId, UpdateOrder, UpdatePayment,
+    PaymentTransactionStatus, ProductId, RemoveOrderItem, UpdateOrder, UpdatePayment,
 };
 use stateset_db::PostgresDatabase;
 use std::env;
+use std::sync::Arc;
+use tokio::sync::Barrier;
 use uuid::Uuid;
 
 // ============================================================================
@@ -366,17 +368,36 @@ async fn postgres_open_captures_for_order_lists_only_outstanding_money() {
 // Idempotency — a racing duplicate key returns the existing payment
 // ============================================================================
 
-#[tokio::test]
+/// Runs on a MULTI-THREAD runtime with `tokio::spawn`, not `tokio::join!`:
+/// joined futures on the default single-threaded test runtime interleave only
+/// at await points on one thread, which never exercises the UNIQUE-index race
+/// this test exists to prove. Same pattern as `postgres_x402_races.rs`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn postgres_concurrent_duplicate_idempotency_key_returns_the_existing_payment() {
-    let db = require_db!();
+    let db = Arc::new(require_db!());
     let key = format!("idem-{}", Uuid::new_v4());
     let input =
         || CreatePayment { idempotency_key: Some(key.clone()), ..payment_input(None, dec!(25.00)) };
 
-    // Both futures pass the pre-transaction lookup before either INSERT lands;
+    // Both tasks pass the pre-transaction lookup before either INSERT lands;
     // the loser trips the UNIQUE index and must resolve to the winner's row.
-    let payments = db.payments();
-    let (a, b) = tokio::join!(payments.create_async(input()), payments.create_async(input()));
+    let barrier = Arc::new(Barrier::new(2));
+    let handles: Vec<_> = (0..2)
+        .map(|_| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let input = input();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                db.payments().create_async(input).await
+            })
+        })
+        .collect();
+    let mut results = Vec::new();
+    for handle in handles {
+        results.push(handle.await.expect("task"));
+    }
+    let [a, b] = <[_; 2]>::try_from(results).expect("two results");
     let a = a.expect("a duplicate idempotency key is idempotent, never a conflict");
     let b = b.expect("a duplicate idempotency key is idempotent, never a conflict");
     assert_eq!(a.id, b.id, "both callers must observe the same payment");
@@ -655,24 +676,39 @@ async fn postgres_duplicate_idempotency_key_with_different_parameters_is_a_confl
     assert_eq!(payments_for(&db, order_id).await.len(), 1);
 }
 
-#[tokio::test]
+/// Real parallelism (see the note on the test above): `tokio::spawn` on a
+/// multi-thread runtime, with a barrier so both tasks reach `create_async`
+/// together.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn postgres_concurrent_duplicate_idempotency_key_with_different_amounts_conflicts() {
-    let db = require_db!();
+    let db = Arc::new(require_db!());
     let key = format!("idem-{}", Uuid::new_v4());
     let input = |amount: Decimal| CreatePayment {
         idempotency_key: Some(key.clone()),
         ..payment_input(None, amount)
     };
 
-    // Both futures pass the pre-transaction lookup before either INSERT lands;
+    // Both tasks pass the pre-transaction lookup before either INSERT lands;
     // the loser trips the UNIQUE index, reads the winner's row and must see
     // that its own request differs.
-    let payments = db.payments();
-    let (a, b) = tokio::join!(
-        payments.create_async(input(dec!(25.00))),
-        payments.create_async(input(dec!(26.00)))
-    );
-    let results = [a, b];
+    let barrier = Arc::new(Barrier::new(2));
+    let handles: Vec<_> = [dec!(25.00), dec!(26.00)]
+        .into_iter()
+        .map(|amount| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let input = input(amount);
+            tokio::spawn(async move {
+                barrier.wait().await;
+                db.payments().create_async(input).await
+            })
+        })
+        .collect();
+    let mut collected = Vec::new();
+    for handle in handles {
+        collected.push(handle.await.expect("task"));
+    }
+    let results = <[_; 2]>::try_from(collected).expect("two results");
     let ok = results.iter().filter(|r| r.is_ok()).count();
     let conflicts = results
         .iter()
@@ -740,4 +776,145 @@ async fn postgres_refunded_cannot_be_reached_through_update() {
         .expect_err("batch refused");
     assert_validation_mentioning(&err, "complete_refund");
     assert_eq!(status(&db, p2.id.into_uuid()).await, PaymentTransactionStatus::Completed);
+}
+
+// ============================================================================
+// D6 — a line removal must not drop the order total below captured money
+// (Postgres mirror of `sqlite_payment_order_guards.rs`)
+// ============================================================================
+
+/// A two-line order (1 × 60.00 + 1 × 40.00 = 100.00) in `Pending`, returned
+/// with its line ids.
+async fn two_line_order(db: &PostgresDatabase) -> (Uuid, Uuid, Uuid) {
+    let customer_id = customer(db).await;
+    let order = db
+        .orders()
+        .create_async(CreateOrder {
+            customer_id,
+            items: vec![
+                CreateOrderItem {
+                    product_id: ProductId::new(),
+                    sku: format!("LINE-60-{}", Uuid::new_v4()),
+                    name: "Sixty".into(),
+                    quantity: 1,
+                    unit_price: dec!(60.00),
+                    ..Default::default()
+                },
+                CreateOrderItem {
+                    product_id: ProductId::new(),
+                    sku: format!("LINE-40-{}", Uuid::new_v4()),
+                    name: "Forty".into(),
+                    quantity: 1,
+                    unit_price: dec!(40.00),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .await
+        .expect("create order");
+    assert_eq!(order.total_amount, dec!(100.00));
+    let big =
+        order.items.iter().find(|i| i.total == dec!(60.00)).expect("60.00 line").id.into_uuid();
+    let small =
+        order.items.iter().find(|i| i.total == dec!(40.00)).expect("40.00 line").id.into_uuid();
+    (order.id.into_uuid(), big, small)
+}
+
+async fn total_of(db: &PostgresDatabase, order_id: Uuid) -> Decimal {
+    db.orders().get_async(order_id).await.expect("get order").expect("order exists").total_amount
+}
+
+#[tokio::test]
+async fn postgres_removing_a_line_that_would_strand_captured_money_is_refused() {
+    let db = require_db!();
+    let (order_id, big, _small) = two_line_order(&db).await;
+    completed_payment(&db, Some(order_id), dec!(50.00)).await;
+
+    let err = db.orders().remove_item_async(order_id, big).await.expect_err("refused");
+    match &err {
+        CommerceError::OrderTotalBelowCaptured { order_id: id, new_total, captured, currency } => {
+            assert_eq!(*id, order_id);
+            // Exact decimal strings, compared as decimals: SQLite stores money
+            // as TEXT and Postgres as NUMERIC(19,4), so the scale differs.
+            assert_eq!(new_total.parse::<Decimal>().expect("decimal"), dec!(40.00));
+            assert_eq!(captured.parse::<Decimal>().expect("decimal"), dec!(50.00));
+            assert_eq!(currency, "USD");
+        }
+        other => panic!("expected OrderTotalBelowCaptured, got {other:?}"),
+    }
+    assert_eq!(err.invariant_code(), Some("commerce.order.total_below_captured"));
+
+    // The refusal rolls the whole mutation back.
+    let order = db.orders().get_async(order_id).await.expect("get").expect("exists");
+    assert_eq!(order.items.len(), 2, "the line must still be there");
+    assert_eq!(order.total_amount, dec!(100.00));
+    assert_eq!(
+        db.payments().open_captures_for_order_async(order_id).await.expect("open").len(),
+        1,
+        "the capture is untouched"
+    );
+}
+
+#[tokio::test]
+async fn postgres_removing_a_line_the_captures_still_cover_is_allowed() {
+    let db = require_db!();
+    let (order_id, _big, small) = two_line_order(&db).await;
+    completed_payment(&db, Some(order_id), dec!(50.00)).await;
+
+    db.orders().remove_item_async(order_id, small).await.expect("removal within capture cover");
+    assert_eq!(total_of(&db, order_id).await, dec!(60.00));
+}
+
+#[tokio::test]
+async fn postgres_an_in_flight_capture_blocks_a_line_removal_too() {
+    let db = require_db!();
+    let (order_id, big, _small) = two_line_order(&db).await;
+    // Never completed: a pending authorization is still a capturing status.
+    payment(&db, Some(order_id), dec!(50.00)).await;
+
+    let err = db.orders().remove_item_async(order_id, big).await.expect_err("refused");
+    assert_eq!(err.invariant_code(), Some("commerce.order.total_below_captured"));
+    assert_eq!(total_of(&db, order_id).await, dec!(100.00));
+}
+
+#[tokio::test]
+async fn postgres_a_refunded_capture_no_longer_blocks_a_line_removal() {
+    let db = require_db!();
+    let (order_id, big, _small) = two_line_order(&db).await;
+    let p = completed_payment(&db, Some(order_id), dec!(50.00)).await;
+    let refund = db
+        .payments()
+        .create_refund_async(CreateRefund { payment_id: p.id, amount: None, ..Default::default() })
+        .await
+        .expect("full refund");
+    db.payments().complete_refund_async(refund.id).await.expect("complete refund");
+
+    db.orders().remove_item_async(order_id, big).await.expect("fully refunded money holds nothing");
+    assert_eq!(total_of(&db, order_id).await, dec!(40.00));
+}
+
+#[tokio::test]
+async fn postgres_allow_overpayment_removes_the_line_and_leaves_the_order_overpaid() {
+    let db = require_db!();
+    let (order_id, big, _small) = two_line_order(&db).await;
+    completed_payment(&db, Some(order_id), dec!(50.00)).await;
+
+    db.orders()
+        .remove_item_with_async(order_id, big, RemoveOrderItem { allow_overpayment: true })
+        .await
+        .expect("explicit opt-in removes the line");
+    assert_eq!(total_of(&db, order_id).await, dec!(40.00));
+    // Nothing was voided or refunded: the overpayment is the caller's to settle.
+    let open = db.payments().open_captures_for_order_async(order_id).await.expect("open");
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].amount - open[0].amount_refunded, dec!(50.00));
+}
+
+#[tokio::test]
+async fn postgres_a_line_removal_on_an_unpaid_order_is_unaffected() {
+    let db = require_db!();
+    let (order_id, big, _small) = two_line_order(&db).await;
+    db.orders().remove_item_async(order_id, big).await.expect("no captures, no guard");
+    assert_eq!(total_of(&db, order_id).await, dec!(40.00));
 }

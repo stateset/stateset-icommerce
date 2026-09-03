@@ -2,7 +2,18 @@
 //!
 //! Every governed kernel command seals its receipt into an append-only hash
 //! chain. These read-only endpoints recompute that chain and mint portable
-//! checkpoints operators can retain outside the database.
+//! checkpoints operators can retain outside the database. Both backends seal
+//! the same chain, so both answer these endpoints.
+//!
+//! # Authorization
+//!
+//! These are ordinary `/api/v1` routes: they run behind bearer authentication
+//! and the fail-closed authorization middleware, which maps them to the
+//! `kernel` resource with `Action::Read`, in addition to `x-tenant-id`
+//! routing. No further gate is added here — the chain exposes only hashes,
+//! counts and a head pointer (never receipt payloads), and operators need to
+//! be able to verify it. A deployment that wants to restrict verification to
+//! auditors grants `kernel:read` to that role alone.
 
 use axum::{Json, Router, extract::State, http::HeaderMap, routing::get};
 use serde::{Deserialize, Serialize};
@@ -52,8 +63,14 @@ pub(crate) async fn verify_audit_chain(
     headers: HeaderMap,
 ) -> Result<Json<KernelAuditVerificationResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let verification = commerce.kernel_audit()?.verify_chain()?;
+    // Verification is synchronous on both backends (the Postgres path bridges
+    // to async through the shared runtime, which must not be entered from a
+    // Tokio worker), so it runs on a blocking thread.
+    let verification = state
+        .run_blocking(tenant_id.as_deref(), |commerce| {
+            Ok(commerce.kernel_audit()?.verify_chain()?)
+        })
+        .await?;
     Ok(Json(KernelAuditVerificationResponse {
         valid: verification.valid,
         entries: verification.entries,
@@ -75,8 +92,9 @@ pub(crate) async fn audit_checkpoint(
     headers: HeaderMap,
 ) -> Result<Json<KernelAuditCheckpointResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let checkpoint = commerce.kernel_audit()?.checkpoint()?;
+    let checkpoint = state
+        .run_blocking(tenant_id.as_deref(), |commerce| Ok(commerce.kernel_audit()?.checkpoint()?))
+        .await?;
     Ok(Json(KernelAuditCheckpointResponse {
         contract_version: checkpoint.contract_version,
         algorithm: checkpoint.algorithm,

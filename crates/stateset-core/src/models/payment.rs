@@ -367,10 +367,20 @@ impl Payment {
     ///
     /// An idempotency key promises "this exact operation, at most once". A
     /// second request with the same key but a different amount, order,
-    /// currency or payment method is not a retry — it is a different payment
-    /// that would silently be answered with the first one's row (and money).
+    /// customer, invoice, currency, method, processor reference, card, billing
+    /// details, description or metadata is not a retry — it is a different
+    /// payment that would silently be answered with the first one's row (and
+    /// money). Every field of [`CreatePayment`] that both backends persist is
+    /// compared; the first difference is named in the error.
+    ///
     /// Both backends call this before returning the stored payment for a
     /// duplicate key, on the fast path and on the UNIQUE-conflict race path.
+    ///
+    /// The blockchain fields of [`CreatePayment`]
+    /// (`blockchain_network`/`stablecoin_type`/wallet addresses/`token_address`)
+    /// are deliberately NOT compared: neither backend's `create` persists them,
+    /// so the stored payment always reads them back as `None` and comparing
+    /// them would reject a byte-identical retry.
     ///
     /// # Errors
     ///
@@ -380,21 +390,7 @@ impl Payment {
         use crate::CommerceError;
 
         let key = self.idempotency_key.as_deref().unwrap_or_default();
-        let mismatch = if self.amount != input.amount {
-            Some(format!("amount {} != {}", self.amount, input.amount))
-        } else if self.order_id != input.order_id {
-            Some(format!(
-                "order_id {} != {}",
-                self.order_id.map_or_else(|| "none".to_string(), |id| id.to_string()),
-                input.order_id.map_or_else(|| "none".to_string(), |id| id.to_string())
-            ))
-        } else if self.currency != input.currency.unwrap_or_default() {
-            Some(format!("currency {} != {}", self.currency, input.currency.unwrap_or_default()))
-        } else if self.payment_method != input.payment_method {
-            Some(format!("payment_method {} != {}", self.payment_method, input.payment_method))
-        } else {
-            None
-        };
+        let mismatch = self.first_replay_mismatch(input);
         match mismatch {
             Some(diff) => Err(CommerceError::Conflict(format!(
                 "Idempotency key '{key}' was already used for payment {} with different parameters ({diff})",
@@ -402,6 +398,63 @@ impl Payment {
             ))),
             None => Ok(()),
         }
+    }
+
+    /// The first [`CreatePayment`] field that differs from this payment, as a
+    /// `field stored != requested` string. Split out of
+    /// [`Self::check_idempotent_replay`] so the comparison list stays one
+    /// readable table.
+    fn first_replay_mismatch(&self, input: &CreatePayment) -> Option<String> {
+        /// Compare two `Option<impl Display>` and render the difference.
+        macro_rules! opt {
+            ($field:literal, $stored:expr, $requested:expr) => {{
+                let stored = $stored;
+                let requested = $requested;
+                if stored != requested {
+                    return Some(format!(
+                        "{} {} != {}",
+                        $field,
+                        stored.map_or_else(|| "none".to_string(), |v| v.to_string()),
+                        requested.map_or_else(|| "none".to_string(), |v| v.to_string()),
+                    ));
+                }
+            }};
+        }
+
+        // Money and identity first: these are the differences that would move
+        // funds, so they are the ones worth naming when several fields differ.
+        if self.amount != input.amount {
+            return Some(format!("amount {} != {}", self.amount, input.amount));
+        }
+        opt!("order_id", self.order_id, input.order_id);
+        opt!("invoice_id", self.invoice_id, input.invoice_id);
+        opt!("customer_id", self.customer_id, input.customer_id);
+        let requested_currency = input.currency.unwrap_or_default();
+        if self.currency != requested_currency {
+            return Some(format!("currency {} != {}", self.currency, requested_currency));
+        }
+        if self.payment_method != input.payment_method {
+            return Some(format!(
+                "payment_method {} != {}",
+                self.payment_method, input.payment_method
+            ));
+        }
+
+        // Processor/card/billing/free-text fields: not money by themselves, but
+        // they identify the request, and a key reused with different ones is a
+        // different payment, not a retry.
+        opt!("external_id", self.external_id.as_ref(), input.external_id.as_ref());
+        opt!("processor", self.processor.as_ref(), input.processor.as_ref());
+        opt!("card_brand", self.card_brand, input.card_brand);
+        opt!("card_last4", self.card_last4.as_ref(), input.card_last4.as_ref());
+        opt!("card_exp_month", self.card_exp_month, input.card_exp_month);
+        opt!("card_exp_year", self.card_exp_year, input.card_exp_year);
+        opt!("billing_email", self.billing_email.as_ref(), input.billing_email.as_ref());
+        opt!("billing_name", self.billing_name.as_ref(), input.billing_name.as_ref());
+        opt!("billing_address", self.billing_address.as_ref(), input.billing_address.as_ref());
+        opt!("description", self.description.as_ref(), input.description.as_ref());
+        opt!("metadata", self.metadata.as_ref(), input.metadata.as_ref());
+        None
     }
 
     /// Validate and resolve a refund request against this payment.
@@ -996,6 +1049,133 @@ mod tests {
                 "{label}: {err:?}"
             );
         }
+    }
+
+    /// A stored payment with every persisted `CreatePayment` field populated,
+    /// and the `CreatePayment` that produced it.
+    fn populated_replay_pair() -> (Payment, CreatePayment) {
+        use rust_decimal_macros::dec;
+        let mut stored = payment_for_refund(PaymentTransactionStatus::Pending, dec!(100), dec!(0));
+        stored.idempotency_key = Some("key-1".into());
+        stored.order_id = Some(OrderId::new());
+        stored.invoice_id = Some(Uuid::new_v4());
+        stored.customer_id = Some(CustomerId::new());
+        stored.external_id = Some("pi_123".into());
+        stored.processor = Some("stripe".into());
+        stored.card_brand = Some(CardBrand::Visa);
+        stored.card_last4 = Some("4242".into());
+        stored.card_exp_month = Some(12);
+        stored.card_exp_year = Some(2031);
+        stored.billing_email = Some("payer@example.com".into());
+        stored.billing_name = Some("Ada Lovelace".into());
+        stored.billing_address = Some("1 Market St".into());
+        stored.description = Some("Order 1234".into());
+        stored.metadata = Some(r#"{"channel":"web"}"#.into());
+
+        let input = CreatePayment {
+            order_id: stored.order_id,
+            invoice_id: stored.invoice_id,
+            customer_id: stored.customer_id,
+            payment_method: stored.payment_method,
+            amount: stored.amount,
+            currency: Some(stored.currency),
+            external_id: stored.external_id.clone(),
+            idempotency_key: stored.idempotency_key.clone(),
+            processor: stored.processor.clone(),
+            card_brand: stored.card_brand,
+            card_last4: stored.card_last4.clone(),
+            card_exp_month: stored.card_exp_month,
+            card_exp_year: stored.card_exp_year,
+            billing_email: stored.billing_email.clone(),
+            billing_name: stored.billing_name.clone(),
+            billing_address: stored.billing_address.clone(),
+            description: stored.description.clone(),
+            metadata: stored.metadata.clone(),
+            ..Default::default()
+        };
+        (stored, input)
+    }
+
+    #[test]
+    fn idempotent_replay_compares_every_persisted_request_field() {
+        use rust_decimal_macros::dec;
+        let (stored, same) = populated_replay_pair();
+        stored.check_idempotent_replay(&same).expect("a byte-identical replay is idempotent");
+
+        // Every field the backends persist must be able to break the replay: a
+        // reused key carrying any of them differently is a DIFFERENT payment,
+        // not a retry, and must never be answered with the stored row.
+        for (field, different) in [
+            ("amount", CreatePayment { amount: dec!(99), ..same.clone() }),
+            ("order_id", CreatePayment { order_id: Some(OrderId::new()), ..same.clone() }),
+            ("order_id", CreatePayment { order_id: None, ..same.clone() }),
+            ("invoice_id", CreatePayment { invoice_id: Some(Uuid::new_v4()), ..same.clone() }),
+            ("invoice_id", CreatePayment { invoice_id: None, ..same.clone() }),
+            ("customer_id", CreatePayment { customer_id: Some(CustomerId::new()), ..same.clone() }),
+            ("customer_id", CreatePayment { customer_id: None, ..same.clone() }),
+            ("currency", CreatePayment { currency: Some(CurrencyCode::EUR), ..same.clone() }),
+            (
+                "payment_method",
+                CreatePayment { payment_method: PaymentMethodType::BankTransfer, ..same.clone() },
+            ),
+            ("external_id", CreatePayment { external_id: Some("pi_999".into()), ..same.clone() }),
+            ("processor", CreatePayment { processor: Some("adyen".into()), ..same.clone() }),
+            ("card_brand", CreatePayment { card_brand: Some(CardBrand::Amex), ..same.clone() }),
+            ("card_last4", CreatePayment { card_last4: Some("1881".into()), ..same.clone() }),
+            ("card_exp_month", CreatePayment { card_exp_month: Some(1), ..same.clone() }),
+            ("card_exp_year", CreatePayment { card_exp_year: Some(2032), ..same.clone() }),
+            (
+                "billing_email",
+                CreatePayment { billing_email: Some("other@example.com".into()), ..same.clone() },
+            ),
+            (
+                "billing_name",
+                CreatePayment { billing_name: Some("Grace Hopper".into()), ..same.clone() },
+            ),
+            (
+                "billing_address",
+                CreatePayment { billing_address: Some("2 Market St".into()), ..same.clone() },
+            ),
+            (
+                "description",
+                CreatePayment { description: Some("Order 5678".into()), ..same.clone() },
+            ),
+            ("metadata", CreatePayment { metadata: Some(r#"{"channel":"pos"}"#.into()), ..same }),
+        ] {
+            let err = match stored.check_idempotent_replay(&different) {
+                Ok(()) => panic!("{field}: a different request must conflict"),
+                Err(error) => error,
+            };
+            match err {
+                crate::CommerceError::Conflict(ref message) => {
+                    assert!(message.contains("key-1"), "{field}: {message}");
+                    assert!(
+                        message.contains(field),
+                        "{field}: the conflict must name the differing field, got {message}"
+                    );
+                }
+                other => panic!("{field}: expected Conflict, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn idempotent_replay_ignores_fields_no_backend_persists() {
+        // `create` drops the blockchain fields on both backends, so the stored
+        // payment always reads them back as `None`. Comparing them would reject
+        // a byte-identical retry of a stablecoin payment.
+        let (stored, same) = populated_replay_pair();
+        let with_chain = CreatePayment {
+            blockchain_network: Some(BlockchainNetwork::Base),
+            stablecoin_type: Some(StablecoinType::Usdc),
+            from_wallet_address: Some("0xfrom".into()),
+            to_wallet_address: Some("0xto".into()),
+            token_address: Some("0xtoken".into()),
+            ..same
+        };
+        stored
+            .check_idempotent_replay(&with_chain)
+            .expect("unpersisted fields cannot break a replay");
     }
 
     #[test]

@@ -280,7 +280,11 @@ async fn postgres_concurrent_releases_of_one_reservation_are_idempotent() {
     assert_allocation_invariant(&db, &[item_id]).await;
 }
 
-#[tokio::test]
+/// The name says "hold row locks", so the calls must actually RACE: the
+/// original version ran every confirm/expire/release sequentially and proved
+/// only idempotence. Confirms, expiries and releases now contend on the same
+/// balance row from several tasks on a real multi-threaded runtime.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn postgres_confirm_and_expire_hold_row_locks_and_keep_invariant() {
     let db = require_pg!();
     let inv = db.inventory();
@@ -290,17 +294,58 @@ async fn postgres_confirm_and_expire_hold_row_locks_and_keep_invariant() {
     let b = inv.reserve_async(reserve(&sku, dec!(3), "b", None)).await.unwrap();
     backdate(&db, a.id).await;
 
-    // Confirming an expired hold reports it expired (and hands units back).
-    let err = inv.confirm_reservation_async(a.id).await;
-    assert!(matches!(err, Err(CommerceError::ReservationExpired(_))), "got {err:?}");
+    // Confirming an expired hold reports it expired (and hands units back);
+    // several racing confirms must all agree on that, and none may surface a
+    // VersionConflict from the balance row they all touch.
+    let mut expiring = Vec::new();
+    for _ in 0..6 {
+        let inv = inv.clone();
+        expiring.push(tokio::spawn(async move { inv.confirm_reservation_async(a.id).await }));
+    }
+    let mut expired_reports = 0;
+    for task in expiring {
+        match task.await.unwrap() {
+            Err(CommerceError::ReservationExpired(_)) => expired_reports += 1,
+            // Once the hold is `expired`, a later confirm reports the terminal
+            // state rather than re-expiring it.
+            Ok(()) => {}
+            other => panic!("racing confirm of an expired hold must not fail: {other:?}"),
+        }
+    }
+    assert!(expired_reports >= 1, "at least one confirm must report the expiry");
     assert_eq!(balance(&inv, &sku).await, (dec!(10), dec!(3), dec!(7)));
-    // Confirming b twice is idempotent.
-    inv.confirm_reservation_async(b.id).await.unwrap();
-    inv.confirm_reservation_async(b.id).await.unwrap();
+
+    // Confirms of a live hold and releases of the expired one race on the same
+    // balance row; both are idempotent and neither may error.
+    let mut tasks = Vec::new();
+    for _ in 0..6 {
+        let inv = inv.clone();
+        tasks.push(tokio::spawn(async move { inv.confirm_reservation_async(b.id).await }));
+    }
+    for _ in 0..6 {
+        let inv = inv.clone();
+        tasks.push(tokio::spawn(async move { inv.release_reservation_async(a.id).await }));
+    }
+    // ... and a sweeper runs over the same rows at the same time.
+    for _ in 0..2 {
+        let inv = inv.clone();
+        tasks.push(tokio::spawn(async move {
+            inv.expire_reservations_async(Utc::now(), 100).await.map(|_| ())
+        }));
+    }
+    for task in tasks {
+        task.await.unwrap().expect("racing confirm/release/sweep must all be Ok");
+    }
+
     assert_eq!(balance(&inv, &sku).await, (dec!(10), dec!(3), dec!(7)));
-    // Releasing an expired reservation is a no-op, not an error.
-    inv.release_reservation_async(a.id).await.unwrap();
-    assert_eq!(balance(&inv, &sku).await, (dec!(10), dec!(3), dec!(7)));
+    assert_eq!(
+        inv.get_reservation_async(a.id).await.unwrap().unwrap().status,
+        ReservationStatus::Expired
+    );
+    assert_eq!(
+        inv.get_reservation_async(b.id).await.unwrap().unwrap().status,
+        ReservationStatus::Confirmed
+    );
     assert_allocation_invariant(&db, &[item_id]).await;
 }
 
@@ -427,9 +472,14 @@ async fn postgres_check_constraint_rejects_negative_balances() {
     let inv = db.inventory();
     let sku = sku("CHK");
     let item_id = seed(&inv, &sku, dec!(5)).await;
-    for column in ["quantity_available", "quantity_allocated"] {
+    // Each write is COHERENT (available = on_hand - allocated, migration 099)
+    // so it can only trip the non-negative CHECK, not the identity one.
+    for assignment in [
+        "quantity_on_hand = -1, quantity_available = -1",
+        "quantity_allocated = -1, quantity_available = 6",
+    ] {
         let err =
-            sqlx::query(&format!("UPDATE inventory_balances SET {column} = -1 WHERE item_id = $1"))
+            sqlx::query(&format!("UPDATE inventory_balances SET {assignment} WHERE item_id = $1"))
                 .bind(item_id)
                 .execute(db.pool())
                 .await

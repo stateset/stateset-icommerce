@@ -350,6 +350,23 @@ mod tests {
         (router, state)
     }
 
+    /// `products.create` mints a `Draft` product; only an `Active` product's
+    /// SKU may be ordered, the same rule the cart has always applied. Test
+    /// fixtures publish the product before ordering it.
+    fn publish(state: &AppState, id: ProductId) {
+        state
+            .commerce()
+            .products()
+            .update(
+                id,
+                stateset_core::UpdateProduct {
+                    status: Some(stateset_core::ProductStatus::Active),
+                    ..Default::default()
+                },
+            )
+            .expect("publish product");
+    }
+
     #[tokio::test]
     async fn create_order_returns_201() {
         let (app, state) = app_with_state();
@@ -380,6 +397,7 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
+        publish(&state, product.id);
 
         let body = serde_json::json!({
             "customer_id": customer.id,
@@ -432,6 +450,8 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
+
+        publish(&state, product.id);
 
         let body = serde_json::json!({
             "customer_id": customer.id,
@@ -486,6 +506,8 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
+
+        publish(&state, product.id);
 
         for _ in 0..2 {
             state
@@ -716,6 +738,8 @@ mod tests {
             })
             .unwrap();
 
+        publish(&state, product.id);
+
         let make_item = || stateset_core::CreateOrderItem {
             product_id: product.id,
             variant_id: None,
@@ -820,6 +844,8 @@ mod tests {
             })
             .unwrap();
 
+        publish(&state, product.id);
+
         // Create 3 orders
         for _ in 0..3 {
             state
@@ -904,6 +930,8 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
+
+        publish(&state, product.id);
 
         for _ in 0..2 {
             state

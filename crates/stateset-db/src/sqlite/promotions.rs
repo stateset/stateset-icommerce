@@ -860,6 +860,108 @@ impl SqlitePromotionRepository {
         Ok(recorded)
     }
 
+    /// Read-only twin of [`Self::consume_cart_promotions_in_tx`] for the
+    /// cart's AUTOMATIC (no-code) promotions: refuses exactly what
+    /// consumption would refuse, and writes nothing.
+    ///
+    /// Checkout preview calls this so it cannot promise an order that apply
+    /// would reject. It mirrors the guards inside `record_usage_in_tx` —
+    /// the promotion's `total_usage_limit` and its `per_customer_limit` —
+    /// against the same candidate set consumption evaluates, so a promotion
+    /// exhausted between quote and checkout is reported at preview.
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::ValidationError`] naming the first promotion that
+    /// could not be recorded.
+    pub(crate) fn ensure_cart_promotions_consumable_with_conn(
+        conn: &rusqlite::Connection,
+        cart: &Cart,
+        customer_id: Option<CustomerId>,
+    ) -> Result<()> {
+        let mut request = ApplyPromotionsRequest::from_cart(cart, "");
+        request.coupon_codes = cart.coupon_code.iter().map(|c| c.to_uppercase()).collect();
+        request.customer_id = customer_id.or(cart.customer_id);
+
+        let candidates =
+            Self::candidate_promotions_with_conn(conn, &request, Utc::now(), &mut Vec::new())?;
+        let customer_usage = match request.customer_id {
+            Some(customer_id) => {
+                Self::customer_usage_counts_with_conn(conn, &candidates, customer_id)
+                    .map_err(|e| CommerceError::DatabaseError(format!("Query error: {e}")))?
+            }
+            None => CustomerUsageCounts::new(),
+        };
+
+        let mut result = ApplyPromotionsResult::default();
+        evaluate_promotions(&request, candidates, &customer_usage, &mut result)?;
+
+        for applied in &result.applied_promotions {
+            if applied.coupon_code.is_some() {
+                // The cart's coupon is covered by
+                // `ensure_cart_coupon_consumable_with_conn`.
+                continue;
+            }
+            // Consumption links an existing (cart, promotion) row rather than
+            // counting again, so an already-recorded promotion cannot fail.
+            let already: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM promotion_usage
+                     WHERE cart_id = ?1 AND promotion_id = ?2 AND coupon_id IS NULL LIMIT 1",
+                    [cart.id.to_string(), applied.promotion_id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| CommerceError::DatabaseError(format!("Query error: {e}")))?;
+            if already.is_some() {
+                continue;
+            }
+
+            let room: Option<i64> = conn
+                .query_row(
+                    "SELECT 1 FROM promotions
+                     WHERE id = ?1 AND (total_usage_limit IS NULL OR usage_count < total_usage_limit)",
+                    [applied.promotion_id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| CommerceError::DatabaseError(format!("Query error: {e}")))?;
+            if room.is_none() {
+                return Err(CommerceError::ValidationError(
+                    "Promotion not found or usage limit reached".to_string(),
+                ));
+            }
+
+            if let Some(customer_id) = request.customer_id {
+                let limit: Option<i32> = conn
+                    .query_row(
+                        "SELECT per_customer_limit FROM promotions WHERE id = ?1",
+                        [applied.promotion_id.to_string()],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(|e| CommerceError::DatabaseError(format!("Query error: {e}")))?
+                    .flatten();
+                if let Some(limit) = limit {
+                    let used: i64 = conn
+                        .query_row(
+                            "SELECT COUNT(*) FROM promotion_usage WHERE promotion_id = ?1 AND customer_id = ?2",
+                            [applied.promotion_id.to_string(), customer_id.to_string()],
+                            |row| row.get(0),
+                        )
+                        .map_err(|e| CommerceError::DatabaseError(format!("Query error: {e}")))?;
+                    if used >= i64::from(limit) {
+                        return Err(CommerceError::ValidationError(
+                            "Per-customer usage limit reached".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     // ========================================================================
     // Usage Tracking
     // ========================================================================

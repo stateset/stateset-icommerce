@@ -3,6 +3,9 @@
 //! * a lot quarantine (direct, or via a failed inspection) quarantines the
 //!   lot's `Available`/`Reserved` serials in the same transaction and releasing
 //!   the lot returns them; shipped serials are untouched;
+//! * `split` and `merge` re-attribute placements between lots (and record the
+//!   parent/child genealogy) without moving stock, so the invariant survives
+//!   both and a merged lot traces back to every source;
 //! * lot movements are mirrored onto `inventory_balances` for the lot's
 //!   `(sku, location)` — the invariant `Σ active lots available == inventory
 //!   available` holds after every operation;
@@ -22,8 +25,9 @@ use rust_decimal_macros::dec;
 use stateset_core::{
     AdjustLot, CommerceError, ConsumeLot, CreateInspection, CreateInspectionItem,
     CreateInventoryItem, CreateLot, CreateSerialNumber, InspectionResult, InspectionStatus,
-    InspectionType, LotFilter, LotStatus, RecordInspectionResult, ReserveLot, ReserveSerialNumber,
-    SerialStatus, TransactionType, TransferLot, UpdateLot,
+    InspectionType, LotFilter, LotRelationship, LotStatus, MergeLots, RecordInspectionResult,
+    ReserveLot, ReserveSerialNumber, SerialStatus, SplitLot, TraceNodeType, TransactionType,
+    TransferLot, UpdateLot,
 };
 use stateset_db::PostgresDatabase;
 use uuid::Uuid;
@@ -525,4 +529,206 @@ async fn postgres_confirmed_serial_reservation_can_be_released_until_shipped() {
         db.serials().release_reservation_async(res2.id).await,
         Err(CommerceError::Conflict(_))
     ));
+}
+
+// ==========================================================================
+// Split / merge: placements, inventory and genealogy (Postgres parity)
+// ==========================================================================
+
+/// `split` moves the placement with the units, so the child is a real, placed
+/// lot and the invariant holds across the operation.
+#[tokio::test]
+async fn postgres_split_moves_placement_and_keeps_inventory_in_step() {
+    let db = db_or_skip!();
+    let sku = sku("TC-SPLIT");
+    let item = inventory_item(&db, &sku).await;
+    let lots = db.lots();
+    let lot = make_lot(&db, &sku, dec!(100), Some(1)).await;
+    assert_invariant(&db, &sku, item, 1, "create").await;
+
+    let child = lots
+        .split_async(SplitLot { lot_id: lot.id, quantity: dec!(30), ..Default::default() })
+        .await
+        .expect("split");
+    assert_invariant(&db, &sku, item, 1, "split").await;
+    assert_eq!(lots.get_quantity_at_location_async(lot.id, 1).await.unwrap(), Some(dec!(70)));
+    assert_eq!(lots.get_quantity_at_location_async(child.id, 1).await.unwrap(), Some(dec!(30)));
+    assert_eq!(balance(&db, item, 1).await.0, dec!(100), "split moves nothing on hand");
+
+    lots.consume_async(ConsumeLot {
+        lot_id: child.id,
+        quantity: dec!(10),
+        reference_type: "work_order".into(),
+        reference_id: Uuid::new_v4(),
+        location_id: None,
+        performed_by: None,
+    })
+    .await
+    .expect("consume child");
+    assert_eq!(balance(&db, item, 1).await.0, dec!(90), "consuming a split child moves stock");
+    assert_invariant(&db, &sku, item, 1, "consume split child").await;
+}
+
+/// `merge` moves every source placement onto the target, so the merged lot
+/// stays visible to inventory and the invariant holds.
+#[tokio::test]
+async fn postgres_merge_moves_placements_and_keeps_inventory_in_step() {
+    let db = db_or_skip!();
+    let sku = sku("TC-MERGE");
+    let item = inventory_item(&db, &sku).await;
+    let lots = db.lots();
+    let a = make_lot(&db, &sku, dec!(40), Some(1)).await;
+    let b = make_lot(&db, &sku, dec!(60), Some(1)).await;
+    assert_invariant(&db, &sku, item, 1, "two lots").await;
+
+    let merged = lots
+        .merge_async(MergeLots {
+            source_lot_ids: vec![a.id, b.id],
+            // Explicit and unique: the generated `MERGED-<timestamp>`
+            // collides when two merges land in the same second.
+            target_lot_number: Some(format!("MERGED-{}", Uuid::new_v4().simple())),
+            reason: Some("consolidate".into()),
+        })
+        .await
+        .expect("merge");
+    assert_eq!(merged.quantity_remaining, dec!(100));
+    assert_invariant(&db, &sku, item, 1, "merge").await;
+    assert_eq!(lots.get_quantity_at_location_async(merged.id, 1).await.unwrap(), Some(dec!(100)));
+    assert_eq!(lots.get_quantity_at_location_async(a.id, 1).await.unwrap(), None);
+    assert_eq!(lots.get_quantity_at_location_async(b.id, 1).await.unwrap(), None);
+    assert_eq!(balance(&db, item, 1).await.0, dec!(100), "merge moves nothing on hand");
+
+    lots.consume_async(ConsumeLot {
+        lot_id: merged.id,
+        quantity: dec!(25),
+        reference_type: "order".into(),
+        reference_id: Uuid::new_v4(),
+        location_id: None,
+        performed_by: None,
+    })
+    .await
+    .expect("consume merged");
+    assert_eq!(balance(&db, item, 1).await.0, dec!(75), "consuming a merged lot moves stock");
+    assert_invariant(&db, &sku, item, 1, "consume merged").await;
+}
+
+/// A merged lot is traceable back to every source lot and the supplier or work
+/// order each came from, even though its own row can only carry one.
+#[tokio::test]
+async fn postgres_merge_records_genealogy_for_every_source() {
+    let db = db_or_skip!();
+    let sku = sku("TC-GEN");
+    let lots = db.lots();
+    let po = Uuid::new_v4();
+    let wo = Uuid::new_v4();
+    let a = lots
+        .create_async(CreateLot {
+            sku: sku.clone(),
+            lot_number: Some(format!("TC-{}", Uuid::new_v4().simple())),
+            quantity: dec!(10),
+            supplier_lot: Some("SUP-A".into()),
+            purchase_order_id: Some(po),
+            ..Default::default()
+        })
+        .await
+        .expect("lot a");
+    let b = lots
+        .create_async(CreateLot {
+            sku: sku.clone(),
+            lot_number: Some(format!("TC-{}", Uuid::new_v4().simple())),
+            quantity: dec!(5),
+            supplier_lot: Some("SUP-B".into()),
+            work_order_id: Some(wo),
+            ..Default::default()
+        })
+        .await
+        .expect("lot b");
+
+    let merged = lots
+        .merge_async(MergeLots {
+            source_lot_ids: vec![b.id, a.id], // reverse order: locks are canonical
+            // Explicit and unique: the generated `MERGED-<timestamp>`
+            // collides when two merges land in the same second.
+            target_lot_number: Some(format!("MERGED-{}", Uuid::new_v4().simple())),
+            reason: None,
+        })
+        .await
+        .expect("merge");
+
+    let parents = lots.get_lot_parents_async(merged.id).await.expect("parents");
+    assert_eq!(parents.len(), 2);
+    assert!(parents.iter().all(|p| p.relationship == LotRelationship::Merge));
+    assert!(parents.iter().any(|p| p.parent_lot_id == a.id && p.quantity == dec!(10)));
+    assert!(parents.iter().any(|p| p.parent_lot_id == b.id && p.quantity == dec!(5)));
+    assert_eq!(lots.get_lot_children_async(a.id).await.expect("children").len(), 1);
+
+    // Sources disagree on both documents, so neither is inherited onto the row.
+    assert_eq!(merged.purchase_order_id, None);
+    assert_eq!(merged.work_order_id, None);
+    assert_eq!(merged.supplier_lot, None);
+
+    let trace = lots.trace_async(merged.id).await.expect("trace");
+    let lot_nodes: Vec<_> =
+        trace.upstream.iter().filter(|n| n.node_type == TraceNodeType::Lot).collect();
+    assert_eq!(lot_nodes.len(), 2, "one node per ancestor lot");
+    assert!(lot_nodes.iter().any(|n| n.entity_name.as_deref() == Some("SUP-A")));
+    assert!(lot_nodes.iter().any(|n| n.entity_name.as_deref() == Some("SUP-B")));
+    assert!(
+        trace
+            .upstream
+            .iter()
+            .any(|n| n.node_type == TraceNodeType::PurchaseOrder && n.node_id == po)
+    );
+    assert!(
+        trace.upstream.iter().any(|n| n.node_type == TraceNodeType::WorkOrder && n.node_id == wo)
+    );
+}
+
+/// Split genealogy is transitive: a grandchild traces back to the original
+/// receipt through both hops.
+#[tokio::test]
+async fn postgres_split_genealogy_is_transitive() {
+    let db = db_or_skip!();
+    let sku = sku("TC-GEN3");
+    let lots = db.lots();
+    let po = Uuid::new_v4();
+    let root = lots
+        .create_async(CreateLot {
+            sku: sku.clone(),
+            lot_number: Some(format!("TC-{}", Uuid::new_v4().simple())),
+            quantity: dec!(100),
+            purchase_order_id: Some(po),
+            ..Default::default()
+        })
+        .await
+        .expect("root");
+    let child = lots
+        .split_async(SplitLot { lot_id: root.id, quantity: dec!(40), ..Default::default() })
+        .await
+        .expect("split");
+    let grandchild = lots
+        .split_async(SplitLot { lot_id: child.id, quantity: dec!(10), ..Default::default() })
+        .await
+        .expect("split again");
+
+    let parents = lots.get_lot_parents_async(grandchild.id).await.expect("parents");
+    assert_eq!(parents.len(), 1);
+    assert_eq!(parents[0].parent_lot_id, child.id);
+    assert_eq!(parents[0].relationship, LotRelationship::Split);
+
+    let trace = lots.trace_async(grandchild.id).await.expect("trace");
+    let ancestors: Vec<Uuid> = trace
+        .upstream
+        .iter()
+        .filter(|n| n.node_type == TraceNodeType::Lot)
+        .map(|n| n.node_id)
+        .collect();
+    assert!(ancestors.contains(&child.id));
+    assert!(ancestors.contains(&root.id));
+    assert!(
+        trace
+            .upstream
+            .iter()
+            .any(|n| n.node_type == TraceNodeType::PurchaseOrder && n.node_id == po)
+    );
 }

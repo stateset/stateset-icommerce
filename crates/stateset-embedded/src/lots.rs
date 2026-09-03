@@ -31,8 +31,8 @@
 use rust_decimal::Decimal;
 use stateset_core::{
     AddLotCertificate, AdjustLot, ConsumeLot, CreateLot, Lot, LotCertificate, LotFilter,
-    LotLocation, LotStatus, LotTransaction, MergeLots, ReserveLot, Result, SplitLot,
-    TraceabilityResult, TransferLot, UpdateLot,
+    LotGenealogyLink, LotLocation, LotStatus, LotTransaction, MergeLots, ReserveLot, Result,
+    SplitLot, TraceabilityResult, TransferLot, UpdateLot,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -308,6 +308,25 @@ impl Lots {
         location_id: i32,
     ) -> Result<Option<Decimal>> {
         self.db.lots().get_quantity_at_location(lot_id, location_id)
+    }
+
+    // ========================================================================
+    // Genealogy
+    // ========================================================================
+
+    /// The lots this lot was derived from: the parent of a `split`, or every
+    /// source of a `merge`. Empty for a lot created by a receipt.
+    ///
+    /// A merged lot can only carry one supplier / work order / purchase order
+    /// on its own row, so this is how you recover the rest.
+    pub fn get_parents(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+        self.db.lots().get_lot_parents(lot_id)
+    }
+
+    /// The lots derived from this lot: split children, and the merge target it
+    /// was consumed into.
+    pub fn get_children(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+        self.db.lots().get_lot_children(lot_id)
     }
 
     // ========================================================================

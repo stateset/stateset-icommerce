@@ -95,6 +95,34 @@ impl ProductStatus {
         matches!(self, Self::Archived)
     }
 
+    /// The catalogue action a status change performs when it withdraws the
+    /// product's SKUs from sale, or `None` when nothing becomes unsellable.
+    ///
+    /// Only `Active` is purchasable ([`Product::is_purchasable`]), so both
+    /// `Active -> Draft` (unpublish) and any move to `Archived` take a SKU off
+    /// sale while live carts, open orders and reservations may still hold it.
+    /// The repositories use the returned verb to run the same
+    /// `SkuReferenceCounts::ensure_none` guard for either withdrawal, so
+    /// unpublishing can no longer strand a cart holding a SKU that checkout
+    /// would go on to accept.
+    ///
+    /// The match is exhaustive on purpose: a new status must be classified
+    /// here rather than falling through a wildcard as "harmless".
+    #[must_use]
+    pub const fn withdrawal_action(self, next: Self) -> Option<&'static str> {
+        match (self, next) {
+            // No-ops and publications leave everything sellable.
+            (Self::Draft, Self::Draft | Self::Active)
+            | (Self::Active, Self::Active)
+            | (Self::Archived, Self::Archived) => None,
+            // Withdrawals.
+            (Self::Active, Self::Draft) => Some("unpublish"),
+            (Self::Draft | Self::Active, Self::Archived) => Some("archive"),
+            // `Archived` is terminal; `can_transition_to` refuses these first.
+            (Self::Archived, Self::Draft | Self::Active) => None,
+        }
+    }
+
     /// Validate a transition, returning a typed error when it is not allowed.
     ///
     /// # Errors
@@ -264,9 +292,17 @@ impl Validate for CreateProductVariant {
 
 /// Maximum number of decimal places a variant amount may carry.
 ///
-/// Both backends persist variant money with four fractional digits
-/// (`NUMERIC(19, 4)` on Postgres); anything finer would be rounded silently by
-/// the database while the returned struct echoed the unrounded input.
+/// Four fractional digits is the canonical money scale for catalogue amounts:
+/// it is what every downstream money column (order and cart lines, invoices,
+/// the general ledger) settles at, and it is the precision the SQLite
+/// price-range filter compares at. Storage is not the binding constraint —
+/// SQLite keeps variant money as exact TEXT and Postgres as unbounded
+/// `NUMERIC` since migration 079 — but an amount finer than this cannot
+/// survive the first line it is copied onto, so it is refused at the door
+/// rather than rounded silently later.
+///
+/// Enforced by [`CreateProductVariant::validate`], which both the SQLite and
+/// the Postgres repository run on every variant write.
 pub const VARIANT_MONEY_SCALE: u32 = 4;
 
 /// Whether `amount` survives a round trip through the variant money columns.
@@ -400,6 +436,40 @@ mod tests {
     use super::*;
     use rust_decimal_macros::dec;
     use std::str::FromStr;
+
+    #[test]
+    fn withdrawal_action_classifies_every_status_pair() {
+        use ProductStatus::{Active, Archived, Draft};
+
+        // Nothing becomes unsellable.
+        for (from, to) in [(Draft, Draft), (Draft, Active), (Active, Active), (Archived, Archived)]
+        {
+            assert_eq!(from.withdrawal_action(to), None, "{from} -> {to}");
+        }
+
+        // Withdrawals must be guarded by the caller.
+        assert_eq!(Active.withdrawal_action(Draft), Some("unpublish"));
+        assert_eq!(Draft.withdrawal_action(Archived), Some("archive"));
+        assert_eq!(Active.withdrawal_action(Archived), Some("archive"));
+
+        // Refused transitions never reach the guard.
+        assert_eq!(Archived.withdrawal_action(Draft), None);
+        assert_eq!(Archived.withdrawal_action(Active), None);
+        assert!(!Archived.can_transition_to(Draft));
+
+        // A withdrawal is exactly "was sellable, is not any more".
+        for from in [Draft, Active, Archived] {
+            for to in [Draft, Active, Archived] {
+                let withdraws = from == Active && to != Active;
+                let archives = to == Archived && from != Archived;
+                assert_eq!(
+                    from.withdrawal_action(to).is_some(),
+                    (withdraws || archives) && from.can_transition_to(to),
+                    "{from} -> {to}"
+                );
+            }
+        }
+    }
 
     // ============================================================================
     // Test Helpers

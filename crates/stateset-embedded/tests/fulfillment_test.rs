@@ -166,6 +166,40 @@ impl TestContext {
             })
             .expect("Failed to create pick task")
     }
+
+    /// Put `qty` units of `sku` on the shelf at both ledger levels.
+    ///
+    /// Completing a pick now takes the units out of the source bin and
+    /// allocates them at warehouse level, so a pick test has to stock the
+    /// shelf first — picking stock the warehouse does not hold is exactly what
+    /// the ledger is there to refuse.
+    fn stock_shelf(&self, sku: &str, qty: rust_decimal::Decimal) {
+        self.commerce
+            .inventory()
+            .create_item(stateset_core::CreateInventoryItem {
+                sku: sku.into(),
+                name: sku.into(),
+                ..Default::default()
+            })
+            .ok();
+        self.commerce
+            .inventory()
+            .adjust_at_location(sku, self.warehouse_id, qty, "seed shelf")
+            .expect("seed warehouse balance");
+        self.commerce
+            .warehouse()
+            .adjust_inventory(stateset_core::AdjustLocationInventory {
+                location_id: self.location_id,
+                sku: sku.into(),
+                lot_id: None,
+                quantity: qty,
+                reason: "seed shelf".into(),
+                reference_type: None,
+                reference_id: None,
+                performed_by: None,
+            })
+            .expect("seed bin");
+    }
 }
 
 // ============================================================================
@@ -1437,6 +1471,7 @@ fn complete_pick_is_idempotent_and_rejects_over_pick() {
     let ctx = TestContext::new();
     let order_id = ctx.create_order();
     let wave = ctx.create_wave(vec![order_id]);
+    ctx.stock_shelf("PICK-SKU-1", dec!(5));
     let pick = ctx.create_pick(Some(wave.id), order_id, "PICK-SKU-1", dec!(5));
 
     // Over-pick guard: cannot pick 6 of a 5-unit request.

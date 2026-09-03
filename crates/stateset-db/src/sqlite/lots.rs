@@ -13,9 +13,9 @@ use stateset_core::errors::BatchResult;
 use stateset_core::traits::LotRepository;
 use stateset_core::{
     AddLotCertificate, AdjustLot, CommerceError, ConsumeLot, CreateLot, Lot, LotCertificate,
-    LotFilter, LotLocation, LotStatus, LotTransaction, LotTransactionType, MergeLots, ReserveLot,
-    Result, SplitLot, TraceNode, TraceNodeType, TraceabilityResult, TransactionType, TransferLot,
-    UpdateLot,
+    LotFilter, LotGenealogyLink, LotLocation, LotRelationship, LotStatus, LotTransaction,
+    LotTransactionType, MergeLots, MergedProvenance, ReserveLot, Result, SplitLot, TraceNode,
+    TraceNodeType, TraceabilityResult, TransactionType, TransferLot, UpdateLot,
 };
 use uuid::Uuid;
 
@@ -127,6 +127,11 @@ fn validate_merge_sources(source_lot_ids: &[Uuid]) -> Result<()> {
 }
 
 impl SqliteLotRepository {
+    /// Hop budget for [`Self::ancestor_lots_on`]: deep enough for any real
+    /// split/merge history, small enough that a corrupt table cannot turn a
+    /// `trace` into an unbounded walk.
+    const GENEALOGY_MAX_ANCESTORS: usize = 512;
+
     #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
@@ -437,6 +442,229 @@ impl SqliteLotRepository {
             }
         }
         Ok(slices)
+    }
+
+    /// Re-attribute `quantity` units of placement from `from_lot` to `to_lot`,
+    /// lowest `location_id` first, on the caller's transaction.
+    ///
+    /// `split` and `merge` move units *between lots* without moving any stock,
+    /// so `inventory_balances` is deliberately untouched — but the placement
+    /// rows must follow, because they are what
+    /// [`Self::inventory_slices_on`] uses to decide which balance a later lot
+    /// movement hits. A derived lot with no placement is invisible to
+    /// inventory (consuming it would never decrement a balance again), while a
+    /// source that keeps a placement it no longer backs over-reports; either
+    /// way the module invariant `Σ available over active lots placed at L ==
+    /// inventory available at L` breaks the moment the operation commits.
+    ///
+    /// A source with no placement at all floats free of inventory by design;
+    /// the derived lot inherits that and nothing is written.
+    fn move_placements_on(
+        conn: &rusqlite::Connection,
+        from_lot: Uuid,
+        to_lot: Uuid,
+        quantity: Decimal,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        if quantity <= Decimal::ZERO {
+            return Ok(());
+        }
+        let placements = Self::lot_locations_on(conn, from_lot)?;
+        let Some(&(last_location, _)) = placements.last() else {
+            return Ok(());
+        };
+
+        let mut moves: Vec<(i32, Decimal)> = Vec::with_capacity(placements.len());
+        let mut left = quantity;
+        for &(location_id, held) in &placements {
+            if left <= Decimal::ZERO {
+                break;
+            }
+            let take = left.min(held.max(Decimal::ZERO));
+            if take > Decimal::ZERO {
+                moves.push((location_id, take));
+                left -= take;
+            }
+        }
+        // Placement rows are a routing hint rather than a second ledger (a
+        // `consume` decrements the lot, not the placement), so they can fall
+        // short of the lot's own quantity. Attribute any shortfall to the last
+        // placement rather than stranding the units off-location.
+        if left > Decimal::ZERO {
+            match moves.last_mut() {
+                Some(last) if last.0 == last_location => last.1 += left,
+                _ => moves.push((last_location, left)),
+            }
+        }
+
+        let now_str = now.to_rfc3339();
+        for (location_id, take) in moves {
+            let held = placements
+                .iter()
+                .find(|(l, _)| *l == location_id)
+                .map_or(Decimal::ZERO, |(_, q)| *q);
+            let remaining = (held - take).max(Decimal::ZERO);
+            if remaining > Decimal::ZERO {
+                conn.execute(
+                    "UPDATE lot_locations SET quantity = ?, updated_at = ?
+                     WHERE lot_id = ? AND location_id = ?",
+                    rusqlite::params![
+                        remaining.to_string(),
+                        &now_str,
+                        from_lot.to_string(),
+                        location_id,
+                    ],
+                )
+                .map_err(map_db_error)?;
+            } else {
+                conn.execute(
+                    "DELETE FROM lot_locations WHERE lot_id = ? AND location_id = ?",
+                    rusqlite::params![from_lot.to_string(), location_id],
+                )
+                .map_err(map_db_error)?;
+            }
+
+            // Compute the destination in `Decimal`: SQL arithmetic on these
+            // TEXT columns coerces through IEEE-754 floats.
+            let existing: Option<String> = conn
+                .query_row(
+                    "SELECT quantity FROM lot_locations WHERE lot_id = ? AND location_id = ?",
+                    rusqlite::params![to_lot.to_string(), location_id],
+                    |row| row.get(0),
+                )
+                .map(Some)
+                .or_else(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                    e => Err(map_db_error(e)),
+                })?;
+            let destination = match existing {
+                Some(q) => parse_decimal_strict(&q, "lot_location", "quantity")? + take,
+                None => take,
+            };
+            conn.execute(
+                "INSERT INTO lot_locations (lot_id, location_id, quantity, updated_at)
+                 VALUES (?, ?, ?, ?)
+                 ON CONFLICT(lot_id, location_id) DO UPDATE SET
+                 quantity = excluded.quantity, updated_at = excluded.updated_at",
+                rusqlite::params![
+                    to_lot.to_string(),
+                    location_id,
+                    destination.to_string(),
+                    &now_str,
+                ],
+            )
+            .map_err(map_db_error)?;
+        }
+        Ok(())
+    }
+
+    /// Record one `parent -> child` genealogy edge on the caller's
+    /// transaction. Idempotent per `(child, parent)` pair.
+    fn record_genealogy_on(
+        conn: &rusqlite::Connection,
+        child_lot_id: Uuid,
+        parent_lot_id: Uuid,
+        relationship: LotRelationship,
+        quantity: Decimal,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        conn.execute(
+            "INSERT INTO lot_genealogy
+                (child_lot_id, parent_lot_id, relationship, quantity, created_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(child_lot_id, parent_lot_id) DO UPDATE SET
+             relationship = excluded.relationship, quantity = excluded.quantity",
+            rusqlite::params![
+                child_lot_id.to_string(),
+                parent_lot_id.to_string(),
+                relationship.to_string(),
+                quantity.to_string(),
+                now.to_rfc3339(),
+            ],
+        )
+        .map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Genealogy edges touching `lot_id`, joined to both lot numbers. `by_child`
+    /// selects the lot's parents; otherwise its children.
+    fn genealogy_links_on(
+        conn: &rusqlite::Connection,
+        lot_id: Uuid,
+        by_child: bool,
+    ) -> Result<Vec<LotGenealogyLink>> {
+        let column = if by_child { "g.child_lot_id" } else { "g.parent_lot_id" };
+        let sql = format!(
+            "SELECT g.child_lot_id, g.parent_lot_id, p.lot_number, c.lot_number,
+                    g.relationship, g.quantity, g.created_at
+             FROM lot_genealogy g
+             JOIN lots p ON p.id = g.parent_lot_id
+             JOIN lots c ON c.id = g.child_lot_id
+             WHERE {column} = ?
+             ORDER BY g.created_at ASC, p.lot_number ASC"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map([lot_id.to_string()], |row| {
+                Ok(LotGenealogyLink {
+                    child_lot_id: parse_uuid_row(
+                        &row.get::<_, String>(0)?,
+                        "lot_genealogy",
+                        "child_lot_id",
+                    )?,
+                    parent_lot_id: parse_uuid_row(
+                        &row.get::<_, String>(1)?,
+                        "lot_genealogy",
+                        "parent_lot_id",
+                    )?,
+                    parent_lot_number: row.get(2)?,
+                    child_lot_number: row.get(3)?,
+                    relationship: parse_enum_row(
+                        &row.get::<_, String>(4)?,
+                        "lot_genealogy",
+                        "relationship",
+                    )?,
+                    quantity: parse_decimal_row(
+                        &row.get::<_, String>(5)?,
+                        "lot_genealogy",
+                        "quantity",
+                    )?,
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>(6)?,
+                        "lot_genealogy",
+                        "created_at",
+                    )?,
+                })
+            })
+            .map_err(map_db_error)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
+    }
+
+    /// Every ancestor lot of `lot_id`, nearest first, walked breadth-first
+    /// through `lot_genealogy`.
+    ///
+    /// A child is always created after its parents so the graph is acyclic by
+    /// construction; the visited set keeps a hand-edited table from looping and
+    /// [`Self::GENEALOGY_MAX_ANCESTORS`] bounds a pathological chain.
+    fn ancestor_lots_on(conn: &rusqlite::Connection, lot_id: Uuid) -> Result<Vec<Lot>> {
+        let mut seen = std::collections::HashSet::from([lot_id]);
+        let mut queue = std::collections::VecDeque::from([lot_id]);
+        let mut ancestors = Vec::new();
+        while let Some(current) = queue.pop_front() {
+            if ancestors.len() >= Self::GENEALOGY_MAX_ANCESTORS {
+                break;
+            }
+            for link in Self::genealogy_links_on(conn, current, true)? {
+                if !seen.insert(link.parent_lot_id) {
+                    continue;
+                }
+                if let Some(parent) = Self::load_lot_on(conn, link.parent_lot_id)? {
+                    ancestors.push(parent);
+                    queue.push_back(link.parent_lot_id);
+                }
+            }
+        }
+        Ok(ancestors)
     }
 
     /// Apply a signed movement to the `inventory_balances` row for
@@ -1097,10 +1325,15 @@ impl LotRepository for SqliteLotRepository {
         Ok(lots)
     }
 
+    /// Delete a lot that never moved (at most the creation receipt).
+    ///
+    /// The history check and the delete run in one transaction: reading on the
+    /// pool and then deleting would let a concurrent `consume` slip a
+    /// transaction in between and lose it to the `ON DELETE CASCADE`.
     fn delete(&self, id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
-        // Check if lot has transactions
-        let tx_count: i64 = conn
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let tx_count: i64 = tx
             .query_row(
                 "SELECT COUNT(*) FROM lot_transactions WHERE lot_id = ?",
                 [id.to_string()],
@@ -1114,7 +1347,8 @@ impl LotRepository for SqliteLotRepository {
             ));
         }
 
-        conn.execute("DELETE FROM lots WHERE id = ?", [id.to_string()]).map_err(map_db_error)?;
+        tx.execute("DELETE FROM lots WHERE id = ?", [id.to_string()]).map_err(map_db_error)?;
+        tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
@@ -1632,13 +1866,16 @@ impl LotRepository for SqliteLotRepository {
         let now = Utc::now();
 
         // Create new lot
+        // `status` is written as `active` rather than copied: the source is
+        // `Active` (`ensure_consolidatable_source`) and copying the column
+        // would silently launder a future non-sellable status onto the child.
         tx.execute(
             "INSERT INTO lots (id, lot_number, sku, status, quantity_produced, quantity_remaining,
                                quantity_reserved, quantity_quarantined, production_date,
                                expiration_date, best_before_date, supplier_lot, supplier_id,
                                work_order_id, purchase_order_id, cost_per_unit, attributes, notes,
                                created_at, updated_at)
-             SELECT ?, ?, sku, status, ?, ?, '0', '0', production_date, expiration_date,
+             SELECT ?, ?, sku, 'active', ?, ?, '0', '0', production_date, expiration_date,
                     best_before_date, supplier_lot, supplier_id, work_order_id, purchase_order_id,
                     cost_per_unit, attributes, ?, ?, ?
              FROM lots WHERE id = ?",
@@ -1655,17 +1892,41 @@ impl LotRepository for SqliteLotRepository {
         )
         .map_err(map_db_error)?;
 
-        // Reduce original lot
+        // Reduce original lot. Status-conditional: the read above ran on this
+        // transaction, but the guard keeps the write honest if the read ever
+        // moves.
         let new_remaining = original.quantity_remaining - input.quantity;
-        tx.execute(
-            "UPDATE lots SET quantity_remaining = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![
-                new_remaining.to_string(),
-                now.to_rfc3339(),
-                input.lot_id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+        let updated = tx
+            .execute(
+                "UPDATE lots SET quantity_remaining = ?, updated_at = ? WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    new_remaining.to_string(),
+                    now.to_rfc3339(),
+                    input.lot_id.to_string(),
+                    original.status.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+        if updated != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot split lot {} ({}): status changed concurrently",
+                original.lot_number, original.id
+            )));
+        }
+
+        // The units move between lots, so the placements move with them and
+        // `inventory_balances` stays put (nothing entered or left the
+        // location). Without this the child is unplaced — invisible to
+        // inventory forever — and the source over-reports.
+        Self::move_placements_on(&tx, input.lot_id, new_lot_id, input.quantity, now)?;
+        Self::record_genealogy_on(
+            &tx,
+            new_lot_id,
+            input.lot_id,
+            LotRelationship::Split,
+            input.quantity,
+            now,
+        )?;
 
         // Record transactions
         Self::record_transaction(
@@ -1706,12 +1967,17 @@ impl LotRepository for SqliteLotRepository {
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
-        // Get all source lots
+        // Get all source lots. Rows are read (and, on Postgres, locked) in a
+        // canonical id order so two concurrent merges naming the same lots in
+        // different orders cannot deadlock on each other.
+        let mut lock_order: Vec<Uuid> = input.source_lot_ids.clone();
+        lock_order.sort_unstable();
+
         let mut total_quantity = Decimal::ZERO;
         let mut sku: Option<String> = None;
-        let mut lots_to_consume: Vec<(Uuid, String, Decimal)> = Vec::new();
+        let mut lots_to_consume: Vec<Lot> = Vec::new();
 
-        for lot_id in &input.source_lot_ids {
+        for lot_id in &lock_order {
             let lot: Lot = tx
                 .query_row(
                     "SELECT * FROM lots WHERE id = ?",
@@ -1752,7 +2018,7 @@ impl LotRepository for SqliteLotRepository {
             }
 
             total_quantity += lot.quantity_remaining;
-            lots_to_consume.push((lot.id, lot.lot_number, lot.quantity_remaining));
+            lots_to_consume.push(lot);
         }
 
         let sku = sku.ok_or(CommerceError::ValidationError("No lots to merge".to_string()))?;
@@ -1772,12 +2038,19 @@ impl LotRepository for SqliteLotRepository {
             )
             .map_err(map_db_error)?;
 
+        // Provenance a merged lot can honestly claim on its own row: only the
+        // fields every source agrees on. Where they disagree the column stays
+        // NULL and `lot_genealogy` (written below) is the answer — inheriting
+        // source #1's supplier would be a fabricated attribution.
+        let provenance = MergedProvenance::of(&lots_to_consume);
+
         tx.execute(
             "INSERT INTO lots (id, lot_number, sku, status, quantity_produced, quantity_remaining,
                                quantity_reserved, quantity_quarantined, production_date,
-                               expiration_date, best_before_date, cost_per_unit, attributes, notes,
+                               expiration_date, best_before_date, supplier_lot, supplier_id,
+                               work_order_id, purchase_order_id, cost_per_unit, attributes, notes,
                                created_at, updated_at)
-             VALUES (?, ?, ?, 'active', ?, ?, '0', '0', ?, ?, ?, ?, '{}', ?, ?, ?)",
+             VALUES (?, ?, ?, 'active', ?, ?, '0', '0', ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?)",
             rusqlite::params![
                 new_lot_id.to_string(),
                 &new_lot_number,
@@ -1787,6 +2060,10 @@ impl LotRepository for SqliteLotRepository {
                 template.production_date.to_rfc3339(),
                 template.expiration_date.map(|d| d.to_rfc3339()),
                 template.best_before_date.map(|d| d.to_rfc3339()),
+                provenance.supplier_lot.as_deref(),
+                provenance.supplier_id.map(|v| v.to_string()),
+                provenance.work_order_id.map(|v| v.to_string()),
+                provenance.purchase_order_id.map(|v| v.to_string()),
                 template.cost_per_unit.map(|c| c.to_string()),
                 input.reason.as_ref().map(|r| format!("Merged lots: {r}")),
                 now.to_rfc3339(),
@@ -1796,16 +2073,56 @@ impl LotRepository for SqliteLotRepository {
         .map_err(map_db_error)?;
 
         // Mark source lots as consumed and record transactions
-        for (lot_id, _lot_number, quantity) in lots_to_consume {
+        for source in &lots_to_consume {
+            let quantity = source.quantity_remaining;
+            // Status-conditional so a concurrent transition cannot be
+            // overwritten, and so the merge cannot consume a lot twice.
+            let updated = tx
+                .execute(
+                    "UPDATE lots SET status = 'consumed', quantity_remaining = '0', updated_at = ?
+                     WHERE id = ? AND status = ?",
+                    rusqlite::params![
+                        now.to_rfc3339(),
+                        source.id.to_string(),
+                        source.status.to_string(),
+                    ],
+                )
+                .map_err(map_db_error)?;
+            if updated != 1 {
+                return Err(CommerceError::ValidationError(format!(
+                    "Cannot merge lot {} ({}): status changed concurrently",
+                    source.lot_number, source.id
+                )));
+            }
+
+            // The units move onto the target lot, so its placements do too —
+            // `inventory_balances` is unchanged because nothing entered or
+            // left the location. Without this the sources drop out of the
+            // lot/inventory invariant (they are `Consumed`) while the target
+            // is unplaced, and consuming the merged lot would never decrement
+            // a balance again.
+            Self::move_placements_on(&tx, source.id, new_lot_id, quantity, now)?;
+            // The source is fully consumed by the merge, so it keeps no
+            // placement: `consume` decrements the lot but not its placement
+            // rows, so a partially-consumed source would otherwise leave a
+            // phantom row behind claiming stock the merged lot now holds.
             tx.execute(
-                "UPDATE lots SET status = 'consumed', quantity_remaining = '0', updated_at = ? WHERE id = ?",
-                rusqlite::params![now.to_rfc3339(), lot_id.to_string()],
+                "DELETE FROM lot_locations WHERE lot_id = ?",
+                rusqlite::params![source.id.to_string()],
             )
             .map_err(map_db_error)?;
+            Self::record_genealogy_on(
+                &tx,
+                new_lot_id,
+                source.id,
+                LotRelationship::Merge,
+                quantity,
+                now,
+            )?;
 
             Self::record_transaction(
                 &tx,
-                lot_id,
+                source.id,
                 LotTransactionType::Merged,
                 -quantity,
                 "lot_merge",
@@ -1946,6 +2263,16 @@ impl LotRepository for SqliteLotRepository {
             .map_err(map_db_error)?;
 
         Ok(locations)
+    }
+
+    fn get_lot_parents(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+        let conn = self.conn()?;
+        Self::genealogy_links_on(&conn, lot_id, true)
+    }
+
+    fn get_lot_children(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+        let conn = self.conn()?;
+        Self::genealogy_links_on(&conn, lot_id, false)
     }
 
     fn add_certificate(&self, input: AddLotCertificate) -> Result<LotCertificate> {
@@ -2132,35 +2459,58 @@ impl LotRepository for SqliteLotRepository {
         Ok(lots.into_iter().filter(Lot::has_available).collect())
     }
 
+    /// Upstream is the lot's own receipt documents **plus** every ancestor
+    /// reached through `lot_genealogy` and that ancestor's receipt documents,
+    /// so a merged or repeatedly-split lot resolves to all of its origins;
+    /// downstream is its consumption / shipment transactions.
     fn trace(&self, lot_id: Uuid) -> Result<TraceabilityResult> {
         let lot = self.get(lot_id)?.ok_or(CommerceError::NotFound)?;
         let conn = self.conn()?;
 
         // Get upstream (where did this lot come from)
         let mut upstream = Vec::new();
-        if let Some(po_id) = lot.purchase_order_id {
+        // The lot itself, then its ancestors nearest-first: one `Lot` node per
+        // ancestor plus whatever receipt documents that ancestor carries.
+        // `merge` only keeps the provenance columns its sources agreed on, so
+        // this walk is the only way back to the rest.
+        let ancestors = Self::ancestor_lots_on(&conn, lot_id)?;
+        for ancestor in &ancestors {
             upstream.push(TraceNode {
-                node_type: TraceNodeType::PurchaseOrder,
-                node_id: po_id,
+                node_type: TraceNodeType::Lot,
+                node_id: ancestor.id,
                 reference_number: None,
-                lot_number: Some(lot.lot_number.clone()),
+                lot_number: Some(ancestor.lot_number.clone()),
                 serial_number: None,
-                quantity: lot.quantity_produced,
-                timestamp: lot.created_at,
-                entity_name: None,
+                quantity: ancestor.quantity_produced,
+                timestamp: ancestor.created_at,
+                entity_name: ancestor.supplier_lot.clone(),
             });
         }
-        if let Some(wo_id) = lot.work_order_id {
-            upstream.push(TraceNode {
-                node_type: TraceNodeType::WorkOrder,
-                node_id: wo_id,
-                reference_number: None,
-                lot_number: Some(lot.lot_number.clone()),
-                serial_number: None,
-                quantity: lot.quantity_produced,
-                timestamp: lot.created_at,
-                entity_name: None,
-            });
+        for origin in std::iter::once(&lot).chain(ancestors.iter()) {
+            if let Some(po_id) = origin.purchase_order_id {
+                upstream.push(TraceNode {
+                    node_type: TraceNodeType::PurchaseOrder,
+                    node_id: po_id,
+                    reference_number: None,
+                    lot_number: Some(origin.lot_number.clone()),
+                    serial_number: None,
+                    quantity: origin.quantity_produced,
+                    timestamp: origin.created_at,
+                    entity_name: origin.supplier_lot.clone(),
+                });
+            }
+            if let Some(wo_id) = origin.work_order_id {
+                upstream.push(TraceNode {
+                    node_type: TraceNodeType::WorkOrder,
+                    node_id: wo_id,
+                    reference_number: None,
+                    lot_number: Some(origin.lot_number.clone()),
+                    serial_number: None,
+                    quantity: origin.quantity_produced,
+                    timestamp: origin.created_at,
+                    entity_name: origin.supplier_lot.clone(),
+                });
+            }
         }
 
         // Get downstream (where did this lot go)
@@ -2179,6 +2529,13 @@ impl LotRepository for SqliteLotRepository {
                     "order" => TraceNodeType::Order,
                     "shipment" => TraceNodeType::Shipment,
                     "work_order" => TraceNodeType::WorkOrder,
+                    "return" => TraceNodeType::Return,
+                    "transfer" => TraceNodeType::Transfer,
+                    "purchase_order" => TraceNodeType::PurchaseOrder,
+                    "receipt" => TraceNodeType::Receipt,
+                    // `reference_type` is free-form text written by callers, so
+                    // this arm cannot be exhaustive; anything unrecognised is
+                    // reported as a bare stock movement rather than guessed at.
                     _ => TraceNodeType::Adjustment,
                 };
 
@@ -2268,8 +2625,8 @@ mod tests {
     use chrono::Duration;
     use rust_decimal_macros::dec;
     use stateset_core::{
-        AdjustLot, ConsumeLot, CreateLot, LotFilter, LotRepository, LotStatus, MergeLots,
-        ReserveLot, SplitLot, TransferLot, UpdateLot,
+        AdjustLot, ConsumeLot, CreateLot, LotFilter, LotRelationship, LotRepository, LotStatus,
+        MergeLots, ReserveLot, SplitLot, TransferLot, UpdateLot,
     };
 
     fn fresh_repo() -> SqliteLotRepository {
@@ -3594,5 +3951,268 @@ mod tests {
     fn get_unknown_id_returns_none() {
         let repo = fresh_repo();
         assert!(repo.get(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    // ======================================================================
+    // Split / merge: placements, inventory and genealogy
+    // ======================================================================
+
+    /// `split` moves the placement with the units. Without it the child lot is
+    /// unplaced, the parent's placement still claims the whole quantity, and
+    /// `Σ active lots available == inventory available` breaks immediately.
+    #[test]
+    fn split_moves_placement_and_keeps_inventory_in_step() {
+        let sku = "SKU-SPLIT-INV";
+        let db = linked_db(sku);
+        let lots = db.lots();
+        let lot = make_lot(&lots, sku, dec!(100));
+        assert_invariant(&db, sku, 1, "create");
+
+        let child = lots
+            .split(SplitLot { lot_id: lot.id, quantity: dec!(30), ..Default::default() })
+            .expect("split");
+        assert_invariant(&db, sku, 1, "split");
+        assert_eq!(lots.get_quantity_at_location(lot.id, 1).unwrap(), Some(dec!(70)));
+        assert_eq!(lots.get_quantity_at_location(child.id, 1).unwrap(), Some(dec!(30)));
+        assert_eq!(inventory_on_hand(&db, sku, 1), dec!(100), "split moves nothing on hand");
+
+        // The child is a real, placed lot: consuming it decrements inventory.
+        lots.consume(ConsumeLot {
+            lot_id: child.id,
+            quantity: dec!(10),
+            reference_type: "work_order".into(),
+            reference_id: Uuid::new_v4(),
+            location_id: None,
+            performed_by: None,
+        })
+        .expect("consume child");
+        assert_eq!(inventory_on_hand(&db, sku, 1), dec!(90), "consuming a split child moves stock");
+        assert_invariant(&db, sku, 1, "consume split child");
+    }
+
+    /// `merge` moves every source placement onto the target. Without it the
+    /// sources go `Consumed` (dropping out of the sum) while the target is
+    /// unplaced, so the whole merged quantity vanishes from the invariant and
+    /// consuming the merged lot never touches inventory again.
+    #[test]
+    fn merge_moves_placements_and_keeps_inventory_in_step() {
+        let sku = "SKU-MERGE-INV";
+        let db = linked_db(sku);
+        let lots = db.lots();
+        let a = make_lot(&lots, sku, dec!(40));
+        let b = make_lot(&lots, sku, dec!(60));
+        assert_eq!(inventory_on_hand(&db, sku, 1), dec!(100));
+        assert_invariant(&db, sku, 1, "two lots");
+
+        // Consume from one source first: `consume` decrements the lot but not
+        // its placement row, so the merge has to drain the stale placement
+        // rather than leave a phantom behind.
+        lots.consume(ConsumeLot {
+            lot_id: b.id,
+            quantity: dec!(20),
+            reference_type: "order".into(),
+            reference_id: Uuid::new_v4(),
+            location_id: None,
+            performed_by: None,
+        })
+        .expect("consume before merge");
+        assert_eq!(inventory_on_hand(&db, sku, 1), dec!(80));
+        assert_invariant(&db, sku, 1, "consume before merge");
+
+        let merged = lots
+            .merge(MergeLots {
+                source_lot_ids: vec![a.id, b.id],
+                target_lot_number: Some("MERGED-INV".into()),
+                reason: Some("consolidate".into()),
+            })
+            .expect("merge");
+        assert_eq!(merged.quantity_remaining, dec!(80));
+        assert_invariant(&db, sku, 1, "merge");
+        assert_eq!(lots.get_quantity_at_location(merged.id, 1).unwrap(), Some(dec!(80)));
+        assert_eq!(lots.get_quantity_at_location(a.id, 1).unwrap(), None, "source placement moved");
+        assert_eq!(lots.get_quantity_at_location(b.id, 1).unwrap(), None, "source placement moved");
+        assert_eq!(inventory_on_hand(&db, sku, 1), dec!(80), "merge moves nothing on hand");
+
+        lots.consume(ConsumeLot {
+            lot_id: merged.id,
+            quantity: dec!(25),
+            reference_type: "order".into(),
+            reference_id: Uuid::new_v4(),
+            location_id: None,
+            performed_by: None,
+        })
+        .expect("consume merged");
+        assert_eq!(inventory_on_hand(&db, sku, 1), dec!(55), "consuming a merged lot moves stock");
+        assert_invariant(&db, sku, 1, "consume merged");
+    }
+
+    /// A merged lot must be traceable back to *every* source lot and the
+    /// supplier / work order each one came from. The merged row itself can
+    /// only carry one attribution, so the linkage lives in `lot_genealogy`.
+    #[test]
+    fn merge_records_genealogy_for_every_source() {
+        let repo = fresh_repo();
+        let supplier_a = Uuid::new_v4();
+        let supplier_b = Uuid::new_v4();
+        let po = Uuid::new_v4();
+        let wo = Uuid::new_v4();
+        let a = repo
+            .create(CreateLot {
+                sku: "SKU-GEN".into(),
+                quantity: dec!(10),
+                supplier_id: Some(supplier_a),
+                supplier_lot: Some("SUP-A".into()),
+                purchase_order_id: Some(po),
+                ..Default::default()
+            })
+            .expect("lot a");
+        let b = repo
+            .create(CreateLot {
+                sku: "SKU-GEN".into(),
+                quantity: dec!(5),
+                supplier_id: Some(supplier_b),
+                supplier_lot: Some("SUP-B".into()),
+                work_order_id: Some(wo),
+                ..Default::default()
+            })
+            .expect("lot b");
+
+        let merged = repo
+            .merge(MergeLots {
+                source_lot_ids: vec![a.id, b.id],
+                target_lot_number: None,
+                reason: None,
+            })
+            .expect("merge");
+
+        let parents = repo.get_lot_parents(merged.id).expect("parents");
+        assert_eq!(parents.len(), 2, "both sources recorded");
+        assert!(parents.iter().all(|p| p.relationship == LotRelationship::Merge));
+        let by_id: std::collections::HashMap<Uuid, &stateset_core::LotGenealogyLink> =
+            parents.iter().map(|p| (p.parent_lot_id, p)).collect();
+        assert_eq!(by_id[&a.id].quantity, dec!(10));
+        assert_eq!(by_id[&b.id].quantity, dec!(5));
+        assert_eq!(by_id[&a.id].parent_lot_number, a.lot_number);
+
+        // Children resolve the other way round.
+        assert_eq!(repo.get_lot_children(a.id).expect("children").len(), 1);
+
+        // `trace` walks the genealogy: both suppliers and both source
+        // documents are reachable from the merged lot.
+        let trace = repo.trace(merged.id).expect("trace");
+        let lot_nodes: Vec<_> =
+            trace.upstream.iter().filter(|n| n.node_type == TraceNodeType::Lot).collect();
+        assert_eq!(lot_nodes.len(), 2, "one node per ancestor lot");
+        assert!(lot_nodes.iter().any(|n| n.entity_name.as_deref() == Some("SUP-A")));
+        assert!(lot_nodes.iter().any(|n| n.entity_name.as_deref() == Some("SUP-B")));
+        assert!(
+            trace
+                .upstream
+                .iter()
+                .any(|n| n.node_type == TraceNodeType::PurchaseOrder && n.node_id == po)
+        );
+        assert!(
+            trace
+                .upstream
+                .iter()
+                .any(|n| n.node_type == TraceNodeType::WorkOrder && n.node_id == wo)
+        );
+    }
+
+    /// Genealogy fields that every source agrees on are carried onto the
+    /// merged lot; disagreeing fields are dropped from the row (the linkage
+    /// table keeps them) rather than silently inheriting lot #1's.
+    #[test]
+    fn merge_inherits_unanimous_provenance_only() {
+        let repo = fresh_repo();
+        let supplier = Uuid::new_v4();
+        let po = Uuid::new_v4();
+        let mk = |supplier_id, po_id| {
+            repo.create(CreateLot {
+                sku: "SKU-GEN2".into(),
+                quantity: dec!(4),
+                supplier_id,
+                purchase_order_id: po_id,
+                ..Default::default()
+            })
+            .expect("lot")
+        };
+        let a = mk(Some(supplier), Some(po));
+        let b = mk(Some(supplier), None);
+        let merged = repo
+            .merge(MergeLots {
+                source_lot_ids: vec![a.id, b.id],
+                target_lot_number: None,
+                reason: None,
+            })
+            .expect("merge");
+        assert_eq!(merged.supplier_id, Some(supplier), "unanimous supplier carries over");
+        assert_eq!(merged.purchase_order_id, None, "disagreeing PO is not inherited");
+    }
+
+    /// A split child keeps a direct link to its parent, so the chain
+    /// parent → child → grandchild is walkable.
+    #[test]
+    fn split_records_genealogy_and_trace_walks_the_chain() {
+        let repo = fresh_repo();
+        let po = Uuid::new_v4();
+        let root = repo
+            .create(CreateLot {
+                sku: "SKU-GEN3".into(),
+                quantity: dec!(100),
+                purchase_order_id: Some(po),
+                supplier_lot: Some("ROOT-SUP".into()),
+                ..Default::default()
+            })
+            .expect("root");
+        let child = repo
+            .split(SplitLot { lot_id: root.id, quantity: dec!(40), ..Default::default() })
+            .expect("split");
+        let grandchild = repo
+            .split(SplitLot { lot_id: child.id, quantity: dec!(10), ..Default::default() })
+            .expect("split again");
+
+        let parents = repo.get_lot_parents(grandchild.id).expect("parents");
+        assert_eq!(parents.len(), 1);
+        assert_eq!(parents[0].parent_lot_id, child.id);
+        assert_eq!(parents[0].relationship, LotRelationship::Split);
+
+        let trace = repo.trace(grandchild.id).expect("trace");
+        let ancestors: Vec<Uuid> = trace
+            .upstream
+            .iter()
+            .filter(|n| n.node_type == TraceNodeType::Lot)
+            .map(|n| n.node_id)
+            .collect();
+        assert!(ancestors.contains(&child.id), "direct parent");
+        assert!(ancestors.contains(&root.id), "transitive ancestor");
+        assert!(
+            trace
+                .upstream
+                .iter()
+                .any(|n| n.node_type == TraceNodeType::PurchaseOrder && n.node_id == po),
+            "the root receipt is reachable from a grandchild lot"
+        );
+    }
+
+    /// Two concurrent merges that name the same sources in opposite order
+    /// must not deadlock: sources are locked in a canonical order.
+    #[test]
+    fn merge_locks_sources_in_canonical_order() {
+        let repo = fresh_repo();
+        let a = make_lot(&repo, "SKU-ORDER", dec!(3));
+        let b = make_lot(&repo, "SKU-ORDER", dec!(4));
+        // Reverse order still merges, and the template is the caller's first
+        // element, not the lock order.
+        let merged = repo
+            .merge(MergeLots {
+                source_lot_ids: vec![b.id, a.id],
+                target_lot_number: None,
+                reason: None,
+            })
+            .expect("merge in reverse order");
+        assert_eq!(merged.quantity_remaining, dec!(7));
+        let parents = repo.get_lot_parents(merged.id).expect("parents");
+        assert_eq!(parents.len(), 2);
     }
 }

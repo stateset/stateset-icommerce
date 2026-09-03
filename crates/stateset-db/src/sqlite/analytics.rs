@@ -1271,8 +1271,10 @@ mod tests {
             )
             .expect("insert location");
             conn.execute(
-                "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand)
-                 VALUES (?1, ?2, ?3)",
+                // quantity_available must satisfy the balance identity
+                // (migration 092), so seed it alongside on_hand.
+                "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, quantity_available)
+                 VALUES (?1, ?2, ?3, ?3)",
                 rusqlite::params![item_id, location_id, qty],
             )
             .expect("insert balance");

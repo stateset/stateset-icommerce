@@ -1005,13 +1005,23 @@ impl ReceivingRepository for SqliteReceivingRepository {
         })
     }
 
-    /// Complete a put-away task and fold its quantity into the receipt.
+    /// Complete a put-away task, move the stock, and fold its quantity into the
+    /// receipt.
     ///
     /// Legal from `Pending`/`Assigned`/`InProgress`. Completing a cancelled task
     /// used to succeed and add its quantity to `receipts.put_away_quantity` for
-    /// stock that was never put away. The status flip and the receipt total are
-    /// one transaction, so the receipt can never quote a total that excludes a
-    /// put-away already marked completed.
+    /// stock that was never put away. The status flip, the stock effect and the
+    /// receipt total are one transaction, so the receipt can never quote a
+    /// total that excludes a put-away already marked completed, and stock can
+    /// never move without the task recording it.
+    ///
+    /// **Stock effect** (this is where received goods actually enter stock —
+    /// receiving itself only counts paperwork): the put-away's quantity is
+    /// added to the destination location's on-hand and to the warehouse-level
+    /// balance, with an `inventory_movements` receipt row for the audit trail.
+    /// Completing twice is impossible — the guarded UPDATE matches zero rows the
+    /// second time and raises a conflict before any stock moves — so the
+    /// movement can never be double counted.
     fn complete_put_away(&self, input: CompletePutAway) -> Result<PutAway> {
         let now = Utc::now().to_rfc3339();
         let id_str = input.put_away_id.to_string();
@@ -1050,6 +1060,43 @@ impl ReceivingRepository for SqliteReceivingRepository {
             tx.execute(
                 "UPDATE receipts SET put_away_quantity = ?1 WHERE id = ?2",
                 params![put_away_total.to_string(), receipt_id_param],
+            )?;
+
+            // Stock effect: the units land in the destination bin and in the
+            // warehouse balance.
+            let warehouse_id = super::warehouse::warehouse_of_location_tx(tx, to_location)?;
+            super::warehouse::ensure_inventory_item_tx(tx, &existing.sku)?;
+            super::warehouse::apply_location_delta_tx(
+                tx,
+                to_location,
+                &existing.sku,
+                existing.lot_id,
+                existing.quantity,
+                &now,
+            )?;
+            super::bins::apply_warehouse_delta_tx(
+                tx,
+                warehouse_id,
+                &existing.sku,
+                existing.quantity,
+                Decimal::ZERO,
+                "put-away completed",
+                Some("put_away"),
+                Some(&id_str),
+                &now,
+            )?;
+            super::warehouse::insert_wms_movement_tx(
+                tx,
+                stateset_core::MovementType::Receipt,
+                existing.from_location_id,
+                Some(to_location),
+                &existing.sku,
+                existing.lot_id,
+                existing.quantity,
+                "put_away",
+                &id_str,
+                existing.assigned_to.as_deref(),
+                &now,
             )?;
 
             Self::read_put_away_by_id_tx(tx, &id_str)

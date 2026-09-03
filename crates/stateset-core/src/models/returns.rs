@@ -182,10 +182,11 @@ impl ReturnStatus {
     ///
     /// This is the pure state-machine edge; the repositories layer two more
     /// guards on top of it inside the transition transaction:
-    /// - `Rejected` / `Cancelled` are refused once any item has a
-    ///   stock-affecting disposition (restocked or quarantined units would
-    ///   otherwise stay in stock while the return releases its claim on the
-    ///   order line, letting the same units be returned again);
+    /// - `Rejected` / `Cancelled` are refused once any item has been
+    ///   dispositioned at all — restocked, quarantined, refurbished, scrapped
+    ///   or returned to vendor. The units have either re-entered stock or been
+    ///   destroyed; releasing the return's claim on the order line would let
+    ///   the same units be returned (and refunded) a second time;
     /// - `Completed` requires every item to be dispositioned unless the caller
     ///   explicitly writes the rest off (`UpdateReturn::write_off_undispositioned`).
     #[must_use]
@@ -421,7 +422,7 @@ impl Return {
     /// executor route status writes through this so the rules cannot drift.
     ///
     /// Errors: `ValidationError` for an illegal edge, `Conflict` for
-    /// rejecting/cancelling after units were restocked or quarantined, and
+    /// rejecting/cancelling after any item was dispositioned, and
     /// `NotPermitted` for completing with undispositioned items when
     /// `write_off_undispositioned` is false.
     pub fn check_transition(
@@ -440,17 +441,21 @@ impl Return {
             return Ok(());
         }
         if matches!(next, ReturnStatus::Rejected | ReturnStatus::Cancelled) {
-            let restocked: i64 = self
+            // ANY disposition pins the return, not just the stock-affecting
+            // ones: scrapped and returned-to-vendor goods are physically gone,
+            // so releasing the claim on the order line would let the same units
+            // be returned — and refunded — a second time.
+            let dispositioned: i64 = self
                 .items
                 .iter()
-                .filter(|item| item.has_stock_effect())
+                .filter(|item| item.disposition.is_some())
                 .map(|item| i64::from(item.quantity))
                 .sum();
-            if restocked > 0 {
+            if dispositioned > 0 {
                 return Err(CommerceError::Conflict(format!(
-                    "Return {} cannot be {next}: {restocked} unit(s) were already restocked or \
-                     quarantined and would stay in stock while the return released its claim \
-                     on the order line",
+                    "Return {} cannot be {next}: {dispositioned} unit(s) were already \
+                     dispositioned (restocked, quarantined, scrapped, refurbished or returned \
+                     to vendor) and the return must keep its claim on the order line",
                     self.id
                 )));
             }
@@ -477,6 +482,53 @@ impl Return {
     #[must_use]
     pub fn has_stock_disposition(&self) -> bool {
         self.items.iter().any(ReturnItem::has_stock_effect)
+    }
+
+    /// Whether any item has been dispositioned at all (stock-affecting or not).
+    #[must_use]
+    pub fn has_any_disposition(&self) -> bool {
+        self.items.iter().any(|item| item.disposition.is_some())
+    }
+
+    /// Check that this return may be hard-deleted.
+    ///
+    /// A return is a *claim* on its order line: [`Self::check_transition`] and
+    /// the repositories' over-return guard count the units of every
+    /// non-terminal return against what remains returnable. Deleting the row
+    /// silently drops that claim, so a completed, restocked, refunded return
+    /// could be deleted and the same units returned and refunded again while
+    /// the restocked stock stayed on the shelf.
+    ///
+    /// Deletion is therefore allowed only in the early, no-effect window —
+    /// `Requested` and `Approved`, and only while no item carries a
+    /// disposition:
+    ///
+    /// - `InTransit` / `Received` / `Inspecting`: the goods are in motion or in
+    ///   the building; the return is the only record of them.
+    /// - `Completed`: stock, serial, lot and refund effects have been applied.
+    /// - `Rejected` / `Cancelled`: terminal audit records of a decision.
+    ///
+    /// Anything outside the window must be cancelled (while it still can be) or
+    /// left in place; there is no soft-delete.
+    ///
+    /// Errors: `NotPermitted` with the blocking status/disposition.
+    pub fn check_deletable(&self) -> Result<()> {
+        use crate::CommerceError;
+        if !matches!(self.status, ReturnStatus::Requested | ReturnStatus::Approved) {
+            return Err(CommerceError::NotPermitted(format!(
+                "Return {} is {}; only returns still in the early no-effect window \
+                 (requested, approved) may be deleted — deleting a later one would free its \
+                 claim on the order line and let the same units be returned and refunded again",
+                self.id, self.status
+            )));
+        }
+        if self.has_any_disposition() {
+            return Err(CommerceError::NotPermitted(format!(
+                "Return {} cannot be deleted: at least one item has been dispositioned",
+                self.id
+            )));
+        }
+        Ok(())
     }
 
     /// Sum of the line refund amounts: the cap for `refund_amount`.
@@ -627,6 +679,87 @@ mod tests {
             ..Default::default()
         };
         assert!(input.validate().is_err());
+    }
+
+    fn return_with(status: ReturnStatus, disposition: Option<ReturnDisposition>) -> Return {
+        let id = ReturnId::new();
+        Return {
+            id,
+            order_id: OrderId::from_uuid(Uuid::new_v4()),
+            customer_id: CustomerId::from_uuid(Uuid::new_v4()),
+            status,
+            reason: ReturnReason::Damaged,
+            reason_details: None,
+            idempotency_key: None,
+            refund_amount: None,
+            refund_method: None,
+            tracking_number: None,
+            items: vec![ReturnItem {
+                id: Uuid::new_v4(),
+                return_id: id,
+                order_item_id: OrderItemId::from_uuid(Uuid::new_v4()),
+                sku: "SKU-1".into(),
+                name: "Widget".into(),
+                quantity: 2,
+                condition: ItemCondition::Damaged,
+                refund_amount: Decimal::ZERO,
+                disposition,
+                disposition_at: None,
+                disposition_by: None,
+                lot_id: None,
+                serial_ids: Vec::new(),
+            }],
+            notes: None,
+            version: 1,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    /// Scrap / return-to-vendor destroy the goods without a stock effect;
+    /// rejecting after them used to be legal and released the order-line claim.
+    #[test]
+    fn reject_and_cancel_are_refused_after_any_disposition() {
+        for disposition in [
+            ReturnDisposition::Restock,
+            ReturnDisposition::Quarantine,
+            ReturnDisposition::Scrap,
+            ReturnDisposition::ReturnToVendor,
+            ReturnDisposition::Refurbish,
+        ] {
+            let ret = return_with(ReturnStatus::Inspecting, Some(disposition));
+            let err = ret
+                .check_transition(ReturnStatus::Rejected, false)
+                .expect_err("reject after a disposition");
+            assert!(matches!(err, crate::CommerceError::Conflict(_)), "{disposition}: got {err:?}");
+            assert!(ret.has_any_disposition());
+        }
+        let clean = return_with(ReturnStatus::Inspecting, None);
+        assert!(clean.check_transition(ReturnStatus::Rejected, false).is_ok());
+        assert!(!clean.has_any_disposition());
+    }
+
+    #[test]
+    fn only_requested_and_approved_returns_are_deletable() {
+        for status in [ReturnStatus::Requested, ReturnStatus::Approved] {
+            assert!(return_with(status, None).check_deletable().is_ok(), "{status}");
+        }
+        for status in [
+            ReturnStatus::InTransit,
+            ReturnStatus::Received,
+            ReturnStatus::Inspecting,
+            ReturnStatus::Completed,
+            ReturnStatus::Rejected,
+            ReturnStatus::Cancelled,
+        ] {
+            let err = return_with(status, None).check_deletable().expect_err("not deletable");
+            assert!(matches!(err, crate::CommerceError::NotPermitted(_)), "{status}: {err:?}");
+        }
+        // A disposition inside the window (data drift) also blocks the delete.
+        let err = return_with(ReturnStatus::Approved, Some(ReturnDisposition::Scrap))
+            .check_deletable()
+            .expect_err("dispositioned return is not deletable");
+        assert!(matches!(err, crate::CommerceError::NotPermitted(_)), "got {err:?}");
     }
 
     #[test]

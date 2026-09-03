@@ -270,6 +270,116 @@ pub struct TaxJurisdiction {
     pub updated_at: DateTime<Utc>,
 }
 
+impl TaxJurisdiction {
+    /// Whether this jurisdiction levies tax on `address`.
+    ///
+    /// Every attribute the jurisdiction **defines** must agree with the
+    /// address; attributes it leaves unset are unconstrained. Country and
+    /// state codes compare case-insensitively, city names compare
+    /// case-insensitively after trimming, and postal codes match by
+    /// [`postal_code_matches`].
+    ///
+    /// Below the state level the jurisdiction must be pinned by something
+    /// narrower than the state — a `city` that matched, or a postal-code
+    /// list that matched — or it does not apply. This fails **closed**: a
+    /// `County`-level jurisdiction identified only by `county` cannot be
+    /// resolved, because [`TaxAddress`] carries no county, and charging
+    /// every address in the state its county rate would be worse than
+    /// charging none. Give such a jurisdiction its `postal_codes` (or a
+    /// `city`) and it resolves.
+    #[must_use]
+    pub fn covers_address(&self, address: &TaxAddress) -> bool {
+        fn same(a: &str, b: &str) -> bool {
+            a.trim().eq_ignore_ascii_case(b.trim())
+        }
+
+        if !self.active || !same(&self.country_code, &address.country) {
+            return false;
+        }
+        if let Some(state) = &self.state_code {
+            if !address.state.as_deref().is_some_and(|a| same(a, state)) {
+                return false;
+            }
+        }
+        let city_matched = match &self.city {
+            Some(city) => {
+                if !address.city.as_deref().is_some_and(|a| same(a, city)) {
+                    return false;
+                }
+                true
+            }
+            None => false,
+        };
+        let postal_matched = if self.postal_codes.is_empty() {
+            false
+        } else {
+            if !address
+                .postal_code
+                .as_deref()
+                .is_some_and(|code| postal_code_matches(&self.postal_codes, code))
+            {
+                return false;
+            }
+            true
+        };
+        if self.level > JurisdictionLevel::State && !(city_matched || postal_matched) {
+            return false;
+        }
+        true
+    }
+}
+
+/// Whether `code` falls in any of `patterns`.
+///
+/// A pattern is one of:
+/// * an exact postal code (`"90210"`), compared case-insensitively after
+///   trimming and stripping spaces and hyphens;
+/// * a prefix wildcard (`"902*"`), matching every code that starts with it;
+/// * an inclusive range (`"90210-90220"`), matched numerically when both
+///   ends and the code are all digits, and lexicographically otherwise.
+#[must_use]
+pub fn postal_code_matches(patterns: &[String], code: &str) -> bool {
+    fn canon(value: &str) -> String {
+        value
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '-')
+            .flat_map(char::to_uppercase)
+            .collect()
+    }
+
+    let code_canon = canon(code);
+    if code_canon.is_empty() {
+        return false;
+    }
+    patterns.iter().any(|pattern| {
+        let pattern = pattern.trim();
+        if let Some(prefix) = pattern.strip_suffix('*') {
+            return code_canon.starts_with(&canon(prefix));
+        }
+        // A range needs a hyphen with non-empty sides; anything else (such as
+        // a Canadian "K1A-0B1" written with a separator) is an exact code.
+        if let Some((low, high)) = pattern.split_once('-') {
+            let (low, high) = (low.trim(), high.trim());
+            if !low.is_empty() && !high.is_empty() {
+                let (low, high) = (canon(low), canon(high));
+                let numeric = [&low, &high, &code_canon]
+                    .iter()
+                    .all(|v| v.chars().all(|c| c.is_ascii_digit()));
+                if numeric {
+                    let parse = |v: &str| v.parse::<u64>().ok();
+                    if let (Some(low), Some(high), Some(value)) =
+                        (parse(&low), parse(&high), parse(&code_canon))
+                    {
+                        return low <= value && value <= high;
+                    }
+                }
+                return low.as_str() <= code_canon.as_str() && code_canon.as_str() <= high.as_str();
+            }
+        }
+        canon(pattern) == code_canon
+    })
+}
+
 /// Level of tax jurisdiction.
 ///
 /// Ordered broadest-first (country before state before city); tax breakdowns
@@ -493,8 +603,15 @@ pub struct TaxCalculationResult {
     pub line_item_taxes: Vec<LineItemTax>,
     /// Whether any exemptions were applied
     pub exemptions_applied: bool,
-    /// Exemption details if applied
+    /// The first entry of [`Self::applied_exemptions`], kept for callers that
+    /// only ever expected a single certificate. Prefer `applied_exemptions`:
+    /// a cart can hit more than one exemption.
     pub exemption_details: Option<ExemptionDetails>,
+    /// Every exemption that actually removed tax, each with the amount it
+    /// covered and the tax IT saved (not the cart's total saving), in
+    /// first-seen order.
+    #[serde(default)]
+    pub applied_exemptions: Vec<ExemptionDetails>,
     /// Jurisdictions involved
     pub jurisdictions: Vec<JurisdictionSummary>,
     /// Calculation timestamp
@@ -789,6 +906,22 @@ pub struct TaxComputationInputs {
 ///   allocated across rates, and `total` equals the listed prices exactly;
 /// * `subtotal` is the (net) sum of line amounts; `total = subtotal +
 ///   total_tax + net shipping`.
+///
+/// # Disabled tax
+///
+/// When [`TaxSettings::enabled`] is `false` the store does not charge tax at
+/// all, and no rate, exemption or jurisdiction is consulted. The result is
+/// the request priced at zero tax:
+///
+/// * `total_tax == 0` and `shipping_tax == 0`;
+/// * `tax_breakdown` and `jurisdictions` are empty;
+/// * `exemptions_applied` is `false` and `exemption_details` is `None`;
+/// * every line appears in `line_item_taxes` with `tax_amount == 0`, an empty
+///   `tax_details` and `is_exempt == false` — the line is not exempt, the
+///   store simply charges no tax;
+/// * `subtotal` is the sum of the line amounts **unchanged** (nothing is
+///   backed out of tax-inclusive prices, because there is no tax inside
+///   them), and `total == subtotal + shipping`.
 #[must_use]
 pub fn compute_tax(
     request: &TaxCalculationRequest,
@@ -803,12 +936,24 @@ pub fn compute_tax(
     let mut acc = TaxAccumulator::new(decimal_places, settings.rounding_strategy());
     acc.inclusive = inclusive;
 
+    // Tax turned off at the store level: price everything at zero tax. Done
+    // before any rate or exemption is looked at, so `enabled = false` is a
+    // hard switch rather than a hint.
+    if !settings.enabled {
+        for item in &request.line_items {
+            acc.add_taxed_line(&item.id, taxable_line_amount(item), &[]);
+        }
+        if let Some(shipping_amount) = request.shipping_amount {
+            acc.add_shipping(shipping_amount.max(Decimal::ZERO), &[]);
+        }
+        return acc.finish(now);
+    }
+
     let exemptions: Vec<&TaxExemption> =
         inputs.exemptions.iter().filter(|e| e.is_effective_on(transaction_date)).collect();
 
     for item in &request.line_items {
-        let line_amount =
-            (item.unit_price * item.quantity - item.discount_amount).max(Decimal::ZERO);
+        let line_amount = taxable_line_amount(item);
 
         if item.tax_category == ProductTaxCategory::Exempt {
             acc.push_exempt_line(&item.id, line_amount, "Exempt product category");
@@ -818,18 +963,11 @@ pub fn compute_tax(
         let rates: Vec<&ResolvedTaxRate> =
             inputs.rates.iter().filter(|r| r.rate.product_category == item.tax_category).collect();
         let rates = sorted_by_priority(rates);
-        let (remaining, exempted) = rates_after_exemptions(&rates, &exemptions, item.tax_category);
+        let (remaining, removed) = attribute_exemptions(&rates, &exemptions, item.tax_category);
+        let exempted = !removed.is_empty();
 
         if exempted {
-            let exemption =
-                exemptions.iter().find(|e| e.covers_category(item.tax_category)).copied();
-            let removed: Vec<&ResolvedTaxRate> = rates
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| !remaining.contains(i))
-                .map(|(_, r)| *r)
-                .collect();
-            acc.note_exemption(exemption, line_amount, &removed);
+            acc.note_exemptions(line_amount, &removed);
         }
         let remaining: Vec<&ResolvedTaxRate> = remaining.iter().map(|&i| rates[i]).collect();
 
@@ -850,7 +988,7 @@ pub fn compute_tax(
                 .collect();
             let rates = sorted_by_priority(rates);
             let (remaining, _) =
-                rates_after_exemptions(&rates, &exemptions, ProductTaxCategory::Standard);
+                attribute_exemptions(&rates, &exemptions, ProductTaxCategory::Standard);
             let remaining: Vec<&ResolvedTaxRate> = remaining.iter().map(|&i| rates[i]).collect();
             acc.add_shipping(shipping_amount, &remaining);
         } else {
@@ -905,7 +1043,8 @@ pub struct TaxAccumulator {
     pub exemptions_applied: bool,
     /// Whether amounts are tax-inclusive (gross) and tax must be backed out.
     pub inclusive: bool,
-    exemption_details: Option<ExemptionDetails>,
+    /// One entry per exemption that actually removed tax, in first-seen order.
+    exemptions: Vec<ExemptionDetails>,
     jurisdictions: std::collections::HashMap<Uuid, JurisdictionSummary>,
     /// Rates already counted into a jurisdiction's `total_rate`.
     seen_rates: std::collections::HashSet<Uuid>,
@@ -933,7 +1072,7 @@ impl TaxAccumulator {
             tax_breakdown: Vec::new(),
             exemptions_applied: false,
             inclusive: false,
-            exemption_details: None,
+            exemptions: Vec::new(),
             jurisdictions: std::collections::HashMap::new(),
             seen_rates: std::collections::HashSet::new(),
             decimal_places,
@@ -955,28 +1094,52 @@ impl TaxAccumulator {
         });
     }
 
-    /// Record that `exemption` removed `removed` rates from a line of
-    /// `line_amount`, accumulating the tax it saved into the result's
-    /// exemption details.
-    pub fn note_exemption(
+    /// Record that `removed` rates were taken off a line of `line_amount`,
+    /// crediting each removed rate's tax to the exemption that removed it.
+    ///
+    /// Each exemption gets its OWN entry in the result: `amount_exempt` sums
+    /// the line amounts on which that exemption removed at least one rate,
+    /// and `tax_saved` sums only the tax that exemption itself removed. A
+    /// cart hitting two certificates therefore reports two — attributing the
+    /// whole saving to whichever certificate happened to be listed first
+    /// misstates both.
+    pub fn note_exemptions(
         &mut self,
-        exemption: Option<&TaxExemption>,
         line_amount: Decimal,
-        removed: &[&ResolvedTaxRate],
+        removed: &[(&ResolvedTaxRate, &TaxExemption)],
     ) {
+        if removed.is_empty() {
+            return;
+        }
         self.exemptions_applied = true;
-        let Some(exemption) = exemption else { return };
-        let (raw_total, _, _) = self.split(line_amount, removed);
-        let tax_saved = raw_total.round_dp_with_strategy(self.decimal_places, self.strategy);
-        let details = self.exemption_details.get_or_insert_with(|| ExemptionDetails {
-            exemption_id: exemption.id,
-            exemption_type: exemption.exemption_type,
-            certificate_number: exemption.certificate_number.clone(),
-            amount_exempt: Decimal::ZERO,
-            tax_saved: Decimal::ZERO,
-        });
-        details.amount_exempt += line_amount;
-        details.tax_saved += tax_saved;
+        // Group this line's removed rates by the exemption that removed them,
+        // preserving first-seen order so the output is deterministic.
+        let mut groups: Vec<(&TaxExemption, Vec<&ResolvedTaxRate>)> = Vec::new();
+        for (rate, exemption) in removed {
+            match groups.iter_mut().find(|(e, _)| e.id == exemption.id) {
+                Some((_, rates)) => rates.push(rate),
+                None => groups.push((exemption, vec![rate])),
+            }
+        }
+        for (exemption, rates) in groups {
+            let (raw_total, _, _) = self.split(line_amount, &rates);
+            let tax_saved = raw_total.round_dp_with_strategy(self.decimal_places, self.strategy);
+            if !self.exemptions.iter().any(|d| d.exemption_id == exemption.id) {
+                self.exemptions.push(ExemptionDetails {
+                    exemption_id: exemption.id,
+                    exemption_type: exemption.exemption_type,
+                    certificate_number: exemption.certificate_number.clone(),
+                    amount_exempt: Decimal::ZERO,
+                    tax_saved: Decimal::ZERO,
+                });
+            }
+            if let Some(details) =
+                self.exemptions.iter_mut().find(|d| d.exemption_id == exemption.id)
+            {
+                details.amount_exempt += line_amount;
+                details.tax_saved += tax_saved;
+            }
+        }
     }
 
     /// Tax `line_amount` with `rates` (each with its jurisdiction). Returns
@@ -991,9 +1154,13 @@ impl TaxAccumulator {
         let (line_tax, allocated) = self.apply_rates(line_amount, rates);
         let net = if self.inclusive { line_amount - line_tax } else { line_amount };
         self.subtotal += net;
-        // Build per-rate details and sort them by a stable key so output is deterministic
-        // even when the underlying rate order differs across platforms (e.g., under Miri).
-        let mut tax_details: Vec<TaxDetail> = allocated
+        // Emitted in ALLOCATION order — the `sorted_by_priority` order the
+        // largest-remainder residue was assigned in — so the breakdown the
+        // customer reads is the breakdown the engine computed. Re-sorting on
+        // a different key (jurisdiction name) printed "Austin" above "Texas"
+        // while the residue cent had gone to Texas. The allocation order is
+        // already platform-stable, so no second sort is needed.
+        let tax_details: Vec<TaxDetail> = allocated
             .iter()
             .map(|(share, amount)| {
                 let resolved = rates[share.index];
@@ -1005,12 +1172,14 @@ impl TaxAccumulator {
                 }
             })
             .collect();
-        tax_details.sort_by(|a, b| {
-            a.jurisdiction_name
-                .cmp(&b.jurisdiction_name)
-                .then_with(|| a.tax_type.to_string().cmp(&b.tax_type.to_string()))
-        });
-        let effective_rate = if net.is_zero() { Decimal::ZERO } else { line_tax / net };
+        let effective_rate = if net.is_zero() {
+            Decimal::ZERO
+        } else {
+            // A quotient of two decimals has unbounded scale; a rate is a
+            // rate, so pin it to four digits beyond the money scale
+            // (0.082500 at 2dp) instead of leaking 28 digits into the API.
+            (line_tax / net).round_dp_with_strategy(self.decimal_places + 4, self.strategy)
+        };
         self.total_tax += line_tax;
         self.line_item_taxes.push(LineItemTax {
             line_item_id: line_item_id.to_string(),
@@ -1140,7 +1309,8 @@ impl TaxAccumulator {
             tax_breakdown: self.tax_breakdown,
             line_item_taxes: self.line_item_taxes,
             exemptions_applied: self.exemptions_applied,
-            exemption_details: self.exemption_details,
+            exemption_details: self.exemptions.first().cloned(),
+            applied_exemptions: self.exemptions,
             jurisdictions,
             calculated_at: now,
             is_estimate: true,
@@ -1186,27 +1356,53 @@ fn rate_shares<'a>(base: Decimal, rates: impl Iterator<Item = &'a TaxRate>) -> V
 /// An effective exemption with no jurisdiction restriction removes every
 /// rate; one restricted to jurisdictions removes only the rates of those
 /// jurisdictions. Returns `(remaining rate indexes, any_exempted)`.
+///
+/// Use [`attribute_exemptions`] when you need to know **which** exemption
+/// removed each rate.
 #[must_use]
 pub fn rates_after_exemptions(
     rates: &[&ResolvedTaxRate],
     exemptions: &[&TaxExemption],
     category: ProductTaxCategory,
 ) -> (Vec<usize>, bool) {
+    let (remaining, removed) = attribute_exemptions(rates, exemptions, category);
+    (remaining, !removed.is_empty())
+}
+
+/// Like [`rates_after_exemptions`], but also says which exemption removed
+/// each removed rate.
+///
+/// Returns `(remaining rate indexes, removed rates paired with the exemption
+/// that removed them)`. When several exemptions cover the same rate the
+/// **first** one in `exemptions` is credited, so attribution is a function of
+/// the caller's (deterministic) exemption order and never of iteration order.
+#[must_use]
+pub fn attribute_exemptions<'a, 'r>(
+    rates: &[&'r ResolvedTaxRate],
+    exemptions: &[&'a TaxExemption],
+    category: ProductTaxCategory,
+) -> (Vec<usize>, Vec<(&'r ResolvedTaxRate, &'a TaxExemption)>) {
     let covering: Vec<&TaxExemption> =
         exemptions.iter().copied().filter(|e| e.covers_category(category)).collect();
     if covering.is_empty() {
-        return ((0..rates.len()).collect(), false);
+        return ((0..rates.len()).collect(), Vec::new());
     }
     let mut remaining = Vec::with_capacity(rates.len());
-    let mut any_exempted = false;
+    let mut removed = Vec::new();
     for (index, resolved) in rates.iter().enumerate() {
-        if covering.iter().any(|e| e.covers_jurisdiction(resolved.rate.jurisdiction_id)) {
-            any_exempted = true;
-        } else {
-            remaining.push(index);
+        match covering.iter().find(|e| e.covers_jurisdiction(resolved.rate.jurisdiction_id)) {
+            Some(exemption) => removed.push((*resolved, *exemption)),
+            None => remaining.push(index),
         }
     }
-    (remaining, any_exempted)
+    (remaining, removed)
+}
+
+/// The amount a line is taxed on: `unit_price × quantity − discount`, floored
+/// at zero (a discount larger than the line never produces negative tax).
+#[must_use]
+pub fn taxable_line_amount(item: &TaxLineItem) -> Decimal {
+    (item.unit_price * item.quantity - item.discount_amount).max(Decimal::ZERO)
 }
 
 // ============================================================================
@@ -1767,13 +1963,21 @@ mod tests {
     // ------------------------------------------------------------------
 
     fn jur(code: &str) -> TaxJurisdiction {
+        jur_named(code, &format!("Jurisdiction {code}"), JurisdictionLevel::State)
+    }
+
+    /// A jurisdiction whose NAME and LEVEL are chosen independently of its
+    /// code — the only shape that can catch a display order that sorts on a
+    /// different key from the allocation order. `jur()` cannot: its name is
+    /// derived from its code and every one is a `State`.
+    fn jur_named(code: &str, name: &str, level: JurisdictionLevel) -> TaxJurisdiction {
         let now = Utc::now();
         TaxJurisdiction {
             id: Uuid::new_v4(),
             parent_id: None,
-            name: format!("Jurisdiction {code}"),
+            name: name.to_string(),
             code: code.to_string(),
-            level: JurisdictionLevel::State,
+            level,
             country_code: "ZZ".into(),
             state_code: None,
             county: None,
@@ -2060,6 +2264,235 @@ mod tests {
         );
         assert_eq!(res.total_tax, dec!(1.00));
         assert_eq!(res.subtotal, dec!(30));
+    }
+
+    /// `TaxSettings::enabled = false` means the store does not charge tax.
+    /// The engine used to read every OTHER setting and ignore this one, so
+    /// turning tax off still charged tax.
+    #[test]
+    fn compute_tax_disabled_settings_charge_no_tax() {
+        let j = jur("ZZ-CA");
+        let customer = Uuid::new_v4();
+        let mut req = request(vec![line("a", dec!(100), dec!(1)), line("b", dec!(19.99), dec!(2))]);
+        req.shipping_amount = Some(dec!(9.99));
+        req.customer_id = Some(customer);
+        let mut inp = inputs(vec![rate(&j, dec!(0.0825))], vec![exemption(customer)]);
+
+        // Sanity: with tax enabled this request is taxed.
+        let enabled = compute_tax(&req, &inp, Utc::now());
+        assert!(enabled.exemptions_applied);
+
+        inp.settings.enabled = false;
+        let res = compute_tax(&req, &inp, Utc::now());
+        assert_eq!(res.total_tax, Decimal::ZERO, "disabled tax must charge nothing: {res:?}");
+        assert_eq!(res.shipping_tax, Decimal::ZERO);
+        assert!(res.tax_breakdown.is_empty(), "no breakdown when tax is off");
+        assert!(res.jurisdictions.is_empty(), "no jurisdiction is consulted when tax is off");
+        assert!(!res.exemptions_applied);
+        assert!(res.exemption_details.is_none());
+        // Subtotal is the line amounts unchanged; the customer pays them plus
+        // shipping and nothing else.
+        assert_eq!(res.subtotal, dec!(139.98));
+        assert_eq!(res.total, dec!(149.97));
+        assert_eq!(res.line_item_taxes.len(), 2);
+        for l in &res.line_item_taxes {
+            assert_eq!(l.tax_amount, Decimal::ZERO);
+            assert!(l.tax_details.is_empty());
+            assert!(!l.is_exempt, "the line is not exempt, the store charges no tax");
+        }
+
+        // Tax-inclusive prices are not touched either: there is no tax inside
+        // them to back out.
+        let mut inclusive = req;
+        inclusive.prices_include_tax = true;
+        let res = compute_tax(&inclusive, &inp, Utc::now());
+        assert_eq!(res.total_tax, Decimal::ZERO);
+        assert_eq!(res.subtotal, dec!(139.98));
+        assert_eq!(res.total, dec!(149.97));
+    }
+
+    /// The customer-facing `tax_details` must be in the SAME order the
+    /// allocation walked (`sorted_by_priority`: broadest jurisdiction first),
+    /// not a second sort on a different key. Sorting the display by
+    /// jurisdiction NAME printed the city above the state while the
+    /// largest-remainder residue cent had been assigned to the state.
+    #[test]
+    fn compute_tax_breakdown_is_in_allocation_order() {
+        // Name order (Austin < Texas) and level order (State < City)
+        // DISAGREE, which is exactly what the old fixtures could not express.
+        let state = jur_named("ZZ-TX", "Texas", JurisdictionLevel::State);
+        let city = jur_named("ZZ-TX-AUS", "Austin", JurisdictionLevel::City);
+        let req = request(vec![line("a", dec!(10), dec!(1))]);
+        let res = compute_tax(
+            &req,
+            &inputs(vec![rate(&city, dec!(0.01)), rate(&state, dec!(0.0625))], vec![]),
+            Utc::now(),
+        );
+
+        let details = &res.line_item_taxes[0].tax_details;
+        let names: Vec<&str> = details.iter().map(|d| d.jurisdiction_name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["Texas", "Austin"],
+            "breakdown must be broadest-jurisdiction-first, as allocated: {details:?}"
+        );
+        // And the amounts line up with those names: 0.625 -> 0.63 (the
+        // residue cent), 0.10 -> 0.10.
+        let amounts: Vec<Decimal> = details.iter().map(|d| d.amount).collect();
+        assert_eq!(amounts, vec![dec!(0.63), dec!(0.10)]);
+        assert_eq!(amounts.iter().sum::<Decimal>(), res.total_tax);
+    }
+
+    /// `line_item_taxes[].effective_rate` is a quotient of two decimals and
+    /// used to carry unbounded scale (28 digits) into the API.
+    #[test]
+    fn compute_tax_effective_rate_is_rounded() {
+        let j = jur("ZZ-CA");
+        let req = request(vec![line("a", dec!(3), dec!(1))]);
+        let res = compute_tax(&req, &inputs(vec![rate(&j, dec!(0.0825))], vec![]), Utc::now());
+        let rate = res.line_item_taxes[0].effective_rate;
+        assert!(rate.scale() <= 6, "effective_rate must be bounded, got {rate}");
+        assert_eq!(rate, dec!(0.083333)); // 0.25 / 3
+    }
+
+    /// Two certificates on one cart must be reported as two, each with the
+    /// tax IT saved. The engine used to credit the FIRST exemption covering
+    /// the line's category with every line's saving, so a cart hitting two
+    /// exemptions reported one, with the other's money on it.
+    #[test]
+    fn compute_tax_attributes_each_exemption_separately() {
+        let country = jur("ZZ");
+        let state = jur("ZZ-CA");
+        let customer = Uuid::new_v4();
+        let mut req = request(vec![line("a", dec!(100), dec!(1))]);
+        req.customer_id = Some(customer);
+
+        let country_cert = TaxExemption {
+            jurisdiction_ids: vec![country.id],
+            certificate_number: Some("FED-1".into()),
+            ..exemption(customer)
+        };
+        let state_cert = TaxExemption {
+            jurisdiction_ids: vec![state.id],
+            certificate_number: Some("CA-1".into()),
+            ..exemption(customer)
+        };
+        let res = compute_tax(
+            &req,
+            &inputs(
+                vec![rate(&country, dec!(0.05)), rate(&state, dec!(0.03))],
+                vec![country_cert.clone(), state_cert.clone()],
+            ),
+            Utc::now(),
+        );
+
+        assert_eq!(res.total_tax, Decimal::ZERO);
+        assert!(res.exemptions_applied);
+        assert_eq!(res.applied_exemptions.len(), 2, "two certificates, two entries: {res:?}");
+        let saved: Vec<(Uuid, Decimal)> =
+            res.applied_exemptions.iter().map(|d| (d.exemption_id, d.tax_saved)).collect();
+        assert!(
+            saved.contains(&(country_cert.id, dec!(5.00))),
+            "the federal certificate saved its own 5.00: {saved:?}"
+        );
+        assert!(
+            saved.contains(&(state_cert.id, dec!(3.00))),
+            "the state certificate saved its own 3.00: {saved:?}"
+        );
+        assert_eq!(res.applied_exemptions.iter().map(|d| d.tax_saved).sum::<Decimal>(), dec!(8.00));
+        // Certificate numbers travel with their own entry.
+        let certs: Vec<Option<&str>> =
+            res.applied_exemptions.iter().map(|d| d.certificate_number.as_deref()).collect();
+        assert!(certs.contains(&Some("FED-1")) && certs.contains(&Some("CA-1")));
+
+        // A single-exemption cart still reports it through the legacy field.
+        let res = compute_tax(
+            &req,
+            &inputs(vec![rate(&country, dec!(0.05))], vec![country_cert.clone()]),
+            Utc::now(),
+        );
+        assert_eq!(res.applied_exemptions.len(), 1);
+        let legacy = res.exemption_details.expect("details");
+        assert_eq!(legacy.exemption_id, country_cert.id);
+        assert_eq!(legacy.tax_saved, dec!(5.00));
+    }
+
+    #[test]
+    fn jurisdiction_covers_address_matches_state_city_and_postal_code() {
+        let address = |city: Option<&str>, state: Option<&str>, postal: Option<&str>| TaxAddress {
+            city: city.map(str::to_string),
+            state: state.map(str::to_string),
+            postal_code: postal.map(str::to_string),
+            country: "US".into(),
+            ..Default::default()
+        };
+
+        let mut country = jur_named("US", "United States", JurisdictionLevel::Country);
+        country.country_code = "US".into();
+        assert!(country.covers_address(&address(None, None, None)));
+        assert!(
+            !country.covers_address(&TaxAddress { country: "CA".into(), ..Default::default() })
+        );
+
+        let mut state = jur_named("US-TX", "Texas", JurisdictionLevel::State);
+        state.country_code = "US".into();
+        state.state_code = Some("TX".into());
+        assert!(state.covers_address(&address(None, Some("tx"), None)), "case-insensitive");
+        assert!(!state.covers_address(&address(None, Some("CA"), None)));
+        assert!(!state.covers_address(&address(None, None, None)), "no state on the address");
+
+        let mut city = jur_named("US-TX-AUS", "Austin", JurisdictionLevel::City);
+        city.country_code = "US".into();
+        city.state_code = Some("TX".into());
+        city.city = Some("Austin".into());
+        assert!(city.covers_address(&address(Some(" austin "), Some("TX"), None)));
+        assert!(!city.covers_address(&address(Some("Dallas"), Some("TX"), None)));
+        assert!(!city.covers_address(&address(None, Some("TX"), None)));
+
+        let mut district = jur_named("US-TX-MTA", "Transit Authority", JurisdictionLevel::District);
+        district.country_code = "US".into();
+        district.state_code = Some("TX".into());
+        district.postal_codes = vec!["787*".into(), "78701-78705".into()];
+        assert!(district.covers_address(&address(None, Some("TX"), Some("78751"))));
+        assert!(district.covers_address(&address(None, Some("TX"), Some("78703"))));
+        assert!(!district.covers_address(&address(None, Some("TX"), Some("75201"))));
+        assert!(!district.covers_address(&address(None, Some("TX"), None)));
+
+        // A below-state jurisdiction with nothing narrower than the state
+        // fails CLOSED rather than taxing the whole state at the city rate.
+        let mut county = jur_named("US-TX-TRV", "Travis County", JurisdictionLevel::County);
+        county.country_code = "US".into();
+        county.state_code = Some("TX".into());
+        county.county = Some("Travis".into());
+        assert!(
+            !county.covers_address(&address(Some("Austin"), Some("TX"), Some("78701"))),
+            "an unpinned county must not apply to the whole state"
+        );
+
+        // Inactive jurisdictions never apply.
+        let inactive = TaxJurisdiction { active: false, ..state };
+        assert!(!inactive.covers_address(&address(None, Some("TX"), None)));
+    }
+
+    #[test]
+    fn postal_code_matches_exact_prefix_and_range() {
+        let patterns = |v: &[&str]| v.iter().map(|s| (*s).to_string()).collect::<Vec<String>>();
+        assert!(postal_code_matches(&patterns(&["90210"]), "90210"));
+        assert!(postal_code_matches(&patterns(&["90210"]), " 90210 "));
+        assert!(!postal_code_matches(&patterns(&["90210"]), "90211"));
+        assert!(postal_code_matches(&patterns(&["902*"]), "90210"));
+        assert!(!postal_code_matches(&patterns(&["902*"]), "91210"));
+        assert!(postal_code_matches(&patterns(&["90210-90220"]), "90215"));
+        assert!(postal_code_matches(&patterns(&["90210-90220"]), "90210"));
+        assert!(postal_code_matches(&patterns(&["90210-90220"]), "90220"));
+        assert!(!postal_code_matches(&patterns(&["90210-90220"]), "90221"));
+        // Non-numeric codes fall back to a lexicographic range.
+        assert!(postal_code_matches(&patterns(&["K1A-K1Z"]), "K1M"));
+        assert!(!postal_code_matches(&patterns(&["K1A-K1Z"]), "K2A"));
+        // A code written with a separator is an exact code, not a range.
+        assert!(postal_code_matches(&patterns(&["K1A 0B1"]), "k1a-0b1"));
+        assert!(!postal_code_matches(&patterns(&[]), "90210"));
+        assert!(!postal_code_matches(&patterns(&["90210"]), ""));
     }
 
     #[test]

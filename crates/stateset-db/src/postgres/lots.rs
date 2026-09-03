@@ -7,10 +7,10 @@ use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
     AddLotCertificate, AdjustLot, BatchResult, CertificateType, CommerceError, ConsumeLot,
-    CreateLot, Lot, LotCertificate, LotFilter, LotLocation, LotRepository, LotStatus,
-    LotTransaction, LotTransactionType, MergeLots, ReserveLot, Result, SplitLot, TraceNode,
-    TraceNodeType, TraceabilityResult, TransactionType, TransferLot, UpdateLot,
-    validate_batch_size,
+    CreateLot, Lot, LotCertificate, LotFilter, LotGenealogyLink, LotLocation, LotRelationship,
+    LotRepository, LotStatus, LotTransaction, LotTransactionType, MergeLots, MergedProvenance,
+    ReserveLot, Result, SplitLot, TraceNode, TraceNodeType, TraceabilityResult, TransactionType,
+    TransferLot, UpdateLot, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -78,6 +78,17 @@ struct LotLocationRow {
     location_id: i32,
     quantity: Decimal,
     updated_at: DateTime<Utc>,
+}
+
+#[derive(FromRow)]
+struct LotGenealogyRow {
+    child_lot_id: Uuid,
+    parent_lot_id: Uuid,
+    parent_lot_number: String,
+    child_lot_number: String,
+    relationship: String,
+    quantity: Decimal,
+    created_at: DateTime<Utc>,
 }
 
 #[derive(FromRow)]
@@ -192,6 +203,11 @@ fn validate_merge_sources(source_lot_ids: &[Uuid]) -> Result<()> {
 }
 
 impl PgLotRepository {
+    /// Hop budget for [`Self::ancestor_lots_async`]: deep enough for any real
+    /// split/merge history, small enough that a corrupt table cannot turn a
+    /// `trace` into an unbounded walk.
+    const GENEALOGY_MAX_ANCESTORS: usize = 512;
+
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -422,6 +438,215 @@ impl PgLotRepository {
             }
         }
         Ok(slices)
+    }
+
+    /// Re-attribute `quantity` units of placement from `from_lot` to `to_lot`,
+    /// lowest `location_id` first, on the caller's transaction.
+    ///
+    /// `split` and `merge` move units *between lots* without moving any stock,
+    /// so `inventory_balances` is deliberately untouched — but the placement
+    /// rows must follow, because they are what
+    /// [`Self::inventory_slices_on`] uses to decide which balance a later lot
+    /// movement hits. A derived lot with no placement is invisible to
+    /// inventory (consuming it would never decrement a balance again), while a
+    /// source that keeps a placement it no longer backs over-reports; either
+    /// way the module invariant `Σ available over active lots placed at L ==
+    /// inventory available at L` breaks the moment the operation commits.
+    ///
+    /// A source with no placement at all floats free of inventory by design;
+    /// the derived lot inherits that and nothing is written.
+    async fn move_placements_on(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        from_lot: Uuid,
+        to_lot: Uuid,
+        quantity: Decimal,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        if quantity <= Decimal::ZERO {
+            return Ok(());
+        }
+        let placements: Vec<(i32, Decimal)> = sqlx::query_as(
+            "SELECT location_id, quantity FROM lot_locations WHERE lot_id = $1
+             ORDER BY location_id ASC FOR UPDATE",
+        )
+        .bind(from_lot)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        let Some(&(last_location, _)) = placements.last() else {
+            return Ok(());
+        };
+
+        let mut moves: Vec<(i32, Decimal)> = Vec::with_capacity(placements.len());
+        let mut left = quantity;
+        for &(location_id, held) in &placements {
+            if left <= Decimal::ZERO {
+                break;
+            }
+            let take = left.min(held.max(Decimal::ZERO));
+            if take > Decimal::ZERO {
+                moves.push((location_id, take));
+                left -= take;
+            }
+        }
+        // Placement rows are a routing hint rather than a second ledger (a
+        // `consume` decrements the lot, not the placement), so they can fall
+        // short of the lot's own quantity. Attribute any shortfall to the last
+        // placement rather than stranding the units off-location.
+        if left > Decimal::ZERO {
+            match moves.last_mut() {
+                Some(last) if last.0 == last_location => last.1 += left,
+                _ => moves.push((last_location, left)),
+            }
+        }
+
+        for (location_id, take) in moves {
+            let held = placements
+                .iter()
+                .find(|(l, _)| *l == location_id)
+                .map_or(Decimal::ZERO, |(_, q)| *q);
+            let remaining = (held - take).max(Decimal::ZERO);
+            if remaining > Decimal::ZERO {
+                sqlx::query(
+                    "UPDATE lot_locations SET quantity = $1, updated_at = $2
+                     WHERE lot_id = $3 AND location_id = $4",
+                )
+                .bind(remaining)
+                .bind(now)
+                .bind(from_lot)
+                .bind(location_id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            } else {
+                sqlx::query("DELETE FROM lot_locations WHERE lot_id = $1 AND location_id = $2")
+                    .bind(from_lot)
+                    .bind(location_id)
+                    .execute(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            }
+
+            sqlx::query(
+                "INSERT INTO lot_locations (lot_id, location_id, quantity, updated_at)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (lot_id, location_id) DO UPDATE SET
+                     quantity = lot_locations.quantity + excluded.quantity,
+                     updated_at = excluded.updated_at",
+            )
+            .bind(to_lot)
+            .bind(location_id)
+            .bind(take)
+            .bind(now)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        }
+        Ok(())
+    }
+
+    /// Record one `parent -> child` genealogy edge on the caller's
+    /// transaction. Idempotent per `(child, parent)` pair.
+    async fn record_genealogy_on(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        child_lot_id: Uuid,
+        parent_lot_id: Uuid,
+        relationship: LotRelationship,
+        quantity: Decimal,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO lot_genealogy
+                (child_lot_id, parent_lot_id, relationship, quantity, created_at)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (child_lot_id, parent_lot_id) DO UPDATE SET
+                 relationship = excluded.relationship, quantity = excluded.quantity",
+        )
+        .bind(child_lot_id)
+        .bind(parent_lot_id)
+        .bind(relationship.to_string())
+        .bind(quantity)
+        .bind(now)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        Ok(())
+    }
+
+    fn row_to_genealogy(row: LotGenealogyRow) -> Result<LotGenealogyLink> {
+        Ok(LotGenealogyLink {
+            child_lot_id: row.child_lot_id,
+            parent_lot_id: row.parent_lot_id,
+            parent_lot_number: row.parent_lot_number,
+            child_lot_number: row.child_lot_number,
+            relationship: row.relationship.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid lot_genealogy.relationship '{}': {e}",
+                    row.relationship
+                ))
+            })?,
+            quantity: row.quantity,
+            created_at: row.created_at,
+        })
+    }
+
+    /// Genealogy edges touching `lot_id`, joined to both lot numbers.
+    /// `by_child` selects the lot's parents; otherwise its children.
+    async fn genealogy_links_async(
+        &self,
+        lot_id: Uuid,
+        by_child: bool,
+    ) -> Result<Vec<LotGenealogyLink>> {
+        let sql = if by_child {
+            "SELECT g.child_lot_id, g.parent_lot_id, p.lot_number AS parent_lot_number,
+                    c.lot_number AS child_lot_number, g.relationship, g.quantity, g.created_at
+             FROM lot_genealogy g
+             JOIN lots p ON p.id = g.parent_lot_id
+             JOIN lots c ON c.id = g.child_lot_id
+             WHERE g.child_lot_id = $1
+             ORDER BY g.created_at ASC, p.lot_number ASC"
+        } else {
+            "SELECT g.child_lot_id, g.parent_lot_id, p.lot_number AS parent_lot_number,
+                    c.lot_number AS child_lot_number, g.relationship, g.quantity, g.created_at
+             FROM lot_genealogy g
+             JOIN lots p ON p.id = g.parent_lot_id
+             JOIN lots c ON c.id = g.child_lot_id
+             WHERE g.parent_lot_id = $1
+             ORDER BY g.created_at ASC, c.lot_number ASC"
+        };
+        let rows = sqlx::query_as::<_, LotGenealogyRow>(sql)
+            .bind(lot_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+        rows.into_iter().map(Self::row_to_genealogy).collect()
+    }
+
+    /// Every ancestor lot of `lot_id`, nearest first, walked breadth-first
+    /// through `lot_genealogy`.
+    ///
+    /// A child is always created after its parents so the graph is acyclic by
+    /// construction; the visited set keeps a hand-edited table from looping and
+    /// [`Self::GENEALOGY_MAX_ANCESTORS`] bounds a pathological chain.
+    async fn ancestor_lots_async(&self, lot_id: Uuid) -> Result<Vec<Lot>> {
+        let mut seen = std::collections::HashSet::from([lot_id]);
+        let mut queue = std::collections::VecDeque::from([lot_id]);
+        let mut ancestors = Vec::new();
+        while let Some(current) = queue.pop_front() {
+            if ancestors.len() >= Self::GENEALOGY_MAX_ANCESTORS {
+                break;
+            }
+            for link in self.genealogy_links_async(current, true).await? {
+                if !seen.insert(link.parent_lot_id) {
+                    continue;
+                }
+                if let Some(parent) = self.get_async(link.parent_lot_id).await? {
+                    ancestors.push(parent);
+                    queue.push_back(link.parent_lot_id);
+                }
+            }
+        }
+        Ok(ancestors)
     }
 
     /// Apply a signed movement to the `inventory_balances` row for
@@ -1038,11 +1263,24 @@ impl PgLotRepository {
         Ok(lots)
     }
 
+    /// Delete a lot that never moved (at most the creation receipt).
+    ///
+    /// The row is locked and the history checked inside the same transaction
+    /// as the delete: reading on the pool and then deleting would let a
+    /// concurrent `consume` slip a transaction in between and lose it to the
+    /// `ON DELETE CASCADE`.
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        sqlx::query("SELECT 1 FROM lots WHERE id = $1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
         let count: (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM lot_transactions WHERE lot_id = $1")
                 .bind(id)
-                .fetch_one(&self.pool)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -1054,10 +1292,11 @@ impl PgLotRepository {
 
         sqlx::query("DELETE FROM lots WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
+        tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
 
@@ -1542,6 +1781,9 @@ impl PgLotRepository {
             input.new_lot_number.unwrap_or_else(|| format!("{}-SPLIT", original.lot_number));
         let now = Utc::now();
 
+        // `status` is written as `active` rather than copied: the source is
+        // `Active` (`ensure_consolidatable_source`) and copying the column
+        // would silently launder a future non-sellable status onto the child.
         sqlx::query(
             r#"
             INSERT INTO lots (
@@ -1550,7 +1792,7 @@ impl PgLotRepository {
                 best_before_date, supplier_lot, supplier_id, work_order_id, purchase_order_id,
                 cost_per_unit, attributes, notes, created_at, updated_at
             )
-            SELECT $1, $2, sku, status, $3, $3, 0, 0, production_date, expiration_date,
+            SELECT $1, $2, sku, 'active', $3, $3, 0, 0, production_date, expiration_date,
                    best_before_date, supplier_lot, supplier_id, work_order_id, purchase_order_id,
                    cost_per_unit, attributes, $4, $5, $5
             FROM lots WHERE id = $6
@@ -1566,14 +1808,40 @@ impl PgLotRepository {
         .await
         .map_err(map_db_error)?;
 
+        // Status-conditional: the row is already locked `FOR UPDATE`, but the
+        // guard keeps the write honest if the read ever moves.
         let new_remaining = original.quantity_remaining - input.quantity;
-        sqlx::query("UPDATE lots SET quantity_remaining = $1, updated_at = $2 WHERE id = $3")
-            .bind(new_remaining)
-            .bind(now)
-            .bind(input.lot_id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let updated = sqlx::query(
+            "UPDATE lots SET quantity_remaining = $1, updated_at = $2 WHERE id = $3 AND status = $4",
+        )
+        .bind(new_remaining)
+        .bind(now)
+        .bind(input.lot_id)
+        .bind(original.status.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot split lot {} ({}): status changed concurrently",
+                original.lot_number, original.id
+            )));
+        }
+
+        // The units move between lots, so the placements move with them and
+        // `inventory_balances` stays put (nothing entered or left the
+        // location). Without this the child is unplaced — invisible to
+        // inventory forever — and the source over-reports.
+        Self::move_placements_on(&mut tx, input.lot_id, new_lot_id, input.quantity, now).await?;
+        Self::record_genealogy_on(
+            &mut tx,
+            new_lot_id,
+            input.lot_id,
+            LotRelationship::Split,
+            input.quantity,
+            now,
+        )
+        .await?;
 
         Self::record_transaction_tx(
             &mut tx,
@@ -1614,11 +1882,17 @@ impl PgLotRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
+        // Sources are locked `FOR UPDATE` in a canonical id order so two
+        // concurrent merges naming the same lots in different orders cannot
+        // deadlock on each other.
+        let mut lock_order: Vec<Uuid> = input.source_lot_ids.clone();
+        lock_order.sort_unstable();
+
         let mut total_quantity = Decimal::ZERO;
         let mut sku: Option<String> = None;
-        let mut lots_to_consume: Vec<(Uuid, String, Decimal)> = Vec::new();
+        let mut lots_to_consume: Vec<Lot> = Vec::new();
 
-        for lot_id in &input.source_lot_ids {
+        for lot_id in &lock_order {
             let lot_row =
                 sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
                     .bind(lot_id)
@@ -1656,7 +1930,7 @@ impl PgLotRepository {
             }
 
             total_quantity += lot.quantity_remaining;
-            lots_to_consume.push((lot.id, lot.lot_number, lot.quantity_remaining));
+            lots_to_consume.push(lot);
         }
 
         let sku =
@@ -1674,13 +1948,20 @@ impl PgLotRepository {
             .map_err(map_db_error)?;
         let template = Self::row_to_lot(template_row)?;
 
+        // Provenance a merged lot can honestly claim on its own row: only the
+        // fields every source agrees on. Where they disagree the column stays
+        // NULL and `lot_genealogy` (written below) is the answer — inheriting
+        // source #1's supplier would be a fabricated attribution.
+        let provenance = MergedProvenance::of(&lots_to_consume);
+
         sqlx::query(
             r#"
             INSERT INTO lots (
                 id, lot_number, sku, status, quantity_produced, quantity_remaining,
                 quantity_reserved, quantity_quarantined, production_date, expiration_date,
-                best_before_date, cost_per_unit, attributes, notes, created_at, updated_at
-            ) VALUES ($1,$2,$3,'active',$4,$4,0,0,$5,$6,$7,$8,'{}',$9,$10,$10)
+                best_before_date, supplier_lot, supplier_id, work_order_id, purchase_order_id,
+                cost_per_unit, attributes, notes, created_at, updated_at
+            ) VALUES ($1,$2,$3,'active',$4,$4,0,0,$5,$6,$7,$8,$9,$10,$11,$12,'{}',$13,$14,$14)
             "#,
         )
         .bind(new_lot_id)
@@ -1690,6 +1971,10 @@ impl PgLotRepository {
         .bind(template.production_date)
         .bind(template.expiration_date)
         .bind(template.best_before_date)
+        .bind(provenance.supplier_lot.as_deref())
+        .bind(provenance.supplier_id)
+        .bind(provenance.work_order_id)
+        .bind(provenance.purchase_order_id)
         .bind(template.cost_per_unit)
         .bind(input.reason.as_ref().map(|r| format!("Merged lots: {}", r)))
         .bind(now)
@@ -1697,19 +1982,56 @@ impl PgLotRepository {
         .await
         .map_err(map_db_error)?;
 
-        for (lot_id, _lot_number, quantity) in lots_to_consume {
-            sqlx::query(
-                "UPDATE lots SET status = 'consumed', quantity_remaining = 0, updated_at = $1 WHERE id = $2",
+        for source in &lots_to_consume {
+            let quantity = source.quantity_remaining;
+            // Status-conditional so a concurrent transition cannot be
+            // overwritten, and so the merge cannot consume a lot twice.
+            let updated = sqlx::query(
+                "UPDATE lots SET status = 'consumed', quantity_remaining = 0, updated_at = $1
+                 WHERE id = $2 AND status = $3",
             )
             .bind(now)
-            .bind(lot_id)
+            .bind(source.id)
+            .bind(source.status.to_string())
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+            if updated.rows_affected() != 1 {
+                return Err(CommerceError::ValidationError(format!(
+                    "Cannot merge lot {} ({}): status changed concurrently",
+                    source.lot_number, source.id
+                )));
+            }
+
+            // The units move onto the target lot, so its placements do too —
+            // `inventory_balances` is unchanged because nothing entered or
+            // left the location. Without this the sources drop out of the
+            // lot/inventory invariant (they are `Consumed`) while the target
+            // is unplaced, and consuming the merged lot would never decrement
+            // a balance again.
+            Self::move_placements_on(&mut tx, source.id, new_lot_id, quantity, now).await?;
+            // The source is fully consumed by the merge, so it keeps no
+            // placement: `consume` decrements the lot but not its placement
+            // rows, so a partially-consumed source would otherwise leave a
+            // phantom row behind claiming stock the merged lot now holds.
+            sqlx::query("DELETE FROM lot_locations WHERE lot_id = $1")
+                .bind(source.id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            Self::record_genealogy_on(
+                &mut tx,
+                new_lot_id,
+                source.id,
+                LotRelationship::Merge,
+                quantity,
+                now,
+            )
+            .await?;
 
             Self::record_transaction_tx(
                 &mut tx,
-                lot_id,
+                source.id,
                 LotTransactionType::Merged,
                 -quantity,
                 "lot_merge",
@@ -1833,6 +2155,16 @@ impl PgLotRepository {
         .map_err(map_db_error)?;
 
         Ok(rows.into_iter().map(Self::row_to_location).collect())
+    }
+
+    /// The lots this lot was derived from (split parent / merge sources).
+    pub async fn get_lot_parents_async(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+        self.genealogy_links_async(lot_id, true).await
+    }
+
+    /// The lots derived from this lot (split children / merge target).
+    pub async fn get_lot_children_async(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+        self.genealogy_links_async(lot_id, false).await
     }
 
     pub async fn add_certificate_async(&self, input: AddLotCertificate) -> Result<LotCertificate> {
@@ -2026,33 +2358,56 @@ impl PgLotRepository {
         Ok(lots)
     }
 
+    /// Upstream is the lot's own receipt documents **plus** every ancestor
+    /// reached through `lot_genealogy` and that ancestor's receipt documents,
+    /// so a merged or repeatedly-split lot resolves to all of its origins;
+    /// downstream is its consumption / shipment transactions.
     pub async fn trace_async(&self, lot_id: Uuid) -> Result<TraceabilityResult> {
         let lot = self.get_async(lot_id).await?.ok_or(CommerceError::NotFound)?;
 
         let mut upstream = Vec::new();
-        if let Some(po_id) = lot.purchase_order_id {
+        // The lot itself, then its ancestors nearest-first: one `Lot` node per
+        // ancestor plus whatever receipt documents that ancestor carries.
+        // `merge` only keeps the provenance columns its sources agreed on, so
+        // this walk is the only way back to the rest.
+        let ancestors = self.ancestor_lots_async(lot_id).await?;
+        for ancestor in &ancestors {
             upstream.push(TraceNode {
-                node_type: TraceNodeType::PurchaseOrder,
-                node_id: po_id,
+                node_type: TraceNodeType::Lot,
+                node_id: ancestor.id,
                 reference_number: None,
-                lot_number: Some(lot.lot_number.clone()),
+                lot_number: Some(ancestor.lot_number.clone()),
                 serial_number: None,
-                quantity: lot.quantity_produced,
-                timestamp: lot.created_at,
-                entity_name: None,
+                quantity: ancestor.quantity_produced,
+                timestamp: ancestor.created_at,
+                entity_name: ancestor.supplier_lot.clone(),
             });
         }
-        if let Some(wo_id) = lot.work_order_id {
-            upstream.push(TraceNode {
-                node_type: TraceNodeType::WorkOrder,
-                node_id: wo_id,
-                reference_number: None,
-                lot_number: Some(lot.lot_number.clone()),
-                serial_number: None,
-                quantity: lot.quantity_produced,
-                timestamp: lot.created_at,
-                entity_name: None,
-            });
+        for origin in std::iter::once(&lot).chain(ancestors.iter()) {
+            if let Some(po_id) = origin.purchase_order_id {
+                upstream.push(TraceNode {
+                    node_type: TraceNodeType::PurchaseOrder,
+                    node_id: po_id,
+                    reference_number: None,
+                    lot_number: Some(origin.lot_number.clone()),
+                    serial_number: None,
+                    quantity: origin.quantity_produced,
+                    timestamp: origin.created_at,
+                    entity_name: origin.supplier_lot.clone(),
+                });
+            }
+            if let Some(wo_id) = origin.work_order_id {
+                upstream.push(TraceNode {
+                    node_type: TraceNodeType::WorkOrder,
+                    node_id: wo_id,
+                    reference_number: None,
+                    lot_number: Some(origin.lot_number.clone()),
+                    serial_number: None,
+                    quantity: origin.quantity_produced,
+                    timestamp: origin.created_at,
+                    entity_name: origin.supplier_lot.clone(),
+                });
+            }
         }
 
         let rows = sqlx::query_as::<_, (String, String, Uuid, Decimal, DateTime<Utc>)>(
@@ -2075,6 +2430,13 @@ impl PgLotRepository {
                     "order" => TraceNodeType::Order,
                     "shipment" => TraceNodeType::Shipment,
                     "work_order" => TraceNodeType::WorkOrder,
+                    "return" => TraceNodeType::Return,
+                    "transfer" => TraceNodeType::Transfer,
+                    "purchase_order" => TraceNodeType::PurchaseOrder,
+                    "receipt" => TraceNodeType::Receipt,
+                    // `reference_type` is free-form text written by callers, so
+                    // this arm cannot be exhaustive; anything unrecognised is
+                    // reported as a bare stock movement rather than guessed at.
                     _ => TraceNodeType::Adjustment,
                 };
 
@@ -2225,6 +2587,14 @@ impl LotRepository for PgLotRepository {
 
     fn get_lot_locations(&self, lot_id: Uuid) -> Result<Vec<LotLocation>> {
         block_on(self.get_lot_locations_async(lot_id))
+    }
+
+    fn get_lot_parents(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+        block_on(self.get_lot_parents_async(lot_id))
+    }
+
+    fn get_lot_children(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+        block_on(self.get_lot_children_async(lot_id))
     }
 
     fn add_certificate(&self, input: AddLotCertificate) -> Result<LotCertificate> {

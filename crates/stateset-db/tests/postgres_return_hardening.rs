@@ -405,10 +405,78 @@ async fn reject_after_restock_is_refused_and_claim_is_kept() {
     let err = db.returns().create_async(return_request(&order, 1)).await.expect_err("claimed");
     assert!(matches!(err, CommerceError::ReturnExceedsReturnable { .. }), "got {err:?}");
 
-    // Reject from Inspecting stays allowed without a stock disposition; the
-    // SQLite backend used to allow it only from Requested (parity).
+    // Scrap and return-to-vendor destroy the goods without a stock effect, so
+    // the old `affects_stock`-only guard let a scrapped return be rejected —
+    // which released its claim and made the destroyed units returnable and
+    // refundable again. ANY disposition now pins the return.
+    for (label, disp) in [
+        ("scrap", ReturnDisposition::Scrap),
+        ("return_to_vendor", ReturnDisposition::ReturnToVendor),
+        ("refurbish", ReturnDisposition::Refurbish),
+    ] {
+        let sku = unique_sku(&format!("SKU-REJ-{label}"));
+        item(&db, &sku).await;
+        let order = shipped_order(&db, &sku, 1, dec!(10), None).await;
+        let ret = received_return(&db, &order, 1).await;
+        db.returns()
+            .update_async(
+                ret.id.into_uuid(),
+                UpdateReturn { status: Some(ReturnStatus::Inspecting), ..Default::default() },
+            )
+            .await
+            .unwrap();
+        db.returns()
+            .set_item_disposition_async(ret.id, ret.items[0].id, disposition(disp, wh))
+            .await
+            .unwrap();
+        let err = db
+            .returns()
+            .reject_async(ret.id.into_uuid(), "damaged")
+            .await
+            .expect_err("reject after a disposition");
+        assert!(matches!(err, CommerceError::Conflict(_)), "{label}: got {err:?}");
+        let err = db
+            .returns()
+            .create_async(return_request(&order, 1))
+            .await
+            .expect_err("units already claimed");
+        assert!(
+            matches!(err, CommerceError::ReturnExceedsReturnable { .. }),
+            "{label}: got {err:?}"
+        );
+    }
+
+    // Rejecting is still allowed while nothing has been dispositioned.
     let order = shipped_order(&db, &unique_sku("SKU-REJ-OK"), 1, dec!(10), None).await;
     let ret = received_return(&db, &order, 1).await;
+    db.returns()
+        .update_async(
+            ret.id.into_uuid(),
+            UpdateReturn { status: Some(ReturnStatus::Inspecting), ..Default::default() },
+        )
+        .await
+        .unwrap();
+    let rejected = db.returns().reject_async(ret.id.into_uuid(), "damaged").await.unwrap();
+    assert_eq!(rejected.status, ReturnStatus::Rejected);
+}
+
+// ---------------------------------------------------------------------------
+// R9: deleting a return may not free the order-line claim
+// ---------------------------------------------------------------------------
+
+/// A completed, restocked, refunded return used to be deletable in any status.
+/// The over-return guard counts claims from the surviving `return_items`, so
+/// the delete made the same units returnable and refundable again while the
+/// restocked stock stayed on the shelf.
+#[tokio::test]
+async fn delete_is_refused_once_the_return_has_had_any_effect() {
+    let db = require_pg!();
+    let wh = warehouse(&db).await;
+    let sku = unique_sku("SKU-DEL");
+    item(&db, &sku).await;
+    let order = shipped_order(&db, &sku, 2, dec!(10), None).await;
+    completed_payment(&db, &order, dec!(20)).await;
+    let ret = received_return(&db, &order, 2).await;
     db.returns()
         .update_async(
             ret.id.into_uuid(),
@@ -420,12 +488,84 @@ async fn reject_after_restock_is_refused_and_claim_is_kept() {
         .set_item_disposition_async(
             ret.id,
             ret.items[0].id,
-            disposition(ReturnDisposition::Scrap, wh),
+            disposition(ReturnDisposition::Restock, wh),
         )
         .await
         .unwrap();
-    let rejected = db.returns().reject_async(ret.id.into_uuid(), "damaged").await.unwrap();
-    assert_eq!(rejected.status, ReturnStatus::Rejected);
+    db.returns().complete_async(ret.id.into_uuid()).await.expect("complete");
+    assert_eq!(on_hand(&db, &sku, wh).await, (dec!(2), dec!(0)));
+
+    for label in ["delete", "delete_batch_atomic"] {
+        let err = if label == "delete" {
+            db.returns().delete_async(ret.id.into_uuid()).await
+        } else {
+            db.returns().delete_batch_atomic_async(vec![ret.id]).await
+        }
+        .expect_err("a completed, restocked return is not deletable");
+        assert!(matches!(err, CommerceError::NotPermitted(_)), "{label}: got {err:?}");
+    }
+
+    // The return survives, so its claim on the order line survives with it.
+    assert!(db.returns().get_async(ret.id.into_uuid()).await.unwrap().is_some());
+    let err = db.returns().create_async(return_request(&order, 1)).await.expect_err("claimed");
+    assert!(matches!(err, CommerceError::ReturnExceedsReturnable { .. }), "got {err:?}");
+    assert_eq!(on_hand(&db, &sku, wh).await, (dec!(2), dec!(0)));
+}
+
+/// Deletion is allowed only in the early, no-effect window: `requested` and
+/// `approved`. Everything later — goods in motion, or terminal — is refused.
+///
+/// Every case gets its own single-unit order (and therefore its own SKU): the
+/// undeletable returns survive the test, and piling them onto one SKU would
+/// leave a large residue in the shared test database.
+#[tokio::test]
+async fn delete_window_is_requested_and_approved_only() {
+    let db = require_pg!();
+    let order = shipped_order(&db, &unique_sku("SKU-DELWIN"), 1, dec!(10), None).await;
+    let requested = db.returns().create_async(return_request(&order, 1)).await.expect("create");
+    db.returns().delete_async(requested.id.into_uuid()).await.expect("delete requested");
+    assert!(db.returns().get_async(requested.id.into_uuid()).await.unwrap().is_none());
+    assert!(db.returns().get_items_async(requested.id.into_uuid()).await.unwrap().is_empty());
+
+    let approved = db.returns().create_async(return_request(&order, 1)).await.expect("create");
+    db.returns().approve_async(approved.id.into_uuid()).await.expect("approve");
+    db.returns().delete_async(approved.id.into_uuid()).await.expect("delete approved");
+    assert!(db.returns().get_async(approved.id.into_uuid()).await.unwrap().is_none());
+
+    for statuses in [
+        vec![ReturnStatus::InTransit],
+        vec![ReturnStatus::InTransit, ReturnStatus::Received],
+        vec![ReturnStatus::InTransit, ReturnStatus::Received, ReturnStatus::Inspecting],
+    ] {
+        let order = shipped_order(&db, &unique_sku("SKU-DELWIN"), 1, dec!(10), None).await;
+        let ret = db.returns().create_async(return_request(&order, 1)).await.expect("create");
+        db.returns().approve_async(ret.id.into_uuid()).await.expect("approve");
+        for status in &statuses {
+            db.returns()
+                .update_async(
+                    ret.id.into_uuid(),
+                    UpdateReturn { status: Some(*status), ..Default::default() },
+                )
+                .await
+                .expect("advance");
+        }
+        let err = db
+            .returns()
+            .delete_async(ret.id.into_uuid())
+            .await
+            .expect_err("in-flight returns are not deletable");
+        assert!(matches!(err, CommerceError::NotPermitted(_)), "{statuses:?}: got {err:?}");
+    }
+
+    let order = shipped_order(&db, &unique_sku("SKU-DELWIN"), 1, dec!(10), None).await;
+    let cancelled = db.returns().create_async(return_request(&order, 1)).await.expect("create");
+    db.returns().cancel_async(cancelled.id.into_uuid()).await.expect("cancel");
+    let err = db
+        .returns()
+        .delete_async(cancelled.id.into_uuid())
+        .await
+        .expect_err("terminal returns are not deletable");
+    assert!(matches!(err, CommerceError::NotPermitted(_)), "got {err:?}");
 }
 
 #[tokio::test]

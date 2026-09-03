@@ -97,6 +97,14 @@ pub(crate) const CLAIMING_STATUSES: [X402IntentStatus; 5] = [
 /// Refuse a new cart/order-linked intent while one of `existing` still
 /// claims (or has settled) the same source. The error names the existing
 /// intent so a caller can reuse or cancel it (idempotent-style).
+///
+/// This is a courtesy check, not the guard. Reading `for_cart` / `for_order`
+/// here and then calling `create` are two statements outside any transaction,
+/// so two simultaneous `create_intent` calls for one cart both passed it and
+/// both inserted — a double charge. The repository re-checks inside its write
+/// transaction and the `cart_claim_key` / `order_claim_key` unique indexes
+/// (migrations 094 / 101) are the backstop; this check only turns the common
+/// case into a better-worded conflict before any row is written.
 pub(crate) fn refuse_duplicate_claim(
     source: &str,
     source_id: Uuid,

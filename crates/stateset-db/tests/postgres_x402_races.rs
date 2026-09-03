@@ -260,3 +260,97 @@ async fn postgres_x402_credit_concurrent_debits_never_go_negative() {
         assert!(raw >= 0, "balance must never be negative, got {raw}");
     }
 }
+
+/// Postgres twin of `sqlite_x402_concurrent_creates_for_one_cart_leave_exactly_one_claim`.
+///
+/// Two `create_intent` calls for one cart used to both pass the accessor's
+/// read-then-create duplicate check and both insert, double-charging the cart.
+/// The repository now re-checks inside its write transaction, and the
+/// `cart_claim_key` unique index (migration 101) catches the interleaving that
+/// beats the re-check.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn postgres_x402_concurrent_creates_for_one_cart_leave_exactly_one_claim() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = Arc::new(PostgresDatabase::connect(&url).await.expect("connect + migrate"));
+    for _ in 0..5 {
+        let cart_id = Uuid::new_v4();
+        let handles: Vec<_> = (0..4)
+            .map(|index| {
+                let db = Arc::clone(&db);
+                tokio::spawn(async move {
+                    db.x402_payment_intents()
+                        .create_async(CreateX402PaymentIntent {
+                            payer_address: format!(
+                                "0xpayer-claim-{index}-{}",
+                                Uuid::new_v4().as_simple()
+                            ),
+                            payee_address: "0xpayee-claim".to_string(),
+                            amount: 1_000_000,
+                            asset: X402Asset::Usdc,
+                            network: X402Network::SetChain,
+                            cart_id: Some(cart_id),
+                            ..Default::default()
+                        })
+                        .await
+                })
+            })
+            .collect();
+        let mut winners = 0;
+        for handle in handles {
+            match handle.await.expect("join") {
+                Ok(_) => winners += 1,
+                Err(error) => assert!(
+                    matches!(error, CommerceError::Conflict(_)),
+                    "losing create must be a conflict, got {error:?}"
+                ),
+            }
+        }
+        assert_eq!(winners, 1, "exactly one create may claim a cart");
+        let claiming = db.x402_payment_intents().for_cart_async(cart_id).await.expect("for_cart");
+        assert_eq!(claiming.len(), 1, "one row per claimed cart");
+    }
+}
+
+/// Leaving the claiming set releases the cart for a replacement intent.
+#[tokio::test]
+async fn postgres_x402_cancelling_a_claim_frees_the_cart_for_a_new_intent() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let cart_id = Uuid::new_v4();
+    let make = |payer: String| CreateX402PaymentIntent {
+        payer_address: payer,
+        payee_address: "0xpayee-claim".to_string(),
+        amount: 1_000_000,
+        asset: X402Asset::Usdc,
+        network: X402Network::SetChain,
+        cart_id: Some(cart_id),
+        ..Default::default()
+    };
+    let intent = db
+        .x402_payment_intents()
+        .create_async(make(format!("0xpayer-a-{}", Uuid::new_v4().as_simple())))
+        .await
+        .expect("first intent claims the cart");
+    let blocked = db
+        .x402_payment_intents()
+        .create_async(make(format!("0xpayer-b-{}", Uuid::new_v4().as_simple())))
+        .await;
+    match blocked {
+        Err(CommerceError::Conflict(message)) => assert!(
+            message.contains(&intent.id.to_string()),
+            "conflict names the winner: {message}"
+        ),
+        other => panic!("second claim must conflict, got {other:?}"),
+    }
+    db.x402_payment_intents().cancel_async(intent.id).await.expect("cancel releases the claim");
+    db.x402_payment_intents()
+        .create_async(make(format!("0xpayer-c-{}", Uuid::new_v4().as_simple())))
+        .await
+        .expect("a released cart accepts a new intent");
+}

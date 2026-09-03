@@ -112,8 +112,11 @@ fn concurrent_workers_claim_disjoint_batches_and_bill_each_subscription_once() {
                             period_end,
                         )
                         .expect("lease holder bills");
+                    // Paying the cycle finishes the work the lease
+                    // protected, so it is released there; an explicit
+                    // release afterwards is a harmless no-op.
                     subs.mark_cycle_paid(cycle.id).expect("mark paid");
-                    assert!(subs.release_billing_claim(sub.id, &worker_id).expect("release"));
+                    assert!(!subs.release_billing_claim(sub.id, &worker_id).expect("release"));
                     billed.push(sub.id);
                 }
                 billed
@@ -173,6 +176,43 @@ fn a_leased_subscription_can_only_be_billed_by_the_lease_holder() {
     assert!(!subs.release_billing_claim(sub.id, "w2").expect("release"));
     assert!(subs.release_billing_claim(sub.id, "w1").expect("release"));
     subs.create_billing_cycle(sub.id, 3, end, end + Duration::days(30)).expect("unleased");
+}
+
+/// A settled cycle ENDS the claim. The lease used to be left to expire, so a
+/// subscription that had finished billing stayed pinned for the rest of the
+/// lease — a retry or a schedule change had to wait the clock out even though
+/// no worker was touching it.
+#[test]
+fn paying_a_cycle_releases_the_lease_immediately() {
+    let commerce = commerce();
+    let plan_id = plan(&commerce, 0);
+    let now = Utc::now();
+    let sub = subscribe(&commerce, plan_id, now - Duration::days(40));
+    let subs = commerce.subscriptions();
+
+    // A long lease, so nothing here can be explained by expiry.
+    let claimed = subs.claim_due_for_billing(10, "w1", 86_400, now).expect("claim");
+    assert_eq!(claimed[0].billing_lease_owner.as_deref(), Some("w1"));
+    let (start, end) = (sub.current_period_end, sub.current_period_end + Duration::days(30));
+    let cycle =
+        subs.create_claimed_billing_cycle("w1", sub.id, 2, start, end).expect("lease holder");
+
+    // Still leased while the cycle is unpaid.
+    assert!(subs.claim_due_for_billing(10, "w2", 60, now).expect("claim").is_empty());
+
+    subs.mark_cycle_paid(cycle.id).expect("mark paid");
+    let after = reload(&commerce, sub.id);
+    assert_eq!(after.billing_lease_owner, None, "a settled cycle releases the lease");
+    assert_eq!(after.billing_lease_until, None);
+    // Releasing again changes nothing (no rows match).
+    assert!(!subs.release_billing_claim(sub.id, "w1").expect("release"));
+
+    // And the subscription is immediately claimable again by anyone once its
+    // clock next comes due, rather than waiting the old lease out.
+    let next_due = after.next_billing_date.expect("clock advanced") + Duration::seconds(1);
+    let reclaimed = subs.claim_due_for_billing(10, "w2", 60, next_due).expect("claim");
+    assert_eq!(reclaimed.len(), 1, "immediately re-claimable");
+    assert_eq!(reclaimed[0].billing_lease_owner.as_deref(), Some("w2"));
 }
 
 #[test]
@@ -239,6 +279,8 @@ fn trial_subscription_is_due_once_its_trial_ends_and_activates_on_first_cycle() 
     let events = subs.get_events(elapsed.id).expect("events");
     assert!(events.iter().any(|e| e.event_type == SubscriptionEventType::Activated), "{events:?}");
     subs.mark_cycle_paid(cycle.id).expect("paid");
-    assert!(subs.release_billing_claim(elapsed.id, "w1").expect("release"));
+    // The paid cycle released the lease already.
+    assert!(!subs.release_billing_claim(elapsed.id, "w1").expect("release"));
+    assert_eq!(reload(&commerce, elapsed.id).billing_lease_owner, None);
     assert!(subs.get_due_for_billing(now).expect("due").is_empty());
 }

@@ -63,7 +63,23 @@ pub trait OrderRepository: Send + Sync {
     /// Remove a line from a pre-fulfilment order: releases the line's own
     /// reservations, cancels its backorder, recomputes the total and writes
     /// an `orders.item_removed.v1` outbox event, all in one transaction.
-    fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()>;
+    ///
+    /// Subject to the money rule of [`crate::RemoveOrderItem`]: refused with
+    /// [`crate::CommerceError::OrderTotalBelowCaptured`] when the order's new
+    /// total would fall below the money already captured against it.
+    /// [`Self::remove_item_with`] can opt out.
+    fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()> {
+        self.remove_item_with(order_id, item_id, RemoveOrderItem::default())
+    }
+
+    /// [`Self::remove_item`] with explicit handling of the order's captured
+    /// money; see [`crate::RemoveOrderItem::allow_overpayment`].
+    fn remove_item_with(
+        &self,
+        order_id: OrderId,
+        item_id: OrderItemId,
+        input: RemoveOrderItem,
+    ) -> Result<()>;
 
     /// Count orders matching filter
     fn count(&self, filter: OrderFilter) -> Result<u64>;

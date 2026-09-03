@@ -344,6 +344,15 @@ impl Inventory {
         Ok(())
     }
 
+    /// Fetch one reservation by id.
+    ///
+    /// Needed by any surface that hands out reservation ids (the HTTP
+    /// reservation endpoints, an agent holding stock for a cart) so the
+    /// holder can read back the hold it created.
+    pub fn get_reservation(&self, reservation_id: Uuid) -> Result<Option<InventoryReservation>> {
+        self.db.inventory().get_reservation(reservation_id)
+    }
+
     /// List reservations by reference (e.g., order id).
     pub fn list_reservations_by_reference(
         &self,

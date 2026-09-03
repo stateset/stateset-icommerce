@@ -30,6 +30,12 @@ impl AsyncX402 {
 
     /// Mirror of the sync accessor: an intent for a cart/order must be for
     /// exactly the cart `grand_total` / order `total_amount` in that currency.
+    ///
+    /// The duplicate-claim part of this check is a courtesy: it reads and then
+    /// creates as two statements, so it cannot stop two simultaneous creates
+    /// on its own. `create_async` re-checks inside its write transaction, and
+    /// the `cart_claim_key` / `order_claim_key` unique indexes (migration 101)
+    /// are the backstop.
     async fn reconcile_with_source(&self, input: &CreateX402PaymentIntent) -> Result<()> {
         if let Some(cart_id) = input.cart_id {
             let cart = self.db.carts().get_async(cart_id).await?.ok_or_else(|| {

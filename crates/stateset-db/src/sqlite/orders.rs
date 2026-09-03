@@ -24,10 +24,10 @@ use rust_decimal::Decimal;
 use stateset_core::{
     Address, BatchResult, CartId, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem,
     CustomerId, FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem, OrderItemId,
-    OrderRepository, OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result, ShipOrder,
-    ShipmentLineInput, StockPolicy, UpdateOrder, validate_batch_size, validate_currency_code,
-    validate_postal_code, validate_price, validate_required_text, validate_required_uuid,
-    validate_sku,
+    OrderRepository, OrderStatus, PaymentStatus, ProductId, RemoveOrderItem, ReserveInventory,
+    Result, ShipOrder, ShipmentLineInput, StockPolicy, UpdateOrder, validate_batch_size,
+    validate_currency_code, validate_postal_code, validate_price, validate_required_text,
+    validate_required_uuid, validate_sku,
 };
 use uuid::Uuid;
 
@@ -88,6 +88,71 @@ fn ensure_lines_mutable(id: OrderId, status: OrderStatus) -> Result<()> {
              lines may only be added or removed before fulfilment (pending, confirmed, processing)"
         )))
     }
+}
+
+/// Refuse an order-line mutation that would leave the order's `total_amount`
+/// below the money already captured against it.
+///
+/// The order total is the ceiling every capture is checked against
+/// (`check_order_capture_capacity_tx`, invariant
+/// `commerce.capture.exceeds_order_total`). Lowering the total from the other
+/// side — dropping a line — would break the same invariant and strand captured
+/// money above what the order is worth, which is precisely the state the cancel
+/// guard exists to prevent. Called AFTER the line change and
+/// `update_order_total`, on the same transaction, so it reads the total the
+/// order would actually commit with; returning `Err` rolls the whole mutation
+/// back.
+///
+/// `allow_overpayment` (see [`RemoveOrderItem`]) skips the check for a caller
+/// that will settle the resulting overpayment itself.
+fn ensure_total_covers_captures_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    id: OrderId,
+    allow_overpayment: bool,
+) -> std::result::Result<(), rusqlite::Error> {
+    if allow_overpayment {
+        return Ok(());
+    }
+    let open = open_captures_for_order_conn(tx, &id.to_string())?;
+    if open.is_empty() {
+        return Ok(());
+    }
+    let captured: Decimal = open.iter().map(|p| p.amount - p.amount_refunded).sum();
+    let (raw_total, raw_currency): (String, String) = tx.query_row(
+        "SELECT total_amount, currency FROM orders WHERE id = ?",
+        [id.to_string()],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let new_total = parse_decimal_row(&raw_total, "order", "total_amount")?;
+    if captured > new_total {
+        return Err(to_sql_err(CommerceError::OrderTotalBelowCaptured {
+            order_id: id.into_uuid(),
+            new_total: new_total.to_string(),
+            captured: captured.to_string(),
+            currency: raw_currency,
+        }));
+    }
+    Ok(())
+}
+
+/// Refuse an order line whose SKU has been withdrawn from the catalogue.
+///
+/// Runs inside the order-creating transaction, exactly as `carts.rs::add_item`
+/// does for cart lines, so an archived product or a soft-deleted variant cannot
+/// reach an order through `create`, `create_from_cart` (checkout), the batch
+/// creators or `add_item`. A SKU that is not in the catalogue at all is allowed
+/// through (`VariantPurchasability::NotInCatalog`) so ad-hoc and external lines
+/// keep working.
+fn ensure_lines_purchasable_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    items: &[CreateOrderItem],
+) -> std::result::Result<(), rusqlite::Error> {
+    for item in items {
+        super::products::variant_is_purchasable_with_conn(tx, &item.sku)
+            .and_then(|purchasability| purchasability.ensure_sellable(&item.sku))
+            .map_err(to_sql_err)?;
+    }
+    Ok(())
 }
 
 /// Refuse deletion of an order that has money against it.
@@ -322,12 +387,17 @@ impl SqliteOrderRepository {
         Ok(())
     }
 
+    /// Everything `create_internal_in_tx` would refuse, evaluated without
+    /// writing: the checkout PREVIEW path calls this so a preview never
+    /// succeeds where the apply would fail.
     pub(crate) fn validate_create_order_in_tx(
         tx: &rusqlite::Transaction<'_>,
         input: &CreateOrder,
     ) -> std::result::Result<(), rusqlite::Error> {
         Self::validate_order_input(input)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        // Same catalogue guard the write path applies.
+        ensure_lines_purchasable_in_tx(tx, &input.items)?;
         if input.stock_policy.allows_backorder() {
             return Ok(());
         }
@@ -653,6 +723,12 @@ impl SqliteOrderRepository {
                 )))
             });
         }
+
+        // Catalogue guard for every line, in the order-creating transaction.
+        // Deliberately AFTER the idempotent-checkout early return above: a
+        // replayed checkout must still resolve to the order it already minted,
+        // even if a SKU has been withdrawn since.
+        ensure_lines_purchasable_in_tx(tx, &input.items)?;
 
         let mut items = Vec::with_capacity(input.items.len());
         {
@@ -1644,6 +1720,11 @@ impl OrderRepository for SqliteOrderRepository {
             // leaves no line and no reservation behind.
             let (status, customer_id) = Self::load_status_and_customer_in_tx(tx, order_id)?;
             ensure_lines_mutable(order_id, status).map_err(to_sql_err)?;
+            // Same catalogue guard as creation: a withdrawn SKU cannot enter an
+            // order through the back door of `add_item` either.
+            super::products::variant_is_purchasable_with_conn(tx, &order_item.sku)
+                .and_then(|purchasability| purchasability.ensure_sellable(&order_item.sku))
+                .map_err(to_sql_err)?;
 
             tx.execute(
                 "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
@@ -1683,7 +1764,12 @@ impl OrderRepository for SqliteOrderRepository {
         Ok(order_item)
     }
 
-    fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()> {
+    fn remove_item_with(
+        &self,
+        order_id: OrderId,
+        item_id: OrderItemId,
+        input: RemoveOrderItem,
+    ) -> Result<()> {
         with_immediate_transaction(&self.pool, |tx| {
             let (status, _customer_id) = Self::load_status_and_customer_in_tx(tx, order_id)?;
             ensure_lines_mutable(order_id, status).map_err(to_sql_err)?;
@@ -1719,6 +1805,11 @@ impl OrderRepository for SqliteOrderRepository {
             )?;
 
             Self::update_order_total(tx, order_id).map_err(to_sql_err)?;
+            // Money guard, on the recomputed total: dropping this line must not
+            // leave the order worth less than the money already captured
+            // against it. `Err` here rolls back the delete, the reservation
+            // release and the backorder cancellation together.
+            ensure_total_covers_captures_in_tx(tx, order_id, input.allow_overpayment)?;
             Self::append_line_event_tx(tx, "orders.item_removed.v1", order_id, &removed)?;
             Ok(())
         })

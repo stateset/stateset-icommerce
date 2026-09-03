@@ -84,6 +84,14 @@ before it. A check that runs outside the transaction is not a guarantee.
 | O3 | Returned quantity per line ≤ quantity shipped (ordered, before shipment) | `commerce.return.exceeds_shipped` | `validate_return_item_tx` |
 | O4 | Order total foots to its line items; each line total = qty × unit price − discount + tax | — | model + engine agree after every op |
 | O5 | A cancelled order holds no live inventory reservation | — | reservation release on cancel |
+| O6 | An order's total can never be lowered below the money already captured against it | `commerce.order.total_below_captured` | `ensure_total_covers_captures_in_tx` on `remove_item` in both backends |
+
+O6 is O1 read from the other side. O1 refuses a capture above the order total;
+O6 refuses lowering the total below the captures. Without it, removing a line
+from a paid order left money stranded above the total — a state the cancel and
+capture guards both exist to prevent. `RemoveOrderItem { allow_overpayment:
+true }` is the explicit opt-out, for a caller that will settle the resulting
+overpayment itself (the line-removal twin of `UpdateOrder::void_payments`).
 
 ## Returns
 

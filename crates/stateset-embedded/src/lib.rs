@@ -822,6 +822,7 @@ pub use stateset_core::{
     RejectionReason,
     ReleaseCreditHold,
     ReleaseQualityHold,
+    RemoveOrderItem,
     RequestQuoteInput,
     RequestQuoteOutput,
     ReservationStatus,

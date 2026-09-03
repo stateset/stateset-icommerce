@@ -15,7 +15,7 @@ use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{
     CreateReturn, CreateReturnItem, CustomerId, ItemCondition, OrderId, OrderItemId, ReturnFilter,
-    ReturnId, ReturnReason, ReturnStatus,
+    ReturnId, ReturnReason, ReturnStatus, UpdateReturn,
 };
 use std::str::FromStr;
 
@@ -23,8 +23,10 @@ use std::str::FromStr;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/returns", post(create_return).get(list_returns))
-        .route("/returns/{id}", get(get_return))
+        .route("/returns/{id}", get(get_return).patch(update_return))
         .route("/returns/{id}/approve", patch(approve_return))
+        .route("/returns/{id}/reject", patch(reject_return))
+        .route("/returns/{id}/complete", patch(complete_return))
         .route("/returns/{id}/items/{item_id}/disposition", post(set_item_disposition))
 }
 
@@ -245,6 +247,186 @@ pub(crate) async fn approve_return(
     Ok(Json(ReturnResponse::from(ret)))
 }
 
+/// Request body for `PATCH /api/v1/returns/{id}`.
+///
+/// Every field is optional; the accessor applies the same guards as the
+/// dedicated action routes (legal transition, refund bounds, terminal returns
+/// immutable, no rejecting/cancelling after a disposition).
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
+pub(crate) struct UpdateReturnRequest {
+    /// Target status: `requested`, `approved`, `rejected`, `in_transit`,
+    /// `received`, `inspecting`, `completed` or `cancelled`.
+    pub status: Option<String>,
+    pub tracking_number: Option<String>,
+    /// Refund total. Non-negative and at most the sum of the line refunds.
+    pub refund_amount: Option<String>,
+    /// `original_payment` (the default) settles through the payments ledger on
+    /// completion; anything else (store credit, exchange, …) is recorded only.
+    pub refund_method: Option<String>,
+    pub notes: Option<String>,
+    /// Complete even though some received items have no disposition; the
+    /// undispositioned units are written off.
+    #[serde(default)]
+    pub write_off_undispositioned: bool,
+}
+
+impl TryFrom<UpdateReturnRequest> for UpdateReturn {
+    type Error = HttpError;
+
+    fn try_from(req: UpdateReturnRequest) -> Result<Self, Self::Error> {
+        let status = req
+            .status
+            .as_deref()
+            .map(ReturnStatus::from_str)
+            .transpose()
+            .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+        let refund_amount = req
+            .refund_amount
+            .as_deref()
+            .map(str::parse::<rust_decimal::Decimal>)
+            .transpose()
+            .map_err(|e| HttpError::BadRequest(format!("Invalid refund_amount: {e}")))?;
+        Ok(Self {
+            status,
+            tracking_number: req.tracking_number,
+            refund_amount,
+            refund_method: req.refund_method,
+            notes: req.notes,
+            write_off_undispositioned: req.write_off_undispositioned,
+        })
+    }
+}
+
+/// Request body for `PATCH /api/v1/returns/{id}/reject`.
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
+pub(crate) struct RejectReturnRequest {
+    /// Why the return was rejected; recorded in the return's notes.
+    #[serde(default)]
+    pub reason: String,
+}
+
+/// Request body for `PATCH /api/v1/returns/{id}/complete`.
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
+pub(crate) struct CompleteReturnRequest {
+    /// Complete even though some received items have no disposition. Off by
+    /// default so received goods cannot silently vanish.
+    #[serde(default)]
+    pub write_off_undispositioned: bool,
+}
+
+/// `PATCH /api/v1/returns/:id`
+///
+/// The general-purpose update: set the tracking number, the refund amount and
+/// method, notes, or drive the status machine. Reaching `completed` here
+/// settles the refund against the order's captured payments in the same
+/// transaction (unless `refund_method` settles out of band).
+#[utoipa::path(
+    patch,
+    operation_id = "return_update",
+    path = "/api/v1/returns/{id}",
+    tag = "returns",
+    request_body = UpdateReturnRequest,
+    params(("id" = String, Path, description = "Return ID (UUID)")),
+    responses(
+        (status = 200, description = "Return updated", body = ReturnResponse),
+        (status = 400, description = "Invalid field or illegal status transition", body = ErrorBody),
+        (status = 403, description = "Terminal return, or completion with undispositioned items", body = ErrorBody),
+        (status = 404, description = "Return not found", body = ErrorBody),
+        (status = 409, description = "Rejecting or cancelling after a disposition", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn update_return(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<ReturnId>,
+    Json(req): Json<UpdateReturnRequest>,
+) -> Result<Json<ReturnResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let input = UpdateReturn::try_from(req)?;
+    let ret = commerce.returns().update(id, input)?;
+    Ok(Json(ReturnResponse::from(ret)))
+}
+
+/// `PATCH /api/v1/returns/:id/reject`
+///
+/// Refused once any item has been dispositioned: the goods have either
+/// re-entered stock or been destroyed, and a rejected return releases its
+/// claim on the order line.
+#[utoipa::path(
+    patch,
+    operation_id = "return_reject",
+    path = "/api/v1/returns/{id}/reject",
+    tag = "returns",
+    request_body(content = Option<RejectReturnRequest>, description = "Optional rejection reason"),
+    params(("id" = String, Path, description = "Return ID (UUID)")),
+    responses(
+        (status = 200, description = "Return rejected", body = ReturnResponse),
+        (status = 400, description = "Return cannot be rejected from its current status", body = ErrorBody),
+        (status = 404, description = "Return not found", body = ErrorBody),
+        (status = 409, description = "An item has already been dispositioned", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, body))]
+pub(crate) async fn reject_return(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<ReturnId>,
+    body: Option<Json<RejectReturnRequest>>,
+) -> Result<Json<ReturnResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let RejectReturnRequest { reason } = body.map(|Json(b)| b).unwrap_or_default();
+    let ret = commerce.returns().reject(id, &reason)?;
+    Ok(Json(ReturnResponse::from(ret)))
+}
+
+/// `PATCH /api/v1/returns/:id/complete`
+///
+/// Settles the refund against the order's captured payments in the same
+/// transaction as the status write. Requires every item to be dispositioned
+/// unless the body sets `write_off_undispositioned`.
+#[utoipa::path(
+    patch,
+    operation_id = "return_complete",
+    path = "/api/v1/returns/{id}/complete",
+    tag = "returns",
+    request_body(content = Option<CompleteReturnRequest>, description = "Optional write-off of undispositioned items"),
+    params(("id" = String, Path, description = "Return ID (UUID)")),
+    responses(
+        (status = 200, description = "Return completed and refund settled", body = ReturnResponse),
+        (status = 400, description = "Return cannot be completed from its current status", body = ErrorBody),
+        (status = 403, description = "Items are still undispositioned", body = ErrorBody),
+        (status = 404, description = "Return not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, body))]
+pub(crate) async fn complete_return(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<ReturnId>,
+    body: Option<Json<CompleteReturnRequest>>,
+) -> Result<Json<ReturnResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let CompleteReturnRequest { write_off_undispositioned } =
+        body.map(|Json(b)| b).unwrap_or_default();
+    let ret = if write_off_undispositioned {
+        commerce.returns().update(
+            id,
+            UpdateReturn {
+                status: Some(ReturnStatus::Completed),
+                write_off_undispositioned: true,
+                ..Default::default()
+            },
+        )?
+    } else {
+        commerce.returns().complete(id)?
+    };
+    Ok(Json(ReturnResponse::from(ret)))
+}
+
 /// `GET /api/v1/returns`
 #[utoipa::path(
     get,
@@ -447,6 +629,192 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// Drive a whole return over HTTP: create → approve → in transit →
+    /// received → disposition → complete, and check that reject/complete/update
+    /// are reachable and carry the accessor's guards.
+    async fn json(resp: axum::response::Response) -> serde_json::Value {
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    fn patch_req(uri: &str, body: serde_json::Value) -> Request<Body> {
+        Request::builder()
+            .method("PATCH")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    /// A shipped single-line order, returned as (`order_id`, `order_item_id`).
+    fn shipped_order(commerce: &Commerce) -> (stateset_core::OrderId, uuid::Uuid) {
+        use stateset_core::{
+            CreateCustomer, CreateOrder, CreateOrderItem, CreateProduct, OrderStatus, UpdateOrder,
+        };
+        let unique = uuid::Uuid::new_v4().simple().to_string();
+        let customer = commerce
+            .customers()
+            .create(CreateCustomer {
+                email: format!("http-ret-{unique}@example.com"),
+                first_name: "Ret".into(),
+                last_name: "Urn".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let product = commerce
+            .products()
+            .create(CreateProduct { name: format!("Widget {unique}"), ..Default::default() })
+            .unwrap();
+        let order = commerce
+            .orders()
+            .create(CreateOrder {
+                customer_id: customer.id,
+                items: vec![CreateOrderItem {
+                    product_id: product.id,
+                    sku: format!("SKU-{unique}"),
+                    name: "Widget".into(),
+                    quantity: 2,
+                    unit_price: rust_decimal_macros::dec!(10),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+        for status in [OrderStatus::Confirmed, OrderStatus::Processing, OrderStatus::Shipped] {
+            commerce
+                .orders()
+                .update(order.id, UpdateOrder { status: Some(status), ..Default::default() })
+                .unwrap();
+        }
+        let order = commerce.orders().get(order.id).unwrap().unwrap();
+        let item_id = order.items[0].id.into_uuid();
+        (order.id, item_id)
+    }
+
+    async fn create_return_over_http(
+        app: &Router,
+        order_id: stateset_core::OrderId,
+        item_id: uuid::Uuid,
+        quantity: i32,
+    ) -> serde_json::Value {
+        let body = serde_json::json!({
+            "order_id": order_id.into_uuid(),
+            "reason": "damaged",
+            "items": [{ "order_item_id": item_id, "quantity": quantity }],
+        });
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::post("/returns")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        json(resp).await
+    }
+
+    #[tokio::test]
+    async fn update_reject_and_complete_are_reachable_over_http() {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let commerce = state.commerce_for_tenant(None).expect("commerce");
+        let app = router().with_state(state);
+        let (order_id, item_id) = shipped_order(&commerce);
+
+        // Reject a fresh request through the dedicated route.
+        let doomed = create_return_over_http(&app, order_id, item_id, 1).await;
+        let resp = app
+            .clone()
+            .oneshot(patch_req(
+                &format!("/returns/{}/reject", doomed["id"].as_str().unwrap()),
+                serde_json::json!({ "reason": "not our product" }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let rejected = json(resp).await;
+        assert_eq!(rejected["status"], "rejected");
+
+        // Walk a second return to completion through the generic update route.
+        let ret = create_return_over_http(&app, order_id, item_id, 2).await;
+        let id = ret["id"].as_str().unwrap().to_string();
+        let resp = app
+            .clone()
+            .oneshot(patch_req(
+                &format!("/returns/{id}/approve"),
+                serde_json::Value::Object(serde_json::Map::new()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        for status in ["in_transit", "received"] {
+            let resp = app
+                .clone()
+                .oneshot(patch_req(
+                    &format!("/returns/{id}"),
+                    serde_json::json!({ "status": status }),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "transition to {status}");
+        }
+        // refund_method is settable over the API, so settlement is reachable.
+        let resp = app
+            .clone()
+            .oneshot(patch_req(
+                &format!("/returns/{id}"),
+                serde_json::json!({ "refund_method": "store_credit", "refund_amount": "20" }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Completing with an undispositioned item is refused ...
+        let resp = app
+            .clone()
+            .oneshot(patch_req(&format!("/returns/{id}/complete"), serde_json::json!({})))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+        // ... until the caller explicitly writes the units off.
+        let resp = app
+            .clone()
+            .oneshot(patch_req(
+                &format!("/returns/{id}/complete"),
+                serde_json::json!({ "write_off_undispositioned": true }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let completed = json(resp).await;
+        assert_eq!(completed["status"], "completed");
+        assert_eq!(completed["refund_amount"], "20");
+    }
+
+    #[tokio::test]
+    async fn update_return_rejects_invalid_status_and_refund_amount() {
+        let id = ReturnId::new();
+        for body in [
+            serde_json::json!({ "status": "teleported" }),
+            serde_json::json!({ "refund_amount": "not-a-number" }),
+        ] {
+            let resp = app().oneshot(patch_req(&format!("/returns/{id}"), body)).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        }
+    }
+
+    #[tokio::test]
+    async fn reject_and_complete_on_a_missing_return_are_client_errors() {
+        let id = ReturnId::new();
+        for uri in [format!("/returns/{id}/reject"), format!("/returns/{id}/complete")] {
+            let resp = app().oneshot(patch_req(&uri, serde_json::json!({}))).await.unwrap();
+            assert!(resp.status().is_client_error(), "{uri}: {}", resp.status());
+        }
     }
 
     #[tokio::test]

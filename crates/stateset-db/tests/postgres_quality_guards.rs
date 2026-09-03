@@ -5,7 +5,9 @@
 //!   transaction as the verdict;
 //! * Q2 — `start_inspection` only from Pending/Scheduled, `complete_inspection`
 //!   only from `InProgress` and only once every item has a result, and a quality
-//!   hold can only be released once.
+//!   hold can only be released once;
+//! * Q3 — a `Closed` or `Cancelled` NCR refuses further status writes and
+//!   edits, so a cancelled NCR cannot be laundered into a closed record.
 //!
 //! Requires a live Postgres instance (`POSTGRES_URL` / `DATABASE_URL`); skipped
 //! otherwise.
@@ -14,9 +16,10 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::{
-    CommerceError, CreateInspection, CreateInspectionItem, CreateLot, CreateQualityHold,
-    InspectionResult, InspectionStatus, InspectionType, LotStatus, LotTransactionType,
-    RecordInspectionResult, ReleaseQualityHold,
+    CommerceError, CreateInspection, CreateInspectionItem, CreateLot, CreateNonConformance,
+    CreateQualityHold, InspectionResult, InspectionStatus, InspectionType, LotStatus,
+    LotTransactionType, NcrStatus, NonConformanceSource, RecordInspectionResult,
+    ReleaseQualityHold, Severity, UpdateNonConformance,
 };
 use stateset_db::PostgresDatabase;
 use uuid::Uuid;
@@ -238,4 +241,92 @@ async fn postgres_release_hold_only_once() {
             .expect_err("unknown"),
         CommerceError::NotFound
     ));
+}
+
+/// Q3 — a finished NCR is evidence: closing is idempotent, cancelling a closed
+/// NCR (or closing a cancelled one) is refused, and `update_ncr` will not edit
+/// either. Before this the status column was written blind on both backends.
+#[tokio::test]
+async fn postgres_terminal_ncrs_refuse_further_status_writes() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let make = |sku: String| async {
+        db.quality()
+            .create_ncr_async(CreateNonConformance {
+                inspection_id: None,
+                source: NonConformanceSource::InternalAudit,
+                severity: Severity::Major,
+                sku,
+                lot_number: None,
+                serial_number: None,
+                quantity_affected: dec!(5),
+                description: "defect".into(),
+                assigned_to: None,
+            })
+            .await
+            .expect("create ncr")
+    };
+
+    let closed = make(format!("Q3-{}", Uuid::new_v4().simple())).await;
+    let done = db.quality().close_ncr_async(closed.id).await.expect("close");
+    assert_eq!(done.status, NcrStatus::Closed);
+    let closed_at = done.closed_at.expect("closed_at stamped");
+    assert_eq!(
+        db.quality().close_ncr_async(closed.id).await.expect("close again").closed_at,
+        Some(closed_at)
+    );
+    let err = db.quality().cancel_ncr_async(closed.id).await.expect_err("cancel a closed NCR");
+    assert_validation_mentions(&err, &["cancel", "closed"]);
+    let err = db
+        .quality()
+        .update_ncr_async(
+            closed.id,
+            UpdateNonConformance { root_cause: Some("rewritten".into()), ..Default::default() },
+        )
+        .await
+        .expect_err("edit a closed NCR");
+    assert_validation_mentions(&err, &["update", "closed"]);
+    assert_eq!(db.quality().get_ncr_async(closed.id).await.unwrap().unwrap().root_cause, None);
+
+    let cancelled = make(format!("Q3-{}", Uuid::new_v4().simple())).await;
+    assert_eq!(
+        db.quality().cancel_ncr_async(cancelled.id).await.expect("cancel").status,
+        NcrStatus::Cancelled
+    );
+    assert_eq!(
+        db.quality().cancel_ncr_async(cancelled.id).await.expect("cancel again").status,
+        NcrStatus::Cancelled
+    );
+    assert!(db.quality().get_ncr_async(cancelled.id).await.unwrap().unwrap().closed_at.is_none());
+    let err = db.quality().close_ncr_async(cancelled.id).await.expect_err("close a cancelled NCR");
+    assert_validation_mentions(&err, &["close", "cancelled"]);
+
+    assert!(matches!(
+        db.quality().close_ncr_async(Uuid::new_v4()).await,
+        Err(CommerceError::NotFound)
+    ));
+
+    // An open NCR still advances through its workflow.
+    let open = make(format!("Q3-{}", Uuid::new_v4().simple())).await;
+    let updated = db
+        .quality()
+        .update_ncr_async(
+            open.id,
+            UpdateNonConformance {
+                status: Some(NcrStatus::CorrectiveAction),
+                root_cause: Some("tooling wear".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("update");
+    assert_eq!(updated.status, NcrStatus::CorrectiveAction);
+    assert_eq!(updated.root_cause.as_deref(), Some("tooling wear"));
+    assert_eq!(
+        db.quality().close_ncr_async(open.id).await.expect("close").status,
+        NcrStatus::Closed
+    );
 }

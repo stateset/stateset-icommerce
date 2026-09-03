@@ -14,6 +14,36 @@ pub trait CustomerRepository: Send + Sync {
     /// Get customer by email
     fn get_by_email(&self, email: &str) -> Result<Option<Customer>>;
 
+    /// Get the live customer owning `input.email`, creating one if there is
+    /// none. Returns `(customer, created)`.
+    ///
+    /// The lookup is case-insensitive ([`Customer::normalize_email`]) and
+    /// ignores deleted accounts. Backends override this with a single
+    /// conflict-tolerant statement so two concurrent callers for the same
+    /// address always end up with exactly one customer; the default body is
+    /// the non-atomic check-then-create fallback and merely narrows the race
+    /// to the window between the two statements.
+    ///
+    /// # Errors
+    ///
+    /// Propagates validation failures and database errors. A losing racer
+    /// never surfaces `EmailAlreadyExists`: it re-reads and returns the
+    /// winner's record.
+    fn get_or_create_by_email(&self, input: CreateCustomer) -> Result<(Customer, bool)> {
+        if let Some(existing) = self.get_by_email(&input.email)? {
+            return Ok((existing, false));
+        }
+        let email = input.email.clone();
+        match self.create(input) {
+            Ok(created) => Ok((created, true)),
+            Err(crate::CommerceError::EmailAlreadyExists(_)) => self
+                .get_by_email(&email)?
+                .map(|winner| (winner, false))
+                .ok_or(crate::CommerceError::EmailAlreadyExists(email)),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Update a customer
     fn update(&self, id: CustomerId, input: UpdateCustomer) -> Result<Customer>;
 

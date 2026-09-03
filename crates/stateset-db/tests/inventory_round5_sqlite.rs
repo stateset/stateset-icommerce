@@ -293,16 +293,19 @@ fn sqlite_balance_triggers_reject_negative_writes_but_leave_legacy_rows_editable
     let db = db();
     db.inventory().create_item(item("TRG-1", dec!(5))).unwrap();
     let conn = db.pool().get().expect("conn");
+    // Each write keeps the BALANCE IDENTITY (migration 092:
+    // available == on_hand - allocated) so it can only trip the non-negative
+    // triggers this test is about, not the identity one.
     let err = conn
         .execute(
-            "UPDATE inventory_balances SET quantity_available = '-1' WHERE item_id = (SELECT id FROM inventory_items WHERE sku = 'TRG-1')",
+            "UPDATE inventory_balances SET quantity_on_hand = '-1', quantity_available = '-1' WHERE item_id = (SELECT id FROM inventory_items WHERE sku = 'TRG-1')",
             [],
         )
         .expect_err("negative available must be rejected");
     assert!(err.to_string().contains("must be >= 0"), "{err}");
     let err = conn
         .execute(
-            "UPDATE inventory_balances SET quantity_allocated = '-0.5' WHERE item_id = (SELECT id FROM inventory_items WHERE sku = 'TRG-1')",
+            "UPDATE inventory_balances SET quantity_allocated = '-0.5', quantity_available = '5.5' WHERE item_id = (SELECT id FROM inventory_items WHERE sku = 'TRG-1')",
             [],
         )
         .expect_err("negative allocated must be rejected");
@@ -311,7 +314,11 @@ fn sqlite_balance_triggers_reject_negative_writes_but_leave_legacy_rows_editable
     // A legacy row that already violates the invariant (simulated by
     // disabling the trigger) can still be updated while negative.
     conn.execute_batch("DROP TRIGGER trg_inventory_balances_non_negative_update").unwrap();
-    conn.execute("UPDATE inventory_balances SET quantity_available = '-3'", []).unwrap();
+    conn.execute(
+        "UPDATE inventory_balances SET quantity_on_hand = '-3', quantity_available = '-3'",
+        [],
+    )
+    .unwrap();
     conn.execute_batch(
         "CREATE TRIGGER trg_inventory_balances_non_negative_update
          BEFORE UPDATE OF quantity_available, quantity_allocated ON inventory_balances
@@ -320,10 +327,16 @@ fn sqlite_balance_triggers_reject_negative_writes_but_leave_legacy_rows_editable
          BEGIN SELECT RAISE(ABORT, 'inventory_balances: quantity_available and quantity_allocated must be >= 0'); END",
     )
     .unwrap();
-    conn.execute("UPDATE inventory_balances SET quantity_available = '-2'", [])
-        .expect("legacy negative row stays editable");
-    conn.execute("UPDATE inventory_balances SET quantity_available = '0'", [])
-        .expect("and can be repaired");
+    conn.execute(
+        "UPDATE inventory_balances SET quantity_on_hand = '-2', quantity_available = '-2'",
+        [],
+    )
+    .expect("legacy negative row stays editable");
+    conn.execute(
+        "UPDATE inventory_balances SET quantity_on_hand = '0', quantity_available = '0'",
+        [],
+    )
+    .expect("and can be repaired");
 }
 
 // ---------------------------------------------------------------------------

@@ -10,28 +10,37 @@ use stateset_core::{
     ReserveInventory, ResolveA2ADispute, SettleX402Intent, ShipOrderCommand,
     SubmitA2ADisputeEvidence, TransitionOrder, TransitionReturn,
 };
+use stateset_db::kernel::KernelAuditChain;
 use stateset_db::kernel_outbox::{KernelAuditCheckpoint, KernelAuditVerification};
-use stateset_db::sqlite::{SqliteKernelExecutor, SqliteKernelOutboxRepository};
+use stateset_db::sqlite::SqliteKernelExecutor;
 
 /// Read-only access to the kernel receipt audit chain.
 ///
 /// Every governed command seals its receipt into an append-only hash chain;
 /// this accessor recomputes that chain and mints portable checkpoints that
 /// can be retained outside the database to make later rewrites detectable.
+///
+/// Both backends seal the same chain, so this accessor is backend-neutral: it
+/// holds whichever [`KernelAuditChain`] the configured database provides.
+///
+/// Verification is synchronous on both backends. The Postgres implementation
+/// bridges to async through the shared runtime, so an async caller must run
+/// these methods on a blocking thread (the HTTP handlers use
+/// `AppState::run_blocking`).
 #[derive(Debug)]
 pub struct KernelAudit {
-    outbox: SqliteKernelOutboxRepository,
+    chain: Box<dyn KernelAuditChain>,
 }
 
 impl KernelAudit {
     /// Recompute every receipt link and report the first broken position.
     pub fn verify_chain(&self) -> Result<KernelAuditVerification, CommerceError> {
-        self.outbox.verify_audit_chain()
+        self.chain.verify_chain()
     }
 
     /// Mint a portable checkpoint of the current chain head.
     pub fn checkpoint(&self) -> Result<KernelAuditCheckpoint, CommerceError> {
-        self.outbox.audit_checkpoint()
+        self.chain.checkpoint()
     }
 
     /// Verify an externally retained checkpoint against the local chain.
@@ -39,7 +48,7 @@ impl KernelAudit {
         &self,
         checkpoint: &KernelAuditCheckpoint,
     ) -> Result<bool, CommerceError> {
-        self.outbox.verify_audit_checkpoint(checkpoint)
+        self.chain.verify_checkpoint(checkpoint)
     }
 }
 
@@ -75,15 +84,17 @@ impl Commerce {
     }
 
     /// Read-only access to the kernel receipt audit chain.
+    ///
+    /// Works on every backend that seals receipts — SQLite and Postgres both
+    /// do — so a Postgres-backed instance verifies and checkpoints the same
+    /// chain the SQLite one does.
     pub fn kernel_audit(&self) -> Result<KernelAudit, CommerceError> {
-        self.sqlite_db
-            .as_ref()
-            .map(|database| KernelAudit { outbox: database.kernel_outbox() })
-            .ok_or_else(|| {
-                CommerceError::Internal(
-                    "the kernel audit chain requires a SQLite commerce instance".into(),
-                )
-            })
+        self.db.kernel_audit_chain().map(|chain| KernelAudit { chain }).ok_or_else(|| {
+            CommerceError::Internal(format!(
+                "the {} backend does not seal a kernel receipt audit chain",
+                self.db.backend_name()
+            ))
+        })
     }
 
     /// Execute one of the versioned, high-risk commerce commands and return

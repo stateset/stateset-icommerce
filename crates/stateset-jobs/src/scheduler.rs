@@ -157,6 +157,23 @@ impl Scheduler {
         Ok(())
     }
 
+    /// Look up a registered definition by name.
+    ///
+    /// A runner needs this to reach the [`JobHandler`](crate::JobHandler)
+    /// named by [`TickAction::Execute`].
+    #[must_use]
+    pub fn definition(&self, name: &str) -> Option<&JobDefinition> {
+        self.definitions.get(name)
+    }
+
+    /// Names of every registered definition, sorted for determinism.
+    #[must_use]
+    pub fn definition_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.definitions.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
     /// Schedule a job for execution.
     ///
     /// Creates a new [`JobInstance`], saves it to the store, and enqueues it.

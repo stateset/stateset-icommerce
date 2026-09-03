@@ -15,10 +15,129 @@ use uuid::Uuid;
 use stateset_core::{
     AddCarton, AddCartonItem, BatchResult, Carton, CartonItem, CommerceError, CompletePick,
     CompleteShip, CreatePackTask, CreatePickTask, CreateShipTask, CreateWave, FulfillmentId,
-    FulfillmentRepository, OrderId, OrderItemId, PackStatus, PackTask, PackTaskFilter, PickStatus,
-    PickTask, PickTaskFilter, Result, ShipStatus, ShipTask, ShipTaskFilter, ShipmentId, Wave,
-    WaveFilter, WaveStatus, generate_carton_number, generate_wave_number,
+    FulfillmentRepository, MovementType, OrderId, OrderItemId, PackStatus, PackTask,
+    PackTaskFilter, PickStatus, PickTask, PickTaskFilter, Result, ShipStatus, ShipTask,
+    ShipTaskFilter, ShipmentId, Wave, WaveFilter, WaveStatus, generate_carton_number,
+    generate_wave_number,
 };
+
+/// Take the picked units off the shelf.
+///
+/// The source bin loses them (`location_inventory`) and the warehouse balance
+/// marks them allocated: off the shelf, committed to the order, still in the
+/// building. Runs on the caller's transaction. A pick that moved nothing
+/// (`quantity_picked` zero, or a pure shortage) has no stock effect.
+fn apply_pick_stock_effect_tx(
+    tx: &rusqlite::Transaction<'_>,
+    pick: &PickTask,
+    now: &str,
+) -> rusqlite::Result<()> {
+    if pick.quantity_picked <= Decimal::ZERO {
+        return Ok(());
+    }
+    super::warehouse::ensure_inventory_item_tx(tx, &pick.sku)?;
+    super::warehouse::apply_location_delta_tx(
+        tx,
+        pick.source_location_id,
+        &pick.sku,
+        pick.lot_id,
+        -pick.quantity_picked,
+        now,
+    )?;
+    super::bins::apply_warehouse_delta_tx(
+        tx,
+        pick.warehouse_id,
+        &pick.sku,
+        Decimal::ZERO,
+        pick.quantity_picked,
+        "pick completed",
+        Some("pick_task"),
+        Some(&pick.id.to_string()),
+        now,
+    )?;
+    super::warehouse::insert_wms_movement_tx(
+        tx,
+        MovementType::Pick,
+        Some(pick.source_location_id),
+        None,
+        &pick.sku,
+        pick.lot_id,
+        pick.quantity_picked,
+        "pick_task",
+        &pick.id.to_string(),
+        pick.assigned_to.as_deref(),
+        now,
+    )?;
+    Ok(())
+}
+
+/// Ship the units the pack task's cartons hold: warehouse `on_hand` and
+/// `allocated` both fall, releasing exactly what the picks allocated.
+///
+/// The warehouse is taken from the order's pick tasks (a ship task carries no
+/// warehouse of its own); with no picks it falls back to the default warehouse.
+fn apply_ship_stock_effect_tx(
+    tx: &rusqlite::Transaction<'_>,
+    ship: &ShipTask,
+    shipped_by: Option<&str>,
+    now: &str,
+) -> rusqlite::Result<()> {
+    let shipped: Vec<(String, String, Option<String>)> = {
+        let mut stmt = tx.prepare(
+            "SELECT ci.sku, ci.quantity, ci.lot_id FROM carton_items ci
+             JOIN cartons c ON c.id = ci.carton_id
+             WHERE c.pack_task_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![ship.pack_task_id.to_string()], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    if shipped.is_empty() {
+        return Ok(());
+    }
+    let warehouse_id: i32 = tx
+        .query_row(
+            "SELECT warehouse_id FROM pick_tasks WHERE order_id = ?1 LIMIT 1",
+            params![ship.order_id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(1);
+    let ship_id = ship.id.to_string();
+    for (sku, quantity, lot_id) in shipped {
+        let quantity = parse_decimal_row(&quantity, "carton_item", "quantity")?;
+        if quantity <= Decimal::ZERO {
+            continue;
+        }
+        let lot_id = parse_uuid_opt_row(lot_id, "carton_item", "lot_id")?;
+        super::bins::apply_warehouse_delta_tx(
+            tx,
+            warehouse_id,
+            &sku,
+            -quantity,
+            -quantity,
+            "ship task completed",
+            Some("ship_task"),
+            Some(&ship_id),
+            now,
+        )?;
+        super::warehouse::insert_wms_movement_tx(
+            tx,
+            MovementType::Shipment,
+            None,
+            None,
+            &sku,
+            lot_id,
+            quantity,
+            "ship_task",
+            &ship_id,
+            shipped_by,
+            now,
+        )?;
+    }
+    Ok(())
+}
 
 /// SQLite fulfillment repository
 #[derive(Debug)]
@@ -812,6 +931,15 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         })
     }
 
+    /// Complete a pick task and take the picked units off the shelf.
+    ///
+    /// **Stock effect**: `quantity_picked` leaves the source location's on-hand
+    /// and becomes `allocated` at warehouse level — the units are on the cart,
+    /// committed to the order, no longer sellable but still in the building.
+    /// The matching ship task releases exactly that allocation when the package
+    /// leaves, so the pick/ship pair is self-balancing. The movement runs on the
+    /// same transaction as the status write, and the "already finalized" guard
+    /// above returns early, so completing twice never moves stock twice.
     fn complete_pick(&self, input: CompletePick) -> Result<PickTask> {
         let now = Utc::now().to_rfc3339();
         let short_qty = input.quantity_short.unwrap_or(Decimal::ZERO);
@@ -882,6 +1010,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
                     params![wave_id.to_string()],
                 )?;
             }
+            apply_pick_stock_effect_tx(tx, &pick, &now)?;
             Ok(pick)
         })
     }
@@ -1497,6 +1626,15 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
     /// Legal from `Pending`/`ReadyToShip`/`LabelPrinted`. Re-shipping an
     /// already-shipped task used to overwrite its tracking number, cost and
     /// `shipped_at`, and a cancelled task could be shipped.
+    /// Complete a ship task: the package is tendered to the carrier.
+    ///
+    /// **Stock effect**: the units in the pack task's cartons leave the
+    /// warehouse balance — `on_hand` and `allocated` both fall by the shipped
+    /// quantity, releasing exactly the allocation the picks created. A pack task
+    /// with no carton items has nothing to consume and moves no stock (the
+    /// cartons *are* the record of what went in the box). The movements run on
+    /// the same transaction as the status write, and the guarded UPDATE matches
+    /// zero rows on a second attempt, so a re-ship never double-decrements.
     fn complete_ship(&self, input: CompleteShip) -> Result<ShipTask> {
         let now = Utc::now().to_rfc3339();
         let id_str = input.ship_task_id.to_string();
@@ -1522,7 +1660,9 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
                     "complete",
                 ));
             }
-            Self::read_ship_by_id_tx(tx, &id_str)
+            let ship = Self::read_ship_by_id_tx(tx, &id_str)?;
+            apply_ship_stock_effect_tx(tx, &ship, input.shipped_by.as_deref(), &now)?;
+            Ok(ship)
         })
     }
 
@@ -1755,6 +1895,53 @@ mod tests {
         fresh_setup().0
     }
 
+    /// Put `qty` units of `sku` on the shelf at `location_id`, at both ledger
+    /// levels (bin and warehouse balance).
+    ///
+    /// Completing a pick now takes the units out of the bin and allocates them
+    /// at warehouse level, so a pick test has to stock both first — picking
+    /// stock the warehouse does not hold is exactly what the ledger refuses.
+    fn seed_location_stock(
+        repo: &SqliteFulfillmentRepository,
+        warehouse_id: i32,
+        location_id: i32,
+        sku: &str,
+        qty: &str,
+    ) {
+        let conn = repo.pool.get().expect("conn");
+        conn.execute(
+            "INSERT INTO location_inventory
+             (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
+             VALUES (?1, ?2, '', ?3, '0', datetime('now'))
+             ON CONFLICT(location_id, sku, lot_id)
+             DO UPDATE SET quantity_on_hand = excluded.quantity_on_hand",
+            params![location_id, sku, qty],
+        )
+        .expect("seed location stock");
+        conn.execute(
+            "INSERT OR IGNORE INTO inventory_items (sku, name) VALUES (?1, ?1)",
+            params![sku],
+        )
+        .expect("seed item");
+        conn.execute(
+            "INSERT OR IGNORE INTO inventory_locations (id, name, code)
+             SELECT id, name, code FROM warehouses WHERE id = ?1",
+            params![warehouse_id],
+        )
+        .expect("seed inventory location");
+        conn.execute(
+            "INSERT INTO inventory_balances
+             (item_id, location_id, quantity_on_hand, quantity_allocated, quantity_available,
+              updated_at)
+             SELECT id, ?2, ?3, '0', ?3, datetime('now') FROM inventory_items WHERE sku = ?1
+             ON CONFLICT(item_id, location_id) DO UPDATE SET
+                 quantity_on_hand = excluded.quantity_on_hand,
+                 quantity_available = excluded.quantity_available",
+            params![sku, warehouse_id, qty],
+        )
+        .expect("seed warehouse balance");
+    }
+
     fn make_wave(
         repo: &SqliteFulfillmentRepository,
         warehouse_id: i32,
@@ -1915,6 +2102,7 @@ mod tests {
     fn start_and_complete_pick_transitions() {
         let (repo, wh_id, loc_id) = fresh_setup();
         let order = OrderId::new();
+        seed_location_stock(&repo, wh_id, loc_id, "SKU-START", "5");
         let pick = make_pick(&repo, wh_id, loc_id, None, order, "SKU-START");
         let started = repo.start_pick(pick.id).expect("start");
         assert_ne!(started.status, pick.status, "status should change after start");
@@ -2021,6 +2209,7 @@ mod tests {
         let (repo, wh_id, loc_id) = fresh_setup();
         let order = OrderId::new();
         let wave = make_wave(&repo, wh_id, vec![order]);
+        seed_location_stock(&repo, wh_id, loc_id, "SKU-A", "5");
         let p1 = make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "SKU-A");
         let p2 = make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "SKU-B");
         repo.release_wave(wave.id).expect("release");

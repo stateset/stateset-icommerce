@@ -899,8 +899,46 @@ impl SqliteDatabase {
     }
 }
 
+/// The values a write is carrying, so a unique-constraint violation can be
+/// reported with the offending slug / SKU / e-mail instead of the column name.
+///
+/// SQLite's `UNIQUE constraint failed: <table>.<column>` message never
+/// contains the value, unlike Postgres' `Key (sku)=(…) already exists`, so the
+/// call site has to supply it. Fields left `None` fall back to the column name.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct ConflictValues<'a> {
+    /// Value written to `products.slug`.
+    pub slug: Option<&'a str>,
+    /// Value written to `product_variants.sku`.
+    pub sku: Option<&'a str>,
+    /// Value written to `customers.email` / `customers.email_key`.
+    pub email: Option<&'a str>,
+}
+
+impl<'a> ConflictValues<'a> {
+    /// A context naming only the slug in flight.
+    pub(crate) const fn slug(slug: &'a str) -> Self {
+        Self { slug: Some(slug), sku: None, email: None }
+    }
+
+    /// A context naming only the SKU in flight.
+    pub(crate) const fn sku(sku: &'a str) -> Self {
+        Self { slug: None, sku: Some(sku), email: None }
+    }
+
+    /// A context naming only the e-mail in flight.
+    pub(crate) const fn email(email: &'a str) -> Self {
+        Self { slug: None, sku: None, email: Some(email) }
+    }
+}
+
 /// Helper function to convert rusqlite errors to `CommerceError`
 pub(crate) fn map_db_error(e: rusqlite::Error) -> CommerceError {
+    map_db_error_with(e, ConflictValues::default())
+}
+
+/// [`map_db_error`] with the offending values for typed conflicts.
+pub(crate) fn map_db_error_with(e: rusqlite::Error, values: ConflictValues<'_>) -> CommerceError {
     match e {
         rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
         rusqlite::Error::ToSqlConversionFailure(boxed) => {
@@ -916,7 +954,7 @@ pub(crate) fn map_db_error(e: rusqlite::Error) -> CommerceError {
                 rusqlite::ErrorCode::ConstraintViolation => {
                     let msg = e.to_string();
                     if msg.contains("UNIQUE") {
-                        map_unique_constraint_message(&msg)
+                        map_unique_constraint_message(&msg, values)
                     } else {
                         CommerceError::ValidationError(msg)
                     }
@@ -943,15 +981,23 @@ pub(crate) fn map_db_error(e: rusqlite::Error) -> CommerceError {
 /// window between check and write (and for writers that skip the check) so a
 /// raced duplicate is still a `DuplicateSlug` / `DuplicateSku` /
 /// `EmailAlreadyExists` rather than an untyped `Conflict`.
-pub(crate) fn map_unique_constraint_message(msg: &str) -> CommerceError {
+///
+/// `values` carries the offending slug / SKU / e-mail from the call site so
+/// the error names the value the caller tried to write (SQLite's message only
+/// names the column); it falls back to the column name when unset.
+pub(crate) fn map_unique_constraint_message(
+    msg: &str,
+    values: ConflictValues<'_>,
+) -> CommerceError {
     let column =
         msg.rsplit_once("UNIQUE constraint failed:").map(|(_, rest)| rest.trim()).unwrap_or("");
+    let payload = |value: Option<&str>| value.unwrap_or(column).to_string();
     if column.starts_with("products.slug") {
-        CommerceError::DuplicateSlug(column.to_string())
+        CommerceError::DuplicateSlug(payload(values.slug))
     } else if column.starts_with("product_variants.sku") {
-        CommerceError::DuplicateSku(column.to_string())
+        CommerceError::DuplicateSku(payload(values.sku))
     } else if column.starts_with("customers.email") {
-        CommerceError::EmailAlreadyExists(column.to_string())
+        CommerceError::EmailAlreadyExists(payload(values.email))
     } else {
         CommerceError::Conflict(msg.to_string())
     }
@@ -959,18 +1005,24 @@ pub(crate) fn map_unique_constraint_message(msg: &str) -> CommerceError {
 
 #[cfg(test)]
 mod unique_constraint_mapping_tests {
-    use super::map_unique_constraint_message;
+    use super::{ConflictValues, map_unique_constraint_message};
     use stateset_core::CommerceError;
 
     #[test]
     fn maps_product_slug_to_duplicate_slug() {
-        let err = map_unique_constraint_message("UNIQUE constraint failed: products.slug");
+        let err = map_unique_constraint_message(
+            "UNIQUE constraint failed: products.slug",
+            ConflictValues::default(),
+        );
         assert!(matches!(err, CommerceError::DuplicateSlug(_)), "{err:?}");
     }
 
     #[test]
     fn maps_variant_sku_to_duplicate_sku() {
-        let err = map_unique_constraint_message("UNIQUE constraint failed: product_variants.sku");
+        let err = map_unique_constraint_message(
+            "UNIQUE constraint failed: product_variants.sku",
+            ConflictValues::default(),
+        );
         assert!(matches!(err, CommerceError::DuplicateSku(_)), "{err:?}");
     }
 
@@ -980,15 +1032,61 @@ mod unique_constraint_mapping_tests {
             "UNIQUE constraint failed: customers.email",
             "UNIQUE constraint failed: customers.email_key",
         ] {
-            let err = map_unique_constraint_message(msg);
+            let err = map_unique_constraint_message(msg, ConflictValues::default());
             assert!(matches!(err, CommerceError::EmailAlreadyExists(_)), "{err:?}");
         }
     }
 
     #[test]
     fn unknown_unique_stays_untyped_conflict() {
-        let err = map_unique_constraint_message("UNIQUE constraint failed: orders.order_number");
+        let err = map_unique_constraint_message(
+            "UNIQUE constraint failed: orders.order_number",
+            ConflictValues::default(),
+        );
         assert!(matches!(err, CommerceError::Conflict(_)), "{err:?}");
+    }
+
+    #[test]
+    fn typed_conflicts_carry_the_offending_value_when_supplied() {
+        let err = map_unique_constraint_message(
+            "UNIQUE constraint failed: products.slug",
+            ConflictValues::slug("premium-widget"),
+        );
+        assert!(
+            matches!(&err, CommerceError::DuplicateSlug(value) if value == "premium-widget"),
+            "{err:?}"
+        );
+
+        let err = map_unique_constraint_message(
+            "UNIQUE constraint failed: product_variants.sku",
+            ConflictValues::sku("WIDGET-001"),
+        );
+        assert!(
+            matches!(&err, CommerceError::DuplicateSku(value) if value == "WIDGET-001"),
+            "{err:?}"
+        );
+
+        let err = map_unique_constraint_message(
+            "UNIQUE constraint failed: customers.email_key",
+            ConflictValues::email("ada@example.com"),
+        );
+        assert!(
+            matches!(&err, CommerceError::EmailAlreadyExists(value) if value == "ada@example.com"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn typed_conflicts_fall_back_to_the_column_name_without_a_value() {
+        let err = map_unique_constraint_message(
+            "UNIQUE constraint failed: products.slug",
+            // A SKU in flight says nothing about a slug collision.
+            ConflictValues::sku("WIDGET-001"),
+        );
+        assert!(
+            matches!(&err, CommerceError::DuplicateSlug(value) if value == "products.slug"),
+            "{err:?}"
+        );
     }
 }
 

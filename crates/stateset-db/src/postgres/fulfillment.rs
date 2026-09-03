@@ -14,6 +14,116 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+/// Take the picked units off the shelf (see the SQLite twin for the model).
+async fn apply_pick_stock_effect_pg(
+    conn: &mut sqlx::PgConnection,
+    pick: &PickRow,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    if pick.quantity_picked <= Decimal::ZERO {
+        return Ok(());
+    }
+    super::warehouse::ensure_inventory_item_pg(&mut *conn, &pick.sku).await?;
+    super::warehouse::apply_location_delta_pg(
+        &mut *conn,
+        pick.source_location_id,
+        &pick.sku,
+        pick.lot_id,
+        -pick.quantity_picked,
+        now,
+    )
+    .await?;
+    super::bins::apply_warehouse_delta_pg(
+        &mut *conn,
+        pick.warehouse_id,
+        &pick.sku,
+        Decimal::ZERO,
+        pick.quantity_picked,
+        "pick completed",
+        Some("pick_task"),
+        Some(&pick.id.to_string()),
+        now,
+    )
+    .await?;
+    super::warehouse::insert_wms_movement_pg(
+        &mut *conn,
+        stateset_core::MovementType::Pick,
+        Some(pick.source_location_id),
+        None,
+        &pick.sku,
+        pick.lot_id,
+        pick.quantity_picked,
+        "pick_task",
+        pick.id,
+        pick.assigned_to.as_deref(),
+        now,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Ship the units the pack task's cartons hold (see the SQLite twin).
+async fn apply_ship_stock_effect_pg(
+    conn: &mut sqlx::PgConnection,
+    ship_id: Uuid,
+    order_id: Uuid,
+    pack_task_id: Uuid,
+    shipped_by: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    let shipped = sqlx::query_as::<_, (String, Decimal, Option<Uuid>)>(
+        "SELECT ci.sku, ci.quantity, ci.lot_id FROM carton_items ci
+         JOIN cartons c ON c.id = ci.carton_id
+         WHERE c.pack_task_id = $1",
+    )
+    .bind(pack_task_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    if shipped.is_empty() {
+        return Ok(());
+    }
+    let warehouse_id: i32 =
+        sqlx::query_scalar("SELECT warehouse_id FROM pick_tasks WHERE order_id = $1 LIMIT 1")
+            .bind(order_id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(map_db_error)?
+            .unwrap_or(1);
+    for (sku, quantity, lot_id) in shipped {
+        if quantity <= Decimal::ZERO {
+            continue;
+        }
+        super::bins::apply_warehouse_delta_pg(
+            &mut *conn,
+            warehouse_id,
+            &sku,
+            -quantity,
+            -quantity,
+            "ship task completed",
+            Some("ship_task"),
+            Some(&ship_id.to_string()),
+            now,
+        )
+        .await?;
+        super::warehouse::insert_wms_movement_pg(
+            &mut *conn,
+            stateset_core::MovementType::Shipment,
+            None,
+            None,
+            &sku,
+            lot_id,
+            quantity,
+            "ship_task",
+            ship_id,
+            shipped_by,
+            now,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct PgFulfillmentRepository {
     pool: PgPool,
@@ -774,6 +884,14 @@ impl PgFulfillmentRepository {
         .await
     }
 
+    /// Complete a pick task and take the picked units off the shelf.
+    ///
+    /// **Stock effect** (mirrors the SQLite backend): `quantity_picked` leaves
+    /// the source location's on-hand and becomes `allocated` at warehouse
+    /// level — on the cart, committed to the order, still in the building. The
+    /// matching ship task releases exactly that allocation. The "already
+    /// finalized" guard returns early, so completing twice never moves stock
+    /// twice.
     pub async fn complete_pick_async(&self, input: CompletePick) -> Result<PickTask> {
         let now = Utc::now();
         let short_qty = input.quantity_short.unwrap_or(Decimal::ZERO);
@@ -857,6 +975,13 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
         }
+
+        let picked = sqlx::query_as::<_, PickRow>("SELECT * FROM pick_tasks WHERE id = $1")
+            .bind(input.pick_id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        apply_pick_stock_effect_pg(tx.as_mut(), &picked, now).await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -1499,6 +1624,12 @@ impl PgFulfillmentRepository {
     /// Legal from `Pending`/`ReadyToShip`/`LabelPrinted`. Re-shipping an
     /// already-shipped task used to overwrite its tracking number, cost and
     /// `shipped_at`, and a cancelled task could be shipped.
+    ///
+    /// **Stock effect** (mirrors the SQLite backend): the units in the pack
+    /// task's cartons leave the warehouse balance — `on_hand` and `allocated`
+    /// both fall — releasing exactly the allocation the picks created. A pack
+    /// task with no carton items moves no stock. The guarded UPDATE matches zero
+    /// rows on a second attempt, so a re-ship never double-decrements.
     pub async fn complete_ship_async(&self, input: CompleteShip) -> Result<ShipTask> {
         let now = Utc::now();
         let id = input.ship_task_id;
@@ -1517,6 +1648,23 @@ impl PgFulfillmentRepository {
         .await
         .map_err(map_db_error)?
         .rows_affected();
+
+        if changed > 0 {
+            let ship = sqlx::query_as::<_, ShipRow>("SELECT * FROM ship_tasks WHERE id = $1")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            apply_ship_stock_effect_pg(
+                tx.as_mut(),
+                ship.id,
+                ship.order_id,
+                ship.pack_task_id,
+                input.shipped_by.as_deref(),
+                now,
+            )
+            .await?;
+        }
 
         Self::finish_transition(
             tx,

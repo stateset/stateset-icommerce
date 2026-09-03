@@ -1467,6 +1467,10 @@ fn tiered_discount(tiers: &[DiscountTier], amount: Decimal) -> Decimal {
 /// per-customer usage counts, then delegate here, so stacking, eligibility,
 /// conditions, limits and discount math agree by construction.
 ///
+/// Candidates are ordered by `priority` ascending and then, at equal
+/// priority, by `code` and `id` — a total order, so the outcome never depends
+/// on the order storage happened to return them in.
+///
 /// Rules, in order, per candidate (priority ascending, each promotion
 /// considered at most once):
 /// - the promotion must be active inside its validity window;
@@ -1499,7 +1503,15 @@ pub fn evaluate_promotions(
     let mut seen: std::collections::HashSet<PromotionId> = std::collections::HashSet::new();
     let mut candidates: Vec<(Promotion, Option<String>)> =
         candidates.into_iter().filter(|(promo, _)| seen.insert(promo.id)).collect();
-    candidates.sort_by_key(|(p, _)| p.priority);
+    // Priority first, then a TOTAL tie-break. `sort_by_key(priority)` alone is
+    // only stable, so two promotions of equal priority applied in whatever
+    // order they happened to arrive from storage — and with Exclusive
+    // stacking, which one arrived first decides which one the customer gets.
+    // `code` is the promotion's business key and `id` the last resort, so the
+    // outcome is a function of the promotions, never of the query plan.
+    candidates.sort_by(|(a, _), (b, _)| {
+        a.priority.cmp(&b.priority).then_with(|| a.code.cmp(&b.code)).then_with(|| a.id.cmp(&b.id))
+    });
 
     let mut total_discount = Decimal::ZERO;
     let mut shipping_discount = Decimal::ZERO;
@@ -1921,6 +1933,54 @@ mod tests {
         let result = evaluate(&req, vec![other, exclusive.clone()]);
         assert_eq!(result.applied_promotions.len(), 1);
         assert_eq!(result.applied_promotions[0].promotion_id, exclusive.id);
+    }
+
+    /// At EQUAL priority the winner must be a function of the promotions, not
+    /// of the order storage handed them over. The existing exclusive-stacking
+    /// test flips priorities rather than arrival order, so it cannot see this:
+    /// `sort_by_key(priority)` is stable, and with two Exclusive promotions of
+    /// the same priority whichever arrived first won.
+    #[test]
+    fn equal_priority_promotions_have_a_deterministic_tie_break() {
+        let mut first = promo(PromotionType::PercentageOff, StackingBehavior::Exclusive, 5);
+        first.code = "AAA".into();
+        first.percentage_off = Some(Decimal::new(1, 1));
+        let mut second = promo(PromotionType::PercentageOff, StackingBehavior::Exclusive, 5);
+        second.code = "BBB".into();
+        second.percentage_off = Some(Decimal::new(2, 1));
+        let req = request(vec![item("A", 1, Decimal::from(100))], Decimal::ZERO);
+
+        let forward = evaluate(&req, vec![first.clone(), second.clone()]);
+        let reversed = evaluate(&req, vec![second, first.clone()]);
+
+        assert_eq!(forward.applied_promotions.len(), 1);
+        assert_eq!(
+            forward.applied_promotions[0].promotion_id, first.id,
+            "the lower code must win at equal priority"
+        );
+        assert_eq!(
+            reversed.applied_promotions[0].promotion_id, forward.applied_promotions[0].promotion_id,
+            "arrival order must not decide which exclusive promotion applies"
+        );
+        assert_eq!(reversed.total_discount, forward.total_discount);
+        assert_eq!(forward.total_discount, Decimal::from(10));
+
+        // Stackable promotions of equal priority apply in the same order
+        // however they arrive, so a fixed-amount discount computed off the
+        // running total is reproducible.
+        let mut a = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 5);
+        a.code = "AAA".into();
+        a.percentage_off = Some(Decimal::new(1, 1));
+        let mut b = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 5);
+        b.code = "BBB".into();
+        b.percentage_off = Some(Decimal::new(2, 1));
+        let ids = |r: &ApplyPromotionsResult| -> Vec<PromotionId> {
+            r.applied_promotions.iter().map(|p| p.promotion_id).collect()
+        };
+        let forward = evaluate(&req, vec![a.clone(), b.clone()]);
+        let reversed = evaluate(&req, vec![b, a.clone()]);
+        assert_eq!(ids(&forward), ids(&reversed));
+        assert_eq!(ids(&forward)[0], a.id);
     }
 
     #[test]

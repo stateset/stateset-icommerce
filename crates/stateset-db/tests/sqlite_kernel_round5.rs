@@ -407,3 +407,47 @@ fn payment_key_mismatch_guard_is_a_sealed_rejection_with_policy_evidence() {
     let replay = db.kernel_executor(policy()).execute_create_payment(&corrected).expect("replay");
     assert_eq!(replay.error_code.as_deref(), Some("kernel.idempotency_conflict"));
 }
+
+/// `payments.create` answered "Previewed" before it ran
+/// `check_order_capture_capacity_*`, so a preview promised a capture that
+/// apply would refuse — the one thing a preview must never do. The capacity
+/// check now runs on both paths, so a preview that cannot be applied fails
+/// exactly the way applying it would.
+#[test]
+fn payment_preview_runs_every_check_apply_runs() {
+    let db = db();
+    let order_id = order_totalling(&db, dec!(100.00));
+
+    // Take the whole order total with a completed capture.
+    let taken = payment(&db, order_id, dec!(100.00));
+    db.payments().mark_completed(taken.id).expect("complete the capture");
+
+    // A preview of a second full capture must not answer "Previewed".
+    let mut preview = payment_command("preview-over-capture-1", dec!(100.00));
+    preview.payload.order_id = Some(order_id);
+    preview.mode = ExecutionMode::Preview;
+    let previewed = db.kernel_executor(policy()).execute_create_payment(&preview);
+    let error = previewed.expect_err("preview must refuse what apply would refuse");
+    assert_eq!(error.invariant_code(), Some("commerce.capture.exceeds_order_total"), "{error:?}");
+
+    // Applying the same command fails identically.
+    let mut apply = preview;
+    apply.command_id = Uuid::new_v4();
+    apply.idempotency_key = "preview-over-capture-2".into();
+    apply.mode = ExecutionMode::Apply;
+    let applied = db.kernel_executor(policy()).execute_create_payment(&apply);
+    assert_eq!(
+        applied.expect_err("apply refuses").invariant_code(),
+        Some("commerce.capture.exceeds_order_total")
+    );
+
+    // A preview that *is* within capacity still previews and mutates nothing.
+    let before = count(&db, "SELECT COUNT(*) FROM payments");
+    let mut ok = payment_command("preview-within-capacity-1", dec!(10.00));
+    ok.payload.order_id = Some(order_totalling(&db, dec!(50.00)));
+    ok.mode = ExecutionMode::Preview;
+    let receipt =
+        db.kernel_executor(policy()).execute_create_payment(&ok).expect("preview within capacity");
+    assert_eq!(receipt.status, ExecutionStatus::Previewed);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM payments"), before);
+}

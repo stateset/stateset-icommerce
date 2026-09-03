@@ -107,70 +107,14 @@ impl Carts {
     /// ```
     pub fn create(&self, input: CreateCart) -> Result<Cart> {
         // Reject obviously-invalid input (negative prices, non-positive
-        // quantities) before persisting any line items.
+        // quantities) before persisting any line items. Catalogue pricing and
+        // purchasability are enforced by the repository itself, inside the
+        // create transaction (`guard_cart_line_with_conn`), so every caller of
+        // `db.carts()` gets the same rule and not just this accessor.
         input.validate()?;
-        if let Some(items) = &input.items {
-            for item in items {
-                self.enforce_catalog_price(item)?;
-            }
-        }
         let cart = self.db.carts().create(input)?;
         self.metrics.record_cart_created(&cart.id.to_string());
         Ok(cart)
-    }
-
-    /// Catalog price for the line `item` names, if it names a catalog line.
-    ///
-    /// Resolution order: the explicit `variant_id`, then the SKU (catalog
-    /// SKUs are variant-level). A `product_id` alone does not carry a price.
-    fn catalog_price(&self, item: &AddCartItem) -> Result<Option<Decimal>> {
-        let products = self.db.products();
-        if let Some(variant_id) = item.variant_id {
-            if let Some(variant) = products.get_variant(variant_id)? {
-                return Ok(Some(variant.price));
-            }
-        }
-        if !item.sku.trim().is_empty() {
-            if let Some(variant) = products.get_variant_by_sku(&item.sku)? {
-                return Ok(Some(variant.price));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Prices are never client-trusted for catalog lines: when the line's
-    /// variant / SKU resolves to a catalog product, the caller's `unit_price`
-    /// must equal the catalog price or the line is refused. Ad-hoc lines (no
-    /// catalog match) keep the caller's price.
-    fn enforce_catalog_price(&self, item: &AddCartItem) -> Result<()> {
-        if let Some(catalog) = self.catalog_price(item)? {
-            if catalog != item.unit_price {
-                return Err(stateset_core::CommerceError::ValidationError(format!(
-                    "unit_price {} for SKU '{}' does not match the catalog price {catalog}; \
-                     catalog lines are priced from the catalog",
-                    item.unit_price, item.sku
-                )));
-            }
-        }
-        Ok(())
-    }
-
-    /// [`Self::enforce_catalog_price`] for a line already in the cart whose
-    /// price is being changed.
-    fn enforce_catalog_price_on_update(&self, item_id: Uuid, input: &UpdateCartItem) -> Result<()> {
-        let Some(new_price) = input.unit_price else {
-            return Ok(());
-        };
-        let Some(line) = self.find_item(item_id)? else {
-            return Ok(());
-        };
-        let probe = AddCartItem {
-            variant_id: line.variant_id,
-            sku: line.sku,
-            unit_price: new_price,
-            ..Default::default()
-        };
-        self.enforce_catalog_price(&probe)
     }
 
     /// The cart line `item_id`, if it exists.
@@ -193,6 +137,12 @@ impl Carts {
             return Ok(());
         };
         if cart.tax_amount <= Decimal::ZERO {
+            return Ok(());
+        }
+        // Tax is money on the cart, and the repository refuses to change it
+        // once the cart is no longer active (`Cart::ensure_money_settable`).
+        // A cart that has left `Active` is not repriced here either.
+        if !cart.can_modify() {
             return Ok(());
         }
         let Some(address) = cart.shipping_address else {
@@ -298,7 +248,6 @@ impl Carts {
     pub fn add_item(&self, cart_id: CartId, item: AddCartItem) -> Result<CartItem> {
         // Reject a negative price or non-positive quantity before persisting.
         item.validate()?;
-        self.enforce_catalog_price(&item)?;
         let added = self.db.carts().add_item(cart_id, item)?;
         self.refresh_tax(cart_id)?;
         Ok(added)
@@ -306,7 +255,6 @@ impl Carts {
 
     /// Update a cart item (quantity, etc.)
     pub fn update_item(&self, item_id: Uuid, input: UpdateCartItem) -> Result<CartItem> {
-        self.enforce_catalog_price_on_update(item_id, &input)?;
         let updated = self.db.carts().update_item(item_id, input)?;
         self.refresh_tax(updated.cart_id)?;
         Ok(updated)

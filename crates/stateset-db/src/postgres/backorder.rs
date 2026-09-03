@@ -1,6 +1,6 @@
 //! PostgreSQL implementation of backorder repository
 
-use super::inventory::{PgInventoryRepository, ReservationConfirmOutcome};
+use super::inventory::{PgInventoryRepository, ReservationConfirmOutcome, with_pg_inventory_retry};
 use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
@@ -940,10 +940,22 @@ impl PgBackorderRepository {
         rows.into_iter().map(Self::row_to_allocation).collect::<Result<Vec<_>>>()
     }
 
+    /// Release one allocation, handing its reservation's units back.
+    ///
+    /// Routed through the crate's Postgres inventory retry wrapper: the
+    /// transaction takes `FOR UPDATE` on the allocation *and* (through
+    /// `release_reservation_in_tx`) on the balance row, so it can lose a
+    /// deadlock (`40P01`) or serialization race against a concurrent
+    /// `auto_allocate`. Without the wrapper that surfaced to the caller as a
+    /// raw database error instead of being retried.
     pub async fn release_allocation_async(
         &self,
         allocation_id: Uuid,
     ) -> Result<BackorderAllocation> {
+        with_pg_inventory_retry(|| self.release_allocation_once(allocation_id)).await
+    }
+
+    async fn release_allocation_once(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let allocation = Self::get_allocation_in_tx(&mut tx, allocation_id).await?;
@@ -968,10 +980,16 @@ impl PgBackorderRepository {
         Ok(updated)
     }
 
+    /// Confirm one allocation. Retried like [`Self::release_allocation_async`]:
+    /// the same balance row lock is taken, so the same deadlock is reachable.
     pub async fn confirm_allocation_async(
         &self,
         allocation_id: Uuid,
     ) -> Result<BackorderAllocation> {
+        with_pg_inventory_retry(|| self.confirm_allocation_once(allocation_id)).await
+    }
+
+    async fn confirm_allocation_once(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let allocation = Self::get_allocation_in_tx(&mut tx, allocation_id).await?;
@@ -1017,7 +1035,14 @@ impl PgBackorderRepository {
         Ok(updated)
     }
 
+    /// Expire every allocation past its expiry, releasing the reservation
+    /// behind each. Retried: the sweep walks many balance rows in one
+    /// transaction and is the most deadlock-prone write in this module.
     pub async fn expire_allocations_async(&self) -> Result<u32> {
+        with_pg_inventory_retry(|| self.expire_allocations_once()).await
+    }
+
+    async fn expire_allocations_once(&self) -> Result<u32> {
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let rows: Vec<(Uuid, Uuid, Option<Uuid>)> = sqlx::query_as(
@@ -1049,10 +1074,20 @@ impl PgBackorderRepository {
         Ok(count)
     }
 
+    /// Give the open backorders of `sku` whatever stock is available, most
+    /// urgent first.
+    ///
+    /// Retried: the `FOR UPDATE` walk over many backorder rows plus the
+    /// per-candidate balance lock is exactly the multi-row lock ordering that
+    /// produces `40P01` against a concurrent release.
     pub async fn auto_allocate_inventory_async(
         &self,
         sku: &str,
     ) -> Result<Vec<BackorderAllocation>> {
+        with_pg_inventory_retry(|| self.auto_allocate_inventory_once(sku)).await
+    }
+
+    async fn auto_allocate_inventory_once(&self, sku: &str) -> Result<Vec<BackorderAllocation>> {
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let candidates: Vec<(Uuid, Decimal, Option<i32>)> = sqlx::query_as(
@@ -1075,10 +1110,18 @@ impl PgBackorderRepository {
                 continue;
             }
             let location_id = source_location_id.unwrap_or(1);
+            // Lock the balance row for the rest of the transaction before
+            // reading availability. Unlocked, a concurrent `reserve` could
+            // take the units between this read and `allocate_in_tx`, and the
+            // resulting `InsufficientStock` aborted the WHOLE batch — every
+            // other backorder of this SKU lost its allocation because one row
+            // lost a race. (`FOR UPDATE OF b` locks only the balance, not the
+            // joined item row.)
             let available: Option<(Decimal,)> = sqlx::query_as(
                 "SELECT b.quantity_available FROM inventory_balances b
                  JOIN inventory_items i ON i.id = b.item_id
-                 WHERE i.sku = $1 AND b.location_id = $2",
+                 WHERE i.sku = $1 AND b.location_id = $2
+                 FOR UPDATE OF b",
             )
             .bind(sku)
             .bind(location_id)
@@ -1090,10 +1133,20 @@ impl PgBackorderRepository {
             if take <= Decimal::ZERO {
                 continue;
             }
-            created.push(
-                self.allocate_in_tx(&mut tx, backorder_id, sku, take, location_id, None, None, now)
-                    .await?,
-            );
+            // Defence in depth: even with the row locked, `reserve_in_tx`
+            // re-checks availability under its own guard. If it still says no
+            // (a lot/serial hold, a legacy drifted row), SKIP this candidate
+            // instead of failing the batch. `InsufficientStock` is raised in
+            // Rust before any failing statement, so the transaction stays
+            // usable.
+            match self
+                .allocate_in_tx(&mut tx, backorder_id, sku, take, location_id, None, None, now)
+                .await
+            {
+                Ok(allocation) => created.push(allocation),
+                Err(CommerceError::InsufficientStock { .. }) => continue,
+                Err(err) => return Err(err),
+            }
         }
         tx.commit().await.map_err(map_db_error)?;
         Ok(created)

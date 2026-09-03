@@ -1008,14 +1008,56 @@ impl PgQualityRepository {
         row.map(Self::row_to_ncr).transpose()
     }
 
+    /// Load an NCR `FOR UPDATE` on the caller's transaction, mapping a
+    /// missing row to `NotFound`.
+    async fn load_ncr_on(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        id: Uuid,
+    ) -> Result<NonConformance> {
+        let row = sqlx::query_as::<_, NcrRow>(
+            "SELECT id, ncr_number, inspection_id, source, severity, status, sku, lot_number, serial_number,
+                    quantity_affected, description, root_cause, corrective_action, preventive_action, disposition,
+                    disposition_quantity, assigned_to, created_at, updated_at, closed_at
+             FROM non_conformances WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        row.map(Self::row_to_ncr).transpose()?.ok_or(CommerceError::NotFound)
+    }
+
+    /// Refuse to edit or re-status a finished NCR: a `Closed` record is
+    /// evidence and a `Cancelled` one was opened in error, so neither may be
+    /// resurrected (a `Cancelled` NCR being "closed" would silently turn a
+    /// mistake into a quality record).
+    fn ensure_ncr_open(ncr: &NonConformance, operation: &str) -> Result<()> {
+        if ncr.status.is_terminal() {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot {operation} NCR {} ({}): status is {} (open a new NCR instead)",
+                ncr.ncr_number, ncr.id, ncr.status
+            )));
+        }
+        Ok(())
+    }
+
+    /// Update an open NCR.
+    ///
+    /// The row is locked and the write is conditional on the status that was
+    /// read, so a concurrent `close_ncr` / `cancel_ncr` cannot be overwritten;
+    /// a finished NCR is refused outright.
     pub async fn update_ncr_async(
         &self,
         id: Uuid,
         input: UpdateNonConformance,
     ) -> Result<NonConformance> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        sqlx::query(
+        let existing = Self::load_ncr_on(&mut tx, id).await?;
+        Self::ensure_ncr_open(&existing, "update")?;
+
+        let updated = sqlx::query(
             r#"
             UPDATE non_conformances SET
                 status = COALESCE($1, status),
@@ -1027,7 +1069,7 @@ impl PgQualityRepository {
                 disposition_quantity = COALESCE($7, disposition_quantity),
                 assigned_to = COALESCE($8, assigned_to),
                 updated_at = $9
-            WHERE id = $10
+            WHERE id = $10 AND status = $11
             "#,
         )
         .bind(input.status.map(|s| s.to_string()))
@@ -1040,11 +1082,63 @@ impl PgQualityRepository {
         .bind(input.assigned_to)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .bind(existing.status.to_string())
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        if updated.rows_affected() != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot update NCR {} ({}): status changed concurrently",
+                existing.ncr_number, existing.id
+            )));
+        }
 
-        self.get_ncr_async(id).await?.ok_or(CommerceError::NotFound)
+        let result = Self::load_ncr_on(&mut tx, id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(result)
+    }
+
+    /// Shared body of [`close_ncr_async`](Self::close_ncr_async) and
+    /// [`cancel_ncr_async`](Self::cancel_ncr_async): move an open NCR to a
+    /// terminal status in one transaction, conditional on the status that was
+    /// read.
+    ///
+    /// Re-applying the same terminal status is a no-op; moving between the two
+    /// terminal statuses is refused.
+    async fn finish_ncr_async(&self, id: Uuid, to: NcrStatus) -> Result<NonConformance> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let now = Utc::now();
+
+        let ncr = Self::load_ncr_on(&mut tx, id).await?;
+        if ncr.status == to {
+            return Ok(ncr); // Idempotent.
+        }
+        Self::ensure_ncr_open(&ncr, if to == NcrStatus::Closed { "close" } else { "cancel" })?;
+
+        let closed_at = (to == NcrStatus::Closed).then_some(now);
+        let updated = sqlx::query(
+            "UPDATE non_conformances
+             SET status = $1, closed_at = COALESCE($2, closed_at), updated_at = $3
+             WHERE id = $4 AND status = $5",
+        )
+        .bind(to.to_string())
+        .bind(closed_at)
+        .bind(now)
+        .bind(id)
+        .bind(ncr.status.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot move NCR {} ({}) to {to}: status changed concurrently",
+                ncr.ncr_number, ncr.id
+            )));
+        }
+
+        let result = Self::load_ncr_on(&mut tx, id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(result)
     }
 
     pub async fn list_ncrs_async(
@@ -1141,33 +1235,17 @@ impl PgQualityRepository {
         rows.into_iter().map(Self::row_to_ncr).collect::<Result<Vec<_>>>()
     }
 
+    /// Close an NCR. Idempotent for an already-closed one; a `Cancelled` NCR
+    /// is refused (cancelling means it was opened in error, so it must not
+    /// become a closed quality record).
     pub async fn close_ncr_async(&self, id: Uuid) -> Result<NonConformance> {
-        let now = Utc::now();
-        sqlx::query(
-            "UPDATE non_conformances SET status = $1, closed_at = $2, updated_at = $3 WHERE id = $4",
-        )
-        .bind(NcrStatus::Closed.to_string())
-        .bind(now)
-        .bind(now)
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        self.get_ncr_async(id).await?.ok_or(CommerceError::NotFound)
+        self.finish_ncr_async(id, NcrStatus::Closed).await
     }
 
+    /// Cancel an NCR opened in error. Idempotent for an already-cancelled one;
+    /// a `Closed` NCR is refused — the record stands.
     pub async fn cancel_ncr_async(&self, id: Uuid) -> Result<NonConformance> {
-        let now = Utc::now();
-        sqlx::query("UPDATE non_conformances SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(NcrStatus::Cancelled.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        self.get_ncr_async(id).await?.ok_or(CommerceError::NotFound)
+        self.finish_ncr_async(id, NcrStatus::Cancelled).await
     }
 
     pub async fn count_ncrs_async(&self, filter: NonConformanceFilter) -> Result<u64> {

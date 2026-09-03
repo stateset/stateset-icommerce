@@ -344,6 +344,29 @@ pub enum CommerceError {
         requested: String,
     },
 
+    /// An order line mutation would drop the order total below the money
+    /// already captured against the order.
+    ///
+    /// Invariant `commerce.order.total_below_captured` — the order-side twin
+    /// of [`CommerceError::CaptureExceedsOrderTotal`]: that one refuses a new
+    /// capture above the total, this one refuses lowering the total below the
+    /// captures. See [`CommerceError::invariant_code`].
+    #[error(
+        "Order {order_id} cannot be reduced to a total of {new_total} {currency}: {captured} {currency} is already captured against it; refund the difference first, or retry with allow_overpayment = true"
+    )]
+    OrderTotalBelowCaptured {
+        /// The order whose total would drop.
+        order_id: Uuid,
+        /// The total the order would have after the mutation, as an exact
+        /// decimal string.
+        new_total: String,
+        /// Money still held by captures on the order (amount less refunds), as
+        /// an exact decimal string.
+        captured: String,
+        /// The order's currency.
+        currency: String,
+    },
+
     /// A return was requested against an order whose goods have not shipped.
     ///
     /// Invariant `commerce.return.order_not_shipped` — see
@@ -671,6 +694,7 @@ impl CommerceError {
                 | Self::InvalidInput { .. }
                 | Self::RefundExceedsCaptured { .. }
                 | Self::CaptureExceedsOrderTotal { .. }
+                | Self::OrderTotalBelowCaptured { .. }
                 | Self::ReturnOrderNotShipped { .. }
                 | Self::ReturnExceedsReturnable { .. }
                 | Self::JournalEntryUnbalanced { .. }
@@ -708,6 +732,7 @@ impl CommerceError {
         match self {
             Self::RefundExceedsCaptured { .. } => Some("commerce.refund.exceeds_captured"),
             Self::CaptureExceedsOrderTotal { .. } => Some("commerce.capture.exceeds_order_total"),
+            Self::OrderTotalBelowCaptured { .. } => Some("commerce.order.total_below_captured"),
             Self::ReturnOrderNotShipped { .. } => Some("commerce.return.order_not_shipped"),
             Self::ReturnExceedsReturnable { .. } => Some("commerce.return.exceeds_shipped"),
             Self::JournalEntryUnbalanced { .. } => Some("commerce.ledger.entry_unbalanced"),

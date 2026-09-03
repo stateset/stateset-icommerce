@@ -7,9 +7,16 @@ A Tokio-based background job scheduler for commerce workloads: cron, intervals,
 one-shot and event-triggered jobs, with retry backoff, a validated lifecycle state
 machine, and pluggable storage.
 
-**Status: standalone library.** No other crate in the workspace depends on it — the
-commerce engine does not schedule jobs implicitly. Add it yourself and register jobs
-against your own `Commerce` instance.
+**Status: wired into the server.** `stateset-http` depends on this crate and starts a
+`JobRunner` carrying the two engine sweeps — `ReservationSweepJob` (expired inventory
+holds and backorder allocations) and `TraceabilitySweepJob` (lot expiry, lot and serial
+reservations) — alongside the HTTP listener; see `stateset_http::sweeps`. Embedding the
+crate directly and registering your own jobs against your own `Commerce` instance works
+the same way.
+
+A `Scheduler` only *decides* what should run (it returns `TickAction`s). `JobRunner` is
+what executes the handlers: `JobRunner::spawn` on the current runtime, or
+`JobRunner::spawn_on_dedicated_thread` for handlers that do blocking database work.
 
 ## Features
 
@@ -20,7 +27,10 @@ against your own `Commerce` instance.
 - **Retry with backoff** — fixed, exponential, or linear
 - **State machine** — validated transitions for the job lifecycle
 - **Pluggable storage** — `JobStore` trait with `InMemoryJobStore` and `FileJobStore`
-- **Built-in jobs** — billing, webhook retry, retention, low stock, subscription renewal
+- **Built-in jobs** — billing, webhook retry, retention, low stock, subscription renewal,
+  reservation sweep, traceability sweep
+- **Async runner** — `JobRunner` drives a `Scheduler`, executes handlers, and serves
+  on-demand triggers through a `JobRunnerHandle`
 
 ## Usage
 

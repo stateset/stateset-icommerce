@@ -350,6 +350,7 @@ pub(crate) use stateset_core::{
     Lot,
     LotCertificate,
     LotFilter,
+    LotGenealogyLink,
     LotLocation,
     LotTransaction,
     MergeLots,

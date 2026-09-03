@@ -34,6 +34,79 @@ impl SqliteQualityRepository {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
+    /// Load an NCR on the caller's transaction, mapping a missing row to
+    /// `NotFound`.
+    fn load_ncr_on(conn: &rusqlite::Connection, id: Uuid) -> Result<NonConformance> {
+        conn.query_row(
+            "SELECT * FROM non_conformances WHERE id = ?",
+            [id.to_string()],
+            Self::row_to_ncr,
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            e => Err(map_db_error(e)),
+        })?
+        .ok_or(CommerceError::NotFound)
+    }
+
+    /// Refuse to edit or re-status a finished NCR: a `Closed` record is
+    /// evidence and a `Cancelled` one was opened in error, so neither may be
+    /// resurrected (a `Cancelled` NCR being "closed" would silently turn a
+    /// mistake into a quality record).
+    fn ensure_ncr_open(ncr: &NonConformance, operation: &str) -> Result<()> {
+        if ncr.status.is_terminal() {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot {operation} NCR {} ({}): status is {} (open a new NCR instead)",
+                ncr.ncr_number, ncr.id, ncr.status
+            )));
+        }
+        Ok(())
+    }
+
+    /// Shared body of [`close_ncr`](Self::close_ncr) and
+    /// [`cancel_ncr`](Self::cancel_ncr): move an open NCR to a terminal status
+    /// in one transaction, conditional on the status that was read.
+    ///
+    /// Re-applying the same terminal status is a no-op; moving between the two
+    /// terminal statuses is refused.
+    fn finish_ncr(&self, id: Uuid, to: NcrStatus) -> Result<NonConformance> {
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let now = Utc::now();
+
+        let ncr = Self::load_ncr_on(&tx, id)?;
+        if ncr.status == to {
+            return Ok(ncr); // Idempotent.
+        }
+        Self::ensure_ncr_open(&ncr, if to == NcrStatus::Closed { "close" } else { "cancel" })?;
+
+        let closed_at = (to == NcrStatus::Closed).then(|| now.to_rfc3339());
+        let rows = tx
+            .execute(
+                "UPDATE non_conformances
+                 SET status = ?, closed_at = COALESCE(?, closed_at), updated_at = ?
+                 WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    to.to_string(),
+                    closed_at,
+                    now.to_rfc3339(),
+                    id.to_string(),
+                    ncr.status.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+        if rows != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot move NCR {} ({}) to {to}: status changed concurrently",
+                ncr.ncr_number, ncr.id
+            )));
+        }
+        let updated = Self::load_ncr_on(&tx, id)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(updated)
+    }
+
     fn generate_inspection_number() -> String {
         // Millisecond timestamp + UUID suffix so concurrent inspection creation
         // (or rapid-fire batches in tests) cannot collide on the UNIQUE constraint.
@@ -933,9 +1006,18 @@ impl QualityRepository for SqliteQualityRepository {
         }
     }
 
+    /// Update an open NCR.
+    ///
+    /// The read and the write share one transaction and the write is
+    /// conditional on the status that was read, so a concurrent `close_ncr` /
+    /// `cancel_ncr` cannot be overwritten; a finished NCR is refused outright.
     fn update_ncr(&self, id: Uuid, input: UpdateNonConformance) -> Result<NonConformance> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
+
+        let existing = Self::load_ncr_on(&tx, id)?;
+        Self::ensure_ncr_open(&existing, "update")?;
 
         let mut updates = vec!["updated_at = ?"];
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
@@ -974,14 +1056,25 @@ impl QualityRepository for SqliteQualityRepository {
         }
 
         params.push(Box::new(id.to_string()));
+        params.push(Box::new(existing.status.to_string()));
 
-        let sql = format!("UPDATE non_conformances SET {} WHERE id = ?", updates.join(", "));
+        let sql = format!(
+            "UPDATE non_conformances SET {} WHERE id = ? AND status = ?",
+            updates.join(", ")
+        );
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
-        conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
-
-        self.get_ncr(id)?.ok_or(CommerceError::NotFound)
+        let rows = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+        if rows != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot update NCR {} ({}): status changed concurrently",
+                existing.ncr_number, existing.id
+            )));
+        }
+        let updated = Self::load_ncr_on(&tx, id)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(updated)
     }
 
     fn list_ncrs(&self, filter: NonConformanceFilter) -> Result<Vec<NonConformance>> {
@@ -1056,35 +1149,17 @@ impl QualityRepository for SqliteQualityRepository {
         Ok(ncrs)
     }
 
+    /// Close an NCR. Idempotent for an already-closed one; a `Cancelled` NCR
+    /// is refused (cancelling means it was opened in error, so it must not
+    /// become a closed quality record).
     fn close_ncr(&self, id: Uuid) -> Result<NonConformance> {
-        let conn = self.conn()?;
-        let now = Utc::now();
-
-        conn.execute(
-            "UPDATE non_conformances SET status = ?, closed_at = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![
-                NcrStatus::Closed.to_string(),
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_ncr(id)?.ok_or(CommerceError::NotFound)
+        self.finish_ncr(id, NcrStatus::Closed)
     }
 
+    /// Cancel an NCR opened in error. Idempotent for an already-cancelled one;
+    /// a `Closed` NCR is refused — the record stands.
     fn cancel_ncr(&self, id: Uuid) -> Result<NonConformance> {
-        let conn = self.conn()?;
-        let now = Utc::now();
-
-        conn.execute(
-            "UPDATE non_conformances SET status = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![NcrStatus::Cancelled.to_string(), now.to_rfc3339(), id.to_string(),],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_ncr(id)?.ok_or(CommerceError::NotFound)
+        self.finish_ncr(id, NcrStatus::Cancelled)
     }
 
     fn count_ncrs(&self, filter: NonConformanceFilter) -> Result<u64> {
@@ -1393,7 +1468,7 @@ mod tests {
     use stateset_core::{
         CreateDefectCode, CreateInspection, CreateInspectionItem, CreateNonConformance,
         CreateQualityHold, InspectionFilter, InspectionType, NonConformanceFilter,
-        NonConformanceSource, QualityHoldFilter, QualityRepository, Severity,
+        NonConformanceSource, QualityHoldFilter, QualityRepository, Severity, UpdateNonConformance,
     };
 
     fn fresh_repo() -> SqliteQualityRepository {
@@ -1490,6 +1565,81 @@ mod tests {
         let by_num = repo.get_ncr_by_number(&ncr.ncr_number).expect("ok").expect("found");
         assert_eq!(by_num.id, ncr.id);
         assert!(repo.get_ncr_by_number("missing").expect("ok").is_none());
+    }
+
+    fn make_ncr(repo: &SqliteQualityRepository, sku: &str) -> NonConformance {
+        repo.create_ncr(CreateNonConformance {
+            inspection_id: None,
+            source: NonConformanceSource::InternalAudit,
+            severity: Severity::Major,
+            sku: sku.into(),
+            lot_number: None,
+            serial_number: None,
+            quantity_affected: dec!(5),
+            description: "defect".into(),
+            assigned_to: None,
+        })
+        .expect("create ncr")
+    }
+
+    /// A finished NCR is evidence: closing is idempotent, cancelling a closed
+    /// NCR (or closing a cancelled one) is refused, and `update_ncr` will not
+    /// edit either. Before this the status column was written blind, so a
+    /// cancelled NCR could be silently turned into a closed quality record.
+    #[test]
+    fn terminal_ncrs_refuse_further_status_writes() {
+        let repo = fresh_repo();
+
+        let closed = make_ncr(&repo, "SKU-NCR-CLOSE");
+        let done = repo.close_ncr(closed.id).expect("close");
+        assert_eq!(done.status, NcrStatus::Closed);
+        let closed_at = done.closed_at.expect("closed_at stamped");
+        assert_eq!(repo.close_ncr(closed.id).expect("close again").closed_at, Some(closed_at));
+        let err = repo.cancel_ncr(closed.id).expect_err("a closed NCR cannot be cancelled");
+        assert_validation_mentions(&err, &["cancel", "closed"]);
+        let err = repo
+            .update_ncr(
+                closed.id,
+                UpdateNonConformance { root_cause: Some("rewritten".into()), ..Default::default() },
+            )
+            .expect_err("a closed NCR cannot be edited");
+        assert_validation_mentions(&err, &["update", "closed"]);
+        assert_eq!(repo.get_ncr(closed.id).unwrap().unwrap().root_cause, None);
+
+        let cancelled = make_ncr(&repo, "SKU-NCR-CANCEL");
+        assert_eq!(repo.cancel_ncr(cancelled.id).expect("cancel").status, NcrStatus::Cancelled);
+        assert_eq!(
+            repo.cancel_ncr(cancelled.id).expect("cancel again").status,
+            NcrStatus::Cancelled
+        );
+        assert!(
+            repo.get_ncr(cancelled.id).unwrap().unwrap().closed_at.is_none(),
+            "cancelling is not a closure"
+        );
+        let err = repo.close_ncr(cancelled.id).expect_err("a cancelled NCR cannot be closed");
+        assert_validation_mentions(&err, &["close", "cancelled"]);
+
+        assert!(matches!(repo.close_ncr(Uuid::new_v4()), Err(CommerceError::NotFound)));
+    }
+
+    /// `update_ncr` still drives an open NCR through its workflow.
+    #[test]
+    fn update_ncr_advances_an_open_ncr() {
+        let repo = fresh_repo();
+        let ncr = make_ncr(&repo, "SKU-NCR-OPEN");
+        let updated = repo
+            .update_ncr(
+                ncr.id,
+                UpdateNonConformance {
+                    status: Some(NcrStatus::CorrectiveAction),
+                    root_cause: Some("tooling wear".into()),
+                    ..Default::default()
+                },
+            )
+            .expect("update");
+        assert_eq!(updated.status, NcrStatus::CorrectiveAction);
+        assert_eq!(updated.root_cause.as_deref(), Some("tooling wear"));
+        assert_eq!(repo.close_ncr(ncr.id).expect("close").status, NcrStatus::Closed);
     }
 
     #[test]

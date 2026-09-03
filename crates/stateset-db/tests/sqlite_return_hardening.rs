@@ -30,6 +30,8 @@ use stateset_core::{
     UpdateReturn, WarehouseAddress, WarehouseRepository, WarehouseType,
 };
 use stateset_db::SqliteDatabase;
+use std::sync::{Arc, Barrier};
+use std::thread;
 use uuid::Uuid;
 
 fn db() -> SqliteDatabase {
@@ -434,18 +436,147 @@ fn create_return_result(
     })
 }
 
+/// Scrap and return-to-vendor destroy the goods without touching stock, so the
+/// old `affects_stock`-only guard let a scrapped return be rejected — which
+/// released its claim on the order line and made the destroyed units returnable
+/// (and refundable) a second time. Any disposition at all now pins the return.
 #[test]
-fn reject_from_inspecting_is_allowed_without_stock_disposition() {
+fn reject_after_any_disposition_is_refused_even_without_a_stock_effect() {
+    for (label, disp) in [
+        ("scrap", ReturnDisposition::Scrap),
+        ("return_to_vendor", ReturnDisposition::ReturnToVendor),
+        ("refurbish", ReturnDisposition::Refurbish),
+    ] {
+        let db = db();
+        let wh = warehouse(&db);
+        let sku = format!("SKU-REJECT-{label}");
+        item(&db, &sku);
+        let order = shipped_order(&db, &sku, 1, dec!(10), None);
+        let ret = create_return(&db, &order, 1);
+        db.returns().approve(ret.id).unwrap();
+        advance(
+            &db,
+            ret.id,
+            &[ReturnStatus::InTransit, ReturnStatus::Received, ReturnStatus::Inspecting],
+        );
+        db.returns().set_item_disposition(ret.id, ret.items[0].id, disposition(disp, wh)).unwrap();
+
+        let err = db.returns().reject(ret.id, "damaged by customer").expect_err("reject");
+        assert!(matches!(err, CommerceError::Conflict(_)), "{label}: got {err:?}");
+        let err = db
+            .returns()
+            .cancel(ret.id)
+            .expect_err("cancel is refused for the same reason (illegal edge or conflict)");
+        assert!(
+            matches!(err, CommerceError::Conflict(_) | CommerceError::ValidationError(_)),
+            "{label}: got {err:?}"
+        );
+        assert_eq!(db.returns().get(ret.id).unwrap().unwrap().status, ReturnStatus::Inspecting);
+
+        // The claim still stands: the destroyed unit is not returnable again.
+        let err = create_return_result(&db, &order, 1).expect_err("units already claimed");
+        assert!(matches!(err, CommerceError::ReturnExceedsReturnable { .. }), "{label}: {err:?}");
+    }
+}
+
+/// Rejecting is still allowed while nothing has been dispositioned.
+#[test]
+fn reject_from_inspecting_is_allowed_while_nothing_is_dispositioned() {
+    let db = db();
+    let ret = received_return(&db, "SKU-REJECT-CLEAN", 1);
+    advance(&db, ret.id, &[ReturnStatus::Inspecting]);
+    let rejected = db.returns().reject(ret.id, "not our product").expect("reject");
+    assert_eq!(rejected.status, ReturnStatus::Rejected);
+    assert_eq!(rejected.notes.as_deref(), Some("not our product"));
+}
+
+// ---------------------------------------------------------------------------
+// R9: deleting a return may not free the order-line claim
+// ---------------------------------------------------------------------------
+
+/// A completed, restocked, refunded return used to be deletable in any status.
+/// `validate_return_item_tx` counts claims from the surviving `return_items`,
+/// so the delete made the same units returnable and refundable again while the
+/// restocked stock stayed on the shelf.
+#[test]
+fn delete_is_refused_once_the_return_has_had_any_effect() {
     let db = db();
     let wh = warehouse(&db);
-    let ret = received_return(&db, "SKU-REJECT-SCRAP", 1);
-    advance(&db, ret.id, &[ReturnStatus::Inspecting]);
+    let sku = "SKU-DELETE-EFFECT";
+    item(&db, sku);
+    let order = shipped_order(&db, sku, 2, dec!(10), None);
+    completed_payment(&db, &order, dec!(20));
+    let ret = create_return(&db, &order, 2);
+    db.returns().approve(ret.id).unwrap();
+    advance(
+        &db,
+        ret.id,
+        &[ReturnStatus::InTransit, ReturnStatus::Received, ReturnStatus::Inspecting],
+    );
     db.returns()
-        .set_item_disposition(ret.id, ret.items[0].id, disposition(ReturnDisposition::Scrap, wh))
-        .unwrap();
-    let rejected = db.returns().reject(ret.id, "damaged by customer").expect("reject");
-    assert_eq!(rejected.status, ReturnStatus::Rejected);
-    assert_eq!(rejected.notes.as_deref(), Some("damaged by customer"));
+        .set_item_disposition(ret.id, ret.items[0].id, disposition(ReturnDisposition::Restock, wh))
+        .expect("restock");
+    db.returns().complete(ret.id).expect("complete");
+    assert_eq!(on_hand(&db, sku, wh), (dec!(2), dec!(0)));
+
+    let err = db
+        .returns()
+        .delete_batch_atomic(vec![ret.id])
+        .expect_err("a completed, restocked return is not deletable");
+    assert!(matches!(err, CommerceError::NotPermitted(_)), "got {err:?}");
+
+    // The partial-success batch records the refusal instead of raising it.
+    let batch = db.returns().delete_batch(vec![ret.id]).expect("batch call itself succeeds");
+    assert_eq!(batch.succeeded.len(), 0, "nothing may be deleted");
+    assert_eq!(batch.failed.len(), 1);
+
+    // The return survives, so its claim on the order line survives with it.
+    assert!(db.returns().get(ret.id).unwrap().is_some());
+    let err = create_return_result(&db, &order, 1).expect_err("units already claimed");
+    assert!(matches!(err, CommerceError::ReturnExceedsReturnable { .. }), "got {err:?}");
+    assert_eq!(on_hand(&db, sku, wh), (dec!(2), dec!(0)));
+}
+
+/// Every status past the early, no-effect window refuses deletion; the early
+/// window itself still deletes header and items together.
+#[test]
+fn delete_window_is_requested_and_approved_only() {
+    let db = db();
+    let order = shipped_order(&db, "SKU-DELETE-WINDOW", 6, dec!(10), None);
+
+    // Deletable: an untouched request, and an approved (nothing physical yet).
+    let requested = create_return(&db, &order, 1);
+    db.returns().delete_batch_atomic(vec![requested.id]).expect("delete requested");
+    assert!(db.returns().get(requested.id).unwrap().is_none());
+
+    let approved = create_return(&db, &order, 1);
+    db.returns().approve(approved.id).unwrap();
+    db.returns().delete_batch_atomic(vec![approved.id]).expect("delete approved");
+    assert!(db.returns().get(approved.id).unwrap().is_none());
+
+    // Not deletable once the goods are moving, or once terminal.
+    for statuses in [
+        vec![ReturnStatus::InTransit],
+        vec![ReturnStatus::InTransit, ReturnStatus::Received],
+        vec![ReturnStatus::InTransit, ReturnStatus::Received, ReturnStatus::Inspecting],
+    ] {
+        let ret = create_return(&db, &order, 1);
+        db.returns().approve(ret.id).unwrap();
+        advance(&db, ret.id, &statuses);
+        let err = db
+            .returns()
+            .delete_batch_atomic(vec![ret.id])
+            .expect_err("in-flight returns are not deletable");
+        assert!(matches!(err, CommerceError::NotPermitted(_)), "{statuses:?}: got {err:?}");
+    }
+
+    let cancelled = create_return(&db, &order, 1);
+    db.returns().cancel(cancelled.id).unwrap();
+    let err = db
+        .returns()
+        .delete_batch_atomic(vec![cancelled.id])
+        .expect_err("terminal returns are not deletable");
+    assert!(matches!(err, CommerceError::NotPermitted(_)), "got {err:?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -851,4 +982,89 @@ fn atomic_batch_update_is_guarded_and_rolls_back() {
     assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
     assert_eq!(db.returns().get(a.id).unwrap().unwrap().status, ReturnStatus::Requested);
     assert_eq!(db.returns().get(b.id).unwrap().unwrap().status, ReturnStatus::Requested);
+}
+
+// ---------------------------------------------------------------------------
+// R10: SQLite concurrency twins of the Postgres race tests
+// ---------------------------------------------------------------------------
+
+/// Two threads racing to return the whole of one order line: the over-return
+/// guard and the insert share one `IMMEDIATE` write transaction, so exactly
+/// one wins and the loser sees `ReturnExceedsReturnable`.
+#[test]
+fn concurrent_full_returns_on_one_line_admit_exactly_one() {
+    let db = Arc::new(db());
+    let order = shipped_order(&db, "SKU-RACE-FULL", 3, dec!(10), None);
+    let barrier = Arc::new(Barrier::new(2));
+
+    let handles: Vec<_> = (0..2)
+        .map(|_| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let order = order.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                create_return_result(&db, &order, 3)
+            })
+        })
+        .collect();
+
+    let (mut ok, mut exceeded) = (0, 0);
+    for handle in handles {
+        match handle.join().expect("thread") {
+            Ok(_) => ok += 1,
+            Err(CommerceError::ReturnExceedsReturnable { .. }) => exceeded += 1,
+            Err(other) => panic!("unexpected error: {other:?}"),
+        }
+    }
+    assert_eq!((ok, exceeded), (1, 1));
+    let stored = db
+        .returns()
+        .list(stateset_core::ReturnFilter { order_id: Some(order.id), ..Default::default() })
+        .expect("list");
+    assert_eq!(stored.len(), 1, "exactly one return may claim the line");
+}
+
+/// Four threads creating with the same idempotency key produce one return;
+/// every loser replays the winner rather than conflicting.
+#[test]
+fn concurrent_creates_with_same_idempotency_key_yield_one_return() {
+    let db = Arc::new(db());
+    let order = shipped_order(&db, "SKU-RACE-IDEM", 4, dec!(10), None);
+    let key = format!("ret-{}", Uuid::new_v4());
+    let barrier = Arc::new(Barrier::new(4));
+
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let order = order.clone();
+            let key = key.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                db.returns().create(CreateReturn {
+                    order_id: order.id,
+                    idempotency_key: Some(key),
+                    items: vec![CreateReturnItem {
+                        order_item_id: order.items[0].id,
+                        quantity: 1,
+                        condition: None,
+                    }],
+                    ..Default::default()
+                })
+            })
+        })
+        .collect();
+
+    let mut ids: Vec<_> = handles
+        .into_iter()
+        .map(|h| h.join().expect("thread").expect("every caller gets the return").id)
+        .collect();
+    ids.dedup();
+    assert_eq!(ids.len(), 1, "all callers must see the same return: {ids:?}");
+    let count = db
+        .returns()
+        .count(stateset_core::ReturnFilter { order_id: Some(order.id), ..Default::default() })
+        .expect("count");
+    assert_eq!(count, 1);
 }

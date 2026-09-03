@@ -2002,7 +2002,14 @@ impl PgSubscriptionRepository {
     /// the schedule, and a subscription whose schedule has been cleared
     /// (paused/cancelled leave `next_billing_date` NULL) is never resurrected
     /// into billing. `billing_cycle_count` increments in every case, since the
-    /// cycle really did settle. Mirrors the SQLite backend.
+    /// cycle really did settle.
+    ///
+    /// The subscription's billing lease is RELEASED here: the work the lease
+    /// protected (billing this period) is finished, so the worker's claim is
+    /// over. Leaving it to expire pinned the subscription for the rest of the
+    /// lease even though nothing was billing it, and a retry after an early
+    /// success had to wait the lease out.
+    /// Mirrors the SQLite backend.
     async fn advance_subscription_after_paid_cycle_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -2040,6 +2047,8 @@ impl PgSubscriptionRepository {
                     current_period_start = $1,
                     current_period_end = $2,
                     next_billing_date = $2,
+                    billing_lease_owner = NULL,
+                    billing_lease_until = NULL,
                     updated_at = $3
                  WHERE id = $4",
             )
@@ -2058,6 +2067,8 @@ impl PgSubscriptionRepository {
                 "UPDATE subscriptions SET
                     billing_cycle_count = billing_cycle_count + 1,
                     failed_payment_attempts = 0,
+                    billing_lease_owner = NULL,
+                    billing_lease_until = NULL,
                     updated_at = $1
                  WHERE id = $2",
             )

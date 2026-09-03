@@ -1,9 +1,9 @@
 //! SQLite customer repository implementation
 
 use super::{
-    build_in_clause, json1_available, map_db_error, params_refs, parse_datetime_row, parse_enum,
-    parse_enum_row, parse_json_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
-    with_immediate_transaction,
+    ConflictValues, build_in_clause, json1_available, map_db_error, map_db_error_with, params_refs,
+    parse_datetime_row, parse_enum, parse_enum_row, parse_json_row, parse_uuid_opt_row,
+    parse_uuid_row, uuid_params, with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -18,6 +18,64 @@ use stateset_core::{
 use uuid::Uuid;
 
 use super::products::OPEN_ORDER_STATUSES;
+
+/// Resolve one *live* customer from a normalised e-mail address (`?1`).
+///
+/// The primary match is on `email_key`. Legacy case-duplicate rows carry a
+/// suffixed key (see migration `091_customer_email_key_backfill`), so when no
+/// row owns the canonical key the lookup falls back to the raw `email`
+/// column — that keeps every legacy account reachable by its own address, and
+/// stops `find_or_create` from falling through to an INSERT that the legacy
+/// raw `UNIQUE(email)` constraint from migration 001 would refuse forever.
+///
+/// Ties are broken deterministically: exact key owner first, then oldest.
+/// Deleted rows never match (NULL key, tombstone e-mail).
+const LIVE_CUSTOMER_BY_EMAIL: &str = "SELECT * FROM customers \
+     WHERE email_key = ?1 OR (status != 'deleted' AND LOWER(TRIM(email)) = ?1) \
+     ORDER BY CASE WHEN email_key = ?1 THEN 0 ELSE 1 END, created_at, id \
+     LIMIT 1";
+
+/// Get the live customer owning `input.email`, creating one if there is none,
+/// using an existing connection so the whole thing runs inside the caller's
+/// transaction. Returns `(customer, created)`.
+///
+/// This is the canonical entry point for any writer that needs "the customer
+/// for this address" — guest checkout above all. Going through it (rather than
+/// a raw `INSERT INTO customers`) is what guarantees the address is
+/// normalised, that `email_key` is populated, and that the account stays
+/// reachable by [`CustomerRepository::get_by_email`] afterwards.
+///
+/// `conn` MUST be a write transaction (`begin_immediate`) for the result to be
+/// atomic: SQLite serialises IMMEDIATE writers, so a racing caller blocks and
+/// then observes the winner's row instead of inserting a second account.
+///
+/// # Errors
+///
+/// Validation failures on the input, and database errors. A caller that loses
+/// the race never sees `EmailAlreadyExists`; it gets the winner's record.
+pub(crate) fn get_or_create_customer_with_conn(
+    conn: &rusqlite::Connection,
+    input: &CreateCustomer,
+) -> Result<(Customer, bool)> {
+    validate_email(&input.email)?;
+    validate_required_text("customer.first_name", &input.first_name, 100)?;
+    validate_required_text("customer.last_name", &input.last_name, 100)?;
+    if let Some(phone) = &input.phone {
+        validate_phone(phone)?;
+    }
+    let email = Customer::normalize_email(&input.email);
+
+    let existing = conn
+        .query_row(LIVE_CUSTOMER_BY_EMAIL, [&email], SqliteCustomerRepository::row_to_customer)
+        .optional()
+        .map_err(map_db_error)?;
+    if let Some(existing) = existing {
+        return Ok((existing, false));
+    }
+    let created = SqliteCustomerRepository::insert_customer_tx(conn, input)
+        .map_err(|e| map_db_error_with(e, ConflictValues::email(&email)))?;
+    Ok((created, true))
+}
 
 /// SQLite implementation of `CustomerRepository`
 #[derive(Debug)]
@@ -141,8 +199,15 @@ impl SqliteCustomerRepository {
         exclude: Option<CustomerId>,
     ) -> Result<bool> {
         let exclude = exclude.map(|id| id.to_string()).unwrap_or_default();
+        // Mirrors `LIVE_CUSTOMER_BY_EMAIL`: a legacy case-duplicate holds the
+        // address in its raw `email` column under a suffixed key, and the
+        // legacy raw `UNIQUE(email)` would reject the write anyway — so report
+        // it as taken here and return the typed `EmailAlreadyExists` instead.
         conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM customers WHERE email_key = ? AND id != ? LIMIT 1)",
+            "SELECT EXISTS(SELECT 1 FROM customers \
+             WHERE id != ?2 \
+               AND (email_key = ?1 OR (status != 'deleted' AND LOWER(TRIM(email)) = ?1)) \
+             LIMIT 1)",
             rusqlite::params![email_key, exclude],
             |row| row.get(0),
         )
@@ -209,7 +274,12 @@ impl SqliteCustomerRepository {
             metadata_json,
             &now_str,
             &now_str,
-        ])?;
+        ])
+        // The pre-check above normally catches this; the UNIQUE indexes
+        // (`email_key`, and the legacy raw `email`) backstop the race window,
+        // and the context makes the typed error name the address rather than
+        // the column.
+        .map_err(|e| wrap(map_db_error_with(e, ConflictValues::email(&email))))?;
 
         Ok(Customer {
             id,
@@ -227,6 +297,21 @@ impl SqliteCustomerRepository {
             created_at: now,
             updated_at: now,
         })
+    }
+
+    /// Atomic get-or-create by normalised e-mail (SQLite twin of the Postgres
+    /// `get_or_create_by_email_async`).
+    ///
+    /// The lookup and the insert share ONE `BEGIN IMMEDIATE` transaction, so
+    /// two callers racing on the same address cannot both create: the second
+    /// one blocks on the write lock, then reads the winner's row. Returns
+    /// `(customer, created)`.
+    fn get_or_create_by_email_inner(&self, input: &CreateCustomer) -> Result<(Customer, bool)> {
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let (customer, created) = get_or_create_customer_with_conn(&tx, input)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok((customer, created))
     }
 
     /// Apply a partial update on an open transaction (shared by `update` and
@@ -260,6 +345,7 @@ impl SqliteCustomerRepository {
 
         let mut updates = vec!["updated_at = ?"];
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
+        let mut new_email = None;
 
         if let Some(email) = &input.email {
             validate_email(email)?;
@@ -270,7 +356,8 @@ impl SqliteCustomerRepository {
             updates.push("email = ?");
             params.push(Box::new(email.clone()));
             updates.push("email_key = ?");
-            params.push(Box::new(email));
+            params.push(Box::new(email.clone()));
+            new_email = Some(email);
         }
         if let Some(first_name) = &input.first_name {
             validate_required_text("customer.first_name", first_name, 100)?;
@@ -321,7 +408,12 @@ impl SqliteCustomerRepository {
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
 
-        let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+        let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(|e| {
+            map_db_error_with(
+                e,
+                ConflictValues { email: new_email.as_deref(), ..ConflictValues::default() },
+            )
+        })?;
         if rows_affected == 0 {
             return Err(CommerceError::VersionConflict {
                 entity: "customer".to_string(),
@@ -488,7 +580,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         // Live accounts only: deleted rows have a NULL key and a tombstone
         // e-mail, so a re-registration never resolves to the old account.
         let result = conn.query_row(
-            "SELECT * FROM customers WHERE email_key = ?",
+            LIVE_CUSTOMER_BY_EMAIL,
             [Customer::normalize_email(email)],
             Self::row_to_customer,
         );
@@ -498,6 +590,10 @@ impl CustomerRepository for SqliteCustomerRepository {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(map_db_error(e)),
         }
+    }
+
+    fn get_or_create_by_email(&self, input: CreateCustomer) -> Result<(Customer, bool)> {
+        self.get_or_create_by_email_inner(&input)
     }
 
     fn update(&self, id: CustomerId, input: UpdateCustomer) -> Result<Customer> {

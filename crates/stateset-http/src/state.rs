@@ -649,6 +649,16 @@ impl AppState {
         &self.commerce
     }
 
+    /// A shared handle to the default [`Commerce`] engine.
+    ///
+    /// Background work (e.g. the built-in sweeps started by
+    /// [`ServerBuilder::serve`](crate::ServerBuilder::serve)) needs to keep the
+    /// engine alive past the borrow [`Self::commerce`] hands out.
+    #[must_use]
+    pub fn commerce_arc(&self) -> Arc<Commerce> {
+        Arc::clone(&self.commerce)
+    }
+
     /// Get (or lazily create) the SSE replay buffer for a `Commerce` engine.
     ///
     /// The buffer assigns monotonic ids to events and retains a bounded window
