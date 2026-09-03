@@ -302,6 +302,38 @@ pub extern "C" fn stateset_product_create(
     }
 }
 
+/// Publish a product so its SKUs may be sold.
+///
+/// Products are created as drafts, and cart and order lines are checked
+/// against the catalogue, so a draft SKU is refused. Returns the updated
+/// product as JSON (caller must free), or null on failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn stateset_product_publish(
+    handle: *mut CommerceHandle,
+    id: *const c_char,
+) -> *mut c_char {
+    let Some(id_str) = cstr_to_string(id) else { return ptr::null_mut() };
+    let Ok(uuid) = uuid::Uuid::parse_str(&id_str) else { return ptr::null_mut() };
+
+    let result = use_handle(handle, |commerce| {
+        commerce
+            .products()
+            .update(
+                uuid.into(),
+                stateset_embedded::UpdateProduct {
+                    status: Some(stateset_embedded::ProductStatus::Active),
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(product) => to_json_cstr(&product),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 /// Get a product by ID
 /// Returns JSON string (caller must free)
 #[unsafe(no_mangle)]

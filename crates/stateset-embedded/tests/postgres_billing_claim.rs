@@ -208,21 +208,31 @@ async fn postgres_concurrent_claims_are_disjoint_and_bill_each_subscription_once
                         .expect("release"),
                     "paying the cycle should have released the lease already"
                 );
-                billed.push(sub.id);
+                billed.push((sub.id, sub.billing_cycle_count + 2));
             }
             (all_claimed, billed)
         }));
     }
 
-    let mut seen_claimed = std::collections::HashSet::new();
+    // These fixtures are overdue by decades, so paying one cycle advances them
+    // by a single interval and leaves them due again. Since a settled cycle
+    // releases its lease, another worker may legitimately claim such a
+    // subscription to continue catching it up — so claims are NOT disjoint for
+    // the whole run, only while a lease is held. What must never happen is two
+    // workers billing the same PERIOD, which the `(subscription, cycle_number)`
+    // key enforces.
     let mut seen_billed = std::collections::HashSet::new();
     for handle in handles {
         let (claimed, billed) = handle.await.expect("worker task");
+        let mut batch = std::collections::HashSet::new();
         for id in claimed {
-            assert!(seen_claimed.insert(id), "subscription {id} claimed by two workers");
+            assert!(batch.insert(id), "subscription {id} appeared twice in one claim batch");
         }
-        for id in billed {
-            assert!(seen_billed.insert(id), "subscription {id} billed by two workers");
+        for (id, cycle_number) in billed {
+            assert!(
+                seen_billed.insert((id, cycle_number)),
+                "subscription {id} billed twice for cycle {cycle_number}"
+            );
         }
     }
     assert_eq!(seen_billed.len(), 9, "every due subscription billed exactly once");

@@ -13,6 +13,7 @@ extern int stateset_customer_delete(StateSetHandle handle, const char* id);
 
 // Products API
 extern char* stateset_product_create(StateSetHandle handle, const char* name, const char* sku, double price, const char* description);
+extern char* stateset_product_publish(StateSetHandle handle, const char* id);
 extern char* stateset_product_get(StateSetHandle handle, const char* id);
 extern char* stateset_product_list(StateSetHandle handle);
 
@@ -193,6 +194,18 @@ func (api *ProductsAPI) Create(name, sku string, price float64, description stri
 	defer C.free(unsafe.Pointer(cDesc))
 
 	result := C.stateset_product_create(api.commerce.handle, cName, cSKU, C.double(price), cDesc)
+	return parseJSON[Product](result)
+}
+
+// Publish makes a product's SKUs sellable.
+//
+// Products are created as drafts, and cart and order lines are checked
+// against the catalogue, so a draft SKU is refused on an order.
+func (api *ProductsAPI) Publish(id string) (*Product, error) {
+	cID := C.CString(id)
+	defer C.free(unsafe.Pointer(cID))
+
+	result := C.stateset_product_publish(api.commerce.handle, cID)
 	return parseJSON[Product](result)
 }
 

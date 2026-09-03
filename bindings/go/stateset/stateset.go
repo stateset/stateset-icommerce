@@ -44,6 +44,7 @@ extern int stateset_customer_delete(StateSetHandle handle, const char* id);
 // Products API
 extern char* stateset_product_create(StateSetHandle handle, const char* name, const char* sku, double price, const char* description);
 extern char* stateset_product_get(StateSetHandle handle, const char* id);
+extern char* stateset_product_publish(StateSetHandle handle, const char* id);
 extern char* stateset_product_list(StateSetHandle handle);
 
 // Orders API
