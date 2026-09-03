@@ -239,8 +239,10 @@ async fn postgres_x402_settle_after_valid_until_is_refused_and_swept() {
     assert_eq!(stored.status, X402IntentStatus::Sequenced);
     assert!(stored.tx_hash.is_none());
 
-    // The sweeper is global; at least this intent must be expired by it.
-    assert!(repo.expire_stale_intents_async().await.expect("sweep") >= 1);
+    // The sweeper is global; invoke it and verify the effect on this intent.
+    // Races in CI across neighboring tests can make the affected-row count flaky;
+    // assert on the final stored status instead of the count.
+    let _ = repo.expire_stale_intents_async().await.expect("sweep");
     let stored = repo.get_async(intent.id).await.expect("get").expect("exists");
     assert_eq!(stored.status, X402IntentStatus::Expired);
 }

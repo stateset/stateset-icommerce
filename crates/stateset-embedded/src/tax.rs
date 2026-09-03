@@ -178,11 +178,17 @@ impl Tax {
     /// println!("Effective tax rate: {}%", rate * rust_decimal_macros::dec!(100));
     /// # Ok::<(), CommerceError>(())
     /// ```
+    /// Returns zero when tax is disabled for the store
+    /// ([`TaxSettings::enabled`]), so this agrees with what
+    /// [`Self::calculate`] would actually charge.
     pub fn get_effective_rate(
         &self,
         address: &TaxAddress,
         category: ProductTaxCategory,
     ) -> Result<Decimal> {
+        if !self.is_enabled()? {
+            return Ok(Decimal::ZERO);
+        }
         let today = chrono::Utc::now().date_naive();
         let rates = self.db.tax().get_rates_for_address(address, category, today)?;
 
@@ -385,7 +391,40 @@ impl Tax {
         self.db.tax().create_exemption(input)
     }
 
-    /// Check if a customer has an active exemption.
+    /// Mark an exemption certificate as verified, or revoke that verification.
+    ///
+    /// Exemptions are created **unverified** and tax calculation honours only
+    /// verified ones, so this is the step that makes a certificate take
+    /// effect. Without it an exemption could be created through the public
+    /// API and never honoured.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommerceError::NotFound`](stateset_core::CommerceError::NotFound)
+    /// if no exemption has `id`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// # use stateset_embedded::*;
+    /// # let commerce = Commerce::new(":memory:")?;
+    /// let exemption = commerce.tax().create_exemption(input)?;
+    /// assert!(!exemption.verified);
+    /// let verified = commerce.tax().verify_exemption(exemption.id, true)?;
+    /// assert!(verified.verified);
+    /// # Ok::<(), CommerceError>(())
+    /// ```
+    pub fn verify_exemption(&self, id: Uuid, verified: bool) -> Result<TaxExemption> {
+        self.db.tax().verify_exemption(id, verified)
+    }
+
+    /// Check whether a customer has an exemption that tax calculation would
+    /// actually honour **today** — active, verified, and inside its validity
+    /// window (see [`TaxExemption::is_effective_on`]).
+    ///
+    /// This deliberately agrees with the engine. Reporting "exempt" for any
+    /// stored row, verified or not, contradicted the tax that was then
+    /// charged.
     ///
     /// # Example
     ///
@@ -393,13 +432,19 @@ impl Tax {
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
     /// if commerce.tax().customer_is_exempt(customer_id)? {
-    ///     println!("Customer has tax exemption");
+    ///     println!("Customer has a tax exemption in force");
     /// }
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn customer_is_exempt(&self, customer_id: Uuid) -> Result<bool> {
+        self.customer_is_exempt_on(customer_id, chrono::Utc::now().date_naive())
+    }
+
+    /// Whether a customer has an exemption in force on `date` — the same test
+    /// [`Self::calculate`] applies to the request's transaction date.
+    pub fn customer_is_exempt_on(&self, customer_id: Uuid, date: NaiveDate) -> Result<bool> {
         let exemptions = self.get_customer_exemptions(customer_id)?;
-        Ok(!exemptions.is_empty())
+        Ok(exemptions.iter().any(|e| e.is_effective_on(date)))
     }
 
     // ========================================================================

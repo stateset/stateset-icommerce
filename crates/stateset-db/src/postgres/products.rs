@@ -3,14 +3,155 @@
 use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::postgres::PgPool;
+use sqlx::postgres::{PgConnection, PgPool};
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
     BatchResult, CommerceError, CreateProduct, CreateProductVariant, Product, ProductFilter,
     ProductId, ProductRepository, ProductStatus, ProductType, ProductVariant, Result,
-    UpdateProduct, validate_batch_size,
+    UpdateProduct, Validate, VariantPurchasability, validate_batch_size, validate_sku,
 };
 use uuid::Uuid;
+
+/// Order statuses that still count as "open" for the purpose of withdrawing a
+/// SKU from sale (mirrors the SQLite backend).
+pub(crate) const OPEN_ORDER_STATUSES: &str =
+    "'pending','confirmed','processing','partially_shipped'";
+
+/// Reservation statuses that still hold stock against a SKU.
+pub(crate) const ACTIVE_RESERVATION_STATUSES: &str = "'pending','confirmed','allocated'";
+
+/// Live references to one or more SKUs from the cart / order / reservation
+/// tables. A product or variant may only be withdrawn from sale when all
+/// three counts are zero (see [`SkuReferenceCounts::ensure_none`]).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SkuReferenceCounts {
+    /// Lines in carts whose status is `active`.
+    pub active_cart_lines: u64,
+    /// Lines on orders in an open status.
+    pub open_order_lines: u64,
+    /// Inventory reservations in pending / confirmed / allocated status.
+    pub active_reservations: u64,
+}
+
+impl SkuReferenceCounts {
+    /// Whether nothing live references the SKU set.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.active_cart_lines == 0 && self.open_order_lines == 0 && self.active_reservations == 0
+    }
+
+    /// Refuse with a [`CommerceError::Conflict`] naming every non-zero count.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Conflict` when any count is non-zero.
+    pub fn ensure_none(&self, action: &str, subject: &str) -> Result<()> {
+        if self.is_empty() {
+            return Ok(());
+        }
+        Err(CommerceError::Conflict(format!(
+            "cannot {action} {subject}: {} active cart line(s), {} open order line(s) and {} active reservation(s) still reference its SKU(s)",
+            self.active_cart_lines, self.open_order_lines, self.active_reservations
+        )))
+    }
+}
+
+/// Count live references to the SKUs selected by `sku_predicate` (a SQL
+/// fragment over the column `sku` using the single bind `$1`).
+async fn sku_reference_counts<A>(
+    conn: &mut PgConnection,
+    sku_predicate: &str,
+    param: A,
+) -> Result<SkuReferenceCounts>
+where
+    A: for<'q> sqlx::Encode<'q, sqlx::Postgres> + sqlx::Type<sqlx::Postgres> + Clone + Send + Sync,
+{
+    let cart_sql = format!(
+        "SELECT COUNT(*) FROM cart_items ci JOIN carts c ON c.id = ci.cart_id \
+         WHERE c.status = 'active' AND ci.sku {sku_predicate}"
+    );
+    let order_sql = format!(
+        "SELECT COUNT(*) FROM order_items oi JOIN orders o ON o.id = oi.order_id \
+         WHERE o.status IN ({OPEN_ORDER_STATUSES}) AND oi.sku {sku_predicate}"
+    );
+    let reservation_sql = format!(
+        "SELECT COUNT(*) FROM inventory_reservations r JOIN inventory_items ii ON ii.id = r.item_id \
+         WHERE r.status IN ({ACTIVE_RESERVATION_STATUSES}) AND ii.sku {sku_predicate}"
+    );
+    let cart: i64 = sqlx::query_scalar(&cart_sql)
+        .bind(param.clone())
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(map_db_error)?;
+    let order: i64 = sqlx::query_scalar(&order_sql)
+        .bind(param.clone())
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(map_db_error)?;
+    let reservation: i64 = sqlx::query_scalar(&reservation_sql)
+        .bind(param)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(map_db_error)?;
+    Ok(SkuReferenceCounts {
+        active_cart_lines: u64::try_from(cart).unwrap_or_default(),
+        open_order_lines: u64::try_from(order).unwrap_or_default(),
+        active_reservations: u64::try_from(reservation).unwrap_or_default(),
+    })
+}
+
+/// Live references to every SKU of `product_id` (active and inactive
+/// variants alike).
+pub(crate) async fn product_reference_counts_pg(
+    conn: &mut PgConnection,
+    product_id: ProductId,
+) -> Result<SkuReferenceCounts> {
+    sku_reference_counts(
+        conn,
+        "IN (SELECT sku FROM product_variants WHERE product_id = $1)",
+        product_id.into_uuid(),
+    )
+    .await
+}
+
+/// Live references to a single SKU.
+pub(crate) async fn sku_reference_counts_for_pg(
+    conn: &mut PgConnection,
+    sku: &str,
+) -> Result<SkuReferenceCounts> {
+    sku_reference_counts(conn, "= $1", sku.to_string()).await
+}
+
+/// Whether `sku` may be sold right now, on an existing connection /
+/// transaction. Postgres twin of the SQLite `variant_is_purchasable_with_conn`;
+/// intended for `carts.rs::add_item_internal` and order line creation.
+pub(crate) async fn variant_is_purchasable_with_conn_pg(
+    conn: &mut PgConnection,
+    sku: &str,
+) -> Result<VariantPurchasability> {
+    let row: Option<(bool, String)> = sqlx::query_as(
+        "SELECT pv.is_active, p.status FROM product_variants pv \
+         JOIN products p ON p.id = pv.product_id WHERE pv.sku = $1",
+    )
+    .bind(sku)
+    .fetch_optional(conn)
+    .await
+    .map_err(map_db_error)?;
+    let Some((is_active, status)) = row else {
+        return Ok(VariantPurchasability::NotInCatalog);
+    };
+    if !is_active {
+        return Ok(VariantPurchasability::VariantInactive);
+    }
+    let status: ProductStatus = status.parse().map_err(|e| {
+        CommerceError::DatabaseError(format!("Invalid product.status '{status}': {e}"))
+    })?;
+    if status == ProductStatus::Active {
+        Ok(VariantPurchasability::Purchasable)
+    } else {
+        Ok(VariantPurchasability::ProductNotActive(status))
+    }
+}
 
 /// PostgreSQL implementation of `ProductRepository`
 #[derive(Debug, Clone)]
@@ -144,14 +285,161 @@ impl PgProductRepository {
         })
     }
 
-    /// Create a product (async)
-    pub async fn create_async(&self, input: CreateProduct) -> Result<Product> {
+    /// Whether `sku` may currently be sold (see `variant_is_purchasable_with_conn_pg`).
+    pub async fn variant_purchasability_async(&self, sku: &str) -> Result<VariantPurchasability> {
+        let mut conn = self.pool.acquire().await.map_err(map_db_error)?;
+        variant_is_purchasable_with_conn_pg(&mut conn, sku).await
+    }
+
+    /// Live cart / order / reservation references to the product's SKUs.
+    pub async fn reference_counts_async(
+        &self,
+        product_id: ProductId,
+    ) -> Result<SkuReferenceCounts> {
+        let mut conn = self.pool.acquire().await.map_err(map_db_error)?;
+        product_reference_counts_pg(&mut conn, product_id).await
+    }
+
+    /// All variants including soft-deleted (`is_active = false`) rows.
+    pub async fn get_variants_including_inactive_async(
+        &self,
+        product_id: ProductId,
+    ) -> Result<Vec<ProductVariant>> {
+        let rows = sqlx::query_as::<_, VariantRow>(
+            "SELECT * FROM product_variants WHERE product_id = $1 ORDER BY is_default DESC, sku",
+        )
+        .bind(product_id.into_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        rows.into_iter().map(Self::row_to_variant).collect()
+    }
+
+    /// Insert one variant on an open connection / transaction.
+    ///
+    /// Validates the SKU, requires the parent product to exist (typed
+    /// `ProductNotFound` rather than a foreign-key failure) and checks SKU
+    /// uniqueness up front; the UNIQUE index (mapped to `DuplicateSku` by
+    /// `map_db_error`) backstops the race window.
+    async fn insert_variant_tx(
+        conn: &mut PgConnection,
+        product_id: ProductId,
+        input: &CreateProductVariant,
+        default_if_unset: bool,
+        now: DateTime<Utc>,
+    ) -> Result<ProductVariant> {
+        // SKU format, amounts and the compare-at relationship. The embedded
+        // facade validates too, but the repository is a public API of its own.
+        // `validate_sku` runs first so a malformed SKU keeps its historical
+        // `ValidationError`.
+        validate_sku(&input.sku)?;
+        input.validate()?;
+
+        let product_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM products WHERE id = $1)")
+                .bind(product_id.into_uuid())
+                .fetch_one(&mut *conn)
+                .await
+                .map_err(map_db_error)?;
+        if !product_exists {
+            return Err(CommerceError::ProductNotFound(product_id.into_uuid()));
+        }
+
+        let sku_taken: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM product_variants WHERE sku = $1)")
+                .bind(&input.sku)
+                .fetch_one(&mut *conn)
+                .await
+                .map_err(map_db_error)?;
+        if sku_taken {
+            return Err(CommerceError::DuplicateSku(input.sku.clone()));
+        }
+
+        let id = Uuid::new_v4();
+        let name = input.name.clone().unwrap_or_else(|| input.sku.clone());
+        let options = input.options.clone().unwrap_or_default();
+        let options_json = serde_json::to_value(&options).unwrap_or_default();
+        let is_default = input.is_default.unwrap_or(default_if_unset);
+
+        sqlx::query(
+            r#"
+            INSERT INTO product_variants (id, product_id, sku, name, price, compare_at_price, cost,
+                                          barcode, weight, weight_unit, options, is_default, is_active,
+                                          created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            "#,
+        )
+        .bind(id)
+        .bind(product_id.into_uuid())
+        .bind(&input.sku)
+        .bind(&name)
+        .bind(input.price)
+        .bind(input.compare_at_price)
+        .bind(input.cost)
+        .bind(&input.barcode)
+        .bind(input.weight)
+        .bind(&input.weight_unit)
+        .bind(&options_json)
+        .bind(is_default)
+        .bind(true)
+        .bind(now)
+        .bind(now)
+        .execute(&mut *conn)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(ProductVariant {
+            id,
+            product_id,
+            sku: input.sku.clone(),
+            name,
+            price: input.price,
+            compare_at_price: input.compare_at_price,
+            cost: input.cost,
+            barcode: input.barcode.clone(),
+            weight: input.weight,
+            weight_unit: input.weight_unit.clone(),
+            options,
+            is_default,
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
+    /// Insert one product and its inline variants on an open transaction.
+    /// Shared by `create_async` and `create_batch_atomic_async` so a failing
+    /// second variant rolls the product back instead of leaving a half-product.
+    async fn insert_product_tx(conn: &mut PgConnection, input: &CreateProduct) -> Result<Product> {
         let id = ProductId::new();
         let now = Utc::now();
         let slug = input.slug.clone().unwrap_or_else(|| Product::generate_slug(&input.name));
         let description = input.description.clone().unwrap_or_default();
         let product_type = input.product_type.unwrap_or_default();
         let attributes = input.attributes.clone().unwrap_or_default();
+
+        // Validate every inline variant (SKU, amounts and the compare-at
+        // relationship) before writing anything, so a bad later variant cannot
+        // leave a half-created product behind and a caller holding the
+        // repository directly cannot store money the catalogue cannot honour.
+        if let Some(variants) = &input.variants {
+            for variant in variants {
+                // `validate_sku` first so a malformed SKU keeps its historical
+                // `ValidationError`; `validate` then covers the amounts.
+                validate_sku(&variant.sku)?;
+                variant.validate()?;
+            }
+        }
+
+        let slug_taken: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM products WHERE slug = $1)")
+                .bind(&slug)
+                .fetch_one(&mut *conn)
+                .await
+                .map_err(map_db_error)?;
+        if slug_taken {
+            return Err(CommerceError::DuplicateSlug(slug));
+        }
 
         let attributes_json = serde_json::to_value(&attributes).unwrap_or_default();
         let seo_json = input.seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
@@ -172,29 +460,151 @@ impl PgProductRepository {
         .bind(&seo_json)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await
         .map_err(map_db_error)?;
 
-        // Create variants if provided
         if let Some(variant_inputs) = &input.variants {
             for (i, vi) in variant_inputs.iter().enumerate() {
-                self.add_variant_async(id.into_uuid(), vi.clone(), i == 0).await?;
+                Self::insert_variant_tx(conn, id, vi, i == 0, now).await?;
             }
         }
 
         Ok(Product {
             id,
-            name: input.name,
+            name: input.name.clone(),
             slug,
             description,
             status: ProductStatus::Draft,
             product_type,
             attributes,
-            seo: input.seo,
+            seo: input.seo.clone(),
             created_at: now,
             updated_at: now,
         })
+    }
+
+    /// Apply a partial update on an open transaction (row locked with
+    /// `FOR UPDATE`). Only the supplied fields are written, matching the
+    /// SQLite backend, and the [`ProductStatus`] state machine plus the
+    /// live-reference guard for archiving are enforced.
+    async fn update_product_tx(
+        conn: &mut PgConnection,
+        id: ProductId,
+        input: &UpdateProduct,
+    ) -> Result<Product> {
+        let now = Utc::now();
+        let existing_row =
+            sqlx::query_as::<_, ProductRow>("SELECT * FROM products WHERE id = $1 FOR UPDATE")
+                .bind(id.into_uuid())
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::ProductNotFound(id.into_uuid()))?;
+        let current_version = existing_row.version;
+        let existing = Self::row_to_product(existing_row)?;
+
+        if let Some(slug) = &input.slug {
+            let owner: Option<Uuid> = sqlx::query_scalar("SELECT id FROM products WHERE slug = $1")
+                .bind(slug)
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_db_error)?;
+            if owner.is_some_and(|owner| owner != id.into_uuid()) {
+                return Err(CommerceError::DuplicateSlug(slug.clone()));
+            }
+        }
+        if let Some(status) = input.status {
+            existing.status.ensure_can_transition_to(status)?;
+            // Any move out of `Active` — archiving OR unpublishing back to
+            // `Draft` — withdraws the SKUs from sale, so both need the same
+            // live-reference guard; without it, unpublishing left carts
+            // holding a SKU checkout would still accept.
+            if let Some(action) = existing.status.withdrawal_action(status) {
+                product_reference_counts_pg(conn, id)
+                    .await?
+                    .ensure_none(action, &format!("product {id}"))?;
+            }
+        }
+
+        let mut builder = QueryBuilder::new("UPDATE products SET updated_at = ");
+        builder.push_bind(now);
+        if let Some(name) = &input.name {
+            builder.push(", name = ").push_bind(name.clone());
+        }
+        if let Some(slug) = &input.slug {
+            builder.push(", slug = ").push_bind(slug.clone());
+        }
+        if let Some(description) = &input.description {
+            builder.push(", description = ").push_bind(description.clone());
+        }
+        if let Some(status) = input.status {
+            builder.push(", status = ").push_bind(status.to_string());
+        }
+        if let Some(attributes) = &input.attributes {
+            let json = serde_json::to_value(attributes).unwrap_or_default();
+            builder.push(", attributes = ").push_bind(json);
+        }
+        if let Some(seo) = &input.seo {
+            let json = serde_json::to_value(seo).unwrap_or_default();
+            builder.push(", seo = ").push_bind(json);
+        }
+        builder.push(", version = version + 1 WHERE id = ").push_bind(id.into_uuid());
+        builder.push(" AND version = ").push_bind(current_version);
+
+        let result = builder.build().execute(&mut *conn).await.map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "product".to_string(),
+                id: id.to_string(),
+                expected_version: current_version,
+            });
+        }
+
+        let row = sqlx::query_as::<_, ProductRow>("SELECT * FROM products WHERE id = $1")
+            .bind(id.into_uuid())
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::ProductNotFound(id.into_uuid()))?;
+        Self::row_to_product(row)
+    }
+
+    /// Archive one product, refusing while live references exist. Unknown or
+    /// already-archived products are a no-op so deletes stay idempotent.
+    async fn archive_product_tx(conn: &mut PgConnection, id: ProductId) -> Result<()> {
+        let status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM products WHERE id = $1 FOR UPDATE")
+                .bind(id.into_uuid())
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_db_error)?;
+        let Some(status) = status else {
+            return Ok(());
+        };
+        if status == ProductStatus::Archived.to_string() {
+            return Ok(());
+        }
+        product_reference_counts_pg(conn, id)
+            .await?
+            .ensure_none("archive", &format!("product {id}"))?;
+        sqlx::query(
+            "UPDATE products SET status = 'archived', updated_at = $1, version = version + 1 WHERE id = $2",
+        )
+        .bind(Utc::now())
+        .bind(id.into_uuid())
+        .execute(&mut *conn)
+        .await
+        .map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Create a product (async) — product and inline variants in one transaction.
+    pub async fn create_async(&self, input: CreateProduct) -> Result<Product> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let product = Self::insert_product_tx(tx.as_mut(), &input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(product)
     }
 
     /// Get a product by ID (async)
@@ -221,84 +631,22 @@ impl PgProductRepository {
 
     /// Update a product (async)
     pub async fn update_async(&self, id: ProductId, input: UpdateProduct) -> Result<Product> {
-        let now = Utc::now();
-
-        let existing_row = sqlx::query_as::<_, ProductRow>("SELECT * FROM products WHERE id = $1")
-            .bind(id.into_uuid())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_db_error)?
-            .ok_or(CommerceError::ProductNotFound(id.into_uuid()))?;
-        let current_version = existing_row.version;
-        let existing = Self::row_to_product(existing_row)?;
-
-        let new_name = input.name.unwrap_or(existing.name);
-        let new_slug = input.slug.unwrap_or(existing.slug);
-        let new_description = input.description.unwrap_or(existing.description);
-        let new_status = input.status.unwrap_or(existing.status);
-        let new_attributes = input.attributes.unwrap_or(existing.attributes);
-        let new_seo = input.seo.or(existing.seo);
-
-        let attributes_json = serde_json::to_value(&new_attributes).unwrap_or_default();
-        let seo_json = new_seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
-
-        let result = sqlx::query(
-            r#"
-            UPDATE products
-            SET name = $1, slug = $2, description = $3, status = $4,
-                attributes = $5, seo = $6, updated_at = $7, version = version + 1
-            WHERE id = $8 AND version = $9
-            "#,
-        )
-        .bind(&new_name)
-        .bind(&new_slug)
-        .bind(&new_description)
-        .bind(new_status.to_string())
-        .bind(&attributes_json)
-        .bind(&seo_json)
-        .bind(now)
-        .bind(id.into_uuid())
-        .bind(current_version)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-        if result.rows_affected() == 0 {
-            return Err(CommerceError::VersionConflict {
-                entity: "product".to_string(),
-                id: id.to_string(),
-                expected_version: current_version,
-            });
-        }
-
-        self.get_async(id).await?.ok_or(CommerceError::ProductNotFound(id.into_uuid()))
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let product = Self::update_product_tx(tx.as_mut(), id, &input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(product)
     }
 
-    /// List products (async)
-    pub async fn list_async(&self, filter: ProductFilter) -> Result<Vec<Product>> {
-        let ProductFilter {
-            status,
-            product_type,
-            search,
-            category,
-            min_price,
-            max_price,
-            in_stock,
-            limit,
-            offset,
-            after_cursor: _,
-        } = filter;
-
-        let mut builder = QueryBuilder::new("SELECT * FROM products WHERE 1=1");
-
-        if let Some(status) = status {
+    fn push_list_filters(builder: &mut QueryBuilder<'_, sqlx::Postgres>, filter: &ProductFilter) {
+        if let Some(status) = filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
         } else {
             builder.push(" AND status != 'archived'");
         }
-        if let Some(product_type) = product_type {
+        if let Some(product_type) = filter.product_type {
             builder.push(" AND product_type = ").push_bind(product_type.to_string());
         }
-        if let Some(search) = search {
+        if let Some(search) = &filter.search {
             let pattern = format!("%{}%", search);
             builder
                 .push(" AND (name ILIKE ")
@@ -307,54 +655,71 @@ impl PgProductRepository {
                 .push_bind(pattern)
                 .push(')');
         }
-        if let Some(category) = category {
+        if let Some(category) = &filter.category {
             builder.push(
                 " AND EXISTS (SELECT 1 FROM jsonb_array_elements(attributes) attr \
                  WHERE (attr->>'name' = 'category' OR attr->>'group' = 'category') \
                    AND attr->>'value' = ",
             );
-            builder.push_bind(category).push(')');
+            builder.push_bind(category.clone()).push(')');
         }
-        if min_price.is_some() || max_price.is_some() {
+        if filter.min_price.is_some() || filter.max_price.is_some() {
             builder.push(
                 " AND EXISTS (SELECT 1 FROM product_variants pv \
                  WHERE pv.product_id = products.id AND pv.is_active = true",
             );
-            if let Some(min_price) = min_price {
+            if let Some(min_price) = filter.min_price {
                 builder.push(" AND pv.price >= ").push_bind(min_price);
             }
-            if let Some(max_price) = max_price {
+            if let Some(max_price) = filter.max_price {
                 builder.push(" AND pv.price <= ").push_bind(max_price);
             }
             builder.push(')');
         }
-        if let Some(in_stock) = in_stock {
-            if in_stock {
-                builder.push(
-                    " AND EXISTS (SELECT 1 FROM product_variants pv_stock \
-                     JOIN inventory_items ii ON ii.sku = pv_stock.sku \
-                     JOIN inventory_balances ib ON ib.item_id = ii.id \
-                     WHERE pv_stock.product_id = products.id \
-                       AND pv_stock.is_active = true \
-                       AND ib.quantity_available > 0)",
-                );
-            } else {
-                builder.push(
-                    " AND NOT EXISTS (SELECT 1 FROM product_variants pv_stock \
-                     JOIN inventory_items ii ON ii.sku = pv_stock.sku \
-                     JOIN inventory_balances ib ON ib.item_id = ii.id \
-                     WHERE pv_stock.product_id = products.id \
-                       AND pv_stock.is_active = true \
-                       AND ib.quantity_available > 0)",
-                );
-            }
+        if let Some(in_stock) = filter.in_stock {
+            let clause = if in_stock { " AND EXISTS" } else { " AND NOT EXISTS" };
+            builder.push(clause).push(
+                " (SELECT 1 FROM product_variants pv_stock \
+                 JOIN inventory_items ii ON ii.sku = pv_stock.sku \
+                 JOIN inventory_balances ib ON ib.item_id = ii.id \
+                 WHERE pv_stock.product_id = products.id \
+                   AND pv_stock.is_active = true \
+                   AND ib.quantity_available > 0)",
+            );
+        }
+    }
+
+    /// List products (async).
+    ///
+    /// Ordered by `(name ASC, id ASC)` and paginated by the same keyset cursor
+    /// as the SQLite backend (`after_cursor = (name, id)`); `offset` applies
+    /// only when no cursor is supplied.
+    pub async fn list_async(&self, filter: ProductFilter) -> Result<Vec<Product>> {
+        let mut builder = QueryBuilder::new("SELECT * FROM products WHERE 1=1");
+        Self::push_list_filters(&mut builder, &filter);
+
+        if let Some((cursor_name, cursor_id)) = &filter.after_cursor {
+            let cursor_id: Uuid = cursor_id.parse().map_err(|e| {
+                CommerceError::ValidationError(format!(
+                    "invalid after_cursor id '{cursor_id}': {e}"
+                ))
+            })?;
+            builder
+                .push(" AND (name > ")
+                .push_bind(cursor_name.clone())
+                .push(" OR (name = ")
+                .push_bind(cursor_name.clone())
+                .push(" AND id > ")
+                .push_bind(cursor_id)
+                .push("))");
         }
 
-        builder.push(" ORDER BY created_at DESC");
-
-        builder.push(" LIMIT ").push_bind(super::effective_limit(limit));
-        if let Some(offset) = offset {
-            builder.push(" OFFSET ").push_bind(offset as i64);
+        builder.push(" ORDER BY name ASC, id ASC");
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
+        if filter.after_cursor.is_none() {
+            if let Some(offset) = filter.offset {
+                builder.push(" OFFSET ").push_bind(i64::from(offset));
+            }
         }
 
         let rows = builder
@@ -363,81 +728,15 @@ impl PgProductRepository {
             .await
             .map_err(map_db_error)?;
 
-        let mut products = Vec::with_capacity(rows.len());
-        for row in rows {
-            products.push(Self::row_to_product(row)?);
-        }
-        Ok(products)
+        rows.into_iter().map(Self::row_to_product).collect()
     }
 
-    /// Delete a product (async)
+    /// Delete a product (async) — archives; refused while live references exist.
     pub async fn delete_async(&self, id: ProductId) -> Result<()> {
-        sqlx::query("UPDATE products SET status = 'archived', updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
-            .bind(id.into_uuid())
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::archive_product_tx(tx.as_mut(), id).await?;
+        tx.commit().await.map_err(map_db_error)?;
         Ok(())
-    }
-
-    /// Add variant to product (async)
-    async fn add_variant_async(
-        &self,
-        product_id: Uuid,
-        input: CreateProductVariant,
-        is_default: bool,
-    ) -> Result<ProductVariant> {
-        let id = Uuid::new_v4();
-        let now = Utc::now();
-        let options = input.options.clone().unwrap_or_default();
-        let options_json = serde_json::to_value(&options).unwrap_or_default();
-
-        sqlx::query(
-            r#"
-            INSERT INTO product_variants (id, product_id, sku, name, price, compare_at_price, cost,
-                                          barcode, weight, weight_unit, options, is_default, is_active,
-                                          created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-            "#,
-        )
-        .bind(id)
-        .bind(product_id)
-        .bind(&input.sku)
-        .bind(input.name.as_deref().unwrap_or(&input.sku))
-        .bind(input.price)
-        .bind(input.compare_at_price)
-        .bind(input.cost)
-        .bind(&input.barcode)
-        .bind(input.weight)
-        .bind(&input.weight_unit)
-        .bind(&options_json)
-        .bind(input.is_default.unwrap_or(is_default))
-        .bind(true)
-        .bind(now)
-        .bind(now)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        Ok(ProductVariant {
-            id,
-            product_id: ProductId::from(product_id),
-            sku: input.sku,
-            name: input.name.unwrap_or_default(),
-            price: input.price,
-            compare_at_price: input.compare_at_price,
-            cost: input.cost,
-            barcode: input.barcode,
-            weight: input.weight,
-            weight_unit: input.weight_unit,
-            options,
-            is_default: input.is_default.unwrap_or(is_default),
-            is_active: true,
-            created_at: now,
-            updated_at: now,
-        })
     }
 
     /// Add variant (public async)
@@ -446,7 +745,11 @@ impl PgProductRepository {
         product_id: ProductId,
         input: CreateProductVariant,
     ) -> Result<ProductVariant> {
-        self.add_variant_async(product_id.into_uuid(), input, false).await
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let variant =
+            Self::insert_variant_tx(tx.as_mut(), product_id, &input, false, Utc::now()).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(variant)
     }
 
     /// Get variant by ID (async)
@@ -477,16 +780,37 @@ impl PgProductRepository {
         id: Uuid,
         input: CreateProductVariant,
     ) -> Result<ProductVariant> {
+        // Same contract as `insert_variant_tx`: SKU, amounts and compare-at.
+        validate_sku(&input.sku)?;
+        input.validate()?;
         let now = Utc::now();
-        let current_version: i32 =
-            sqlx::query_scalar("SELECT version FROM product_variants WHERE id = $1")
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let current: (i32, String) =
+            sqlx::query_as("SELECT version, sku FROM product_variants WHERE id = $1 FOR UPDATE")
                 .bind(id)
-                .fetch_one(&self.pool)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(|e| match e {
                     sqlx::Error::RowNotFound => CommerceError::ProductVariantNotFound(id),
                     e => map_db_error(e),
                 })?;
+        let (current_version, current_sku) = current;
+
+        if current_sku != input.sku {
+            let taken: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM product_variants WHERE sku = $1 AND id != $2)",
+            )
+            .bind(&input.sku)
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            if taken {
+                return Err(CommerceError::DuplicateSku(input.sku));
+            }
+        }
+
         let options_json =
             serde_json::to_value(input.options.clone().unwrap_or_default()).unwrap_or_default();
 
@@ -510,7 +834,7 @@ impl PgProductRepository {
         .bind(now)
         .bind(id)
         .bind(current_version)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
         if result.rows_affected() == 0 {
@@ -521,112 +845,69 @@ impl PgProductRepository {
             });
         }
 
-        self.get_variant_async(id).await?.ok_or(CommerceError::ProductVariantNotFound(id))
+        let row = sqlx::query_as::<_, VariantRow>("SELECT * FROM product_variants WHERE id = $1")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::ProductVariantNotFound(id))?;
+        tx.commit().await.map_err(map_db_error)?;
+        Self::row_to_variant(row)
     }
 
-    /// Delete variant (async)
+    /// Delete variant (async) — soft delete (`is_active = false`), matching
+    /// SQLite; refused while live cart / order / reservation references exist.
     pub async fn delete_variant_async(&self, id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM product_variants WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        let row: Option<(String, bool)> =
+            sqlx::query_as("SELECT sku, is_active FROM product_variants WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let Some((sku, is_active)) = row else {
+            return Ok(());
+        };
+        if !is_active {
+            return Ok(());
+        }
+
+        sku_reference_counts_for_pg(tx.as_mut(), &sku)
+            .await?
+            .ensure_none("delete", &format!("variant {id} (SKU {sku})"))?;
+
+        sqlx::query(
+            "UPDATE product_variants SET is_active = false, updated_at = $1, version = version + 1 WHERE id = $2",
+        )
+        .bind(Utc::now())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
 
-    /// Get all variants for product (async)
+    /// Get all live variants for product (async)
     pub async fn get_variants_async(&self, product_id: ProductId) -> Result<Vec<ProductVariant>> {
-        let rows =
-            sqlx::query_as::<_, VariantRow>("SELECT * FROM product_variants WHERE product_id = $1")
-                .bind(product_id.into_uuid())
-                .fetch_all(&self.pool)
-                .await
-                .map_err(map_db_error)?;
+        let rows = sqlx::query_as::<_, VariantRow>(
+            "SELECT * FROM product_variants WHERE product_id = $1 AND is_active = true \
+             ORDER BY is_default DESC, sku",
+        )
+        .bind(product_id.into_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
-        let mut variants = Vec::with_capacity(rows.len());
-        for row in rows {
-            variants.push(Self::row_to_variant(row)?);
-        }
-        Ok(variants)
+        rows.into_iter().map(Self::row_to_variant).collect()
     }
 
     /// Count products (async)
     pub async fn count_async(&self, filter: ProductFilter) -> Result<u64> {
-        let ProductFilter {
-            status,
-            product_type,
-            search,
-            category,
-            min_price,
-            max_price,
-            in_stock,
-            limit: _,
-            offset: _,
-            after_cursor: _,
-        } = filter;
-
         let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM products WHERE 1=1");
-
-        if let Some(status) = status {
-            builder.push(" AND status = ").push_bind(status.to_string());
-        } else {
-            builder.push(" AND status != 'archived'");
-        }
-        if let Some(product_type) = product_type {
-            builder.push(" AND product_type = ").push_bind(product_type.to_string());
-        }
-        if let Some(search) = search {
-            let pattern = format!("%{}%", search);
-            builder
-                .push(" AND (name ILIKE ")
-                .push_bind(pattern.clone())
-                .push(" OR description ILIKE ")
-                .push_bind(pattern)
-                .push(')');
-        }
-        if let Some(category) = category {
-            builder.push(
-                " AND EXISTS (SELECT 1 FROM jsonb_array_elements(attributes) attr \
-                 WHERE (attr->>'name' = 'category' OR attr->>'group' = 'category') \
-                   AND attr->>'value' = ",
-            );
-            builder.push_bind(category).push(')');
-        }
-        if min_price.is_some() || max_price.is_some() {
-            builder.push(
-                " AND EXISTS (SELECT 1 FROM product_variants pv \
-                 WHERE pv.product_id = products.id AND pv.is_active = true",
-            );
-            if let Some(min_price) = min_price {
-                builder.push(" AND pv.price >= ").push_bind(min_price);
-            }
-            if let Some(max_price) = max_price {
-                builder.push(" AND pv.price <= ").push_bind(max_price);
-            }
-            builder.push(')');
-        }
-        if let Some(in_stock) = in_stock {
-            if in_stock {
-                builder.push(
-                    " AND EXISTS (SELECT 1 FROM product_variants pv_stock \
-                     JOIN inventory_items ii ON ii.sku = pv_stock.sku \
-                     JOIN inventory_balances ib ON ib.item_id = ii.id \
-                     WHERE pv_stock.product_id = products.id \
-                       AND pv_stock.is_active = true \
-                       AND ib.quantity_available > 0)",
-                );
-            } else {
-                builder.push(
-                    " AND NOT EXISTS (SELECT 1 FROM product_variants pv_stock \
-                     JOIN inventory_items ii ON ii.sku = pv_stock.sku \
-                     JOIN inventory_balances ib ON ib.item_id = ii.id \
-                     WHERE pv_stock.product_id = products.id \
-                       AND pv_stock.is_active = true \
-                       AND ib.quantity_available > 0)",
-                );
-            }
-        }
+        Self::push_list_filters(&mut builder, &filter);
 
         let count: (i64,) =
             builder.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
@@ -663,85 +944,8 @@ impl PgProductRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut products = Vec::with_capacity(inputs.len());
 
-        for input in inputs {
-            let id = ProductId::new();
-            let now = Utc::now();
-            let slug = input.slug.clone().unwrap_or_else(|| Product::generate_slug(&input.name));
-            let description = input.description.clone().unwrap_or_default();
-            let product_type = input.product_type.unwrap_or_default();
-            let attributes = input.attributes.clone().unwrap_or_default();
-
-            let attributes_json = serde_json::to_value(&attributes).unwrap_or_default();
-            let seo_json = input.seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
-
-            sqlx::query(
-                r#"
-                INSERT INTO products (id, name, slug, description, status, product_type, attributes, seo, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                "#,
-            )
-            .bind(id.into_uuid())
-            .bind(&input.name)
-            .bind(&slug)
-            .bind(&description)
-            .bind(ProductStatus::Draft.to_string())
-            .bind(product_type.to_string())
-            .bind(&attributes_json)
-            .bind(&seo_json)
-            .bind(now)
-            .bind(now)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            // Create variants if provided
-            if let Some(variant_inputs) = &input.variants {
-                for (i, vi) in variant_inputs.iter().enumerate() {
-                    let variant_id = Uuid::new_v4();
-                    let options = vi.options.clone().unwrap_or_default();
-                    let options_json = serde_json::to_value(&options).unwrap_or_default();
-
-                    sqlx::query(
-                        r#"
-                        INSERT INTO product_variants (id, product_id, sku, name, price, compare_at_price, cost,
-                                                      barcode, weight, weight_unit, options, is_default, is_active,
-                                                      created_at, updated_at)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-                        "#,
-                    )
-                    .bind(variant_id)
-                    .bind(id.into_uuid())
-                    .bind(&vi.sku)
-                    .bind(vi.name.as_deref().unwrap_or(&vi.sku))
-                    .bind(vi.price)
-                    .bind(vi.compare_at_price)
-                    .bind(vi.cost)
-                    .bind(&vi.barcode)
-                    .bind(vi.weight)
-                    .bind(&vi.weight_unit)
-                    .bind(&options_json)
-                    .bind(vi.is_default.unwrap_or(i == 0))
-                    .bind(true)
-                    .bind(now)
-                    .bind(now)
-                    .execute(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-                }
-            }
-
-            products.push(Product {
-                id,
-                name: input.name,
-                slug,
-                description,
-                status: ProductStatus::Draft,
-                product_type,
-                attributes,
-                seo: input.seo,
-                created_at: now,
-                updated_at: now,
-            });
+        for input in &inputs {
+            products.push(Self::insert_product_tx(tx.as_mut(), input).await?);
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -775,70 +979,8 @@ impl PgProductRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut products = Vec::with_capacity(updates.len());
 
-        for (id, input) in updates {
-            let now = Utc::now();
-
-            let existing_row =
-                sqlx::query_as::<_, ProductRow>("SELECT * FROM products WHERE id = $1 FOR UPDATE")
-                    .bind(id.into_uuid())
-                    .fetch_optional(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?
-                    .ok_or(CommerceError::ProductNotFound(id.into_uuid()))?;
-            let current_version = existing_row.version;
-            let existing = Self::row_to_product(existing_row)?;
-
-            let new_name = input.name.unwrap_or(existing.name);
-            let new_slug = input.slug.unwrap_or(existing.slug);
-            let new_description = input.description.unwrap_or(existing.description);
-            let new_status = input.status.unwrap_or(existing.status);
-            let new_attributes = input.attributes.unwrap_or(existing.attributes);
-            let new_seo = input.seo.or(existing.seo);
-
-            let attributes_json = serde_json::to_value(&new_attributes).unwrap_or_default();
-            let seo_json = new_seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
-
-            let result = sqlx::query(
-                r#"
-                UPDATE products
-                SET name = $1, slug = $2, description = $3, status = $4,
-                    attributes = $5, seo = $6, updated_at = $7, version = version + 1
-                WHERE id = $8 AND version = $9
-                "#,
-            )
-            .bind(&new_name)
-            .bind(&new_slug)
-            .bind(&new_description)
-            .bind(new_status.to_string())
-            .bind(&attributes_json)
-            .bind(&seo_json)
-            .bind(now)
-            .bind(id.into_uuid())
-            .bind(current_version)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            if result.rows_affected() == 0 {
-                return Err(CommerceError::VersionConflict {
-                    entity: "product".to_string(),
-                    id: id.to_string(),
-                    expected_version: current_version,
-                });
-            }
-
-            products.push(Product {
-                id,
-                name: new_name,
-                slug: new_slug,
-                description: new_description,
-                status: new_status,
-                product_type: existing.product_type,
-                attributes: new_attributes,
-                seo: new_seo,
-                created_at: existing.created_at,
-                updated_at: now,
-            });
+        for (id, input) in &updates {
+            products.push(Self::update_product_tx(tx.as_mut(), *id, input).await?);
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -868,16 +1010,9 @@ impl PgProductRepository {
         }
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let now = Utc::now();
-
-        let uuid_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
-        sqlx::query("UPDATE products SET status = 'archived', updated_at = $1 WHERE id = ANY($2)")
-            .bind(now)
-            .bind(&uuid_ids)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
+        for id in &ids {
+            Self::archive_product_tx(tx.as_mut(), *id).await?;
+        }
         tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
@@ -896,11 +1031,7 @@ impl PgProductRepository {
             .await
             .map_err(map_db_error)?;
 
-        let mut products = Vec::with_capacity(rows.len());
-        for row in rows {
-            products.push(Self::row_to_product(row)?);
-        }
-        Ok(products)
+        rows.into_iter().map(Self::row_to_product).collect()
     }
 }
 

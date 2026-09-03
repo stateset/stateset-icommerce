@@ -168,3 +168,171 @@ fn sqlite_store_modules_have_postgres_counterparts() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Gate (c): kernel op SEMANTICS, not just file names
+// ---------------------------------------------------------------------------
+//
+// Gate (b) only proves that a `postgres/foo.rs` exists next to every
+// `sqlite/foo.rs`. It says nothing about what those files *do*, so the two
+// kernel executors could drift apart op by op — a rejection reordered, a
+// preview point moved after a check, a success sealed on a different path —
+// and still pass. This gate extracts, for every governed op, the ordered
+// sequence of observable kernel events in the executor body:
+//
+//   * `replay`   — the durable-receipt replay/conflict resolution point,
+//   * `guard`    — the shared envelope/plan guard rejection point,
+//   * `preview`  — where a non-mutating preview receipt is sealed,
+//   * `success`  — where a committed mutation is sealed,
+//   * `reject:<code>` — every `kernel.*` / `commerce.*` receipt code, in the
+//     order the executor can emit it.
+//
+// The two backends must produce identical sequences. Anything a backend does
+// differently — an extra check, a missing one, a preview that answers before a
+// check the other runs (the `payments.create` capacity bug) — changes the
+// sequence and fails here.
+
+const SQLITE_EXECUTOR: &str = include_str!("../src/sqlite/kernel_executor.rs");
+const POSTGRES_EXECUTOR: &str = include_str!("../src/postgres/kernel_executor.rs");
+
+/// One observable step in an executor body.
+///
+/// Call sites are matched by callee name rather than by exact text so a
+/// backend-suffixed helper (`succeeded_kernel_receipt_pg`) reads the same as
+/// its twin (`succeeded_kernel_receipt`) — the point is what the op does, not
+/// how the helper is spelled.
+fn kernel_event_sequence(body: &str) -> Vec<String> {
+    let bytes = body.as_bytes();
+    let mut events: Vec<(usize, String)> = Vec::new();
+
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte != b'(' {
+            continue;
+        }
+        let mut start = index;
+        while start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+            start -= 1;
+        }
+        let callee = &body[start..index];
+        let label = if callee.starts_with("replay_or_conflict") {
+            "replay"
+        } else if callee.starts_with("guard_receipt") {
+            "guard"
+        } else if callee.starts_with("previewed") || callee.starts_with("preview_receipt") {
+            "preview"
+        } else if callee.starts_with("succeeded") {
+            "success"
+        } else {
+            continue;
+        };
+        events.push((start, label.to_string()));
+    }
+
+    // Receipt codes, in source order.
+    let mut from = 0;
+    while let Some(found) = body[from..].find('"') {
+        let start = from + found + 1;
+        let Some(len) = body[start..].find('"') else { break };
+        let literal = &body[start..start + len];
+        if literal.starts_with("kernel.") || literal.starts_with("commerce.") {
+            events.push((start, format!("reject:{literal}")));
+        }
+        from = start + len + 1;
+    }
+
+    events.sort_by_key(|(at, _)| *at);
+    events.into_iter().map(|(_, label)| label).collect()
+}
+
+/// Split an executor source into `(op_name, body)` pairs, keyed by the op name
+/// with the backend suffix removed so the two backends line up.
+fn executor_ops(source: &str) -> Vec<(String, String)> {
+    let mut starts: Vec<(usize, String)> = Vec::new();
+    let mut from = 0;
+    while let Some(found) = source[from..].find("fn execute_") {
+        let at = from + found;
+        let name_start = at + "fn ".len();
+        let name_end = source[name_start..]
+            .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .map_or(source.len(), |offset| name_start + offset);
+        let name = source[name_start..name_end].trim_end_matches("_async").to_string();
+        starts.push((at, name));
+        from = name_end;
+    }
+    let mut ops = Vec::new();
+    for index in 0..starts.len() {
+        let end = starts.get(index + 1).map_or(source.len(), |(at, _)| *at);
+        ops.push((starts[index].1.clone(), source[starts[index].0..end].to_string()));
+    }
+    ops
+}
+
+#[test]
+fn kernel_executors_expose_the_same_op_semantics_on_both_backends() {
+    let sqlite_ops = executor_ops(SQLITE_EXECUTOR);
+    let postgres_ops = executor_ops(POSTGRES_EXECUTOR);
+    assert!(
+        sqlite_ops.len() >= 20,
+        "capability_parity_gate: parsed only {} sqlite kernel ops — the parser is broken",
+        sqlite_ops.len()
+    );
+
+    let sqlite_names: BTreeSet<&String> = sqlite_ops.iter().map(|(name, _)| name).collect();
+    let postgres_names: BTreeSet<&String> = postgres_ops.iter().map(|(name, _)| name).collect();
+    assert_eq!(
+        sqlite_names, postgres_names,
+        "capability_parity_gate: the kernel executors do not implement the same set of ops. \
+         Every governed command must exist on both backends."
+    );
+
+    for (name, sqlite_body) in &sqlite_ops {
+        let (_, postgres_body) = postgres_ops
+            .iter()
+            .find(|(other, _)| other == name)
+            .expect("op sets were just proven equal");
+        let sqlite_events = kernel_event_sequence(sqlite_body);
+        let postgres_events = kernel_event_sequence(postgres_body);
+        assert_eq!(
+            sqlite_events, postgres_events,
+            "capability_parity_gate: `{name}` has drifted between backends.\n  \
+             sqlite:   {sqlite_events:?}\n  postgres: {postgres_events:?}\n\
+             The ordered sequence of replay / guard / preview / success points and receipt \
+             codes must be identical on both backends. If the two genuinely must differ, move \
+             the differing decision into `src/kernel/` so there is one copy of it."
+        );
+    }
+}
+
+/// Every governed op must run the shared envelope guard chain
+/// (`CommandRun::prepare` + `EnvelopeGuard`), which is what enforces actor
+/// coherence — a principal may not approve its own command, and an agent may
+/// not delegate to itself. Eleven ops used to hand-roll that chain and omit
+/// the actor check; nothing but this gate stops a twelfth from appearing.
+#[test]
+fn every_kernel_op_runs_the_shared_envelope_guard_chain() {
+    for (backend, source) in [("sqlite", SQLITE_EXECUTOR), ("postgres", POSTGRES_EXECUTOR)] {
+        for (name, body) in executor_ops(source) {
+            // Dispatch-only wrappers delegate to a shared implementation.
+            if !body.contains("replay_or_conflict(") {
+                continue;
+            }
+            assert!(
+                body.contains("CommandRun::prepare("),
+                "capability_parity_gate: {backend} op `{name}` does not build a \
+                 `CommandRun`, so it skips the shared envelope guard chain (and with it the \
+                 actor-coherence check). Convert it to `CommandRun::prepare` + `EnvelopeGuard`."
+            );
+            assert!(
+                body.contains("run.guard_receipt()"),
+                "capability_parity_gate: {backend} op `{name}` never seals \
+                 `run.guard_receipt()`, so its envelope rejections are hand-rolled."
+            );
+            assert!(
+                !body.contains("kernel.command_type_mismatch"),
+                "capability_parity_gate: {backend} op `{name}` still hand-rolls the \
+                 envelope chain (it names `kernel.command_type_mismatch` itself). That check \
+                 belongs to `EnvelopeGuard`, which also enforces actor coherence."
+            );
+        }
+    }
+}

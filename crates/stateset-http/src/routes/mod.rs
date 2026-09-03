@@ -24,6 +24,7 @@ pub mod integration_field_mappings;
 pub mod integration_mappings;
 pub mod inventory;
 pub mod invoices;
+pub mod kernel;
 pub mod lots;
 pub mod loyalty;
 pub mod negotiations;
@@ -53,6 +54,7 @@ pub mod stock_snapshots;
 pub mod store_credits;
 pub mod subscriptions;
 pub mod supplier_skus;
+pub mod tax;
 pub mod topology_snapshots;
 pub mod transfer_orders;
 pub mod units_of_measure;
@@ -62,6 +64,7 @@ pub mod warehouse;
 pub mod warranties;
 pub mod wishlists;
 pub mod work_orders;
+pub mod x402;
 
 use axum::{Router, extract::DefaultBodyLimit, middleware::from_fn_with_state};
 use std::time::Duration;
@@ -160,6 +163,8 @@ fn v1_router() -> Router<AppState> {
         .merge(topology_snapshots::router())
         .merge(stock_snapshots::router())
         .merge(reports::router())
+        .merge(kernel::router())
+        .merge(x402::router())
         .merge(prepayments::router())
         .merge(purchase_orders::router())
         .merge(general_ledger::router())
@@ -176,6 +181,7 @@ fn v1_router() -> Router<AppState> {
         .merge(lots::router())
         .merge(serials::router())
         .merge(carts::router())
+        .merge(tax::router())
         .merge(backorders::router())
         .merge(crate::openapi::router())
 }

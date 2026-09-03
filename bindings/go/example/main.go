@@ -49,6 +49,13 @@ func main() {
 	}
 	fmt.Printf("✓ Created product: %s (%s) - $%.2f\n", product.ID, product.Name, 99.99)
 
+	// Products are created as drafts, and order lines are checked against the
+	// catalogue, so publish it before selling it.
+	product, err = commerce.Products().Publish(product.ID)
+	if err != nil {
+		log.Fatalf("Failed to publish product: %v", err)
+	}
+
 	// Create inventory for the product
 	invItem, err := commerce.Inventory().CreateItem(
 		"WIDGET-001",

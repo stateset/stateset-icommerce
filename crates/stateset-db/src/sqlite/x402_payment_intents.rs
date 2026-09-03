@@ -4,6 +4,7 @@ use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
     parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
 };
+use crate::x402_claim::{CLAIMING_STATUS_SQL, duplicate_claim_error, is_claim_key_violation};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -345,8 +346,9 @@ impl SqliteX402PaymentIntentRepository {
                 id, version, status, payer_address, payee_address, amount, amount_decimal,
                 asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
                 idempotency_key, resource_uri, resource_method, description, cart_id, order_id,
-                invoice_id, merchant_id, signing_hash, payer_signature_scheme, metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                invoice_id, merchant_id, signing_hash, payer_signature_scheme, metadata, created_at, updated_at,
+                cart_claim_key, order_claim_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rusqlite::params![
                 row.id.to_string(),
                 "1.0",
@@ -375,10 +377,41 @@ impl SqliteX402PaymentIntentRepository {
                 input.metadata,
                 row.now.to_rfc3339(),
                 row.now.to_rfc3339(),
+                // New intents are `created`, which claims the cart/order.
+                input.cart_id.map(|id| id.to_string()),
+                input.order_id.map(|id| id.to_string()),
             ],
         )
-        .map_err(map_db_error)?;
+        .map_err(|error| {
+            let message = error.to_string();
+            if is_claim_key_violation(&message) {
+                CommerceError::Conflict(
+                    "cart or order already has a claiming x402 payment intent; reuse or cancel it instead of creating another"
+                        .into(),
+                )
+            } else {
+                map_db_error(error)
+            }
+        })?;
         Ok(())
+    }
+
+    /// The first intent still claiming `column = value`, if any.
+    fn claiming_intent_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        column: &'static str,
+        value: &str,
+    ) -> Result<Option<(String, String)>> {
+        tx.query_row(
+            &format!(
+                "SELECT id, status FROM x402_payment_intents
+                 WHERE {column} = ? AND status IN {CLAIMING_STATUS_SQL} LIMIT 1"
+            ),
+            [value],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(map_db_error)
     }
 
     /// Refuse a transition once the validity window has closed. Settlement
@@ -420,6 +453,25 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             Some(n) => n,
             None => Self::get_next_nonce_in_tx(&tx, &input.payer_address)?,
         };
+        // In-transaction duplicate-claim guard. The accessor's `for_cart` /
+        // `for_order` read followed by `create` is two statements: two
+        // concurrent creates for one cart both passed it. Re-checking under
+        // this IMMEDIATE transaction, with the claim-key unique indexes
+        // (migration 094) as the backstop, makes the second one lose.
+        if let Some(cart_id) = input.cart_id {
+            if let Some((existing_id, status)) =
+                Self::claiming_intent_in_tx(&tx, "cart_id", &cart_id.to_string())?
+            {
+                return Err(duplicate_claim_error("cart", cart_id, &existing_id, &status));
+            }
+        }
+        if let Some(order_id) = input.order_id {
+            if let Some((existing_id, status)) =
+                Self::claiming_intent_in_tx(&tx, "order_id", &order_id.to_string())?
+            {
+                return Err(duplicate_claim_error("order", order_id, &existing_id, &status));
+            }
+        }
         let row = Self::new_intent_row(&input, id, now, nonce);
         Self::insert_new_intent(&tx, &input, row)?;
 
@@ -568,6 +620,45 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         Self::finish_transition(tx, id, affected, "sequence")
     }
 
+    fn mark_batched(
+        &self,
+        id: Uuid,
+        batch_merkle_root: &str,
+        inclusion_proof: Vec<String>,
+    ) -> Result<X402PaymentIntent> {
+        if batch_merkle_root.trim().is_empty() {
+            return Err(CommerceError::ValidationError(
+                "batch_merkle_root is required to batch an x402 intent".to_string(),
+            ));
+        }
+        let proof_json = serde_json::to_string(&inclusion_proof)
+            .map_err(|e| CommerceError::ValidationError(e.to_string()))?;
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let intent = Self::load_for_transition(&tx, id, &[X402IntentStatus::Sequenced], "batch")?;
+        // A commitment published after the validity window is meaningless
+        // on-chain, exactly like a late settlement.
+        Self::ensure_not_expired(&intent, "batch")?;
+
+        let affected = tx
+            .execute(
+                "UPDATE x402_payment_intents SET
+                status = ?, batch_merkle_root = ?, inclusion_proof = ?, updated_at = ?
+             WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    X402IntentStatus::Batched.to_string(),
+                    batch_merkle_root,
+                    proof_json,
+                    Utc::now().to_rfc3339(),
+                    id.to_string(),
+                    X402IntentStatus::Sequenced.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+        Self::finish_transition(tx, id, affected, "batch")
+    }
+
     fn mark_settled(
         &self,
         id: Uuid,
@@ -576,7 +667,12 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
     ) -> Result<X402PaymentIntent> {
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-        let intent = Self::load_for_transition(&tx, id, &[X402IntentStatus::Sequenced], "settle")?;
+        let intent = Self::load_for_transition(
+            &tx,
+            id,
+            &[X402IntentStatus::Sequenced, X402IntentStatus::Batched],
+            "settle",
+        )?;
         Self::ensure_not_expired(&intent, "settle")?;
 
         // One on-chain transaction settles at most one intent. Checked here
@@ -609,7 +705,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
                     Utc::now().to_rfc3339(),
                     Utc::now().to_rfc3339(),
                     id.to_string(),
-                    X402IntentStatus::Sequenced.to_string(),
+                    intent.status.to_string(),
                 ],
             )
             .map_err(map_db_error)?;
@@ -625,7 +721,8 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         let affected = tx
             .execute(
                 "UPDATE x402_payment_intents SET
-                status = ?, metadata = json_set(COALESCE(metadata, '{}'), '$.failure_reason', ?), updated_at = ?
+                status = ?, metadata = json_set(COALESCE(metadata, '{}'), '$.failure_reason', ?), updated_at = ?,
+                cart_claim_key = NULL, order_claim_key = NULL
              WHERE id = ? AND status = ?",
                 rusqlite::params![
                     X402IntentStatus::Failed.to_string(),
@@ -647,7 +744,8 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
 
         let affected = tx
             .execute(
-                "UPDATE x402_payment_intents SET status = ?, updated_at = ?
+                "UPDATE x402_payment_intents SET status = ?, updated_at = ?,
+                cart_claim_key = NULL, order_claim_key = NULL
              WHERE id = ? AND status = ?",
                 rusqlite::params![
                     X402IntentStatus::Expired.to_string(),
@@ -673,7 +771,8 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
 
         let affected = tx
             .execute(
-                "UPDATE x402_payment_intents SET status = ?, updated_at = ?
+                "UPDATE x402_payment_intents SET status = ?, updated_at = ?,
+                cart_claim_key = NULL, order_claim_key = NULL
              WHERE id = ? AND status = ?",
                 rusqlite::params![
                     X402IntentStatus::Cancelled.to_string(),
@@ -866,7 +965,8 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         // not by the wall clock.
         let count = conn
             .execute(
-                "UPDATE x402_payment_intents SET status = ?, updated_at = ?
+                "UPDATE x402_payment_intents SET status = ?, updated_at = ?,
+                cart_claim_key = NULL, order_claim_key = NULL
              WHERE status IN (?, ?, ?) AND valid_until < ?",
                 rusqlite::params![
                     X402IntentStatus::Expired.to_string(),

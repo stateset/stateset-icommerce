@@ -1,9 +1,9 @@
 //! SQLite implementation of Quality Control repository
 
 use crate::sqlite::{
-    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
-    parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_json_row, parse_uuid_opt_row,
-    parse_uuid_row,
+    SqliteLotRepository, map_db_error, parse_datetime_opt_row, parse_datetime_row,
+    parse_decimal_opt_row, parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_json_row,
+    parse_uuid_opt_row, parse_uuid_row,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -13,7 +13,7 @@ use stateset_core::traits::QualityRepository;
 use stateset_core::{
     CommerceError, CreateDefectCode, CreateInspection, CreateNonConformance, CreateQualityHold,
     DefectCode, Inspection, InspectionFilter, InspectionItem, InspectionResult, InspectionStatus,
-    LotStatus, LotTransactionType, NcrStatus, NonConformance, NonConformanceFilter, QualityHold,
+    Lot, LotStatus, NcrStatus, NonConformance, NonConformanceFilter, QualityHold,
     QualityHoldFilter, RecordInspectionResult, ReleaseQualityHold, Result, UpdateInspection,
     UpdateNonConformance,
 };
@@ -32,6 +32,79 @@ impl SqliteQualityRepository {
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
+    }
+
+    /// Load an NCR on the caller's transaction, mapping a missing row to
+    /// `NotFound`.
+    fn load_ncr_on(conn: &rusqlite::Connection, id: Uuid) -> Result<NonConformance> {
+        conn.query_row(
+            "SELECT * FROM non_conformances WHERE id = ?",
+            [id.to_string()],
+            Self::row_to_ncr,
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            e => Err(map_db_error(e)),
+        })?
+        .ok_or(CommerceError::NotFound)
+    }
+
+    /// Refuse to edit or re-status a finished NCR: a `Closed` record is
+    /// evidence and a `Cancelled` one was opened in error, so neither may be
+    /// resurrected (a `Cancelled` NCR being "closed" would silently turn a
+    /// mistake into a quality record).
+    fn ensure_ncr_open(ncr: &NonConformance, operation: &str) -> Result<()> {
+        if ncr.status.is_terminal() {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot {operation} NCR {} ({}): status is {} (open a new NCR instead)",
+                ncr.ncr_number, ncr.id, ncr.status
+            )));
+        }
+        Ok(())
+    }
+
+    /// Shared body of [`close_ncr`](Self::close_ncr) and
+    /// [`cancel_ncr`](Self::cancel_ncr): move an open NCR to a terminal status
+    /// in one transaction, conditional on the status that was read.
+    ///
+    /// Re-applying the same terminal status is a no-op; moving between the two
+    /// terminal statuses is refused.
+    fn finish_ncr(&self, id: Uuid, to: NcrStatus) -> Result<NonConformance> {
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let now = Utc::now();
+
+        let ncr = Self::load_ncr_on(&tx, id)?;
+        if ncr.status == to {
+            return Ok(ncr); // Idempotent.
+        }
+        Self::ensure_ncr_open(&ncr, if to == NcrStatus::Closed { "close" } else { "cancel" })?;
+
+        let closed_at = (to == NcrStatus::Closed).then(|| now.to_rfc3339());
+        let rows = tx
+            .execute(
+                "UPDATE non_conformances
+                 SET status = ?, closed_at = COALESCE(?, closed_at), updated_at = ?
+                 WHERE id = ? AND status = ?",
+                rusqlite::params![
+                    to.to_string(),
+                    closed_at,
+                    now.to_rfc3339(),
+                    id.to_string(),
+                    ncr.status.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+        if rows != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot move NCR {} ({}) to {to}: status changed concurrently",
+                ncr.ncr_number, ncr.id
+            )));
+        }
+        let updated = Self::load_ncr_on(&tx, id)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(updated)
     }
 
     fn generate_inspection_number() -> String {
@@ -289,103 +362,41 @@ impl SqliteQualityRepository {
         }
     }
 
-    /// Place the lot selected by `where_sql` (`id = ?` or `lot_number = ?`)
-    /// into quarantine on the caller's transaction, mirroring
-    /// `SqliteLotRepository::quarantine`: only `Active`/`OnHold` lots move, every
-    /// unreserved unit is quarantined, and a `Quarantined` lot transaction is
-    /// written. Lots that are missing, already quarantined, or terminal are
-    /// left untouched — a failed inspection must never fail to complete because
-    /// the lot has already been dealt with.
+    /// Quarantine `lot` on the caller's transaction if it can still be
+    /// quarantined. Mirrors `SqliteLotRepository::quarantine` exactly (same
+    /// helper): the status flips, unreserved units are held, the lot's
+    /// serials are quarantined and the linked inventory balance holds the
+    /// units — all in this transaction. Lots that are already quarantined or
+    /// terminal are left untouched: a failed inspection must never fail to
+    /// complete because the lot has already been dealt with.
     fn quarantine_lot_on(
-        conn: &rusqlite::Connection,
-        where_sql: &str,
-        key: &str,
+        tx: &rusqlite::Transaction<'_>,
+        lot: Option<Lot>,
         reason: &str,
         now: chrono::DateTime<Utc>,
     ) -> Result<()> {
-        let row: Option<(String, String, String, String, String)> = conn
-            .query_row(
-                &format!(
-                    "SELECT id, status, quantity_remaining, quantity_reserved, quantity_quarantined
-                     FROM lots WHERE {where_sql}"
-                ),
-                [key],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-            )
-            .map(Some)
-            .or_else(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                e => Err(map_db_error(e)),
-            })?;
-        let Some((lot_id, status, remaining, reserved, quarantined)) = row else {
-            return Ok(());
-        };
-        let status: LotStatus = parse_enum_row(&status, "lot", "status").map_err(map_db_error)?;
-        if !status.can_transition_to(LotStatus::Quarantine) {
+        let Some(lot) = lot else { return Ok(()) };
+        if !lot.status.can_transition_to(LotStatus::Quarantine) {
             return Ok(());
         }
-        let remaining =
-            parse_decimal_row(&remaining, "lot", "quantity_remaining").map_err(map_db_error)?;
-        let reserved =
-            parse_decimal_row(&reserved, "lot", "quantity_reserved").map_err(map_db_error)?;
-        let quarantined =
-            parse_decimal_row(&quarantined, "lot", "quantity_quarantined").map_err(map_db_error)?;
-        let available = (remaining - reserved - quarantined).max(Decimal::ZERO);
-
-        let updated = conn
-            .execute(
-                "UPDATE lots SET status = ?, quantity_quarantined = ?, updated_at = ?
-                 WHERE id = ? AND status = ?",
-                rusqlite::params![
-                    LotStatus::Quarantine.to_string(),
-                    available.to_string(),
-                    now.to_rfc3339(),
-                    &lot_id,
-                    status.to_string(),
-                ],
-            )
-            .map_err(map_db_error)?;
-        if updated != 1 {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot quarantine lot {lot_id}: status changed concurrently"
-            )));
-        }
-        conn.execute(
-            "INSERT INTO lot_transactions (id, lot_id, transaction_type, quantity, reference_type,
-                                           reference_id, reason, created_at)
-             VALUES (?, ?, ?, ?, 'quarantine', ?, ?, ?)",
-            rusqlite::params![
-                Uuid::new_v4().to_string(),
-                &lot_id,
-                LotTransactionType::Quarantined.to_string(),
-                available.to_string(),
-                &lot_id,
-                reason,
-                now.to_rfc3339(),
-            ],
-        )
-        .map_err(map_db_error)?;
-        Ok(())
+        SqliteLotRepository::quarantine_lot_on(tx, &lot, reason, now).map(|_| ())
     }
 
     /// Quarantine every lot a failed/partially-failed inspection implicates:
     /// the header's lot when `reference_type = "lot"`, plus each lot named on
-    /// an item whose result is `Fail`.
+    /// an item whose result is `Fail`. Item lots are resolved by
+    /// `(sku, lot_number)` — an item's lot number that exists under a
+    /// different SKU is a `Conflict`, never a silent match on the wrong stock.
     fn quarantine_failed_lots_on(
-        conn: &rusqlite::Connection,
+        tx: &rusqlite::Transaction<'_>,
         inspection: &Inspection,
         overall: InspectionStatus,
         now: chrono::DateTime<Utc>,
     ) -> Result<()> {
         let reason = format!("Inspection {} completed as {overall}", inspection.inspection_number);
         if overall == InspectionStatus::Failed && inspection.reference_type == "lot" {
-            Self::quarantine_lot_on(
-                conn,
-                "id = ?",
-                &inspection.reference_id.to_string(),
-                &reason,
-                now,
-            )?;
+            let lot = SqliteLotRepository::load_lot_on(tx, inspection.reference_id)?;
+            Self::quarantine_lot_on(tx, lot, &reason, now)?;
         }
         if matches!(overall, InspectionStatus::Failed | InspectionStatus::PartialPass) {
             let mut seen = std::collections::HashSet::new();
@@ -394,8 +405,10 @@ impl SqliteQualityRepository {
                     continue;
                 }
                 if let Some(lot_number) = &item.lot_number {
-                    if seen.insert(lot_number.clone()) {
-                        Self::quarantine_lot_on(conn, "lot_number = ?", lot_number, &reason, now)?;
+                    let sku = Some(item.sku.trim()).filter(|s| !s.is_empty());
+                    if seen.insert((sku.map(str::to_owned), lot_number.clone())) {
+                        let lot = SqliteLotRepository::load_lot_by_number_on(tx, lot_number, sku)?;
+                        Self::quarantine_lot_on(tx, lot, &reason, now)?;
                     }
                 }
             }
@@ -993,9 +1006,18 @@ impl QualityRepository for SqliteQualityRepository {
         }
     }
 
+    /// Update an open NCR.
+    ///
+    /// The read and the write share one transaction and the write is
+    /// conditional on the status that was read, so a concurrent `close_ncr` /
+    /// `cancel_ncr` cannot be overwritten; a finished NCR is refused outright.
     fn update_ncr(&self, id: Uuid, input: UpdateNonConformance) -> Result<NonConformance> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
+
+        let existing = Self::load_ncr_on(&tx, id)?;
+        Self::ensure_ncr_open(&existing, "update")?;
 
         let mut updates = vec!["updated_at = ?"];
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
@@ -1034,14 +1056,25 @@ impl QualityRepository for SqliteQualityRepository {
         }
 
         params.push(Box::new(id.to_string()));
+        params.push(Box::new(existing.status.to_string()));
 
-        let sql = format!("UPDATE non_conformances SET {} WHERE id = ?", updates.join(", "));
+        let sql = format!(
+            "UPDATE non_conformances SET {} WHERE id = ? AND status = ?",
+            updates.join(", ")
+        );
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
-        conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
-
-        self.get_ncr(id)?.ok_or(CommerceError::NotFound)
+        let rows = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+        if rows != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot update NCR {} ({}): status changed concurrently",
+                existing.ncr_number, existing.id
+            )));
+        }
+        let updated = Self::load_ncr_on(&tx, id)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(updated)
     }
 
     fn list_ncrs(&self, filter: NonConformanceFilter) -> Result<Vec<NonConformance>> {
@@ -1116,35 +1149,17 @@ impl QualityRepository for SqliteQualityRepository {
         Ok(ncrs)
     }
 
+    /// Close an NCR. Idempotent for an already-closed one; a `Cancelled` NCR
+    /// is refused (cancelling means it was opened in error, so it must not
+    /// become a closed quality record).
     fn close_ncr(&self, id: Uuid) -> Result<NonConformance> {
-        let conn = self.conn()?;
-        let now = Utc::now();
-
-        conn.execute(
-            "UPDATE non_conformances SET status = ?, closed_at = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![
-                NcrStatus::Closed.to_string(),
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_ncr(id)?.ok_or(CommerceError::NotFound)
+        self.finish_ncr(id, NcrStatus::Closed)
     }
 
+    /// Cancel an NCR opened in error. Idempotent for an already-cancelled one;
+    /// a `Closed` NCR is refused — the record stands.
     fn cancel_ncr(&self, id: Uuid) -> Result<NonConformance> {
-        let conn = self.conn()?;
-        let now = Utc::now();
-
-        conn.execute(
-            "UPDATE non_conformances SET status = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![NcrStatus::Cancelled.to_string(), now.to_rfc3339(), id.to_string(),],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_ncr(id)?.ok_or(CommerceError::NotFound)
+        self.finish_ncr(id, NcrStatus::Cancelled)
     }
 
     fn count_ncrs(&self, filter: NonConformanceFilter) -> Result<u64> {
@@ -1453,7 +1468,7 @@ mod tests {
     use stateset_core::{
         CreateDefectCode, CreateInspection, CreateInspectionItem, CreateNonConformance,
         CreateQualityHold, InspectionFilter, InspectionType, NonConformanceFilter,
-        NonConformanceSource, QualityHoldFilter, QualityRepository, Severity,
+        NonConformanceSource, QualityHoldFilter, QualityRepository, Severity, UpdateNonConformance,
     };
 
     fn fresh_repo() -> SqliteQualityRepository {
@@ -1550,6 +1565,81 @@ mod tests {
         let by_num = repo.get_ncr_by_number(&ncr.ncr_number).expect("ok").expect("found");
         assert_eq!(by_num.id, ncr.id);
         assert!(repo.get_ncr_by_number("missing").expect("ok").is_none());
+    }
+
+    fn make_ncr(repo: &SqliteQualityRepository, sku: &str) -> NonConformance {
+        repo.create_ncr(CreateNonConformance {
+            inspection_id: None,
+            source: NonConformanceSource::InternalAudit,
+            severity: Severity::Major,
+            sku: sku.into(),
+            lot_number: None,
+            serial_number: None,
+            quantity_affected: dec!(5),
+            description: "defect".into(),
+            assigned_to: None,
+        })
+        .expect("create ncr")
+    }
+
+    /// A finished NCR is evidence: closing is idempotent, cancelling a closed
+    /// NCR (or closing a cancelled one) is refused, and `update_ncr` will not
+    /// edit either. Before this the status column was written blind, so a
+    /// cancelled NCR could be silently turned into a closed quality record.
+    #[test]
+    fn terminal_ncrs_refuse_further_status_writes() {
+        let repo = fresh_repo();
+
+        let closed = make_ncr(&repo, "SKU-NCR-CLOSE");
+        let done = repo.close_ncr(closed.id).expect("close");
+        assert_eq!(done.status, NcrStatus::Closed);
+        let closed_at = done.closed_at.expect("closed_at stamped");
+        assert_eq!(repo.close_ncr(closed.id).expect("close again").closed_at, Some(closed_at));
+        let err = repo.cancel_ncr(closed.id).expect_err("a closed NCR cannot be cancelled");
+        assert_validation_mentions(&err, &["cancel", "closed"]);
+        let err = repo
+            .update_ncr(
+                closed.id,
+                UpdateNonConformance { root_cause: Some("rewritten".into()), ..Default::default() },
+            )
+            .expect_err("a closed NCR cannot be edited");
+        assert_validation_mentions(&err, &["update", "closed"]);
+        assert_eq!(repo.get_ncr(closed.id).unwrap().unwrap().root_cause, None);
+
+        let cancelled = make_ncr(&repo, "SKU-NCR-CANCEL");
+        assert_eq!(repo.cancel_ncr(cancelled.id).expect("cancel").status, NcrStatus::Cancelled);
+        assert_eq!(
+            repo.cancel_ncr(cancelled.id).expect("cancel again").status,
+            NcrStatus::Cancelled
+        );
+        assert!(
+            repo.get_ncr(cancelled.id).unwrap().unwrap().closed_at.is_none(),
+            "cancelling is not a closure"
+        );
+        let err = repo.close_ncr(cancelled.id).expect_err("a cancelled NCR cannot be closed");
+        assert_validation_mentions(&err, &["close", "cancelled"]);
+
+        assert!(matches!(repo.close_ncr(Uuid::new_v4()), Err(CommerceError::NotFound)));
+    }
+
+    /// `update_ncr` still drives an open NCR through its workflow.
+    #[test]
+    fn update_ncr_advances_an_open_ncr() {
+        let repo = fresh_repo();
+        let ncr = make_ncr(&repo, "SKU-NCR-OPEN");
+        let updated = repo
+            .update_ncr(
+                ncr.id,
+                UpdateNonConformance {
+                    status: Some(NcrStatus::CorrectiveAction),
+                    root_cause: Some("tooling wear".into()),
+                    ..Default::default()
+                },
+            )
+            .expect("update");
+        assert_eq!(updated.status, NcrStatus::CorrectiveAction);
+        assert_eq!(updated.root_cause.as_deref(), Some("tooling wear"));
+        assert_eq!(repo.close_ncr(ncr.id).expect("close").status, NcrStatus::Closed);
     }
 
     #[test]
@@ -1904,6 +1994,144 @@ mod tests {
         assert_eq!(done.status, InspectionStatus::PartialPass);
         assert_eq!(lots.get(bad.id).unwrap().unwrap().status, LotStatus::Quarantine);
         assert_eq!(lots.get(good.id).unwrap().unwrap().status, LotStatus::Active);
+    }
+
+    /// A failed inspection quarantines the lot's serials and holds the linked
+    /// inventory in the same transaction as the verdict — exactly like
+    /// `LotRepository::quarantine`.
+    #[test]
+    fn failed_inspection_quarantines_serials_and_holds_inventory() {
+        use stateset_core::{
+            CreateInventoryItem, CreateSerialNumber, InventoryRepository, SerialRepository,
+            SerialStatus,
+        };
+        let db = fresh_db();
+        let sku = "SKU-QSI";
+        db.inventory()
+            .create_item(CreateInventoryItem {
+                sku: sku.into(),
+                name: "x".into(),
+                description: None,
+                unit_of_measure: None,
+                initial_quantity: None,
+                location_id: Some(1),
+                reorder_point: None,
+                safety_stock: None,
+            })
+            .expect("item");
+        let lot = db
+            .lots()
+            .create(CreateLot {
+                sku: sku.into(),
+                quantity: dec!(2),
+                initial_location_id: Some(1),
+                ..Default::default()
+            })
+            .expect("lot");
+        let serial = db
+            .serials()
+            .create(CreateSerialNumber {
+                serial: Some("SN-QSI-1".into()),
+                sku: sku.into(),
+                lot_id: Some(lot.id),
+                lot_number: Some(lot.lot_number.clone()),
+                location_id: Some(1),
+                manufactured_at: None,
+                notes: None,
+                attributes: None,
+            })
+            .expect("serial");
+        let item = db.inventory().get_item_by_sku(sku).unwrap().unwrap();
+        let available =
+            || db.inventory().get_balance(item.id, 1).unwrap().unwrap().quantity_available;
+        assert_eq!(available(), dec!(2));
+
+        let repo = db.quality();
+        let insp = inspection_for_lot(&repo, &lot);
+        repo.start_inspection(insp.id).expect("start");
+        record(&repo, insp.items[0].id, InspectionResult::Fail);
+        repo.complete_inspection(insp.id).expect("complete");
+
+        assert_eq!(db.lots().get(lot.id).unwrap().unwrap().status, LotStatus::Quarantine);
+        assert_eq!(db.serials().get(serial.id).unwrap().unwrap().status, SerialStatus::Quarantined);
+        assert_eq!(available(), dec!(0), "inventory hold");
+
+        db.lots().release_quarantine(lot.id).expect("release");
+        assert_eq!(db.serials().get(serial.id).unwrap().unwrap().status, SerialStatus::Available);
+        assert_eq!(available(), dec!(2));
+    }
+
+    /// An item's lot number is resolved under the item's SKU: a lot with that
+    /// number under a different SKU is a conflict, never a silent match.
+    #[test]
+    fn failed_item_lot_number_is_scoped_to_the_items_sku() {
+        let db = fresh_db();
+        let (lots, repo) = (db.lots(), db.quality());
+        let other = lots
+            .create(CreateLot {
+                sku: "SKU-OTHER".into(),
+                lot_number: Some("SHARED-1".into()),
+                quantity: dec!(10),
+                ..Default::default()
+            })
+            .expect("other sku lot");
+        let insp = repo
+            .create_inspection(CreateInspection {
+                inspection_type: InspectionType::Receiving,
+                reference_type: "receipt".into(),
+                reference_id: Uuid::new_v4(),
+                inspector_id: None,
+                scheduled_at: None,
+                notes: None,
+                items: vec![CreateInspectionItem {
+                    sku: "SKU-MINE".into(),
+                    lot_number: Some("SHARED-1".into()),
+                    serial_number: None,
+                    quantity_to_inspect: dec!(10),
+                }],
+            })
+            .expect("create");
+        repo.start_inspection(insp.id).expect("start");
+        record(&repo, insp.items[0].id, InspectionResult::Fail);
+        let err = repo.complete_inspection(insp.id).expect_err("wrong-SKU lot");
+        assert!(
+            matches!(err, CommerceError::Conflict(ref m) if m.contains("SKU-OTHER")),
+            "{err:?}"
+        );
+        // Nothing moved: the verdict and the other SKU's lot are untouched.
+        assert_eq!(
+            repo.get_inspection(insp.id).unwrap().unwrap().status,
+            InspectionStatus::InProgress
+        );
+        assert_eq!(lots.get(other.id).unwrap().unwrap().status, LotStatus::Active);
+    }
+
+    /// Without a SKU on the item the lot number alone is the key.
+    #[test]
+    fn failed_item_without_sku_resolves_lot_by_number_only() {
+        let db = fresh_db();
+        let (lots, repo) = (db.lots(), db.quality());
+        let lot = make_lot(&lots, "SKU-NOSKU");
+        let insp = repo
+            .create_inspection(CreateInspection {
+                inspection_type: InspectionType::Receiving,
+                reference_type: "receipt".into(),
+                reference_id: Uuid::new_v4(),
+                inspector_id: None,
+                scheduled_at: None,
+                notes: None,
+                items: vec![CreateInspectionItem {
+                    sku: String::new(),
+                    lot_number: Some(lot.lot_number.clone()),
+                    serial_number: None,
+                    quantity_to_inspect: dec!(10),
+                }],
+            })
+            .expect("create");
+        repo.start_inspection(insp.id).expect("start");
+        record(&repo, insp.items[0].id, InspectionResult::Fail);
+        repo.complete_inspection(insp.id).expect("complete");
+        assert_eq!(lots.get(lot.id).unwrap().unwrap().status, LotStatus::Quarantine);
     }
 
     #[test]

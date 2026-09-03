@@ -1,3 +1,4 @@
+use crate::kernel::SealedAuditEntry;
 use crate::kernel_outbox::{
     KernelAuditCheckpoint, KernelAuditVerification, KernelOutboxEvent, KernelOutboxHealth,
     KernelReceiptRecord, audit_checkpoint_hash_is_valid, build_audit_checkpoint,
@@ -433,19 +434,21 @@ impl SqliteKernelOutboxRepository {
         let expected_hash = checkpoint.head_hash.as_deref().ok_or_else(|| {
             CommerceError::ValidationError("non-empty checkpoint is missing head_hash".into())
         })?;
-        let Ok(expected_sequence) = i64::try_from(checkpoint.entries) else {
+        // Address the entry by ordinal position, not by `sequence` value, so
+        // a gap left by a rolled-back append cannot invalidate a checkpoint.
+        let Ok(offset) = i64::try_from(checkpoint.entries - 1) else {
             return Ok(false);
         };
         let local_hash = conn
             .query_row(
                 "SELECT audit_hash FROM kernel_receipt_audit_log
-                 WHERE sequence = ? AND audit_hash = ?",
-                params![expected_sequence, expected_hash],
+                 ORDER BY sequence LIMIT 1 OFFSET ?",
+                params![offset],
                 |row| row.get::<_, String>(0),
             )
             .optional()
             .map_err(map_db_error)?;
-        Ok(local_hash == checkpoint.head_hash)
+        Ok(local_hash.as_deref() == Some(expected_hash))
     }
 }
 
@@ -664,4 +667,37 @@ pub(crate) fn append_kernel_receipt_tx(
         ],
     )?;
     Ok(audit_hash)
+}
+
+/// Load the sealed audit-log entry a materialized receipt claims through its
+/// `audit_hash`, for replay verification.
+pub(crate) fn sealed_audit_entry_tx(
+    tx: &rusqlite::Transaction<'_>,
+    existing: &KernelReceiptRecord,
+) -> rusqlite::Result<Option<SealedAuditEntry>> {
+    let Some(audit_hash) = existing.receipt.get("audit_hash").and_then(serde_json::Value::as_str)
+    else {
+        return Ok(None);
+    };
+    tx.query_row(
+        "SELECT previous_audit_hash, request_hash FROM kernel_receipt_audit_log
+         WHERE audit_hash = ?",
+        [audit_hash],
+        |row| Ok(SealedAuditEntry { previous_audit_hash: row.get(0)?, request_hash: row.get(1)? }),
+    )
+    .optional()
+}
+
+impl crate::kernel::KernelAuditChain for SqliteKernelOutboxRepository {
+    fn verify_chain(&self) -> Result<KernelAuditVerification> {
+        Self::verify_audit_chain(self)
+    }
+
+    fn checkpoint(&self) -> Result<KernelAuditCheckpoint> {
+        Self::audit_checkpoint(self)
+    }
+
+    fn verify_checkpoint(&self, checkpoint: &KernelAuditCheckpoint) -> Result<bool> {
+        Self::verify_audit_checkpoint(self, checkpoint)
+    }
 }

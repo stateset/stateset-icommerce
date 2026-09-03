@@ -194,6 +194,177 @@ pub(crate) async fn open_captures_for_order_pg(
     rows.into_iter().map(PgPaymentRepository::row_to_payment).collect()
 }
 
+/// Money still refundable on `payment`, on the caller's connection: the
+/// payment's remaining balance minus every in-flight (`pending`/`processing`)
+/// refund, exactly as `create_refund_async` reserves it. Zero when the payment
+/// is not in a refundable status.
+pub(crate) async fn refundable_remaining_pg(
+    conn: &mut sqlx::PgConnection,
+    payment: &Payment,
+) -> Result<Decimal> {
+    if !payment.status.is_refundable() {
+        return Ok(Decimal::ZERO);
+    }
+    let in_flight: Decimal = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(amount), 0) FROM refunds \
+         WHERE payment_id = $1 AND status IN ($2, $3)",
+    )
+    .bind(payment.id.into_uuid())
+    .bind(RefundStatus::Pending.to_string())
+    .bind(RefundStatus::Processing.to_string())
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    Ok((payment.refundable_remaining() - in_flight).max(Decimal::ZERO))
+}
+
+/// Create a `pending` refund of `amount` against `payment` on the caller's
+/// connection/transaction, returning the refund id. The in-transaction twin of
+/// [`PgPaymentRepository::create_refund_async`] for callers (the returns
+/// module) that must settle a refund in the SAME commit as their own state
+/// change. The caller must already hold the payment row lock (`FOR UPDATE`).
+/// `idempotency_key` is honoured inside the transaction: an existing refund
+/// with the key is returned as-is.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn create_refund_pg_tx(
+    conn: &mut sqlx::PgConnection,
+    payment: &Payment,
+    amount: Decimal,
+    reason: Option<&str>,
+    idempotency_key: Option<&str>,
+    notes: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<Uuid> {
+    if let Some(key) = idempotency_key {
+        let existing: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM refunds WHERE idempotency_key = $1")
+                .bind(key)
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_db_error)?;
+        if let Some(id) = existing {
+            return Ok(id);
+        }
+    }
+    let mut reserved = payment.clone();
+    reserved.amount_refunded +=
+        payment.refundable_remaining() - refundable_remaining_pg(conn, payment).await?;
+    let refund_amount = reserved.validate_refund(Some(amount))?;
+
+    let id = Uuid::new_v4();
+    let refund_number = generate_refund_number();
+    sqlx::query(
+        "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason, external_id, idempotency_key, notes, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11)",
+    )
+    .bind(id)
+    .bind(&refund_number)
+    .bind(payment.id.into_uuid())
+    .bind(RefundStatus::Pending.to_string())
+    .bind(refund_amount)
+    .bind(payment.currency)
+    .bind(reason)
+    .bind(idempotency_key)
+    .bind(notes)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    append_kernel_event_tx(
+        conn,
+        &KernelOutboxEvent::domain(
+            "payments.refund_created.v1",
+            "refund",
+            id.to_string(),
+            serde_json::json!({
+                "refund_id": id.to_string(),
+                "refund_number": refund_number,
+                "payment_id": payment.id.to_string(),
+                "amount": refund_amount.to_string(),
+                "currency": payment.currency.as_str(),
+                "status": RefundStatus::Pending.to_string(),
+            }),
+            idempotency_key.map(str::to_string),
+        ),
+    )
+    .await?;
+    Ok(id)
+}
+
+/// Statuses a payment can be voided from when its order is force-cancelled:
+/// money that is in flight but not yet captured.
+const IN_FLIGHT_STATUSES: [PaymentTransactionStatus; 3] = [
+    PaymentTransactionStatus::Pending,
+    PaymentTransactionStatus::Processing,
+    PaymentTransactionStatus::RequiresAction,
+];
+
+/// Void (`cancelled`) every in-flight payment against `order_id`, returning the
+/// ids voided. Runs on the caller's connection/transaction so a forced order
+/// cancel (`UpdateOrder::void_payments`) voids the holds in the same commit as
+/// the status change. Settled payments are NOT touched: captured money leaves
+/// through a refund. Mirrors the SQLite implementation.
+pub(crate) async fn void_in_flight_payments_for_order_pg(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+    now: DateTime<Utc>,
+) -> Result<Vec<Uuid>> {
+    let in_flight: Vec<String> = IN_FLIGHT_STATUSES.iter().map(ToString::to_string).collect();
+    let rows: Vec<(Uuid,)> = sqlx::query_as(
+        "UPDATE payments SET status = $1, updated_at = $2
+         WHERE order_id = $3 AND status = ANY($4)
+         RETURNING id",
+    )
+    .bind(PaymentTransactionStatus::Cancelled.to_string())
+    .bind(now)
+    .bind(order_id)
+    .bind(&in_flight)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+/// Whether any payment row references `order_id`, on the caller's connection.
+/// The orders module consults it inside its delete transaction.
+pub(crate) async fn order_has_payments_pg(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+) -> Result<bool> {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM payments WHERE order_id = $1)")
+        .bind(order_id)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(map_db_error)
+}
+
+/// Refuse `update` writes that would move a payment INTO `Refunded` /
+/// `PartiallyRefunded` as a bare status flip: those are ledger states written
+/// only by `complete_refund_async`, which also advances `amount_refunded`.
+/// Taking `Completed`/`PartiallyRefunded`/`Disputed -> Refunded` through
+/// `update` left `amount_refunded` stale, so `open_captures_for_order` kept
+/// reporting the money as outstanding. Same-status writes still pass. Worded
+/// identically in the SQLite backend.
+pub(crate) fn ensure_not_refund_by_status_flip(
+    current: PaymentTransactionStatus,
+    target: PaymentTransactionStatus,
+) -> Result<()> {
+    if current != target
+        && matches!(
+            target,
+            PaymentTransactionStatus::Refunded | PaymentTransactionStatus::PartiallyRefunded
+        )
+    {
+        return Err(CommerceError::ValidationError(format!(
+            "Payment status cannot be set to {target} directly (from {current}); \
+             refunds are recorded through create_refund + complete_refund so that \
+             amount_refunded and the refund ledger stay consistent"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct PgPaymentRepository {
     pool: PgPool,
@@ -465,8 +636,12 @@ impl PgPaymentRepository {
     /// Create payment (async)
     pub async fn create_async(&self, input: CreatePayment) -> Result<Payment> {
         input.validate()?;
+        // A duplicate idempotency key is only a replay when it carries the
+        // SAME request (`Payment::check_idempotent_replay`); a different
+        // amount/order/currency/method under a reused key is a `Conflict`.
         if let Some(key) = input.idempotency_key.as_deref() {
             if let Some(existing) = self.get_by_idempotency_key_async(key).await? {
+                existing.check_idempotent_replay(&input)?;
                 return Ok(existing);
             }
         }
@@ -549,6 +724,7 @@ impl PgPaymentRepository {
             {
                 drop(tx);
                 if let Some(existing) = self.get_by_idempotency_key_async(key).await? {
+                    existing.check_idempotent_replay(&input)?;
                     return Ok(existing);
                 }
             }
@@ -663,6 +839,7 @@ impl PgPaymentRepository {
         if !payment_transition_allowed(current, target) {
             return Err(transition_conflict(current, target));
         }
+        ensure_not_refund_by_status_flip(current, target)?;
 
         // A write that moves the payment from a non-capturing status into a
         // capturing one re-acquires a slice of the order total, so it gets the
@@ -1613,6 +1790,7 @@ impl PgPaymentRepository {
             if !payment_transition_allowed(current, target) {
                 return Err(transition_conflict(current, target));
             }
+            ensure_not_refund_by_status_flip(current, target)?;
             // Same order guards as the single-row `update_async` when the
             // write re-acquires a slice of the order total.
             if !is_capturing(current) && is_capturing(target) {

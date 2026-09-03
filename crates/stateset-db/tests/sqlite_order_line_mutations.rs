@@ -473,3 +473,174 @@ fn create_refuses_discount_that_drives_total_negative() {
         .expect("zero total is allowed");
     assert_eq!(free.total_amount, Decimal::ZERO);
 }
+
+// ---------------------------------------------------------------------------
+// Round 4: reservations are keyed to the order LINE (migration 080).
+//
+// `remove_item` used to release "whole reservations for this SKU, oldest
+// first, until the removed line's quantity is covered". With two lines on the
+// same SKU (A qty 5 reserved first, B qty 1) removing B released A's 5-unit
+// hold and left B's own reservation open.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn remove_item_releases_only_its_own_reservation_when_lines_share_a_sku() {
+    let (db, customer_id) = setup();
+    let order = db
+        .orders()
+        .create(CreateOrder {
+            customer_id,
+            items: vec![line(SKU_A, 5, dec!(1.00)), line(SKU_A, 1, dec!(1.00))],
+            ..Default::default()
+        })
+        .expect("create order");
+    let line_a = order.items.iter().find(|i| i.quantity == 5).expect("line A").id;
+    let line_b = order.items.iter().find(|i| i.quantity == 1).expect("line B").id;
+    assert_eq!(open_reserved_qty(&db, order.id), dec!(6));
+    assert_eq!(db.inventory().get_stock(SKU_A).unwrap().unwrap().total_available, dec!(4));
+
+    db.orders().remove_item(order.id, line_b).expect("remove line B");
+
+    // Exactly B's unit came back; A's 5-unit hold is untouched.
+    assert_eq!(open_reserved_qty(&db, order.id), dec!(5), "line A's reservation must survive");
+    assert_eq!(db.inventory().get_stock(SKU_A).unwrap().unwrap().total_available, dec!(5));
+    let after = db.orders().get(order.id).unwrap().unwrap();
+    assert_eq!(after.items.len(), 1);
+    assert_eq!(after.items[0].id, line_a);
+
+    // Removing A afterwards frees the rest.
+    db.orders().remove_item(order.id, line_a).expect("remove line A");
+    assert_eq!(open_reserved_qty(&db, order.id), Decimal::ZERO);
+    assert_eq!(db.inventory().get_stock(SKU_A).unwrap().unwrap().total_available, dec!(10));
+}
+
+#[test]
+fn legacy_unkeyed_reservations_still_release_by_sku() {
+    // Rows created before migration 080 have no `order_item_id`; the SKU-based
+    // path must keep working for them.
+    let (db, customer_id) = setup();
+    let order = order_with_order_level_money(&db, customer_id);
+    {
+        let conn = db.conn().expect("get sqlite connection");
+        conn.execute(
+            "UPDATE inventory_reservations SET order_item_id = NULL WHERE reference_id = ?",
+            [order.id.to_string()],
+        )
+        .expect("strip line keys");
+    }
+    assert_eq!(open_reserved_qty(&db, order.id), dec!(2));
+
+    db.orders().remove_item(order.id, order.items[0].id).expect("remove legacy line");
+    assert_eq!(open_reserved_qty(&db, order.id), Decimal::ZERO);
+    assert_eq!(db.inventory().get_stock(SKU_A).unwrap().unwrap().total_available, dec!(10));
+}
+
+// ---------------------------------------------------------------------------
+// Round 4: line edits are kernel events, not silent writes.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn line_edits_write_kernel_outbox_events_in_the_same_transaction() {
+    let (db, customer_id) = setup();
+    let order = order_with_order_level_money(&db, customer_id);
+    let added = db.orders().add_item(order.id, line(SKU_B, 3, dec!(2.00))).expect("add item");
+    db.orders().remove_item(order.id, added.id).expect("remove item");
+
+    let events = db.kernel_outbox().pending(100).expect("pending outbox events");
+    let added_event = events
+        .iter()
+        .find(|e| e.event_type == "orders.item_added.v1" && e.aggregate_id == order.id.to_string())
+        .expect("orders.item_added.v1 event");
+    assert_eq!(added_event.aggregate_type, "order");
+    assert_eq!(added_event.payload["order_item_id"], added.id.to_string());
+    assert_eq!(added_event.payload["sku"], SKU_B);
+    assert_eq!(added_event.payload["quantity"], 3);
+    assert_eq!(added_event.payload["total_amount"], "30.50", "24.50 + 3 × 2.00");
+
+    let removed_event = events
+        .iter()
+        .find(|e| {
+            e.event_type == "orders.item_removed.v1" && e.aggregate_id == order.id.to_string()
+        })
+        .expect("orders.item_removed.v1 event");
+    assert_eq!(removed_event.payload["order_item_id"], added.id.to_string());
+    assert_eq!(removed_event.payload["total_amount"], "24.50");
+
+    // A refused edit writes nothing.
+    let bogus = db.orders().remove_item(order.id, stateset_core::OrderItemId::new());
+    assert!(bogus.is_err());
+    let removed_count = db
+        .kernel_outbox()
+        .pending(100)
+        .expect("pending")
+        .iter()
+        .filter(|e| e.event_type == "orders.item_removed.v1")
+        .count();
+    assert_eq!(removed_count, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Round 4: an order with money against it is a financial record.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn delete_refuses_an_order_whose_payment_status_holds_money() {
+    let (db, customer_id) = setup();
+    let order = order_with_order_level_money(&db, customer_id);
+    db.orders()
+        .update(
+            order.id,
+            UpdateOrder {
+                payment_status: Some(stateset_core::PaymentStatus::Paid),
+                ..Default::default()
+            },
+        )
+        .expect("mark paid");
+
+    let err = db.orders().delete(order.id).expect_err("paid orders are records");
+    assert!(matches!(err, CommerceError::Conflict(ref m) if m.contains("paid")), "{err:?}");
+    assert!(db.orders().get(order.id).unwrap().is_some(), "order survives");
+    assert_eq!(open_reserved_qty(&db, order.id), dec!(2), "nothing released on a refused delete");
+
+    // A cancelled-but-paid order is refused too (status alone would allow it).
+    db.orders()
+        .update(
+            order.id,
+            UpdateOrder {
+                status: Some(OrderStatus::Cancelled),
+                payment_status: Some(stateset_core::PaymentStatus::PartiallyRefunded),
+                ..Default::default()
+            },
+        )
+        .expect("cancel");
+    let err = db.orders().delete(order.id).expect_err("partially refunded orders are records");
+    assert!(matches!(err, CommerceError::Conflict(_)), "{err:?}");
+    assert!(db.orders().get(order.id).unwrap().is_some());
+}
+
+#[test]
+fn delete_refuses_an_order_referenced_by_a_payment_row() {
+    use stateset_core::{CreatePayment, PaymentMethodType, PaymentRepository};
+    let (db, customer_id) = setup();
+    let order = order_with_order_level_money(&db, customer_id);
+    let payment = db
+        .payments()
+        .create(CreatePayment {
+            order_id: Some(order.id),
+            payment_method: PaymentMethodType::CreditCard,
+            amount: dec!(10.00),
+            ..Default::default()
+        })
+        .expect("create payment");
+    // Even a failed attempt keeps the order as a record.
+    db.payments().mark_failed(payment.id, "declined", None).expect("fail payment");
+
+    let err = db.orders().delete(order.id).expect_err("orders with payment rows are records");
+    assert!(matches!(err, CommerceError::Conflict(ref m) if m.contains("payments")), "{err:?}");
+    assert!(db.orders().get(order.id).unwrap().is_some());
+    assert_eq!(db.payments().for_order(order.id).unwrap().len(), 1);
+
+    // `delete_batch_atomic` shares the guard.
+    let err = db.orders().delete_batch_atomic(vec![order.id]).expect_err("atomic batch refused");
+    assert!(matches!(err, CommerceError::Conflict(_)), "{err:?}");
+}

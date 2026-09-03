@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.28.5",
+    "version": "1.30.0",
     "memberCount": 30,
     "defaultMemberCount": 19,
     "rustCrateCount": 22,
@@ -221,6 +221,7 @@
         "stateset-authz",
         "stateset-core",
         "stateset-embedded",
+        "stateset-jobs",
         "stateset-observability",
         "stateset-primitives"
       ],
@@ -417,6 +418,13 @@
       },
       {
         "name": "stateset-authz",
+        "dependentCount": 1,
+        "dependents": [
+          "stateset-http"
+        ]
+      },
+      {
+        "name": "stateset-jobs",
         "dependentCount": 1,
         "dependents": [
           "stateset-http"

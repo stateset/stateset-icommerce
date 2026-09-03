@@ -152,6 +152,20 @@ impl OrderStatus {
     }
 }
 
+impl PaymentStatus {
+    /// Whether an order in this payment status is holding customer money.
+    ///
+    /// `Paid`, `PartiallyPaid` and `PartiallyRefunded` orders have captured
+    /// funds that are not (fully) returned; such an order is a financial
+    /// record and must not be deleted outright — even when its order status
+    /// (`Pending`/`Cancelled`) would otherwise allow it — because the payment
+    /// rows would survive the order they reference. Refund first.
+    #[must_use]
+    pub const fn holds_money(self) -> bool {
+        matches!(self, Self::Paid | Self::PartiallyPaid | Self::PartiallyRefunded)
+    }
+}
+
 /// Payment status enumeration.
 ///
 /// Uses [`strum`] derives for `Display` (`snake_case`) and `FromStr` (case-insensitive).
@@ -307,6 +321,64 @@ pub struct UpdateOrder {
     pub notes: Option<String>,
     pub shipping_address: Option<Address>,
     pub billing_address: Option<Address>,
+    /// Only meaningful with `status: Some(OrderStatus::Cancelled)`.
+    ///
+    /// Cancelling an order that still has payments holding money (in-flight
+    /// or captured, see `PaymentRepository::open_captures_for_order`) is
+    /// refused with a `ValidationError` naming the outstanding amount, so a
+    /// cancel can never orphan captured funds. Set this to `true` to cancel
+    /// anyway: in-flight payments (`pending`/`processing`/`requires_action`)
+    /// are voided (`cancelled`) inside the same transaction, while settled
+    /// ones (`completed`/`partially_refunded`/`disputed`) are left for an
+    /// explicit refund and listed on the `orders.updated.v1` outbox event as
+    /// `outstanding_payment_ids` / `outstanding_captured`.
+    #[serde(default)]
+    pub void_payments: bool,
+}
+
+/// Input for cancelling an order.
+///
+/// See [`UpdateOrder::void_payments`] for the money rule: a cancel with
+/// `void_payments: false` (the default) is refused while any payment against
+/// the order still holds money.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CancelOrder {
+    /// Void in-flight payments and cancel even though settled payments remain
+    /// outstanding (they must then be refunded separately).
+    pub void_payments: bool,
+}
+
+/// Input for removing a line from an order.
+///
+/// Money rule (mirrors [`UpdateOrder::void_payments`] on the cancel path):
+/// dropping a line lowers `total_amount`, and the order total is the ceiling
+/// every capture is checked against
+/// (`commerce.capture.exceeds_order_total`). Removing a line while payments
+/// already hold more money than the order would then be worth is refused with
+/// [`crate::CommerceError::OrderTotalBelowCaptured`], so a line removal can
+/// never strand captured funds above the order total.
+///
+/// Set [`Self::allow_overpayment`] to remove the line anyway. Unlike
+/// `void_payments`, nothing is voided or refunded: the caller is asserting it
+/// will settle the resulting overpayment itself (a refund, or a credit note).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RemoveOrderItem {
+    /// Remove the line even though the order's new total would fall below the
+    /// money already captured against it, leaving the order overpaid by the
+    /// difference. The captured payments are left exactly as they are.
+    pub allow_overpayment: bool,
+}
+
+impl From<CancelOrder> for UpdateOrder {
+    fn from(input: CancelOrder) -> Self {
+        Self {
+            status: Some(OrderStatus::Cancelled),
+            void_payments: input.void_payments,
+            ..Self::default()
+        }
+    }
 }
 
 /// Kernel command payload for an order state-machine transition.
@@ -318,6 +390,15 @@ pub struct TransitionOrder {
     pub order_id: OrderId,
     pub status: OrderStatus,
     pub payment_status: Option<PaymentStatus>,
+    /// Cancel money rule (mirrors [`UpdateOrder::void_payments`]): a
+    /// transition to [`OrderStatus::Cancelled`] is rejected with
+    /// `commerce.order.captured_money_outstanding` while any payment still
+    /// holds captured money, unless this is `true` — then in-flight payments
+    /// are voided atomically with the cancel and settled money is left for a
+    /// refund. Omitted from the semantic request hash when `false` so
+    /// pre-existing retry keys stay bound.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub void_payments: bool,
 }
 
 /// One order line in a shipment request.
@@ -610,6 +691,37 @@ impl Validate for CreateOrder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn payment_status_holds_money_for_captured_or_partially_returned_funds() {
+        assert!(PaymentStatus::Paid.holds_money());
+        assert!(PaymentStatus::PartiallyPaid.holds_money());
+        assert!(PaymentStatus::PartiallyRefunded.holds_money());
+        assert!(!PaymentStatus::Pending.holds_money());
+        assert!(!PaymentStatus::Authorized.holds_money());
+        assert!(!PaymentStatus::Refunded.holds_money());
+        assert!(!PaymentStatus::Failed.holds_money());
+    }
+
+    #[test]
+    fn cancel_order_converts_to_a_cancelled_update_carrying_the_void_flag() {
+        let update: UpdateOrder = CancelOrder { void_payments: true }.into();
+        assert_eq!(update.status, Some(OrderStatus::Cancelled));
+        assert!(update.void_payments);
+        let update: UpdateOrder = CancelOrder::default().into();
+        assert!(!update.void_payments);
+    }
+
+    #[test]
+    fn update_order_void_payments_defaults_to_false_when_absent_from_json() {
+        let update: UpdateOrder =
+            serde_json::from_str(r#"{"status":"cancelled"}"#).expect("deserialize");
+        assert!(!update.void_payments);
+        let update: UpdateOrder =
+            serde_json::from_str(r#"{"status":"cancelled","void_payments":true}"#)
+                .expect("deserialize");
+        assert!(update.void_payments);
+    }
     use rust_decimal_macros::dec;
 
     // ============================================================================

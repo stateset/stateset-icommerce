@@ -293,6 +293,21 @@ impl stateset_core::TransferOrderRepository for SqliteTransferOrderRepository {
         let item_str = item_id.to_string();
         let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
+            // Decide on the order status under the same write transaction that
+            // records the receipt: units cannot be booked in against a transfer
+            // order that a concurrent cancel has already closed.
+            let status: String = tx.query_row(
+                "SELECT status FROM transfer_orders WHERE id = ?",
+                [&id_str],
+                |row| row.get(0),
+            )?;
+            if status == TransferOrderStatus::Cancelled.to_string() {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(
+                        "Cannot receive against a cancelled transfer order".into(),
+                    ),
+                )));
+            }
             let row: Option<(String, String)> = tx
                 .query_row(
                     "SELECT quantity, quantity_received FROM transfer_order_items WHERE id = ? AND transfer_order_id = ?",
@@ -331,25 +346,28 @@ impl stateset_core::TransferOrderRepository for SqliteTransferOrderRepository {
         })
     }
 
+    /// Cancel a transfer order.
+    ///
+    /// The terminal-state read and the cancel write share one IMMEDIATE
+    /// transaction. Reading the status on a pooled connection and writing on a
+    /// later transaction decided the guard on a status nobody held, so
+    /// concurrent cancels each saw a live order and each wrote.
     fn cancel(&self, id: TransferOrderId) -> Result<TransferOrder> {
         let id_str = id.to_string();
         let now = Utc::now().to_rfc3339();
-        let conn = self.conn()?;
-        let status: String = conn
-            .query_row("SELECT status FROM transfer_orders WHERE id = ?", [&id_str], |row| {
-                row.get(0)
-            })
-            .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
-                other => map_db_error(other),
-            })?;
-        drop(conn);
-        if matches!(status.as_str(), "received" | "cancelled") {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot cancel a transfer order in status {status}"
-            )));
-        }
         with_immediate_transaction(&self.pool, |tx| {
+            let status: String = tx.query_row(
+                "SELECT status FROM transfer_orders WHERE id = ?",
+                [&id_str],
+                |row| row.get(0),
+            )?;
+            if matches!(status.as_str(), "received" | "cancelled") {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(format!(
+                        "Cannot cancel a transfer order in status {status}"
+                    )),
+                )));
+            }
             tx.execute(
                 "UPDATE transfer_orders SET status = 'cancelled', updated_at = ? WHERE id = ?",
                 rusqlite::params![&now, &id_str],
@@ -446,6 +464,22 @@ mod tests {
         // Exact remaining (3) still succeeds.
         let full = repo.receive_line(o.id, item_id, dec!(3)).expect("receive rest");
         assert_eq!(full.status, TransferOrderStatus::Received);
+    }
+
+    #[test]
+    fn receive_line_rejects_cancelled_order() {
+        let repo = test_repo();
+        let o = new_order(&repo);
+        let shipped = repo.ship(o.id).expect("ship");
+        let item_id = shipped.items[0].id;
+        repo.cancel(o.id).expect("cancel");
+        // Units cannot be booked in against a cancelled transfer order: the
+        // status is sticky in `derive_receipt_status`, so without this guard the
+        // receipt silently raised `quantity_received` on a cancelled order.
+        let err = repo.receive_line(o.id, item_id, dec!(1)).expect_err("receive after cancel");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        let stored = repo.get(o.id).expect("get").expect("found");
+        assert_eq!(stored.total_received(), dec!(0));
     }
 
     #[test]

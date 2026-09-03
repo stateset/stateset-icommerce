@@ -649,7 +649,12 @@ impl ReceivingRepository for SqliteReceivingRepository {
                         + reject_qty;
                 let expected = parse_decimal_row(&expected, "receipt_item", "expected_quantity")?;
 
-                if new_received > expected {
+                // A line with `expected_quantity = 0` is a blind receipt (no
+                // ASN/PO quantity to check against): any positive quantity is
+                // accepted and the line is `received` in full. Otherwise the
+                // cumulative received quantity is capped at expected.
+                let blind = expected == Decimal::ZERO;
+                if !blind && new_received > expected {
                     return Err(Self::smuggle(CommerceError::ValidationError(format!(
                         "Receiving {new_received} would exceed expected quantity {expected} for receipt item {line_id}"
                     ))));
@@ -822,33 +827,88 @@ impl ReceivingRepository for SqliteReceivingRepository {
     }
 
     // Put-away operations
+
+    /// Create a put-away task against a received line.
+    ///
+    /// Guards (all inside one `IMMEDIATE` transaction so two concurrent
+    /// put-aways cannot both pass the cap):
+    /// 1. `quantity` must be positive;
+    /// 2. `receipt_item_id` must be a line of `receipt_id` — a line from
+    ///    another receipt cannot be put away through this one;
+    /// 3. the requested quantity plus every non-cancelled put-away already
+    ///    planned for the line may not exceed the line's `received_quantity`.
+    ///    Without this cap a 10-unit receipt could plan 10 + 10 and, once both
+    ///    completed, report `put_away_quantity = 20` for stock that never
+    ///    arrived.
     fn create_put_away(&self, input: CreatePutAway) -> Result<PutAway> {
-        let conn = self.conn()?;
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Put-away quantity must be greater than zero".into(),
+            ));
+        }
         let now = Utc::now().to_rfc3339();
         let id = Uuid::new_v4();
+        let id_str = id.to_string();
+        let receipt_id = input.receipt_id.to_string();
+        let item_id = input.receipt_item_id.to_string();
 
-        conn.execute(
-            "INSERT INTO put_aways (id, receipt_id, receipt_item_id, sku, from_location_id, to_location_id,
-             quantity, lot_id, assigned_to, notes, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                id.to_string(),
-                input.receipt_id.to_string(),
-                input.receipt_item_id.to_string(),
-                input.sku,
-                input.from_location_id,
-                input.to_location_id,
-                input.quantity.to_string(),
-                input.lot_id.map(|id| id.to_string()),
-                input.assigned_to,
-                input.notes,
-                now,
-            ],
-        )
-        .map_err(map_db_error)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            let (owner, received_str): (String, String) = tx
+                .query_row(
+                    "SELECT receipt_id, received_quantity FROM receipt_items WHERE id = ?1",
+                    params![item_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => Self::smuggle(CommerceError::NotFound),
+                    other => other,
+                })?;
+            if owner != receipt_id {
+                return Err(Self::smuggle(CommerceError::ValidationError(format!(
+                    "Receipt item {item_id} does not belong to receipt {receipt_id}"
+                ))));
+            }
+            let received = parse_decimal_row(&received_str, "receipt_item", "received_quantity")?;
 
-        self.get_put_away(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to create put-away".into()))
+            let planned_params: [&dyn rusqlite::ToSql; 1] = [&item_id];
+            let planned = sum_decimal_query(
+                tx,
+                "SELECT quantity FROM put_aways WHERE receipt_item_id = ?1 AND status != 'cancelled'",
+                &planned_params,
+                "put_aways",
+                "quantity",
+            )
+            .map_err(Self::smuggle)?;
+
+            if planned + input.quantity > received {
+                return Err(Self::smuggle(CommerceError::ValidationError(format!(
+                    "Cannot put away {} of receipt item {item_id}: {received} received, {planned} already planned, {} available",
+                    input.quantity,
+                    received - planned
+                ))));
+            }
+
+            tx.execute(
+                "INSERT INTO put_aways (id, receipt_id, receipt_item_id, sku, from_location_id, to_location_id,
+                 quantity, lot_id, assigned_to, notes, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    id_str,
+                    receipt_id,
+                    item_id,
+                    input.sku,
+                    input.from_location_id,
+                    input.to_location_id,
+                    input.quantity.to_string(),
+                    input.lot_id.map(|id| id.to_string()),
+                    input.assigned_to,
+                    input.notes,
+                    now,
+                ],
+            )?;
+
+            Self::read_put_away_by_id_tx(tx, &id_str)
+        })
     }
 
     fn get_put_away(&self, id: Uuid) -> Result<Option<PutAway>> {
@@ -945,13 +1005,23 @@ impl ReceivingRepository for SqliteReceivingRepository {
         })
     }
 
-    /// Complete a put-away task and fold its quantity into the receipt.
+    /// Complete a put-away task, move the stock, and fold its quantity into the
+    /// receipt.
     ///
     /// Legal from `Pending`/`Assigned`/`InProgress`. Completing a cancelled task
     /// used to succeed and add its quantity to `receipts.put_away_quantity` for
-    /// stock that was never put away. The status flip and the receipt total are
-    /// one transaction, so the receipt can never quote a total that excludes a
-    /// put-away already marked completed.
+    /// stock that was never put away. The status flip, the stock effect and the
+    /// receipt total are one transaction, so the receipt can never quote a
+    /// total that excludes a put-away already marked completed, and stock can
+    /// never move without the task recording it.
+    ///
+    /// **Stock effect** (this is where received goods actually enter stock —
+    /// receiving itself only counts paperwork): the put-away's quantity is
+    /// added to the destination location's on-hand and to the warehouse-level
+    /// balance, with an `inventory_movements` receipt row for the audit trail.
+    /// Completing twice is impossible — the guarded UPDATE matches zero rows the
+    /// second time and raises a conflict before any stock moves — so the
+    /// movement can never be double counted.
     fn complete_put_away(&self, input: CompletePutAway) -> Result<PutAway> {
         let now = Utc::now().to_rfc3339();
         let id_str = input.put_away_id.to_string();
@@ -990,6 +1060,43 @@ impl ReceivingRepository for SqliteReceivingRepository {
             tx.execute(
                 "UPDATE receipts SET put_away_quantity = ?1 WHERE id = ?2",
                 params![put_away_total.to_string(), receipt_id_param],
+            )?;
+
+            // Stock effect: the units land in the destination bin and in the
+            // warehouse balance.
+            let warehouse_id = super::warehouse::warehouse_of_location_tx(tx, to_location)?;
+            super::warehouse::ensure_inventory_item_tx(tx, &existing.sku)?;
+            super::warehouse::apply_location_delta_tx(
+                tx,
+                to_location,
+                &existing.sku,
+                existing.lot_id,
+                existing.quantity,
+                &now,
+            )?;
+            super::bins::apply_warehouse_delta_tx(
+                tx,
+                warehouse_id,
+                &existing.sku,
+                existing.quantity,
+                Decimal::ZERO,
+                "put-away completed",
+                Some("put_away"),
+                Some(&id_str),
+                &now,
+            )?;
+            super::warehouse::insert_wms_movement_tx(
+                tx,
+                stateset_core::MovementType::Receipt,
+                existing.from_location_id,
+                Some(to_location),
+                &existing.sku,
+                existing.lot_id,
+                existing.quantity,
+                "put_away",
+                &id_str,
+                existing.assigned_to.as_deref(),
+                &now,
             )?;
 
             Self::read_put_away_by_id_tx(tx, &id_str)
@@ -1116,6 +1223,7 @@ impl ReceivingRepository for SqliteReceivingRepository {
     }
 
     fn create_receipts_batch(&self, inputs: Vec<CreateReceipt>) -> Result<BatchResult<Receipt>> {
+        stateset_core::validate_batch_size(&inputs)?;
         let mut result = BatchResult::new();
 
         for (index, input) in inputs.into_iter().enumerate() {
@@ -1145,9 +1253,66 @@ mod tests {
     use crate::SqliteDatabase;
     use rust_decimal_macros::dec;
     use stateset_core::{
-        CreateReceipt, CreateReceiptItem, CreateWarehouse, ReceiptItemStatus, ReceiptType,
-        ReceiveItemLine, ReceiveItems, WarehouseRepository, WarehouseType,
+        CompletePutAway, CreateLocation, CreatePutAway, CreateReceipt, CreateReceiptItem,
+        CreateWarehouse, LocationType, ReceiptItemStatus, ReceiptType, ReceiveItemLine,
+        ReceiveItems, WarehouseRepository, WarehouseType,
     };
+
+    /// A DB with warehouse id 1 and one receivable location; returns
+    /// `(db, location_id)`.
+    fn fresh_db_with_location() -> (SqliteDatabase, i32) {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let wh = db
+            .warehouse()
+            .create_warehouse(CreateWarehouse {
+                code: "WH-PA".into(),
+                name: "Put-away Test".into(),
+                warehouse_type: WarehouseType::Distribution,
+                ..Default::default()
+            })
+            .expect("seed warehouse");
+        let loc = db
+            .warehouse()
+            .create_location(CreateLocation {
+                warehouse_id: wh.id,
+                code: Some("BULK-1".into()),
+                location_type: LocationType::Bulk,
+                is_receivable: Some(true),
+                ..Default::default()
+            })
+            .expect("seed location");
+        (db, loc.id)
+    }
+
+    fn put_away(
+        repo: &SqliteReceivingRepository,
+        receipt_id: Uuid,
+        item_id: Uuid,
+        location_id: i32,
+        qty: Decimal,
+    ) -> Result<PutAway> {
+        repo.create_put_away(CreatePutAway {
+            receipt_id,
+            receipt_item_id: item_id,
+            sku: "SKU-1".into(),
+            from_location_id: None,
+            to_location_id: location_id,
+            quantity: qty,
+            lot_id: None,
+            assigned_to: None,
+            notes: None,
+        })
+    }
+
+    fn complete(repo: &SqliteReceivingRepository, id: Uuid) -> PutAway {
+        repo.complete_put_away(CompletePutAway {
+            put_away_id: id,
+            actual_location_id: None,
+            notes: None,
+            completed_by: None,
+        })
+        .expect("complete put-away")
+    }
 
     /// A receiving repo backed by a DB that already has warehouse id 1 seeded
     /// (receipts carry a FOREIGN KEY onto `warehouses`).
@@ -1318,5 +1483,127 @@ mod tests {
         receive(&repo, rid, iid, dec!(0.2));
         assert_eq!(item_status(&repo, rid, iid), ReceiptItemStatus::Received);
         assert_eq!(item_received(&repo, rid, iid), dec!(0.3));
+    }
+
+    // ----- W1: put-away creation is capped at the received quantity -----
+
+    #[test]
+    fn create_put_away_rejects_non_positive_quantity() {
+        let (db, loc) = fresh_db_with_location();
+        let repo = db.receiving();
+        let (rid, iid) = receipt_with_one_item(&repo, dec!(10));
+        receive(&repo, rid, iid, dec!(10));
+
+        for qty in [dec!(0), dec!(-1)] {
+            let err = put_away(&repo, rid, iid, loc, qty).expect_err("must reject");
+            assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        }
+    }
+
+    #[test]
+    fn create_put_away_rejects_item_from_another_receipt() {
+        let (db, loc) = fresh_db_with_location();
+        let repo = db.receiving();
+        let (rid_a, iid_a) = receipt_with_one_item(&repo, dec!(10));
+        let (rid_b, _iid_b) = receipt_with_one_item(&repo, dec!(10));
+        receive(&repo, rid_a, iid_a, dec!(10));
+
+        let err = put_away(&repo, rid_b, iid_a, loc, dec!(1)).expect_err("wrong receipt");
+        assert!(
+            matches!(err, CommerceError::ValidationError(ref m) if m.contains("does not belong")),
+            "got {err:?}"
+        );
+
+        let err = put_away(&repo, rid_a, Uuid::new_v4(), loc, dec!(1)).expect_err("unknown line");
+        assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
+    }
+
+    #[test]
+    fn create_put_away_caps_cumulative_planned_quantity_at_received() {
+        // Regression: receive 10, plan 10 + 10, complete both -> the receipt
+        // reported put_away_quantity = 20 for stock that never arrived.
+        let (db, loc) = fresh_db_with_location();
+        let repo = db.receiving();
+        let (rid, iid) = receipt_with_one_item(&repo, dec!(10));
+
+        // Nothing received yet: nothing can be put away.
+        let err = put_away(&repo, rid, iid, loc, dec!(1)).expect_err("nothing received");
+        assert!(
+            matches!(err, CommerceError::ValidationError(ref m) if m.contains("0 received")),
+            "got {err:?}"
+        );
+
+        receive(&repo, rid, iid, dec!(10));
+        let first = put_away(&repo, rid, iid, loc, dec!(6)).expect("6 of 10");
+        let err = put_away(&repo, rid, iid, loc, dec!(5)).expect_err("6 + 5 > 10");
+        match err {
+            CommerceError::ValidationError(m) => {
+                assert!(m.contains("10 received"), "{m}");
+                assert!(m.contains("6 already planned"), "{m}");
+                assert!(m.contains("4 available"), "{m}");
+            }
+            other => panic!("got {other:?}"),
+        }
+        let second = put_away(&repo, rid, iid, loc, dec!(4)).expect("exactly the remainder");
+
+        complete(&repo, first.id);
+        complete(&repo, second.id);
+        let receipt = repo.get_receipt(rid).expect("get").expect("exists");
+        assert_eq!(receipt.put_away_quantity, dec!(10));
+    }
+
+    #[test]
+    fn cancelled_put_away_frees_its_planned_quantity() {
+        let (db, loc) = fresh_db_with_location();
+        let repo = db.receiving();
+        let (rid, iid) = receipt_with_one_item(&repo, dec!(10));
+        receive(&repo, rid, iid, dec!(10));
+
+        let planned = put_away(&repo, rid, iid, loc, dec!(10)).expect("plan all");
+        assert!(put_away(&repo, rid, iid, loc, dec!(1)).is_err(), "line fully planned");
+        repo.cancel_put_away(planned.id).expect("cancel");
+        put_away(&repo, rid, iid, loc, dec!(10)).expect("capacity returned after cancel");
+    }
+
+    // ----- W3: expected_quantity = 0 is a blind receipt -----
+
+    #[test]
+    fn blind_receipt_line_accepts_any_positive_quantity() {
+        let repo = fresh_repo();
+        let (rid, iid) = receipt_with_one_item(&repo, dec!(0));
+
+        receive(&repo, rid, iid, dec!(7));
+        assert_eq!(item_received(&repo, rid, iid), dec!(7));
+        assert_eq!(item_status(&repo, rid, iid), ReceiptItemStatus::Received);
+
+        // Still open: more can arrive against a blind line.
+        receive(&repo, rid, iid, dec!(3));
+        assert_eq!(item_received(&repo, rid, iid), dec!(10));
+        let receipt = repo.get_receipt(rid).expect("get").expect("exists");
+        assert_eq!(receipt.received_quantity, dec!(10));
+    }
+
+    #[test]
+    fn non_blind_line_is_still_capped_at_expected() {
+        let repo = fresh_repo();
+        let (rid, iid) = receipt_with_one_item(&repo, dec!(5));
+        let err = repo
+            .receive_items(ReceiveItems {
+                receipt_id: rid,
+                items: vec![ReceiveItemLine {
+                    receipt_item_id: iid,
+                    quantity_received: dec!(6),
+                    quantity_rejected: None,
+                    rejection_reason: None,
+                    lot_number: None,
+                    serial_numbers: None,
+                    expiration_date: None,
+                    notes: None,
+                }],
+                receiving_location_id: None,
+                received_by: None,
+            })
+            .expect_err("over-receipt");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
     }
 }

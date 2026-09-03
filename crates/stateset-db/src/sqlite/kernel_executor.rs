@@ -6,9 +6,13 @@ use super::general_ledger::SqliteGeneralLedgerRepository;
 use super::inventory::SqliteInventoryRepository;
 use super::kernel_outbox::{
     append_kernel_event_tx, append_kernel_receipt_tx, receipt_by_idempotency_key_tx,
+    sealed_audit_entry_tx,
 };
 use super::orders::{ShipMode, SqliteOrderRepository};
-use super::payments::{SqlitePaymentRepository, check_order_capture_capacity_tx};
+use super::payments::{
+    SqlitePaymentRepository, check_order_capture_capacity_tx, open_captures_for_order_conn,
+    void_in_flight_payments_for_order_conn,
+};
 use super::returns::{SqliteReturnRepository, row_to_return_item};
 use super::subscriptions::SqliteSubscriptionRepository;
 use super::x402_payment_intents::SqliteX402PaymentIntentRepository;
@@ -16,11 +20,35 @@ use super::{
     parse_datetime_opt_row, parse_datetime_row, parse_decimal_row, parse_uuid_row,
     with_immediate_transaction,
 };
-use crate::kernel_outbox::semantic_request_hash;
+use crate::kernel::plans::PlanOutcome;
+use crate::kernel::plans::catalog::{create_inventory_item_guard, create_product_guard};
+use crate::kernel::plans::escrow::{
+    ESCROW_UNVERSIONED, create_escrow_guard, dispute_escrow_guard, escrow_id_guard,
+    escrow_legacy_amount, escrow_settlement_guard, file_dispute_guard, plan_fund_escrow,
+    resolve_dispute_guard, submit_evidence_guard,
+};
+use crate::kernel::plans::finance::{
+    BILLING_CYCLE_UNVERSIONED, CART_UNVERSIONED, JOURNAL_ENTRY_UNVERSIONED,
+    X402_INTENT_UNVERSIONED, charge_subscription_guard, commit_checkout_guard,
+    post_journal_entry_guard, settle_x402_guard,
+};
+use crate::kernel::plans::inventory::{reservation_lifecycle_guard, reserve_inventory_guard};
+use crate::kernel::plans::orders::{
+    OrderTransitionSnapshot, ShipOrderSnapshot, plan_order_transition, plan_ship_order,
+    reservation_expired_during_shipment, ship_order_guard, transition_order_guard,
+};
+use crate::kernel::plans::payments::{RefundSnapshot, create_payment_guard, plan_refund};
+use crate::kernel::plans::returns::transition_return_guard;
+use crate::kernel::receipt::{
+    attach_command_context, checkout_error_code, preview_receipt, principal_kind_name,
+    receipt_record, rejected_receipt, succeeded_receipt,
+};
+use crate::kernel::{CommandRun, EnvelopeGuard, Replay, resolve_replay};
 use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::OptionalExtension;
 use rusqlite::params;
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -31,12 +59,12 @@ use stateset_core::{
     CreateA2AEscrow, CreateInventoryItem, CreatePayment, CreateProduct, CreateRefund,
     DisputeA2AEscrow, ExecutionMode, ExecutionReceipt, ExecutionStatus, FileA2ADispute,
     FundA2AEscrow, InventoryItem, InventoryReservation, JournalEntry, JournalEntryStatus,
-    KernelPolicy, Order, OrderStatus, Payment, PaymentStatus, PaymentTransactionStatus,
-    PostJournalEntry, Product, ProductId, ProductStatus, Refund, RefundA2AEscrow, RefundStatus,
-    ReleaseA2AEscrow, ReleaseInventoryReservation, ReservationStatus, ReserveInventory,
-    ResolveA2ADispute, Result, RetryDisposition, Return, SettleX402Intent, ShipOrderCommand,
-    SubmitA2ADisputeEvidence, SubscriptionCharge, SubscriptionStatus, TransitionOrder,
-    TransitionReturn, Validate, X402IntentStatus, X402PaymentIntent,
+    KernelPolicy, Order, OrderStatus, Payment, PaymentTransactionStatus, PostJournalEntry, Product,
+    ProductId, ProductStatus, Refund, RefundA2AEscrow, RefundStatus, ReleaseA2AEscrow,
+    ReleaseInventoryReservation, ReservationStatus, ReserveInventory, ResolveA2ADispute, Result,
+    RetryDisposition, Return, SettleX402Intent, ShipOrderCommand, SubmitA2ADisputeEvidence,
+    SubscriptionCharge, SubscriptionStatus, TransitionOrder, TransitionReturn, Validate,
+    X402IntentStatus, X402PaymentIntent,
 };
 use uuid::Uuid;
 
@@ -63,6 +91,10 @@ const FILE_A2A_DISPUTE_COMMAND: &str = "a2a.dispute.file";
 const SUBMIT_A2A_EVIDENCE_COMMAND: &str = "a2a.dispute.evidence.submit";
 const RESOLVE_A2A_DISPUTE_COMMAND: &str = "a2a.dispute.resolve";
 
+fn to_sql_err(error: CommerceError) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+}
+
 #[derive(Clone, Copy)]
 enum InventoryLifecycleAction {
     Confirm(Option<rust_decimal::Decimal>),
@@ -87,57 +119,30 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<CreateInventoryItem>,
     ) -> Result<ExecutionReceipt<InventoryItem>> {
-        command
-            .validate_contract()
-            .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
         let input = command.payload.clone();
-        let request_hash = semantic_request_hash(command, &input)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != CREATE_INVENTORY_ITEM_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected inventory.item.create command type".into(),
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "create commands cannot carry an expected aggregate version".into(),
-            ))
-        } else if let Err(error) = input.validate() {
-            Some(("commerce.validation_failed", error.to_string()))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_INVENTORY_ITEM_COMMAND),
+            "inventory_item",
+        )?
+        .then_guard(|_| create_inventory_item_guard(&input));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         let location_id = input.location_id.unwrap_or(1);
         let initial_quantity = input.initial_quantity.unwrap_or_default();
 
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored =
-                    replay_or_conflict(command, &request_hash, existing, "inventory_item")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
+                if let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "inventory_item")?
                 {
                     return Ok(stored);
                 }
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "inventory_item",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -237,33 +242,18 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<CreateProduct>,
     ) -> Result<ExecutionReceipt<Product>> {
-        command
-            .validate_contract()
-            .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
-
         let input = command.payload.clone();
-        let request_hash = semantic_request_hash(command, &input)?;
-        let now = Utc::now();
-        let policy = self.policy.evaluate(command, now);
-        let guard = if command.command_type != CREATE_PRODUCT_COMMAND {
-            Some(("kernel.command_type_mismatch", "expected products.create command type".into()))
-        } else if command.deadline.is_some_and(|deadline| deadline <= now) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "create commands cannot carry an expected aggregate version".into(),
-            ))
-        } else if let Err(error) = input.validate() {
-            Some(("commerce.validation_failed", error.to_string()))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_PRODUCT_COMMAND),
+            "product",
+        )?
+        .then_guard(|_| create_product_guard(&input));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let now = run.started_at;
         let slug = input.slug.clone().unwrap_or_else(|| Product::generate_slug(&input.name));
         let attributes_json = serde_json::to_string(&input.attributes.clone().unwrap_or_default())
             .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
@@ -276,23 +266,14 @@ impl SqliteKernelExecutor {
 
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored = replay_or_conflict(command, &request_hash, existing, "product")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
+                if let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "product")?
                 {
                     return Ok(stored);
                 }
             }
 
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "product",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -448,92 +429,39 @@ impl SqliteKernelExecutor {
     }
 
     /// Preview or atomically apply `payments.create`.
-    ///
-    /// Apply mode commits the payment, outbox event, and final receipt in one
-    /// SQLite transaction. Reusing the key with the same semantic request
-    /// returns the stored receipt; reusing it for different work is rejected.
     pub fn execute_create_payment(
         &self,
         command: &CommandEnvelope<CreatePayment>,
     ) -> Result<ExecutionReceipt<Payment>> {
-        command
-            .validate_contract()
-            .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
-
         let mut input = command.payload.clone();
-        if input.idempotency_key.as_deref().is_some_and(|key| key != command.idempotency_key) {
-            return self.persist_guard_receipt(
-                command,
-                None,
-                "kernel.idempotency_key_mismatch",
-                "payload idempotency key does not match the command envelope",
-                RetryDisposition::Never,
-            );
+        if input.idempotency_key.is_none() {
+            input.idempotency_key = Some(command.idempotency_key.clone());
         }
-        input.idempotency_key = Some(command.idempotency_key.clone());
-        let request_hash = semantic_request_hash(command, &input)?;
-        let now = Utc::now();
-        let policy = self.policy.evaluate(command, now);
-
-        let guard = if command.command_type != CREATE_PAYMENT_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected payments.create command type".to_string(),
-                RetryDisposition::Never,
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= now) {
-            Some((
-                "kernel.deadline_exceeded",
-                "command deadline elapsed before execution".to_string(),
-                RetryDisposition::Never,
-            ))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-                RetryDisposition::Never,
-            ))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "create commands cannot carry an expected aggregate version".to_string(),
-                RetryDisposition::Never,
-            ))
-        } else if let Err(error) = input.validate() {
-            Some(("commerce.validation_failed", error.to_string(), RetryDisposition::Never))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_PAYMENT_COMMAND)
+                .with_payload_key(input.idempotency_key.as_deref()),
+            "payment",
+        )?
+        .then_guard(|_| create_payment_guard(&input));
+        let request_hash = run.request_hash.clone();
+        let started_at = run.started_at;
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored = replay_or_conflict(command, &request_hash, existing, "payment")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
-                {
-                    return Ok(stored);
-                }
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "payment")?
+            {
+                return Ok(stored);
             }
-
-            if let Some((code, message, retry)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    *retry,
-                    "payment",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
-
-            if command.mode == ExecutionMode::Preview {
-                let mut receipt = preview_receipt(command, policy.clone(), "payment");
-                append_receipt(tx, &request_hash, &mut receipt)?;
-                return Ok(receipt);
-            }
-
+            // Every check apply performs must run before the preview answer
+            // is sealed, or a preview would promise a capture apply refuses.
             if let Some(order_id) = input.order_id {
                 check_order_capture_capacity_tx(
                     tx,
@@ -542,6 +470,11 @@ impl SqliteKernelExecutor {
                     input.amount,
                     input.currency.unwrap_or_default(),
                 )?;
+            }
+            if run.is_preview() {
+                let mut receipt = run.previewed();
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
             }
 
             let id = Uuid::new_v4();
@@ -586,7 +519,7 @@ impl SqliteKernelExecutor {
                 [id.to_string()],
                 SqlitePaymentRepository::row_to_payment,
             )?;
-            let mut event = KernelOutboxEvent::domain(
+            let event = run.event(
                 "payments.created.v1",
                 "payment",
                 id.to_string(),
@@ -598,53 +531,11 @@ impl SqliteKernelExecutor {
                     "currency": payment.currency.as_str(),
                     "status": payment.status.to_string(),
                 }),
-                Some(command.idempotency_key.clone()),
             );
-            attach_command_context(&mut event, command);
             append_kernel_event_tx(tx, &event)?;
-
-            let completed_at = Utc::now();
-            let mut receipt = ExecutionReceipt {
-                contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-                receipt_id: Uuid::new_v4(),
-                command_id: command.command_id,
-                idempotency_key: command.idempotency_key.clone(),
-                command_type: command.command_type.clone(),
-                status: ExecutionStatus::Succeeded,
-                result: Some(payment),
-                error_code: None,
-                error_message: None,
-                retry: RetryDisposition::SameKey,
-                aggregate_type: Some("payment".into()),
-                aggregate_id: Some(id.to_string()),
-                version_before: None,
-                version_after: Some(1),
-                event_ids: vec![event.id],
-                policy: Some(policy.clone()),
-                audit_hash: None,
-                started_at: now,
-                completed_at,
-            };
-            append_receipt(tx, &request_hash, &mut receipt)?;
-            Ok(receipt)
-        })
-    }
-
-    fn persist_guard_receipt(
-        &self,
-        command: &CommandEnvelope<CreatePayment>,
-        policy: Option<stateset_core::PolicyDecisionEvidence>,
-        code: &str,
-        message: &str,
-        retry: RetryDisposition,
-    ) -> Result<ExecutionReceipt<Payment>> {
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                return replay_or_conflict(command, &request_hash, existing, "payment");
-            }
+            let _ = started_at;
             let mut receipt =
-                rejected_receipt(command, policy.clone(), code, message, retry, "payment");
+                run.succeeded(payment, Some(id.to_string()), None, Some(1), vec![event.id]);
             append_receipt(tx, &request_hash, &mut receipt)?;
             Ok(receipt)
         })
@@ -655,142 +546,71 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<CreateRefund>,
     ) -> Result<ExecutionReceipt<Refund>> {
-        command
-            .validate_contract()
-            .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
-
-        let key_mismatch = command
-            .payload
-            .idempotency_key
-            .as_deref()
-            .is_some_and(|key| key != command.idempotency_key);
         let mut input = command.payload.clone();
-        if !key_mismatch {
+        if input.idempotency_key.is_none() {
             input.idempotency_key = Some(command.idempotency_key.clone());
         }
-        let request_hash = semantic_request_hash(command, &input)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let static_guard = if key_mismatch {
-            Some((
-                "kernel.idempotency_key_mismatch",
-                "payload idempotency key does not match the command envelope".to_string(),
-            ))
-        } else if command.command_type != CREATE_REFUND_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected payments.create_refund command type".to_string(),
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some((
-                "kernel.deadline_exceeded",
-                "command deadline elapsed before execution".to_string(),
-            ))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "create commands cannot carry an expected aggregate version".to_string(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_REFUND_COMMAND)
+                .with_payload_key(input.idempotency_key.as_deref()),
+            "refund",
+        )?;
+        let request_hash = run.request_hash.clone();
+        let payment_id = input.payment_id.to_string();
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<Refund> =
-                    replay_or_conflict(command, &request_hash, existing, "refund")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
-                {
-                    return Ok(stored);
-                }
-            }
-
-            if let Some((code, message)) = &static_guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "refund",
-                );
-                append_receipt(tx, &request_hash, &mut receipt)?;
-                return Ok(receipt);
-            }
-
-            let mut payment = match tx.query_row(
-                "SELECT * FROM payments WHERE id = ?",
-                [input.payment_id.to_string()],
-                SqlitePaymentRepository::row_to_payment,
-            ) {
-                Ok(payment) => payment,
-                Err(rusqlite::Error::QueryReturnedNoRows) => {
-                    let mut receipt = rejected_receipt(
-                        command,
-                        Some(policy.clone()),
-                        "commerce.payment_not_found",
-                        "payment does not exist",
-                        RetryDisposition::Never,
-                        "refund",
-                    );
-                    append_receipt(tx, &request_hash, &mut receipt)?;
-                    return Ok(receipt);
-                }
-                Err(error) => return Err(error),
-            };
-            if let Err(error) = input.validate_for_currency(payment.currency) {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    "commerce.refund_validation_failed",
-                    &error.to_string(),
-                    RetryDisposition::Never,
-                    "refund",
-                );
-                append_receipt(tx, &request_hash, &mut receipt)?;
-                return Ok(receipt);
-            }
-
-            let mut in_flight = rust_decimal::Decimal::ZERO;
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "refund")?
             {
-                let mut statement = tx.prepare(
-                    "SELECT amount FROM refunds
-                     WHERE payment_id = ? AND status IN ('pending', 'processing')",
-                )?;
-                let rows = statement.query_map([input.payment_id.to_string()], |row| {
-                    let amount: String = row.get(0)?;
-                    parse_decimal_row(&amount, "refund", "amount")
-                })?;
-                for row in rows {
-                    in_flight += row?;
-                }
+                return Ok(stored);
             }
-            payment.amount_refunded += in_flight;
-            let refund_amount = match payment.validate_refund(input.amount) {
-                Ok(amount) => amount,
-                Err(error) => {
-                    let code = error.invariant_code().unwrap_or("commerce.refund_rejected");
-                    let mut receipt = rejected_receipt(
-                        command,
-                        Some(policy.clone()),
-                        code,
-                        &error.to_string(),
-                        RetryDisposition::Never,
-                        "refund",
-                    );
+            if let Some(mut receipt) = run.guard_receipt() {
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+
+            let snapshot = tx
+                .query_row(
+                    "SELECT * FROM payments WHERE id = ?",
+                    [&payment_id],
+                    SqlitePaymentRepository::row_to_payment,
+                )
+                .optional()?
+                .map(|payment| {
+                    let mut in_flight_refunds = rust_decimal::Decimal::ZERO;
+                    let mut statement = tx.prepare(
+                        "SELECT amount FROM refunds
+                         WHERE payment_id = ? AND status IN ('pending', 'processing')",
+                    )?;
+                    let rows = statement.query_map([&payment_id], |row| {
+                        let amount: String = row.get(0)?;
+                        parse_decimal_row(&amount, "refund", "amount")
+                    })?;
+                    for row in rows {
+                        in_flight_refunds += row?;
+                    }
+                    let open_dispute = open_dispute_for_payment(tx, &payment_id)?;
+                    Ok::<_, rusqlite::Error>(RefundSnapshot {
+                        payment,
+                        in_flight_refunds,
+                        open_dispute,
+                    })
+                })
+                .transpose()?;
+            let effects = match plan_refund(&input, snapshot.as_ref()) {
+                PlanOutcome::Reject { rejection, .. } => {
+                    let mut receipt = run.rejected_by(&rejection);
                     append_receipt(tx, &request_hash, &mut receipt)?;
                     return Ok(receipt);
                 }
+                PlanOutcome::Proceed(effects) => effects,
             };
-
-            if command.mode == ExecutionMode::Preview {
-                let mut receipt = preview_receipt(command, policy.clone(), "refund");
+            if run.is_preview() {
+                let mut receipt = run.previewed();
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -805,10 +625,10 @@ impl SqliteKernelExecutor {
                 params![
                     id.to_string(),
                     refund_number,
-                    input.payment_id.to_string(),
+                    payment_id,
                     RefundStatus::Pending.to_string(),
-                    refund_amount.to_string(),
-                    payment.currency,
+                    effects.amount.to_string(),
+                    effects.currency,
                     input.reason,
                     input.external_id,
                     input.idempotency_key,
@@ -822,7 +642,7 @@ impl SqliteKernelExecutor {
                 [id.to_string()],
                 SqlitePaymentRepository::row_to_refund,
             )?;
-            let mut event = KernelOutboxEvent::domain(
+            let event = run.event(
                 "payments.refund_created.v1",
                 "refund",
                 id.to_string(),
@@ -834,32 +654,10 @@ impl SqliteKernelExecutor {
                     "currency": refund.currency.as_str(),
                     "status": refund.status.to_string(),
                 }),
-                Some(command.idempotency_key.clone()),
             );
-            attach_command_context(&mut event, command);
             append_kernel_event_tx(tx, &event)?;
-
-            let mut receipt = ExecutionReceipt {
-                contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-                receipt_id: Uuid::new_v4(),
-                command_id: command.command_id,
-                idempotency_key: command.idempotency_key.clone(),
-                command_type: command.command_type.clone(),
-                status: ExecutionStatus::Succeeded,
-                result: Some(refund),
-                error_code: None,
-                error_message: None,
-                retry: RetryDisposition::SameKey,
-                aggregate_type: Some("refund".into()),
-                aggregate_id: Some(id.to_string()),
-                version_before: None,
-                version_after: Some(1),
-                event_ids: vec![event.id],
-                policy: Some(policy.clone()),
-                audit_hash: None,
-                started_at,
-                completed_at: Utc::now(),
-            };
+            let mut receipt =
+                run.succeeded(refund, Some(id.to_string()), None, Some(1), vec![event.id]);
             append_receipt(tx, &request_hash, &mut receipt)?;
             Ok(receipt)
         })
@@ -870,66 +668,32 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<ReserveInventory>,
     ) -> Result<ExecutionReceipt<InventoryReservation>> {
-        command
-            .validate_contract()
-            .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
         let input = &command.payload;
-        let request_hash = semantic_request_hash(command, input)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let static_guard = if command.command_type != RESERVE_INVENTORY_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected inventory.reserve command type".to_string(),
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some((
-                "kernel.deadline_exceeded",
-                "command deadline elapsed before execution".to_string(),
-            ))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if input.sku.trim().is_empty()
-            || input.reference_type.trim().is_empty()
-            || input.reference_id.trim().is_empty()
-        {
-            Some((
-                "commerce.inventory_validation_failed",
-                "sku, reference_type, and reference_id are required".to_string(),
-            ))
-        } else if input.expires_in_seconds.is_some_and(|seconds| seconds <= 0) {
-            Some((
-                "commerce.inventory_validation_failed",
-                "expires_in_seconds must be greater than zero".to_string(),
-            ))
-        } else if let Err(error) = stateset_core::validate_quantity(input.quantity) {
-            Some(("commerce.inventory_validation_failed", error.to_string()))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::aggregate(RESERVE_INVENTORY_COMMAND),
+            "inventory_reservation",
+        )?
+        .then_guard(|_| reserve_inventory_guard(input));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
 
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<InventoryReservation> =
-                    replay_or_conflict(command, &request_hash, existing, "inventory_reservation")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
-                {
+                if let Replay::Return(stored) = replay_or_conflict(
+                    tx,
+                    command,
+                    &request_hash,
+                    existing,
+                    "inventory_reservation",
+                )? {
                     return Ok(stored);
                 }
             }
-            if let Some((code, message)) = &static_guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "inventory_reservation",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -1116,64 +880,35 @@ impl SqliteKernelExecutor {
         expected_command_type: &str,
         action: InventoryLifecycleAction,
     ) -> Result<ExecutionReceipt<InventoryReservation>> {
-        command
-            .validate_contract()
-            .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let static_guard = if command.command_type != expected_command_type {
-            Some((
-                "kernel.command_type_mismatch",
-                format!("expected {expected_command_type} command type"),
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some((
-                "kernel.deadline_exceeded",
-                "command deadline elapsed before execution".to_string(),
-            ))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if reservation_id.is_nil() {
-            Some((
-                "commerce.inventory_validation_failed",
-                "reservation_id must not be nil".to_string(),
-            ))
-        } else if let InventoryLifecycleAction::Confirm(Some(quantity)) = action {
-            if quantity <= rust_decimal::Decimal::ZERO {
-                Some((
-                    "commerce.inventory_validation_failed",
-                    "confirmation quantity must be greater than zero".to_string(),
-                ))
-            } else {
-                None
-            }
-        } else {
-            None
+        let confirm_quantity = match action {
+            InventoryLifecycleAction::Confirm(quantity) => quantity,
+            InventoryLifecycleAction::Release => None,
         };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::aggregate(expected_command_type),
+            "inventory_reservation",
+        )?
+        .then_guard(|_| reservation_lifecycle_guard(reservation_id, confirm_quantity));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
 
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<InventoryReservation> =
-                    replay_or_conflict(command, &request_hash, existing, "inventory_reservation")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
-                {
+                if let Replay::Return(stored) = replay_or_conflict(
+                    tx,
+                    command,
+                    &request_hash,
+                    existing,
+                    "inventory_reservation",
+                )? {
                     return Ok(stored);
                 }
             }
-            if let Some((code, message)) = &static_guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "inventory_reservation",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -1354,144 +1089,77 @@ impl SqliteKernelExecutor {
         })
     }
 
-    /// Preview or atomically apply a non-shipment order state transition.
+    /// Preview or atomically apply an order state-machine transition.
+    ///
+    /// Cancellations honour the same money rule as
+    /// `OrderRepository::update`: captured money must be refunded (or
+    /// `void_payments` set to void in-flight payments) before the order can
+    /// be cancelled, and every inventory hold is released atomically.
     pub fn execute_transition_order(
         &self,
         command: &CommandEnvelope<TransitionOrder>,
     ) -> Result<ExecutionReceipt<Order>> {
-        command
-            .validate_contract()
-            .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let static_guard = if command.command_type != TRANSITION_ORDER_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected orders.transition command type".to_string(),
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some((
-                "kernel.deadline_exceeded",
-                "command deadline elapsed before execution".to_string(),
-            ))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.order_id.into_uuid().is_nil() {
-            Some(("commerce.order_validation_failed", "order_id must not be nil".to_string()))
-        } else if matches!(
-            command.payload.status,
-            OrderStatus::Shipped | OrderStatus::PartiallyShipped
-        ) {
-            Some((
-                "commerce.shipment_command_required",
-                "shipment transitions must use orders.ship".to_string(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::aggregate(TRANSITION_ORDER_COMMAND),
+            "order",
+        )?
+        .then_guard(|_| transition_order_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let started_at = run.started_at;
+        let order_id = command.payload.order_id.to_string();
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<Order> =
-                    replay_or_conflict(command, &request_hash, existing, "order")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
-                {
-                    return Ok(stored);
-                }
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "order")?
+            {
+                return Ok(stored);
             }
-            if let Some((code, message)) = &static_guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "order",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
 
-            let mut order = match tx.query_row(
-                "SELECT * FROM orders WHERE id = ?",
-                [command.payload.order_id.to_string()],
-                SqliteOrderRepository::row_to_order,
-            ) {
-                Ok(order) => order,
-                Err(rusqlite::Error::QueryReturnedNoRows) => {
-                    let mut receipt = rejected_receipt(
-                        command,
-                        Some(policy.clone()),
-                        "commerce.order_not_found",
-                        "order does not exist",
-                        RetryDisposition::Never,
-                        "order",
-                    );
+            let snapshot = tx
+                .query_row(
+                    "SELECT * FROM orders WHERE id = ?",
+                    [&order_id],
+                    SqliteOrderRepository::row_to_order,
+                )
+                .optional()?
+                .map(|mut order| {
+                    order.items = SqliteOrderRepository::load_order_items_with_conn(tx, order.id)
+                        .map_err(to_sql_err)?;
+                    let open_captures = if command.payload.status == OrderStatus::Cancelled {
+                        open_captures_for_order_conn(tx, &order_id)?
+                    } else {
+                        Vec::new()
+                    };
+                    Ok::<_, rusqlite::Error>(OrderTransitionSnapshot { order, open_captures })
+                })
+                .transpose()?;
+            let effects = match plan_order_transition(command, snapshot.as_ref()) {
+                PlanOutcome::Reject { rejection, version_before, aggregate_id } => {
+                    let mut receipt = run.rejected_by(&rejection);
+                    receipt.version_before = version_before;
+                    receipt.aggregate_id = aggregate_id;
                     append_receipt(tx, &request_hash, &mut receipt)?;
                     return Ok(receipt);
                 }
-                Err(error) => return Err(error),
+                PlanOutcome::Proceed(effects) => effects,
             };
-            order.items = SqliteOrderRepository::load_order_items_with_conn(tx, order.id)
-                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-            let version_before = order.version;
-            if command.expected_version.is_some_and(|expected| expected != version_before) {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    "kernel.version_conflict",
-                    "order version does not match expected_version",
-                    RetryDisposition::AfterConflict,
-                    "order",
-                );
-                receipt.version_before = Some(version_before);
-                append_receipt(tx, &request_hash, &mut receipt)?;
-                return Ok(receipt);
-            }
-            if !order.status.can_transition_to(command.payload.status) {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    "commerce.invalid_order_status_transition",
-                    &format!(
-                        "order cannot transition from {} to {}",
-                        order.status, command.payload.status
-                    ),
-                    RetryDisposition::Never,
-                    "order",
-                );
-                append_receipt(tx, &request_hash, &mut receipt)?;
-                return Ok(receipt);
-            }
-            let next_payment_status =
-                command.payload.payment_status.unwrap_or(order.payment_status);
-            if command.payload.status == OrderStatus::Refunded
-                && !matches!(
-                    next_payment_status,
-                    PaymentStatus::Paid
-                        | PaymentStatus::PartiallyPaid
-                        | PaymentStatus::Refunded
-                        | PaymentStatus::PartiallyRefunded
-                )
-            {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    "commerce.order_not_refundable",
-                    "order payment status is not refundable",
-                    RetryDisposition::Never,
-                    "order",
-                );
-                append_receipt(tx, &request_hash, &mut receipt)?;
-                return Ok(receipt);
-            }
-            if command.mode == ExecutionMode::Preview {
-                let mut receipt = preview_receipt(command, policy.clone(), "order");
+            let Some(OrderTransitionSnapshot { order, .. }) = snapshot else {
+                return Err(to_sql_err(CommerceError::Internal(
+                    "order transition planned without a loaded order".into(),
+                )));
+            };
+            let version_before = effects.version_before;
+            if run.is_preview() {
+                let mut receipt = run.previewed();
+                receipt.aggregate_id = Some(order_id.clone());
                 receipt.result = Some(order);
                 receipt.version_before = Some(version_before);
                 receipt.version_after = Some(version_before + 1);
@@ -1503,29 +1171,30 @@ impl SqliteKernelExecutor {
                 "UPDATE orders SET status = ?, payment_status = ?, updated_at = ?,
                         version = version + 1 WHERE id = ? AND version = ?",
                 params![
-                    command.payload.status.to_string(),
-                    next_payment_status.to_string(),
+                    effects.next_status.to_string(),
+                    effects.next_payment_status.to_string(),
                     started_at.to_rfc3339(),
-                    command.payload.order_id.to_string(),
+                    order_id,
                     version_before,
                 ],
             )?;
             if rows == 0 {
-                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                    CommerceError::VersionConflict {
-                        entity: "order".into(),
-                        id: command.payload.order_id.to_string(),
-                        expected_version: version_before,
-                    },
-                )));
+                return Err(to_sql_err(CommerceError::VersionConflict {
+                    entity: "order".into(),
+                    id: order_id.clone(),
+                    expected_version: version_before,
+                }));
             }
             let mut related_event_ids = Vec::new();
-            if command.payload.status == OrderStatus::Cancelled {
+            let mut voided_payment_ids = Vec::new();
+            if effects.void_in_flight_payments {
+                voided_payment_ids =
+                    void_in_flight_payments_for_order_conn(tx, &order_id, started_at)?;
+            }
+            if effects.release_holds {
                 let reservation_ids =
                     SqliteInventoryRepository::list_reservation_ids_by_reference_in_tx(
-                        tx,
-                        "order",
-                        &command.payload.order_id.to_string(),
+                        tx, "order", &order_id,
                     )?;
                 for reservation_id in reservation_ids {
                     SqliteInventoryRepository::release_reservation_in_tx(tx, reservation_id)?;
@@ -1554,203 +1223,142 @@ impl SqliteKernelExecutor {
                 }
                 cancel_backorders_for_order_in_tx(tx, command.payload.order_id.into_uuid())?;
             }
+            let outstanding_payment_ids: Vec<String> = effects
+                .outstanding_capture_ids
+                .iter()
+                .filter(|id| !voided_payment_ids.contains(id))
+                .map(ToString::to_string)
+                .collect();
 
-            let mut event = KernelOutboxEvent::domain(
+            let event = run.event(
                 "orders.updated.v1",
                 "order",
-                command.payload.order_id.to_string(),
+                order_id.clone(),
                 serde_json::json!({
-                    "order_id": command.payload.order_id.to_string(),
-                    "status_before": order.status.to_string(),
-                    "status_after": command.payload.status.to_string(),
-                    "payment_status_before": order.payment_status.to_string(),
-                    "payment_status_after": next_payment_status.to_string(),
+                    "order_id": order_id,
+                    "status_before": effects.status_before.to_string(),
+                    "status_after": effects.next_status.to_string(),
+                    "payment_status_before": effects.payment_status_before.to_string(),
+                    "payment_status_after": effects.next_payment_status.to_string(),
                     "fulfillment_status_after": order.fulfillment_status.to_string(),
                     "version_before": version_before,
                     "version_after": version_before + 1,
                     "total_amount": order.total_amount.to_string(),
+                    "void_payments": command.payload.void_payments,
+                    "voided_payment_ids": voided_payment_ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                    "outstanding_payment_ids": outstanding_payment_ids,
                 }),
-                Some(command.idempotency_key.clone()),
             );
-            attach_command_context(&mut event, command);
             append_kernel_event_tx(tx, &event)?;
             related_event_ids.push(event.id);
 
-            order = tx.query_row(
+            let mut order = tx.query_row(
                 "SELECT * FROM orders WHERE id = ?",
-                [command.payload.order_id.to_string()],
+                [&order_id],
                 SqliteOrderRepository::row_to_order,
             )?;
             order.items = SqliteOrderRepository::load_order_items_with_conn(tx, order.id)
-                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-            let mut receipt = ExecutionReceipt {
-                contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-                receipt_id: Uuid::new_v4(),
-                command_id: command.command_id,
-                idempotency_key: command.idempotency_key.clone(),
-                command_type: command.command_type.clone(),
-                status: ExecutionStatus::Succeeded,
-                result: Some(order.clone()),
-                error_code: None,
-                error_message: None,
-                retry: RetryDisposition::SameKey,
-                aggregate_type: Some("order".into()),
-                aggregate_id: Some(order.id.to_string()),
-                version_before: Some(version_before),
-                version_after: Some(order.version),
-                event_ids: related_event_ids,
-                policy: Some(policy.clone()),
-                audit_hash: None,
-                started_at,
-                completed_at: Utc::now(),
-            };
+                .map_err(to_sql_err)?;
+            let version_after = order.version;
+            let mut receipt = run.succeeded(
+                order,
+                Some(order_id.clone()),
+                Some(version_before),
+                Some(version_after),
+                related_event_ids,
+            );
             append_receipt(tx, &request_hash, &mut receipt)?;
             Ok(receipt)
         })
     }
 
     /// Preview or atomically ship all or selected order-line quantities.
+    ///
+    /// A reservation that expires while it is being confirmed rolls the
+    /// shipment back to its savepoint and seals a
+    /// `commerce.reservation_expired` rejection instead of failing the call.
     pub fn execute_ship_order(
         &self,
         command: &CommandEnvelope<ShipOrderCommand>,
     ) -> Result<ExecutionReceipt<Order>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != SHIP_ORDER_COMMAND {
-            Some(("kernel.command_type_mismatch", "expected orders.ship command type".to_string()))
-        } else if command.deadline.is_some_and(|d| d <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.order_id.into_uuid().is_nil() {
-            Some(("commerce.order_validation_failed", "order_id must not be nil".into()))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::aggregate(SHIP_ORDER_COMMAND),
+            "order",
+        )?
+        .then_guard(|_| ship_order_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let started_at = run.started_at;
+        let order_id = command.payload.order_id.to_string();
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<Order> =
-                    replay_or_conflict(command, &request_hash, existing, "order")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
-                {
-                    return Ok(stored);
-                }
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "order")?
+            {
+                return Ok(stored);
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "order",
-                );
-                append_receipt(tx, &request_hash, &mut receipt)?;
-                return Ok(receipt);
-            }
-            let mut order = match tx.query_row(
-                "SELECT * FROM orders WHERE id = ?",
-                [command.payload.order_id.to_string()],
-                SqliteOrderRepository::row_to_order,
-            ) {
-                Ok(order) => order,
-                Err(rusqlite::Error::QueryReturnedNoRows) => {
-                    let mut receipt = rejected_receipt(
-                        command,
-                        Some(policy.clone()),
-                        "commerce.order_not_found",
-                        "order does not exist",
-                        RetryDisposition::Never,
-                        "order",
-                    );
-                    append_receipt(tx, &request_hash, &mut receipt)?;
-                    return Ok(receipt);
-                }
-                Err(e) => return Err(e),
-            };
-            order.items = SqliteOrderRepository::load_order_items_with_conn(tx, order.id)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            let version_before = order.version;
-            if command.expected_version.is_some_and(|v| v != version_before) {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    "kernel.version_conflict",
-                    "order version does not match expected_version",
-                    RetryDisposition::AfterConflict,
-                    "order",
-                );
-                receipt.version_before = Some(version_before);
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
             let lines = command.payload.lines.as_deref().unwrap_or_default();
             let mode = if lines.is_empty() { ShipMode::All } else { ShipMode::Lines(lines) };
-            let (resolved_status, deltas) = match SqliteOrderRepository::plan_shipment_in_tx(
-                tx,
-                command.payload.order_id,
-                &mode,
-            ) {
-                Ok(plan) => plan,
-                Err(error) => {
-                    let mut receipt = rejected_receipt(
-                        command,
-                        Some(policy.clone()),
-                        "commerce.shipment_invalid",
-                        &error.to_string(),
-                        RetryDisposition::Never,
-                        "order",
-                    );
+            let snapshot = tx
+                .query_row(
+                    "SELECT * FROM orders WHERE id = ?",
+                    [&order_id],
+                    SqliteOrderRepository::row_to_order,
+                )
+                .optional()?
+                .map(|mut order| {
+                    order.items = SqliteOrderRepository::load_order_items_with_conn(tx, order.id)
+                        .map_err(to_sql_err)?;
+                    let shipment = SqliteOrderRepository::plan_shipment_in_tx(
+                        tx,
+                        command.payload.order_id,
+                        &mode,
+                    )
+                    .map_err(|error| error.to_string());
+                    let expired_reservation = tx
+                        .query_row(
+                            "SELECT id FROM inventory_reservations
+                             WHERE reference_type = 'order' AND reference_id = ?
+                               AND status IN ('pending', 'confirmed', 'allocated')
+                               AND expires_at IS NOT NULL AND expires_at < ? LIMIT 1",
+                            params![order_id, started_at.to_rfc3339()],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .optional()?
+                        .is_some();
+                    Ok::<_, rusqlite::Error>(ShipOrderSnapshot {
+                        order,
+                        shipment,
+                        expired_reservation,
+                    })
+                })
+                .transpose()?;
+            let effects = match plan_ship_order(command, snapshot.as_ref()) {
+                PlanOutcome::Reject { rejection, version_before, aggregate_id } => {
+                    let mut receipt = run.rejected_by(&rejection);
+                    receipt.version_before = version_before;
+                    receipt.aggregate_id = aggregate_id;
                     append_receipt(tx, &request_hash, &mut receipt)?;
                     return Ok(receipt);
                 }
+                PlanOutcome::Proceed(effects) => effects,
             };
-            if !order.status.can_transition_to(resolved_status) {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    "commerce.invalid_order_status_transition",
-                    &format!(
-                        "order cannot transition from {} to {}",
-                        order.status, resolved_status
-                    ),
-                    RetryDisposition::Never,
-                    "order",
-                );
-                append_receipt(tx, &request_hash, &mut receipt)?;
-                return Ok(receipt);
-            }
-            let expired: Option<String> = tx
-                .query_row(
-                    "SELECT id FROM inventory_reservations
-                 WHERE reference_type = 'order' AND reference_id = ?
-                   AND status IN ('pending', 'confirmed', 'allocated')
-                   AND expires_at IS NOT NULL AND expires_at < ? LIMIT 1",
-                    params![command.payload.order_id.to_string(), started_at.to_rfc3339()],
-                    |row| row.get(0),
-                )
-                .ok();
-            if expired.is_some() {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    "commerce.reservation_expired",
-                    "an inventory reservation expired before shipment",
-                    RetryDisposition::Never,
-                    "order",
-                );
-                append_receipt(tx, &request_hash, &mut receipt)?;
-                return Ok(receipt);
-            }
-            if command.mode == ExecutionMode::Preview {
-                let mut receipt = preview_receipt(command, policy.clone(), "order");
+            let Some(ShipOrderSnapshot { order, .. }) = snapshot else {
+                return Err(to_sql_err(CommerceError::Internal(
+                    "shipment planned without a loaded order".into(),
+                )));
+            };
+            let version_before = effects.version_before;
+            if run.is_preview() {
+                let mut receipt = run.previewed();
+                receipt.aggregate_id = Some(order_id.clone());
                 receipt.result = Some(order);
                 receipt.version_before = Some(version_before);
                 receipt.version_after = Some(version_before + 1);
@@ -1760,31 +1368,27 @@ impl SqliteKernelExecutor {
 
             let reservation_ids =
                 SqliteInventoryRepository::list_reservation_ids_by_reference_in_tx(
-                    tx,
-                    "order",
-                    &command.payload.order_id.to_string(),
+                    tx, "order", &order_id,
                 )?;
+            tx.execute_batch("SAVEPOINT kernel_ship")?;
             if SqliteOrderRepository::confirm_shipped_reservations_in_tx(
                 tx,
                 command.payload.order_id,
                 &mode,
-                &deltas,
+                &effects.deltas,
                 started_at,
             )?
             .is_some()
             {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    "commerce.reservation_expired",
-                    "an inventory reservation expired during shipment",
-                    RetryDisposition::Never,
-                    "order",
-                );
+                tx.execute_batch("ROLLBACK TO kernel_ship; RELEASE kernel_ship")?;
+                let mut receipt = run.rejected_by(&reservation_expired_during_shipment());
+                receipt.aggregate_id = Some(order_id.clone());
+                receipt.version_before = Some(version_before);
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
-            for delta in deltas.iter().filter(|d| d.delta > 0) {
+            tx.execute_batch("RELEASE kernel_ship")?;
+            for delta in effects.deltas.iter().filter(|d| d.delta > 0) {
                 tx.execute(
                     "UPDATE order_items SET shipped_quantity = shipped_quantity + ? WHERE id = ?",
                     params![delta.delta, delta.item_id],
@@ -1794,21 +1398,19 @@ impl SqliteKernelExecutor {
                 "UPDATE orders SET status = ?, tracking_number = COALESCE(?, tracking_number),
                         updated_at = ?, version = version + 1 WHERE id = ? AND version = ?",
                 params![
-                    resolved_status.to_string(),
+                    effects.resolved_status.to_string(),
                     command.payload.tracking_number,
                     started_at.to_rfc3339(),
-                    command.payload.order_id.to_string(),
+                    order_id,
                     version_before
                 ],
             )?;
             if rows == 0 {
-                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                    CommerceError::VersionConflict {
-                        entity: "order".into(),
-                        id: command.payload.order_id.to_string(),
-                        expected_version: version_before,
-                    },
-                )));
+                return Err(to_sql_err(CommerceError::VersionConflict {
+                    entity: "order".into(),
+                    id: order_id.clone(),
+                    expected_version: version_before,
+                }));
             }
             let mut event_ids = Vec::new();
             for reservation_id in reservation_ids {
@@ -1836,49 +1438,34 @@ impl SqliteKernelExecutor {
                     }
                 }
             }
-            let mut event = KernelOutboxEvent::domain(
+            let event = run.event(
                 "orders.updated.v1",
                 "order",
-                command.payload.order_id.to_string(),
+                order_id.clone(),
                 serde_json::json!({
-                    "order_id": command.payload.order_id.to_string(), "status_before": order.status.to_string(),
-                    "status_after": resolved_status.to_string(), "payment_status_before": order.payment_status.to_string(),
+                    "order_id": order_id, "status_before": effects.status_before.to_string(),
+                    "status_after": effects.resolved_status.to_string(), "payment_status_before": order.payment_status.to_string(),
                     "payment_status_after": order.payment_status.to_string(), "fulfillment_status_after": order.fulfillment_status.to_string(),
                     "version_before": version_before, "version_after": version_before + 1, "total_amount": order.total_amount.to_string(),
                 }),
-                Some(command.idempotency_key.clone()),
             );
-            attach_command_context(&mut event, command);
             append_kernel_event_tx(tx, &event)?;
             event_ids.push(event.id);
-            order = tx.query_row(
+            let mut order = tx.query_row(
                 "SELECT * FROM orders WHERE id = ?",
-                [command.payload.order_id.to_string()],
+                [&order_id],
                 SqliteOrderRepository::row_to_order,
             )?;
             order.items = SqliteOrderRepository::load_order_items_with_conn(tx, order.id)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            let mut receipt = ExecutionReceipt {
-                contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-                receipt_id: Uuid::new_v4(),
-                command_id: command.command_id,
-                idempotency_key: command.idempotency_key.clone(),
-                command_type: command.command_type.clone(),
-                status: ExecutionStatus::Succeeded,
-                result: Some(order.clone()),
-                error_code: None,
-                error_message: None,
-                retry: RetryDisposition::SameKey,
-                aggregate_type: Some("order".into()),
-                aggregate_id: Some(order.id.to_string()),
-                version_before: Some(version_before),
-                version_after: Some(order.version),
+                .map_err(to_sql_err)?;
+            let version_after = order.version;
+            let mut receipt = run.succeeded(
+                order,
+                Some(order_id.clone()),
+                Some(version_before),
+                Some(version_after),
                 event_ids,
-                policy: Some(policy.clone()),
-                audit_hash: None,
-                started_at,
-                completed_at: Utc::now(),
-            };
+            );
             append_receipt(tx, &request_hash, &mut receipt)?;
             Ok(receipt)
         })
@@ -1889,46 +1476,26 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<TransitionReturn>,
     ) -> Result<ExecutionReceipt<Return>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != TRANSITION_RETURN_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected returns.transition command type".to_string(),
-            ))
-        } else if command.deadline.is_some_and(|d| d <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.return_id.into_uuid().is_nil() {
-            Some(("commerce.return_validation_failed", "return_id must not be nil".into()))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::aggregate(TRANSITION_RETURN_COMMAND),
+            "return",
+        )?
+        .then_guard(|_| transition_return_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<Return> =
-                    replay_or_conflict(command, &request_hash, existing, "return")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
+                if let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "return")?
                 {
                     return Ok(stored);
                 }
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "return",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -1954,7 +1521,8 @@ impl SqliteKernelExecutor {
             };
             let mut stmt = tx.prepare(
                 "SELECT id, return_id, order_item_id, sku, name, quantity, condition,
-                        refund_amount, disposition, disposition_at, disposition_by
+                        refund_amount, disposition, disposition_at, disposition_by,
+                        lot_id, serial_ids
                  FROM return_items WHERE return_id = ? ORDER BY rowid",
             )?;
             returned.items = stmt
@@ -2036,7 +1604,8 @@ impl SqliteKernelExecutor {
             )?;
             let mut stmt = tx.prepare(
                 "SELECT id, return_id, order_item_id, sku, name, quantity, condition,
-                        refund_amount, disposition, disposition_at, disposition_by
+                        refund_amount, disposition, disposition_at, disposition_by,
+                        lot_id, serial_ids
                  FROM return_items WHERE return_id = ? ORDER BY rowid",
             )?;
             returned.items = stmt
@@ -2069,101 +1638,36 @@ impl SqliteKernelExecutor {
         })
     }
 
-    /// Preview or atomically create an exact-decimal A2A escrow.
+    /// Preview or atomically create an A2A escrow in `created` status.
     pub fn execute_create_a2a_escrow(
         &self,
         command: &CommandEnvelope<CreateA2AEscrow>,
     ) -> Result<ExecutionReceipt<A2AEscrow>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
         let input = &command.payload;
-        let request_hash = semantic_request_hash(command, input)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let legacy_amount = i64::try_from(input.amount.normalize().mantissa()).ok();
-        let guard = if command.command_type != CREATE_A2A_ESCROW_COMMAND {
-            Some(("kernel.command_type_mismatch", "expected a2a.escrow.create command type".into()))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "create commands cannot carry an expected aggregate version".into(),
-            ))
-        } else if input.buyer_address.trim().is_empty()
-            || input.seller_address.trim().is_empty()
-            || input.asset.trim().is_empty()
-            || input.network.trim().is_empty()
-        {
-            Some((
-                "commerce.a2a.escrow.validation_failed",
-                "buyer_address, seller_address, asset, and network are required".into(),
-            ))
-        } else if input.buyer_address == input.seller_address {
-            Some((
-                "commerce.a2a.escrow.validation_failed",
-                "buyer_address and seller_address must differ".into(),
-            ))
-        } else if input.amount <= rust_decimal::Decimal::ZERO {
-            Some((
-                "commerce.a2a.escrow.validation_failed",
-                "amount must be greater than zero".into(),
-            ))
-        } else if legacy_amount.is_none() {
-            Some((
-                "commerce.a2a.escrow.validation_failed",
-                "amount exceeds the embedded escrow compatibility range".into(),
-            ))
-        } else if input.release_conditions.len() > 20 {
-            Some((
-                "commerce.a2a.escrow.validation_failed",
-                "release_conditions cannot contain more than 20 entries".into(),
-            ))
-        } else if input.expires_at <= started_at {
-            Some((
-                "commerce.a2a.escrow.validation_failed",
-                "expires_at must be in the future".into(),
-            ))
-        } else if input
-            .auto_release_after
-            .is_some_and(|at| at <= started_at || at > input.expires_at)
-        {
-            Some((
-                "commerce.a2a.escrow.validation_failed",
-                "auto_release_after must be in the future and no later than expires_at".into(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_A2A_ESCROW_COMMAND),
+            "a2a_escrow",
+        )?
+        .then_guard(|run| create_escrow_guard(input, run.started_at));
+        let request_hash = run.request_hash.clone();
+        let started_at = run.started_at;
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<A2AEscrow> =
-                    replay_or_conflict(command, &request_hash, existing, "a2a_escrow")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
-                {
-                    return Ok(stored);
-                }
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "a2a_escrow")?
+            {
+                return Ok(stored);
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "a2a_escrow",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
-            if command.mode == ExecutionMode::Preview {
-                let mut receipt = preview_receipt(command, policy.clone(), "a2a_escrow");
+            if run.is_preview() {
+                let mut receipt = run.previewed();
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -2178,7 +1682,7 @@ impl SqliteKernelExecutor {
                 payment_id: input.payment_id.clone(),
                 buyer_address: input.buyer_address.clone(),
                 seller_address: input.seller_address.clone(),
-                amount: legacy_amount.expect("validated legacy amount"),
+                amount: escrow_legacy_amount(input).expect("validated legacy amount"),
                 amount_decimal: input.amount,
                 asset: input.asset.to_uppercase(),
                 network: input.network.clone(),
@@ -2228,10 +1732,10 @@ impl SqliteKernelExecutor {
                     &created.store_id,
                 ],
             )?;
-            let mut event = KernelOutboxEvent::domain(
+            let event = run.event(
                 "a2a.escrow_created.v1",
                 "a2a_escrow",
-                id,
+                id.clone(),
                 serde_json::json!({
                     "escrow_id": &created.id,
                     "quote_id": &created.quote_id,
@@ -2243,12 +1747,9 @@ impl SqliteKernelExecutor {
                     "network": &created.network,
                     "status": "created",
                 }),
-                Some(command.idempotency_key.clone()),
             );
-            attach_command_context(&mut event, command);
             append_kernel_event_tx(tx, &event)?;
-            let mut receipt =
-                succeeded_a2a_receipt(command, policy.clone(), created, event.id, started_at);
+            let mut receipt = run.succeeded(created, Some(id), None, None, vec![event.id]);
             append_receipt(tx, &request_hash, &mut receipt)?;
             Ok(receipt)
         })
@@ -2259,79 +1760,45 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<FundA2AEscrow>,
     ) -> Result<ExecutionReceipt<A2AEscrow>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = a2a_transition_guard(
+        let run = CommandRun::prepare(
             command,
-            &policy,
-            started_at,
-            FUND_A2A_ESCROW_COMMAND,
-            "a2a.escrow.fund",
-            &command.payload.escrow_id,
-        );
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(FUND_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
+            "a2a_escrow",
+        )?
+        .then_guard(|_| escrow_id_guard(&command.payload.escrow_id));
+        let request_hash = run.request_hash.clone();
+        let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<A2AEscrow> =
-                    replay_or_conflict(command, &request_hash, existing, "a2a_escrow")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
-                {
-                    return Ok(stored);
-                }
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "a2a_escrow")?
+            {
+                return Ok(stored);
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "a2a_escrow",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
-            let mut escrow = match load_a2a_escrow_sqlite(
+            let loaded = load_a2a_escrow_sqlite(
                 tx,
                 &command.payload.escrow_id,
                 command.principal.tenant_id.as_deref().expect("policy validated tenant"),
                 command.store_id.as_deref().expect("policy validated store"),
-            ) {
-                Ok(escrow) => escrow,
-                Err(rusqlite::Error::QueryReturnedNoRows) => {
-                    let mut receipt = rejected_receipt(
-                        command,
-                        Some(policy.clone()),
-                        "commerce.a2a.escrow_not_found",
-                        "A2A escrow does not exist",
-                        RetryDisposition::Never,
-                        "a2a_escrow",
-                    );
+            )
+            .optional()?;
+            let escrow = match plan_fund_escrow(loaded, started_at) {
+                PlanOutcome::Reject { rejection, aggregate_id, .. } => {
+                    let mut receipt = run.rejected_by(&rejection);
+                    receipt.aggregate_id = aggregate_id;
                     append_receipt(tx, &request_hash, &mut receipt)?;
                     return Ok(receipt);
                 }
-                Err(error) => return Err(error),
+                PlanOutcome::Proceed(escrow) => escrow,
             };
-            if escrow.status != A2AEscrowStatus::Created || escrow.expires_at <= started_at {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    "commerce.a2a.escrow_not_fundable",
-                    &format!("cannot fund escrow in {} status or after expiry", escrow.status),
-                    RetryDisposition::Never,
-                    "a2a_escrow",
-                );
-                receipt.aggregate_id = Some(escrow.id);
-                append_receipt(tx, &request_hash, &mut receipt)?;
-                return Ok(receipt);
-            }
-            escrow.status = A2AEscrowStatus::Active;
-            escrow.funded_at = Some(started_at);
-            escrow.updated_at = started_at;
-            if command.mode == ExecutionMode::Preview {
-                let mut receipt = preview_receipt(command, policy.clone(), "a2a_escrow");
+            if run.is_preview() {
+                let mut receipt = run.previewed();
                 receipt.aggregate_id = Some(escrow.id.clone());
                 receipt.result = Some(escrow);
                 append_receipt(tx, &request_hash, &mut receipt)?;
@@ -2343,16 +1810,16 @@ impl SqliteKernelExecutor {
                 params![started_at.to_rfc3339(), started_at.to_rfc3339(), &escrow.id],
             )? == 0
             {
-                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                    CommerceError::Conflict("A2A escrow was modified concurrently".into()),
+                return Err(to_sql_err(CommerceError::Conflict(
+                    "A2A escrow was modified concurrently".into(),
                 )));
             }
             let mut event =
                 a2a_transition_event(command, &escrow, "a2a.escrow_funded.v1", "active", None);
             attach_command_context(&mut event, command);
             append_kernel_event_tx(tx, &event)?;
-            let mut receipt =
-                succeeded_a2a_receipt(command, policy.clone(), escrow, event.id, started_at);
+            let aggregate_id = escrow.id.clone();
+            let mut receipt = run.succeeded(escrow, Some(aggregate_id), None, None, vec![event.id]);
             append_receipt(tx, &request_hash, &mut receipt)?;
             Ok(receipt)
         })
@@ -2363,43 +1830,26 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<DisputeA2AEscrow>,
     ) -> Result<ExecutionReceipt<A2AEscrow>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let mut guard = a2a_transition_guard(
+        let run = CommandRun::prepare(
             command,
-            &policy,
-            started_at,
-            DISPUTE_A2A_ESCROW_COMMAND,
-            "a2a.escrow.dispute",
-            &command.payload.escrow_id,
-        );
-        if guard.is_none() && command.payload.reason.trim().is_empty() {
-            guard = Some((
-                "commerce.a2a.escrow.validation_failed",
-                "dispute reason is required".into(),
-            ));
-        }
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(DISPUTE_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
+            "a2a_escrow",
+        )?
+        .then_guard(|_| dispute_escrow_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<A2AEscrow> =
-                    replay_or_conflict(command, &request_hash, existing, "a2a_escrow")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
+                if let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "a2a_escrow")?
                 {
                     return Ok(stored);
                 }
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "a2a_escrow",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -2497,64 +1947,33 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<FileA2ADispute>,
     ) -> Result<ExecutionReceipt<A2ADispute>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
         let input = &command.payload;
-        let mut guard = a2a_transition_guard(
+        let run = CommandRun::prepare(
             command,
-            &policy,
-            started_at,
-            FILE_A2A_DISPUTE_COMMAND,
-            "a2a.dispute.file",
-            &input.escrow_id,
-        );
-        if guard.is_none()
-            && (input.reason.trim().is_empty()
-                || input.category.trim().is_empty()
-                || input.claimant_address.trim().is_empty())
-        {
-            guard = Some((
-                "commerce.a2a.dispute.validation_failed",
-                "claimant_address, reason, and category are required".into(),
-            ));
-        }
-        if guard.is_none()
-            && (input.evidence_deadline <= started_at
-                || input.review_deadline <= input.evidence_deadline)
-        {
-            guard = Some((
-                "commerce.a2a.dispute.invalid_deadlines",
-                "evidence_deadline must be in the future and precede review_deadline".into(),
-            ));
-        }
-        if guard.is_none() && !principal_controls_address(command, &input.claimant_address) {
-            guard = Some((
-                "kernel.actor_mismatch",
-                "principal or delegator must control the claimant address".into(),
-            ));
-        }
-
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(FILE_A2A_DISPUTE_COMMAND, ESCROW_UNVERSIONED),
+            "a2a_dispute",
+        )?
+        .then_guard(|run| {
+            file_dispute_guard(
+                input,
+                run.started_at,
+                principal_controls_address(command, &input.claimant_address),
+            )
+        });
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<A2ADispute> =
-                    replay_or_conflict(command, &request_hash, existing, "a2a_dispute")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
+                if let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "a2a_dispute")?
                 {
                     return Ok(stored);
                 }
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "a2a_dispute",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -2727,62 +2146,33 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<SubmitA2ADisputeEvidence>,
     ) -> Result<ExecutionReceipt<A2ADisputeEvidence>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
         let input = &command.payload;
-        let mut guard = a2a_transition_guard(
+        let run = CommandRun::prepare(
             command,
-            &policy,
-            started_at,
-            SUBMIT_A2A_EVIDENCE_COMMAND,
-            "a2a.dispute.evidence.submit",
-            &input.dispute_id,
-        );
-        if guard.is_none()
-            && (input.submitted_by.trim().is_empty()
-                || input.evidence_type.trim().is_empty()
-                || input.title.trim().is_empty()
-                || input.content.is_empty())
-        {
-            guard = Some((
-                "commerce.a2a.dispute.evidence.validation_failed",
-                "submitted_by, evidence_type, title, and content are required".into(),
-            ));
-        }
-        if guard.is_none() && (input.title.len() > 256 || input.content.len() > 1_048_576) {
-            guard = Some((
-                "commerce.a2a.dispute.evidence.too_large",
-                "evidence title is limited to 256 bytes and content to 1 MiB".into(),
-            ));
-        }
-        if guard.is_none() && !principal_controls_address(command, &input.submitted_by) {
-            guard = Some((
-                "kernel.actor_mismatch",
-                "principal or delegator must control the evidence submitter address".into(),
-            ));
-        }
-
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(SUBMIT_A2A_EVIDENCE_COMMAND, ESCROW_UNVERSIONED),
+            "a2a_dispute_evidence",
+        )?
+        .then_guard(|_| {
+            submit_evidence_guard(input, principal_controls_address(command, &input.submitted_by))
+        });
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<A2ADisputeEvidence> =
-                    replay_or_conflict(command, &request_hash, existing, "a2a_dispute_evidence")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
-                {
+                if let Replay::Return(stored) = replay_or_conflict(
+                    tx,
+                    command,
+                    &request_hash,
+                    existing,
+                    "a2a_dispute_evidence",
+                )? {
                     return Ok(stored);
                 }
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "a2a_dispute_evidence",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -2925,54 +2315,27 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<ResolveA2ADispute>,
     ) -> Result<ExecutionReceipt<A2ADisputeResolution>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
         let input = &command.payload;
-        let mut guard = a2a_transition_guard(
+        let run = CommandRun::prepare(
             command,
-            &policy,
-            started_at,
-            RESOLVE_A2A_DISPUTE_COMMAND,
-            "a2a.dispute.resolve",
-            &input.dispute_id,
-        );
-        if guard.is_none() && input.note.as_ref().is_some_and(|note| note.len() > 2_000) {
-            guard = Some((
-                "commerce.a2a.dispute.resolution_note_too_large",
-                "resolution note is limited to 2000 bytes".into(),
-            ));
-        }
-        let is_split = input.resolution_type == A2ADisputeResolutionType::Split;
-        if guard.is_none()
-            && (is_split != (input.buyer_amount.is_some() && input.seller_amount.is_some()))
-        {
-            guard = Some((
-                "commerce.a2a.dispute.invalid_allocations",
-                "split requires both exact allocations; other outcomes forbid allocations".into(),
-            ));
-        }
-
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(RESOLVE_A2A_DISPUTE_COMMAND, ESCROW_UNVERSIONED),
+            "a2a_dispute",
+        )?
+        .then_guard(|_| resolve_dispute_guard(input));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<A2ADisputeResolution> =
-                    replay_or_conflict(command, &request_hash, existing, "a2a_dispute")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
+                if let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "a2a_dispute")?
                 {
                     return Ok(stored);
                 }
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "a2a_dispute",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -3210,37 +2573,26 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<RefundA2AEscrow>,
     ) -> Result<ExecutionReceipt<A2AEscrow>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = a2a_transition_guard(
+        let run = CommandRun::prepare(
             command,
-            &policy,
-            started_at,
-            REFUND_A2A_ESCROW_COMMAND,
-            "a2a.escrow.refund",
-            &command.payload.escrow_id,
-        );
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(REFUND_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
+            "a2a_escrow",
+        )?
+        .then_guard(|_| escrow_settlement_guard(&command.payload.escrow_id));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<A2AEscrow> =
-                    replay_or_conflict(command, &request_hash, existing, "a2a_escrow")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
+                if let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "a2a_escrow")?
                 {
                     return Ok(stored);
                 }
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "a2a_escrow",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -3324,52 +2676,27 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<ReleaseA2AEscrow>,
     ) -> Result<ExecutionReceipt<A2AEscrow>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != RELEASE_A2A_ESCROW_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected a2a.escrow.release command type".into(),
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.escrow_id.trim().is_empty() {
-            Some(("commerce.a2a.escrow.validation_failed", "escrow_id is required".into()))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "A2A escrows do not expose an aggregate version".into(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(RELEASE_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
+            "a2a_escrow",
+        )?
+        .then_guard(|_| escrow_settlement_guard(&command.payload.escrow_id));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
 
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<A2AEscrow> =
-                    replay_or_conflict(command, &request_hash, existing, "a2a_escrow")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
+                if let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "a2a_escrow")?
                 {
                     return Ok(stored);
                 }
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "a2a_escrow",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -3506,56 +2833,28 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<ChargeSubscription>,
     ) -> Result<ExecutionReceipt<SubscriptionCharge>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != CHARGE_SUBSCRIPTION_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected subscriptions.charge command type".into(),
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.billing_cycle_id.is_nil() {
-            Some(("commerce.subscription.validation_failed", "billing_cycle_id is required".into()))
-        } else if command.payload.processor.as_deref().is_some_and(|value| value.trim().is_empty())
-        {
-            Some(("commerce.subscription.validation_failed", "processor cannot be blank".into()))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "billing cycles do not expose an aggregate version".into(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(CHARGE_SUBSCRIPTION_COMMAND, BILLING_CYCLE_UNVERSIONED),
+            "billing_cycle",
+        )?
+        .then_guard(|_| charge_subscription_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         let subscription_repo = SqliteSubscriptionRepository::new(self.pool.clone());
 
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<SubscriptionCharge> =
-                    replay_or_conflict(command, &request_hash, existing, "billing_cycle")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
+                if let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "billing_cycle")?
                 {
                     return Ok(stored);
                 }
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "billing_cycle",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -3773,58 +3072,34 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<CommitCheckout>,
     ) -> Result<ExecutionReceipt<CheckoutResult>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != COMMIT_CHECKOUT_COMMAND {
-            Some(("kernel.command_type_mismatch", "expected checkout.commit command type".into()))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.cart_id.is_nil() {
-            Some(("commerce.checkout.validation_failed", "cart_id is required".into()))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "carts do not expose an aggregate version".into(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(COMMIT_CHECKOUT_COMMAND, CART_UNVERSIONED),
+            "checkout",
+        )?
+        .then_guard(|_| commit_checkout_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         let cart_repo = SqliteCartRepository::new(self.pool.clone());
 
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<CheckoutResult> =
-                    replay_or_conflict(command, &request_hash, existing, "checkout")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
+                if let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "checkout")?
                 {
                     return Ok(stored);
                 }
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "checkout",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
 
             if command.mode == ExecutionMode::Preview {
-                if let Err(error) =
-                    SqliteCartRepository::validate_checkout_in_tx(tx, command.payload.cart_id)
-                {
+                if let Err(error) = cart_repo.validate_checkout_in_tx(tx, command.payload.cart_id) {
                     if let Some(commerce_error) = sqlite_commerce_error(&error) {
                         let mut receipt = rejected_receipt(
                             command,
@@ -3926,53 +3201,26 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<PostJournalEntry>,
     ) -> Result<ExecutionReceipt<JournalEntry>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != POST_LEDGER_COMMAND {
-            Some(("kernel.command_type_mismatch", "expected ledger.post command type".to_string()))
-        } else if command.deadline.is_some_and(|d| d <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.journal_entry_id.is_nil()
-            || command.payload.posted_by.trim().is_empty()
-        {
-            Some((
-                "commerce.ledger.validation_failed",
-                "journal_entry_id and posted_by are required".into(),
-            ))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "journal entries do not expose an aggregate version".into(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(POST_LEDGER_COMMAND, JOURNAL_ENTRY_UNVERSIONED),
+            "journal_entry",
+        )?
+        .then_guard(|_| post_journal_entry_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<JournalEntry> =
-                    replay_or_conflict(command, &request_hash, existing, "journal_entry")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
+                if let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "journal_entry")?
                 {
                     return Ok(stored);
                 }
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "journal_entry",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -4098,48 +3346,26 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<SettleX402Intent>,
     ) -> Result<ExecutionReceipt<X402PaymentIntent>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != SETTLE_X402_COMMAND {
-            Some(("kernel.command_type_mismatch", "expected x402.settle command type".into()))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.intent_id.is_nil() || command.payload.tx_hash.trim().is_empty() {
-            Some(("commerce.x402.validation_failed", "intent_id and tx_hash are required".into()))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "x402 payment intents do not expose an aggregate version".into(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(SETTLE_X402_COMMAND, X402_INTENT_UNVERSIONED),
+            "x402_payment_intent",
+        )?
+        .then_guard(|_| settle_x402_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                let stored: ExecutionReceipt<X402PaymentIntent> =
-                    replay_or_conflict(command, &request_hash, existing, "x402_payment_intent")?;
-                if stored.status != ExecutionStatus::Previewed
-                    || command.mode != ExecutionMode::Apply
+                if let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "x402_payment_intent")?
                 {
                     return Ok(stored);
                 }
             }
-            if let Some((code, message)) = &guard {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    code,
-                    message,
-                    RetryDisposition::Never,
-                    "x402_payment_intent",
-                );
+            if let Some(mut receipt) = run.guard_receipt() {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -4321,35 +3547,6 @@ fn find_inventory_lifecycle_event_tx(
     }
 }
 
-fn a2a_transition_guard<T>(
-    command: &CommandEnvelope<T>,
-    policy: &stateset_core::PolicyDecisionEvidence,
-    now: chrono::DateTime<Utc>,
-    expected_command: &str,
-    expected_name: &str,
-    escrow_id: &str,
-) -> Option<(&'static str, String)> {
-    if command.command_type != expected_command {
-        Some(("kernel.command_type_mismatch", format!("expected {expected_name} command type")))
-    } else if command.deadline.is_some_and(|deadline| deadline <= now) {
-        Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-    } else if !policy.allowed {
-        Some((
-            "kernel.policy_denied",
-            format!("policy denied command: {}", policy.reason_codes.join(", ")),
-        ))
-    } else if escrow_id.trim().is_empty() {
-        Some(("commerce.a2a.escrow.validation_failed", "escrow_id is required".into()))
-    } else if command.expected_version.is_some() {
-        Some((
-            "kernel.expected_version_not_applicable",
-            "A2A escrows do not expose an aggregate version".into(),
-        ))
-    } else {
-        None
-    }
-}
-
 fn a2a_transition_event<T>(
     command: &CommandEnvelope<T>,
     escrow: &A2AEscrow,
@@ -4385,27 +3582,17 @@ fn succeeded_a2a_receipt<C>(
     started_at: chrono::DateTime<Utc>,
 ) -> ExecutionReceipt<A2AEscrow> {
     let aggregate_id = escrow.id.clone();
-    ExecutionReceipt {
-        contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-        receipt_id: Uuid::new_v4(),
-        command_id: command.command_id,
-        idempotency_key: command.idempotency_key.clone(),
-        command_type: command.command_type.clone(),
-        status: ExecutionStatus::Succeeded,
-        result: Some(escrow),
-        error_code: None,
-        error_message: None,
-        retry: RetryDisposition::SameKey,
-        aggregate_type: Some("a2a_escrow".into()),
-        aggregate_id: Some(aggregate_id),
-        version_before: None,
-        version_after: None,
-        event_ids: vec![event_id],
-        policy: Some(policy),
-        audit_hash: None,
+    succeeded_receipt(
+        command,
+        policy,
+        escrow,
+        "a2a_escrow",
+        Some(aggregate_id),
+        None,
+        None,
+        vec![event_id],
         started_at,
-        completed_at: Utc::now(),
-    }
+    )
 }
 
 fn succeeded_kernel_receipt<C, T>(
@@ -4417,27 +3604,17 @@ fn succeeded_kernel_receipt<C, T>(
     event_ids: Vec<Uuid>,
     started_at: chrono::DateTime<Utc>,
 ) -> ExecutionReceipt<T> {
-    ExecutionReceipt {
-        contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-        receipt_id: Uuid::new_v4(),
-        command_id: command.command_id,
-        idempotency_key: command.idempotency_key.clone(),
-        command_type: command.command_type.clone(),
-        status: ExecutionStatus::Succeeded,
-        result: Some(result),
-        error_code: None,
-        error_message: None,
-        retry: RetryDisposition::SameKey,
-        aggregate_type: Some(aggregate_type.into()),
-        aggregate_id: Some(aggregate_id),
-        version_before: None,
-        version_after: None,
+    succeeded_receipt(
+        command,
+        policy,
+        result,
+        aggregate_type,
+        Some(aggregate_id),
+        None,
+        None,
         event_ids,
-        policy: Some(policy),
-        audit_hash: None,
         started_at,
-        completed_at: Utc::now(),
-    }
+    )
 }
 
 fn principal_controls_address<C>(command: &CommandEnvelope<C>, address: &str) -> bool {
@@ -4699,33 +3876,48 @@ fn sqlite_commerce_error(error: &rusqlite::Error) -> Option<&CommerceError> {
     }
 }
 
-fn checkout_error_code(error: &CommerceError) -> &'static str {
-    error.invariant_code().unwrap_or(match error {
-        CommerceError::NotFound => "commerce.checkout.cart_not_found",
-        CommerceError::ValidationError(_) => "commerce.checkout.validation_failed",
-        CommerceError::Conflict(_) => "commerce.checkout.conflict",
-        _ => "commerce.checkout.rejected",
-    })
+/// Escrow (and its dispute id, if one was filed) that holds `payment_id` and
+/// is currently frozen: either the escrow itself is `disputed` or a dispute
+/// row for it is still open. Returns `None` when the payment is unencumbered.
+fn open_dispute_for_payment(
+    tx: &rusqlite::Transaction<'_>,
+    payment_id: &str,
+) -> rusqlite::Result<Option<(String, Option<String>)>> {
+    tx.query_row(
+        "SELECT e.id,
+                COALESCE(e.dispute_id, (
+                    SELECT d.id FROM a2a_disputes d
+                    WHERE d.escrow_id = e.id
+                      AND d.status IN ('filed', 'evidence_period', 'under_review', 'escalated')
+                    LIMIT 1
+                ))
+         FROM a2a_escrows e
+         WHERE e.payment_id = ?
+           AND (
+                e.status = 'disputed'
+                OR EXISTS (
+                    SELECT 1 FROM a2a_disputes d
+                    WHERE d.escrow_id = e.id
+                      AND d.status IN ('filed', 'evidence_period', 'under_review', 'escalated')
+                )
+           )
+         LIMIT 1",
+        [payment_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .optional()
 }
 
-fn attach_command_context<C>(event: &mut KernelOutboxEvent, command: &CommandEnvelope<C>) {
-    event.command_id = Some(command.command_id);
-    event.principal_type = Some(
-        serde_json::to_value(command.principal.kind)
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_owned))
-            .unwrap_or_else(|| "unknown".into()),
-    );
-    event.principal_id = Some(command.principal.id.clone());
-    event.correlation_id = command.correlation_id;
-    event.causation_id = command.causation_id;
-}
-
-fn principal_kind_name<C>(command: &CommandEnvelope<C>) -> String {
-    serde_json::to_value(command.principal.kind)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "unknown".into())
+fn replay_or_conflict<C, T: DeserializeOwned>(
+    tx: &rusqlite::Transaction<'_>,
+    command: &CommandEnvelope<C>,
+    request_hash: &str,
+    existing: KernelReceiptRecord,
+    aggregate_type: &str,
+) -> rusqlite::Result<Replay<T>> {
+    let audit = sealed_audit_entry_tx(tx, &existing)?;
+    resolve_replay(command, request_hash, existing, audit.as_ref(), aggregate_type)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
 }
 
 fn append_receipt<T: Serialize>(
@@ -4733,113 +3925,8 @@ fn append_receipt<T: Serialize>(
     request_hash: &str,
     receipt: &mut ExecutionReceipt<T>,
 ) -> rusqlite::Result<()> {
-    let value = serde_json::to_value(&*receipt)
+    let record = receipt_record(request_hash, receipt)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    let audit_hash = append_kernel_receipt_tx(
-        tx,
-        &KernelReceiptRecord {
-            command_id: receipt.command_id,
-            idempotency_key: receipt.idempotency_key.clone(),
-            command_type: receipt.command_type.clone(),
-            contract_version: receipt.contract_version.clone(),
-            request_hash: request_hash.into(),
-            status: status_name(receipt.status).into(),
-            receipt: value,
-            created_at: receipt.started_at,
-            completed_at: receipt.completed_at,
-        },
-    )?;
-    receipt.audit_hash = Some(audit_hash);
+    receipt.audit_hash = Some(append_kernel_receipt_tx(tx, &record)?);
     Ok(())
-}
-
-fn replay_or_conflict<C, T: DeserializeOwned>(
-    command: &CommandEnvelope<C>,
-    request_hash: &str,
-    existing: KernelReceiptRecord,
-    aggregate_type: &str,
-) -> rusqlite::Result<ExecutionReceipt<T>> {
-    if existing.request_hash != request_hash {
-        return Ok(rejected_receipt(
-            command,
-            None,
-            "kernel.idempotency_conflict",
-            "idempotency key is already bound to a different semantic request",
-            RetryDisposition::Never,
-            aggregate_type,
-        ));
-    }
-    serde_json::from_value(existing.receipt).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
-    })
-}
-
-fn preview_receipt<C, T>(
-    command: &CommandEnvelope<C>,
-    policy: stateset_core::PolicyDecisionEvidence,
-    aggregate_type: &str,
-) -> ExecutionReceipt<T> {
-    let now = Utc::now();
-    ExecutionReceipt {
-        contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-        receipt_id: Uuid::new_v4(),
-        command_id: command.command_id,
-        idempotency_key: command.idempotency_key.clone(),
-        command_type: command.command_type.clone(),
-        status: ExecutionStatus::Previewed,
-        result: None,
-        error_code: None,
-        error_message: None,
-        retry: RetryDisposition::Never,
-        aggregate_type: Some(aggregate_type.into()),
-        aggregate_id: None,
-        version_before: None,
-        version_after: None,
-        event_ids: Vec::new(),
-        policy: Some(policy),
-        audit_hash: None,
-        started_at: now,
-        completed_at: now,
-    }
-}
-
-fn rejected_receipt<C, T>(
-    command: &CommandEnvelope<C>,
-    policy: Option<stateset_core::PolicyDecisionEvidence>,
-    code: &str,
-    message: &str,
-    retry: RetryDisposition,
-    aggregate_type: &str,
-) -> ExecutionReceipt<T> {
-    let now = Utc::now();
-    ExecutionReceipt {
-        contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-        receipt_id: Uuid::new_v4(),
-        command_id: command.command_id,
-        idempotency_key: command.idempotency_key.clone(),
-        command_type: command.command_type.clone(),
-        status: ExecutionStatus::Rejected,
-        result: None,
-        error_code: Some(code.into()),
-        error_message: Some(message.into()),
-        retry,
-        aggregate_type: Some(aggregate_type.into()),
-        aggregate_id: None,
-        version_before: None,
-        version_after: None,
-        event_ids: Vec::new(),
-        policy,
-        audit_hash: None,
-        started_at: now,
-        completed_at: now,
-    }
-}
-
-const fn status_name(status: ExecutionStatus) -> &'static str {
-    match status {
-        ExecutionStatus::Previewed => "previewed",
-        ExecutionStatus::Succeeded => "succeeded",
-        ExecutionStatus::Rejected => "rejected",
-        ExecutionStatus::Failed => "failed",
-    }
 }

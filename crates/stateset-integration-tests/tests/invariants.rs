@@ -27,7 +27,8 @@ use stateset_core::{
     CreateInvoiceItem, CreateOrder, CreateOrderItem, CreatePayment, CreateRefund, CreateReturn,
     CreateReturnItem, CustomerId, InvoiceId, JournalEntryFilter, JournalEntryStatus, OrderId,
     OrderItemId, OrderStatus, PaymentId, PaymentTransactionStatus, ProductId, RecordInvoicePayment,
-    RefundStatus, ReservationStatus, ReturnId, ReturnReason, ReturnStatus,
+    RefundStatus, ReservationStatus, ReturnDisposition, ReturnId, ReturnReason, ReturnStatus,
+    SetReturnDisposition,
 };
 use stateset_embedded::Commerce;
 use stateset_test_utils::fixtures;
@@ -343,6 +344,36 @@ impl Harness {
     }
 
     #[allow(clippy::too_many_lines)]
+    /// Record any refund the engine created on its own (return completion
+    /// settles through the payments layer) so the model tracks the same
+    /// in-flight money the database holds.
+    fn adopt_engine_refunds(&mut self) {
+        let payments = self.commerce.payments();
+        for p in 0..self.model.payments.len() {
+            let Ok(refunds) = payments.get_refunds(self.model.payments[p].id) else { continue };
+            for refund in refunds {
+                if self.model.refunds.iter().any(|r| r.id == refund.id) {
+                    continue;
+                }
+                match refund.status {
+                    RefundStatus::Pending | RefundStatus::Processing => {
+                        self.model.payments[p].in_flight += refund.amount;
+                    }
+                    RefundStatus::Completed => {
+                        self.model.payments[p].refunded += refund.amount;
+                    }
+                    _ => continue,
+                }
+                self.model.refunds.push(MRefund {
+                    id: refund.id,
+                    payment: p,
+                    amount: refund.amount,
+                    status: refund.status,
+                });
+            }
+        }
+    }
+
     fn apply_inner(&mut self, op: &Op) -> Result<(), CommerceError> {
         match op {
             Op::ReceiveStock { sku, qty } => {
@@ -475,7 +506,30 @@ impl Harness {
                         returns.mark_received(id)?;
                     }
                     ReturnStatus::Received | ReturnStatus::Inspecting => {
+                        // Completion requires every received line to be
+                        // dispositioned. `ReturnToVendor` is the stock-neutral
+                        // disposition, so the returned units leave the building
+                        // without moving the warehouse balances this harness
+                        // models (Restock/Quarantine would).
+                        for item in &current.items {
+                            if item.disposition.is_none() {
+                                returns.set_item_disposition(
+                                    id,
+                                    item.id,
+                                    SetReturnDisposition {
+                                        disposition: ReturnDisposition::ReturnToVendor,
+                                        ..Default::default()
+                                    },
+                                )?;
+                            }
+                        }
                         returns.complete(id)?;
+                        // Completing a return settles it through the payments
+                        // layer, so the engine may have created refunds the
+                        // model has not seen. Adopt them (the model still
+                        // checks independently that refunded + in-flight never
+                        // exceeds what was captured).
+                        self.adopt_engine_refunds();
                     }
                     _ => {}
                 }

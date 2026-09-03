@@ -1421,3 +1421,128 @@ fn test_full_checkout_flow() {
     assert!(final_cart.order_id.is_some());
     assert_eq!(final_cart.order_id.unwrap(), result.order_id);
 }
+
+// ============================================================================
+// Catalog price enforcement and tax refresh (round 4)
+// ============================================================================
+
+/// Lines that resolve to a catalog SKU are priced from the catalog: a client
+/// `unit_price` that disagrees is refused; ad-hoc lines keep their price.
+#[test]
+fn test_add_item_refuses_client_price_that_differs_from_catalog() {
+    use stateset_embedded::{CreateProduct, CreateProductVariant, ProductStatus, UpdateProduct};
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let sku = format!("CAT-{}", Uuid::new_v4().simple());
+    let product = commerce
+        .products()
+        .create(CreateProduct {
+            name: "Catalog Widget".into(),
+            variants: Some(vec![CreateProductVariant {
+                sku: sku.clone(),
+                price: dec!(49.99),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        })
+        .expect("create product");
+    // Only a published product is sellable, so put it on sale before pricing.
+    commerce
+        .products()
+        .update(
+            product.id,
+            UpdateProduct { status: Some(ProductStatus::Active), ..Default::default() },
+        )
+        .expect("publish product");
+    let cart = create_test_cart(&commerce);
+
+    let line = |price| AddCartItem {
+        product_id: Some(product.id),
+        sku: sku.clone(),
+        name: "Catalog Widget".into(),
+        quantity: 1,
+        unit_price: price,
+        ..Default::default()
+    };
+    let err = commerce.carts().add_item(cart.id, line(dec!(0.01))).expect_err("wrong price");
+    match err {
+        stateset_embedded::CommerceError::ValidationError(msg) => {
+            assert!(msg.contains("catalog price 49.99"), "{msg}");
+        }
+        other => panic!("expected ValidationError, got {other:?}"),
+    }
+    assert!(commerce.carts().get(cart.id).unwrap().unwrap().items.is_empty());
+
+    let item = commerce.carts().add_item(cart.id, line(dec!(49.99))).expect("catalog price ok");
+    assert_eq!(item.unit_price, dec!(49.99));
+
+    // Repricing a catalog line away from the catalog is refused too.
+    let err = commerce
+        .carts()
+        .update_item(item.id, UpdateCartItem { unit_price: Some(dec!(1.00)), ..Default::default() })
+        .expect_err("wrong price on update");
+    assert!(matches!(err, stateset_embedded::CommerceError::ValidationError(_)), "{err:?}");
+    let item = commerce
+        .carts()
+        .update_item(item.id, UpdateCartItem { quantity: Some(3), ..Default::default() })
+        .expect("quantity change ok");
+    assert_eq!(item.quantity, 3);
+    assert_eq!(item.unit_price, dec!(49.99));
+
+    // Ad-hoc lines (no catalog match) keep the caller's price.
+    let adhoc = commerce
+        .carts()
+        .add_item(
+            cart.id,
+            AddCartItem {
+                sku: "ADHOC-LINE".into(),
+                name: "Gift wrap".into(),
+                quantity: 1,
+                unit_price: dec!(2.50),
+                ..Default::default()
+            },
+        )
+        .expect("ad-hoc ok");
+    assert_eq!(adhoc.unit_price, dec!(2.50));
+
+    // Also enforced for initial items on create.
+    let err = commerce
+        .carts()
+        .create(CreateCart { items: Some(vec![line(dec!(5))]), ..Default::default() })
+        .expect_err("wrong price on create");
+    assert!(matches!(err, stateset_embedded::CommerceError::ValidationError(_)), "{err:?}");
+}
+
+/// A cart with a tax amount keeps that tax in step with its lines across
+/// item mutations (proportional carry when no tax rate covers the address).
+#[test]
+fn test_cart_tax_follows_item_mutations() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let cart = create_test_cart(&commerce);
+    commerce.carts().set_shipping_address(cart.id, create_test_address()).expect("address");
+    add_test_item(&commerce, cart.id); // 2 x 29.99 = 59.98
+    let taxed = commerce.carts().set_tax(cart.id, dec!(5.40)).expect("tax");
+    assert_eq!(taxed.grand_total, dec!(65.38));
+
+    let item = commerce
+        .carts()
+        .add_item(
+            cart.id,
+            AddCartItem {
+                sku: "TEST-SKU-002".into(),
+                name: "Second".into(),
+                quantity: 1,
+                unit_price: dec!(59.98),
+                ..Default::default()
+            },
+        )
+        .expect("add");
+    let cart_now = commerce.carts().get(cart.id).unwrap().unwrap();
+    assert_eq!(cart_now.subtotal, dec!(119.96));
+    assert_eq!(cart_now.tax_amount, dec!(10.80), "tax must follow the new lines");
+    assert_eq!(cart_now.grand_total, dec!(130.76));
+
+    commerce.carts().remove_item(item.id).expect("remove");
+    let cart_now = commerce.carts().get(cart.id).unwrap().unwrap();
+    assert_eq!(cart_now.tax_amount, dec!(5.40));
+    assert_eq!(cart_now.grand_total, dec!(65.38));
+}

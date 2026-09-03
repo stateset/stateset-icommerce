@@ -1345,6 +1345,7 @@ async fn postgres_kernel_order_shipment_and_return_commands_share_state_machine_
             order_id: order.id,
             status: OrderStatus::Confirmed,
             payment_status: None,
+            void_payments: false,
         },
     );
     transition.expected_version = Some(order.version);

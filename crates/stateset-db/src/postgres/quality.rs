@@ -1,6 +1,6 @@
 //! PostgreSQL implementation of Quality Control repository
 
-use super::map_db_error;
+use super::{PgLotRepository, map_db_error};
 use chrono::Utc;
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -10,17 +10,11 @@ use stateset_core::traits::QualityRepository;
 use stateset_core::{
     CommerceError, CreateDefectCode, CreateInspection, CreateNonConformance, CreateQualityHold,
     DefectCode, Inspection, InspectionFilter, InspectionItem, InspectionResult, InspectionStatus,
-    InspectionType, LotStatus, LotTransactionType, NcrStatus, NonConformance, NonConformanceFilter,
-    QualityHold, QualityHoldFilter, RecordInspectionResult, ReleaseQualityHold, Result,
-    UpdateInspection, UpdateNonConformance,
+    InspectionType, Lot, LotStatus, NcrStatus, NonConformance, NonConformanceFilter, QualityHold,
+    QualityHoldFilter, RecordInspectionResult, ReleaseQualityHold, Result, UpdateInspection,
+    UpdateNonConformance,
 };
 use uuid::Uuid;
-
-/// How a failed inspection identifies the lot to quarantine.
-enum LotKey {
-    Id(Uuid),
-    Number(String),
-}
 
 #[derive(Debug, Clone)]
 pub struct PgQualityRepository {
@@ -445,80 +439,31 @@ impl PgQualityRepository {
         Ok(Some(Self::row_to_inspection(row, items)?))
     }
 
-    /// Place the lot selected by `key` into quarantine on the caller's
-    /// transaction, mirroring `PgLotRepository::quarantine_async`: only
-    /// `Active`/`OnHold` lots move, every unreserved unit is quarantined, and a
-    /// `Quarantined` lot transaction is written. Lots that are missing, already
-    /// quarantined, or terminal are left untouched — a failed inspection must
-    /// never fail to complete because the lot has already been dealt with.
+    /// Quarantine `lot` on the caller's transaction if it can still be
+    /// quarantined. Mirrors `PgLotRepository::quarantine_async` exactly (same
+    /// helper): the status flips, unreserved units are held, the lot's serials
+    /// are quarantined and the linked inventory balance holds the units — all
+    /// in this transaction. Lots that are already quarantined or terminal are
+    /// left untouched: a failed inspection must never fail to complete
+    /// because the lot has already been dealt with.
     async fn quarantine_lot_on(
         tx: &mut sqlx::Transaction<'_, Postgres>,
-        key: LotKey,
+        lot: Option<Lot>,
         reason: &str,
         now: chrono::DateTime<Utc>,
     ) -> Result<()> {
-        const BY_ID: &str =
-            "SELECT id, status, quantity_remaining, quantity_reserved, quantity_quarantined
-             FROM lots WHERE id = $1 FOR UPDATE";
-        const BY_NUMBER: &str =
-            "SELECT id, status, quantity_remaining, quantity_reserved, quantity_quarantined
-             FROM lots WHERE lot_number = $1 FOR UPDATE";
-        let row: Option<(Uuid, String, Decimal, Decimal, Decimal)> = match key {
-            LotKey::Id(id) => sqlx::query_as(BY_ID).bind(id).fetch_optional(tx.as_mut()).await,
-            LotKey::Number(n) => {
-                sqlx::query_as(BY_NUMBER).bind(n).fetch_optional(tx.as_mut()).await
-            }
-        }
-        .map_err(map_db_error)?;
-        let Some((lot_id, status, remaining, reserved, quarantined)) = row else {
-            return Ok(());
-        };
-        let status: LotStatus = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!("Invalid lot.status '{status}': {e}"))
-        })?;
-        if !status.can_transition_to(LotStatus::Quarantine) {
+        let Some(lot) = lot else { return Ok(()) };
+        if !lot.status.can_transition_to(LotStatus::Quarantine) {
             return Ok(());
         }
-        let available = (remaining - reserved - quarantined).max(Decimal::ZERO);
-
-        let updated = sqlx::query(
-            "UPDATE lots SET status = $1, quantity_quarantined = $2, updated_at = $3
-             WHERE id = $4 AND status = $5",
-        )
-        .bind(LotStatus::Quarantine.to_string())
-        .bind(available)
-        .bind(now)
-        .bind(lot_id)
-        .bind(status.to_string())
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?
-        .rows_affected();
-        if updated != 1 {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot quarantine lot {lot_id}: status changed concurrently"
-            )));
-        }
-        sqlx::query(
-            "INSERT INTO lot_transactions (id, lot_id, transaction_type, quantity, reference_type,
-                                           reference_id, reason, created_at)
-             VALUES ($1, $2, $3, $4, 'quarantine', $2, $5, $6)",
-        )
-        .bind(Uuid::new_v4())
-        .bind(lot_id)
-        .bind(LotTransactionType::Quarantined.to_string())
-        .bind(available)
-        .bind(reason)
-        .bind(now)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-        Ok(())
+        PgLotRepository::quarantine_lot_on(tx, &lot, reason, now).await.map(|_| ())
     }
 
     /// Quarantine every lot a failed/partially-failed inspection implicates:
     /// the header's lot when `reference_type = "lot"`, plus each lot named on
-    /// an item whose result is `Fail`.
+    /// an item whose result is `Fail`. Item lots are resolved by
+    /// `(sku, lot_number)` — an item's lot number that exists under a
+    /// different SKU is a `Conflict`, never a silent match on the wrong stock.
     async fn quarantine_failed_lots_on(
         tx: &mut sqlx::Transaction<'_, Postgres>,
         inspection: &Inspection,
@@ -527,7 +472,8 @@ impl PgQualityRepository {
     ) -> Result<()> {
         let reason = format!("Inspection {} completed as {overall}", inspection.inspection_number);
         if overall == InspectionStatus::Failed && inspection.reference_type == "lot" {
-            Self::quarantine_lot_on(tx, LotKey::Id(inspection.reference_id), &reason, now).await?;
+            let lot = PgLotRepository::load_lot_on(tx, inspection.reference_id).await?;
+            Self::quarantine_lot_on(tx, lot, &reason, now).await?;
         }
         if matches!(overall, InspectionStatus::Failed | InspectionStatus::PartialPass) {
             let mut seen = std::collections::HashSet::new();
@@ -536,14 +482,11 @@ impl PgQualityRepository {
                     continue;
                 }
                 if let Some(lot_number) = &item.lot_number {
-                    if seen.insert(lot_number.clone()) {
-                        Self::quarantine_lot_on(
-                            tx,
-                            LotKey::Number(lot_number.clone()),
-                            &reason,
-                            now,
-                        )
-                        .await?;
+                    let sku = Some(item.sku.trim()).filter(|s| !s.is_empty());
+                    if seen.insert((sku.map(str::to_owned), lot_number.clone())) {
+                        let lot =
+                            PgLotRepository::load_lot_by_number_on(tx, lot_number, sku).await?;
+                        Self::quarantine_lot_on(tx, lot, &reason, now).await?;
                     }
                 }
             }
@@ -1065,14 +1008,56 @@ impl PgQualityRepository {
         row.map(Self::row_to_ncr).transpose()
     }
 
+    /// Load an NCR `FOR UPDATE` on the caller's transaction, mapping a
+    /// missing row to `NotFound`.
+    async fn load_ncr_on(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        id: Uuid,
+    ) -> Result<NonConformance> {
+        let row = sqlx::query_as::<_, NcrRow>(
+            "SELECT id, ncr_number, inspection_id, source, severity, status, sku, lot_number, serial_number,
+                    quantity_affected, description, root_cause, corrective_action, preventive_action, disposition,
+                    disposition_quantity, assigned_to, created_at, updated_at, closed_at
+             FROM non_conformances WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        row.map(Self::row_to_ncr).transpose()?.ok_or(CommerceError::NotFound)
+    }
+
+    /// Refuse to edit or re-status a finished NCR: a `Closed` record is
+    /// evidence and a `Cancelled` one was opened in error, so neither may be
+    /// resurrected (a `Cancelled` NCR being "closed" would silently turn a
+    /// mistake into a quality record).
+    fn ensure_ncr_open(ncr: &NonConformance, operation: &str) -> Result<()> {
+        if ncr.status.is_terminal() {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot {operation} NCR {} ({}): status is {} (open a new NCR instead)",
+                ncr.ncr_number, ncr.id, ncr.status
+            )));
+        }
+        Ok(())
+    }
+
+    /// Update an open NCR.
+    ///
+    /// The row is locked and the write is conditional on the status that was
+    /// read, so a concurrent `close_ncr` / `cancel_ncr` cannot be overwritten;
+    /// a finished NCR is refused outright.
     pub async fn update_ncr_async(
         &self,
         id: Uuid,
         input: UpdateNonConformance,
     ) -> Result<NonConformance> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        sqlx::query(
+        let existing = Self::load_ncr_on(&mut tx, id).await?;
+        Self::ensure_ncr_open(&existing, "update")?;
+
+        let updated = sqlx::query(
             r#"
             UPDATE non_conformances SET
                 status = COALESCE($1, status),
@@ -1084,7 +1069,7 @@ impl PgQualityRepository {
                 disposition_quantity = COALESCE($7, disposition_quantity),
                 assigned_to = COALESCE($8, assigned_to),
                 updated_at = $9
-            WHERE id = $10
+            WHERE id = $10 AND status = $11
             "#,
         )
         .bind(input.status.map(|s| s.to_string()))
@@ -1097,11 +1082,63 @@ impl PgQualityRepository {
         .bind(input.assigned_to)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .bind(existing.status.to_string())
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        if updated.rows_affected() != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot update NCR {} ({}): status changed concurrently",
+                existing.ncr_number, existing.id
+            )));
+        }
 
-        self.get_ncr_async(id).await?.ok_or(CommerceError::NotFound)
+        let result = Self::load_ncr_on(&mut tx, id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(result)
+    }
+
+    /// Shared body of [`close_ncr_async`](Self::close_ncr_async) and
+    /// [`cancel_ncr_async`](Self::cancel_ncr_async): move an open NCR to a
+    /// terminal status in one transaction, conditional on the status that was
+    /// read.
+    ///
+    /// Re-applying the same terminal status is a no-op; moving between the two
+    /// terminal statuses is refused.
+    async fn finish_ncr_async(&self, id: Uuid, to: NcrStatus) -> Result<NonConformance> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let now = Utc::now();
+
+        let ncr = Self::load_ncr_on(&mut tx, id).await?;
+        if ncr.status == to {
+            return Ok(ncr); // Idempotent.
+        }
+        Self::ensure_ncr_open(&ncr, if to == NcrStatus::Closed { "close" } else { "cancel" })?;
+
+        let closed_at = (to == NcrStatus::Closed).then_some(now);
+        let updated = sqlx::query(
+            "UPDATE non_conformances
+             SET status = $1, closed_at = COALESCE($2, closed_at), updated_at = $3
+             WHERE id = $4 AND status = $5",
+        )
+        .bind(to.to_string())
+        .bind(closed_at)
+        .bind(now)
+        .bind(id)
+        .bind(ncr.status.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot move NCR {} ({}) to {to}: status changed concurrently",
+                ncr.ncr_number, ncr.id
+            )));
+        }
+
+        let result = Self::load_ncr_on(&mut tx, id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(result)
     }
 
     pub async fn list_ncrs_async(
@@ -1198,33 +1235,17 @@ impl PgQualityRepository {
         rows.into_iter().map(Self::row_to_ncr).collect::<Result<Vec<_>>>()
     }
 
+    /// Close an NCR. Idempotent for an already-closed one; a `Cancelled` NCR
+    /// is refused (cancelling means it was opened in error, so it must not
+    /// become a closed quality record).
     pub async fn close_ncr_async(&self, id: Uuid) -> Result<NonConformance> {
-        let now = Utc::now();
-        sqlx::query(
-            "UPDATE non_conformances SET status = $1, closed_at = $2, updated_at = $3 WHERE id = $4",
-        )
-        .bind(NcrStatus::Closed.to_string())
-        .bind(now)
-        .bind(now)
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        self.get_ncr_async(id).await?.ok_or(CommerceError::NotFound)
+        self.finish_ncr_async(id, NcrStatus::Closed).await
     }
 
+    /// Cancel an NCR opened in error. Idempotent for an already-cancelled one;
+    /// a `Closed` NCR is refused — the record stands.
     pub async fn cancel_ncr_async(&self, id: Uuid) -> Result<NonConformance> {
-        let now = Utc::now();
-        sqlx::query("UPDATE non_conformances SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(NcrStatus::Cancelled.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        self.get_ncr_async(id).await?.ok_or(CommerceError::NotFound)
+        self.finish_ncr_async(id, NcrStatus::Cancelled).await
     }
 
     pub async fn count_ncrs_async(&self, filter: NonConformanceFilter) -> Result<u64> {

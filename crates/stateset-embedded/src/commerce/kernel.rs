@@ -10,7 +10,47 @@ use stateset_core::{
     ReserveInventory, ResolveA2ADispute, SettleX402Intent, ShipOrderCommand,
     SubmitA2ADisputeEvidence, TransitionOrder, TransitionReturn,
 };
+use stateset_db::kernel::KernelAuditChain;
+use stateset_db::kernel_outbox::{KernelAuditCheckpoint, KernelAuditVerification};
 use stateset_db::sqlite::SqliteKernelExecutor;
+
+/// Read-only access to the kernel receipt audit chain.
+///
+/// Every governed command seals its receipt into an append-only hash chain;
+/// this accessor recomputes that chain and mints portable checkpoints that
+/// can be retained outside the database to make later rewrites detectable.
+///
+/// Both backends seal the same chain, so this accessor is backend-neutral: it
+/// holds whichever [`KernelAuditChain`] the configured database provides.
+///
+/// Verification is synchronous on both backends. The Postgres implementation
+/// bridges to async through the shared runtime, so an async caller must run
+/// these methods on a blocking thread (the HTTP handlers use
+/// `AppState::run_blocking`).
+#[derive(Debug)]
+pub struct KernelAudit {
+    chain: Box<dyn KernelAuditChain>,
+}
+
+impl KernelAudit {
+    /// Recompute every receipt link and report the first broken position.
+    pub fn verify_chain(&self) -> Result<KernelAuditVerification, CommerceError> {
+        self.chain.verify_chain()
+    }
+
+    /// Mint a portable checkpoint of the current chain head.
+    pub fn checkpoint(&self) -> Result<KernelAuditCheckpoint, CommerceError> {
+        self.chain.checkpoint()
+    }
+
+    /// Verify an externally retained checkpoint against the local chain.
+    pub fn verify_checkpoint(
+        &self,
+        checkpoint: &KernelAuditCheckpoint,
+    ) -> Result<bool, CommerceError> {
+        self.chain.verify_checkpoint(checkpoint)
+    }
+}
 
 fn decode_command<T: DeserializeOwned>(
     command: Value,
@@ -40,6 +80,20 @@ impl Commerce {
             CommerceError::Internal(
                 "the synchronous kernel executor requires a SQLite commerce instance".into(),
             )
+        })
+    }
+
+    /// Read-only access to the kernel receipt audit chain.
+    ///
+    /// Works on every backend that seals receipts — SQLite and Postgres both
+    /// do — so a Postgres-backed instance verifies and checkpoints the same
+    /// chain the SQLite one does.
+    pub fn kernel_audit(&self) -> Result<KernelAudit, CommerceError> {
+        self.db.kernel_audit_chain().map(|chain| KernelAudit { chain }).ok_or_else(|| {
+            CommerceError::Internal(format!(
+                "the {} backend does not seal a kernel receipt audit chain",
+                self.db.backend_name()
+            ))
         })
     }
 
@@ -160,6 +214,32 @@ mod tests {
 
         assert_eq!(receipt.status, ExecutionStatus::Previewed);
         assert_eq!(commerce.payments().count(Default::default()).expect("count payments"), 0);
+    }
+
+    #[test]
+    fn kernel_audit_accessor_verifies_and_checkpoints_the_receipt_chain() {
+        let commerce = Commerce::in_memory().expect("in-memory commerce");
+        let policy = KernelPolicy::new("test-policy")
+            .allow("payments.create", KernelCommandPolicy::requiring(["payments.create"]));
+        let empty = commerce.kernel_audit().expect("audit").verify_chain().expect("verify");
+        assert!(empty.valid);
+        assert_eq!(empty.entries, 0);
+
+        let command = payment_command();
+        commerce
+            .execute_kernel_command(
+                serde_json::to_value(&command).expect("serialize command"),
+                policy,
+            )
+            .expect("execute preview");
+        let audit = commerce.kernel_audit().expect("audit");
+        let verification = audit.verify_chain().expect("verify");
+        assert!(verification.valid);
+        assert_eq!(verification.entries, 1);
+        let checkpoint = audit.checkpoint().expect("checkpoint");
+        assert_eq!(checkpoint.entries, 1);
+        assert_eq!(checkpoint.head_hash, verification.head_hash);
+        assert!(audit.verify_checkpoint(&checkpoint).expect("verify checkpoint"));
     }
 
     #[test]

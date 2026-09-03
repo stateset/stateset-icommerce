@@ -20,9 +20,9 @@ use crate::dto::{
 };
 use crate::error::ErrorBody;
 use crate::routes::a2a_credit::{
-    CreateCreditTermsRequest, CreditAmountRequest, CreditTermsResponse,
+    CreateCreditTermsRequest, CreditAmountRequest, CreditEntryResponse, CreditTermsResponse,
 };
-use crate::routes::a2a_messaging::{MessageResponse, SendMessageRequest};
+use crate::routes::a2a_messaging::{FailMessageRequest, MessageResponse, SendMessageRequest};
 use crate::routes::currency::{
     ConversionResponse, ConvertCurrencyRequest, ExchangeRateListResponse, ExchangeRateResponse,
     SetExchangeRateRequest,
@@ -94,11 +94,21 @@ use crate::state::AppState;
         crate::routes::inventory::list_inventory,
         crate::routes::inventory::get_stock,
         crate::routes::inventory::adjust_stock,
+        crate::routes::inventory::create_reservation,
+        crate::routes::inventory::get_reservation,
+        crate::routes::inventory::list_reservations,
+        crate::routes::inventory::release_reservation,
+        crate::routes::inventory::confirm_reservation,
+        crate::routes::inventory::expire_reservations,
+        crate::routes::inventory::run_sweeps,
         // Returns
         crate::routes::returns::create_return,
         crate::routes::returns::get_return,
         crate::routes::returns::list_returns,
         crate::routes::returns::approve_return,
+        crate::routes::returns::reject_return,
+        crate::routes::returns::complete_return,
+        crate::routes::returns::update_return,
         crate::routes::returns::set_item_disposition,
         // Shipments
         crate::routes::shipments::create_shipment,
@@ -151,12 +161,15 @@ use crate::state::AppState;
         crate::routes::a2a_messaging::send_message,
         crate::routes::a2a_messaging::list_messages,
         crate::routes::a2a_messaging::acknowledge_message,
+        crate::routes::a2a_messaging::get_message,
+        crate::routes::a2a_messaging::fail_message,
         // A2A Credit
         crate::routes::a2a_credit::create_terms,
         crate::routes::a2a_credit::list_terms,
         crate::routes::a2a_credit::get_terms,
         crate::routes::a2a_credit::charge_credit,
         crate::routes::a2a_credit::record_payment,
+        crate::routes::a2a_credit::list_entries,
         // Subscriptions
         crate::routes::subscriptions::create_subscription,
         crate::routes::subscriptions::list_subscriptions,
@@ -350,6 +363,23 @@ use crate::state::AppState;
         crate::routes::reports::transaction_cogs,
         crate::routes::reports::close_the_books,
         crate::routes::reports::consumption,
+        // kernel
+        crate::routes::kernel::verify_audit_chain,
+        crate::routes::kernel::audit_checkpoint,
+        // x402 payment intents
+        crate::routes::tax::create_exemption,
+        crate::routes::tax::list_exemptions,
+        crate::routes::tax::get_exemption,
+        crate::routes::tax::verify_exemption,
+        crate::routes::x402::create_intent,
+        crate::routes::x402::list_intents,
+        crate::routes::x402::get_intent,
+        crate::routes::x402::sign_intent,
+        crate::routes::x402::settle_intent,
+        crate::routes::x402::fail_intent,
+        crate::routes::x402::cancel_intent,
+        crate::routes::x402::intents_for_cart,
+        crate::routes::x402::intents_for_order,
         // carts
         crate::routes::carts::create,
         crate::routes::carts::list,
@@ -562,6 +592,7 @@ use crate::state::AppState;
         crate::routes::lots::release_reservation,
         crate::routes::lots::quarantine,
         crate::routes::lots::release_quarantine,
+        crate::routes::lots::genealogy,
         // serials
         crate::routes::serials::create,
         crate::routes::serials::list,
@@ -581,6 +612,13 @@ use crate::state::AppState;
         CreateCustomerRequest,
         CreateProductRequest,
         InventoryAdjustRequest,
+        crate::routes::inventory::CreateReservationRequest,
+        crate::routes::inventory::ExpireReservationsRequest,
+        crate::routes::inventory::ReservationResponse,
+        crate::routes::inventory::ReservationListResponse,
+        crate::routes::inventory::ExpireReservationsResponse,
+        crate::sweeps::SweepJobReport,
+        crate::sweeps::SweepRunReport,
         CreateReturnRequest,
         CreateReturnItemRequest,
         UpdateCustomerRequest,
@@ -641,11 +679,13 @@ use crate::state::AppState;
         NegotiationResponse,
         // A2A Messaging
         SendMessageRequest,
+        FailMessageRequest,
         MessageResponse,
         // A2A Credit
         CreateCreditTermsRequest,
         CreditAmountRequest,
         CreditTermsResponse,
+        CreditEntryResponse,
         // Subscriptions
         CreateSubscriptionRequest,
         SubscriptionResponse,
@@ -719,6 +759,15 @@ use crate::state::AppState;
         (name = "production_batches", description = "Production batch tracking"),
         (name = "purgatory", description = "Quarantined record review"),
         (name = "reports", description = "Computed business reports"),
+        (name = "kernel", description = "Kernel receipt audit chain verification and checkpoints"),
+        (
+            name = "tax",
+            description = "Tax exemption certificates: create, list, and verify (only verified certificates reduce tax)"
+        ),
+        (
+            name = "x402",
+            description = "x402 stablecoin payment intents: create, sign, settle, and the one-claim-per-cart guard"
+        ),
         (name = "stock_snapshots", description = "Point-in-time inventory snapshots"),
         (name = "supplier_skus", description = "Supplier SKU catalog"),
         (name = "topology_snapshots", description = "Network topology snapshots"),

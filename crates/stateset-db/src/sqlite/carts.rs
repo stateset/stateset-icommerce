@@ -16,10 +16,10 @@ use stateset_core::{
     AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartId, CartItem, CartPaymentStatus,
     CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError, CreateCart,
     CreateOrder, CreateOrderItem, CurrencyCode, CustomerId, OrderId, OrderStatus, PaymentStatus,
-    ProductId, PromotionType, Result, SetCartPayment, SetCartShipping, SetCartX402Payment,
-    ShippingRate, UpdateCart, UpdateCartItem, X402AwaitingSettlementData, X402CheckoutResult,
+    ProductId, Result, SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate,
+    UpdateCart, UpdateCartItem, X402AwaitingSettlementData, X402CheckoutResult,
     X402IntentCreatedData, X402IntentStatus, X402PaymentRequiredData, validate_batch_size,
-    validate_currency_code, validate_email, validate_phone, validate_price, validate_required_text,
+    validate_currency_code, validate_email, validate_money_scale, validate_price,
 };
 use uuid::Uuid;
 
@@ -304,6 +304,20 @@ impl SqliteCartRepository {
         Ok(map)
     }
 
+    /// Currency of cart `id` on `conn` (the cart must exist).
+    fn cart_currency_with_conn(conn: &rusqlite::Connection, id: CartId) -> Result<CurrencyCode> {
+        let raw: Option<String> = conn
+            .query_row("SELECT currency FROM carts WHERE id = ?", [id.to_string()], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(map_db_error)?;
+        let raw = raw.ok_or(CommerceError::NotFound)?;
+        raw.parse().map_err(|_| {
+            CommerceError::DatabaseError(format!("Invalid cart.currency '{raw}' for cart {id}"))
+        })
+    }
+
     fn load_cart_with_conn(conn: &rusqlite::Connection, id: CartId) -> Result<Option<Cart>> {
         let result =
             conn.query_row("SELECT * FROM carts WHERE id = ?", [id.to_string()], Self::row_to_cart);
@@ -357,14 +371,10 @@ impl SqliteCartRepository {
         // matching the Postgres DECIMAL(12,2) columns and the order pipeline.
         let subtotal = subtotal.round_dp(2);
 
-        // Persist the subtotal first so the cart loaded below (and handed to
-        // coupon validation) reflects the new contents.
-        conn.execute(
-            "UPDATE carts SET subtotal = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![subtotal.to_string(), Utc::now().to_rfc3339(), cart_id.to_string()],
-        )
-        .map_err(map_db_error)?;
-        let cart = Self::load_cart_with_conn(conn, cart_id)?.ok_or(CommerceError::NotFound)?;
+        let mut cart = Self::load_cart_with_conn(conn, cart_id)?.ok_or(CommerceError::NotFound)?;
+        // Tax follows the lines it was computed on (see `rescale_tax`).
+        cart.tax_amount = rescale_tax(cart.tax_amount, cart.subtotal, subtotal);
+        cart.subtotal = subtotal;
 
         // The discount is derived from the cart as it is NOW, never a frozen
         // snapshot: a coupon is re-validated and re-priced against the new
@@ -373,9 +383,11 @@ impl SqliteCartRepository {
         let grand_total = derived.grand_total(&cart);
 
         conn.execute(
-            "UPDATE carts SET discount_amount = ?, discount_description = ?, grand_total = ?,
-             updated_at = ? WHERE id = ?",
+            "UPDATE carts SET subtotal = ?, tax_amount = ?, discount_amount = ?,
+             discount_description = ?, grand_total = ?, updated_at = ? WHERE id = ?",
             rusqlite::params![
+                subtotal.to_string(),
+                cart.tax_amount.to_string(),
                 derived.amount.to_string(),
                 derived.description,
                 grand_total.to_string(),
@@ -398,10 +410,12 @@ impl SqliteCartRepository {
     /// cart's `discount_description` says why; checkout refuses the cart while
     /// it is in that state (see [`DerivedDiscount::coupon_error`]).
     ///
-    /// Promotion types this path cannot price (bundles, tiers, ...) keep the
-    /// discount recorded by full promotion evaluation. Every discount, coupon
-    /// or manual, is capped at `subtotal + tax + shipping` so the cart never
-    /// hands an order a discount larger than the order can absorb.
+    /// Every promotion type is priced by the core evaluator
+    /// ([`stateset_core::Promotion::calculate_discount`]) against the current
+    /// lines, so a bundle, tier or Buy-X-Get-Y coupon loses its discount the
+    /// moment the cart stops qualifying. Every discount, coupon or manual, is
+    /// capped at `subtotal + tax + shipping` so the cart never hands an order
+    /// a discount larger than the order can absorb.
     fn derive_discount(&self, conn: &rusqlite::Connection, cart: &Cart) -> Result<DerivedDiscount> {
         let Some(code) = cart.coupon_code.as_deref() else {
             return Ok(DerivedDiscount::capped(cart, cart.discount_amount, None));
@@ -412,12 +426,7 @@ impl SqliteCartRepository {
         let promo_repo = SqlitePromotionRepository::new(self.pool.clone());
         match promo_repo.validate_coupon_for_cart_with_conn(conn, cart, code, Utc::now()) {
             Ok((_coupon, promotion)) => {
-                let amount = match promotion.promotion_type {
-                    PromotionType::PercentageOff | PromotionType::FixedAmountOff => {
-                        coupon_discount_amount(&promotion, cart)
-                    }
-                    _ => cart.discount_amount,
-                };
+                let amount = coupon_discount_amount(&promotion, cart);
                 Ok(DerivedDiscount::capped(cart, amount, Some(promotion.name)))
             }
             Err(CommerceError::ValidationError(reason)) => Ok(DerivedDiscount {
@@ -522,6 +531,16 @@ impl CartRepository for SqliteCartRepository {
         let mut items = vec![];
         if let Some(input_items) = &input.items {
             for item_input in input_items {
+                validate_add_item_money(currency, item_input)?;
+                // Same line guard as `add_item`: `create` used to reach
+                // `add_item_internal` directly, so a withdrawn catalogue SKU
+                // (and a client-chosen price) entered the cart unchecked.
+                guard_cart_line_with_conn(
+                    &tx,
+                    item_input.variant_id,
+                    &item_input.sku,
+                    item_input.unit_price,
+                )?;
                 let item = self.add_item_internal(&tx, id, item_input.clone())?;
                 items.push(item);
             }
@@ -601,6 +620,13 @@ impl CartRepository for SqliteCartRepository {
 
     fn update(&self, id: CartId, input: UpdateCart) -> Result<Cart> {
         let now = Utc::now();
+        if let Some(discount) = input.discount_amount {
+            if discount < Decimal::ZERO {
+                return Err(CommerceError::ValidationError(format!(
+                    "Cart discount must not be negative, got {discount}"
+                )));
+            }
+        }
 
         let mut updates = vec!["updated_at = ?"];
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
@@ -672,8 +698,16 @@ impl CartRepository for SqliteCartRepository {
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
         {
-            let conn = self.conn()?;
-            conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+            let mut conn = self.conn()?;
+            let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+            let rows = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+            if rows == 0 {
+                return Err(CommerceError::NotFound);
+            }
+            // A discount / coupon written here must land in grand_total too:
+            // never store a discount the totals do not reflect.
+            self.update_cart_totals(&tx, id)?;
+            tx.commit().map_err(map_db_error)?;
         }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
@@ -771,6 +805,9 @@ impl CartRepository for SqliteCartRepository {
 
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let currency = Self::cart_currency_with_conn(&tx, cart_id)?;
+        validate_add_item_money(currency, &item)?;
+        guard_cart_line_with_conn(&tx, item.variant_id, &item.sku, item.unit_price)?;
         let result = self.add_item_internal(&tx, cart_id, item)?;
         self.update_cart_totals(&tx, cart_id)?;
         tx.commit().map_err(map_db_error)?;
@@ -792,6 +829,32 @@ impl CartRepository for SqliteCartRepository {
                 |row| row.get(0),
             )
             .map_err(map_db_error)?;
+
+        let cart_uuid = CartId::from(parse_uuid(&cart_id, "cart_item", "cart_id")?);
+        let currency = Self::cart_currency_with_conn(&tx, cart_uuid)?;
+        validate_update_cart_item_money(currency, &input)?;
+
+        // Re-run the line guard against the CURRENT catalogue: a line added
+        // while its SKU was sellable must not be grown, or repriced, after the
+        // SKU was withdrawn. Shrinking a line (or removing it) stays allowed
+        // so a cart holding a withdrawn SKU is never stuck.
+        let (line_sku, line_variant_id, line_quantity): (String, Option<String>, i32) = tx
+            .query_row(
+                "SELECT sku, variant_id, quantity FROM cart_items WHERE id = ?",
+                [item_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(map_db_error)?;
+        let line_variant_id =
+            parse_uuid_opt_row(line_variant_id, "cart_item", "variant_id").map_err(map_db_error)?;
+        let raises_quantity = input.quantity.is_some_and(|qty| qty > line_quantity);
+        if raises_quantity {
+            super::products::variant_is_purchasable_with_conn(&tx, &line_sku)?
+                .ensure_sellable(&line_sku)?;
+        }
+        if let Some(unit_price) = input.unit_price {
+            guard_cart_line_with_conn(&tx, line_variant_id, &line_sku, unit_price)?;
+        }
 
         let mut updates = vec!["updated_at = ?"];
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
@@ -843,7 +906,6 @@ impl CartRepository for SqliteCartRepository {
         .map_err(map_db_error)?;
 
         // Update cart totals
-        let cart_uuid = CartId::from(parse_uuid(&cart_id, "cart_item", "cart_id")?);
         self.update_cart_totals(&tx, cart_uuid)?;
 
         // Return updated item
@@ -947,6 +1009,17 @@ impl CartRepository for SqliteCartRepository {
         Ok(())
     }
 
+    fn get_item(&self, item_id: Uuid) -> Result<Option<CartItem>> {
+        let conn = self.conn()?;
+        conn.query_row(
+            "SELECT * FROM cart_items WHERE id = ?",
+            [item_id.to_string()],
+            Self::row_to_cart_item,
+        )
+        .optional()
+        .map_err(map_db_error)
+    }
+
     fn get_items(&self, cart_id: CartId) -> Result<Vec<CartItem>> {
         let conn = self.conn()?;
         Self::load_cart_items_with_conn(&conn, cart_id)
@@ -992,29 +1065,41 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
+    /// Set the cart's shipping address, method and charge.
+    ///
+    /// The charge is money written straight onto the cart, so it runs the same
+    /// guard as [`CartRepository::set_tax`]
+    /// ([`Cart::ensure_money_settable`]) and the write plus the repricing
+    /// happen in ONE `BEGIN IMMEDIATE` transaction, holding the cart's write
+    /// lock. Before this, the UPDATE and `recalculate` were separate
+    /// statements outside any transaction, so a concurrent line mutation could
+    /// reprice between them.
     fn set_shipping(&self, id: CartId, shipping: SetCartShipping) -> Result<Cart> {
         let address_json = serde_json::to_string(&shipping.shipping_address).unwrap_or_default();
         let shipping_amount = shipping.shipping_amount.unwrap_or_default();
 
-        {
-            let conn = self.conn()?;
-            conn.execute(
-                "UPDATE carts SET shipping_address = ?, shipping_method = ?, shipping_carrier = ?,
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let cart = Self::load_cart_with_conn(&tx, id)?.ok_or(CommerceError::NotFound)?;
+        cart.ensure_money_settable("shipping", shipping_amount)?;
+        tx.execute(
+            "UPDATE carts SET shipping_address = ?, shipping_method = ?, shipping_carrier = ?,
              shipping_amount = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![
-                    address_json,
-                    shipping.shipping_method,
-                    shipping.shipping_carrier,
-                    shipping_amount.to_string(),
-                    Utc::now().to_rfc3339(),
-                    id.to_string()
-                ],
-            )
-            .map_err(map_db_error)?;
-        }
+            rusqlite::params![
+                address_json,
+                shipping.shipping_method,
+                shipping.shipping_carrier,
+                shipping_amount.to_string(),
+                Utc::now().to_rfc3339(),
+                id.to_string()
+            ],
+        )
+        .map_err(map_db_error)?;
+        // Reprice inside the same transaction, under the same lock.
+        self.update_cart_totals(&tx, id)?;
+        tx.commit().map_err(map_db_error)?;
 
-        // Recalculate grand total
-        self.recalculate(id)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn get_shipping_rates(&self, _id: CartId) -> Result<Vec<ShippingRate>> {
@@ -1227,7 +1312,7 @@ impl CartRepository for SqliteCartRepository {
 
     fn apply_discount(&self, id: CartId, coupon_code: &str) -> Result<Cart> {
         // Get the cart first to calculate discount
-        let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
+        let mut cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
 
         // Resolve the coupon and its promotion, and refuse anything that is
         // not redeemable right now: inactive/expired/exhausted coupon,
@@ -1239,6 +1324,7 @@ impl CartRepository for SqliteCartRepository {
         let (_coupon, promotion) =
             promo_repo.validate_coupon_for_cart(&cart, coupon_code, Utc::now())?;
 
+        cart.coupon_code = Some(coupon_code.to_uppercase());
         let discount_amount = coupon_discount_amount(&promotion, &cart);
 
         let discount_description = Some(promotion.name);
@@ -1405,17 +1491,30 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
+    /// Set the cart's tax amount.
+    ///
+    /// Guarded by [`Cart::ensure_money_settable`] — non-negative, expressible
+    /// in the cart's currency, and only while the cart is still active — and
+    /// written together with the repricing in ONE `BEGIN IMMEDIATE`
+    /// transaction holding the cart's write lock. Before this the amount was
+    /// unchecked (a negative tax lowered `grand_total`, a completed cart could
+    /// still be re-taxed) and the UPDATE and `recalculate` were two separate
+    /// statements outside any transaction.
     fn set_tax(&self, id: CartId, tax_amount: Decimal) -> Result<Cart> {
-        {
-            let conn = self.conn()?;
-            conn.execute(
-                "UPDATE carts SET tax_amount = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![tax_amount.to_string(), Utc::now().to_rfc3339(), id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        }
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let cart = Self::load_cart_with_conn(&tx, id)?.ok_or(CommerceError::NotFound)?;
+        cart.ensure_money_settable("tax", tax_amount)?;
+        tx.execute(
+            "UPDATE carts SET tax_amount = ?, updated_at = ? WHERE id = ?",
+            rusqlite::params![tax_amount.to_string(), Utc::now().to_rfc3339(), id.to_string()],
+        )
+        .map_err(map_db_error)?;
+        // Reprice inside the same transaction, under the same lock.
+        self.update_cart_totals(&tx, id)?;
+        tx.commit().map_err(map_db_error)?;
 
-        self.recalculate(id)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn get_abandoned(&self) -> Result<Vec<Cart>> {
@@ -1535,10 +1634,19 @@ impl CartRepository for SqliteCartRepository {
             )
             .map_err(map_db_error)?;
 
-            // Add initial items if provided
+            // Add initial items if provided, through the same money
+            // validation and line guard `create` runs — this batch path used
+            // to reach `add_item_internal` unguarded too.
             let mut items = vec![];
             if let Some(input_items) = &input.items {
                 for item_input in input_items {
+                    validate_add_item_money(currency, item_input)?;
+                    guard_cart_line_with_conn(
+                        &tx,
+                        item_input.variant_id,
+                        &item_input.sku,
+                        item_input.unit_price,
+                    )?;
                     let item = self.add_item_internal(&tx, id, item_input.clone())?;
                     items.push(item);
                 }
@@ -1853,6 +1961,17 @@ impl SqliteCartRepository {
         })
     }
 
+    /// The customer a guest checkout mints its order for, resolved through
+    /// the customers repository's own get-or-create
+    /// ([`crate::sqlite::customers::get_or_create_customer_with_conn`]) on the
+    /// checkout's transaction.
+    ///
+    /// It used to open-code the lookup and the INSERT here. That INSERT never
+    /// populated `email_key`, so a customer created by guest checkout was
+    /// unreachable through `get_by_email` (which resolves through the key),
+    /// and the raw-column lookup made two guests differing only in e-mail case
+    /// two different customers. Delegating keeps guest checkout on exactly the
+    /// same normalised identity as every other way a customer is created.
     fn resolve_customer_id_with_conn(
         conn: &rusqlite::Connection,
         cart: &Cart,
@@ -1867,49 +1986,20 @@ impl SqliteCartRepository {
             )
         })?;
 
-        validate_email(email)?;
-
         let (first_name, last_name) = split_customer_name(cart.customer_name.as_deref());
-        validate_required_text("customer.first_name", &first_name, 100)?;
-        validate_required_text("customer.last_name", &last_name, 100)?;
-        if let Some(phone) = &cart.customer_phone {
-            validate_phone(phone)?;
-        }
-
-        let result = conn.query_row("SELECT id FROM customers WHERE email = ?", [email], |row| {
-            row.get::<_, String>(0)
-        });
-
-        match result {
-            Ok(id) => Ok(CustomerId::from(parse_uuid(&id, "customer", "id")?)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => {
-                let customer_id = CustomerId::new();
-                let now = Utc::now();
-                conn.execute(
-                    "INSERT INTO customers (id, email, first_name, last_name, phone, status,
-                                            accepts_marketing, email_verified, tags, metadata,
-                                            created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    rusqlite::params![
-                        customer_id.to_string(),
-                        email,
-                        &first_name,
-                        &last_name,
-                        &cart.customer_phone,
-                        "active",
-                        0,
-                        0,
-                        "[]",
-                        Option::<String>::None,
-                        now.to_rfc3339(),
-                        now.to_rfc3339(),
-                    ],
-                )
-                .map_err(map_db_error)?;
-                Ok(customer_id)
-            }
-            Err(error) => Err(map_db_error(error)),
-        }
+        let (customer, _created) = super::customers::get_or_create_customer_with_conn(
+            conn,
+            &stateset_core::CreateCustomer {
+                email: email.to_string(),
+                first_name,
+                last_name,
+                phone: cart.customer_phone.clone(),
+                accepts_marketing: None,
+                tags: None,
+                metadata: None,
+            },
+        )?;
+        Ok(customer.id)
     }
 
     fn resolve_customer_id_in_tx(
@@ -1921,6 +2011,7 @@ impl SqliteCartRepository {
     }
 
     pub(crate) fn validate_checkout_in_tx(
+        &self,
         tx: &rusqlite::Transaction<'_>,
         cart_id: CartId,
     ) -> std::result::Result<(), rusqlite::Error> {
@@ -1955,8 +2046,21 @@ impl SqliteCartRepository {
                 CommerceError::ValidationError("Cart is not ready for checkout".into()),
             )));
         }
-        // Never hand the order a discount it cannot absorb (see `cap_discount`).
-        cart.discount_amount = cap_discount(&cart, cart.discount_amount);
+        // Same coupon re-validation / discount derivation as
+        // `complete_checkout_in_tx`, so a Preview never succeeds where Apply
+        // would refuse (and reports the same error).
+        let derived = self
+            .derive_discount(tx, &cart)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        if let Some(reason) = derived.coupon_error {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                CommerceError::ValidationError(format!(
+                    "Coupon {} is no longer valid: {reason}",
+                    cart.coupon_code.as_deref().unwrap_or_default()
+                )),
+            )));
+        }
+        cart.discount_amount = derived.amount;
         let customer_id = if let Some(id) = cart.customer_id {
             id
         } else {
@@ -1969,6 +2073,18 @@ impl SqliteCartRepository {
                 .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
             CustomerId::new()
         };
+        // Apply consumes the cart's coupon inside the checkout transaction;
+        // Preview must refuse wherever that consumption would. Read-only, and
+        // against the customer Apply would resolve — not the throwaway id
+        // above, which exists only to shape the order-validation input.
+        let redeemer = preview_customer_id_with_conn(tx, &cart)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        ensure_cart_coupon_consumable_with_conn(tx, &cart, redeemer)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        // Apply also consumes the cart's automatic (no-code) promotions, which
+        // carry their own usage limits; Preview must refuse those too.
+        SqlitePromotionRepository::ensure_cart_promotions_consumable_with_conn(tx, &cart, redeemer)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
         let input = CreateOrder {
             customer_id,
             items: cart
@@ -2262,18 +2378,297 @@ impl SqliteCartRepository {
 /// minor-unit boundaries (percentage-off with an optional cap, or a fixed
 /// amount never exceeding the subtotal).
 pub(crate) fn coupon_discount_amount(promotion: &stateset_core::Promotion, cart: &Cart) -> Decimal {
-    let subtotal = cart.subtotal;
-    let raw = match promotion.promotion_type {
-        PromotionType::PercentageOff => {
-            let discount = subtotal * promotion.percentage_off.unwrap_or(Decimal::ZERO);
-            promotion.max_discount_amount.map_or(discount, |max| discount.min(max))
-        }
-        PromotionType::FixedAmountOff => {
-            promotion.fixed_amount_off.unwrap_or(Decimal::ZERO).min(subtotal)
-        }
-        _ => Decimal::ZERO, // Other types are priced by full promotion evaluation
-    };
+    let request = stateset_core::ApplyPromotionsRequest::from_cart(
+        cart,
+        cart.coupon_code.as_deref().unwrap_or_default(),
+    );
+    let raw = promotion.calculate_discount(&request, Decimal::ZERO);
     cap_discount(cart, raw).round_dp(u32::from(cart.currency.decimal_places()))
+}
+
+/// Carry a cart's tax across a change of its lines.
+///
+/// The cart stores only a tax *amount* (set by `set_tax`, normally from the
+/// tax engine), not the rate or jurisdiction it came from, so the storage
+/// layer cannot re-run the engine. It keeps the effective rate instead: the
+/// stored tax is scaled by `new_subtotal / previous_subtotal`, which is exact
+/// for a single-rate cart and a best-effort estimate for mixed-rate lines —
+/// the embedded cart accessor re-runs the tax engine after each mutation when
+/// it can and overwrites this estimate. Tax that was never set (zero) stays
+/// zero, and a cart emptied of lines carries no tax.
+pub(crate) fn rescale_tax(
+    previous_tax: Decimal,
+    previous_subtotal: Decimal,
+    new_subtotal: Decimal,
+) -> Decimal {
+    if previous_tax <= Decimal::ZERO || previous_subtotal <= Decimal::ZERO {
+        return previous_tax.max(Decimal::ZERO);
+    }
+    if new_subtotal == previous_subtotal {
+        return previous_tax;
+    }
+    if new_subtotal <= Decimal::ZERO {
+        return Decimal::ZERO;
+    }
+    (previous_tax * new_subtotal / previous_subtotal).round_dp(2)
+}
+
+/// The customer identity Apply would attribute this cart's redemption to,
+/// resolved WITHOUT writing.
+///
+/// `complete_checkout_in_tx` calls `resolve_customer_id_with_conn`, which
+/// creates the customer row when the guest's email is new. Preview must not
+/// create anything, so it resolves the same way minus the insert: an existing
+/// row for the cart's email, or `None` when the customer would be brand new
+/// (and therefore has no prior redemptions to breach a per-customer limit).
+pub(crate) fn preview_customer_id_with_conn(
+    conn: &rusqlite::Connection,
+    cart: &Cart,
+) -> Result<Option<CustomerId>> {
+    if let Some(customer_id) = cart.customer_id {
+        return Ok(Some(customer_id));
+    }
+    let Some(email) = cart.customer_email.as_deref() else {
+        return Ok(None);
+    };
+    // Same resolution as the customers repository's `LIVE_CUSTOMER_BY_EMAIL`
+    // (normalised key first, legacy raw column second), id only.
+    let id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM customers \
+             WHERE email_key = ?1 OR (status != 'deleted' AND LOWER(TRIM(email)) = ?1) \
+             ORDER BY CASE WHEN email_key = ?1 THEN 0 ELSE 1 END, created_at, id \
+             LIMIT 1",
+            [stateset_core::Customer::normalize_email(email)],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_db_error)?;
+    match id {
+        Some(id) => Ok(Some(CustomerId::from(parse_uuid(&id, "customer", "id")?))),
+        None => Ok(None),
+    }
+}
+
+/// Read-only twin of the coupon consumption Apply performs
+/// (`SqlitePromotionRepository::consume_cart_coupon_in_tx`, whose limit
+/// enforcement lives in `record_usage_in_tx`).
+///
+/// Preview used to price the cart but never exercise consumption, so every
+/// limit that is only enforced at consumption time — the per-customer limits,
+/// which Apply checks against the customer it RESOLVES from the guest email
+/// rather than the `customer_id` on the cart — passed Preview and failed
+/// Apply. This checks exactly the same limits, in the same order, with the
+/// same messages, and writes nothing.
+///
+/// The branches mirror `consume_cart_coupon_in_tx` one for one: no coupon, or
+/// a code that no longer resolves, is a no-op; a usage row already recorded
+/// for this (cart, coupon) is linked to the order rather than counted again,
+/// so no limit is consumed and none is checked.
+pub(crate) fn ensure_cart_coupon_consumable_with_conn(
+    conn: &rusqlite::Connection,
+    cart: &Cart,
+    customer_id: Option<CustomerId>,
+) -> Result<()> {
+    let Some(code) = cart.coupon_code.as_deref() else {
+        return Ok(());
+    };
+    // Coupon codes are stored uppercased; look up the same way consumption does.
+    let coupon: Option<(String, String)> = conn
+        .query_row(
+            "SELECT id, promotion_id FROM coupon_codes WHERE code = ?",
+            [code.to_uppercase()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_db_error)?;
+    let Some((coupon_id, promotion_id)) = coupon else {
+        return Ok(());
+    };
+
+    let already_recorded: Option<String> = conn
+        .query_row(
+            "SELECT id FROM promotion_usage WHERE cart_id = ? AND coupon_id = ? LIMIT 1",
+            [cart.id.to_string(), coupon_id.clone()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_db_error)?;
+    if already_recorded.is_some() {
+        return Ok(());
+    }
+
+    if let Some(customer_id) = customer_id {
+        for (table, id, limit_column, message) in [
+            (
+                "promotions",
+                promotion_id.clone(),
+                "promotion_id",
+                "Per-customer promotion usage limit reached",
+            ),
+            (
+                "coupon_codes",
+                coupon_id.clone(),
+                "coupon_id",
+                "Per-customer coupon usage limit reached",
+            ),
+        ] {
+            let limit: Option<i64> = conn
+                .query_row(
+                    &format!("SELECT per_customer_limit FROM {table} WHERE id = ?"),
+                    [&id],
+                    |row| row.get(0),
+                )
+                .map_err(map_db_error)?;
+            let Some(limit) = limit else { continue };
+            let used: i64 = conn
+                .query_row(
+                    &format!(
+                        "SELECT COUNT(*) FROM promotion_usage
+                         WHERE {limit_column} = ?1 AND customer_id = ?2"
+                    ),
+                    [&id, &customer_id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(map_db_error)?;
+            if used >= limit {
+                return Err(CommerceError::ValidationError(message.to_string()));
+            }
+        }
+    }
+
+    // The total limits consumption advances under, checked the way the guarded
+    // The guarded updates check them (`usage_count < limit`).
+    let promotion: Option<(Option<i64>, i64)> = conn
+        .query_row(
+            "SELECT total_usage_limit, usage_count FROM promotions WHERE id = ?",
+            [&promotion_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_db_error)?;
+    match promotion {
+        Some((Some(limit), used)) if used >= limit => {
+            return Err(CommerceError::ValidationError(
+                "Promotion not found or usage limit reached".to_string(),
+            ));
+        }
+        Some(_) => {}
+        None => {
+            return Err(CommerceError::ValidationError(
+                "Promotion not found or usage limit reached".to_string(),
+            ));
+        }
+    }
+    let coupon: (Option<i64>, i64) = conn
+        .query_row(
+            "SELECT usage_limit, usage_count FROM coupon_codes WHERE id = ?",
+            [&coupon_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(map_db_error)?;
+    if let (Some(limit), used) = coupon {
+        if used >= limit {
+            return Err(CommerceError::ValidationError(
+                "Coupon not found or usage limit reached".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The catalogue's own price for the line a cart mutation names, if the line
+/// names a catalogue variant.
+///
+/// Resolution order matches the embedded accessor it replaces: the explicit
+/// `variant_id` first, then the SKU (catalogue SKUs are variant-level). A line
+/// that resolves to nothing is an ad-hoc line and keeps the caller's price.
+pub(crate) fn catalog_unit_price_with_conn(
+    conn: &rusqlite::Connection,
+    variant_id: Option<Uuid>,
+    sku: &str,
+) -> Result<Option<Decimal>> {
+    let mut price: Option<String> = None;
+    if let Some(variant_id) = variant_id {
+        price = conn
+            .query_row(
+                "SELECT price FROM product_variants WHERE id = ?",
+                [variant_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_db_error)?;
+    }
+    if price.is_none() && !sku.trim().is_empty() {
+        price = conn
+            .query_row("SELECT price FROM product_variants WHERE sku = ?", [sku], |row| row.get(0))
+            .optional()
+            .map_err(map_db_error)?;
+    }
+    match price {
+        Some(price) => Ok(Some(parse_decimal_err(&price, "product_variant", "price")?)),
+        None => Ok(None),
+    }
+}
+
+/// THE guard every path that puts a SKU on a cart line runs, inside that
+/// path's own write transaction: `create` with `items`, `add_item`, and
+/// `update_item` when it raises a line or reprices it.
+///
+/// Two rules, both of which used to be enforceable only somewhere else:
+///
+/// - **Purchasability.** A SKU that resolves to the catalogue must still be
+///   sellable; an archived product or a soft-deleted variant is not. SKUs the
+///   catalogue has never heard of report `NotInCatalog`, which is sellable, so
+///   ad-hoc lines keep working.
+/// - **Catalogue price.** Prices are never client-trusted for catalogue lines:
+///   when the line resolves to a catalogue variant, the caller's `unit_price`
+///   must equal the catalogue price. This lived only in the embedded accessor
+///   (`stateset_embedded::Carts::enforce_catalog_price`), so every other caller
+///   of `db.carts()` — the whole async Postgres API included — priced from the
+///   client. Ad-hoc lines keep the caller's price.
+pub(crate) fn guard_cart_line_with_conn(
+    conn: &rusqlite::Connection,
+    variant_id: Option<Uuid>,
+    sku: &str,
+    unit_price: Decimal,
+) -> Result<()> {
+    super::products::variant_is_purchasable_with_conn(conn, sku)?.ensure_sellable(sku)?;
+    if let Some(catalog) = catalog_unit_price_with_conn(conn, variant_id, sku)? {
+        if catalog != unit_price {
+            return Err(CommerceError::ValidationError(format!(
+                "unit_price {unit_price} for SKU '{sku}' does not match the catalog price \
+                 {catalog}; catalog lines are priced from the catalog"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Invariant M1 (`commerce.money.scale_exceeds_currency`) for a line being
+/// added: no money input may carry more decimals than the cart currency's
+/// minor unit, because the line total and cart subtotal are rounded to it
+/// and a sub-minor-unit price would silently lose money.
+pub(crate) fn validate_add_item_money(currency: CurrencyCode, item: &AddCartItem) -> Result<()> {
+    validate_money_scale(currency, item.unit_price)?;
+    if let Some(original) = item.original_price {
+        validate_money_scale(currency, original)?;
+    }
+    Ok(())
+}
+
+/// Invariant M1 for a line update (see [`validate_add_item_money`]).
+pub(crate) fn validate_update_cart_item_money(
+    currency: CurrencyCode,
+    input: &UpdateCartItem,
+) -> Result<()> {
+    if let Some(unit_price) = input.unit_price {
+        validate_money_scale(currency, unit_price)?;
+    }
+    if let Some(discount) = input.discount_amount {
+        validate_money_scale(currency, discount)?;
+    }
+    Ok(())
 }
 
 /// Reject a cart-item update that would store a non-positive quantity, a
@@ -2352,6 +2747,472 @@ mod tests {
             unit_price: price,
             ..Default::default()
         }
+    }
+
+    /// A cart line whose SKU resolves to the catalogue must be sellable:
+    /// archiving the product (or soft-deleting the variant) withdraws it from
+    /// sale immediately, while SKUs that are not in the catalogue stay
+    /// addable so ad-hoc lines keep working.
+    #[test]
+    fn add_item_refuses_a_sku_withdrawn_from_the_catalogue() {
+        use stateset_core::{
+            CreateProduct, CreateProductVariant, ProductRepository, ProductStatus, UpdateProduct,
+        };
+
+        let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+        let (carts, products) = (db.carts(), db.products());
+        let product = products
+            .create(CreateProduct {
+                name: "Catalogue widget".into(),
+                variants: Some(vec![CreateProductVariant {
+                    sku: "SKU-CATALOGUE".into(),
+                    price: dec!(10.00),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .expect("create product");
+        products
+            .update(
+                product.id,
+                UpdateProduct { status: Some(ProductStatus::Active), ..Default::default() },
+            )
+            .expect("activate");
+
+        let cart = carts.create(CreateCart::default()).expect("cart");
+        carts
+            .add_item(cart.id, add_item("SKU-CATALOGUE", 1, dec!(10.00)))
+            .expect("an active catalogue SKU is sellable");
+        // A SKU the catalogue has never heard of is an ad-hoc line, still fine.
+        carts.add_item(cart.id, add_item("SKU-ADHOC", 1, dec!(3.00))).expect("ad-hoc line");
+
+        // A second product, withdrawn before anything references it. (Archiving
+        // the first one is refused precisely because the cart above holds it.)
+        let withdrawn = products
+            .create(CreateProduct {
+                name: "Withdrawn widget".into(),
+                variants: Some(vec![CreateProductVariant {
+                    sku: "SKU-WITHDRAWN".into(),
+                    price: dec!(10.00),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .expect("create second product");
+        products
+            .update(
+                withdrawn.id,
+                UpdateProduct { status: Some(ProductStatus::Active), ..Default::default() },
+            )
+            .expect("activate");
+        products
+            .update(
+                withdrawn.id,
+                UpdateProduct { status: Some(ProductStatus::Archived), ..Default::default() },
+            )
+            .expect("archive");
+
+        let err = carts
+            .add_item(cart.id, add_item("SKU-WITHDRAWN", 1, dec!(10.00)))
+            .expect_err("an archived product must not be addable");
+        match &err {
+            CommerceError::ValidationError(message) => {
+                assert!(message.contains("SKU-WITHDRAWN"), "{message}");
+                assert!(message.contains("not purchasable"), "{message}");
+            }
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
+        // The ad-hoc SKU is unaffected.
+        carts.add_item(cart.id, add_item("SKU-ADHOC", 1, dec!(3.00))).expect("ad-hoc still fine");
+    }
+
+    /// An ACTIVE catalogue product with a single variant `sku` priced at
+    /// `price`, ready to be put on a cart line.
+    fn catalogue_product(
+        products: &crate::sqlite::SqliteProductRepository,
+        name: &str,
+        sku: &str,
+        price: Decimal,
+    ) -> stateset_core::Product {
+        use stateset_core::{
+            CreateProduct, CreateProductVariant, ProductRepository, ProductStatus, UpdateProduct,
+        };
+        let product = products
+            .create(CreateProduct {
+                name: name.into(),
+                variants: Some(vec![CreateProductVariant {
+                    sku: sku.into(),
+                    price,
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .expect("create product");
+        products
+            .update(
+                product.id,
+                UpdateProduct { status: Some(ProductStatus::Active), ..Default::default() },
+            )
+            .expect("activate")
+    }
+
+    /// `create` with `items` reaches `add_item_internal` directly, so it used
+    /// to skip the purchasability guard `add_item` runs: a withdrawn
+    /// catalogue SKU entered the cart at creation time.
+    #[test]
+    fn create_with_items_refuses_a_sku_withdrawn_from_the_catalogue() {
+        use stateset_core::{ProductRepository, ProductStatus, UpdateProduct};
+
+        let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+        let (carts, products) = (db.carts(), db.products());
+        let withdrawn = catalogue_product(&products, "Withdrawn", "SKU-GONE", dec!(10.00));
+        products
+            .update(
+                withdrawn.id,
+                UpdateProduct { status: Some(ProductStatus::Archived), ..Default::default() },
+            )
+            .expect("archive");
+
+        let err = carts
+            .create(CreateCart {
+                items: Some(vec![add_item("SKU-GONE", 1, dec!(10.00))]),
+                ..Default::default()
+            })
+            .expect_err("a withdrawn SKU must not enter a cart at creation time");
+        match &err {
+            CommerceError::ValidationError(message) => {
+                assert!(message.contains("SKU-GONE"), "{message}");
+                assert!(message.contains("not purchasable"), "{message}");
+            }
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
+        // The whole create rolled back: no orphan cart, no orphan line.
+        assert!(carts.list(CartFilter::default()).expect("list").is_empty());
+
+        // An active catalogue SKU and an ad-hoc SKU both still create fine.
+        catalogue_product(&products, "Live", "SKU-LIVE", dec!(4.00));
+        let cart = carts
+            .create(CreateCart {
+                items: Some(vec![
+                    add_item("SKU-LIVE", 1, dec!(4.00)),
+                    add_item("SKU-ADHOC", 2, dec!(3.00)),
+                ]),
+                ..Default::default()
+            })
+            .expect("create with sellable lines");
+        let cart = carts.get(cart.id).expect("ok").expect("found");
+        assert_eq!(cart.items.len(), 2);
+        assert_eq!(cart.subtotal, dec!(10.00));
+    }
+
+    /// `create_batch_atomic` is a third path that puts SKUs on cart lines, and
+    /// it reached `add_item_internal` unguarded too.
+    #[test]
+    fn create_batch_atomic_refuses_a_sku_withdrawn_from_the_catalogue() {
+        use stateset_core::{ProductRepository, ProductStatus, UpdateProduct};
+
+        let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+        let (carts, products) = (db.carts(), db.products());
+        catalogue_product(&products, "Live", "SKU-BATCH-LIVE", dec!(5.00));
+        let withdrawn = catalogue_product(&products, "Gone", "SKU-BATCH-GONE", dec!(10.00));
+        products
+            .update(
+                withdrawn.id,
+                UpdateProduct { status: Some(ProductStatus::Archived), ..Default::default() },
+            )
+            .expect("archive");
+
+        let err = carts
+            .create_batch_atomic(vec![
+                CreateCart {
+                    items: Some(vec![add_item("SKU-BATCH-LIVE", 1, dec!(5.00))]),
+                    ..Default::default()
+                },
+                CreateCart {
+                    items: Some(vec![add_item("SKU-BATCH-GONE", 1, dec!(10.00))]),
+                    ..Default::default()
+                },
+            ])
+            .expect_err("a withdrawn SKU must not enter a cart through the batch path");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        assert!(
+            carts.list(CartFilter::default()).expect("list").is_empty(),
+            "an atomic batch must roll back entirely"
+        );
+
+        // A batch line priced away from the catalogue is refused too.
+        let err = carts
+            .create_batch_atomic(vec![CreateCart {
+                items: Some(vec![add_item("SKU-BATCH-LIVE", 1, dec!(1.00))]),
+                ..Default::default()
+            }])
+            .expect_err("batch lines are priced from the catalogue");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+        carts
+            .create_batch_atomic(vec![CreateCart {
+                items: Some(vec![add_item("SKU-BATCH-LIVE", 2, dec!(5.00))]),
+                ..Default::default()
+            }])
+            .expect("sellable, catalogue-priced lines still batch-create");
+    }
+
+    /// Raising the quantity of a line whose SKU has since been withdrawn must
+    /// be refused; shrinking it must not, or a cart holding a withdrawn SKU
+    /// would be stuck.
+    #[test]
+    fn update_item_refuses_raising_quantity_on_a_withdrawn_sku() {
+        let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+        let (carts, products) = (db.carts(), db.products());
+        catalogue_product(&products, "Doomed", "SKU-DOOM", dec!(10.00));
+        let cart = carts.create(CreateCart::default()).expect("cart");
+        let line = carts.add_item(cart.id, add_item("SKU-DOOM", 2, dec!(10.00))).expect("add");
+
+        // Withdraw the variant out from under the live cart line. The
+        // repository refuses to soft-delete a variant a cart still holds, so
+        // this stands in for the withdrawal happening first, elsewhere.
+        db.conn()
+            .expect("conn")
+            .execute("UPDATE product_variants SET is_active = 0 WHERE sku = ?", ["SKU-DOOM"])
+            .expect("withdraw the variant");
+
+        let err = carts
+            .update_item(line.id, UpdateCartItem { quantity: Some(5), ..Default::default() })
+            .expect_err("must not grow a line on a withdrawn SKU");
+        match &err {
+            CommerceError::ValidationError(message) => {
+                assert!(message.contains("SKU-DOOM"), "{message}");
+                assert!(message.contains("no longer available"), "{message}");
+            }
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
+        let cart = carts.get(cart.id).expect("ok").expect("found");
+        assert_eq!(cart.items[0].quantity, 2, "the refused update must roll back");
+
+        // Shrinking still works: the customer can back out of a dead line.
+        carts
+            .update_item(line.id, UpdateCartItem { quantity: Some(1), ..Default::default() })
+            .expect("shrinking a withdrawn line is allowed");
+        let cart = carts.get(cart.id).expect("ok").expect("found");
+        assert_eq!(cart.items[0].quantity, 1);
+        carts.remove_item(line.id).expect("removing is allowed");
+    }
+
+    /// Catalogue lines are priced from the CATALOGUE on every path, not from
+    /// the client. This lived only in the embedded accessor, so every caller
+    /// of `db.carts()` (the whole async Postgres API included) could name its
+    /// own price. Ad-hoc SKUs stay client-priced.
+    #[test]
+    fn cart_lines_are_priced_from_the_catalogue_not_the_client() {
+        let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+        let (carts, products) = (db.carts(), db.products());
+        catalogue_product(&products, "Priced", "SKU-PRICED", dec!(25.00));
+
+        let expect_price_refusal = |err: &CommerceError| match err {
+            CommerceError::ValidationError(message) => {
+                assert!(message.contains("SKU-PRICED"), "{message}");
+                assert!(message.contains("catalog price 25.00"), "{message}");
+            }
+            other => panic!("expected ValidationError, got {other:?}"),
+        };
+
+        // create
+        let err = carts
+            .create(CreateCart {
+                items: Some(vec![add_item("SKU-PRICED", 1, dec!(1.00))]),
+                ..Default::default()
+            })
+            .expect_err("create must not price a catalogue line from the client");
+        expect_price_refusal(&err);
+
+        // add_item
+        let cart = carts.create(CreateCart::default()).expect("cart");
+        let err = carts
+            .add_item(cart.id, add_item("SKU-PRICED", 1, dec!(1.00)))
+            .expect_err("add_item must not price a catalogue line from the client");
+        expect_price_refusal(&err);
+
+        // The catalogue price itself is accepted, and ad-hoc lines are free.
+        let line = carts.add_item(cart.id, add_item("SKU-PRICED", 1, dec!(25.00))).expect("add");
+        carts.add_item(cart.id, add_item("SKU-ADHOC", 1, dec!(7.77))).expect("ad-hoc line");
+
+        // update_item repricing
+        let err = carts
+            .update_item(
+                line.id,
+                UpdateCartItem { unit_price: Some(dec!(0.01)), ..Default::default() },
+            )
+            .expect_err("update_item must not reprice a catalogue line");
+        expect_price_refusal(&err);
+        let cart = carts.get(cart.id).expect("ok").expect("found");
+        assert_eq!(cart.subtotal, dec!(32.77));
+    }
+
+    /// `set_tax` writes money straight onto the cart. It must reject a
+    /// negative amount (which lowers `grand_total`), an amount finer than the
+    /// currency's minor unit, and any cart that is no longer active.
+    #[test]
+    fn set_tax_refuses_negative_sub_cent_and_inactive_carts() {
+        let repo = fresh_repo();
+        let cart = repo
+            .create(CreateCart {
+                items: Some(vec![add_item("SKU-TAX", 1, dec!(100.00))]),
+                ..Default::default()
+            })
+            .expect("create");
+
+        let err = repo.set_tax(cart.id, dec!(-5.00)).expect_err("negative tax");
+        assert!(
+            matches!(&err, CommerceError::ValidationError(m) if m.contains("must not be negative")),
+            "got {err:?}"
+        );
+        let err = repo.set_tax(cart.id, dec!(0.005)).expect_err("sub-cent tax");
+        assert!(matches!(err, CommerceError::MoneyScaleExceedsCurrency { .. }), "got {err:?}");
+
+        let stored = repo.get(cart.id).expect("ok").expect("found");
+        assert_eq!(stored.tax_amount, dec!(0), "a refused set_tax must not write");
+        assert_eq!(stored.grand_total, dec!(100.00));
+
+        let taxed = repo.set_tax(cart.id, dec!(8.25)).expect("a real tax amount");
+        assert_eq!(taxed.tax_amount, dec!(8.25));
+        assert_eq!(taxed.grand_total, dec!(108.25));
+
+        repo.cancel(cart.id).expect("cancel");
+        let err =
+            repo.set_tax(cart.id, dec!(1.00)).expect_err("a cancelled cart must not be taxed");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        assert_eq!(repo.get(cart.id).expect("ok").expect("found").tax_amount, dec!(8.25));
+    }
+
+    /// A completed cart's totals are settled against a minted order: re-taxing
+    /// it rewrites money nobody will collect.
+    #[test]
+    fn set_tax_refuses_a_completed_cart() {
+        let repo = fresh_repo();
+        let cart = checkoutable_cart(&repo);
+        let result = repo.complete(cart.id).expect("checkout");
+        let err =
+            repo.set_tax(cart.id, dec!(999.00)).expect_err("a completed cart must not be re-taxed");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        let cart = repo.get(cart.id).expect("ok").expect("found");
+        assert_eq!(cart.tax_amount, dec!(0));
+        assert_eq!(cart.grand_total, result.total_charged);
+    }
+
+    /// `set_shipping` carries the same money guard as `set_tax`.
+    #[test]
+    fn set_shipping_refuses_negative_and_sub_cent_amounts() {
+        let repo = fresh_repo();
+        let cart = repo
+            .create(CreateCart {
+                items: Some(vec![add_item("SKU-SHIP", 1, dec!(50.00))]),
+                ..Default::default()
+            })
+            .expect("create");
+        let shipping = |amount: Decimal| SetCartShipping {
+            shipping_address: addr(),
+            shipping_method: Some("Ground".into()),
+            shipping_carrier: Some("USPS".into()),
+            shipping_amount: Some(amount),
+        };
+
+        let err = repo.set_shipping(cart.id, shipping(dec!(-1.00))).expect_err("negative shipping");
+        assert!(
+            matches!(&err, CommerceError::ValidationError(m) if m.contains("must not be negative")),
+            "got {err:?}"
+        );
+        let err = repo.set_shipping(cart.id, shipping(dec!(1.005))).expect_err("sub-cent shipping");
+        assert!(matches!(err, CommerceError::MoneyScaleExceedsCurrency { .. }), "got {err:?}");
+
+        let stored = repo.get(cart.id).expect("ok").expect("found");
+        assert_eq!(stored.shipping_amount, dec!(0), "a refused set_shipping must not write");
+        assert!(stored.shipping_method.is_none(), "nor may it write the method");
+
+        let shipped = repo.set_shipping(cart.id, shipping(dec!(6.50))).expect("real amount");
+        assert_eq!(shipped.shipping_amount, dec!(6.50));
+        assert_eq!(shipped.grand_total, dec!(56.50));
+
+        repo.abandon(cart.id).expect("abandon");
+        let err = repo.set_shipping(cart.id, shipping(dec!(1.00))).expect_err("abandoned cart");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+    }
+
+    /// Concurrent `add_item` calls on one cart must not lose an update in the
+    /// stored subtotal: each add takes the cart's write lock (`BEGIN
+    /// IMMEDIATE`) before summing its lines. Twin of the Postgres
+    /// `postgres_concurrent_add_item_keeps_subtotal_consistent`.
+    #[test]
+    fn concurrent_add_item_keeps_subtotal_consistent() {
+        let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+        let repo = db.carts();
+        let cart = repo.create(CreateCart::default()).expect("create");
+
+        const ADDS: i64 = 12;
+        let mut handles = Vec::new();
+        for n in 0..ADDS {
+            let carts = db.carts();
+            let cart_id = cart.id;
+            handles.push(std::thread::spawn(move || {
+                carts
+                    .add_item(cart_id, add_item("SKU-PAR", 1, Decimal::from(n + 1)))
+                    .expect("concurrent add")
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("join");
+        }
+
+        let cart = repo.get(cart.id).expect("ok").expect("found");
+        assert_eq!(cart.items.len(), ADDS as usize);
+        let expected = Decimal::from(ADDS * (ADDS + 1) / 2);
+        assert_eq!(cart.subtotal, expected, "stored subtotal lost a concurrent add");
+        assert_eq!(cart.grand_total, expected);
+    }
+
+    /// A `set_tax` racing concurrent `add_item` calls must land on top of a
+    /// consistent subtotal, never on a half-computed one: both take the cart's
+    /// write lock, and each writes its amount and reprices in one transaction.
+    #[test]
+    fn concurrent_set_tax_and_add_item_keep_the_cart_consistent() {
+        let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+        let repo = db.carts();
+        let cart = repo.create(CreateCart::default()).expect("create");
+        repo.add_item(cart.id, add_item("SKU-SEED", 1, dec!(10.00))).expect("seed line");
+
+        const ADDS: i64 = 8;
+        let mut handles = Vec::new();
+        for n in 0..ADDS {
+            let carts = db.carts();
+            let cart_id = cart.id;
+            handles.push(std::thread::spawn(move || {
+                carts
+                    .add_item(cart_id, add_item("SKU-RACE", 1, Decimal::from(n + 1)))
+                    .expect("concurrent add");
+            }));
+        }
+        let taxer = db.carts();
+        let cart_id = cart.id;
+        let tax_handle =
+            std::thread::spawn(move || taxer.set_tax(cart_id, dec!(3.00)).expect("set tax"));
+        for handle in handles {
+            handle.join().expect("join");
+        }
+        tax_handle.join().expect("join tax");
+
+        let cart = repo.get(cart.id).expect("ok").expect("found");
+        let expected_subtotal = dec!(10.00) + Decimal::from(ADDS * (ADDS + 1) / 2);
+        assert_eq!(cart.subtotal, expected_subtotal, "a concurrent add was lost");
+        // The tax lands somewhere between the amount set and that amount
+        // carried up to the final subtotal (`rescale_tax` follows the lines
+        // it was computed on), but it is always present and always priced
+        // into the stored grand total.
+        assert!(cart.tax_amount >= dec!(3.00), "the tax was lost: {}", cart.tax_amount);
+        assert_eq!(
+            cart.grand_total,
+            (cart.subtotal + cart.tax_amount + cart.shipping_amount - cart.discount_amount)
+                .round_dp(2),
+            "grand_total must agree with the parts it is made of"
+        );
     }
 
     #[test]
@@ -2537,6 +3398,67 @@ mod tests {
             .expect("create");
         repo.set_shipping_address(cart.id, addr()).expect("ship addr");
         repo.get(cart.id).expect("ok").expect("found")
+    }
+
+    /// Guest checkout mints its customer through the customers repository's
+    /// get-or-create, so the row carries the normalised `email_key` and is
+    /// retrievable by e-mail afterwards. It used to open-code an INSERT that
+    /// never set the key: the customer was unreachable by e-mail, and two
+    /// guests differing only in case became two customers.
+    #[test]
+    fn guest_checkout_customer_is_retrievable_by_email_case_insensitively() {
+        use stateset_core::CustomerRepository;
+
+        let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+        let (carts, customers) = (db.carts(), db.customers());
+        let guest_cart = |email: &str| {
+            let cart = carts
+                .create(CreateCart {
+                    customer_email: Some(email.into()),
+                    customer_name: Some("Ada Lovelace".into()),
+                    items: Some(vec![add_item("SKU-GUEST", 1, dec!(10))]),
+                    shipping_address: Some(addr()),
+                    ..Default::default()
+                })
+                .expect("create");
+            carts.set_shipping_address(cart.id, addr()).expect("ship addr");
+            cart.id
+        };
+
+        let first = guest_cart("Guest.Buyer@Example.COM");
+        carts.complete(first).expect("guest checkout");
+
+        let created = customers
+            .get_by_email("guest.buyer@example.com")
+            .expect("ok")
+            .expect("a guest-checkout customer must be retrievable by e-mail");
+        assert_eq!(created.email, "guest.buyer@example.com", "stored normalised");
+        assert_eq!(
+            customers.get_by_email("GUEST.BUYER@EXAMPLE.com").expect("ok").map(|c| c.id),
+            Some(created.id),
+            "lookup is case-insensitive"
+        );
+
+        // A second guest whose address differs only in case is the SAME customer.
+        let second = guest_cart("guest.buyer@EXAMPLE.com");
+        carts.complete(second).expect("second guest checkout");
+        let second_cart = carts.get(second).expect("ok").expect("found");
+        assert_eq!(
+            second_cart.customer_id,
+            Some(created.id),
+            "case-differing guests must resolve to one customer"
+        );
+        assert_eq!(
+            customers
+                .list(stateset_core::CustomerFilter {
+                    email: Some("guest.buyer@example.com".into()),
+                    ..Default::default()
+                })
+                .expect("list")
+                .len(),
+            1,
+            "guest checkout must not mint a second customer for the same address"
+        );
     }
 
     #[test]
@@ -3096,6 +4018,123 @@ mod tests {
             assert_refused(f.carts.apply_discount(other.id, "CHECKOUT10"), "usage limit");
         }
 
+        /// Run the kernel's PREVIEW path (`validate_checkout_in_tx`) against a
+        /// cart and return what it decided, rolling back whatever it touched.
+        /// The refusal message, if it refused.
+        fn preview_checkout(f: &Fixture, cart_id: CartId) -> std::result::Result<(), String> {
+            let mut conn = f.carts.conn().expect("conn");
+            let tx = crate::sqlite::begin_immediate(&mut conn).expect("begin");
+            let outcome = f.carts.validate_checkout_in_tx(&tx, cart_id);
+            tx.rollback().expect("preview writes nothing");
+            outcome.map_err(|error| match &error {
+                rusqlite::Error::ToSqlConversionFailure(source) => source
+                    .downcast_ref::<CommerceError>()
+                    .map_or_else(|| error.to_string(), ToString::to_string),
+                _ => error.to_string(),
+            })
+        }
+
+        /// Preview and Apply must agree. Apply consumes the cart's coupon
+        /// (`consume_cart_coupon_in_tx`), and the per-customer limits it
+        /// enforces are checked against the customer Apply RESOLVES from the
+        /// guest cart's email — not the `customer_id` on the cart, which is
+        /// `None`. Preview never exercised that consumption at all, so an
+        /// exhausted coupon sailed through Preview and then failed Apply.
+        #[test]
+        fn preview_and_apply_agree_on_a_coupon_exhausted_for_the_customer() {
+            use stateset_core::{CreateCustomer, CustomerRepository};
+
+            let f = fixture();
+            let (_promo, coupon) = active_promo_with_coupon(
+                &f,
+                "PERCUST",
+                CreateCouponCode { per_customer_limit: Some(1), ..coupon_input() },
+            );
+            // The guest cart's email already belongs to a customer who has
+            // spent their one redemption of this coupon.
+            let existing =
+                f.db.customers()
+                    .create(CreateCustomer {
+                        email: "buyer@example.com".into(),
+                        first_name: "Ada".into(),
+                        last_name: "Lovelace".into(),
+                        ..Default::default()
+                    })
+                    .expect("customer");
+            f.promos
+                .record_usage(
+                    coupon.promotion_id,
+                    Some(coupon.id),
+                    Some(existing.id),
+                    None,
+                    None,
+                    dec!(1),
+                    "USD",
+                )
+                .expect("their earlier redemption");
+
+            let cart = checkoutable_cart(&f.carts);
+            assert!(cart.customer_id.is_none(), "guest cart: identity comes from the email");
+            f.carts.apply_discount(cart.id, "PERCUST").expect("applies to the anonymous cart");
+
+            let preview = preview_checkout(&f, cart.id).expect_err("preview must refuse");
+            let apply = f.carts.complete(cart.id).expect_err("apply must refuse");
+            assert!(
+                preview.contains("Per-customer coupon usage limit reached"),
+                "preview said {preview:?}"
+            );
+            assert_eq!(preview, apply.to_string(), "preview and apply must refuse identically");
+            assert_eq!(
+                f.carts.get(cart.id).expect("ok").expect("found").status,
+                CartStatus::Active,
+                "neither preview nor the failed apply may advance the cart"
+            );
+        }
+
+        /// The same agreement for a coupon whose TOTAL usage limit is spent
+        /// between apply and checkout.
+        #[test]
+        fn preview_and_apply_agree_on_a_coupon_exhausted_since_apply() {
+            let f = fixture();
+            let (promo, coupon) = active_promo_with_coupon(
+                &f,
+                "TOTALLIM",
+                CreateCouponCode { usage_limit: Some(1), ..coupon_input() },
+            );
+            let cart = checkoutable_cart(&f.carts);
+            f.carts.apply_discount(cart.id, "TOTALLIM").expect("applies while still available");
+            f.promos
+                .record_usage(promo.id, Some(coupon.id), None, None, None, dec!(1), "USD")
+                .expect("someone else takes the last use");
+
+            let preview = preview_checkout(&f, cart.id).expect_err("preview must refuse");
+            let apply = f.carts.complete(cart.id).expect_err("apply must refuse");
+            assert!(preview.to_lowercase().contains("usage limit"), "preview said {preview:?}");
+            assert!(matches!(apply, CommerceError::ValidationError(_)), "got {apply:?}");
+        }
+
+        /// Preview passes a cart whose coupon is still redeemable, and writes
+        /// nothing: the coupon is consumed exactly once, by Apply.
+        #[test]
+        fn preview_does_not_consume_the_coupon() {
+            let f = fixture();
+            let (promo, coupon) = active_promo_with_coupon(
+                &f,
+                "PREVIEWOK",
+                CreateCouponCode { usage_limit: Some(1), ..coupon_input() },
+            );
+            let cart = checkoutable_cart(&f.carts);
+            f.carts.apply_discount(cart.id, "PREVIEWOK").expect("applies");
+
+            preview_checkout(&f, cart.id).expect("preview accepts a redeemable coupon");
+            assert_eq!(f.promos.get_coupon(coupon.id).expect("ok").expect("coupon").usage_count, 0);
+            assert_eq!(f.promos.get(promo.id).expect("ok").expect("promo").usage_count, 0);
+            assert!(f.promos.usage_for_cart(cart.id).expect("ledger").is_empty());
+
+            f.carts.complete(cart.id).expect("apply succeeds where preview said it would");
+            assert_eq!(f.promos.get_coupon(coupon.id).expect("ok").expect("coupon").usage_count, 1);
+        }
+
         /// A coupon that was valid when applied but is exhausted by the time
         /// the cart checks out must not be honoured.
         #[test]
@@ -3393,6 +4432,264 @@ mod tests {
             assert_eq!(cart.items.len(), 1);
             assert_eq!(cart.items[0].quantity, 1);
             assert_eq!(cart.subtotal, dec!(10));
+        }
+
+        /// A bundle coupon is re-derived from the CURRENT lines like every
+        /// other promotion type: removing a bundle item drops the discount,
+        /// and adding it back revives it (no frozen snapshot).
+        #[test]
+        fn bundle_coupon_loses_discount_when_bundle_item_removed() {
+            let f = fixture();
+            let (widget, gadget) = (ProductId::new(), ProductId::new());
+            let promo = f
+                .promos
+                .create(CreatePromotion {
+                    code: Some("BUNDLE15-PROMO".into()),
+                    name: "Widget + Gadget bundle".into(),
+                    promotion_type: PromotionType::BundleDiscount,
+                    trigger: PromotionTrigger::CouponCode,
+                    target: PromotionTarget::Order,
+                    stacking: StackingBehavior::Stackable,
+                    bundle_product_ids: Some(vec![widget, gadget]),
+                    bundle_discount: Some(dec!(15)),
+                    ..Default::default()
+                })
+                .expect("create promo");
+            f.promos.activate(promo.id).expect("activate");
+            f.promos
+                .create_coupon(CreateCouponCode {
+                    promotion_id: promo.id,
+                    code: "BUNDLE15".into(),
+                    ..coupon_input()
+                })
+                .expect("coupon");
+
+            let cart = checkoutable_cart(&f.carts);
+            let line = |product: ProductId, sku: &str, price: Decimal| AddCartItem {
+                product_id: Some(product),
+                ..add_item(sku, 1, price)
+            };
+            f.carts.add_item(cart.id, line(widget, "SKU-WIDGET", dec!(40))).expect("add");
+            let gadget_line =
+                f.carts.add_item(cart.id, line(gadget, "SKU-GADGET", dec!(60))).expect("add");
+            let cart = f.carts.apply_discount(cart.id, "BUNDLE15").expect("applies");
+            assert_eq!(cart.subtotal, dec!(110));
+            assert_eq!(cart.discount_amount, dec!(15));
+            assert_eq!(cart.grand_total, dec!(95));
+
+            // Break the bundle: the discount must go, not stay frozen at $15.
+            f.carts.remove_item(gadget_line.id).expect("remove");
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert_eq!(cart.subtotal, dec!(50));
+            assert_eq!(cart.discount_amount, dec!(0), "bundle discount must be re-derived");
+            assert_eq!(cart.grand_total, dec!(50));
+            assert_eq!(cart.coupon_code.as_deref(), Some("BUNDLE15"), "coupon is kept");
+
+            // Complete the bundle again: the discount comes back on its own.
+            f.carts.add_item(cart.id, line(gadget, "SKU-GADGET", dec!(60))).expect("add");
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert_eq!(cart.discount_amount, dec!(15));
+            assert_eq!(cart.grand_total, dec!(95));
+        }
+
+        /// The kernel's checkout Preview (`validate_checkout_in_tx`) runs the
+        /// same coupon re-validation as Apply, so it cannot succeed where
+        /// Apply would refuse, and it reports the same error.
+        #[test]
+        fn checkout_preview_refuses_coupon_that_stopped_qualifying() {
+            let f = fixture();
+            pct_promo_with_minimum(&f, "TWENTY100", dec!(0.20), dec!(100));
+            let cart = checkoutable_cart(&f.carts);
+            let item = f.carts.add_item(cart.id, add_item("SKU-BIG", 1, dec!(90))).expect("add");
+            f.carts.apply_discount(cart.id, "TWENTY100").expect("applies at $100");
+            f.carts
+                .update_item(
+                    item.id,
+                    UpdateCartItem { unit_price: Some(dec!(20)), ..Default::default() },
+                )
+                .expect("reprice");
+
+            let preview = crate::sqlite::with_immediate_transaction(&f.carts.pool, |tx| {
+                f.carts.validate_checkout_in_tx(tx, cart.id)
+            });
+            let apply = f.carts.complete(cart.id);
+            let (preview_err, apply_err) = match (preview, apply) {
+                (
+                    Err(CommerceError::ValidationError(p)),
+                    Err(CommerceError::ValidationError(a)),
+                ) => (p, a),
+                other => panic!("preview and apply must both refuse: {other:?}"),
+            };
+            assert!(
+                preview_err.contains("TWENTY100") && preview_err.contains("no longer valid"),
+                "preview must name the coupon and the reason: {preview_err}"
+            );
+            assert_eq!(preview_err, apply_err, "preview and apply must agree");
+        }
+
+        /// `update` writing a discount (or coupon) must land in `grand_total`
+        /// through the shared totals path, never as a bare column write.
+        #[test]
+        fn update_with_discount_amount_recomputes_grand_total() {
+            let f = fixture();
+            let cart = checkoutable_cart(&f.carts);
+            assert_eq!(cart.grand_total, dec!(10));
+            let cart = f
+                .carts
+                .update(
+                    cart.id,
+                    UpdateCart {
+                        discount_amount: Some(dec!(3)),
+                        discount_description: Some("Manual".into()),
+                        ..Default::default()
+                    },
+                )
+                .expect("update");
+            assert_eq!(cart.discount_amount, dec!(3));
+            assert_eq!(cart.grand_total, dec!(7));
+
+            // Oversized manual discounts are capped, negative ones refused.
+            let cart = f
+                .carts
+                .update(
+                    cart.id,
+                    UpdateCart { discount_amount: Some(dec!(50)), ..Default::default() },
+                )
+                .expect("update");
+            assert_eq!(cart.discount_amount, dec!(10));
+            assert_eq!(cart.grand_total, dec!(0));
+            let err = f
+                .carts
+                .update(
+                    cart.id,
+                    UpdateCart { discount_amount: Some(dec!(-1)), ..Default::default() },
+                )
+                .expect_err("negative discount");
+            assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        }
+
+        /// Tax set on a cart follows its lines: the storage layer keeps the
+        /// effective rate across item mutations instead of carrying a stale
+        /// amount into `grand_total` (see `rescale_tax`).
+        #[test]
+        fn tax_follows_line_changes_proportionally() {
+            let f = fixture();
+            let cart = checkoutable_cart(&f.carts);
+            let cart = f.carts.set_tax(cart.id, dec!(0.80)).expect("tax");
+            assert_eq!(cart.grand_total, dec!(10.80));
+
+            let more = f.carts.add_item(cart.id, add_item("SKU-MORE", 1, dec!(10))).expect("add");
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert_eq!(cart.subtotal, dec!(20));
+            assert_eq!(cart.tax_amount, dec!(1.60), "tax must be recomputed for the new lines");
+            assert_eq!(cart.grand_total, dec!(21.60));
+
+            f.carts
+                .update_item(more.id, UpdateCartItem { quantity: Some(3), ..Default::default() })
+                .expect("qty");
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert_eq!(cart.subtotal, dec!(40));
+            assert_eq!(cart.tax_amount, dec!(3.20));
+            assert_eq!(cart.grand_total, dec!(43.20));
+
+            f.carts.clear_items(cart.id).expect("clear");
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert_eq!(cart.subtotal, dec!(0));
+            assert_eq!(cart.tax_amount, dec!(0), "an empty cart carries no tax");
+            assert_eq!(cart.grand_total, dec!(0));
+
+            // A cart that never had tax stays at zero.
+            let other = checkoutable_cart(&f.carts);
+            f.carts.add_item(other.id, add_item("SKU-X", 1, dec!(5))).expect("add");
+            assert_eq!(f.carts.get(other.id).expect("ok").expect("found").tax_amount, dec!(0));
+        }
+
+        /// Invariant M1: line money inputs cannot carry more decimals than the
+        /// cart currency's minor unit (the same rule orders enforce).
+        #[test]
+        fn add_and_update_item_reject_sub_minor_unit_money() {
+            let f = fixture();
+            let cart = checkoutable_cart(&f.carts);
+            let item = cart.items[0].clone();
+            let scale_err = |err: CommerceError| {
+                assert!(
+                    matches!(err, CommerceError::MoneyScaleExceedsCurrency { .. }),
+                    "expected MoneyScaleExceedsCurrency, got {err:?}"
+                );
+            };
+            scale_err(
+                f.carts.add_item(cart.id, add_item("SKU-TINY", 1, dec!(10.001))).expect_err("add"),
+            );
+            scale_err(
+                f.carts
+                    .add_item(
+                        cart.id,
+                        AddCartItem {
+                            original_price: Some(dec!(12.345)),
+                            ..add_item("SKU-ORIG", 1, dec!(10))
+                        },
+                    )
+                    .expect_err("original price"),
+            );
+            scale_err(
+                f.carts
+                    .update_item(
+                        item.id,
+                        UpdateCartItem { unit_price: Some(dec!(9.995)), ..Default::default() },
+                    )
+                    .expect_err("unit price"),
+            );
+            scale_err(
+                f.carts
+                    .update_item(
+                        item.id,
+                        UpdateCartItem { discount_amount: Some(dec!(0.001)), ..Default::default() },
+                    )
+                    .expect_err("discount"),
+            );
+            scale_err(
+                f.carts
+                    .create(CreateCart {
+                        items: Some(vec![add_item("SKU-NEW", 1, dec!(1.234))]),
+                        ..Default::default()
+                    })
+                    .expect_err("create"),
+            );
+            // Trailing zeros are not extra scale.
+            f.carts.add_item(cart.id, add_item("SKU-OK", 1, dec!(10.500))).expect("ok");
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert_eq!(cart.items.len(), 2);
+            assert_eq!(cart.subtotal, dec!(20.50));
+        }
+
+        /// `remove_discount` on a cart whose coupon is in the "not applied"
+        /// state clears the coupon, its message and the discount, and the
+        /// cart checks out again.
+        #[test]
+        fn remove_discount_recovers_from_not_applied_state() {
+            let f = fixture();
+            pct_promo_with_minimum(&f, "TWENTY100", dec!(0.20), dec!(100));
+            let cart = checkoutable_cart(&f.carts);
+            let item = f.carts.add_item(cart.id, add_item("SKU-BIG", 1, dec!(90))).expect("add");
+            f.carts.apply_discount(cart.id, "TWENTY100").expect("applies at $100");
+            f.carts
+                .update_item(
+                    item.id,
+                    UpdateCartItem { unit_price: Some(dec!(20)), ..Default::default() },
+                )
+                .expect("reprice");
+            let cart = f.carts.get(cart.id).expect("ok").expect("found");
+            assert!(cart.discount_description.unwrap_or_default().contains("not applied"));
+            f.carts.complete(cart.id).expect_err("refused while not applied");
+
+            let cart = f.carts.remove_discount(cart.id).expect("remove");
+            assert_eq!(cart.coupon_code, None);
+            assert_eq!(cart.discount_amount, dec!(0));
+            assert_eq!(cart.discount_description, None);
+            assert_eq!(cart.grand_total, dec!(30));
+
+            let result = f.carts.complete(cart.id).expect("checks out without the coupon");
+            assert_eq!(result.total_charged, dec!(30));
         }
     }
 }

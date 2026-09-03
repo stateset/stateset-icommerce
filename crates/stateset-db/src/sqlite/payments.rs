@@ -9,7 +9,7 @@ use super::{
 use crate::KernelOutboxEvent;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{Row, params};
+use rusqlite::{OptionalExtension, Row, params};
 use stateset_core::{
     BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CurrencyCode,
     CustomerId, InvoiceId, OrderId, OrderStatus, Payment, PaymentFilter, PaymentId, PaymentMethod,
@@ -97,6 +97,37 @@ fn statuses_allowing_transition_to(target: PaymentTransactionStatus) -> String {
         .map(|status| format!("'{status}'"))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Refuse `update` writes that would move a payment INTO `Refunded` /
+/// `PartiallyRefunded` as a bare status flip.
+///
+/// Decision: those two statuses are ledger states — they are written only by
+/// `complete_refund`, which also advances `amount_refunded` and holds the
+/// refund row. The state machine allows `Completed -> Refunded`,
+/// `PartiallyRefunded -> Refunded` and `Disputed -> Refunded`, but taking any
+/// of them through `update` left `amount_refunded` at its old value, so
+/// `open_captures_for_order` still reported the money as outstanding and the
+/// order could never be cancelled or deleted cleanly. A no-op write (already
+/// in that status) is still allowed so metadata patches on refunded payments
+/// keep working. Worded identically in the Postgres backend.
+pub(crate) fn ensure_not_refund_by_status_flip(
+    current: PaymentTransactionStatus,
+    target: PaymentTransactionStatus,
+) -> Result<()> {
+    if current != target
+        && matches!(
+            target,
+            PaymentTransactionStatus::Refunded | PaymentTransactionStatus::PartiallyRefunded
+        )
+    {
+        return Err(CommerceError::ValidationError(format!(
+            "Payment status cannot be set to {target} directly (from {current}); \
+             refunds are recorded through create_refund + complete_refund so that \
+             amount_refunded and the refund ledger stay consistent"
+        )));
+    }
+    Ok(())
 }
 
 /// Conflict error for a refused status write, naming the status the payment is
@@ -217,6 +248,154 @@ pub(crate) fn open_captures_for_order_conn(
         }
     }
     Ok(open)
+}
+
+/// Money still refundable on `payment`, on the caller's transaction: the
+/// payment's remaining balance minus every in-flight (`pending`/`processing`)
+/// refund, exactly as `create_refund` reserves it. Zero when the payment is
+/// not in a refundable status.
+pub(crate) fn refundable_remaining_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    payment: &Payment,
+) -> rusqlite::Result<rust_decimal::Decimal> {
+    if !payment.status.is_refundable() {
+        return Ok(rust_decimal::Decimal::ZERO);
+    }
+    let mut in_flight = rust_decimal::Decimal::ZERO;
+    let mut stmt = tx.prepare(
+        "SELECT amount FROM refunds WHERE payment_id = ? AND status IN ('pending', 'processing')",
+    )?;
+    let rows = stmt.query_map([payment.id.to_string()], |row| {
+        let amount: String = row.get(0)?;
+        parse_decimal_row(&amount, "refund", "amount")
+    })?;
+    for row in rows {
+        in_flight += row?;
+    }
+    Ok((payment.refundable_remaining() - in_flight).max(rust_decimal::Decimal::ZERO))
+}
+
+/// Create a `pending` refund of `amount` against `payment` on the caller's
+/// transaction, returning the refund id. The in-transaction twin of
+/// [`PaymentRepository::create_refund`] for callers (the returns module) that
+/// must settle a refund in the SAME commit as their own state change. Applies
+/// the same rules: refundable status, positive amount, and `amount` within the
+/// remaining balance net of in-flight refunds. `idempotency_key` is honoured
+/// inside the transaction: an existing refund with the key is returned as-is.
+pub(crate) fn create_refund_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    payment: &Payment,
+    amount: rust_decimal::Decimal,
+    reason: Option<&str>,
+    idempotency_key: Option<&str>,
+    notes: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<Uuid> {
+    if let Some(key) = idempotency_key {
+        let existing: Option<String> = tx
+            .query_row("SELECT id FROM refunds WHERE idempotency_key = ?", [key], |row| row.get(0))
+            .optional()?;
+        if let Some(id) = existing {
+            return parse_uuid_row(&id, "refund", "id");
+        }
+    }
+    let smuggle = |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
+    let mut reserved = payment.clone();
+    reserved.amount_refunded +=
+        payment.refundable_remaining() - refundable_remaining_in_tx(tx, payment)?;
+    let refund_amount = reserved.validate_refund(Some(amount)).map_err(smuggle)?;
+
+    let id = Uuid::new_v4();
+    let refund_number = generate_refund_number();
+    tx.execute(
+        "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason, external_id, idempotency_key, notes, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+        params![
+            id.to_string(),
+            refund_number,
+            payment.id.to_string(),
+            RefundStatus::Pending.to_string(),
+            refund_amount.to_string(),
+            payment.currency,
+            reason,
+            idempotency_key,
+            notes,
+            now.to_rfc3339(),
+            now.to_rfc3339(),
+        ],
+    )?;
+    append_kernel_event_tx(
+        tx,
+        &KernelOutboxEvent::domain(
+            "payments.refund_created.v1",
+            "refund",
+            id.to_string(),
+            serde_json::json!({
+                "refund_id": id.to_string(),
+                "refund_number": refund_number,
+                "payment_id": payment.id.to_string(),
+                "amount": refund_amount.to_string(),
+                "currency": payment.currency.as_str(),
+                "status": RefundStatus::Pending.to_string(),
+            }),
+            idempotency_key.map(str::to_string),
+        ),
+    )?;
+    Ok(id)
+}
+
+/// Statuses a payment can be voided from when its order is force-cancelled:
+/// money that is in flight but not yet captured.
+const IN_FLIGHT_STATUSES: [PaymentTransactionStatus; 3] = [
+    PaymentTransactionStatus::Pending,
+    PaymentTransactionStatus::Processing,
+    PaymentTransactionStatus::RequiresAction,
+];
+
+/// Void (`cancelled`) every in-flight payment against `order_id`, returning the
+/// ids voided. Runs on the caller's transaction so a forced order cancel
+/// (`UpdateOrder::void_payments`) voids the holds in the same commit as the
+/// status change. Settled payments (`completed`/`partially_refunded`/
+/// `disputed`) are NOT touched: captured money leaves through a refund, never
+/// through a status flip (see `payment_transition_allowed`).
+pub(crate) fn void_in_flight_payments_for_order_conn(
+    conn: &rusqlite::Connection,
+    order_id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> std::result::Result<Vec<Uuid>, rusqlite::Error> {
+    let in_flight =
+        IN_FLIGHT_STATUSES.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>().join(", ");
+    let ids: Vec<String> = conn
+        .prepare(&format!(
+            "SELECT id FROM payments WHERE order_id = ? AND status IN ({in_flight}) ORDER BY created_at"
+        ))?
+        .query_map([order_id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut voided = Vec::with_capacity(ids.len());
+    for id in ids {
+        let rows = conn.execute(
+            &format!(
+                "UPDATE payments SET status = ?, updated_at = ? WHERE id = ? AND status IN ({in_flight})"
+            ),
+            params![PaymentTransactionStatus::Cancelled.to_string(), now.to_rfc3339(), &id],
+        )?;
+        if rows == 1 {
+            voided.push(parse_uuid_row(&id, "payment", "id")?);
+        }
+    }
+    Ok(voided)
+}
+
+/// Whether any payment row references `order_id`, on the caller's connection.
+/// The orders module consults it inside its delete transaction: an order with
+/// payment history is a financial record and must not be erased.
+pub(crate) fn order_has_payments_conn(
+    conn: &rusqlite::Connection,
+    order_id: &str,
+) -> std::result::Result<bool, rusqlite::Error> {
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM payments WHERE order_id = ?)", [order_id], |row| {
+        row.get::<_, bool>(0)
+    })
 }
 
 #[derive(Debug)]
@@ -444,8 +623,13 @@ impl SqlitePaymentRepository {
 impl PaymentRepository for SqlitePaymentRepository {
     fn create(&self, input: CreatePayment) -> Result<Payment> {
         input.validate()?;
+        // A duplicate idempotency key is only a replay when it carries the
+        // SAME request; a different amount/order/currency/method under a
+        // reused key is a `Conflict`, never silently answered with the first
+        // payment (`Payment::check_idempotent_replay`).
         if let Some(key) = input.idempotency_key.as_deref() {
             if let Some(existing) = self.get_by_idempotency_key(key)? {
+                existing.check_idempotent_replay(&input)?;
                 return Ok(existing);
             }
         }
@@ -526,6 +710,7 @@ impl PaymentRepository for SqlitePaymentRepository {
             (&inserted, input.idempotency_key.as_deref())
         {
             if let Some(existing) = self.get_by_idempotency_key(key)? {
+                existing.check_idempotent_replay(&input)?;
                 return Ok(existing);
             }
         }
@@ -602,6 +787,7 @@ impl PaymentRepository for SqlitePaymentRepository {
             if !payment_transition_allowed(current, target) {
                 return Err(domain_err(transition_conflict(current, target)));
             }
+            ensure_not_refund_by_status_flip(current, target).map_err(domain_err)?;
 
             // A write that moves the payment from a non-capturing status into a
             // capturing one re-acquires a slice of the order total, so it gets
@@ -1408,6 +1594,7 @@ impl PaymentRepository for SqlitePaymentRepository {
             if !payment_transition_allowed(current, target) {
                 return Err(transition_conflict(current, target));
             }
+            ensure_not_refund_by_status_flip(current, target)?;
             // Same order guards as the single-row `update` when the write
             // re-acquires a slice of the order total.
             if !is_capturing(current) && is_capturing(target) {

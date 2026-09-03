@@ -1530,6 +1530,268 @@ pub struct A2ADisputeResolution {
     pub escrow: A2AEscrow,
 }
 
+// =============================================================================
+// A2A Credit Terms (net-30/60/90 between trusted agents) — durable ledger
+// =============================================================================
+
+/// Payment terms on an agent-to-agent credit line.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::EnumString,
+    Serialize,
+    Deserialize,
+    Default,
+)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum A2ACreditPaymentTerms {
+    /// Pay before delivery; charges are due immediately.
+    Prepaid,
+    #[strum(serialize = "net_15")]
+    #[serde(rename = "net_15")]
+    Net15,
+    #[default]
+    #[strum(serialize = "net_30")]
+    #[serde(rename = "net_30")]
+    Net30,
+    #[strum(serialize = "net_60")]
+    #[serde(rename = "net_60")]
+    Net60,
+    #[strum(serialize = "net_90")]
+    #[serde(rename = "net_90")]
+    Net90,
+}
+
+impl A2ACreditPaymentTerms {
+    /// Days a charge has before it is due.
+    #[must_use]
+    pub const fn days(self) -> u32 {
+        match self {
+            Self::Prepaid => 0,
+            Self::Net15 => 15,
+            Self::Net30 => 30,
+            Self::Net60 => 60,
+            Self::Net90 => 90,
+        }
+    }
+}
+
+/// Lifecycle state of an agent-to-agent credit line.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::EnumString,
+    Serialize,
+    Deserialize,
+    Default,
+)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum A2ACreditTermsStatus {
+    #[default]
+    Active,
+    Suspended,
+    Closed,
+    Defaulted,
+}
+
+/// Kind of ledger entry against a credit line.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::EnumString,
+    Serialize,
+    Deserialize,
+)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum A2ACreditEntryType {
+    /// Debtor drew on the line; increases the outstanding balance.
+    Charge,
+    /// Debtor paid down the line; decreases the outstanding balance.
+    Payment,
+}
+
+/// Durable, tenant-scoped credit line between a creditor and a debtor agent.
+///
+/// `outstanding_balance` is maintained by the repository under a write lock
+/// and every change is journaled as an [`A2ACreditEntry`]; it is never
+/// computed client-side.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct A2ACreditTerms {
+    pub id: Uuid,
+    pub tenant_id: String,
+    pub creditor_agent_id: String,
+    pub debtor_agent_id: String,
+    pub credit_limit: Decimal,
+    pub outstanding_balance: Decimal,
+    pub currency: String,
+    pub payment_terms: A2ACreditPaymentTerms,
+    pub status: A2ACreditTermsStatus,
+    pub min_trust_tier: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl A2ACreditTerms {
+    /// Credit still available to draw.
+    #[must_use]
+    pub fn available_credit(&self) -> Decimal {
+        self.credit_limit - self.outstanding_balance
+    }
+}
+
+/// Request to open a credit line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CreateA2ACreditTerms {
+    pub tenant_id: String,
+    pub creditor_agent_id: String,
+    pub debtor_agent_id: String,
+    pub credit_limit: Decimal,
+    /// ISO currency code; defaults to `USD`.
+    pub currency: Option<String>,
+    /// Defaults to `Net30`.
+    pub payment_terms: Option<A2ACreditPaymentTerms>,
+    /// Defaults to `standard`.
+    pub min_trust_tier: Option<String>,
+}
+
+/// Journal entry against a credit line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct A2ACreditEntry {
+    pub id: Uuid,
+    pub terms_id: Uuid,
+    pub tenant_id: String,
+    pub entry_type: A2ACreditEntryType,
+    pub amount: Decimal,
+    /// Outstanding balance after this entry was applied.
+    pub balance_after: Decimal,
+    pub reference_id: Option<String>,
+    pub notes: Option<String>,
+    /// When a charge falls due (`created_at + payment_terms.days()`).
+    pub due_date: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Charge or payment against a credit line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct A2ACreditMovement {
+    pub tenant_id: String,
+    pub terms_id: Uuid,
+    pub amount: Decimal,
+    pub reference_id: Option<String>,
+    pub notes: Option<String>,
+}
+
+/// Filter for listing credit lines within a tenant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct A2ACreditTermsFilter {
+    pub tenant_id: String,
+    pub creditor_agent_id: Option<String>,
+    pub debtor_agent_id: Option<String>,
+    pub status: Option<A2ACreditTermsStatus>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+// =============================================================================
+// A2A Agent Messaging — durable conversations
+// =============================================================================
+
+/// Delivery state of an agent-to-agent message.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::EnumString,
+    Serialize,
+    Deserialize,
+    Default,
+)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum A2AAgentMessageStatus {
+    #[default]
+    Pending,
+    Delivered,
+    Acknowledged,
+    Failed,
+    Expired,
+}
+
+/// Durable, tenant-scoped message between two agents.
+///
+/// `sequence_number` is allocated per `(tenant_id, conversation_id)` under a
+/// write lock and is unique within the conversation, so a reader can order a
+/// conversation deterministically.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct A2AAgentMessage {
+    pub id: Uuid,
+    pub tenant_id: String,
+    pub conversation_id: Uuid,
+    pub from_agent_id: Uuid,
+    pub to_agent_id: Uuid,
+    pub message_type: String,
+    pub payload: serde_json::Value,
+    pub status: A2AAgentMessageStatus,
+    pub sequence_number: u64,
+    pub attempts: u32,
+    pub max_attempts: u32,
+    pub next_retry_at: Option<DateTime<Utc>>,
+    pub acknowledged_at: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Request to send a message; a missing `conversation_id` starts a new one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SendA2AAgentMessage {
+    pub tenant_id: String,
+    pub conversation_id: Option<Uuid>,
+    pub from_agent_id: Uuid,
+    pub to_agent_id: Uuid,
+    pub message_type: String,
+    pub payload: serde_json::Value,
+    /// Defaults to 5.
+    pub max_attempts: Option<u32>,
+}
+
+/// Filter for listing messages within a tenant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct A2AAgentMessageFilter {
+    pub tenant_id: String,
+    pub conversation_id: Option<Uuid>,
+    pub to_agent_id: Option<Uuid>,
+    pub from_agent_id: Option<Uuid>,
+    pub status: Option<A2AAgentMessageStatus>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

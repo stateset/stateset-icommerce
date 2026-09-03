@@ -91,6 +91,7 @@ async fn postgres_list_billing_cycles_filters_by_date_and_orders_by_period_start
         cycle_number: 2,
         period_start: dt("2020-01-15T00:00:00Z"),
         period_end: dt("2020-01-31T00:00:00Z"),
+        claimed_by: None,
     })
     .await
     .expect("cycle 2");
@@ -99,6 +100,7 @@ async fn postgres_list_billing_cycles_filters_by_date_and_orders_by_period_start
         cycle_number: 3,
         period_start: dt("2020-02-15T00:00:00Z"),
         period_end: dt("2020-02-28T00:00:00Z"),
+        claimed_by: None,
     })
     .await
     .expect("cycle 3");

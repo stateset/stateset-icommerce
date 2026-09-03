@@ -18,6 +18,7 @@ stateset-primitives = { workspace = true }
 stateset-a2a = { workspace = true }
 stateset-authz = { workspace = true }
 stateset-observability = { workspace = true }
+stateset-jobs = { workspace = true }
 
 axum = { version = "0.8", features = ["json", "query"] }
 tower = { version = "0.5", features = ["timeout"] }

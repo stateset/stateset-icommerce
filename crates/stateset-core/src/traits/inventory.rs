@@ -42,10 +42,26 @@ pub trait InventoryRepository: Send + Sync {
         reference_id: &str,
     ) -> Result<Vec<InventoryReservation>>;
 
+    /// Sweep up to `limit` open reservations whose `expires_at` is before
+    /// `now`: flip each to `expired` and hand its units back to the balance
+    /// (`quantity_allocated` down, `quantity_available` up), all in one
+    /// transaction per call. Returns how many were expired; call again while
+    /// the result equals `limit` to drain a large backlog.
+    ///
+    /// `reserve`, `release_reservation` and `confirm_reservation` also expire
+    /// stale reservations lazily on the `(item, location)` they touch, so this
+    /// sweeper only has to catch balances nobody is touching — without it
+    /// `quantity_allocated` on an idle SKU would keep counting holds that
+    /// timed out long ago. Idempotent; schedule it (e.g. via
+    /// `stateset_jobs::ReservationSweepJob`).
+    fn expire_reservations(&self, now: chrono::DateTime<chrono::Utc>, limit: u32) -> Result<u64>;
+
     /// List inventory items with filter
     fn list(&self, filter: InventoryFilter) -> Result<Vec<InventoryItem>>;
 
-    /// Get items below reorder point
+    /// Get items whose available quantity is below their reorder threshold
+    /// (`reorder_point + safety_stock`) at any location. Balances without a
+    /// `reorder_point` never need reordering; each SKU appears once.
     fn get_reorder_needed(&self) -> Result<Vec<StockLevel>>;
 
     /// Record transaction
@@ -131,10 +147,26 @@ pub trait LotRepository: Send + Sync {
     /// Transfer lot between locations
     fn transfer(&self, input: TransferLot) -> Result<LotTransaction>;
 
-    /// Split a lot into two
+    /// Split `quantity` unreserved units off an `Active` lot into a new one.
+    ///
+    /// The placement rows move with the units, so both lots stay in step with
+    /// `inventory_balances` (nothing enters or leaves the location, it is
+    /// merely re-attributed) and the child is consumable like any other lot.
+    /// A `split` edge is recorded in the genealogy, so the child traces back
+    /// to the parent's receipt — see [`Self::get_lot_parents`].
     fn split(&self, input: SplitLot) -> Result<Lot>;
 
-    /// Merge multiple lots into one
+    /// Merge two or more unreserved, unquarantined `Active` lots of the same
+    /// SKU into one; the sources become `Consumed`.
+    ///
+    /// The sources' placements move onto the target, so the lot/inventory
+    /// invariant survives the merge and the merged lot is consumable.
+    ///
+    /// Provenance: the merged row keeps only the `supplier_lot` / `supplier_id`
+    /// / `work_order_id` / `purchase_order_id` that *every* source agrees on —
+    /// inheriting the first source's would fabricate an attribution for the
+    /// rest. One `merge` genealogy edge per source records the full picture,
+    /// and [`Self::trace`] walks it back to every original receipt.
     fn merge(&self, input: MergeLots) -> Result<Lot>;
 
     /// Quarantine a lot
@@ -155,6 +187,19 @@ pub trait LotRepository: Send + Sync {
 
     /// Get all locations for a lot
     fn get_lot_locations(&self, lot_id: Uuid) -> Result<Vec<LotLocation>>;
+
+    // Genealogy operations
+    /// The lots this lot was derived from: the parent of a `split`, or every
+    /// source of a `merge`. Empty for a lot created by a receipt.
+    ///
+    /// A merged lot has many parents and a single `lots` row cannot carry
+    /// their provenance, so the linkage is stored separately; `trace` walks it
+    /// transitively to reach the original receipts.
+    fn get_lot_parents(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>>;
+
+    /// The lots derived from this lot: split children, and the merge target it
+    /// was consumed into.
+    fn get_lot_children(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>>;
 
     // Certificate operations
     /// Add certificate to lot
@@ -179,10 +224,24 @@ pub trait LotRepository: Send + Sync {
     /// regardless of whether this sweeper has run.
     fn expire_lots(&self, now: chrono::DateTime<chrono::Utc>) -> Result<u64>;
 
+    /// Sweep lot reservations that expired before `now` without being
+    /// confirmed or released: close each one and hand its units back to the
+    /// lot (and to the linked inventory balance). Returns the number of
+    /// reservations released. Idempotent; `reserve` and `confirm_reservation`
+    /// also expire stale reservations lazily on the lot they touch, so the
+    /// sweeper only has to catch lots nobody is looking at.
+    fn release_expired_reservations(&self, now: chrono::DateTime<chrono::Utc>) -> Result<u64>;
+
     /// Get lots with available quantity for SKU
     fn get_available_lots_for_sku(&self, sku: &str) -> Result<Vec<Lot>>;
 
-    /// Trace lot (upstream and downstream)
+    /// Trace a lot upstream and downstream.
+    ///
+    /// Upstream is the lot's own receipt documents *plus* every ancestor
+    /// reached transitively through the genealogy graph and that ancestor's
+    /// receipt documents, so a merged or repeatedly-split lot resolves to all
+    /// of its origins. Downstream is the lot's consumption and shipment
+    /// transactions.
     fn trace(&self, lot_id: Uuid) -> Result<TraceabilityResult>;
 
     /// Count lots
@@ -230,7 +289,14 @@ pub trait SerialRepository: Send + Sync {
     /// Reserve a serial
     fn reserve(&self, input: ReserveSerialNumber) -> Result<SerialReservation>;
 
-    /// Release reservation
+    /// Release a reservation, returning the serial to `Available`.
+    ///
+    /// Allowed while the reservation still holds the unit — i.e. the serial is
+    /// `Reserved` — **including after `confirm_reservation`**: confirmation is
+    /// a commitment on the row, not a movement of the unit, so an order
+    /// cancelled after confirmation but before `mark_shipped` / `mark_sold`
+    /// can still hand the serial back. Once the unit has shipped or sold the
+    /// reservation is consumed and release is refused with `Conflict`.
     fn release_reservation(&self, reservation_id: Uuid) -> Result<()>;
 
     /// Confirm reservation

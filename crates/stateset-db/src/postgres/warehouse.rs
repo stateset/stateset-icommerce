@@ -15,6 +15,142 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+// ============================================================================
+// WMS stock ledger (shared by receiving and fulfillment)
+// ============================================================================
+//
+// Mirrors `crate::sqlite::warehouse`'s helpers exactly; see that module for the
+// rationale. Every helper runs on the caller's connection — the same
+// transaction that writes the document's status — so the movement and the
+// status flip commit or roll back together.
+
+/// `location_inventory.lot_id` is `NOT NULL`; lot-less rows use the nil UUID.
+fn location_lot_key(lot_id: Option<Uuid>) -> Uuid {
+    lot_id.unwrap_or_else(Uuid::nil)
+}
+
+/// Add `delta` units of `sku` to a location's on-hand, creating the row on
+/// first use. A negative delta is refused when the bin does not hold enough
+/// unreserved stock (`InsufficientStock`). The row is taken `FOR UPDATE` first
+/// so concurrent WMS writers serialize.
+pub(crate) async fn apply_location_delta_pg(
+    conn: &mut sqlx::PgConnection,
+    location_id: i32,
+    sku: &str,
+    lot_id: Option<Uuid>,
+    delta: Decimal,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    if delta.is_zero() {
+        return Ok(());
+    }
+    let lot_key = location_lot_key(lot_id);
+    let existing = sqlx::query_as::<_, (Decimal, Decimal)>(
+        "SELECT quantity_on_hand, quantity_reserved FROM location_inventory
+         WHERE location_id = $1 AND sku = $2 AND lot_id = $3 FOR UPDATE",
+    )
+    .bind(location_id)
+    .bind(sku)
+    .bind(lot_key)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    let (on_hand, reserved) = existing.unwrap_or((Decimal::ZERO, Decimal::ZERO));
+    let new_on_hand = on_hand + delta;
+    if new_on_hand < reserved {
+        return Err(CommerceError::InsufficientStock {
+            sku: sku.to_string(),
+            requested: delta.abs().to_string(),
+            available: (on_hand - reserved).to_string(),
+        });
+    }
+    sqlx::query(
+        "INSERT INTO location_inventory
+         (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
+         VALUES ($1, $2, $3, $4, 0, $5)
+         ON CONFLICT (location_id, sku, lot_id) DO UPDATE SET
+             quantity_on_hand = EXCLUDED.quantity_on_hand,
+             updated_at = EXCLUDED.updated_at",
+    )
+    .bind(location_id)
+    .bind(sku)
+    .bind(lot_key)
+    .bind(new_on_hand)
+    .bind(now)
+    .execute(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    Ok(())
+}
+
+/// Record a WMS movement in the `inventory_movements` audit trail.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn insert_wms_movement_pg(
+    conn: &mut sqlx::PgConnection,
+    movement_type: MovementType,
+    from_location_id: Option<i32>,
+    to_location_id: Option<i32>,
+    sku: &str,
+    lot_id: Option<Uuid>,
+    quantity: Decimal,
+    reference_type: &str,
+    reference_id: Uuid,
+    performed_by: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO inventory_movements
+         (id, movement_type, from_location_id, to_location_id, sku, lot_id, quantity,
+          reference_type, reference_id, reason, performed_by, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(movement_type.to_string())
+    .bind(from_location_id)
+    .bind(to_location_id)
+    .bind(sku)
+    .bind(lot_id)
+    .bind(quantity)
+    .bind(reference_type)
+    .bind(reference_id)
+    .bind(format!("{movement_type} {reference_type} {reference_id}"))
+    .bind(performed_by)
+    .bind(now)
+    .execute(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    Ok(())
+}
+
+/// The warehouse a location belongs to.
+pub(crate) async fn warehouse_of_location_pg(
+    conn: &mut sqlx::PgConnection,
+    location_id: i32,
+) -> Result<i32> {
+    sqlx::query_scalar::<_, i32>("SELECT warehouse_id FROM locations WHERE id = $1")
+        .bind(location_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(map_db_error)?
+        .ok_or_else(|| {
+            CommerceError::ValidationError(format!("Location {location_id} does not exist"))
+        })
+}
+
+/// Ensure an `inventory_items` master row exists for `sku`; a receipt
+/// legitimately introduces a SKU the item master has never seen.
+pub(crate) async fn ensure_inventory_item_pg(
+    conn: &mut sqlx::PgConnection,
+    sku: &str,
+) -> Result<()> {
+    sqlx::query("INSERT INTO inventory_items (sku, name) VALUES ($1, $1) ON CONFLICT DO NOTHING")
+        .bind(sku)
+        .execute(&mut *conn)
+        .await
+        .map_err(map_db_error)?;
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct PgWarehouseRepository {
     pool: PgPool,
@@ -294,6 +430,30 @@ impl PgWarehouseRepository {
 
     fn lot_key(lot_id: Option<Uuid>) -> Uuid {
         lot_id.unwrap_or_else(Uuid::nil)
+    }
+
+    /// Take a shared lock on a `locations` row before writing stock at it.
+    ///
+    /// `delete_location_async` takes the same row `FOR UPDATE`, so the two
+    /// serialize: either the stock write commits first and the delete then sees
+    /// the inventory it must refuse, or the delete commits first and the stock
+    /// write finds no location (`NotFound`) instead of writing a row that the
+    /// `ON DELETE CASCADE` silently swallowed. Shared mode lets concurrent
+    /// stock writers proceed together.
+    async fn lock_location_for_stock_write(
+        conn: &mut sqlx::PgConnection,
+        location_id: i32,
+    ) -> Result<()> {
+        let found: Option<(i32,)> =
+            sqlx::query_as("SELECT id FROM locations WHERE id = $1 FOR SHARE")
+                .bind(location_id)
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_db_error)?;
+        if found.is_none() {
+            return Err(CommerceError::NotFound);
+        }
+        Ok(())
     }
 
     pub async fn create_warehouse_async(&self, input: CreateWarehouse) -> Result<Warehouse> {
@@ -718,31 +878,89 @@ impl PgWarehouseRepository {
         rows.into_iter().map(Self::row_to_location).collect::<Result<Vec<_>>>()
     }
 
+    /// Delete a location.
+    ///
+    /// Refused (`ValidationError`) while the location holds on-hand or
+    /// reserved stock, or while any `inventory_movements`, pick task, put-away
+    /// or cycle count still references it — those rows are the audit trail
+    /// and would otherwise fail on the foreign key as an opaque database
+    /// error. Such a location should be deactivated instead. A missing id is
+    /// `NotFound`.
+    ///
+    /// The guards and the DELETE share one transaction *and one row lock*: the
+    /// `locations` row is taken `FOR UPDATE` first, and every writer that can
+    /// create stock at a location ([`Self::adjust_inventory_async`],
+    /// [`Self::move_inventory_async`]) takes the same row `FOR SHARE`. Locking
+    /// only `location_inventory` was not enough — `FOR UPDATE` cannot lock a
+    /// row that does not exist yet, so a concurrent first adjustment for a new
+    /// SKU inserted its row after the zero-stock read and had it silently
+    /// cascaded away by the DELETE, with both calls reporting success.
     pub async fn delete_location_async(&self, id: i32) -> Result<()> {
-        // Check-then-delete: the stock guard and the DELETE share one
-        // transaction, so an adjustment landing between them cannot have its
-        // stock silently cascaded away by a delete that read zero on-hand.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM location_inventory WHERE location_id = $1 AND quantity_on_hand > 0",
+        // Serialize against concurrent stock writers for this location.
+        let exists: Option<(i32,)> =
+            sqlx::query_as("SELECT id FROM locations WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if exists.is_none() {
+            return Err(CommerceError::NotFound);
+        }
+
+        let (on_hand, reserved): (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*) FILTER (WHERE quantity_on_hand > 0),
+                    COUNT(*) FILTER (WHERE quantity_reserved > 0)
+             FROM (SELECT quantity_on_hand, quantity_reserved FROM location_inventory
+                   WHERE location_id = $1 FOR UPDATE) locked",
         )
         .bind(id)
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-
-        if count.0 > 0 {
+        if on_hand > 0 {
             return Err(CommerceError::ValidationError(
                 "Cannot delete location with inventory".into(),
             ));
         }
+        if reserved > 0 {
+            return Err(CommerceError::ValidationError(
+                "Cannot delete location with reserved inventory".into(),
+            ));
+        }
 
-        sqlx::query("DELETE FROM locations WHERE id = $1")
+        let history: [(&str, &str); 4] = [
+            (
+                "movement history",
+                "SELECT COUNT(*) FROM inventory_movements WHERE from_location_id = $1 OR to_location_id = $1",
+            ),
+            ("pick tasks", "SELECT COUNT(*) FROM pick_tasks WHERE source_location_id = $1"),
+            (
+                "put-aways",
+                "SELECT COUNT(*) FROM put_aways WHERE from_location_id = $1 OR to_location_id = $1",
+            ),
+            ("cycle counts", "SELECT COUNT(*) FROM cycle_counts WHERE location_id = $1"),
+        ];
+        for (what, sql) in history {
+            let (count,): (i64,) =
+                sqlx::query_as(sql).bind(id).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+            if count > 0 {
+                return Err(CommerceError::ValidationError(format!(
+                    "Cannot delete location {id}: it has {what}; deactivate it instead"
+                )));
+            }
+        }
+
+        let deleted = sqlx::query("DELETE FROM locations WHERE id = $1")
             .bind(id)
             .execute(tx.as_mut())
             .await
-            .map_err(map_db_error)?;
+            .map_err(map_db_error)?
+            .rows_affected();
+        if deleted == 0 {
+            return Err(CommerceError::NotFound);
+        }
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -878,6 +1096,12 @@ impl PgWarehouseRepository {
         // IMMEDIATE write transaction.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        // Pin the location itself (`FOR SHARE`) so a concurrent
+        // `delete_location_async` — which takes it `FOR UPDATE` — cannot cascade
+        // this adjustment away between its zero-stock read and its DELETE.
+        // Concurrent adjustments hold the share lock together and do not block.
+        Self::lock_location_for_stock_write(tx.as_mut(), input.location_id).await?;
+
         let existing = sqlx::query_as::<_, (Decimal, Decimal)>(
             "SELECT quantity_on_hand, quantity_reserved FROM location_inventory WHERE location_id = $1 AND sku = $2 AND lot_id = $3 FOR UPDATE",
         )
@@ -983,6 +1207,15 @@ impl PgWarehouseRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
         let lot_key = Self::lot_key(input.lot_id);
+
+        // Pin both locations (`FOR SHARE`) against a concurrent
+        // `delete_location_async`, lowest id first so two opposing moves cannot
+        // deadlock.
+        let mut pin = [input.from_location_id, input.to_location_id];
+        pin.sort_unstable();
+        for location_id in pin {
+            Self::lock_location_for_stock_write(tx.as_mut(), location_id).await?;
+        }
 
         // Lock the source row (`FOR UPDATE`) before the availability guard so
         // concurrent moves of the same (location, sku, lot) serialize and cannot both

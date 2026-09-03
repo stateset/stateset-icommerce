@@ -59,6 +59,87 @@ pub enum ProductStatus {
     Archived,
 }
 
+impl ProductStatus {
+    /// Whether a product may move from `self` to `next`.
+    ///
+    /// The catalogue state machine is deliberately small:
+    ///
+    /// | from       | to                  |
+    /// |------------|---------------------|
+    /// | `Draft`    | `Active`, `Archived` |
+    /// | `Active`   | `Draft`, `Archived`  |
+    /// | `Archived` | (terminal)           |
+    ///
+    /// A same-state transition is always allowed (idempotent updates).
+    /// `Archived` is terminal: an archived product has been withdrawn from
+    /// sale and its slug may already be reused by a replacement, so it can
+    /// never be resurrected in place.
+    #[must_use]
+    pub const fn can_transition_to(self, next: Self) -> bool {
+        if matches!((self, next), (Self::Draft, Self::Draft))
+            || matches!((self, next), (Self::Active, Self::Active))
+            || matches!((self, next), (Self::Archived, Self::Archived))
+        {
+            return true;
+        }
+        match self {
+            Self::Draft => matches!(next, Self::Active | Self::Archived),
+            Self::Active => matches!(next, Self::Draft | Self::Archived),
+            Self::Archived => false,
+        }
+    }
+
+    /// Whether this status is terminal (no outgoing transitions).
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Archived)
+    }
+
+    /// The catalogue action a status change performs when it withdraws the
+    /// product's SKUs from sale, or `None` when nothing becomes unsellable.
+    ///
+    /// Only `Active` is purchasable ([`Product::is_purchasable`]), so both
+    /// `Active -> Draft` (unpublish) and any move to `Archived` take a SKU off
+    /// sale while live carts, open orders and reservations may still hold it.
+    /// The repositories use the returned verb to run the same
+    /// `SkuReferenceCounts::ensure_none` guard for either withdrawal, so
+    /// unpublishing can no longer strand a cart holding a SKU that checkout
+    /// would go on to accept.
+    ///
+    /// The match is exhaustive on purpose: a new status must be classified
+    /// here rather than falling through a wildcard as "harmless".
+    #[must_use]
+    pub const fn withdrawal_action(self, next: Self) -> Option<&'static str> {
+        match (self, next) {
+            // No-ops and publications leave everything sellable.
+            (Self::Draft, Self::Draft | Self::Active)
+            | (Self::Active, Self::Active)
+            | (Self::Archived, Self::Archived) => None,
+            // Withdrawals.
+            (Self::Active, Self::Draft) => Some("unpublish"),
+            (Self::Draft | Self::Active, Self::Archived) => Some("archive"),
+            // `Archived` is terminal; `can_transition_to` refuses these first.
+            (Self::Archived, Self::Draft | Self::Active) => None,
+        }
+    }
+
+    /// Validate a transition, returning a typed error when it is not allowed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::CommerceError::ValidationError`] naming both states
+    /// when [`Self::can_transition_to`] is false.
+    pub fn ensure_can_transition_to(self, next: Self) -> Result<()> {
+        if self.can_transition_to(next) {
+            Ok(())
+        } else {
+            Err(crate::CommerceError::ValidationError(format!(
+                "product status cannot transition from {self} to {next}"
+            )))
+        }
+    }
+}
+
 /// Product type enumeration
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString,
@@ -185,8 +266,49 @@ impl Validate for CreateProductVariant {
             .non_negative("compare_at_price", self.compare_at_price.unwrap_or(Decimal::ZERO))
             .non_negative("cost", self.cost.unwrap_or(Decimal::ZERO))
             .non_negative("weight", self.weight.unwrap_or(Decimal::ZERO))
+            .custom(
+                "price",
+                || money_scale_fits_storage(self.price),
+                "price cannot carry more than 4 decimal places",
+            )
+            .custom(
+                "compare_at_price",
+                || self.compare_at_price.is_none_or(money_scale_fits_storage),
+                "compare_at_price cannot carry more than 4 decimal places",
+            )
+            .custom(
+                "cost",
+                || self.cost.is_none_or(money_scale_fits_storage),
+                "cost cannot carry more than 4 decimal places",
+            )
+            .custom(
+                "compare_at_price",
+                || self.compare_at_price.is_none_or(|compare| compare >= self.price),
+                "compare_at_price must be greater than or equal to price",
+            )
             .build()
     }
+}
+
+/// Maximum number of decimal places a variant amount may carry.
+///
+/// Four fractional digits is the canonical money scale for catalogue amounts:
+/// it is what every downstream money column (order and cart lines, invoices,
+/// the general ledger) settles at, and it is the precision the SQLite
+/// price-range filter compares at. Storage is not the binding constraint —
+/// SQLite keeps variant money as exact TEXT and Postgres as unbounded
+/// `NUMERIC` since migration 079 — but an amount finer than this cannot
+/// survive the first line it is copied onto, so it is refused at the door
+/// rather than rounded silently later.
+///
+/// Enforced by [`CreateProductVariant::validate`], which both the SQLite and
+/// the Postgres repository run on every variant write.
+pub const VARIANT_MONEY_SCALE: u32 = 4;
+
+/// Whether `amount` survives a round trip through the variant money columns.
+#[must_use]
+pub fn money_scale_fits_storage(amount: Decimal) -> bool {
+    crate::validation::significant_scale(amount) <= VARIANT_MONEY_SCALE
 }
 
 /// Input for updating a product
@@ -239,6 +361,56 @@ impl Product {
     }
 }
 
+/// Why a variant cannot be sold right now.
+///
+/// Produced by the repositories' purchasability checks (see
+/// `variant_is_purchasable_with_conn` in the SQLite/Postgres product
+/// repositories) so that cart and order code can refuse a line with a precise
+/// reason instead of a generic conflict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum VariantPurchasability {
+    /// The SKU exists in the catalogue and can be sold.
+    Purchasable,
+    /// The SKU is not in the catalogue at all (ad-hoc / external line).
+    NotInCatalog,
+    /// The variant row is soft-deleted (`is_active = false`).
+    VariantInactive,
+    /// The parent product is not `Active` (draft or archived).
+    ProductNotActive(ProductStatus),
+}
+
+impl VariantPurchasability {
+    /// Whether a line for this SKU may be added to a cart or order.
+    ///
+    /// `NotInCatalog` is treated as sellable so that ad-hoc lines (services,
+    /// external marketplace SKUs) keep working; only a *known* variant that has
+    /// been withdrawn is refused.
+    #[must_use]
+    pub const fn is_sellable(self) -> bool {
+        matches!(self, Self::Purchasable | Self::NotInCatalog)
+    }
+
+    /// Convert into a typed error for a `sku` when not sellable.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::CommerceError::ValidationError`] naming the SKU and the
+    /// reason when [`Self::is_sellable`] is false.
+    pub fn ensure_sellable(self, sku: &str) -> Result<()> {
+        match self {
+            Self::Purchasable | Self::NotInCatalog => Ok(()),
+            Self::VariantInactive => Err(crate::CommerceError::ValidationError(format!(
+                "SKU {sku} is no longer available (variant deleted)"
+            ))),
+            Self::ProductNotActive(status) => Err(crate::CommerceError::ValidationError(format!(
+                "SKU {sku} is not purchasable: product status is {status}"
+            ))),
+        }
+    }
+}
+
 impl ProductVariant {
     /// Calculate profit margin
     #[must_use]
@@ -264,6 +436,40 @@ mod tests {
     use super::*;
     use rust_decimal_macros::dec;
     use std::str::FromStr;
+
+    #[test]
+    fn withdrawal_action_classifies_every_status_pair() {
+        use ProductStatus::{Active, Archived, Draft};
+
+        // Nothing becomes unsellable.
+        for (from, to) in [(Draft, Draft), (Draft, Active), (Active, Active), (Archived, Archived)]
+        {
+            assert_eq!(from.withdrawal_action(to), None, "{from} -> {to}");
+        }
+
+        // Withdrawals must be guarded by the caller.
+        assert_eq!(Active.withdrawal_action(Draft), Some("unpublish"));
+        assert_eq!(Draft.withdrawal_action(Archived), Some("archive"));
+        assert_eq!(Active.withdrawal_action(Archived), Some("archive"));
+
+        // Refused transitions never reach the guard.
+        assert_eq!(Archived.withdrawal_action(Draft), None);
+        assert_eq!(Archived.withdrawal_action(Active), None);
+        assert!(!Archived.can_transition_to(Draft));
+
+        // A withdrawal is exactly "was sellable, is not any more".
+        for from in [Draft, Active, Archived] {
+            for to in [Draft, Active, Archived] {
+                let withdraws = from == Active && to != Active;
+                let archives = to == Archived && from != Archived;
+                assert_eq!(
+                    from.withdrawal_action(to).is_some(),
+                    (withdraws || archives) && from.can_transition_to(to),
+                    "{from} -> {to}"
+                );
+            }
+        }
+    }
 
     // ============================================================================
     // Test Helpers
@@ -611,6 +817,95 @@ mod tests {
             ..Default::default()
         };
         assert!(with_variant.validate().is_ok());
+    }
+
+    #[test]
+    fn create_product_variant_rejects_compare_at_below_price() {
+        let variant = CreateProductVariant {
+            price: dec!(50),
+            compare_at_price: Some(dec!(40)),
+            ..valid_create_variant()
+        };
+        let err = variant.validate().expect_err("compare_at below price must be rejected");
+        assert!(matches!(
+            err,
+            crate::CommerceError::InvalidInput { ref field, .. } if field == "compare_at_price"
+        ));
+        assert!(
+            CreateProductVariant { compare_at_price: Some(dec!(50)), ..variant }.validate().is_ok(),
+            "equal compare-at is allowed"
+        );
+    }
+
+    #[test]
+    fn create_product_variant_rejects_money_finer_than_storage_scale() {
+        for (field, variant) in [
+            ("price", CreateProductVariant { price: dec!(1.00001), ..valid_create_variant() }),
+            (
+                "compare_at_price",
+                CreateProductVariant {
+                    compare_at_price: Some(dec!(99.99999)),
+                    ..valid_create_variant()
+                },
+            ),
+            ("cost", CreateProductVariant { cost: Some(dec!(0.123456)), ..valid_create_variant() }),
+        ] {
+            let err = variant.validate().expect_err("sub-0.0001 amount must be rejected");
+            assert!(
+                matches!(err, crate::CommerceError::InvalidInput { field: ref f, .. } if f == field),
+                "{field}: {err:?}"
+            );
+        }
+        // Four decimals and trailing zeros survive the NUMERIC(19,4) round trip.
+        assert!(
+            CreateProductVariant {
+                price: dec!(1.2345),
+                cost: Some(dec!(1.10000)),
+                ..valid_create_variant()
+            }
+            .validate()
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn product_status_transition_table_is_exhaustive() {
+        use ProductStatus::{Active, Archived, Draft};
+        let allowed = [
+            (Draft, Draft),
+            (Draft, Active),
+            (Draft, Archived),
+            (Active, Active),
+            (Active, Draft),
+            (Active, Archived),
+            (Archived, Archived),
+        ];
+        for from in [Draft, Active, Archived] {
+            for to in [Draft, Active, Archived] {
+                let expected = allowed.contains(&(from, to));
+                assert_eq!(from.can_transition_to(to), expected, "{from} -> {to}");
+                assert_eq!(from.ensure_can_transition_to(to).is_ok(), expected, "{from} -> {to}");
+            }
+        }
+        assert!(Archived.is_terminal());
+        assert!(!Active.is_terminal());
+        assert!(matches!(
+            Archived.ensure_can_transition_to(Active),
+            Err(crate::CommerceError::ValidationError(_))
+        ));
+    }
+
+    #[test]
+    fn variant_purchasability_sellability() {
+        assert!(VariantPurchasability::Purchasable.is_sellable());
+        assert!(VariantPurchasability::NotInCatalog.is_sellable());
+        assert!(!VariantPurchasability::VariantInactive.is_sellable());
+        assert!(!VariantPurchasability::ProductNotActive(ProductStatus::Archived).is_sellable());
+        let err = VariantPurchasability::ProductNotActive(ProductStatus::Draft)
+            .ensure_sellable("SKU-1")
+            .expect_err("draft product is not sellable");
+        assert!(err.to_string().contains("SKU-1"), "{err}");
+        assert!(VariantPurchasability::VariantInactive.ensure_sellable("SKU-1").is_err());
     }
 
     // ============================================================================

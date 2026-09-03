@@ -1,6 +1,54 @@
 //! Lot/Batch Tracking domain models
 //!
 //! Models for lot tracking, traceability, and batch management.
+//!
+//! # How lots relate to inventory
+//!
+//! A lot is the itemised view of a SKU's stock: `quantity_remaining` is what
+//! the lot still holds, `quantity_reserved` what is promised to orders, and
+//! `quantity_quarantined` what a quality event has blocked. The sellable
+//! remainder is [`Lot::quantity_available`].
+//!
+//! Lots are **linked to `inventory_balances`** (the per-SKU, per-location
+//! on-hand / allocated / available triple) whenever two things are true:
+//!
+//! 1. the lot has a placement in `lot_locations` (created with
+//!    `initial_location_id`, or moved there by a transfer), and
+//! 2. an `inventory_items` row exists for the lot's SKU.
+//!
+//! When both hold, every lot mutation adjusts the balance for
+//! `(sku, location)` **in the same database transaction**:
+//!
+//! | lot operation              | inventory effect at the lot's location        |
+//! |----------------------------|-----------------------------------------------|
+//! | create (with a location)   | on-hand `+= quantity` (receipt)                |
+//! | adjust                     | on-hand `+= quantity_change`                   |
+//! | consume / confirm          | on-hand `-= quantity` (confirm also frees the hold) |
+//! | reserve / release          | allocated `+= / -= quantity` (a hold)          |
+//! | quarantine / release       | allocated `+= / -= quarantined units` (a hold) |
+//! | expiry sweep               | allocated `+= available units` (a hold)        |
+//! | transfer                   | on-hand moves from source to destination       |
+//!
+//! Inventory has no dedicated quarantine bucket, so a quarantined (or expired)
+//! lot **holds** its blocked units via `quantity_allocated`: the stock stays
+//! on hand, but `quantity_available` — which the order path checks — drops.
+//! Each on-hand change also writes an `inventory_transactions` row referencing
+//! the lot. The invariant maintained is, per `(sku, location)`:
+//!
+//! ```text
+//! Σ active lots (remaining − reserved − quarantined) == inventory available
+//! ```
+//!
+//! Lots without a location, or SKUs without an inventory item, float free
+//! (the pre-existing behaviour). `split` / `merge` move units *between lots*
+//! and leave inventory untouched; the derived lots carry no placement.
+//! Balances are floored at zero when a legacy lot was never received into
+//! inventory, so the linkage can be adopted on live data without failing
+//! consumption.
+//!
+//! Quarantining a lot also quarantines its `Available` / `Reserved` serials
+//! (closing their reservations) and releasing it returns them to `Available`;
+//! a failed inspection does the same through the quality repository.
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
@@ -236,6 +284,89 @@ pub struct LotLocation {
 }
 
 // ============================================================================
+// Lot Genealogy Types
+// ============================================================================
+
+/// How a derived lot came to exist from one of its parents.
+///
+/// A lot row carries a single provenance (`supplier_lot` / `supplier_id` /
+/// `work_order_id` / `purchase_order_id`), which cannot describe a lot merged
+/// from several receipts. The parent/child links are therefore recorded in
+/// their own table and surfaced as [`LotGenealogyLink`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum LotRelationship {
+    /// The child was split off the parent; the parent survives with the
+    /// remainder.
+    Split,
+    /// The child is the target of a merge; the parent was consumed into it.
+    Merge,
+}
+
+/// One parent → child edge in the lot genealogy graph.
+///
+/// Written by `LotRepository::split` and `LotRepository::merge`, read back by
+/// `get_lot_parents` / `get_lot_children`, and walked by `trace` so a derived
+/// lot resolves to every original receipt (and its supplier or work order).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LotGenealogyLink {
+    /// The derived lot.
+    pub child_lot_id: Uuid,
+    /// The lot the units came from.
+    pub parent_lot_id: Uuid,
+    /// The parent's human-readable lot number, resolved for convenience.
+    pub parent_lot_number: String,
+    /// The child's human-readable lot number, resolved for convenience.
+    pub child_lot_number: String,
+    /// How the child was derived from this parent.
+    pub relationship: LotRelationship,
+    /// Units that moved from the parent to the child.
+    pub quantity: Decimal,
+    /// When the link was written.
+    pub created_at: DateTime<Utc>,
+}
+
+/// The provenance a merged lot may honestly claim on its own row.
+///
+/// `merge` collapses several source lots into one, but a `lots` row has room
+/// for exactly one supplier lot, supplier, work order and purchase order.
+/// Inheriting the first source's would fabricate an attribution for the
+/// others, so only the fields on which *every* source agrees are carried over;
+/// the rest are left `None` and recovered from the genealogy links
+/// ([`LotGenealogyLink`]), which record all of them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MergedProvenance {
+    /// The supplier's own lot code, when every source shares it.
+    pub supplier_lot: Option<String>,
+    /// The supplier, when every source shares it.
+    pub supplier_id: Option<Uuid>,
+    /// The producing work order, when every source shares it.
+    pub work_order_id: Option<Uuid>,
+    /// The receiving purchase order, when every source shares it.
+    pub purchase_order_id: Option<Uuid>,
+}
+
+impl MergedProvenance {
+    /// Fold the sources' provenance: a field survives only when every source
+    /// carries the same non-`None` value. An empty slice yields all-`None`.
+    #[must_use]
+    pub fn of(sources: &[Lot]) -> Self {
+        fn unanimous<T: PartialEq>(mut values: impl Iterator<Item = Option<T>>) -> Option<T> {
+            let first = values.next().flatten()?;
+            values.all(|v| v.as_ref() == Some(&first)).then_some(first)
+        }
+        Self {
+            supplier_lot: unanimous(sources.iter().map(|l| l.supplier_lot.clone())),
+            supplier_id: unanimous(sources.iter().map(|l| l.supplier_id)),
+            work_order_id: unanimous(sources.iter().map(|l| l.work_order_id)),
+            purchase_order_id: unanimous(sources.iter().map(|l| l.purchase_order_id)),
+        }
+    }
+}
+
+// ============================================================================
 // Traceability Types
 // ============================================================================
 
@@ -267,6 +398,9 @@ pub struct TraceNode {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TraceNodeType {
+    /// An ancestor lot reached through the genealogy graph (a split parent or
+    /// a merge source).
+    Lot,
     PurchaseOrder,
     Receipt,
     WorkOrder,
@@ -280,6 +414,7 @@ pub enum TraceNodeType {
 impl std::fmt::Display for TraceNodeType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Lot => write!(f, "lot"),
             Self::PurchaseOrder => write!(f, "purchase_order"),
             Self::Receipt => write!(f, "receipt"),
             Self::WorkOrder => write!(f, "work_order"),

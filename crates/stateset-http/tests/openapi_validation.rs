@@ -110,6 +110,9 @@ const EXPECTED_V1_PATHS: &[&str] = &[
     "/api/v1/loyalty/programs",
     "/api/v1/loyalty/enroll",
     "/api/v1/loyalty/accounts/{id}",
+    // Kernel audit chain
+    "/api/v1/kernel/audit",
+    "/api/v1/kernel/audit/checkpoint",
 ];
 
 const EXPECTED_HEALTH_PATHS: &[&str] = &["/health", "/health/ready", "/metrics"];

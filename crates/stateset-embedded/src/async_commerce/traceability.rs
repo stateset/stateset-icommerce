@@ -71,6 +71,8 @@ impl AsyncQuality {
         self.db.quality().get_ncr_by_number_async(number).await
     }
 
+    /// Update an *open* NCR; a `Closed` or `Cancelled` one is a finished
+    /// record and is refused.
     pub async fn update_ncr(
         &self,
         id: Uuid,
@@ -83,10 +85,12 @@ impl AsyncQuality {
         self.db.quality().list_ncrs_async(filter).await
     }
 
+    /// Close an NCR. Idempotent; a `Cancelled` NCR is refused.
     pub async fn close_ncr(&self, id: Uuid) -> Result<NonConformance> {
         self.db.quality().close_ncr_async(id).await
     }
 
+    /// Cancel an NCR opened in error. Idempotent; a `Closed` NCR is refused.
     pub async fn cancel_ncr(&self, id: Uuid) -> Result<NonConformance> {
         self.db.quality().cancel_ncr_async(id).await
     }
@@ -234,6 +238,21 @@ impl AsyncLots {
         self.db.lots().get_lot_locations_async(lot_id).await
     }
 
+    /// The lots this lot was derived from: the parent of a `split`, or every
+    /// source of a `merge`. Empty for a lot created by a receipt.
+    ///
+    /// A merged lot can only carry one supplier / work order / purchase order
+    /// on its own row, so this is how you recover the rest.
+    pub async fn get_parents(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+        self.db.lots().get_lot_parents_async(lot_id).await
+    }
+
+    /// The lots derived from this lot: split children, and the merge target it
+    /// was consumed into.
+    pub async fn get_children(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+        self.db.lots().get_lot_children_async(lot_id).await
+    }
+
     pub async fn add_certificate(&self, input: AddLotCertificate) -> Result<LotCertificate> {
         self.db.lots().add_certificate_async(input).await
     }
@@ -258,6 +277,15 @@ impl AsyncLots {
     /// returns how many were flipped. Idempotent.
     pub async fn expire_lots(&self) -> Result<u64> {
         self.db.lots().expire_lots_async(chrono::Utc::now()).await
+    }
+
+    /// Sweep lot reservations that expired before `now`; see
+    /// `Lots::release_expired_reservations`.
+    pub async fn release_expired_reservations(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64> {
+        self.db.lots().release_expired_reservations_async(now).await
     }
 
     pub async fn get_available_lots_for_sku(&self, sku: &str) -> Result<Vec<Lot>> {

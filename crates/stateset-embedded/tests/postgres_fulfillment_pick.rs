@@ -118,6 +118,50 @@ async fn postgres_complete_pick_is_idempotent_and_rejects_over_pick() {
         .await
         .expect("create pick");
 
+    // Completing a pick now takes the units out of the source bin and
+    // allocates them at warehouse level, so the shelf has to hold them first.
+    let pool = sqlx::PgPool::connect(&url).await.expect("pool for seeding");
+    sqlx::query("INSERT INTO inventory_items (sku, name) VALUES ($1, $1) ON CONFLICT DO NOTHING")
+        .bind("PICK-SKU")
+        .execute(&pool)
+        .await
+        .expect("seed item");
+    sqlx::query(
+        "INSERT INTO inventory_locations (id, name, code)
+         SELECT id, name, code FROM warehouses WHERE id = $1 ON CONFLICT DO NOTHING",
+    )
+    .bind(warehouse.id)
+    .execute(&pool)
+    .await
+    .expect("seed inventory location");
+    sqlx::query(
+        "INSERT INTO inventory_balances
+         (item_id, location_id, quantity_on_hand, quantity_allocated, quantity_available)
+         SELECT id, $2, 5, 0, 5 FROM inventory_items WHERE sku = $1
+         ON CONFLICT (item_id, location_id) DO UPDATE SET
+             quantity_on_hand = EXCLUDED.quantity_on_hand,
+             quantity_available = EXCLUDED.quantity_available",
+    )
+    .bind("PICK-SKU")
+    .bind(warehouse.id)
+    .execute(&pool)
+    .await
+    .expect("seed warehouse balance");
+    commerce
+        .warehouse()
+        .adjust_inventory(stateset_core::AdjustLocationInventory {
+            location_id: location.id,
+            sku: "PICK-SKU".into(),
+            lot_id: None,
+            quantity: dec!(5),
+            reason: "seed shelf".into(),
+            reference_type: None,
+            reference_id: None,
+            performed_by: None,
+        })
+        .await
+        .expect("seed bin");
+
     let complete = |qty| CompletePick {
         pick_id: pick.id,
         quantity_picked: qty,

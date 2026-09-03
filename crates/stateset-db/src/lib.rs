@@ -41,7 +41,9 @@
 
 pub mod error_helpers;
 pub mod http_idempotency;
+pub mod kernel;
 pub mod kernel_outbox;
+pub(crate) mod x402_claim;
 pub use http_idempotency::{HttpIdempotencyRecord, HttpIdempotencyRepository};
 pub use kernel_outbox::{KernelOutboxEvent, KernelReceiptRecord};
 
@@ -72,8 +74,9 @@ pub use sqlite::SqliteDatabase;
 pub use postgres::PostgresDatabase;
 
 use stateset_core::{
-    A2ACommerceRepository, AccountsPayableRepository, AccountsReceivableRepository,
-    ActivityLogRepository, AgentCardRepository, AgentIdentityRepository, AgentReputationRepository,
+    A2ACommerceRepository, A2ACreditTermsRepository, A2AMessagingRepository,
+    AccountsPayableRepository, AccountsReceivableRepository, ActivityLogRepository,
+    AgentCardRepository, AgentIdentityRepository, AgentReputationRepository,
     AgentValidationRepository, AnalyticsRepository, BackorderRepository, BinRepository,
     BomRepository, CartRepository, ChannelRepository, CommerceError, CompanyRepository,
     CostAccountingRepository, CreditRepository, CurrencyRepository, CustomObjectRepository,
@@ -354,6 +357,10 @@ pub trait Database: Send + Sync {
     fn a2a_quotes(&self) -> Box<dyn A2ACommerceRepository + '_>;
     /// Get the agent-to-agent commerce repository (quotes and purchases)
     fn a2a_purchases(&self) -> Box<dyn A2ACommerceRepository + '_>;
+    /// Get the durable, tenant-scoped A2A credit terms repository
+    fn a2a_credit_terms(&self) -> Box<dyn A2ACreditTermsRepository + '_>;
+    /// Get the durable, tenant-scoped A2A agent messaging repository
+    fn a2a_messages(&self) -> Box<dyn A2AMessagingRepository + '_>;
     /// Get the agent card repository
     fn agent_cards(&self) -> Box<dyn AgentCardRepository + '_>;
     /// Get the agent identity registry repository (ERC-8004)
@@ -437,6 +444,12 @@ pub trait Database: Send + Sync {
     /// one. Backends without durable idempotency support return `None`, in
     /// which case callers fall back to in-memory behavior.
     fn http_idempotency(&self) -> Option<Box<dyn HttpIdempotencyRepository + '_>> {
+        None
+    }
+
+    /// Read-only access to the sealed kernel receipt audit chain, when the
+    /// backend seals one. Backends without a kernel outbox return `None`.
+    fn kernel_audit_chain(&self) -> Option<Box<dyn crate::kernel::KernelAuditChain>> {
         None
     }
 }
@@ -866,6 +879,10 @@ macro_rules! impl_database_accessors {
                 impl_database_accessors!(@supports_capability $db_type, capability)
             }
 
+            fn kernel_audit_chain(&self) -> Option<Box<dyn crate::kernel::KernelAuditChain>> {
+                Some(Box::new(<$db_type>::kernel_outbox(self)))
+            }
+
             fn orders(&self) -> Box<dyn OrderRepository + '_> {
                 Box::new(<$db_type>::orders(self))
             }
@@ -1008,6 +1025,14 @@ macro_rules! impl_database_accessors {
 
             fn a2a_purchases(&self) -> Box<dyn A2ACommerceRepository + '_> {
                 Box::new(<$db_type>::a2a_purchases(self))
+            }
+
+            fn a2a_credit_terms(&self) -> Box<dyn A2ACreditTermsRepository + '_> {
+                Box::new(<$db_type>::a2a_credit_terms(self))
+            }
+
+            fn a2a_messages(&self) -> Box<dyn A2AMessagingRepository + '_> {
+                Box::new(<$db_type>::a2a_messages(self))
             }
 
             fn agent_cards(&self) -> Box<dyn AgentCardRepository + '_> {

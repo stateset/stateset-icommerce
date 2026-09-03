@@ -234,10 +234,59 @@ impl PgTransferOrderRepository {
         Ok(out)
     }
 
+    /// Lock the transfer-order head row for the rest of the transaction and
+    /// return its current status.
+    ///
+    /// Every write path that touches both the head and its lines takes this lock
+    /// FIRST, so all of them acquire row locks in the same order (head, then
+    /// lines) and cannot deadlock against each other. Returning the status under
+    /// the lock is what lets callers decide on a value nobody can change
+    /// underneath them.
+    async fn lock_order(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        id: TransferOrderId,
+    ) -> Result<TransferOrderStatus> {
+        let locked: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM transfer_orders WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let (status,) = locked.ok_or(CommerceError::NotFound)?;
+        status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid transfer_order.status '{status}': {e}"))
+        })
+    }
+
+    /// Load a transfer order and its lines using the given transaction, so the
+    /// read sees this transaction's own uncommitted writes.
+    async fn load_full_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        id: TransferOrderId,
+    ) -> Result<TransferOrder> {
+        let row = sqlx::query_as::<_, OrderRow>("SELECT * FROM transfer_orders WHERE id = $1")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        let mut order = Self::row_to_head(row)?;
+        let items = sqlx::query_as::<_, ItemRow>(
+            "SELECT * FROM transfer_order_items WHERE transfer_order_id = $1 ORDER BY sku",
+        )
+        .bind(id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        order.items = items.into_iter().map(Self::row_to_item).collect();
+        Ok(order)
+    }
+
     /// Mark a transfer order as shipped from the source.
     pub async fn ship_async(&self, id: TransferOrderId) -> Result<TransferOrder> {
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let _status = Self::lock_order(&mut tx, id).await?;
         // Shipping sets quantity_shipped = quantity on each line.
         sqlx::query(
             "UPDATE transfer_order_items SET quantity_shipped = quantity WHERE transfer_order_id = $1",
@@ -259,6 +308,21 @@ impl PgTransferOrderRepository {
     }
 
     /// Receive quantities at the destination for a single line.
+    ///
+    /// The read of the line, the over-receipt check, the write and the derived
+    /// order status all happen inside ONE transaction, with the order head and
+    /// the line locked `FOR UPDATE`, and the write is an INCREMENT rather than an
+    /// absolute quantity. Running these as separate autocommit statements let two
+    /// clerks scanning receipts against the same line both read the same
+    /// `quantity_received`, both pass the cap check and both write the same
+    /// absolute total: a 100-unit line took in 200 units but recorded 100 and
+    /// closed as `received`, and partial receipts overwrote each other instead of
+    /// accumulating. Neither self-corrected, because the write was absolute.
+    ///
+    /// Locking the HEAD (not only the line) also serializes receipts against
+    /// different lines of the same order, so the status derived from all lines
+    /// cannot be computed from a stale snapshot that leaves a fully received
+    /// order stuck in `partially_received`.
     pub async fn receive_line_async(
         &self,
         id: TransferOrderId,
@@ -270,12 +334,20 @@ impl PgTransferOrderRepository {
         }
         let now = Utc::now();
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let status = Self::lock_order(&mut tx, id).await?;
+        if status == TransferOrderStatus::Cancelled {
+            return Err(CommerceError::ValidationError(
+                "Cannot receive against a cancelled transfer order".into(),
+            ));
+        }
+
         let row: Option<(Decimal, Decimal)> = sqlx::query_as(
-            "SELECT quantity, quantity_received FROM transfer_order_items WHERE id = $1 AND transfer_order_id = $2",
+            "SELECT quantity, quantity_received FROM transfer_order_items WHERE id = $1 AND transfer_order_id = $2 FOR UPDATE",
         )
         .bind(item_id)
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?;
         let Some((expected, current)) = row else {
@@ -287,15 +359,18 @@ impl PgTransferOrderRepository {
                 "receiving {quantity} would exceed the {expected} expected on this line ({current} already received)"
             )));
         }
-        sqlx::query("UPDATE transfer_order_items SET quantity_received = $1 WHERE id = $2")
-            .bind(new_received)
-            .bind(item_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE transfer_order_items SET quantity_received = quantity_received + $1 WHERE id = $2",
+        )
+        .bind(quantity)
+        .bind(item_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
-        // Recompute order status from line receipts.
-        let order = self.require_full(id).await?;
+        // Recompute order status from line receipts, still under the same locks
+        // and reading this transaction's own write.
+        let order = Self::load_full_tx(&mut tx, id).await?;
         let derived = order.derive_receipt_status();
         let received_at = if derived == TransferOrderStatus::Received { Some(now) } else { None };
         sqlx::query(
@@ -305,21 +380,28 @@ impl PgTransferOrderRepository {
         .bind(received_at)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.require_full(id).await
     }
 
     /// Cancel a transfer order.
+    ///
+    /// The terminal-state guard reads the status and the cancel writes it, so
+    /// both happen in one transaction with the row locked `FOR UPDATE`. Split
+    /// across two autocommit statements the guard decided on a status nobody
+    /// held: concurrent cancels each saw a live order and each wrote, and a
+    /// cancel could land on an order that became `received` after the check.
     pub async fn cancel_async(&self, id: TransferOrderId) -> Result<TransferOrder> {
-        let current = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
-        if matches!(current.status, TransferOrderStatus::Received | TransferOrderStatus::Cancelled)
-        {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let status = Self::lock_order(&mut tx, id).await?;
+        if status.is_terminal() {
             return Err(CommerceError::ValidationError(format!(
-                "Cannot cancel a transfer order in status {}",
-                current.status
+                "Cannot cancel a transfer order in status {status}"
             )));
         }
         sqlx::query(
@@ -327,9 +409,10 @@ impl PgTransferOrderRepository {
         )
         .bind(Utc::now())
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
         self.require_full(id).await
     }
 }

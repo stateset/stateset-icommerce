@@ -138,8 +138,8 @@ fn disposition(d: ReturnDisposition, wh: i32) -> SetReturnDisposition {
     SetReturnDisposition {
         disposition: d,
         warehouse_id: Some(wh),
-        bin_id: None,
         disposition_by: Some("inspector".into()),
+        ..Default::default()
     }
 }
 
@@ -231,8 +231,10 @@ fn quarantine_with_bin_holds_stock_as_allocated() {
     assert!(db.bins().reconcile(wh, sku).unwrap().is_balanced());
 }
 
+/// Without a quarantine bin the hold is still recorded at warehouse level (on
+/// hand + allocated), so received units never vanish from stock tracking.
 #[test]
-fn quarantine_without_bins_records_only() {
+fn quarantine_without_bins_holds_stock_at_warehouse() {
     let db = db();
     let wh = warehouse(&db);
     let sku = "SKU-QUAR-NOBIN";
@@ -247,7 +249,7 @@ fn quarantine_without_bins_records_only() {
         )
         .unwrap();
     assert_eq!(updated.disposition, Some(ReturnDisposition::Quarantine));
-    assert_eq!(on_hand(&db, sku, wh), (dec!(0), dec!(0)));
+    assert_eq!(on_hand(&db, sku, wh), (dec!(4), dec!(4)));
 }
 
 #[test]

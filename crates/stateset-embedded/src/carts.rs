@@ -107,11 +107,86 @@ impl Carts {
     /// ```
     pub fn create(&self, input: CreateCart) -> Result<Cart> {
         // Reject obviously-invalid input (negative prices, non-positive
-        // quantities) before persisting any line items.
+        // quantities) before persisting any line items. Catalogue pricing and
+        // purchasability are enforced by the repository itself, inside the
+        // create transaction (`guard_cart_line_with_conn`), so every caller of
+        // `db.carts()` gets the same rule and not just this accessor.
         input.validate()?;
         let cart = self.db.carts().create(input)?;
         self.metrics.record_cart_created(&cart.id.to_string());
         Ok(cart)
+    }
+
+    /// The cart line `item_id`, if it exists.
+    fn find_item(&self, item_id: Uuid) -> Result<Option<CartItem>> {
+        self.db.carts().get_item(item_id)
+    }
+
+    /// Re-run the tax engine for a cart that carries a tax context (a tax
+    /// amount was set and it has a shipping address) after its lines changed.
+    ///
+    /// The storage layer has already carried the tax proportionally to the
+    /// new subtotal (see `rescale_tax` in the cart repositories); this
+    /// replaces that estimate with the engine's figure whenever the engine
+    /// can price the cart. When no tax rate covers the address the engine
+    /// has nothing to say and the proportional estimate stands, so a tax set
+    /// manually via `set_tax` is not silently zeroed.
+    fn refresh_tax(&self, cart_id: CartId) -> Result<()> {
+        use stateset_core::{ProductTaxCategory, TaxAddress, TaxCalculationRequest, TaxLineItem};
+        let Some(cart) = self.db.carts().get(cart_id)? else {
+            return Ok(());
+        };
+        if cart.tax_amount <= Decimal::ZERO {
+            return Ok(());
+        }
+        // Tax is money on the cart, and the repository refuses to change it
+        // once the cart is no longer active (`Cart::ensure_money_settable`).
+        // A cart that has left `Active` is not repriced here either.
+        if !cart.can_modify() {
+            return Ok(());
+        }
+        let Some(address) = cart.shipping_address else {
+            return Ok(());
+        };
+        let request = TaxCalculationRequest {
+            line_items: cart
+                .items
+                .iter()
+                .map(|item| TaxLineItem {
+                    id: item.id.to_string(),
+                    sku: Some(item.sku.clone()),
+                    product_id: item.product_id,
+                    quantity: Decimal::from(item.quantity),
+                    unit_price: item.unit_price,
+                    discount_amount: item.discount_amount,
+                    tax_category: ProductTaxCategory::Standard,
+                    tax_code: None,
+                    description: Some(item.name.clone()),
+                })
+                .collect(),
+            shipping_address: TaxAddress {
+                country: address.country,
+                state: address.state,
+                city: Some(address.city),
+                postal_code: Some(address.postal_code),
+                line1: Some(address.line1),
+                line2: address.line2,
+            },
+            customer_id: cart.customer_id.map(Into::into),
+            currency: cart.currency,
+            shipping_amount: Some(cart.shipping_amount),
+            ..Default::default()
+        };
+        let Ok(result) = self.db.tax().calculate_tax(request) else {
+            return Ok(());
+        };
+        if result.tax_breakdown.is_empty() && result.total_tax <= Decimal::ZERO {
+            return Ok(());
+        }
+        if result.total_tax != cart.tax_amount {
+            self.db.carts().set_tax(cart_id, result.total_tax)?;
+        }
+        Ok(())
     }
 
     /// Get a cart by ID
@@ -173,17 +248,26 @@ impl Carts {
     pub fn add_item(&self, cart_id: CartId, item: AddCartItem) -> Result<CartItem> {
         // Reject a negative price or non-positive quantity before persisting.
         item.validate()?;
-        self.db.carts().add_item(cart_id, item)
+        let added = self.db.carts().add_item(cart_id, item)?;
+        self.refresh_tax(cart_id)?;
+        Ok(added)
     }
 
     /// Update a cart item (quantity, etc.)
     pub fn update_item(&self, item_id: Uuid, input: UpdateCartItem) -> Result<CartItem> {
-        self.db.carts().update_item(item_id, input)
+        let updated = self.db.carts().update_item(item_id, input)?;
+        self.refresh_tax(updated.cart_id)?;
+        Ok(updated)
     }
 
     /// Remove an item from the cart
     pub fn remove_item(&self, item_id: Uuid) -> Result<()> {
-        self.db.carts().remove_item(item_id)
+        let cart_id = self.find_item(item_id)?.map(|item| item.cart_id);
+        self.db.carts().remove_item(item_id)?;
+        if let Some(cart_id) = cart_id {
+            self.refresh_tax(cart_id)?;
+        }
+        Ok(())
     }
 
     /// Get all items in the cart
@@ -193,7 +277,8 @@ impl Carts {
 
     /// Clear all items from the cart
     pub fn clear_items(&self, cart_id: CartId) -> Result<()> {
-        self.db.carts().clear_items(cart_id)
+        self.db.carts().clear_items(cart_id)?;
+        self.refresh_tax(cart_id)
     }
 
     // === Address Operations ===

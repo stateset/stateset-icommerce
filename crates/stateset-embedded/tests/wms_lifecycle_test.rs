@@ -38,6 +38,9 @@ use uuid::Uuid;
 // Fixtures
 // ============================================================================
 
+/// The SKU every pick task in this file draws on.
+const WMS_SKU: &str = "WMS-SKU-1";
+
 /// An in-memory engine plus the warehouse and pickable location that
 /// fulfillment/receiving rows carry foreign keys onto.
 struct Wms {
@@ -68,6 +71,37 @@ fn wms() -> Wms {
             ..Default::default()
         })
         .expect("create location");
+
+    // Completing a pick now takes the units out of the source bin and
+    // allocates them at warehouse level, so the shelf has to hold them first.
+    // Every pick in this file draws on `WMS_SKU`; stock it generously so the
+    // lifecycle tests exercise the state machine, not the stock guard.
+    commerce
+        .inventory()
+        .create_item(stateset_core::CreateInventoryItem {
+            sku: WMS_SKU.into(),
+            name: WMS_SKU.into(),
+            ..Default::default()
+        })
+        .expect("create inventory item");
+    commerce
+        .inventory()
+        .adjust_at_location(WMS_SKU, warehouse.id, Decimal::from(10_000), "seed shelf")
+        .expect("seed warehouse balance");
+    commerce
+        .warehouse()
+        .adjust_inventory(stateset_core::AdjustLocationInventory {
+            location_id: location.id,
+            sku: WMS_SKU.into(),
+            lot_id: None,
+            quantity: Decimal::from(10_000),
+            reason: "seed shelf".into(),
+            reference_type: None,
+            reference_id: None,
+            performed_by: None,
+        })
+        .expect("seed bin");
+
     Wms { commerce, warehouse_id: warehouse.id, location_id: location.id }
 }
 
@@ -99,7 +133,7 @@ impl Wms {
                 order_id: OrderId::new(),
                 order_item_id: OrderItemId::new(),
                 warehouse_id: self.warehouse_id,
-                sku: "WMS-SKU-1".into(),
+                sku: WMS_SKU.into(),
                 product_name: Some("Widget".into()),
                 source_location_id: self.location_id,
                 quantity_requested: qty,
@@ -572,7 +606,7 @@ fn cartons_cannot_be_added_to_a_finished_pack_task() {
     let err = f
         .add_carton_item(AddCartonItem {
             carton_id: carton.id,
-            sku: "WMS-SKU-1".into(),
+            sku: WMS_SKU.into(),
             quantity: dec!(1),
             lot_id: None,
             serial_number: None,
@@ -810,6 +844,8 @@ fn start_receiving_and_delete_receipt_are_guarded() {
 fn complete_put_away_rejects_cancelled_task_and_leaves_receipt_total_alone() {
     let wms = wms();
     let (receipt, items) = wms.receipt(&[dec!(10)]);
+    // Put-aways are capped at the received quantity, so receive the line first.
+    wms.receive(&receipt, &[(items[0].id, dec!(10))]).expect("receive");
     let task = wms.put_away(&receipt, &items[0], dec!(10));
 
     wms.commerce.receiving().cancel_put_away(task.id).expect("cancel");
@@ -837,6 +873,8 @@ fn complete_put_away_rejects_cancelled_task_and_leaves_receipt_total_alone() {
 fn complete_put_away_folds_quantity_into_receipt_exactly_once() {
     let wms = wms();
     let (receipt, items) = wms.receipt(&[dec!(10)]);
+    // Put-aways are capped at the received quantity, so receive the line first.
+    wms.receive(&receipt, &[(items[0].id, dec!(10))]).expect("receive");
     let task = wms.put_away(&receipt, &items[0], dec!(10));
 
     let done = wms
@@ -870,6 +908,7 @@ fn complete_put_away_folds_quantity_into_receipt_exactly_once() {
 fn put_away_assign_start_cancel_are_guarded() {
     let wms = wms();
     let (receipt, items) = wms.receipt(&[dec!(10)]);
+    wms.receive(&receipt, &[(items[0].id, dec!(10))]).expect("receive");
 
     let completed = wms.put_away(&receipt, &items[0], dec!(4));
     wms.commerce

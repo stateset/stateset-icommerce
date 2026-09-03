@@ -226,16 +226,24 @@ pub trait QualityRepository: Send + Sync {
     /// Get NCR by number
     fn get_ncr_by_number(&self, number: &str) -> Result<Option<NonConformance>>;
 
-    /// Update an NCR
+    /// Update an *open* NCR.
+    ///
+    /// A `Closed` or `Cancelled` NCR is a finished quality record and is
+    /// refused (`ValidationError`) — open a new NCR instead. The read and the
+    /// write share one transaction, so a concurrent close/cancel cannot be
+    /// overwritten.
     fn update_ncr(&self, id: Uuid, input: UpdateNonConformance) -> Result<NonConformance>;
 
     /// List NCRs with filter
     fn list_ncrs(&self, filter: NonConformanceFilter) -> Result<Vec<NonConformance>>;
 
-    /// Close an NCR
+    /// Close an NCR. Idempotent for an already-closed one; a `Cancelled` NCR
+    /// is refused, since cancelling means it was opened in error and it must
+    /// not become a closed quality record.
     fn close_ncr(&self, id: Uuid) -> Result<NonConformance>;
 
-    /// Cancel an NCR
+    /// Cancel an NCR opened in error. Idempotent for an already-cancelled one;
+    /// a `Closed` NCR is refused — the record stands.
     fn cancel_ncr(&self, id: Uuid) -> Result<NonConformance>;
 
     /// Count NCRs

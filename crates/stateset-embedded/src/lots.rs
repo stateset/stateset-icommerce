@@ -31,8 +31,8 @@
 use rust_decimal::Decimal;
 use stateset_core::{
     AddLotCertificate, AdjustLot, ConsumeLot, CreateLot, Lot, LotCertificate, LotFilter,
-    LotLocation, LotStatus, LotTransaction, MergeLots, ReserveLot, Result, SplitLot,
-    TraceabilityResult, TransferLot, UpdateLot,
+    LotGenealogyLink, LotLocation, LotStatus, LotTransaction, MergeLots, ReserveLot, Result,
+    SplitLot, TraceabilityResult, TransferLot, UpdateLot,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -311,6 +311,25 @@ impl Lots {
     }
 
     // ========================================================================
+    // Genealogy
+    // ========================================================================
+
+    /// The lots this lot was derived from: the parent of a `split`, or every
+    /// source of a `merge`. Empty for a lot created by a receipt.
+    ///
+    /// A merged lot can only carry one supplier / work order / purchase order
+    /// on its own row, so this is how you recover the rest.
+    pub fn get_parents(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+        self.db.lots().get_lot_parents(lot_id)
+    }
+
+    /// The lots derived from this lot: split children, and the merge target it
+    /// was consumed into.
+    pub fn get_children(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+        self.db.lots().get_lot_children(lot_id)
+    }
+
+    // ========================================================================
     // Transactions
     // ========================================================================
 
@@ -384,6 +403,18 @@ impl Lots {
     /// sweeper only makes the status column agree with the calendar.
     pub fn expire_lots(&self) -> Result<u64> {
         self.db.lots().expire_lots(chrono::Utc::now())
+    }
+
+    /// Sweep lot reservations that expired before `now` without being
+    /// confirmed or released, handing their units back to the lot (and the
+    /// linked inventory balance). Returns how many were released. Idempotent;
+    /// `reserve` / `confirm_reservation` also expire stale reservations lazily
+    /// on the lot they touch, so this only has to catch lots nobody touches.
+    /// Schedule it together with [`Self::expire_lots`] and
+    /// `Serials::release_expired_reservations` (e.g. via
+    /// `stateset_jobs::TraceabilitySweepJob`).
+    pub fn release_expired_reservations(&self, now: chrono::DateTime<chrono::Utc>) -> Result<u64> {
+        self.db.lots().release_expired_reservations(now)
     }
 
     /// Get lots with available quantity for a SKU.

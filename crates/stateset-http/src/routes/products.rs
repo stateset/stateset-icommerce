@@ -238,6 +238,12 @@ pub(crate) async fn update_product(
         .map(ProductStatus::from_str)
         .transpose()
         .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+    let requested_type = req
+        .product_type
+        .as_deref()
+        .map(ProductType::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid product_type: {e}")))?;
 
     let input = UpdateProduct {
         name: req.name,
@@ -249,6 +255,24 @@ pub(crate) async fn update_product(
     };
     let product = state
         .run_blocking(tenant_id.as_deref(), move |commerce| {
+            // `product_type` is immutable — the shape a product was created
+            // with is baked into its variants — and [`UpdateProduct`] has no
+            // field for it. Dropping the value silently let a client believe
+            // the change had been applied, so echoing the current type is a
+            // no-op and anything else is refused explicitly.
+            if let Some(requested_type) = requested_type {
+                let current = commerce
+                    .products()
+                    .get(id)?
+                    .ok_or_else(|| HttpError::NotFound(format!("Product {id} not found")))?;
+                if current.product_type != requested_type {
+                    return Err(HttpError::BadRequest(format!(
+                        "product_type cannot be changed after creation (product {id} is \
+                         {current_type}, requested {requested_type})",
+                        current_type = current.product_type
+                    )));
+                }
+            }
             Ok(commerce.products().update(id, input)?)
         })
         .await?;
@@ -490,6 +514,51 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["name"], "Super Widget");
+    }
+
+    #[tokio::test]
+    async fn update_product_refuses_a_product_type_change_instead_of_dropping_it() {
+        let (app, state) = app_with_state();
+        let product = state
+            .commerce()
+            .products()
+            .create(stateset_core::CreateProduct { name: "Widget".into(), ..Default::default() })
+            .unwrap();
+
+        // Echoing the current type is a no-op...
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::patch(format!("/products/{}", product.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&serde_json::json!({ "product_type": "simple" }))
+                            .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // ... but a real change is refused rather than silently ignored.
+        let resp = app
+            .oneshot(
+                Request::patch(format!("/products/{}", product.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&serde_json::json!({ "product_type": "bundle" }))
+                            .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            state.commerce().products().get(product.id).unwrap().unwrap().product_type,
+            stateset_core::ProductType::Simple
+        );
     }
 
     #[tokio::test]

@@ -269,7 +269,7 @@ from stateset_embedded.openai import (
     execute_openai_tool_calls,
 )
 
-__version__ = "1.28.5"
+__version__ = "1.30.0"
 
 __all__ = [
     # Main entry point

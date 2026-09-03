@@ -10,7 +10,7 @@ use crate::sqlite::{
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
@@ -21,6 +21,157 @@ use stateset_core::{
     MoveInventory, MovementFilter, MovementType, RecordCycleCountLine, Result, UpdateLocation,
     UpdateWarehouse, UpdateZone, Warehouse, WarehouseFilter, WarehouseRepository, Zone,
 };
+
+// ============================================================================
+// WMS stock ledger (shared by receiving and fulfillment)
+// ============================================================================
+//
+// Warehouse documents used to be pure paperwork: completing a put-away, a pick
+// or a ship moved no stock anywhere, while return dispositions *did*, so the
+// warehouse was half-ledgered. These helpers are the missing half. Each is
+// applied on the caller's transaction — the same one that writes the document's
+// status — so the movement and the status flip commit or roll back together,
+// and the status guard (`WHERE status IN (...)` matching zero rows on a second
+// attempt) is what makes completing twice a no-op rather than a double count.
+//
+// Levels:
+// - `location_inventory` (bin level) is the WMS's own ledger: put-away adds to
+//   the destination bin, a pick takes from the source bin.
+// - `inventory_balances` (warehouse level, via
+//   [`super::bins::apply_warehouse_delta_tx`]) mirrors it: a put-away is the
+//   only producer of received stock, a pick allocates it (off the shelf, still
+//   in the building) and a ship consumes exactly what the picks allocated. The
+//   WMS pair pick/ship is therefore self-balancing.
+
+/// `location_inventory.lot_id` is `NOT NULL` and stores `''` for lot-less rows.
+fn location_lot_key(lot_id: Option<Uuid>) -> String {
+    lot_id.map_or_else(String::new, |id| id.to_string())
+}
+
+/// Add `delta` units of `sku` to a location's on-hand, creating the row on
+/// first use. A negative delta is refused when the bin does not hold enough
+/// unreserved stock (`InsufficientStock`).
+pub(crate) fn apply_location_delta_tx(
+    tx: &rusqlite::Transaction<'_>,
+    location_id: i32,
+    sku: &str,
+    lot_id: Option<Uuid>,
+    delta: Decimal,
+    now: &str,
+) -> rusqlite::Result<()> {
+    if delta.is_zero() {
+        return Ok(());
+    }
+    let lot_key = location_lot_key(lot_id);
+    let current: Option<(String, String)> = tx
+        .query_row(
+            "SELECT quantity_on_hand, quantity_reserved FROM location_inventory
+             WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
+            params![location_id, sku, lot_key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let (on_hand, reserved) = match &current {
+        Some((oh, res)) => (
+            parse_decimal_strict(oh, "location_inventory", "quantity_on_hand")
+                .map_err(super::bins::smuggle)?,
+            parse_decimal_strict(res, "location_inventory", "quantity_reserved")
+                .map_err(super::bins::smuggle)?,
+        ),
+        None => (Decimal::ZERO, Decimal::ZERO),
+    };
+    let new_on_hand = on_hand + delta;
+    if new_on_hand < reserved {
+        return Err(super::bins::smuggle(CommerceError::InsufficientStock {
+            sku: sku.to_string(),
+            requested: delta.abs().to_string(),
+            available: (on_hand - reserved).to_string(),
+        }));
+    }
+    if current.is_some() {
+        tx.execute(
+            "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
+             WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
+            params![new_on_hand.to_string(), now, location_id, sku, lot_key],
+        )?;
+    } else {
+        tx.execute(
+            "INSERT INTO location_inventory
+             (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
+             VALUES (?1, ?2, ?3, ?4, '0', ?5)",
+            params![location_id, sku, lot_key, new_on_hand.to_string(), now],
+        )?;
+    }
+    Ok(())
+}
+
+/// Record a WMS movement in the `inventory_movements` audit trail.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn insert_wms_movement_tx(
+    tx: &rusqlite::Transaction<'_>,
+    movement_type: MovementType,
+    from_location_id: Option<i32>,
+    to_location_id: Option<i32>,
+    sku: &str,
+    lot_id: Option<Uuid>,
+    quantity: Decimal,
+    reference_type: &str,
+    reference_id: &str,
+    performed_by: Option<&str>,
+    now: &str,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO inventory_movements
+         (id, movement_type, from_location_id, to_location_id, sku, lot_id, quantity,
+          reference_type, reference_id, reason, performed_by, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            Uuid::new_v4().to_string(),
+            movement_type.to_string(),
+            from_location_id,
+            to_location_id,
+            sku,
+            lot_id.map(|id| id.to_string()),
+            quantity.to_string(),
+            reference_type,
+            reference_id,
+            format!("{movement_type} {reference_type} {reference_id}"),
+            performed_by,
+            now,
+        ],
+    )?;
+    Ok(())
+}
+
+/// The warehouse a location belongs to.
+pub(crate) fn warehouse_of_location_tx(
+    tx: &rusqlite::Transaction<'_>,
+    location_id: i32,
+) -> rusqlite::Result<i32> {
+    tx.query_row("SELECT warehouse_id FROM locations WHERE id = ?1", params![location_id], |row| {
+        row.get(0)
+    })
+    .optional()?
+    .ok_or_else(|| {
+        super::bins::smuggle(CommerceError::ValidationError(format!(
+            "Location {location_id} does not exist"
+        )))
+    })
+}
+
+/// Ensure an `inventory_items` master row exists for `sku`.
+///
+/// `apply_warehouse_delta_tx` refuses to stock an unknown SKU, but a receipt
+/// legitimately introduces one: the goods are physically on the dock. Creating
+/// the master row here keeps a put-away from failing on a SKU that only the
+/// receipt knows about.
+pub(crate) fn ensure_inventory_item_tx(
+    tx: &rusqlite::Transaction<'_>,
+    sku: &str,
+) -> rusqlite::Result<()> {
+    tx.execute("INSERT OR IGNORE INTO inventory_items (sku, name) VALUES (?1, ?1)", params![sku])?;
+    Ok(())
+}
 
 /// SQLite warehouse repository
 #[derive(Debug)]
@@ -928,23 +1079,31 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         Ok(locations)
     }
 
+    /// Delete a location.
+    ///
+    /// Refused (`ValidationError`) while the location holds on-hand or
+    /// reserved stock, or while any `inventory_movements`, pick task, put-away
+    /// or cycle count still references it — those rows are the audit trail
+    /// and would otherwise fail on the foreign key as an opaque database
+    /// error. Such a location should be deactivated instead. A missing id is
+    /// `NotFound`. The guards and the DELETE share one `IMMEDIATE`
+    /// transaction, so an adjustment landing between them cannot have its
+    /// stock silently cascaded away by a delete that read zero on-hand.
     fn delete_location(&self, id: i32) -> Result<()> {
-        // Check-then-delete: the stock guard and the DELETE share one IMMEDIATE
-        // transaction, so an adjustment landing between them cannot have its
-        // stock silently cascaded away by a delete that read zero on-hand.
         with_immediate_transaction(&self.pool, |tx| {
-            // `quantity_on_hand` is a TEXT decimal, so compare the exact parsed
-            // `Decimal`s in Rust instead of a float-coercing CAST(... AS REAL)
-            // in SQL.
-            let quantities: Vec<String> = {
+            // `quantity_on_hand`/`quantity_reserved` are TEXT decimals, so
+            // compare the exact parsed `Decimal`s in Rust instead of a
+            // float-coercing CAST(... AS REAL) in SQL.
+            let quantities: Vec<(String, String)> = {
                 let mut stmt = tx.prepare(
-                    "SELECT quantity_on_hand FROM location_inventory WHERE location_id = ?1",
+                    "SELECT quantity_on_hand, quantity_reserved FROM location_inventory
+                     WHERE location_id = ?1",
                 )?;
-                let rows = stmt.query_map(params![id], |row| row.get(0))?;
+                let rows = stmt.query_map(params![id], |row| Ok((row.get(0)?, row.get(1)?)))?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()?
             };
-            for qty in &quantities {
-                if parse_decimal_strict(qty, "location_inventory", "quantity_on_hand")
+            for (on_hand, reserved) in &quantities {
+                if parse_decimal_strict(on_hand, "location_inventory", "quantity_on_hand")
                     .map_err(Self::smuggle)?
                     > Decimal::ZERO
                 {
@@ -952,9 +1111,41 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                         "Cannot delete location with inventory".into(),
                     )));
                 }
+                if parse_decimal_strict(reserved, "location_inventory", "quantity_reserved")
+                    .map_err(Self::smuggle)?
+                    > Decimal::ZERO
+                {
+                    return Err(Self::smuggle(CommerceError::ValidationError(
+                        "Cannot delete location with reserved inventory".into(),
+                    )));
+                }
             }
 
-            tx.execute("DELETE FROM locations WHERE id = ?1", params![id])?;
+            let history: [(&str, &str); 4] = [
+                (
+                    "movement history",
+                    "SELECT COUNT(*) FROM inventory_movements WHERE from_location_id = ?1 OR to_location_id = ?1",
+                ),
+                ("pick tasks", "SELECT COUNT(*) FROM pick_tasks WHERE source_location_id = ?1"),
+                (
+                    "put-aways",
+                    "SELECT COUNT(*) FROM put_aways WHERE from_location_id = ?1 OR to_location_id = ?1",
+                ),
+                ("cycle counts", "SELECT COUNT(*) FROM cycle_counts WHERE location_id = ?1"),
+            ];
+            for (what, sql) in history {
+                let count: i64 = tx.query_row(sql, params![id], |row| row.get(0))?;
+                if count > 0 {
+                    return Err(Self::smuggle(CommerceError::ValidationError(format!(
+                        "Cannot delete location {id}: it has {what}; deactivate it instead"
+                    ))));
+                }
+            }
+
+            let deleted = tx.execute("DELETE FROM locations WHERE id = ?1", params![id])?;
+            if deleted == 0 {
+                return Err(Self::smuggle(CommerceError::NotFound));
+            }
 
             Ok(())
         })
@@ -2634,5 +2825,83 @@ mod tests {
             .expect("page 2");
         assert_eq!(second_page.len(), 1);
         assert_eq!(second_page[0].id, all[2].id);
+    }
+
+    // ----- W4: delete_location guards -----
+
+    #[test]
+    fn delete_location_unknown_id_is_not_found() {
+        let repo = fresh_repo();
+        let err = repo.delete_location(999_999).expect_err("no such location");
+        assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
+    }
+
+    #[test]
+    fn delete_location_refuses_reserved_stock() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-DEL-R");
+        let loc = make_loc(&repo, wh.id, "L-RES");
+        {
+            let conn = repo.conn().expect("conn");
+            conn.execute(
+                "INSERT INTO location_inventory
+                    (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
+                 VALUES (?1, 'RES-SKU', '', '0', '2', datetime('now'))",
+                params![loc.id],
+            )
+            .expect("seed reserved");
+        }
+        let err = repo.delete_location(loc.id).expect_err("reserved stock");
+        assert!(
+            matches!(err, CommerceError::ValidationError(ref m) if m.contains("reserved")),
+            "got {err:?}"
+        );
+        assert!(repo.get_location(loc.id).expect("get").is_some());
+    }
+
+    #[test]
+    fn delete_location_refuses_movement_history_instead_of_fk_error() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-DEL-M");
+        let loc = make_loc(&repo, wh.id, "L-MOV");
+        // Adjust in, then adjust the same quantity out: on-hand is zero but the
+        // movement rows reference the location.
+        for qty in [dec!(4), dec!(-4)] {
+            repo.adjust_inventory(AdjustLocationInventory {
+                location_id: loc.id,
+                sku: "MOV-SKU".into(),
+                lot_id: None,
+                quantity: qty,
+                reason: "test".into(),
+                reference_type: None,
+                reference_id: None,
+                performed_by: None,
+            })
+            .expect("adjust");
+        }
+        let err = repo.delete_location(loc.id).expect_err("movement history");
+        assert!(
+            matches!(err, CommerceError::ValidationError(ref m) if m.contains("movement history") && m.contains("deactivate")),
+            "got {err:?}"
+        );
+        assert!(repo.get_location(loc.id).expect("get").is_some());
+
+        // Deactivation is the supported path.
+        let updated = repo
+            .update_location(
+                loc.id,
+                UpdateLocation { is_active: Some(false), ..Default::default() },
+            )
+            .expect("deactivate");
+        assert!(!updated.is_active);
+    }
+
+    #[test]
+    fn delete_location_succeeds_for_untouched_location() {
+        let repo = fresh_repo();
+        let wh = make_wh(&repo, "WH-DEL-OK");
+        let loc = make_loc(&repo, wh.id, "L-OK");
+        repo.delete_location(loc.id).expect("delete");
+        assert!(repo.get_location(loc.id).expect("get").is_none());
     }
 }

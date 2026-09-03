@@ -401,10 +401,17 @@ pub(crate) async fn remove_item(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// `409` when the cart is no longer active: the shipping charge is money on
+// the cart, and a completed / cancelled / abandoned / expired cart's totals
+// are settled (`Cart::ensure_money_settable`). Kept as a plain comment: a doc
+// comment here becomes the operation's OpenAPI `summary`.
 #[utoipa::path(post, operation_id = "carts_set_shipping", path = "/api/v1/carts/{id}/shipping", tag = "carts",
     request_body = SetCartShippingRequest,
     params(("id" = String, Path, description = "Cart ID")),
-    responses((status = 200, body = CartResponse), (status = 400, body = ErrorBody)))]
+    responses(
+        (status = 200, body = CartResponse),
+        (status = 400, body = ErrorBody),
+        (status = 409, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers, req))]
 pub(crate) async fn set_shipping(
     State(state): State<AppState>,
@@ -626,6 +633,87 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let json = json_body(resp).await;
         assert_eq!(json["status"], "cancelled");
+    }
+
+    /// Catalog lines are priced from the catalog: a client `unit_price`
+    /// that disagrees with the SKU's catalog price is a 422, and the line
+    /// is not added. Ad-hoc SKUs keep the client price.
+    #[tokio::test]
+    async fn add_item_refuses_client_price_that_differs_from_catalog() {
+        use rust_decimal_macros::dec;
+        use stateset_core::{CreateProduct, CreateProductVariant, ProductStatus, UpdateProduct};
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let product = state
+            .commerce()
+            .products()
+            .create(CreateProduct {
+                name: "Catalog Widget".into(),
+                variants: Some(vec![CreateProductVariant {
+                    sku: "CAT-1".into(),
+                    price: dec!(49.99),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .expect("create product");
+        // Only a published product is sellable, so put it on sale before pricing.
+        state
+            .commerce()
+            .products()
+            .update(
+                product.id,
+                UpdateProduct { status: Some(ProductStatus::Active), ..Default::default() },
+            )
+            .expect("publish product");
+        let app = router().with_state(state);
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::post("/carts")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "customer_email": "cat@example.com" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let id = json_body(resp).await["id"].as_str().unwrap().to_string();
+
+        let post_item = |body: serde_json::Value| {
+            Request::post(format!("/carts/{id}/items"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        let resp = app
+            .clone()
+            .oneshot(post_item(serde_json::json!({
+                "sku": "CAT-1", "name": "Catalog Widget", "quantity": 1, "unit_price": "0.01"
+            })))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let err = json_body(resp).await;
+        assert!(err.to_string().contains("catalog price 49.99"), "{err}");
+
+        let resp = app
+            .clone()
+            .oneshot(post_item(serde_json::json!({
+                "sku": "CAT-1", "name": "Catalog Widget", "quantity": 1, "unit_price": "49.99"
+            })))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let resp = app
+            .oneshot(post_item(serde_json::json!({
+                "sku": "ADHOC-9", "name": "Gift wrap", "quantity": 1, "unit_price": "2.50"
+            })))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        assert_eq!(json_body(resp).await["unit_price"], "2.50");
     }
 
     #[tokio::test]

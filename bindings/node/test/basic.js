@@ -192,6 +192,11 @@ test('Commerce: basic operations', async (t) => {
     assert.ok(product.id, 'product should have an ID');
     assert.strictEqual(product.name, 'Premium Widget');
 
+    // Products are created as drafts, and only a published product is
+    // sellable, so put it on sale before the order tests below use its SKU.
+    const published = await commerce.products.update(product.id, { status: 'active' });
+    assert.strictEqual(published.status, 'active');
+
     // Get variant by SKU
     widgetSmall = await commerce.products.getVariantBySku('WIDGET-001');
     assert.ok(widgetSmall, 'variant should exist');

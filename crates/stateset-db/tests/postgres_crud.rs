@@ -155,6 +155,7 @@ async fn postgres_core_crud_smoke() {
                 notes: None,
                 shipping_address: None,
                 billing_address: None,
+                void_payments: false,
             },
         )
         .await

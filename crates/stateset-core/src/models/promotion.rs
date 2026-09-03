@@ -1467,6 +1467,10 @@ fn tiered_discount(tiers: &[DiscountTier], amount: Decimal) -> Decimal {
 /// per-customer usage counts, then delegate here, so stacking, eligibility,
 /// conditions, limits and discount math agree by construction.
 ///
+/// Candidates are ordered by `priority` ascending and then, at equal
+/// priority, by `code` and `id` — a total order, so the outcome never depends
+/// on the order storage happened to return them in.
+///
 /// Rules, in order, per candidate (priority ascending, each promotion
 /// considered at most once):
 /// - the promotion must be active inside its validity window;
@@ -1499,7 +1503,15 @@ pub fn evaluate_promotions(
     let mut seen: std::collections::HashSet<PromotionId> = std::collections::HashSet::new();
     let mut candidates: Vec<(Promotion, Option<String>)> =
         candidates.into_iter().filter(|(promo, _)| seen.insert(promo.id)).collect();
-    candidates.sort_by_key(|(p, _)| p.priority);
+    // Priority first, then a TOTAL tie-break. `sort_by_key(priority)` alone is
+    // only stable, so two promotions of equal priority applied in whatever
+    // order they happened to arrive from storage — and with Exclusive
+    // stacking, which one arrived first decides which one the customer gets.
+    // `code` is the promotion's business key and `id` the last resort, so the
+    // outcome is a function of the promotions, never of the query plan.
+    candidates.sort_by(|(a, _), (b, _)| {
+        a.priority.cmp(&b.priority).then_with(|| a.code.cmp(&b.code)).then_with(|| a.id.cmp(&b.id))
+    });
 
     let mut total_discount = Decimal::ZERO;
     let mut shipping_discount = Decimal::ZERO;
@@ -1696,5 +1708,300 @@ mod tests {
     fn test_coupon_status_from_str() {
         assert_eq!(CouponStatus::from_str("active").unwrap(), CouponStatus::Active);
         assert_eq!(CouponStatus::from_str("exhausted").unwrap(), CouponStatus::Exhausted);
+    }
+
+    // ------------------------------------------------------------------
+    // calculate_discount / evaluate_promotions
+    // ------------------------------------------------------------------
+
+    fn promo(
+        promotion_type: PromotionType,
+        stacking: StackingBehavior,
+        priority: i32,
+    ) -> Promotion {
+        let now = Utc::now();
+        Promotion {
+            id: PromotionId::new(),
+            code: format!("P{priority}"),
+            name: format!("promo {priority}"),
+            description: None,
+            internal_notes: None,
+            promotion_type,
+            trigger: PromotionTrigger::Automatic,
+            target: PromotionTarget::Order,
+            stacking,
+            status: PromotionStatus::Active,
+            percentage_off: None,
+            fixed_amount_off: None,
+            max_discount_amount: None,
+            buy_quantity: None,
+            get_quantity: None,
+            get_discount_percent: None,
+            tiers: None,
+            bundle_product_ids: None,
+            bundle_discount: None,
+            starts_at: now - chrono::Duration::days(1),
+            ends_at: None,
+            total_usage_limit: None,
+            per_customer_limit: None,
+            usage_count: 0,
+            conditions: Vec::new(),
+            applicable_product_ids: Vec::new(),
+            applicable_category_ids: Vec::new(),
+            applicable_skus: Vec::new(),
+            excluded_product_ids: Vec::new(),
+            excluded_category_ids: Vec::new(),
+            eligible_customer_ids: Vec::new(),
+            eligible_customer_groups: Vec::new(),
+            currency: CurrencyCode::USD,
+            priority,
+            metadata: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn item(sku: &str, quantity: i32, unit_price: Decimal) -> PromotionLineItem {
+        PromotionLineItem {
+            id: sku.to_string(),
+            product_id: None,
+            variant_id: None,
+            sku: Some(sku.to_string()),
+            category_ids: vec![],
+            quantity,
+            unit_price,
+            line_total: unit_price * Decimal::from(quantity),
+        }
+    }
+
+    fn request(items: Vec<PromotionLineItem>, shipping: Decimal) -> ApplyPromotionsRequest {
+        let subtotal = items.iter().map(|i| i.line_total).sum();
+        ApplyPromotionsRequest {
+            line_items: items,
+            subtotal,
+            shipping_amount: shipping,
+            currency: CurrencyCode::USD,
+            ..Default::default()
+        }
+    }
+
+    fn evaluate(
+        request: &ApplyPromotionsRequest,
+        candidates: Vec<Promotion>,
+    ) -> ApplyPromotionsResult {
+        let mut result = ApplyPromotionsResult::default();
+        evaluate_promotions(
+            request,
+            candidates.into_iter().map(|p| (p, None)).collect(),
+            &CustomerUsageCounts::new(),
+            &mut result,
+        )
+        .expect("evaluate");
+        result
+    }
+
+    #[test]
+    fn calculate_discount_percentage_rounds_to_the_currency_minor_unit() {
+        let mut p = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 1);
+        p.percentage_off = Some(Decimal::new(1, 1)); // 10%
+        // 3 x 33.33 = 99.99; 10% = 9.999 -> 10.00 (banker's, 2 dp).
+        let req = request(vec![item("A", 3, Decimal::new(3333, 2))], Decimal::ZERO);
+        assert_eq!(p.calculate_discount(&req, Decimal::ZERO), Decimal::new(1000, 2));
+        // 12.345 -> 12.34 under banker's rounding (round half to even).
+        let req = request(vec![item("A", 1, Decimal::new(12345, 2))], Decimal::ZERO);
+        assert_eq!(p.calculate_discount(&req, Decimal::ZERO), Decimal::new(1234, 2));
+    }
+
+    #[test]
+    fn calculate_discount_is_capped_by_the_remaining_subtotal_and_max_amount() {
+        let mut p = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 1);
+        p.percentage_off = Some(Decimal::new(5, 1)); // 50%
+        let req = request(vec![item("A", 1, Decimal::from(100))], Decimal::ZERO);
+        // 90 already discounted: the percentage applies to the 10 that
+        // remains (5), never to value another promotion already took.
+        assert_eq!(p.calculate_discount(&req, Decimal::from(90)), Decimal::from(5));
+        // Fully discounted: nothing left.
+        assert_eq!(p.calculate_discount(&req, Decimal::from(100)), Decimal::ZERO);
+        // max_discount_amount caps a larger computed discount.
+        p.max_discount_amount = Some(Decimal::from(7));
+        assert_eq!(p.calculate_discount(&req, Decimal::ZERO), Decimal::from(7));
+        // A misconfigured >100% percentage never exceeds the item value.
+        p.max_discount_amount = None;
+        p.percentage_off = Some(Decimal::from(3));
+        assert_eq!(p.calculate_discount(&req, Decimal::ZERO), Decimal::from(100));
+    }
+
+    #[test]
+    fn calculate_discount_scoped_fixed_amount_cannot_exceed_eligible_items() {
+        let mut p = promo(PromotionType::FixedAmountOff, StackingBehavior::Stackable, 1);
+        p.fixed_amount_off = Some(Decimal::from(50));
+        p.applicable_skus = vec!["A".into()];
+        let req = request(
+            vec![item("A", 1, Decimal::from(20)), item("B", 1, Decimal::from(80))],
+            Decimal::ZERO,
+        );
+        assert_eq!(p.calculate_discount(&req, Decimal::ZERO), Decimal::from(20));
+        // Unscoped keeps whole-order semantics.
+        p.applicable_skus.clear();
+        assert_eq!(p.calculate_discount(&req, Decimal::ZERO), Decimal::from(50));
+        // Scoped to a SKU that is not in the cart: nothing applies.
+        p.applicable_skus = vec!["Z".into()];
+        assert_eq!(p.calculate_discount(&req, Decimal::ZERO), Decimal::ZERO);
+    }
+
+    #[test]
+    fn calculate_discount_free_shipping_is_the_shipping_amount() {
+        let mut p = promo(PromotionType::FreeShipping, StackingBehavior::Stackable, 1);
+        p.target = PromotionTarget::Shipping;
+        let req = request(vec![item("A", 1, Decimal::from(10))], Decimal::new(795, 2));
+        assert_eq!(p.calculate_discount(&req, Decimal::ZERO), Decimal::new(795, 2));
+    }
+
+    #[test]
+    fn calculate_discount_buy_x_get_y_grants_one_free_item_per_full_set() {
+        let mut p = promo(PromotionType::BuyXGetY, StackingBehavior::Stackable, 1);
+        p.buy_quantity = Some(2);
+        p.get_quantity = Some(1);
+        p.get_discount_percent = Some(Decimal::ONE);
+        // Buy 2 get 1 on 5 units at $10: one full set of 3 -> 1 free unit.
+        let req = request(vec![item("A", 5, Decimal::from(10))], Decimal::ZERO);
+        assert_eq!(p.calculate_discount(&req, Decimal::ZERO), Decimal::from(10));
+        // 6 units: two sets -> 2 free units.
+        let req = request(vec![item("A", 6, Decimal::from(10))], Decimal::ZERO);
+        assert_eq!(p.calculate_discount(&req, Decimal::ZERO), Decimal::from(20));
+        // 2 units: no full set -> nothing.
+        let req = request(vec![item("A", 2, Decimal::from(10))], Decimal::ZERO);
+        assert_eq!(p.calculate_discount(&req, Decimal::ZERO), Decimal::ZERO);
+        // Half off the free item.
+        p.get_discount_percent = Some(Decimal::new(5, 1));
+        let req = request(vec![item("A", 3, Decimal::from(10))], Decimal::ZERO);
+        assert_eq!(p.calculate_discount(&req, Decimal::ZERO), Decimal::from(5));
+    }
+
+    #[test]
+    fn buy_x_get_y_with_a_zero_quantity_is_refused_at_create() {
+        let base = CreatePromotion {
+            name: "BOGO".into(),
+            promotion_type: PromotionType::BuyXGetY,
+            get_discount_percent: Some(Decimal::ONE),
+            ..Default::default()
+        };
+        let zero_buy =
+            CreatePromotion { buy_quantity: Some(0), get_quantity: Some(1), ..base.clone() };
+        assert!(matches!(zero_buy.validate(), Err(CommerceError::ValidationError(_))));
+        let zero_get =
+            CreatePromotion { buy_quantity: Some(2), get_quantity: Some(0), ..base.clone() };
+        assert!(matches!(zero_get.validate(), Err(CommerceError::ValidationError(_))));
+        let missing = CreatePromotion { buy_quantity: None, get_quantity: None, ..base.clone() };
+        assert!(matches!(missing.validate(), Err(CommerceError::ValidationError(_))));
+        let ok = CreatePromotion { buy_quantity: Some(2), get_quantity: Some(1), ..base };
+        assert!(ok.validate().is_ok());
+    }
+
+    #[test]
+    fn exclusive_stacking_is_order_independent() {
+        let mut stackable = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 1);
+        stackable.percentage_off = Some(Decimal::new(1, 1));
+        let mut exclusive = promo(PromotionType::PercentageOff, StackingBehavior::Exclusive, 2);
+        exclusive.percentage_off = Some(Decimal::new(2, 1));
+        let req = request(vec![item("A", 1, Decimal::from(100))], Decimal::ZERO);
+
+        // Stackable first (lower priority): it applies, the Exclusive one
+        // cannot join.
+        let result = evaluate(&req, vec![stackable.clone(), exclusive.clone()]);
+        assert_eq!(result.applied_promotions.len(), 1);
+        assert_eq!(result.applied_promotions[0].promotion_id, stackable.id);
+        assert_eq!(result.total_discount, Decimal::from(10));
+        assert!(result.rejected_promotions.iter().any(|r| r.promotion_id == Some(exclusive.id)
+            && r.reason_code == RejectionReason::NotStackable));
+
+        // Exclusive first: it applies alone and blocks everything after it.
+        // (Candidate order does not matter — priority decides — so flip the
+        // priorities to make the Exclusive one come first.)
+        stackable.priority = 2;
+        exclusive.priority = 1;
+        let result = evaluate(&req, vec![stackable.clone(), exclusive.clone()]);
+        assert_eq!(result.applied_promotions.len(), 1);
+        assert_eq!(result.applied_promotions[0].promotion_id, exclusive.id);
+        assert_eq!(result.total_discount, Decimal::from(20));
+        assert!(result.rejected_promotions.iter().any(|r| r.promotion_id == Some(stackable.id)
+            && r.reason_code == RejectionReason::NotStackable));
+
+        // Two Exclusive promotions: only the first by priority applies.
+        let mut other = promo(PromotionType::PercentageOff, StackingBehavior::Exclusive, 3);
+        other.percentage_off = Some(Decimal::new(3, 1));
+        let result = evaluate(&req, vec![other, exclusive.clone()]);
+        assert_eq!(result.applied_promotions.len(), 1);
+        assert_eq!(result.applied_promotions[0].promotion_id, exclusive.id);
+    }
+
+    /// At EQUAL priority the winner must be a function of the promotions, not
+    /// of the order storage handed them over. The existing exclusive-stacking
+    /// test flips priorities rather than arrival order, so it cannot see this:
+    /// `sort_by_key(priority)` is stable, and with two Exclusive promotions of
+    /// the same priority whichever arrived first won.
+    #[test]
+    fn equal_priority_promotions_have_a_deterministic_tie_break() {
+        let mut first = promo(PromotionType::PercentageOff, StackingBehavior::Exclusive, 5);
+        first.code = "AAA".into();
+        first.percentage_off = Some(Decimal::new(1, 1));
+        let mut second = promo(PromotionType::PercentageOff, StackingBehavior::Exclusive, 5);
+        second.code = "BBB".into();
+        second.percentage_off = Some(Decimal::new(2, 1));
+        let req = request(vec![item("A", 1, Decimal::from(100))], Decimal::ZERO);
+
+        let forward = evaluate(&req, vec![first.clone(), second.clone()]);
+        let reversed = evaluate(&req, vec![second, first.clone()]);
+
+        assert_eq!(forward.applied_promotions.len(), 1);
+        assert_eq!(
+            forward.applied_promotions[0].promotion_id, first.id,
+            "the lower code must win at equal priority"
+        );
+        assert_eq!(
+            reversed.applied_promotions[0].promotion_id, forward.applied_promotions[0].promotion_id,
+            "arrival order must not decide which exclusive promotion applies"
+        );
+        assert_eq!(reversed.total_discount, forward.total_discount);
+        assert_eq!(forward.total_discount, Decimal::from(10));
+
+        // Stackable promotions of equal priority apply in the same order
+        // however they arrive, so a fixed-amount discount computed off the
+        // running total is reproducible.
+        let mut a = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 5);
+        a.code = "AAA".into();
+        a.percentage_off = Some(Decimal::new(1, 1));
+        let mut b = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 5);
+        b.code = "BBB".into();
+        b.percentage_off = Some(Decimal::new(2, 1));
+        let ids = |r: &ApplyPromotionsResult| -> Vec<PromotionId> {
+            r.applied_promotions.iter().map(|p| p.promotion_id).collect()
+        };
+        let forward = evaluate(&req, vec![a.clone(), b.clone()]);
+        let reversed = evaluate(&req, vec![b, a.clone()]);
+        assert_eq!(ids(&forward), ids(&reversed));
+        assert_eq!(ids(&forward)[0], a.id);
+    }
+
+    #[test]
+    fn evaluate_honours_per_customer_limit_for_automatic_promotions() {
+        let mut p = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 1);
+        p.percentage_off = Some(Decimal::new(1, 1));
+        p.per_customer_limit = Some(1);
+        let mut req = request(vec![item("A", 1, Decimal::from(100))], Decimal::ZERO);
+        req.customer_id = Some(CustomerId::new());
+
+        let mut usage = CustomerUsageCounts::new();
+        usage.insert(p.id, 1);
+        let mut result = ApplyPromotionsResult::default();
+        evaluate_promotions(&req, vec![(p.clone(), None)], &usage, &mut result).expect("eval");
+        assert!(result.applied_promotions.is_empty());
+        assert_eq!(result.rejected_promotions[0].reason_code, RejectionReason::UsageLimitReached);
+
+        // Under the limit it applies.
+        usage.insert(p.id, 0);
+        let mut result = ApplyPromotionsResult::default();
+        evaluate_promotions(&req, vec![(p, None)], &usage, &mut result).expect("eval");
+        assert_eq!(result.applied_promotions.len(), 1);
     }
 }

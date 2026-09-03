@@ -35,10 +35,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==1.28.5     # Python
-npm install @stateset/embedded@1.28.5     # Node.js
-npm install -g @stateset/cli@1.28.5       # CLI
-gem install stateset_embedded -v 1.28.5   # Ruby
+pip install stateset-embedded==1.30.0     # Python
+npm install @stateset/embedded@1.30.0     # Node.js
+npm install -g @stateset/cli@1.30.0       # CLI
+gem install stateset_embedded -v 1.30.0   # Ruby
 ```
 
 **Connect an AI agent in one line** (Claude Desktop, Cursor, any MCP client —
@@ -102,7 +102,7 @@ No database setup. No config files. No migrations to run. It just works.
 - [Engine-First Adoption](#engine-first-adoption) — embed it, don't service-mesh it
 - [Embedded Agent Toolkit](#embedded-agent-toolkit-openai--langgraph--server-side-agents) — OpenAI / LangGraph / server-side
 - [MCP Server](#mcp-server-claude-desktop--cursor--windsurf) — Claude Desktop / Cursor / Windsurf
-- [What's New in v1.28.5](#whats-new-in-v1285)
+- [What's New in v1.30.0](#whats-new-in-v1300)
 - [Architecture](#architecture) — Rust kernel, language bindings, operator runtime
 - [Quick Start](#quick-start) — working snippets in every language
 - [Production Notes](#production-notes) — running on Postgres, scaling, observability
@@ -151,7 +151,7 @@ autonomous agents actually need to transact safely:
   hops between agent and runtime.
 
 Most of the differentiators above are *not* "coming soon" — they're shipping in
-v1.0.x. See [`AGENTIC_COMMERCE.md`](./AGENTIC_COMMERCE.md) for the full A2A
+v1.30.x. See [`AGENTIC_COMMERCE.md`](./AGENTIC_COMMERCE.md) for the full A2A
 case study and [`TRUST_FOUNDATION.md`](./TRUST_FOUNDATION.md) for the security
 and verification architecture (including the explicit gap inventory: PQC hard
 finality and SOC 2 are honest "in progress" items, not aspirational claims).
@@ -200,7 +200,7 @@ examples before release.
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/embedded@1.28.5 @stateset/cli@1.28.5
+npm install @stateset/embedded@1.30.0 @stateset/cli@1.30.0
 ```
 
 ```javascript
@@ -350,12 +350,76 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v1.28.5
+## What's New in v1.30.0
 
-**v1.28.5 closes every catalogued defect on the commerce engine's report
-card — three rounds of verified, both-backend fixes across orders, carts,
-payments, subscriptions, promotions, tax, lots, serials, quality and the
-agentic rails.**
+**v1.30.0 makes one rule structural: hold the row you decided on. A parity
+audit of the modules no earlier round had read found five defects, three of
+them money or stock, and one pattern behind all of them -- a fix lands on a
+method and stops short of its sibling. This release closes the defects and
+adds a lint that fails the build on the next one.**
+
+- **The ledger cannot stamp a balance it does not hold.** Postgres credit
+  `record_transaction` read the balance on one pooled connection and inserted
+  on another, so a payment committing in between left the ledger recording a
+  balance the account no longer had -- $4,000 overstated in the reproduction,
+  with no reconciliation path. It now reads under `FOR UPDATE` inside the
+  transaction that writes.
+- **A transfer receipt cannot take in stock it never records.** The receive
+  path ran four autocommit statements and wrote an absolute quantity, so two
+  clerks scanning the same 100-unit receipt both passed the over-receipt check
+  and both wrote 100, leaving 100 units untracked; concurrent partial receipts
+  lost units outright. Receiving is now one transaction holding the order and
+  the line, and the write is an increment, so receipts accumulate. Cancelling
+  takes the same lock, and receiving checks order status -- a cancelled order
+  can no longer take in stock.
+- **Deleting a serial cannot destroy a live reservation.** The delete read the
+  serial's status through a second pooled connection, so a reservation
+  committing in that window was deleted along with the unit and its history.
+- **The pattern is now enforced, not remembered.** A source-reading lint fails
+  the build when a method decides on what it read and then writes the same
+  table without holding it -- a missing write transaction on either backend, a
+  missing `FOR UPDATE` on Postgres, or a SQLite read through a second pooled
+  connection while a transaction is open. Its safe-exception list is empty, so
+  it fails closed, and a companion test asserts it still rejects the pre-fix
+  serial delete, so it cannot decay into a no-op. It found two further defects
+  on its first run.
+
+**v1.29.0 wires up what was built and guards what was open. Three more
+rounds of verified, both-backend work took every module past the defects a
+seven-part read-only audit found, and closed two patterns that a defect
+list alone would have missed.**
+
+- **Features that ran nowhere now run.** The inventory and traceability
+  sweeps existed with passing tests but nothing executed them, so expired
+  holds and expired lots were reclaimed only by traffic on the same SKU;
+  the server now runs both by default with an operator endpoint. Tax
+  exemption verification had no public surface, and only verified
+  exemptions reduce tax. Turning tax off still charged tax. x402 payment
+  intents and inventory reservations had no HTTP surface at all.
+- **Guards now cover every entry point, not one.** Catalogue purchasability
+  and pricing are enforced in the repositories on every path that puts a
+  SKU on a cart or order line. All 22 kernel operations run the shared
+  envelope guard, so none accepts a self-approving principal, and the
+  parity gate compares operation semantics rather than file names so future
+  drift fails CI.
+- **Warehouse documents move stock.** Completing a put-away, pick or
+  shipment recorded paperwork against a ledger that never changed. They now
+  move inventory in the same transaction as the status write, idempotently.
+- **Money cannot be stranded or double-claimed.** A return cannot be
+  deleted or rejected in a way that frees its order-line claim; removing an
+  order line cannot drop the total below captured money; one cart or order
+  accepts one x402 claim, enforced by a unique key; cart tax and shipping
+  are guarded and atomic; lot split and merge keep inventory in step and
+  record genealogy.
+- **Identity and restore are correct.** Customers whose addresses differ
+  only by letter case are one customer and remain reachable, guest checkout
+  creates them through the same normalised identity, and export/import no
+  longer silently unpublishes the catalogue.
+
+**v1.28.5 closed every catalogued defect on the commerce engine's report
+card — three earlier rounds of verified, both-backend fixes across orders,
+carts, payments, subscriptions, promotions, tax, lots, serials, quality and
+the agentic rails.**
 
 - **Money cannot leak at checkout.** Orders carry tax, shipping and
   discount, so a legitimate capture is never refused as over-capture; the
@@ -730,6 +794,7 @@ admin | cli
 
 - `cli/` is a large Node 20.20+ runtime with the MCP server, tool registry, sync/x402 logic, agent routing, messaging channels, and scaffolding flows.
 - `admin/` is a Next.js surface that depends on the local Node binding package and loads `@stateset/embedded` at runtime.
+- `stateset-http` runs the engine's background sweeps on a `stateset-jobs` scheduler: expired inventory reservations and backorder allocations, and expired lots and serial reservations. They start with the server unless `ServerBuilder::without_background_sweeps()` is set, and an operator can run them on demand with `POST /api/v1/inventory/sweeps/run`.
 - The root `npm run check` pipeline validates release hygiene, Rust fmt/tests/lints/feature-matrix checks, shell scripts, the Node binding, the admin app, and the CLI.
 - `npm run check:release` is the authoritative local release preflight; it extends `npm run check` with doc-tool validation and generated inventory checks before a tag is cut.
 
@@ -1356,6 +1421,8 @@ Operational notes:
 - Payments are recorded as ledger events; integrate a PCI-compliant PSP for capture and store tokens/last4 only.
 - Sync is event-ordered and can surface conflicts; for order/payment state use a single writer or a sequenced event log.
 - Treat external processor IDs and webhook IDs as idempotency keys and de-dupe on ingest to avoid double charges/refunds.
+- Leave the background sweeps enabled. Reservations and lot holds also expire lazily when traffic touches the same SKU, but a SKU that goes quiet keeps its stock allocated until a sweep reclaims it. Multi-tenant deployments that resolve a database per tenant are not swept in the background — schedule `POST /api/v1/inventory/sweeps/run` per tenant instead.
+- Publish a product before selling it. Products are created as drafts, and cart and order lines are checked against the catalogue, so a draft or archived SKU is refused. SKUs absent from the catalogue are treated as ad-hoc lines and keep the price the caller supplies.
 
 ---
 
@@ -1408,7 +1475,7 @@ tool access are generated from code in the
 
 ## Key Features
 
-A capability matrix — what ships in v1.0.x, with depth links. The agentic
+A capability matrix — what ships in v1.30.x, with depth links. The agentic
 primitives that distinguish iCommerce from a generic commerce engine
 ([A2A](./AGENTIC_COMMERCE.md), [x402](./docs/src/payments/x402.md),
 [VES v1.0](./docs/PQC_INITIAL_SPEC.md), [Policy DSL](./crates/stateset-policy/),
@@ -1451,7 +1518,7 @@ Platform-specific notes that don't fit either:
   <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>1.28.5</version>
+    <version>1.30.0</version>
   </dependency>
   ```
 
@@ -1461,7 +1528,7 @@ Platform-specific notes that don't fit either:
   the autoloaded stubs throw at runtime.
 
 - **Swift** — Swift Package Manager is the supported path. CocoaPods is
-  community-maintained at `pod 'StateSet', '~> 1.28.5'`.
+  community-maintained at `pod 'StateSet', '~> 1.30.0'`.
 
 - **CLI** — clone the repo, then `cd cli && npm install && npm link`. After
   that, `stateset --help` works anywhere.
@@ -1474,16 +1541,16 @@ StateSet provides a Rust SDK plus native runtime bindings built from the same Ru
 
 | Language | Package | Install | Docs |
 |----------|---------|---------|------|
-| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.28.5"` | [docs.rs](https://docs.rs/stateset-sdk) |
-| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.28.5` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
+| **Rust** | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.30.0"` | [docs.rs](https://docs.rs/stateset-sdk) |
+| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded@1.30.0` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
 | **Python** | `stateset-embedded` | `pip install stateset-embedded` | [PyPI](https://pypi.org/project/stateset-embedded/) |
 | **Ruby** | `stateset_embedded` | `gem install stateset_embedded` | [RubyGems](https://rubygems.org/gems/stateset_embedded) |
 | **PHP** | `stateset/embedded` | `composer require stateset/embedded` | [Packagist](https://packagist.org/packages/stateset/embedded) |
-| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.28.5'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
-| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.28.5")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
-| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.28.5")` | [GitHub](https://github.com/stateset/stateset-swift) |
-| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.28.5` / `<PackageReference Include="StateSet.Embedded" Version="1.28.5" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
-| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.28.5` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
+| **Java** | `com.stateset:embedded` | `implementation 'com.stateset:embedded:1.30.0'` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
+| **Kotlin** | `com.stateset:embedded-kotlin` | `implementation("com.stateset:embedded-kotlin:1.30.0")` | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
+| **Swift** | `StateSet` | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.30.0")` | [GitHub](https://github.com/stateset/stateset-swift) |
+| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded --version 1.30.0` / `<PackageReference Include="StateSet.Embedded" Version="1.30.0" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
+| **Go** | `stateset` | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.30.0` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
 | **WASM** | `@stateset/embedded-wasm` | `npm install @stateset/embedded-wasm` | [npm](https://www.npmjs.com/package/@stateset/embedded-wasm) |
 
 For Rust specifically, `stateset-sdk` is the recommended facade crate. Use

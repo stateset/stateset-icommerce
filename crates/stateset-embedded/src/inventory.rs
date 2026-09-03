@@ -344,6 +344,15 @@ impl Inventory {
         Ok(())
     }
 
+    /// Fetch one reservation by id.
+    ///
+    /// Needed by any surface that hands out reservation ids (the HTTP
+    /// reservation endpoints, an agent holding stock for a cart) so the
+    /// holder can read back the hold it created.
+    pub fn get_reservation(&self, reservation_id: Uuid) -> Result<Option<InventoryReservation>> {
+        self.db.inventory().get_reservation(reservation_id)
+    }
+
     /// List reservations by reference (e.g., order id).
     pub fn list_reservations_by_reference(
         &self,
@@ -351,6 +360,29 @@ impl Inventory {
         reference_id: &str,
     ) -> Result<Vec<InventoryReservation>> {
         self.db.inventory().list_reservations_by_reference(reference_type, reference_id)
+    }
+
+    /// Sweep up to `limit` inventory reservations that expired before `now`
+    /// without being confirmed or released: each is flipped to `expired`
+    /// and its units go back to `quantity_available`. Returns how many were
+    /// expired; call again while the result equals `limit` to drain a
+    /// backlog.
+    ///
+    /// `reserve` / `release_reservation` / `confirm_reservation` expire stale
+    /// holds lazily on the balance they touch, so this only has to catch
+    /// SKUs nobody is touching — without it an idle SKU keeps counting holds
+    /// that timed out long ago. Idempotent; schedule it (e.g. via
+    /// `stateset_jobs::ReservationSweepJob`).
+    pub fn expire_reservations(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+        limit: u32,
+    ) -> Result<u64> {
+        let expired = self.db.inventory().expire_reservations(now, limit)?;
+        if expired > 0 {
+            tracing::info!(expired, "expired stale inventory reservations");
+        }
+        Ok(expired)
     }
 
     /// List inventory items with optional filtering.

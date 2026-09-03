@@ -16,8 +16,8 @@ use stateset_core::{
 use uuid::Uuid;
 
 use super::{
-    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
-    parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
+    append_limit_offset, map_db_error, parse_datetime_opt_row, parse_datetime_row,
+    parse_decimal_opt_row, parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
     with_immediate_transaction,
 };
 
@@ -1011,6 +1011,13 @@ impl CreditRepository for SqliteCreditRepository {
             sql.push_str(" AND order_id = ?");
             params.push(Box::new(ord_id.to_string()));
         }
+        // `hold_type` was silently dropped here while the Postgres backend
+        // applied it: an operator filtering the high-risk queue was shown every
+        // hold of every type and could release unrelated over-limit holds.
+        if let Some(ref hold_type) = filter.hold_type {
+            sql.push_str(" AND hold_type = ?");
+            params.push(Box::new(hold_type.to_string()));
+        }
         if let Some(ref status) = filter.status {
             sql.push_str(" AND status = ?");
             params.push(Box::new(status.to_string()));
@@ -1018,9 +1025,11 @@ impl CreditRepository for SqliteCreditRepository {
 
         sql.push_str(" ORDER BY placed_at DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
+        // Share the server-side pagination policy with every other listing (and
+        // with Postgres): a `LIMIT` is always emitted — an absent filter limit
+        // means the default page size, not an unbounded scan — and `offset`,
+        // previously ignored outright, pages.
+        append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let param_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
@@ -1553,8 +1562,8 @@ mod tests {
     use crate::{DatabaseConfig, SqliteDatabase};
     use rust_decimal_macros::dec;
     use stateset_core::{
-        CreateCreditAccount, CreditAccountFilter, CreditAccountStatus, CreditRepository,
-        CustomerId, RiskRating, UpdateCreditAccount,
+        CreateCreditAccount, CreditAccountFilter, CreditAccountStatus, CreditHoldType,
+        CreditRepository, CustomerId, RiskRating, UpdateCreditAccount,
     };
 
     fn fresh_repo() -> SqliteCreditRepository {
@@ -2130,6 +2139,143 @@ mod tests {
         assert!(
             !flagged.iter().any(|a| a.customer_id == at_limit),
             "an account exactly at its limit must not be reported as over-limit"
+        );
+    }
+
+    /// Recording a ledger row for a customer with no `credit_accounts` row must
+    /// be refused. The balance read is a `query_row` inside the IMMEDIATE
+    /// transaction, so the missing account surfaces as `NotFound` and nothing is
+    /// written — the parity anchor for the Postgres backend, which used to mask
+    /// the missing account with `unwrap_or(Decimal::ZERO)` and book a phantom
+    /// entry at a zero running balance.
+    #[test]
+    fn record_transaction_rejects_a_missing_account() {
+        let repo = fresh_repo();
+        let stranger = CustomerId::new();
+
+        let err = repo
+            .record_transaction(RecordCreditTransaction {
+                customer_id: stranger,
+                transaction_type: CreditTransactionType::Payment,
+                amount: dec!(4000),
+                reference_type: Some("test".into()),
+                reference_id: None,
+                notes: None,
+            })
+            .expect_err("a customer with no credit account cannot have a ledger row");
+        assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
+
+        let rows = repo
+            .list_transactions(stateset_core::CreditTransactionFilter {
+                customer_id: Some(stranger),
+                ..Default::default()
+            })
+            .expect("list transactions");
+        assert!(rows.is_empty(), "no phantom ledger entry may be written: {rows:?}");
+    }
+
+    /// Place one hold of each of three types and filter for one of them.
+    ///
+    /// `list_holds` built predicates for `customer_id`, `order_id` and `status`
+    /// only, silently dropping `hold_type` (which the Postgres backend applies).
+    /// An operator working the high-risk queue was shown every hold of every
+    /// type and could release unrelated over-limit holds.
+    #[test]
+    fn list_holds_filters_by_hold_type() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(1000));
+
+        for hold_type in
+            [CreditHoldType::HighRisk, CreditHoldType::OverLimit, CreditHoldType::Manual]
+        {
+            repo.place_hold(PlaceCreditHold {
+                customer_id: cust,
+                order_id: None,
+                hold_type,
+                hold_amount: dec!(10),
+                reason: format!("{hold_type}"),
+                placed_by: None,
+            })
+            .expect("place hold");
+        }
+
+        let high_risk = repo
+            .list_holds(CreditHoldFilter {
+                customer_id: Some(cust),
+                hold_type: Some(CreditHoldType::HighRisk),
+                ..Default::default()
+            })
+            .expect("list holds");
+        assert_eq!(high_risk.len(), 1, "only the high-risk hold may match: {high_risk:?}");
+        assert_eq!(high_risk[0].hold_type, CreditHoldType::HighRisk);
+
+        let all = repo
+            .list_holds(CreditHoldFilter { customer_id: Some(cust), ..Default::default() })
+            .expect("list holds");
+        assert_eq!(all.len(), 3, "an unfiltered listing still sees every hold: {all:?}");
+    }
+
+    /// `list_holds` emitted a `LIMIT` clause only when the filter carried one and
+    /// ignored `offset` outright, so an unfiltered listing scanned the whole
+    /// table and paging was impossible — while the Postgres backend applied
+    /// `effective_limit` and `OFFSET`. Both backends now share the pagination
+    /// policy.
+    #[test]
+    fn list_holds_paginates_like_postgres() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(100000));
+
+        for i in 0..3 {
+            repo.place_hold(PlaceCreditHold {
+                customer_id: cust,
+                order_id: None,
+                hold_type: CreditHoldType::Manual,
+                hold_amount: Decimal::from(i + 1),
+                reason: format!("hold {i}"),
+                placed_by: None,
+            })
+            .expect("place hold");
+        }
+
+        let tail = repo
+            .list_holds(CreditHoldFilter {
+                customer_id: Some(cust),
+                offset: Some(2),
+                ..Default::default()
+            })
+            .expect("list holds");
+        assert_eq!(tail.len(), 1, "offset 2 of 3 holds leaves one row: {tail:?}");
+    }
+
+    /// A listing with no `limit` must still be bounded by the server-side
+    /// default rather than returning the whole table.
+    #[test]
+    fn list_holds_caps_an_unbounded_listing_at_the_default_limit() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(100000));
+
+        for i in 0..(super::super::DEFAULT_LIST_LIMIT + 1) {
+            repo.place_hold(PlaceCreditHold {
+                customer_id: cust,
+                order_id: None,
+                hold_type: CreditHoldType::Manual,
+                hold_amount: dec!(1),
+                reason: format!("hold {i}"),
+                placed_by: None,
+            })
+            .expect("place hold");
+        }
+
+        let page = repo
+            .list_holds(CreditHoldFilter { customer_id: Some(cust), ..Default::default() })
+            .expect("list holds");
+        assert_eq!(
+            page.len(),
+            super::super::DEFAULT_LIST_LIMIT as usize,
+            "an unbounded listing must be capped at the default page size"
         );
     }
 }

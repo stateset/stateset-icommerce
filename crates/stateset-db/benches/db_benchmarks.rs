@@ -558,9 +558,19 @@ fn benchmark_mixed_workload(c: &mut Criterion) {
             // Create customer
             let customer = db.customers().create(create_test_customer(0)).unwrap();
 
-            // Create products
+            // Create products, published: `products.create` mints a `Draft`
+            // product and only an `Active` product's SKU may be ordered.
             for i in 0..5 {
-                db.products().create(create_test_product(i)).unwrap();
+                let product = db.products().create(create_test_product(i)).unwrap();
+                db.products()
+                    .update(
+                        product.id,
+                        stateset_core::UpdateProduct {
+                            status: Some(stateset_core::ProductStatus::Active),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
             }
 
             // Create inventory

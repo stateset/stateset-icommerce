@@ -227,7 +227,16 @@ impl Returns {
         self.update(id, UpdateReturn { status: Some(ReturnStatus::Received), ..Default::default() })
     }
 
-    /// Complete a return (process refund).
+    /// Complete a return and settle its refund.
+    ///
+    /// Requires every item to be dispositioned (see
+    /// [`Self::set_item_disposition`]); to write undispositioned units off
+    /// instead, use [`Self::update`] with
+    /// `UpdateReturn { status: Some(ReturnStatus::Completed), write_off_undispositioned: true, .. }`.
+    /// When `refund_method` is unset or `original_payment`, `pending` payment
+    /// refunds are created against the order's captured payments in the same
+    /// transaction; other methods (store credit, exchange, ...) are recorded
+    /// and capped but settled out of band.
     pub fn complete(&self, id: ReturnId) -> Result<Return> {
         #[cfg(feature = "events")]
         let previous = self.db.returns().get(id)?;
@@ -302,10 +311,11 @@ impl Returns {
 
 impl Returns {
     /// Record a received return item's warehouse disposition (restock,
-    /// refurbish, scrap, return to vendor, quarantine) and apply its stock
-    /// effect atomically. Allowed only while the return is `received` or
-    /// `inspecting`; a second disposition on the same item is rejected with
-    /// `Conflict`.
+    /// refurbish, scrap, return to vendor, quarantine) and apply its stock,
+    /// serial and lot effects atomically. Allowed only while the return is
+    /// `received` or `inspecting`; a second disposition on the same item is
+    /// rejected with `Conflict`. Once units are restocked or quarantined the
+    /// return can no longer be rejected or cancelled.
     pub fn set_item_disposition(
         &self,
         return_id: ReturnId,

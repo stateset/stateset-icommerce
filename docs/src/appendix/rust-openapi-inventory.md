@@ -16,26 +16,26 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | OpenAPI version | `3.1.0` |
 | API title | StateSet Commerce API |
 | API version | `1.0.4` |
-| Paths | 326 |
-| Operations | 442 |
-| Schemas | 430 |
-| Tags | 61 |
+| Paths | 352 |
+| Operations | 471 |
+| Schemas | 455 |
+| Tags | 64 |
 
 ## Method Counts
 
 | Method | Operations |
 | --- | --- |
 | DELETE | 25 |
-| GET | 175 |
-| PATCH | 10 |
-| POST | 219 |
+| GET | 188 |
+| PATCH | 13 |
+| POST | 232 |
 | PUT | 13 |
 
 ## Tag Counts
 
 | Tag | Operations | Description |
 | --- | --- | --- |
-| `a2a` | 8 | Agent-to-agent messaging and credit terms |
+| `a2a` | 11 | Agent-to-agent messaging and credit terms |
 | `accounts_payable` | 14 | Supplier bills, AP payments and allocations, payment runs, and AP aging |
 | `accounts_receivable` | 15 | AR aging, payment application, credit memos, write-offs, dunning, and customer statements |
 | `activity_logs` | 4 | Record-level activity history |
@@ -56,9 +56,10 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `inbound_shipments` | 7 | Inbound shipment receiving |
 | `integration_field_mappings` | 8 | Integration field-level mappings |
 | `integration_mappings` | 7 | External integration record mappings |
-| `inventory` | 3 | Stock and inventory management |
+| `inventory` | 10 | Stock and inventory management |
 | `invoices` | 5 | Invoice management |
-| `lots` | 9 | Lot/batch tracking: creation, consumption, reservations, quarantine, and expiry queries |
+| `kernel` | 2 | Kernel receipt audit chain verification and checkpoints |
+| `lots` | 10 | Lot/batch tracking: creation, consumption, reservations, quarantine, and expiry queries |
 | `loyalty` | 4 | Loyalty program management |
 | `negotiations` | 5 | Agent-to-agent price negotiation |
 | `orders` | 5 | Order lifecycle management |
@@ -76,7 +77,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `quality` | 15 | Quality control: inspections, non-conformance reports, and quality holds |
 | `receiving` | 12 | Inbound receiving: goods receipts, item receipt, and put-away tasks |
 | `reports` | 5 | Computed business reports |
-| `returns` | 5 | Return request processing |
+| `returns` | 8 | Return request processing |
 | `revenue_recognition` | 8 | Revenue contracts, performance obligations, and recognition schedules (ASC 606) |
 | `reviews` | 4 | Product review management |
 | `segments` | 6 | Customer segment management |
@@ -87,6 +88,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `store_credits` | 5 | Store credit management |
 | `subscriptions` | 6 | Recurring subscription management |
 | `supplier_skus` | 4 | Supplier SKU catalog |
+| `tax` | 4 | Tax exemption certificates: create, list, and verify (only verified certificates reduce tax) |
 | `topology_snapshots` | 5 | Network topology snapshots |
 | `transfer_orders` | 6 | Inter-warehouse transfer orders |
 | `units_of_measure` | 6 | Unit of measure definitions |
@@ -96,6 +98,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `warranties` | 3 | Product warranty management |
 | `wishlists` | 6 | Customer wishlist management |
 | `work_orders` | 13 | Manufacturing work order lifecycle and shop-floor tasks |
+| `x402` | 9 | x402 stablecoin payment intents: create, sign, settle, and the one-claim-per-cart guard |
 
 ## Operations
 
@@ -105,10 +108,13 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `POST` | `/api/v1/a2a/credit` | `a2a` | `create_terms` | `POST /api/v1/a2a/credit` |
 | `GET` | `/api/v1/a2a/credit/{id}` | `a2a` | `get_terms` | `GET /api/v1/a2a/credit/:id` |
 | `POST` | `/api/v1/a2a/credit/{id}/charge` | `a2a` | `charge_credit` | `POST /api/v1/a2a/credit/:id/charge` |
+| `GET` | `/api/v1/a2a/credit/{id}/entries` | `a2a` | `list_entries` | `GET /api/v1/a2a/credit/:id/entries` |
 | `POST` | `/api/v1/a2a/credit/{id}/payment` | `a2a` | `record_payment` | `POST /api/v1/a2a/credit/:id/payment` |
 | `GET` | `/api/v1/a2a/messages` | `a2a` | `list_messages` | `GET /api/v1/a2a/messages` |
 | `POST` | `/api/v1/a2a/messages` | `a2a` | `send_message` | `POST /api/v1/a2a/messages` |
+| `GET` | `/api/v1/a2a/messages/{id}` | `a2a` | `get_message` | `GET /api/v1/a2a/messages/:id` |
 | `POST` | `/api/v1/a2a/messages/{id}/acknowledge` | `a2a` | `acknowledge_message` | `POST /api/v1/a2a/messages/:id/acknowledge` |
+| `POST` | `/api/v1/a2a/messages/{id}/fail` | `a2a` | `fail_message` | `POST /api/v1/a2a/messages/:id/fail` |
 | `GET` | `/api/v1/activity-logs` | `activity_logs` | `activity_logs_list` | — |
 | `POST` | `/api/v1/activity-logs` | `activity_logs` | `activity_logs_record` | — |
 | `GET` | `/api/v1/activity-logs/{id}` | `activity_logs` | `activity_logs_get_one` | — |
@@ -272,15 +278,25 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `GET` | `/api/v1/inventory` | `inventory` | `list_inventory` | `GET /api/v1/inventory` |
 | `GET` | `/api/v1/inventory/{sku}` | `inventory` | `get_stock` | `GET /api/v1/inventory/:sku` |
 | `POST` | `/api/v1/inventory/{sku}/adjust` | `inventory` | `adjust_stock` | `POST /api/v1/inventory/:sku/adjust` |
+| `POST` | `/api/v1/inventory/{sku}/reservations` | `inventory` | `create_reservation` | `POST /api/v1/inventory/:sku/reservations` |
+| `GET` | `/api/v1/inventory/reservations` | `inventory` | `list_reservations` | `GET /api/v1/inventory/reservations?reference_type=order&reference_id=...` |
+| `GET` | `/api/v1/inventory/reservations/{reservation_id}` | `inventory` | `get_reservation` | `GET /api/v1/inventory/reservations/:reservation_id` |
+| `POST` | `/api/v1/inventory/reservations/{reservation_id}/confirm` | `inventory` | `confirm_reservation` | `POST /api/v1/inventory/reservations/:reservation_id/confirm` |
+| `POST` | `/api/v1/inventory/reservations/{reservation_id}/release` | `inventory` | `release_reservation` | `POST /api/v1/inventory/reservations/:reservation_id/release` |
+| `POST` | `/api/v1/inventory/reservations/expire` | `inventory` | `expire_reservations` | `POST /api/v1/inventory/reservations/expire` |
+| `POST` | `/api/v1/inventory/sweeps/run` | `inventory` | `run_sweeps` | `POST /api/v1/inventory/sweeps/run` |
 | `GET` | `/api/v1/invoices` | `invoices` | `list_invoices` | `GET /api/v1/invoices` |
 | `POST` | `/api/v1/invoices` | `invoices` | `create_invoice` | `POST /api/v1/invoices` |
 | `GET` | `/api/v1/invoices/{id}` | `invoices` | `get_invoice` | `GET /api/v1/invoices/:id` |
 | `POST` | `/api/v1/invoices/{id}/payments` | `invoices` | `record_invoice_payment` | `POST /api/v1/invoices/:id/payments` |
 | `POST` | `/api/v1/invoices/{id}/send` | `invoices` | `send_invoice` | `POST /api/v1/invoices/:id/send` |
+| `GET` | `/api/v1/kernel/audit` | `kernel` | `kernel_verify_audit_chain` | `GET /api/v1/kernel/audit` — recompute the receipt audit chain. |
+| `GET` | `/api/v1/kernel/audit/checkpoint` | `kernel` | `kernel_audit_checkpoint` | `GET /api/v1/kernel/audit/checkpoint` — mint a portable chain checkpoint. |
 | `GET` | `/api/v1/lots` | `lots` | `lots_list` | — |
 | `POST` | `/api/v1/lots` | `lots` | `lots_create` | — |
 | `GET` | `/api/v1/lots/{id}` | `lots` | `lots_get_one` | — |
 | `POST` | `/api/v1/lots/{id}/consume` | `lots` | `lots_consume` | — |
+| `GET` | `/api/v1/lots/{id}/genealogy` | `lots` | `lots_genealogy` | — |
 | `POST` | `/api/v1/lots/{id}/quarantine` | `lots` | `lots_quarantine` | — |
 | `POST` | `/api/v1/lots/{id}/release-quarantine` | `lots` | `lots_release_quarantine` | — |
 | `POST` | `/api/v1/lots/{id}/reserve` | `lots` | `lots_reserve` | — |
@@ -407,8 +423,11 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `GET` | `/api/v1/returns` | `returns` | `list_returns` | `GET /api/v1/returns` |
 | `POST` | `/api/v1/returns` | `returns` | `create_return` | `POST /api/v1/returns` |
 | `GET` | `/api/v1/returns/{id}` | `returns` | `get_return` | `GET /api/v1/returns/:id` |
+| `PATCH` | `/api/v1/returns/{id}` | `returns` | `return_update` | `PATCH /api/v1/returns/:id` |
 | `PATCH` | `/api/v1/returns/{id}/approve` | `returns` | `approve_return` | `PATCH /api/v1/returns/:id/approve` |
+| `PATCH` | `/api/v1/returns/{id}/complete` | `returns` | `return_complete` | `PATCH /api/v1/returns/:id/complete` |
 | `POST` | `/api/v1/returns/{id}/items/{item_id}/disposition` | `returns` | `return_item_set_disposition` | `POST /api/v1/returns/:id/items/:item_id/disposition` |
+| `PATCH` | `/api/v1/returns/{id}/reject` | `returns` | `return_reject` | `PATCH /api/v1/returns/:id/reject` |
 | `GET` | `/api/v1/revenue-contracts` | `revenue_recognition` | `revenue_recognition_list_contracts` | — |
 | `POST` | `/api/v1/revenue-contracts` | `revenue_recognition` | `revenue_recognition_create_contract` | — |
 | `GET` | `/api/v1/revenue-contracts/{id}` | `revenue_recognition` | `revenue_recognition_get_contract` | — |
@@ -470,6 +489,10 @@ expired credits, and insufficient balance. |
 | `DELETE` | `/api/v1/suppliers/{id}` | `purchase_orders` | `purchase_orders_delete_supplier` | — |
 | `GET` | `/api/v1/suppliers/{id}` | `purchase_orders` | `purchase_orders_get_supplier` | — |
 | `PUT` | `/api/v1/suppliers/{id}` | `purchase_orders` | `purchase_orders_update_supplier` | — |
+| `GET` | `/api/v1/tax/exemptions` | `tax` | `list_exemptions` | — |
+| `POST` | `/api/v1/tax/exemptions` | `tax` | `create_exemption` | — |
+| `GET` | `/api/v1/tax/exemptions/{id}` | `tax` | `get_exemption` | — |
+| `POST` | `/api/v1/tax/exemptions/{id}/verify` | `tax` | `verify_exemption` | — |
 | `GET` | `/api/v1/topology-snapshots` | `topology_snapshots` | `topology_snapshots_list` | — |
 | `POST` | `/api/v1/topology-snapshots` | `topology_snapshots` | `topology_snapshots_capture` | — |
 | `DELETE` | `/api/v1/topology-snapshots/{id}` | `topology_snapshots` | `topology_snapshots_delete_one` | — |
@@ -540,6 +563,15 @@ expired credits, and insufficient balance. |
 | `POST` | `/api/v1/work-orders/{id}/tasks` | `work_orders` | `work_orders_add_task` | — |
 | `POST` | `/api/v1/work-orders/tasks/{task_id}/complete` | `work_orders` | `work_orders_complete_task` | — |
 | `POST` | `/api/v1/work-orders/tasks/{task_id}/start` | `work_orders` | `work_orders_start_task` | — |
+| `GET` | `/api/v1/x402/carts/{cart_id}/intents` | `x402` | `x402_intents_for_cart` | `GET /api/v1/x402/carts/{cart_id}/intents` — every intent for one cart. |
+| `GET` | `/api/v1/x402/intents` | `x402` | `x402_list_intents` | `GET /api/v1/x402/intents` — list payment intents. |
+| `POST` | `/api/v1/x402/intents` | `x402` | `x402_create_intent` | `POST /api/v1/x402/intents` — create (and claim) a payment intent. |
+| `GET` | `/api/v1/x402/intents/{id}` | `x402` | `x402_get_intent` | `GET /api/v1/x402/intents/{id}` — read one payment intent. |
+| `POST` | `/api/v1/x402/intents/{id}/cancel` | `x402` | `x402_cancel_intent` | `POST /api/v1/x402/intents/{id}/cancel` — release the cart/order claim. |
+| `POST` | `/api/v1/x402/intents/{id}/fail` | `x402` | `x402_fail_intent` | `POST /api/v1/x402/intents/{id}/fail` — record a settlement failure. |
+| `POST` | `/api/v1/x402/intents/{id}/settle` | `x402` | `x402_settle_intent` | `POST /api/v1/x402/intents/{id}/settle` — record an on-chain settlement. |
+| `POST` | `/api/v1/x402/intents/{id}/sign` | `x402` | `x402_sign_intent` | `POST /api/v1/x402/intents/{id}/sign` — attach the payer authorization. |
+| `GET` | `/api/v1/x402/orders/{order_id}/intents` | `x402` | `x402_intents_for_order` | `GET /api/v1/x402/orders/{order_id}/intents` — every intent for one order. |
 | `GET` | `/health` | `health` | `health` | `GET /health` — simple liveness probe. |
 | `GET` | `/health/deep` | `health` | `deep_health` | `GET /health/deep` — deep health check with DB connectivity and metrics. |
 | `GET` | `/health/ready` | `health` | `readiness` | `GET /health/ready` — readiness probe that checks DB connectivity. |

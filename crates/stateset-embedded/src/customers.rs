@@ -160,8 +160,39 @@ impl Customers {
     }
 
     /// Delete a customer (soft delete).
+    ///
+    /// The account is marked `Deleted`, its e-mail is replaced by a tombstone
+    /// so the address can be registered again, and the status can never be
+    /// changed back. Refused with a conflict while the customer has open
+    /// orders.
     pub fn delete(&self, id: CustomerId) -> Result<()> {
         self.db.customers().delete(id)
+    }
+
+    /// Anonymise a customer (GDPR erasure): [`Self::delete`] plus scrubbing of
+    /// every PII column and removal of all addresses. Returns the scrubbed
+    /// record.
+    pub fn anonymize(&self, id: CustomerId) -> Result<Customer> {
+        #[cfg(feature = "events")]
+        let previous = self.db.customers().get(id)?;
+
+        let scrubbed = self.db.customers().anonymize(id)?;
+
+        #[cfg(feature = "events")]
+        {
+            if let Some(previous) = previous {
+                if previous.status != scrubbed.status {
+                    self.emit(CommerceEvent::CustomerStatusChanged {
+                        customer_id: scrubbed.id,
+                        from_status: previous.status,
+                        to_status: scrubbed.status,
+                        timestamp: scrubbed.updated_at,
+                    });
+                }
+            }
+        }
+
+        Ok(scrubbed)
     }
 
     /// Add an address for a customer.
@@ -215,11 +246,31 @@ impl Customers {
     }
 
     /// Find or create a customer by email.
+    ///
+    /// The lookup is case-insensitive and ignores deleted accounts. Atomic:
+    /// the repository resolves and creates in ONE transaction
+    /// ([`stateset_core::CustomerRepository::get_or_create_by_email`]), so two
+    /// callers racing on the same address always end up with the same single
+    /// customer and neither of them ever sees `EmailAlreadyExists`.
+    ///
+    /// A `CustomerCreated` event and the creation metric are emitted only when
+    /// this call is the one that created the record.
     pub fn find_or_create(&self, input: CreateCustomer) -> Result<Customer> {
-        if let Some(customer) = self.get_by_email(&input.email)? {
-            Ok(customer)
-        } else {
-            self.create(input)
+        // Reject empty/malformed email or empty names before persisting,
+        // exactly as `create` does.
+        input.validate()?;
+        let (customer, created) = self.db.customers().get_or_create_by_email(input)?;
+        if created {
+            self.metrics.record_customer_created(&customer.id.to_string());
+            #[cfg(feature = "events")]
+            {
+                self.emit(CommerceEvent::CustomerCreated {
+                    customer_id: customer.id,
+                    email: customer.email.clone(),
+                    timestamp: customer.created_at,
+                });
+            }
         }
+        Ok(customer)
     }
 }

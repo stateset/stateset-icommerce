@@ -15,10 +15,129 @@ use uuid::Uuid;
 use stateset_core::{
     AddCarton, AddCartonItem, BatchResult, Carton, CartonItem, CommerceError, CompletePick,
     CompleteShip, CreatePackTask, CreatePickTask, CreateShipTask, CreateWave, FulfillmentId,
-    FulfillmentRepository, OrderId, OrderItemId, PackStatus, PackTask, PackTaskFilter, PickStatus,
-    PickTask, PickTaskFilter, Result, ShipStatus, ShipTask, ShipTaskFilter, ShipmentId, Wave,
-    WaveFilter, WaveStatus, generate_carton_number, generate_wave_number,
+    FulfillmentRepository, MovementType, OrderId, OrderItemId, PackStatus, PackTask,
+    PackTaskFilter, PickStatus, PickTask, PickTaskFilter, Result, ShipStatus, ShipTask,
+    ShipTaskFilter, ShipmentId, Wave, WaveFilter, WaveStatus, generate_carton_number,
+    generate_wave_number,
 };
+
+/// Take the picked units off the shelf.
+///
+/// The source bin loses them (`location_inventory`) and the warehouse balance
+/// marks them allocated: off the shelf, committed to the order, still in the
+/// building. Runs on the caller's transaction. A pick that moved nothing
+/// (`quantity_picked` zero, or a pure shortage) has no stock effect.
+fn apply_pick_stock_effect_tx(
+    tx: &rusqlite::Transaction<'_>,
+    pick: &PickTask,
+    now: &str,
+) -> rusqlite::Result<()> {
+    if pick.quantity_picked <= Decimal::ZERO {
+        return Ok(());
+    }
+    super::warehouse::ensure_inventory_item_tx(tx, &pick.sku)?;
+    super::warehouse::apply_location_delta_tx(
+        tx,
+        pick.source_location_id,
+        &pick.sku,
+        pick.lot_id,
+        -pick.quantity_picked,
+        now,
+    )?;
+    super::bins::apply_warehouse_delta_tx(
+        tx,
+        pick.warehouse_id,
+        &pick.sku,
+        Decimal::ZERO,
+        pick.quantity_picked,
+        "pick completed",
+        Some("pick_task"),
+        Some(&pick.id.to_string()),
+        now,
+    )?;
+    super::warehouse::insert_wms_movement_tx(
+        tx,
+        MovementType::Pick,
+        Some(pick.source_location_id),
+        None,
+        &pick.sku,
+        pick.lot_id,
+        pick.quantity_picked,
+        "pick_task",
+        &pick.id.to_string(),
+        pick.assigned_to.as_deref(),
+        now,
+    )?;
+    Ok(())
+}
+
+/// Ship the units the pack task's cartons hold: warehouse `on_hand` and
+/// `allocated` both fall, releasing exactly what the picks allocated.
+///
+/// The warehouse is taken from the order's pick tasks (a ship task carries no
+/// warehouse of its own); with no picks it falls back to the default warehouse.
+fn apply_ship_stock_effect_tx(
+    tx: &rusqlite::Transaction<'_>,
+    ship: &ShipTask,
+    shipped_by: Option<&str>,
+    now: &str,
+) -> rusqlite::Result<()> {
+    let shipped: Vec<(String, String, Option<String>)> = {
+        let mut stmt = tx.prepare(
+            "SELECT ci.sku, ci.quantity, ci.lot_id FROM carton_items ci
+             JOIN cartons c ON c.id = ci.carton_id
+             WHERE c.pack_task_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![ship.pack_task_id.to_string()], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    if shipped.is_empty() {
+        return Ok(());
+    }
+    let warehouse_id: i32 = tx
+        .query_row(
+            "SELECT warehouse_id FROM pick_tasks WHERE order_id = ?1 LIMIT 1",
+            params![ship.order_id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(1);
+    let ship_id = ship.id.to_string();
+    for (sku, quantity, lot_id) in shipped {
+        let quantity = parse_decimal_row(&quantity, "carton_item", "quantity")?;
+        if quantity <= Decimal::ZERO {
+            continue;
+        }
+        let lot_id = parse_uuid_opt_row(lot_id, "carton_item", "lot_id")?;
+        super::bins::apply_warehouse_delta_tx(
+            tx,
+            warehouse_id,
+            &sku,
+            -quantity,
+            -quantity,
+            "ship task completed",
+            Some("ship_task"),
+            Some(&ship_id),
+            now,
+        )?;
+        super::warehouse::insert_wms_movement_tx(
+            tx,
+            MovementType::Shipment,
+            None,
+            None,
+            &sku,
+            lot_id,
+            quantity,
+            "ship_task",
+            &ship_id,
+            shipped_by,
+            now,
+        )?;
+    }
+    Ok(())
+}
 
 /// SQLite fulfillment repository
 #[derive(Debug)]
@@ -233,6 +352,27 @@ impl SqliteFulfillmentRepository {
         let now = Utc::now().to_rfc3339();
         let id = Uuid::new_v4();
         let id_str = id.to_string();
+
+        // Count the pick on its wave. A wave that is already completed or
+        // cancelled cannot take new picks: they would never be reflected in
+        // its counters and `complete_wave` could no longer reconcile them.
+        if let Some(wave_id) = input.wave_id {
+            let wave_id_str = wave_id.to_string();
+            let changed = tx.execute(
+                "UPDATE waves SET pick_count = pick_count + 1
+                 WHERE id = ?1 AND status IN ('draft', 'released', 'in_progress')",
+                params![wave_id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "waves",
+                    "wave",
+                    &wave_id_str,
+                    "add a pick to",
+                ));
+            }
+        }
 
         tx.execute(
             "INSERT INTO pick_tasks (id, wave_id, order_id, order_item_id, warehouse_id, status, sku, product_name,
@@ -549,6 +689,11 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
     /// a `Draft` wave was never on the floor, and a `Cancelled` or already
     /// `Completed` wave is terminal. Completing a cancelled wave used to
     /// succeed, resurrecting it with counters that describe nothing.
+    ///
+    /// A wave also cannot complete while any of its picks is still open
+    /// (`pending`/`assigned`/`in_progress`): the predicate is computed from the
+    /// `pick_tasks` table rather than the `pick_count` counter so waves created
+    /// before the counter was maintained are judged correctly.
     fn complete_wave(&self, id: FulfillmentId) -> Result<Wave> {
         let now = Utc::now().to_rfc3339();
         let id_str = id.to_string();
@@ -556,10 +701,30 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         with_immediate_transaction(&self.pool, |tx| {
             let changed = tx.execute(
                 "UPDATE waves SET status = ?1, completed_at = ?2
-                 WHERE id = ?3 AND status IN ('released', 'in_progress')",
+                 WHERE id = ?3 AND status IN ('released', 'in_progress')
+                   AND NOT EXISTS (
+                       SELECT 1 FROM pick_tasks
+                       WHERE wave_id = waves.id
+                         AND status IN ('pending', 'assigned', 'in_progress'))",
                 params![WaveStatus::Completed.to_string(), now, id_str],
             )?;
             if changed == 0 {
+                let open: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM pick_tasks WHERE wave_id = ?1
+                     AND status IN ('pending', 'assigned', 'in_progress')",
+                    params![id_str],
+                    |row| row.get(0),
+                )?;
+                let status: Option<String> = tx
+                    .query_row("SELECT status FROM waves WHERE id = ?1", params![id_str], |row| {
+                        row.get(0)
+                    })
+                    .ok();
+                if open > 0 && matches!(status.as_deref(), Some("released" | "in_progress")) {
+                    return Err(Self::smuggle(CommerceError::ValidationError(format!(
+                        "cannot complete wave {id_str}: {open} pick task(s) still open"
+                    ))));
+                }
                 return Err(Self::transition_conflict(tx, "waves", "wave", &id_str, "complete"));
             }
             Self::read_wave_by_id_tx(tx, &id_str)
@@ -766,6 +931,15 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         })
     }
 
+    /// Complete a pick task and take the picked units off the shelf.
+    ///
+    /// **Stock effect**: `quantity_picked` leaves the source location's on-hand
+    /// and becomes `allocated` at warehouse level — the units are on the cart,
+    /// committed to the order, no longer sellable but still in the building.
+    /// The matching ship task releases exactly that allocation when the package
+    /// leaves, so the pick/ship pair is self-balancing. The movement runs on the
+    /// same transaction as the status write, and the "already finalized" guard
+    /// above returns early, so completing twice never moves stock twice.
     fn complete_pick(&self, input: CompletePick) -> Result<PickTask> {
         let now = Utc::now().to_rfc3339();
         let short_qty = input.quantity_short.unwrap_or(Decimal::ZERO);
@@ -836,6 +1010,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
                     params![wave_id.to_string()],
                 )?;
             }
+            apply_pick_stock_effect_tx(tx, &pick, &now)?;
             Ok(pick)
         })
     }
@@ -907,7 +1082,15 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
                     "cancel",
                 ));
             }
-            Self::read_pick_by_id_tx(tx, &id_str)
+            let pick = Self::read_pick_by_id_tx(tx, &id_str)?;
+            // A cancelled pick no longer counts toward the wave's workload.
+            if let Some(wave_id) = pick.wave_id {
+                tx.execute(
+                    "UPDATE waves SET pick_count = MAX(pick_count - 1, 0) WHERE id = ?1",
+                    params![wave_id.to_string()],
+                )?;
+            }
+            Ok(pick)
         })
     }
 
@@ -1443,6 +1626,15 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
     /// Legal from `Pending`/`ReadyToShip`/`LabelPrinted`. Re-shipping an
     /// already-shipped task used to overwrite its tracking number, cost and
     /// `shipped_at`, and a cancelled task could be shipped.
+    /// Complete a ship task: the package is tendered to the carrier.
+    ///
+    /// **Stock effect**: the units in the pack task's cartons leave the
+    /// warehouse balance — `on_hand` and `allocated` both fall by the shipped
+    /// quantity, releasing exactly the allocation the picks created. A pack task
+    /// with no carton items has nothing to consume and moves no stock (the
+    /// cartons *are* the record of what went in the box). The movements run on
+    /// the same transaction as the status write, and the guarded UPDATE matches
+    /// zero rows on a second attempt, so a re-ship never double-decrements.
     fn complete_ship(&self, input: CompleteShip) -> Result<ShipTask> {
         let now = Utc::now().to_rfc3339();
         let id_str = input.ship_task_id.to_string();
@@ -1468,7 +1660,9 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
                     "complete",
                 ));
             }
-            Self::read_ship_by_id_tx(tx, &id_str)
+            let ship = Self::read_ship_by_id_tx(tx, &id_str)?;
+            apply_ship_stock_effect_tx(tx, &ship, input.shipped_by.as_deref(), &now)?;
+            Ok(ship)
         })
     }
 
@@ -1627,6 +1821,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
     // ========================================================================
 
     fn create_waves_batch(&self, inputs: Vec<CreateWave>) -> Result<BatchResult<Wave>> {
+        stateset_core::validate_batch_size(&inputs)?;
         let mut result = BatchResult::new();
 
         for (index, input) in inputs.into_iter().enumerate() {
@@ -1699,6 +1894,53 @@ mod tests {
 
     fn fresh_repo() -> SqliteFulfillmentRepository {
         fresh_setup().0
+    }
+
+    /// Put `qty` units of `sku` on the shelf at `location_id`, at both ledger
+    /// levels (bin and warehouse balance).
+    ///
+    /// Completing a pick now takes the units out of the bin and allocates them
+    /// at warehouse level, so a pick test has to stock both first — picking
+    /// stock the warehouse does not hold is exactly what the ledger refuses.
+    fn seed_location_stock(
+        repo: &SqliteFulfillmentRepository,
+        warehouse_id: i32,
+        location_id: i32,
+        sku: &str,
+        qty: &str,
+    ) {
+        let conn = repo.pool.get().expect("conn");
+        conn.execute(
+            "INSERT INTO location_inventory
+             (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
+             VALUES (?1, ?2, '', ?3, '0', datetime('now'))
+             ON CONFLICT(location_id, sku, lot_id)
+             DO UPDATE SET quantity_on_hand = excluded.quantity_on_hand",
+            params![location_id, sku, qty],
+        )
+        .expect("seed location stock");
+        conn.execute(
+            "INSERT OR IGNORE INTO inventory_items (sku, name) VALUES (?1, ?1)",
+            params![sku],
+        )
+        .expect("seed item");
+        conn.execute(
+            "INSERT OR IGNORE INTO inventory_locations (id, name, code)
+             SELECT id, name, code FROM warehouses WHERE id = ?1",
+            params![warehouse_id],
+        )
+        .expect("seed inventory location");
+        conn.execute(
+            "INSERT INTO inventory_balances
+             (item_id, location_id, quantity_on_hand, quantity_allocated, quantity_available,
+              updated_at)
+             SELECT id, ?2, ?3, '0', ?3, datetime('now') FROM inventory_items WHERE sku = ?1
+             ON CONFLICT(item_id, location_id) DO UPDATE SET
+                 quantity_on_hand = excluded.quantity_on_hand,
+                 quantity_available = excluded.quantity_available",
+            params![sku, warehouse_id, qty],
+        )
+        .expect("seed warehouse balance");
     }
 
     fn make_wave(
@@ -1861,6 +2103,7 @@ mod tests {
     fn start_and_complete_pick_transitions() {
         let (repo, wh_id, loc_id) = fresh_setup();
         let order = OrderId::new();
+        seed_location_stock(&repo, wh_id, loc_id, "SKU-START", "5");
         let pick = make_pick(&repo, wh_id, loc_id, None, order, "SKU-START");
         let started = repo.start_pick(pick.id).expect("start");
         assert_ne!(started.status, pick.status, "status should change after start");
@@ -1936,5 +2179,124 @@ mod tests {
     fn get_unknown_pick_returns_none() {
         let repo = fresh_repo();
         assert!(repo.get_pick(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    // ----- W2: waves.pick_count is maintained and gates completion -----
+
+    #[test]
+    fn pick_count_tracks_inserted_and_cancelled_picks() {
+        let (repo, wh_id, loc_id) = fresh_setup();
+        let order = OrderId::new();
+        let wave = make_wave(&repo, wh_id, vec![order]);
+        assert_eq!(wave.pick_count, 0);
+
+        let a = make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "SKU-A");
+        let _b = make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "SKU-B");
+        let w = repo.get_wave(wave.id).expect("get").expect("exists");
+        assert_eq!(w.pick_count, 2);
+
+        repo.cancel_pick(a.id).expect("cancel");
+        let w = repo.get_wave(wave.id).expect("get").expect("exists");
+        assert_eq!(w.pick_count, 1);
+
+        // Picks without a wave never touch a counter.
+        make_pick(&repo, wh_id, loc_id, None, order, "SKU-C");
+        let w = repo.get_wave(wave.id).expect("get").expect("exists");
+        assert_eq!(w.pick_count, 1);
+    }
+
+    #[test]
+    fn complete_wave_refuses_while_picks_are_open() {
+        let (repo, wh_id, loc_id) = fresh_setup();
+        let order = OrderId::new();
+        let wave = make_wave(&repo, wh_id, vec![order]);
+        seed_location_stock(&repo, wh_id, loc_id, "SKU-A", "5");
+        let p1 = make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "SKU-A");
+        let p2 = make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "SKU-B");
+        repo.release_wave(wave.id).expect("release");
+
+        let err = repo.complete_wave(wave.id).expect_err("0 of 2 picks done");
+        assert!(
+            matches!(err, CommerceError::ValidationError(ref m) if m.contains("2 pick task(s) still open")),
+            "got {err:?}"
+        );
+        let w = repo.get_wave(wave.id).expect("get").expect("exists");
+        assert_eq!(w.status, WaveStatus::Released, "status must be unchanged");
+
+        repo.complete_pick(CompletePick {
+            pick_id: p1.id,
+            quantity_picked: dec!(5),
+            quantity_short: None,
+            short_reason: None,
+            lot_id: None,
+            serial_number: None,
+            completed_by: None,
+        })
+        .expect("complete p1");
+        assert!(repo.complete_wave(wave.id).is_err(), "1 of 2 picks done");
+
+        // A cancelled pick is no longer open, so the wave can complete.
+        repo.cancel_pick(p2.id).expect("cancel p2");
+        let done = repo.complete_wave(wave.id).expect("all picks finalized");
+        assert_eq!(done.status, WaveStatus::Completed);
+        assert_eq!(done.pick_count, 1);
+        assert_eq!(done.completed_pick_count, 1);
+    }
+
+    #[test]
+    fn complete_wave_treats_short_picks_as_finalized() {
+        let (repo, wh_id, loc_id) = fresh_setup();
+        let order = OrderId::new();
+        let wave = make_wave(&repo, wh_id, vec![order]);
+        let p = make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "SKU-A");
+        repo.release_wave(wave.id).expect("release");
+        repo.report_short(p.id, dec!(5), "out of stock").expect("short");
+        repo.complete_wave(wave.id).expect("short pick is finalized");
+    }
+
+    #[test]
+    fn create_pick_rejects_completed_or_cancelled_wave() {
+        let (repo, wh_id, loc_id) = fresh_setup();
+        let order = OrderId::new();
+        let wave = make_wave(&repo, wh_id, vec![order]);
+        repo.release_wave(wave.id).expect("release");
+        repo.complete_wave(wave.id).expect("complete empty wave");
+
+        let err = repo
+            .create_pick(CreatePickTask {
+                wave_id: Some(wave.id),
+                order_id: order,
+                order_item_id: OrderItemId::new(),
+                warehouse_id: wh_id,
+                sku: "SKU-LATE".into(),
+                product_name: None,
+                source_location_id: loc_id,
+                quantity_requested: dec!(1),
+                lot_id: None,
+                serial_number: None,
+                priority: None,
+                notes: None,
+            })
+            .expect_err("wave is completed");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        assert!(repo.get_picks_for_wave(wave.id).expect("picks").is_empty(), "insert rolled back");
+
+        let err = repo
+            .create_pick(CreatePickTask {
+                wave_id: Some(FulfillmentId::new()),
+                order_id: order,
+                order_item_id: OrderItemId::new(),
+                warehouse_id: wh_id,
+                sku: "SKU-NOWAVE".into(),
+                product_name: None,
+                source_location_id: loc_id,
+                quantity_requested: dec!(1),
+                lot_id: None,
+                serial_number: None,
+                priority: None,
+                notes: None,
+            })
+            .expect_err("wave does not exist");
+        assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
     }
 }

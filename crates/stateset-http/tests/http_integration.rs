@@ -119,7 +119,11 @@ fn seed_customer(state: &AppState) -> String {
     customer.id.to_string()
 }
 
-/// Create a product with a variant directly via the Commerce engine.
+/// Create a product with a variant directly via the Commerce engine, published
+/// (`Active`) so its SKU may be ordered.
+///
+/// `products.create` mints a `Draft` product, and a `Draft` SKU is refused on
+/// order lines exactly as it has always been refused on cart lines.
 fn seed_product(state: &AppState) -> String {
     let product = state
         .commerce()
@@ -134,6 +138,17 @@ fn seed_product(state: &AppState) -> String {
             ..Default::default()
         })
         .unwrap();
+    state
+        .commerce()
+        .products()
+        .update(
+            product.id,
+            stateset_core::UpdateProduct {
+                status: Some(stateset_core::ProductStatus::Active),
+                ..Default::default()
+            },
+        )
+        .expect("publish product");
     product.id.to_string()
 }
 
@@ -4953,4 +4968,72 @@ async fn return_item_disposition_requires_received_status_and_scrap_is_stock_neu
         get_path(&router, &format!("/api/v1/warehouse-bins/reconcile?warehouse_id={wh}&sku={sku}"))
             .await;
     assert_eq!(body_json(resp).await["warehouse_on_hand"], "0");
+}
+
+// ============================================================================
+// Kernel receipt audit chain
+// ============================================================================
+
+#[tokio::test]
+async fn kernel_audit_routes_verify_and_checkpoint_the_receipt_chain() {
+    let (router, state) = app_with_state();
+    let empty = router
+        .clone()
+        .oneshot(Request::get("/api/v1/kernel/audit").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(empty.status(), StatusCode::OK);
+    let body = body_json(empty).await;
+    assert_eq!(body["valid"], true);
+    assert_eq!(body["entries"], 0);
+    assert!(body["head_hash"].is_null());
+
+    // Seal one receipt through the governed executor, then verify + checkpoint.
+    let policy = stateset_core::KernelPolicy::new("http-policy").allow(
+        "payments.create",
+        stateset_core::KernelCommandPolicy::requiring(["payments.create"]),
+    );
+    let command = stateset_core::CommandEnvelope::preview(
+        "payments.create",
+        "http-kernel-audit-1",
+        stateset_core::KernelPrincipal {
+            id: "agent:http".into(),
+            kind: stateset_core::PrincipalKind::Agent,
+            tenant_id: Some("tenant:http".into()),
+            delegated_by: Some("user:http".into()),
+            capabilities: vec!["payments.create".into()],
+        },
+        stateset_core::CreatePayment {
+            amount: dec!(12.34),
+            payment_method: stateset_core::PaymentMethodType::CreditCard,
+            ..Default::default()
+        },
+    );
+    state
+        .commerce()
+        .execute_kernel_command(serde_json::to_value(&command).unwrap(), policy)
+        .expect("preview payment");
+
+    let verified = router
+        .clone()
+        .oneshot(Request::get("/api/v1/kernel/audit").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(verified.status(), StatusCode::OK);
+    let verified = body_json(verified).await;
+    assert_eq!(verified["valid"], true);
+    assert_eq!(verified["entries"], 1);
+    let head = verified["head_hash"].as_str().expect("head hash").to_string();
+    assert_eq!(head.len(), 64);
+
+    let checkpoint = router
+        .oneshot(Request::get("/api/v1/kernel/audit/checkpoint").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(checkpoint.status(), StatusCode::OK);
+    let checkpoint = body_json(checkpoint).await;
+    assert_eq!(checkpoint["entries"], 1);
+    assert_eq!(checkpoint["head_hash"], head);
+    assert_eq!(checkpoint["algorithm"], "sha256-jcs-v1");
+    assert_eq!(checkpoint["checkpoint_hash"].as_str().map(str::len), Some(64));
 }

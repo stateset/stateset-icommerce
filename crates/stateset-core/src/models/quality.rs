@@ -234,6 +234,29 @@ impl Default for NcrStatus {
     }
 }
 
+impl NcrStatus {
+    /// Whether the NCR has reached a state no further work leaves.
+    ///
+    /// A `Closed` NCR is a finished quality record and a `Cancelled` one was
+    /// opened in error; both are evidence, so the repositories refuse to edit
+    /// or re-status them. Every other status is still in flight.
+    ///
+    /// The match is exhaustive on purpose: adding a status forces a decision
+    /// about whether it ends the NCR.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        match self {
+            Self::Closed | Self::Cancelled => true,
+            Self::Open
+            | Self::UnderReview
+            | Self::PendingDisposition
+            | Self::CorrectiveAction
+            | Self::PreventiveAction
+            | Self::Verification => false,
+        }
+    }
+}
+
 impl std::str::FromStr for NcrStatus {
     type Err = String;
 

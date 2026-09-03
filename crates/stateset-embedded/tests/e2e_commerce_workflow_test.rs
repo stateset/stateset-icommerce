@@ -59,6 +59,20 @@ fn test_full_commerce_lifecycle() {
         })
         .expect("Failed to create product");
 
+    // `products.create` mints a `Draft` product; publishing it (`Active`) is
+    // what makes its SKU sellable — order lines are held to the same
+    // purchasability rule as cart lines.
+    commerce
+        .products()
+        .update(
+            product.id,
+            stateset_embedded::UpdateProduct {
+                status: Some(stateset_embedded::ProductStatus::Active),
+                ..Default::default()
+            },
+        )
+        .expect("Failed to publish product");
+
     // ========================================================================
     // 3. Create inventory
     // ========================================================================
@@ -239,6 +253,10 @@ fn test_full_commerce_lifecycle() {
             ret.id,
             UpdateReturn {
                 status: Some(ReturnStatus::Completed),
+                // No warehouse disposition in this flow: write the received
+                // units off explicitly (completion refuses silently vanishing
+                // stock otherwise).
+                write_off_undispositioned: true,
                 refund_amount: Some(dec!(49.99)),
                 refund_method: Some("original_payment".into()),
                 ..Default::default()
@@ -377,6 +395,10 @@ fn test_multi_product_order_partial_return() {
             ret.id,
             UpdateReturn {
                 status: Some(ReturnStatus::Completed),
+                // No warehouse disposition in this flow: write the received
+                // units off explicitly (completion refuses silently vanishing
+                // stock otherwise).
+                write_off_undispositioned: true,
                 refund_amount: Some(dec!(25.00)),
                 ..Default::default()
             },

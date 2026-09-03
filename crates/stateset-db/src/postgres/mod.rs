@@ -3,6 +3,8 @@
 //! This module provides async PostgreSQL support for production deployments.
 
 mod a2a;
+mod a2a_credit_terms;
+mod a2a_messaging;
 mod accounts_payable;
 mod accounts_receivable;
 mod activity_logs;
@@ -80,6 +82,8 @@ mod x402_payment_intents;
 mod zone_shipping_methods;
 
 pub use a2a::*;
+pub use a2a_credit_terms::*;
+pub use a2a_messaging::*;
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
 pub use activity_logs::*;
@@ -464,10 +468,68 @@ impl PostgresDatabase {
             "086_serial_reservation_uniqueness",
             include_str!("migrations/086_serial_reservation_uniqueness.sql"),
         ));
+        // Nullable `order_item_id` on inventory_reservations so a removed order
+        // line releases ITS reservation, not the oldest one for the same SKU.
+        migrations.push((
+            "087_reservation_order_line",
+            include_str!("migrations/087_reservation_order_line.sql"),
+        ));
+        // Lot/serial traceability columns on return_items.
+        migrations.push((
+            "088_return_idempotency_and_traceability",
+            include_str!("migrations/088_return_idempotency_and_traceability.sql"),
+        ));
         // Legacy-safe uniqueness for x402 settlement tx hashes.
         migrations.push((
             "089_x402_tx_hash_uniqueness",
             include_str!("migrations/089_x402_tx_hash_uniqueness.sql"),
+        ));
+        // Non-negative CHECK on inventory balances (NOT VALID → legacy-safe)
+        // and `reservation_id` on backorder allocations.
+        migrations.push((
+            "090_inventory_balance_guards",
+            include_str!("migrations/090_inventory_balance_guards.sql"),
+        ));
+        // Nullable billing-worker lease columns on subscriptions so due
+        // subscriptions are claimed atomically before they are billed.
+        migrations.push((
+            "091_billing_claim_lease",
+            include_str!("migrations/091_billing_claim_lease.sql"),
+        ));
+        // Legacy-safe, case-insensitive e-mail uniqueness for live customers
+        // (keyed column; deleted accounts release their address).
+        migrations.push((
+            "092_customer_email_key",
+            include_str!("migrations/092_customer_email_key.sql"),
+        ));
+        // Durable, tenant-scoped A2A credit terms and agent messaging
+        // (previously process-local state in the HTTP routes).
+        migrations.push((
+            "093_a2a_credit_terms_and_messaging",
+            include_str!("migrations/093_a2a_credit_terms_and_messaging.sql"),
+        ));
+        // Key the legacy case-duplicate customers 092 had to leave NULL, so
+        // every live account is reachable and re-registration is defined.
+        migrations.push((
+            "098_customer_email_key_backfill",
+            include_str!("migrations/098_customer_email_key_backfill.sql"),
+        ));
+        // Lot parent/child linkage, so a merged lot can be traced back to
+        // every source lot (and its supplier or work order).
+        migrations.push(("100_lot_genealogy", include_str!("migrations/100_lot_genealogy.sql")));
+        // The inventory balance identity
+        // (available = on_hand - allocated) as a NOT VALID CHECK, promoted to
+        // VALID on a clean database. 090 only guaranteed non-negativity.
+        migrations.push((
+            "099_inventory_balance_identity",
+            include_str!("migrations/099_inventory_balance_identity.sql"),
+        ));
+        // One claiming x402 intent per cart / per order, enforced by keyed
+        // columns. The accessor's read-then-create check was a TOCTOU that
+        // let two concurrent creates double-charge one cart.
+        migrations.push((
+            "101_x402_cart_order_claim",
+            include_str!("migrations/101_x402_cart_order_claim.sql"),
         ));
 
         migrations
@@ -767,6 +829,16 @@ impl PostgresDatabase {
     /// Get A2A quote/purchase repository
     pub fn a2a_purchases(&self) -> PgA2ARepository {
         PgA2ARepository::new(self.pool.clone())
+    }
+
+    /// Get durable A2A credit terms repository
+    pub fn a2a_credit_terms(&self) -> PgA2ACreditTermsRepository {
+        PgA2ACreditTermsRepository::new(self.pool.clone())
+    }
+
+    /// Get durable A2A agent messaging repository
+    pub fn a2a_messages(&self) -> PgA2AMessagingRepository {
+        PgA2AMessagingRepository::new(self.pool.clone())
     }
 
     /// Get agent card repository

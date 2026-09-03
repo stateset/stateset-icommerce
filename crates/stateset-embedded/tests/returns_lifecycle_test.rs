@@ -144,6 +144,10 @@ fn test_return_full_approve_complete_lifecycle() {
             ret.id,
             UpdateReturn {
                 status: Some(ReturnStatus::Completed),
+                // No warehouse disposition in this flow: write the received
+                // units off explicitly (completion refuses silently vanishing
+                // stock otherwise).
+                write_off_undispositioned: true,
                 refund_amount: Some(dec!(49.99)),
                 refund_method: Some("original_payment".into()),
                 ..Default::default()

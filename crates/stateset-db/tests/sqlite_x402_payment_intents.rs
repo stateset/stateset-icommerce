@@ -381,3 +381,113 @@ fn sqlite_x402_batch_created_intent_rejects_ed25519_downgrade() {
             if message.contains("ed25519_ml_dsa65") && message.contains("refusing ed25519")
     ));
 }
+
+/// A cart may have at most one x402 intent that still claims it. The accessor
+/// enforced that by reading `for_cart` and then calling `create` — two
+/// statements, outside any transaction — so two simultaneous creates for one
+/// cart both passed and the cart could be charged twice. The repository now
+/// re-checks inside its IMMEDIATE write transaction, with the
+/// `cart_claim_key` / `order_claim_key` unique indexes (migration 094) as the
+/// backstop.
+#[test]
+fn sqlite_x402_concurrent_creates_for_one_cart_leave_exactly_one_claim() {
+    use std::sync::Arc;
+    use std::sync::Barrier;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("x402-claim-race.db");
+    let db = Arc::new(
+        SqliteDatabase::new(&stateset_db::DatabaseConfig::sqlite(
+            path.to_str().expect("utf-8 path"),
+        ))
+        .expect("open sqlite db"),
+    );
+
+    for _ in 0..5 {
+        let cart_id = uuid::Uuid::new_v4();
+        let barrier = Arc::new(Barrier::new(4));
+        let handles: Vec<_> = (0..4)
+            .map(|index| {
+                let db = Arc::clone(&db);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    db.x402_payment_intents().create(CreateX402PaymentIntent {
+                        payer_address: format!("0xpayer-race-{index}"),
+                        payee_address: "0xpayee-race".to_string(),
+                        amount: 1_000_000,
+                        asset: X402Asset::Usdc,
+                        network: X402Network::SetChain,
+                        cart_id: Some(cart_id),
+                        ..Default::default()
+                    })
+                })
+            })
+            .collect();
+        let results: Vec<_> =
+            handles.into_iter().map(|handle| handle.join().expect("thread")).collect();
+        let winners = results.iter().filter(|result| result.is_ok()).count();
+        assert_eq!(winners, 1, "exactly one create may claim a cart: {results:?}");
+        for result in results.iter().filter(|result| result.is_err()) {
+            let error = result.as_ref().expect_err("loser");
+            assert!(
+                matches!(error, CommerceError::Conflict(_)),
+                "losing create must be a conflict, got {error:?}"
+            );
+        }
+        let claiming = db.x402_payment_intents().for_cart(cart_id).expect("for_cart");
+        assert_eq!(claiming.len(), 1, "one row per claimed cart");
+    }
+}
+
+/// Leaving the claiming set releases the cart, so a replacement intent can be
+/// created — the claim is a live guard, not a permanent lock.
+#[test]
+fn sqlite_x402_cancelling_a_claim_frees_the_cart_for_a_new_intent() {
+    let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
+    let cart_id = uuid::Uuid::new_v4();
+    let intent = db
+        .x402_payment_intents()
+        .create(CreateX402PaymentIntent {
+            payer_address: "0xpayer-claim".into(),
+            payee_address: "0xpayee-claim".into(),
+            amount: 1_000_000,
+            asset: X402Asset::Usdc,
+            network: X402Network::SetChain,
+            cart_id: Some(cart_id),
+            ..Default::default()
+        })
+        .expect("first intent claims the cart");
+
+    let blocked = db.x402_payment_intents().create(CreateX402PaymentIntent {
+        payer_address: "0xpayer-claim-2".into(),
+        payee_address: "0xpayee-claim".into(),
+        amount: 1_000_000,
+        asset: X402Asset::Usdc,
+        network: X402Network::SetChain,
+        cart_id: Some(cart_id),
+        ..Default::default()
+    });
+    match blocked {
+        Err(CommerceError::Conflict(message)) => {
+            assert!(
+                message.contains(&intent.id.to_string()),
+                "conflict names the winner: {message}"
+            );
+        }
+        other => panic!("second claim must conflict, got {other:?}"),
+    }
+
+    db.x402_payment_intents().cancel(intent.id).expect("cancel releases the claim");
+    db.x402_payment_intents()
+        .create(CreateX402PaymentIntent {
+            payer_address: "0xpayer-claim-3".into(),
+            payee_address: "0xpayee-claim".into(),
+            amount: 1_000_000,
+            asset: X402Asset::Usdc,
+            network: X402Network::SetChain,
+            cart_id: Some(cart_id),
+            ..Default::default()
+        })
+        .expect("a released cart accepts a new intent");
+}

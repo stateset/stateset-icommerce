@@ -1,7 +1,8 @@
 //! PostgreSQL implementation of backorder repository
 
+use super::inventory::{PgInventoryRepository, ReservationConfirmOutcome, with_pg_inventory_retry};
 use super::map_db_error;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
@@ -9,9 +10,17 @@ use stateset_core::{
     AllocateBackorder, AllocationStatus, Backorder, BackorderAllocation, BackorderFilter,
     BackorderFulfillment, BackorderPriority, BackorderRepository, BackorderStatus,
     BackorderSummary, CommerceError, CreateBackorder, FulfillBackorder, FulfillmentSourceType,
-    Result, SkuBackorderSummary, UpdateBackorder, generate_backorder_number,
+    ReserveInventory, Result, SkuBackorderSummary, UpdateBackorder, generate_backorder_number,
 };
 use uuid::Uuid;
+
+/// `reference_type` of the inventory reservation that backs an allocation
+/// (same constant as the SQLite backend).
+pub(crate) const BACKORDER_RESERVATION_REFERENCE: &str = "backorder";
+
+const ALLOCATION_COLUMNS: &str = "id, backorder_id, sku, quantity, location_id, lot_id, status, allocated_at, expires_at, reservation_id";
+
+type PgTx<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
 
 #[derive(Debug, Clone)]
 pub struct PgBackorderRepository {
@@ -62,6 +71,7 @@ struct AllocationRow {
     status: String,
     allocated_at: chrono::DateTime<Utc>,
     expires_at: Option<chrono::DateTime<Utc>>,
+    reservation_id: Option<Uuid>,
 }
 
 impl PgBackorderRepository {
@@ -166,6 +176,67 @@ impl PgBackorderRepository {
         Self::row_to_backorder(row)
     }
 
+    /// Open allocations (`reserved`/`confirmed`) of a backorder, oldest first.
+    async fn open_allocations_in_tx(
+        tx: &mut PgTx<'_>,
+        backorder_id: Uuid,
+    ) -> Result<Vec<(Uuid, Decimal, Option<Uuid>)>> {
+        sqlx::query_as(
+            "SELECT id, quantity, reservation_id FROM backorder_allocations
+             WHERE backorder_id = $1 AND status IN ('reserved', 'confirmed')
+             ORDER BY allocated_at, id
+             FOR UPDATE",
+        )
+        .bind(backorder_id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)
+    }
+
+    /// Release the inventory reservation behind every open allocation of the
+    /// given backorders and mark the allocations `released`.
+    async fn release_open_allocations_in_tx(
+        &self,
+        tx: &mut PgTx<'_>,
+        backorder_ids: &[Uuid],
+    ) -> Result<()> {
+        let inventory = PgInventoryRepository::new(self.pool.clone());
+        for backorder_id in backorder_ids {
+            for (allocation_id, _, reservation_id) in
+                Self::open_allocations_in_tx(tx, *backorder_id).await?
+            {
+                if let Some(reservation_id) = reservation_id {
+                    inventory.release_reservation_in_tx(tx, reservation_id).await?;
+                }
+                sqlx::query("UPDATE backorder_allocations SET status = 'released' WHERE id = $1")
+                    .bind(allocation_id)
+                    .execute(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn open_backorder_ids_for_order_in_tx(
+        tx: &mut PgTx<'_>,
+        order_id: Uuid,
+        order_line_id: Option<Uuid>,
+    ) -> Result<Vec<Uuid>> {
+        let rows: Vec<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM backorders
+             WHERE order_id = $1 AND ($2::uuid IS NULL OR order_line_id = $2)
+               AND status NOT IN ('fulfilled', 'cancelled')
+             FOR UPDATE",
+        )
+        .bind(order_id)
+        .bind(order_line_id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
     pub(crate) async fn cancel_backorders_for_order_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -173,20 +244,14 @@ impl PgBackorderRepository {
     ) -> Result<()> {
         let now = Utc::now();
 
-        sqlx::query(
-            "UPDATE backorders SET status = 'cancelled', updated_at = $1 WHERE order_id = $2",
-        )
-        .bind(now)
-        .bind(order_id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let ids = Self::open_backorder_ids_for_order_in_tx(tx, order_id, None).await?;
+        self.release_open_allocations_in_tx(tx, &ids).await?;
 
         sqlx::query(
-            "UPDATE backorder_allocations SET status = 'released'
-             WHERE backorder_id IN (SELECT id FROM backorders WHERE order_id = $1)
-               AND status = 'reserved'",
+            "UPDATE backorders SET status = 'cancelled', updated_at = $1
+             WHERE order_id = $2 AND status NOT IN ('fulfilled', 'cancelled')",
         )
+        .bind(now)
         .bind(order_id)
         .execute(tx.as_mut())
         .await
@@ -206,18 +271,9 @@ impl PgBackorderRepository {
     ) -> Result<()> {
         let now = Utc::now();
 
-        sqlx::query(
-            "UPDATE backorder_allocations SET status = 'released'
-             WHERE backorder_id IN (
-                 SELECT id FROM backorders WHERE order_id = $1 AND order_line_id = $2
-             )
-               AND status = 'reserved'",
-        )
-        .bind(order_id)
-        .bind(order_line_id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let ids =
+            Self::open_backorder_ids_for_order_in_tx(tx, order_id, Some(order_line_id)).await?;
+        self.release_open_allocations_in_tx(tx, &ids).await?;
 
         sqlx::query(
             "UPDATE backorders SET status = 'cancelled', updated_at = $1
@@ -231,6 +287,195 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
+        Ok(())
+    }
+
+    async fn get_allocation_in_tx(
+        tx: &mut PgTx<'_>,
+        allocation_id: Uuid,
+    ) -> Result<BackorderAllocation> {
+        let row = sqlx::query_as::<_, AllocationRow>(&format!(
+            "SELECT {ALLOCATION_COLUMNS} FROM backorder_allocations WHERE id = $1 FOR UPDATE"
+        ))
+        .bind(allocation_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        Self::row_to_allocation(row)
+    }
+
+    async fn open_allocated_quantity_in_tx(
+        tx: &mut PgTx<'_>,
+        backorder_id: Uuid,
+    ) -> Result<Decimal> {
+        Ok(Self::open_allocations_in_tx(tx, backorder_id).await?.iter().map(|(_, q, _)| *q).sum())
+    }
+
+    /// Reserve `quantity` units of `sku` for a backorder and record the
+    /// allocation (reservation keyed `backorder:<id>`).
+    #[allow(clippy::too_many_arguments)]
+    async fn allocate_in_tx(
+        &self,
+        tx: &mut PgTx<'_>,
+        backorder_id: Uuid,
+        sku: &str,
+        quantity: Decimal,
+        location_id: i32,
+        lot_id: Option<Uuid>,
+        expires_at: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) -> Result<BackorderAllocation> {
+        let inventory = PgInventoryRepository::new(self.pool.clone());
+        let expires_in_seconds = expires_at.map(|at| (at - now).num_seconds().max(1));
+        let (reservation, _) = inventory
+            .reserve_in_tx(
+                tx,
+                &ReserveInventory {
+                    sku: sku.to_string(),
+                    location_id: Some(location_id),
+                    quantity,
+                    reference_type: BACKORDER_RESERVATION_REFERENCE.to_string(),
+                    reference_id: backorder_id.to_string(),
+                    expires_in_seconds,
+                },
+            )
+            .await?;
+
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO backorder_allocations (id, backorder_id, sku, quantity, location_id, lot_id, status, allocated_at, expires_at, reservation_id)
+             VALUES ($1,$2,$3,$4,$5,$6,'reserved',$7,$8,$9)",
+        )
+        .bind(id)
+        .bind(backorder_id)
+        .bind(sku)
+        .bind(quantity)
+        .bind(location_id)
+        .bind(lot_id)
+        .bind(now)
+        .bind(expires_at)
+        .bind(reservation.id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            "UPDATE backorders SET status = 'allocated', updated_at = $1
+             WHERE id = $2 AND status = 'pending'",
+        )
+        .bind(now)
+        .bind(backorder_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(BackorderAllocation {
+            id,
+            backorder_id,
+            sku: sku.to_string(),
+            quantity,
+            location_id: Some(location_id),
+            lot_id,
+            status: AllocationStatus::Reserved,
+            allocated_at: now,
+            expires_at,
+            reservation_id: Some(reservation.id),
+        })
+    }
+
+    /// If a backorder was flagged `allocated` and no open allocation remains,
+    /// drop it back to `pending`.
+    async fn settle_backorder_allocation_status_in_tx(
+        tx: &mut PgTx<'_>,
+        backorder_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        if Self::open_allocations_in_tx(tx, backorder_id).await?.is_empty() {
+            sqlx::query(
+                "UPDATE backorders SET status = 'pending', updated_at = $1
+                 WHERE id = $2 AND status = 'allocated'",
+            )
+            .bind(now)
+            .bind(backorder_id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        }
+        Ok(())
+    }
+
+    /// Take `input.quantity` units out of stock for a fulfilment: open
+    /// allocations first (their reservations are fulfilled: on-hand and
+    /// allocated both decrement, `shipment` ledger row), then any remainder
+    /// straight from available stock when fulfilling from `Inventory` and the
+    /// SKU has an inventory master. Other sources (PO, transfer, production)
+    /// and SKUs without an inventory item pass through untouched. Mirrors the
+    /// SQLite backend.
+    async fn consume_stock_for_fulfilment_in_tx(
+        tx: &mut PgTx<'_>,
+        input: &FulfillBackorder,
+        sku: &str,
+        source_location_id: Option<i32>,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let reason = format!("Backorder {} fulfilment", input.backorder_id);
+        let mut remaining = input.quantity;
+        for (allocation_id, allocated, reservation_id) in
+            Self::open_allocations_in_tx(tx, input.backorder_id).await?
+        {
+            if remaining <= Decimal::ZERO {
+                break;
+            }
+            let take = remaining.min(allocated);
+            if let Some(reservation_id) = reservation_id {
+                PgInventoryRepository::fulfil_reservation_in_tx(
+                    tx,
+                    reservation_id,
+                    take,
+                    &reason,
+                    now,
+                )
+                .await?;
+            }
+            if take == allocated {
+                sqlx::query("UPDATE backorder_allocations SET status = 'fulfilled' WHERE id = $1")
+                    .bind(allocation_id)
+                    .execute(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            } else {
+                sqlx::query("UPDATE backorder_allocations SET quantity = $1 WHERE id = $2")
+                    .bind(allocated - take)
+                    .bind(allocation_id)
+                    .execute(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            }
+            remaining -= take;
+        }
+
+        if remaining > Decimal::ZERO && input.source_type == FulfillmentSourceType::Inventory {
+            let item: Option<(i64,)> =
+                sqlx::query_as("SELECT id FROM inventory_items WHERE sku = $1")
+                    .bind(sku)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            if let Some((item_id,)) = item {
+                PgInventoryRepository::consume_available_in_tx(
+                    tx,
+                    item_id,
+                    source_location_id.unwrap_or(1),
+                    remaining,
+                    BACKORDER_RESERVATION_REFERENCE,
+                    &input.backorder_id.to_string(),
+                    &reason,
+                    now,
+                )
+                .await?;
+            }
+        }
         Ok(())
     }
 
@@ -276,6 +521,7 @@ impl PgBackorderRepository {
             status,
             allocated_at,
             expires_at,
+            reservation_id,
         } = row;
 
         let status: AllocationStatus = status.parse().map_err(|e| {
@@ -295,6 +541,7 @@ impl PgBackorderRepository {
             status,
             allocated_at,
             expires_at,
+            reservation_id,
         })
     }
 
@@ -444,12 +691,39 @@ impl PgBackorderRepository {
 
     pub async fn cancel_backorder_async(&self, id: Uuid) -> Result<Backorder> {
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let status_str: String =
+            sqlx::query_scalar("SELECT status FROM backorders WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        let status: BackorderStatus = status_str.parse().map_err(|_| {
+            CommerceError::DatabaseError(format!("Invalid backorder status '{status_str}'"))
+        })?;
+        match status {
+            BackorderStatus::Cancelled => {
+                return self.get_backorder_async(id).await?.ok_or(CommerceError::NotFound);
+            }
+            BackorderStatus::Fulfilled => {
+                return Err(CommerceError::ValidationError(
+                    "A fulfilled backorder cannot be cancelled".into(),
+                ));
+            }
+            _ => {}
+        }
+
+        self.release_open_allocations_in_tx(&mut tx, &[id]).await?;
         sqlx::query("UPDATE backorders SET status = 'cancelled', updated_at = $1 WHERE id = $2")
             .bind(now)
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
+
         self.get_backorder_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -495,8 +769,15 @@ impl PgBackorderRepository {
         // quantity and over-fulfilling.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let (status_str, remaining, fulfilled): (String, Decimal, Decimal) = sqlx::query_as(
-            "SELECT status, quantity_remaining, quantity_fulfilled FROM backorders WHERE id = $1 FOR UPDATE",
+        let (status_str, remaining, fulfilled, sku, source_location_id): (
+            String,
+            Decimal,
+            Decimal,
+            String,
+            Option<i32>,
+        ) = sqlx::query_as(
+            "SELECT status, quantity_remaining, quantity_fulfilled, sku, source_location_id
+             FROM backorders WHERE id = $1 FOR UPDATE",
         )
         .bind(input.backorder_id)
         .fetch_optional(tx.as_mut())
@@ -526,6 +807,9 @@ impl PgBackorderRepository {
         } else {
             BackorderStatus::PartiallyFulfilled
         };
+
+        Self::consume_stock_for_fulfilment_in_tx(&mut tx, &input, &sku, source_location_id, now)
+            .await?;
 
         sqlx::query(
             "UPDATE backorders SET quantity_fulfilled = $1, quantity_remaining = $2, status = $3, updated_at = $4 WHERE id = $5",
@@ -581,51 +865,73 @@ impl PgBackorderRepository {
         &self,
         input: AllocateBackorder,
     ) -> Result<BackorderAllocation> {
-        let id = Uuid::new_v4();
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Allocation quantity must be greater than zero".into(),
+            ));
+        }
+        if input.location_id.is_some_and(|id| id <= 0) {
+            return Err(CommerceError::ValidationError("location_id must be positive".into()));
+        }
         let now = Utc::now();
-        let sku = sqlx::query_scalar::<_, String>("SELECT sku FROM backorders WHERE id = $1")
-            .bind(input.backorder_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_db_error)?
-            .ok_or(CommerceError::NotFound)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        sqlx::query(
-            "INSERT INTO backorder_allocations (id, backorder_id, sku, quantity, location_id, lot_id, status, allocated_at, expires_at)
-             VALUES ($1,$2,$3,$4,$5,$6,'reserved',$7,$8)",
+        let (status_str, remaining, sku, source_location_id): (
+            String,
+            Decimal,
+            String,
+            Option<i32>,
+        ) = sqlx::query_as(
+            "SELECT status, quantity_remaining, sku, source_location_id FROM backorders
+             WHERE id = $1 FOR UPDATE",
         )
-        .bind(id)
         .bind(input.backorder_id)
-        .bind(&sku)
-        .bind(input.quantity)
-        .bind(input.location_id)
-        .bind(input.lot_id)
-        .bind(now)
-        .bind(input.expires_at)
-        .execute(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        let status: BackorderStatus = status_str.parse().map_err(|_| {
+            CommerceError::DatabaseError(format!("Invalid backorder status '{status_str}'"))
+        })?;
+        if matches!(status, BackorderStatus::Cancelled | BackorderStatus::Fulfilled) {
+            return Err(CommerceError::ValidationError(format!(
+                "Backorder is {status} and cannot be allocated"
+            )));
+        }
+        let already = Self::open_allocated_quantity_in_tx(&mut tx, input.backorder_id).await?;
+        if input.quantity + already > remaining {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot allocate {} - only {} of the backorder remains unallocated",
+                input.quantity,
+                remaining - already
+            )));
+        }
 
-        let row = sqlx::query_as::<_, AllocationRow>(
-            "SELECT id, backorder_id, sku, quantity, location_id, lot_id, status, allocated_at, expires_at
-             FROM backorder_allocations WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        Self::row_to_allocation(row)
+        let location_id = input.location_id.or(source_location_id).unwrap_or(1);
+        let allocation = self
+            .allocate_in_tx(
+                &mut tx,
+                input.backorder_id,
+                &sku,
+                input.quantity,
+                location_id,
+                input.lot_id,
+                input.expires_at,
+                now,
+            )
+            .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(allocation)
     }
 
     pub async fn get_allocations_async(
         &self,
         backorder_id: Uuid,
     ) -> Result<Vec<BackorderAllocation>> {
-        let rows = sqlx::query_as::<_, AllocationRow>(
-            "SELECT id, backorder_id, sku, quantity, location_id, lot_id, status, allocated_at, expires_at
-             FROM backorder_allocations WHERE backorder_id = $1",
-        )
+        let rows = sqlx::query_as::<_, AllocationRow>(&format!(
+            "SELECT {ALLOCATION_COLUMNS} FROM backorder_allocations
+             WHERE backorder_id = $1 ORDER BY allocated_at, id"
+        ))
         .bind(backorder_id)
         .fetch_all(&self.pool)
         .await
@@ -634,69 +940,216 @@ impl PgBackorderRepository {
         rows.into_iter().map(Self::row_to_allocation).collect::<Result<Vec<_>>>()
     }
 
+    /// Release one allocation, handing its reservation's units back.
+    ///
+    /// Routed through the crate's Postgres inventory retry wrapper: the
+    /// transaction takes `FOR UPDATE` on the allocation *and* (through
+    /// `release_reservation_in_tx`) on the balance row, so it can lose a
+    /// deadlock (`40P01`) or serialization race against a concurrent
+    /// `auto_allocate`. Without the wrapper that surfaced to the caller as a
+    /// raw database error instead of being retried.
     pub async fn release_allocation_async(
         &self,
         allocation_id: Uuid,
     ) -> Result<BackorderAllocation> {
-        sqlx::query("UPDATE backorder_allocations SET status = 'released' WHERE id = $1")
-            .bind(allocation_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        let row = sqlx::query_as::<_, AllocationRow>(
-            "SELECT id, backorder_id, sku, quantity, location_id, lot_id, status, allocated_at, expires_at
-             FROM backorder_allocations WHERE id = $1",
-        )
-        .bind(allocation_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        Self::row_to_allocation(row)
+        with_pg_inventory_retry(|| self.release_allocation_once(allocation_id)).await
     }
 
+    async fn release_allocation_once(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let allocation = Self::get_allocation_in_tx(&mut tx, allocation_id).await?;
+        if !allocation.status.is_open() {
+            tx.commit().await.map_err(map_db_error)?;
+            return Ok(allocation);
+        }
+        if let Some(reservation_id) = allocation.reservation_id {
+            PgInventoryRepository::new(self.pool.clone())
+                .release_reservation_in_tx(&mut tx, reservation_id)
+                .await?;
+        }
+        sqlx::query("UPDATE backorder_allocations SET status = 'released' WHERE id = $1")
+            .bind(allocation_id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        Self::settle_backorder_allocation_status_in_tx(&mut tx, allocation.backorder_id, now)
+            .await?;
+        let updated = Self::get_allocation_in_tx(&mut tx, allocation_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(updated)
+    }
+
+    /// Confirm one allocation. Retried like [`Self::release_allocation_async`]:
+    /// the same balance row lock is taken, so the same deadlock is reachable.
     pub async fn confirm_allocation_async(
         &self,
         allocation_id: Uuid,
     ) -> Result<BackorderAllocation> {
+        with_pg_inventory_retry(|| self.confirm_allocation_once(allocation_id)).await
+    }
+
+    async fn confirm_allocation_once(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let allocation = Self::get_allocation_in_tx(&mut tx, allocation_id).await?;
+        match allocation.status {
+            AllocationStatus::Confirmed => {
+                tx.commit().await.map_err(map_db_error)?;
+                return Ok(allocation);
+            }
+            AllocationStatus::Reserved => {}
+            other => {
+                return Err(CommerceError::Conflict(format!(
+                    "Backorder allocation {allocation_id} is {other} and cannot be confirmed"
+                )));
+            }
+        }
+        if let Some(reservation_id) = allocation.reservation_id {
+            let outcome = PgInventoryRepository::new(self.pool.clone())
+                .confirm_reservation_in_tx_with_now(&mut tx, reservation_id, now)
+                .await?;
+            if outcome == ReservationConfirmOutcome::Expired {
+                sqlx::query("UPDATE backorder_allocations SET status = 'expired' WHERE id = $1")
+                    .bind(allocation_id)
+                    .execute(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+                Self::settle_backorder_allocation_status_in_tx(
+                    &mut tx,
+                    allocation.backorder_id,
+                    now,
+                )
+                .await?;
+                tx.commit().await.map_err(map_db_error)?;
+                return Err(CommerceError::ReservationExpired(reservation_id));
+            }
+        }
         sqlx::query("UPDATE backorder_allocations SET status = 'confirmed' WHERE id = $1")
             .bind(allocation_id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+        let updated = Self::get_allocation_in_tx(&mut tx, allocation_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(updated)
+    }
 
-        let row = sqlx::query_as::<_, AllocationRow>(
-            "SELECT id, backorder_id, sku, quantity, location_id, lot_id, status, allocated_at, expires_at
-             FROM backorder_allocations WHERE id = $1",
+    /// Expire every allocation past its expiry, releasing the reservation
+    /// behind each. Retried: the sweep walks many balance rows in one
+    /// transaction and is the most deadlock-prone write in this module.
+    pub async fn expire_allocations_async(&self) -> Result<u32> {
+        with_pg_inventory_retry(|| self.expire_allocations_once()).await
+    }
+
+    async fn expire_allocations_once(&self) -> Result<u32> {
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let rows: Vec<(Uuid, Uuid, Option<Uuid>)> = sqlx::query_as(
+            "SELECT id, backorder_id, reservation_id FROM backorder_allocations
+             WHERE status = 'reserved' AND expires_at IS NOT NULL AND expires_at < $1
+             ORDER BY expires_at, id
+             FOR UPDATE SKIP LOCKED",
         )
-        .bind(allocation_id)
-        .fetch_one(&self.pool)
+        .bind(now)
+        .fetch_all(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        Self::row_to_allocation(row)
+        let inventory = PgInventoryRepository::new(self.pool.clone());
+        let mut count = 0u32;
+        for (id, backorder_id, reservation_id) in rows {
+            if let Some(reservation_id) = reservation_id {
+                inventory.release_reservation_in_tx(&mut tx, reservation_id).await?;
+            }
+            sqlx::query("UPDATE backorder_allocations SET status = 'expired' WHERE id = $1")
+                .bind(id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            Self::settle_backorder_allocation_status_in_tx(&mut tx, backorder_id, now).await?;
+            count += 1;
+        }
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(count)
     }
 
-    pub async fn expire_allocations_async(&self) -> Result<u32> {
-        let now = Utc::now();
-        let count = sqlx::query(
-            "UPDATE backorder_allocations SET status = 'expired' WHERE status = 'reserved' AND expires_at IS NOT NULL AND expires_at < $1",
-        )
-        .bind(now)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?
-        .rows_affected();
-
-        Ok(count as u32)
-    }
-
+    /// Give the open backorders of `sku` whatever stock is available, most
+    /// urgent first.
+    ///
+    /// Retried: the `FOR UPDATE` walk over many backorder rows plus the
+    /// per-candidate balance lock is exactly the multi-row lock ordering that
+    /// produces `40P01` against a concurrent release.
     pub async fn auto_allocate_inventory_async(
         &self,
-        _sku: &str,
+        sku: &str,
     ) -> Result<Vec<BackorderAllocation>> {
-        Ok(Vec::new())
+        with_pg_inventory_retry(|| self.auto_allocate_inventory_once(sku)).await
+    }
+
+    async fn auto_allocate_inventory_once(&self, sku: &str) -> Result<Vec<BackorderAllocation>> {
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let candidates: Vec<(Uuid, Decimal, Option<i32>)> = sqlx::query_as(
+            "SELECT id, quantity_remaining, source_location_id FROM backorders
+             WHERE sku = $1 AND status IN ('pending', 'partially_fulfilled', 'allocated')
+             ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END,
+                      created_at ASC, id ASC
+             FOR UPDATE",
+        )
+        .bind(sku)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let mut created = Vec::new();
+        for (backorder_id, remaining, source_location_id) in candidates {
+            let need =
+                remaining - Self::open_allocated_quantity_in_tx(&mut tx, backorder_id).await?;
+            if need <= Decimal::ZERO {
+                continue;
+            }
+            let location_id = source_location_id.unwrap_or(1);
+            // Lock the balance row for the rest of the transaction before
+            // reading availability. Unlocked, a concurrent `reserve` could
+            // take the units between this read and `allocate_in_tx`, and the
+            // resulting `InsufficientStock` aborted the WHOLE batch — every
+            // other backorder of this SKU lost its allocation because one row
+            // lost a race. (`FOR UPDATE OF b` locks only the balance, not the
+            // joined item row.)
+            let available: Option<(Decimal,)> = sqlx::query_as(
+                "SELECT b.quantity_available FROM inventory_balances b
+                 JOIN inventory_items i ON i.id = b.item_id
+                 WHERE i.sku = $1 AND b.location_id = $2
+                 FOR UPDATE OF b",
+            )
+            .bind(sku)
+            .bind(location_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            let Some((available,)) = available else { break };
+            let take = need.min(available);
+            if take <= Decimal::ZERO {
+                continue;
+            }
+            // Defence in depth: even with the row locked, `reserve_in_tx`
+            // re-checks availability under its own guard. If it still says no
+            // (a lot/serial hold, a legacy drifted row), SKIP this candidate
+            // instead of failing the batch. `InsufficientStock` is raised in
+            // Rust before any failing statement, so the transaction stays
+            // usable.
+            match self
+                .allocate_in_tx(&mut tx, backorder_id, sku, take, location_id, None, None, now)
+                .await
+            {
+                Ok(allocation) => created.push(allocation),
+                Err(CommerceError::InsufficientStock { .. }) => continue,
+                Err(err) => return Err(err),
+            }
+        }
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(created)
     }
 
     pub async fn get_summary_async(&self) -> Result<BackorderSummary> {

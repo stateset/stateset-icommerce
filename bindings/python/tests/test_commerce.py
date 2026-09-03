@@ -17,7 +17,12 @@ def commerce():
     return Commerce(":memory:")
 
 def create_product(commerce, sku: str, price: float, name: str):
-    return commerce.products.create(
+    """Create a product and publish it.
+
+    Products are created as drafts and only an active product is sellable,
+    so every fixture that goes on to order the SKU needs it published.
+    """
+    product = commerce.products.create(
         name=name,
         variants=[
             CreateProductVariantInput(
@@ -27,6 +32,7 @@ def create_product(commerce, sku: str, price: float, name: str):
             )
         ],
     )
+    return commerce.products.update(product.id, status="active")
 
 class TestCustomObjects:
     """Custom Objects API tests."""

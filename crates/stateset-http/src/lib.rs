@@ -62,6 +62,7 @@ pub mod openapi;
 pub mod routes;
 mod server;
 mod state;
+pub mod sweeps;
 
 pub use dto::*;
 pub use error::HttpError;

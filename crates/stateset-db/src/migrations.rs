@@ -396,11 +396,60 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
             "079_serial_reservation_uniqueness",
             include_str!("../migrations/079_serial_reservation_uniqueness.sql"),
         ),
+        // Nullable `order_item_id` on inventory_reservations so a removed order
+        // line releases ITS reservation, not the oldest one for the same SKU.
+        (
+            "080_reservation_order_line",
+            include_str!("../migrations/080_reservation_order_line.sql"),
+        ),
         // Legacy-safe uniqueness for x402 settlement tx hashes.
+        // Lot/serial traceability columns on return_items.
+        (
+            "081_return_idempotency_and_traceability",
+            include_str!("../migrations/081_return_idempotency_and_traceability.sql"),
+        ),
         (
             "082_x402_tx_hash_uniqueness",
             include_str!("../migrations/082_x402_tx_hash_uniqueness.sql"),
         ),
+        // Non-negative triggers on inventory balances (legacy-safe) and
+        // `reservation_id` on backorder allocations.
+        (
+            "083_inventory_balance_guards",
+            include_str!("../migrations/083_inventory_balance_guards.sql"),
+        ),
+        // Nullable billing-worker lease columns on subscriptions so due
+        // subscriptions are claimed atomically before they are billed.
+        ("084_billing_claim_lease", include_str!("../migrations/084_billing_claim_lease.sql")),
+        // Legacy-safe, case-insensitive e-mail uniqueness for live customers
+        // (keyed column; deleted accounts release their address).
+        ("085_customer_email_key", include_str!("../migrations/085_customer_email_key.sql")),
+        // Durable, tenant-scoped A2A credit terms and agent messaging
+        // (previously process-local state in the HTTP routes).
+        (
+            "086_a2a_credit_terms_and_messaging",
+            include_str!("../migrations/086_a2a_credit_terms_and_messaging.sql"),
+        ),
+        // Key the legacy case-duplicate customers 085 had to leave NULL, so
+        // every live account is reachable and re-registration is defined.
+        (
+            "091_customer_email_key_backfill",
+            include_str!("../migrations/091_customer_email_key_backfill.sql"),
+        ),
+        // The inventory balance identity (available == on_hand - allocated),
+        // enforced by legacy-safe triggers. 083 only guaranteed
+        // non-negativity.
+        (
+            "092_inventory_balance_identity",
+            include_str!("../migrations/092_inventory_balance_identity.sql"),
+        ),
+        // Lot parent/child linkage, so a merged lot can be traced back to
+        // every source lot (and its supplier or work order).
+        ("093_lot_genealogy", include_str!("../migrations/093_lot_genealogy.sql")),
+        // One claiming x402 intent per cart / per order, enforced by keyed
+        // columns. The accessor's read-then-create check was a TOCTOU that
+        // let two concurrent creates double-charge one cart.
+        ("094_x402_cart_order_claim", include_str!("../migrations/094_x402_cart_order_claim.sql")),
     ]
 }
 

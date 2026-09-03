@@ -9,7 +9,12 @@ use super::{
     build_in_clause,
     inventory::{ReservationConfirmOutcome, SqliteInventoryRepository},
     map_db_error, params_refs, parse_datetime_row, parse_decimal_row, parse_enum, parse_enum_row,
-    parse_json_opt_row, parse_uuid_row, sum_decimal_query, uuid_params, with_immediate_transaction,
+    parse_json_opt_row, parse_uuid_row,
+    payments::{
+        open_captures_for_order_conn, order_has_payments_conn,
+        void_in_flight_payments_for_order_conn,
+    },
+    sum_decimal_query, uuid_params, with_immediate_transaction,
 };
 use crate::KernelOutboxEvent;
 use chrono::Utc;
@@ -19,10 +24,10 @@ use rust_decimal::Decimal;
 use stateset_core::{
     Address, BatchResult, CartId, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem,
     CustomerId, FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem, OrderItemId,
-    OrderRepository, OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result, ShipOrder,
-    ShipmentLineInput, StockPolicy, UpdateOrder, validate_batch_size, validate_currency_code,
-    validate_postal_code, validate_price, validate_required_text, validate_required_uuid,
-    validate_sku,
+    OrderRepository, OrderStatus, PaymentStatus, ProductId, RemoveOrderItem, ReserveInventory,
+    Result, ShipOrder, ShipmentLineInput, StockPolicy, UpdateOrder, validate_batch_size,
+    validate_currency_code, validate_postal_code, validate_price, validate_required_text,
+    validate_required_uuid, validate_sku,
 };
 use uuid::Uuid;
 
@@ -51,6 +56,14 @@ pub(crate) struct LineDelta {
     pub(crate) delta: i32,
 }
 
+/// What a forced cancel did to the order's payments, for the outbox event.
+#[derive(Debug, Default)]
+struct CancelMoney {
+    voided_payment_ids: Vec<Uuid>,
+    outstanding_payment_ids: Vec<Uuid>,
+    outstanding_captured: Decimal,
+}
+
 fn to_sql_err(err: CommerceError) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(err))
 }
@@ -75,6 +88,99 @@ fn ensure_lines_mutable(id: OrderId, status: OrderStatus) -> Result<()> {
              lines may only be added or removed before fulfilment (pending, confirmed, processing)"
         )))
     }
+}
+
+/// Refuse an order-line mutation that would leave the order's `total_amount`
+/// below the money already captured against it.
+///
+/// The order total is the ceiling every capture is checked against
+/// (`check_order_capture_capacity_tx`, invariant
+/// `commerce.capture.exceeds_order_total`). Lowering the total from the other
+/// side — dropping a line — would break the same invariant and strand captured
+/// money above what the order is worth, which is precisely the state the cancel
+/// guard exists to prevent. Called AFTER the line change and
+/// `update_order_total`, on the same transaction, so it reads the total the
+/// order would actually commit with; returning `Err` rolls the whole mutation
+/// back.
+///
+/// `allow_overpayment` (see [`RemoveOrderItem`]) skips the check for a caller
+/// that will settle the resulting overpayment itself.
+fn ensure_total_covers_captures_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    id: OrderId,
+    allow_overpayment: bool,
+) -> std::result::Result<(), rusqlite::Error> {
+    if allow_overpayment {
+        return Ok(());
+    }
+    let open = open_captures_for_order_conn(tx, &id.to_string())?;
+    if open.is_empty() {
+        return Ok(());
+    }
+    let captured: Decimal = open.iter().map(|p| p.amount - p.amount_refunded).sum();
+    let (raw_total, raw_currency): (String, String) = tx.query_row(
+        "SELECT total_amount, currency FROM orders WHERE id = ?",
+        [id.to_string()],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let new_total = parse_decimal_row(&raw_total, "order", "total_amount")?;
+    if captured > new_total {
+        return Err(to_sql_err(CommerceError::OrderTotalBelowCaptured {
+            order_id: id.into_uuid(),
+            new_total: new_total.to_string(),
+            captured: captured.to_string(),
+            currency: raw_currency,
+        }));
+    }
+    Ok(())
+}
+
+/// Refuse an order line whose SKU has been withdrawn from the catalogue.
+///
+/// Runs inside the order-creating transaction, exactly as `carts.rs::add_item`
+/// does for cart lines, so an archived product or a soft-deleted variant cannot
+/// reach an order through `create`, `create_from_cart` (checkout), the batch
+/// creators or `add_item`. A SKU that is not in the catalogue at all is allowed
+/// through (`VariantPurchasability::NotInCatalog`) so ad-hoc and external lines
+/// keep working.
+fn ensure_lines_purchasable_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    items: &[CreateOrderItem],
+) -> std::result::Result<(), rusqlite::Error> {
+    for item in items {
+        super::products::variant_is_purchasable_with_conn(tx, &item.sku)
+            .and_then(|purchasability| purchasability.ensure_sellable(&item.sku))
+            .map_err(to_sql_err)?;
+    }
+    Ok(())
+}
+
+/// Refuse deletion of an order that has money against it.
+///
+/// `allows_delete` only looks at the order status, so a `Pending`/`Cancelled`
+/// order with `payment_status = paid` could be erased while its payment rows
+/// survived, pointing at nothing. Both signals are checked: the order's own
+/// `payment_status` (`PaymentStatus::holds_money`) and the existence of ANY
+/// payment row for the order (queried in the delete transaction), so even a
+/// pending or failed payment attempt keeps the order as a record.
+fn ensure_no_money_on_delete(
+    id: OrderId,
+    payment_status: PaymentStatus,
+    has_payments: bool,
+) -> Result<()> {
+    if payment_status.holds_money() {
+        return Err(CommerceError::Conflict(format!(
+            "order {id} cannot be deleted while its payment status is {payment_status}; \
+             refund the order first"
+        )));
+    }
+    if has_payments {
+        return Err(CommerceError::Conflict(format!(
+            "order {id} cannot be deleted because payments reference it; \
+             it is a financial record — cancel or refund instead"
+        )));
+    }
+    Ok(())
 }
 
 /// Refuse deletion of an order that is a fulfilment/financial record.
@@ -281,12 +387,17 @@ impl SqliteOrderRepository {
         Ok(())
     }
 
+    /// Everything `create_internal_in_tx` would refuse, evaluated without
+    /// writing: the checkout PREVIEW path calls this so a preview never
+    /// succeeds where the apply would fail.
     pub(crate) fn validate_create_order_in_tx(
         tx: &rusqlite::Transaction<'_>,
         input: &CreateOrder,
     ) -> std::result::Result<(), rusqlite::Error> {
         Self::validate_order_input(input)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        // Same catalogue guard the write path applies.
+        ensure_lines_purchasable_in_tx(tx, &input.items)?;
         if input.stock_policy.allows_backorder() {
             return Ok(());
         }
@@ -613,6 +724,12 @@ impl SqliteOrderRepository {
             });
         }
 
+        // Catalogue guard for every line, in the order-creating transaction.
+        // Deliberately AFTER the idempotent-checkout early return above: a
+        // replayed checkout must still resolve to the order it already minted,
+        // even if a SKU has been withdrawn since.
+        ensure_lines_purchasable_in_tx(tx, &input.items)?;
+
         let mut items = Vec::with_capacity(input.items.len());
         {
             let mut stmt = tx.prepare_cached(
@@ -751,7 +868,11 @@ impl SqliteOrderRepository {
                 expires_in_seconds: None,
             };
 
-            match SqliteInventoryRepository::reserve_in_tx(tx, &reserve_input) {
+            match SqliteInventoryRepository::reserve_for_line_in_tx(
+                tx,
+                &reserve_input,
+                Some(item.id.into_uuid()),
+            ) {
                 Ok(_reservation) => {
                     reserved = reserve_qty;
                 }
@@ -787,20 +908,37 @@ impl SqliteOrderRepository {
         Ok(())
     }
 
-    /// Release the open reservations held for `sku` on this order that cover
-    /// `quantity` units (whole reservations, oldest first), returning stock to
-    /// available. Used when a line is removed.
+    /// Release the open reservations held by one order line, returning stock
+    /// to available. Used when a line is removed.
     ///
-    /// Reservations are created one per line, so releasing whole reservations
-    /// until the line's quantity is covered releases exactly that line's hold.
+    /// Reservations created since migration 080 carry the line's
+    /// `order_item_id`, so the line's own holds are released — never a
+    /// sibling line's hold for the same SKU (removing a 1-unit line B used to
+    /// free line A's 5-unit reservation because both shared a SKU and A was
+    /// older). Legacy rows without a line key fall back to the historical
+    /// SKU-based path: whole un-keyed reservations for the SKU, oldest first,
+    /// until the removed line's quantity is covered.
     fn release_line_reservations_in_tx(
         tx: &rusqlite::Transaction<'_>,
         order_id: OrderId,
+        item_id: OrderItemId,
         sku: &str,
         quantity: Decimal,
     ) -> std::result::Result<(), rusqlite::Error> {
+        let keyed = SqliteInventoryRepository::list_open_reservations_for_line_in_tx(
+            tx,
+            item_id.into_uuid(),
+        )?;
+        if !keyed.is_empty() {
+            for (reservation_id, _) in keyed {
+                SqliteInventoryRepository::release_reservation_in_tx(tx, reservation_id)?;
+            }
+            return Ok(());
+        }
+
+        // Legacy (pre-080) reservations: no line key, so release by SKU.
         let mut remaining = quantity;
-        let open = SqliteInventoryRepository::list_open_reservations_for_sku_in_tx(
+        let open = SqliteInventoryRepository::list_open_legacy_reservations_for_sku_in_tx(
             tx,
             "order",
             &order_id.to_string(),
@@ -814,6 +952,26 @@ impl SqliteOrderRepository {
             remaining -= reserved_qty;
         }
         Ok(())
+    }
+
+    /// Open reservations to confirm for one shipped line: the line's own keyed
+    /// holds first, then (legacy, pre-080 rows only) un-keyed holds for the
+    /// same SKU on the order.
+    fn open_reservations_for_shipped_line_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        reference_id: &str,
+        delta: &LineDelta,
+    ) -> std::result::Result<Vec<(Uuid, Decimal)>, rusqlite::Error> {
+        let item_id = parse_uuid_row(&delta.item_id, "order_item", "id")?;
+        let mut open =
+            SqliteInventoryRepository::list_open_reservations_for_line_in_tx(tx, item_id)?;
+        open.extend(SqliteInventoryRepository::list_open_legacy_reservations_for_sku_in_tx(
+            tx,
+            "order",
+            reference_id,
+            &delta.sku,
+        )?);
+        Ok(open)
     }
 
     /// Release every reservation and cancel every backorder held by the order.
@@ -843,16 +1001,25 @@ impl SqliteOrderRepository {
         tx: &rusqlite::Transaction<'_>,
         id: OrderId,
     ) -> std::result::Result<(), rusqlite::Error> {
-        let status_raw =
-            match tx.query_row("SELECT status FROM orders WHERE id = ?", [id.to_string()], |row| {
-                row.get::<_, String>(0)
-            }) {
-                Ok(status) => status,
-                Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
-                Err(e) => return Err(e),
-            };
+        let (status_raw, payment_status_raw) = match tx.query_row(
+            "SELECT status, payment_status FROM orders WHERE id = ?",
+            [id.to_string()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        ) {
+            Ok(row) => row,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+            Err(e) => return Err(e),
+        };
         let status: OrderStatus = parse_enum(&status_raw, "order", "status").map_err(to_sql_err)?;
         ensure_deletable(id, status).map_err(to_sql_err)?;
+        let payment_status: PaymentStatus =
+            parse_enum(&payment_status_raw, "order", "payment_status").map_err(to_sql_err)?;
+        ensure_no_money_on_delete(
+            id,
+            payment_status,
+            order_has_payments_conn(tx, &id.to_string())?,
+        )
+        .map_err(to_sql_err)?;
 
         Self::release_order_stock_in_tx(tx, id)?;
         tx.execute("DELETE FROM order_items WHERE order_id = ?", [id.to_string()])?;
@@ -1027,12 +1194,8 @@ impl SqliteOrderRepository {
             ShipMode::Lines(_) => {
                 for delta in deltas.iter().filter(|d| d.delta > 0) {
                     let mut remaining = Decimal::from(delta.delta);
-                    let open = SqliteInventoryRepository::list_open_reservations_for_sku_in_tx(
-                        tx,
-                        "order",
-                        &reference_id,
-                        &delta.sku,
-                    )?;
+                    let open =
+                        Self::open_reservations_for_shipped_line_in_tx(tx, &reference_id, delta)?;
                     for (reservation_id, reserved_qty) in open {
                         if remaining <= Decimal::ZERO {
                             break;
@@ -1213,6 +1376,37 @@ impl SqliteOrderRepository {
                 )?;
             }
 
+            // Money rule for cancel (see `UpdateOrder::void_payments`): an
+            // order whose payments still hold money cannot be cancelled
+            // unless the caller explicitly voids; even then only in-flight
+            // payments are voided here — settled money leaves via a refund.
+            let mut cancel_money = CancelMoney::default();
+            if matches!(input.status, Some(OrderStatus::Cancelled)) {
+                let open = open_captures_for_order_conn(tx, &id.to_string())?;
+                if !open.is_empty() && !input.void_payments {
+                    let outstanding: Decimal =
+                        open.iter().map(|p| p.amount - p.amount_refunded).sum();
+                    let currency = open[0].currency;
+                    return Err(to_sql_err(CommerceError::ValidationError(format!(
+                        "order {id} cannot be cancelled: {} payment(s) still hold {outstanding} {currency}; \
+                         refund them first, or cancel with void_payments = true to void in-flight \
+                         payments and leave settled ones for refund",
+                        open.len()
+                    ))));
+                }
+                if input.void_payments {
+                    cancel_money.voided_payment_ids =
+                        void_in_flight_payments_for_order_conn(tx, &id.to_string(), now)?;
+                    let voided = &cancel_money.voided_payment_ids;
+                    let outstanding: Vec<_> =
+                        open.iter().filter(|p| !voided.contains(&p.id.into_uuid())).collect();
+                    cancel_money.outstanding_captured =
+                        outstanding.iter().map(|p| p.amount - p.amount_refunded).sum();
+                    cancel_money.outstanding_payment_ids =
+                        outstanding.iter().map(|p| p.id.into_uuid()).collect();
+                }
+            }
+
             // Build dynamic update
             let mut updates = vec!["updated_at = ?"];
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
@@ -1314,6 +1508,10 @@ impl SqliteOrderRepository {
                         "version_before": current_version,
                         "version_after": order.version,
                         "total_amount": order.total_amount.to_string(),
+                        "void_payments": input.void_payments,
+                        "voided_payment_ids": cancel_money.voided_payment_ids,
+                        "outstanding_payment_ids": cancel_money.outstanding_payment_ids,
+                        "outstanding_captured": cancel_money.outstanding_captured.to_string(),
                     }),
                     None,
                 ),
@@ -1522,6 +1720,11 @@ impl OrderRepository for SqliteOrderRepository {
             // leaves no line and no reservation behind.
             let (status, customer_id) = Self::load_status_and_customer_in_tx(tx, order_id)?;
             ensure_lines_mutable(order_id, status).map_err(to_sql_err)?;
+            // Same catalogue guard as creation: a withdrawn SKU cannot enter an
+            // order through the back door of `add_item` either.
+            super::products::variant_is_purchasable_with_conn(tx, &order_item.sku)
+                .and_then(|purchasability| purchasability.ensure_sellable(&order_item.sku))
+                .map_err(to_sql_err)?;
 
             tx.execute(
                 "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
@@ -1554,21 +1757,27 @@ impl OrderRepository for SqliteOrderRepository {
             )?;
 
             Self::update_order_total(tx, order_id).map_err(to_sql_err)?;
+            Self::append_line_event_tx(tx, "orders.item_added.v1", order_id, &order_item)?;
             Ok(())
         })?;
 
         Ok(order_item)
     }
 
-    fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()> {
+    fn remove_item_with(
+        &self,
+        order_id: OrderId,
+        item_id: OrderItemId,
+        input: RemoveOrderItem,
+    ) -> Result<()> {
         with_immediate_transaction(&self.pool, |tx| {
             let (status, _customer_id) = Self::load_status_and_customer_in_tx(tx, order_id)?;
             ensure_lines_mutable(order_id, status).map_err(to_sql_err)?;
 
-            let (sku, quantity) = match tx.query_row(
-                "SELECT sku, quantity FROM order_items WHERE id = ? AND order_id = ?",
+            let removed = match tx.query_row(
+                "SELECT * FROM order_items WHERE id = ? AND order_id = ?",
                 [item_id.to_string(), order_id.to_string()],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?)),
+                Self::row_to_order_item,
             ) {
                 Ok(line) => line,
                 Err(rusqlite::Error::QueryReturnedNoRows) => {
@@ -1581,7 +1790,13 @@ impl OrderRepository for SqliteOrderRepository {
 
             // Give the line's stock back and drop its backorder in the same
             // transaction as the delete, so removal never leaks a hold.
-            Self::release_line_reservations_in_tx(tx, order_id, &sku, Decimal::from(quantity))?;
+            Self::release_line_reservations_in_tx(
+                tx,
+                order_id,
+                item_id,
+                &removed.sku,
+                Decimal::from(removed.quantity),
+            )?;
             cancel_backorders_for_order_line_in_tx(tx, order_id.into_uuid(), item_id.into_uuid())?;
 
             tx.execute(
@@ -1590,6 +1805,12 @@ impl OrderRepository for SqliteOrderRepository {
             )?;
 
             Self::update_order_total(tx, order_id).map_err(to_sql_err)?;
+            // Money guard, on the recomputed total: dropping this line must not
+            // leave the order worth less than the money already captured
+            // against it. `Err` here rolls back the delete, the reservation
+            // release and the backorder cancellation together.
+            ensure_total_covers_captures_in_tx(tx, order_id, input.allow_overpayment)?;
+            Self::append_line_event_tx(tx, "orders.item_removed.v1", order_id, &removed)?;
             Ok(())
         })
     }
@@ -1841,6 +2062,41 @@ impl SqliteOrderRepository {
     /// shipping_amount - discount_amount` — the same rule `create` writes and
     /// [`Order::calculate_total`] reads. It used to be the bare line sum, which
     /// silently dropped the order-level money on the first `add_item`.
+    /// Kernel outbox event for a line edit (`orders.item_added.v1` /
+    /// `orders.item_removed.v1`), written on the same transaction as the
+    /// line change so consumers see every mutation of the order's money and
+    /// stock, not only status transitions.
+    fn append_line_event_tx(
+        tx: &rusqlite::Transaction<'_>,
+        kind: &str,
+        order_id: OrderId,
+        item: &OrderItem,
+    ) -> std::result::Result<(), rusqlite::Error> {
+        let total_amount: String = tx.query_row(
+            "SELECT total_amount FROM orders WHERE id = ?",
+            [order_id.to_string()],
+            |row| row.get(0),
+        )?;
+        append_kernel_event_tx(
+            tx,
+            &KernelOutboxEvent::domain(
+                kind,
+                "order",
+                order_id.to_string(),
+                serde_json::json!({
+                    "order_id": order_id.to_string(),
+                    "order_item_id": item.id.to_string(),
+                    "sku": item.sku,
+                    "quantity": item.quantity,
+                    "unit_price": item.unit_price.to_string(),
+                    "line_total": item.total.to_string(),
+                    "total_amount": total_amount,
+                }),
+                None,
+            ),
+        )
+    }
+
     fn update_order_total(conn: &rusqlite::Connection, order_id: OrderId) -> Result<()> {
         let (current_version, tax_raw, shipping_raw, discount_raw): (i32, String, String, String) =
             conn.query_row(

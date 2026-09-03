@@ -1,8 +1,9 @@
 //! PostgreSQL customer repository implementation
 
 use super::map_db_error;
+use super::products::OPEN_ORDER_STATUSES;
 use chrono::{DateTime, Utc};
-use sqlx::postgres::PgPool;
+use sqlx::postgres::{PgConnection, PgPool};
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
     AddressType, BatchResult, CommerceError, CreateCustomer, CreateCustomerAddress, Customer,
@@ -11,6 +12,99 @@ use stateset_core::{
     validate_required_text, validate_required_uuid,
 };
 use uuid::Uuid;
+
+/// Resolve one *live* customer from a normalised e-mail address (`$1`).
+///
+/// Postgres twin of the SQLite `LIVE_CUSTOMER_BY_EMAIL`. The primary match is
+/// on `email_key`; legacy case-duplicate rows carry a suffixed key (see
+/// migration `098_customer_email_key_backfill`), so when no row owns the
+/// canonical key the lookup falls back to the raw `email` column — that keeps
+/// every legacy account reachable by its own address, and stops
+/// `find_or_create` from falling through to an INSERT that the legacy raw
+/// `UNIQUE(email)` constraint from migration 001 would refuse forever.
+///
+/// Ties are broken deterministically: exact key owner first, then oldest.
+/// Deleted rows never match (NULL key, tombstone e-mail).
+const LIVE_CUSTOMER_BY_EMAIL: &str = "SELECT * FROM customers \
+     WHERE email_key = $1 OR (status <> 'deleted' AND LOWER(TRIM(email)) = $1) \
+     ORDER BY CASE WHEN email_key = $1 THEN 0 ELSE 1 END, created_at, id \
+     LIMIT 1";
+
+/// Get the live customer owning `input.email`, creating one if there is none,
+/// using an existing connection so the whole thing runs inside the caller's
+/// transaction. Returns `(customer, created)`.
+///
+/// Postgres twin of the SQLite `get_or_create_customer_with_conn`, and the
+/// canonical entry point for any writer that needs "the customer for this
+/// address" — guest checkout above all. Going through it (rather than a raw
+/// `INSERT INTO customers`) is what guarantees the address is normalised, that
+/// `email_key` is populated, and that the account stays reachable by
+/// [`CustomerRepository::get_by_email`] afterwards.
+///
+/// Safe under concurrency without any extra locking: the insert is
+/// conflict-tolerant on EVERY unique constraint (the `email_key` index and the
+/// legacy raw `UNIQUE(email)` from migration 001, which a legacy
+/// case-duplicate can still trip) and the loser re-reads the winner on the
+/// same connection.
+///
+/// # Errors
+///
+/// Validation failures on the input, and database errors. A caller that loses
+/// the race never sees `EmailAlreadyExists`; it gets the winner's record.
+pub(crate) async fn get_or_create_customer_with_conn_pg(
+    conn: &mut PgConnection,
+    input: &CreateCustomer,
+) -> Result<(Customer, bool)> {
+    PgCustomerRepository::validate_customer_input(input)?;
+
+    let id = CustomerId::new();
+    let now = Utc::now();
+    let email = Customer::normalize_email(&input.email);
+    let tags = input.tags.clone().unwrap_or_default();
+    let accepts_marketing = input.accepts_marketing.unwrap_or(false);
+
+    let tags_json = serde_json::to_value(&tags).unwrap_or_default();
+    let metadata_json = input.metadata.clone();
+
+    let inserted: Option<CustomerRow> = sqlx::query_as(
+        r#"
+        INSERT INTO customers (id, email, email_key, first_name, last_name, phone, status,
+                               accepts_marketing, email_verified, tags, metadata,
+                               created_at, updated_at)
+        VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT DO NOTHING
+        RETURNING *
+        "#,
+    )
+    .bind(id.into_uuid())
+    .bind(&email)
+    .bind(&input.first_name)
+    .bind(&input.last_name)
+    .bind(&input.phone)
+    .bind("active")
+    .bind(accepts_marketing)
+    .bind(false)
+    .bind(&tags_json)
+    .bind(&metadata_json)
+    .bind(now)
+    .bind(now)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+
+    if let Some(row) = inserted {
+        return Ok((PgCustomerRepository::row_to_customer(row)?, true));
+    }
+
+    // Conflict: return the existing live customer row.
+    let row = sqlx::query_as::<_, CustomerRow>(LIVE_CUSTOMER_BY_EMAIL)
+        .bind(&email)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::EmailAlreadyExists(email))?;
+    Ok((PgCustomerRepository::row_to_customer(row)?, false))
+}
 
 /// PostgreSQL implementation of `CustomerRepository`
 #[derive(Debug, Clone)]
@@ -150,93 +244,80 @@ impl PgCustomerRepository {
         })
     }
 
-    /// Get a customer by email, creating one if it doesn't exist.
-    ///
-    /// This is safe under concurrency and avoids surfacing unique-constraint races to callers.
-    pub async fn get_or_create_by_email_async(&self, input: CreateCustomer) -> Result<Customer> {
-        Self::validate_customer_input(&input)?;
-
-        let id = CustomerId::new();
-        let now = Utc::now();
-        let tags = input.tags.clone().unwrap_or_default();
-        let accepts_marketing = input.accepts_marketing.unwrap_or(false);
-
-        let tags_json = serde_json::to_value(&tags).unwrap_or_default();
-        let metadata_json = input.metadata.clone();
-
-        let inserted: Option<CustomerRow> = sqlx::query_as(
-            r#"
-            INSERT INTO customers (id, email, first_name, last_name, phone, status,
-                                   accepts_marketing, email_verified, tags, metadata,
-                                   created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            ON CONFLICT (email) DO NOTHING
-            RETURNING *
-            "#,
-        )
-        .bind(id.into_uuid())
-        .bind(&input.email)
-        .bind(&input.first_name)
-        .bind(&input.last_name)
-        .bind(&input.phone)
-        .bind("active")
-        .bind(accepts_marketing)
-        .bind(false)
-        .bind(&tags_json)
-        .bind(&metadata_json)
-        .bind(now)
-        .bind(now)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        if let Some(row) = inserted {
-            return Self::row_to_customer(row);
-        }
-
-        // Conflict: return the existing customer row.
-        let row = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE email = $1")
-            .bind(&input.email)
-            .fetch_one(&self.pool)
+    async fn fetch_customer(conn: &mut PgConnection, id: CustomerId) -> Result<Customer> {
+        let row = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
+            .bind(id.into_uuid())
+            .fetch_optional(conn)
             .await
-            .map_err(map_db_error)?;
-
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::CustomerNotFound(id.into_uuid()))?;
         Self::row_to_customer(row)
     }
 
-    /// Create a new customer (async)
-    pub async fn create_async(&self, input: CreateCustomer) -> Result<Customer> {
-        Self::validate_customer_input(&input)?;
+    /// Whether another *live* customer already owns the normalised e-mail.
+    async fn email_taken_by_other(
+        conn: &mut PgConnection,
+        email_key: &str,
+        exclude: Option<CustomerId>,
+    ) -> Result<bool> {
+        let exclude = exclude.map(|id| id.into_uuid()).unwrap_or(Uuid::nil());
+        sqlx::query_scalar(
+            // Mirrors `LIVE_CUSTOMER_BY_EMAIL`: a legacy case-duplicate holds
+            // the address in its raw `email` column under a suffixed key, and
+            // the legacy raw `UNIQUE(email)` would reject the write anyway —
+            // so report it as taken and return the typed error instead.
+            "SELECT EXISTS(SELECT 1 FROM customers \
+             WHERE id <> $2 \
+               AND (email_key = $1 OR (status <> 'deleted' AND LOWER(TRIM(email)) = $1)))",
+        )
+        .bind(email_key)
+        .bind(exclude)
+        .fetch_one(conn)
+        .await
+        .map_err(map_db_error)
+    }
 
+    async fn open_order_count(conn: &mut PgConnection, customer_id: CustomerId) -> Result<u64> {
+        let n: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM orders WHERE customer_id = $1 AND status IN ({OPEN_ORDER_STATUSES})"
+        ))
+        .bind(customer_id.into_uuid())
+        .fetch_one(conn)
+        .await
+        .map_err(map_db_error)?;
+        Ok(u64::try_from(n).unwrap_or_default())
+    }
+
+    /// Insert one customer on an open transaction (shared by `create_async`
+    /// and `create_batch_atomic_async`). The e-mail is normalised and checked
+    /// against live accounts; the `email_key` unique index (mapped to
+    /// `EmailAlreadyExists` by `map_db_error`) backstops the race window.
+    async fn insert_customer_tx(
+        conn: &mut PgConnection,
+        input: &CreateCustomer,
+    ) -> Result<Customer> {
         let id = CustomerId::new();
         let now = Utc::now();
+        let email = Customer::normalize_email(&input.email);
         let tags = input.tags.clone().unwrap_or_default();
         let accepts_marketing = input.accepts_marketing.unwrap_or(false);
 
-        // Check email uniqueness
-        let exists: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM customers WHERE email = $1")
-            .bind(&input.email)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        if exists.0 > 0 {
-            return Err(CommerceError::EmailAlreadyExists(input.email));
+        if Self::email_taken_by_other(conn, &email, None).await? {
+            return Err(CommerceError::EmailAlreadyExists(email));
         }
 
         let tags_json = serde_json::to_value(&tags).unwrap_or_default();
-        let metadata_json = input.metadata.clone();
 
         sqlx::query(
             r#"
-            INSERT INTO customers (id, email, first_name, last_name, phone, status,
+            INSERT INTO customers (id, email, email_key, first_name, last_name, phone, status,
                                    accepts_marketing, email_verified, tags, metadata,
                                    created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             "#,
         )
         .bind(id.into_uuid())
-        .bind(&input.email)
+        .bind(&email)
         .bind(&input.first_name)
         .bind(&input.last_name)
         .bind(&input.phone)
@@ -244,29 +325,265 @@ impl PgCustomerRepository {
         .bind(accepts_marketing)
         .bind(false)
         .bind(&tags_json)
-        .bind(&metadata_json)
+        .bind(&input.metadata)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(conn)
         .await
         .map_err(map_db_error)?;
 
         Ok(Customer {
             id,
-            email: input.email,
-            first_name: input.first_name,
-            last_name: input.last_name,
-            phone: input.phone,
+            email,
+            first_name: input.first_name.clone(),
+            last_name: input.last_name.clone(),
+            phone: input.phone.clone(),
             status: CustomerStatus::Active,
             accepts_marketing,
             email_verified: false,
             tags,
-            metadata: input.metadata,
+            metadata: input.metadata.clone(),
             default_shipping_address_id: None,
             default_billing_address_id: None,
             created_at: now,
             updated_at: now,
         })
+    }
+
+    /// Apply a partial update on an open transaction (row locked with
+    /// `FOR UPDATE`). Only supplied fields are written (parity with SQLite)
+    /// and the [`CustomerStatus`] state machine is enforced: a deleted account
+    /// can neither change status nor be edited.
+    async fn update_customer_tx(
+        conn: &mut PgConnection,
+        id: CustomerId,
+        input: &UpdateCustomer,
+    ) -> Result<Customer> {
+        let now = Utc::now();
+        let existing_row =
+            sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1 FOR UPDATE")
+                .bind(id.into_uuid())
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::CustomerNotFound(id.into_uuid()))?;
+        let current_version = existing_row.version;
+        let existing = Self::row_to_customer(existing_row)?;
+        if existing.status.is_terminal() {
+            return Err(CommerceError::Conflict(format!(
+                "customer {id} is deleted and can no longer be updated"
+            )));
+        }
+
+        let mut builder = QueryBuilder::new("UPDATE customers SET updated_at = ");
+        builder.push_bind(now);
+
+        if let Some(email) = &input.email {
+            validate_email(email)?;
+            let email = Customer::normalize_email(email);
+            if Self::email_taken_by_other(&mut *conn, &email, Some(id)).await? {
+                return Err(CommerceError::EmailAlreadyExists(email));
+            }
+            builder.push(", email = ").push_bind(email.clone());
+            builder.push(", email_key = ").push_bind(email);
+        }
+        if let Some(first_name) = &input.first_name {
+            validate_required_text("customer.first_name", first_name, 100)?;
+            builder.push(", first_name = ").push_bind(first_name.clone());
+        }
+        if let Some(last_name) = &input.last_name {
+            validate_required_text("customer.last_name", last_name, 100)?;
+            builder.push(", last_name = ").push_bind(last_name.clone());
+        }
+        if let Some(phone) = &input.phone {
+            validate_phone(phone)?;
+            builder.push(", phone = ").push_bind(phone.clone());
+        }
+        if let Some(status) = input.status {
+            existing.status.ensure_can_transition_to(status)?;
+            if status == CustomerStatus::Deleted {
+                return Err(CommerceError::ValidationError(
+                    "use delete/anonymize to mark a customer deleted".into(),
+                ));
+            }
+            builder.push(", status = ").push_bind(status.to_string());
+        }
+        if let Some(accepts_marketing) = input.accepts_marketing {
+            builder.push(", accepts_marketing = ").push_bind(accepts_marketing);
+        }
+        if let Some(tags) = &input.tags {
+            let json = serde_json::to_value(tags).unwrap_or_default();
+            builder.push(", tags = ").push_bind(json);
+        }
+        if let Some(metadata) = &input.metadata {
+            builder.push(", metadata = ").push_bind(metadata.clone());
+        }
+        builder.push(", version = version + 1 WHERE id = ").push_bind(id.into_uuid());
+        builder.push(" AND version = ").push_bind(current_version);
+
+        let result = builder.build().execute(&mut *conn).await.map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "customer".to_string(),
+                id: id.to_string(),
+                expected_version: current_version,
+            });
+        }
+
+        Self::fetch_customer(conn, id).await
+    }
+
+    /// Soft-delete one customer on an open transaction: status `deleted`,
+    /// e-mail replaced by a tombstone, `email_key` cleared. Refuses while open
+    /// orders exist; unknown / already-deleted rows are a no-op (`Ok(false)`).
+    async fn delete_customer_tx(conn: &mut PgConnection, id: CustomerId) -> Result<bool> {
+        let status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM customers WHERE id = $1 FOR UPDATE")
+                .bind(id.into_uuid())
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_db_error)?;
+        let Some(status) = status else {
+            return Ok(false);
+        };
+        if status == CustomerStatus::Deleted.to_string() {
+            return Ok(false);
+        }
+        let open = Self::open_order_count(&mut *conn, id).await?;
+        if open > 0 {
+            return Err(CommerceError::Conflict(format!(
+                "cannot delete customer {id}: {open} open order(s) still reference it"
+            )));
+        }
+        sqlx::query(
+            "UPDATE customers SET status = 'deleted', email = $1, email_key = NULL, updated_at = $2, version = version + 1 WHERE id = $3",
+        )
+        .bind(Customer::tombstone_email(id))
+        .bind(Utc::now())
+        .bind(id.into_uuid())
+        .execute(conn)
+        .await
+        .map_err(map_db_error)?;
+        Ok(true)
+    }
+
+    /// Re-derive every `customer_addresses.is_default` flag from the two
+    /// pointer columns so the flagged rows are exactly the pointed-at rows.
+    async fn sync_default_flags(conn: &mut PgConnection, customer_id: CustomerId) -> Result<()> {
+        sqlx::query(
+            "UPDATE customer_addresses a SET is_default = (
+                 a.id IN (SELECT default_shipping_address_id FROM customers WHERE id = $1 AND default_shipping_address_id IS NOT NULL
+                          UNION
+                          SELECT default_billing_address_id FROM customers WHERE id = $1 AND default_billing_address_id IS NOT NULL)
+             )
+             WHERE a.customer_id = $1",
+        )
+        .bind(customer_id.into_uuid())
+        .execute(conn)
+        .await
+        .map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Point the customer's default(s) for `role` at `address_id`; the address
+    /// (of type `address_type`) must be able to serve that role.
+    async fn set_default_pointer_tx(
+        conn: &mut PgConnection,
+        customer_id: CustomerId,
+        address_id: Uuid,
+        address_type: AddressType,
+        role: AddressType,
+    ) -> Result<()> {
+        if !address_type.can_default_for(role) {
+            return Err(CommerceError::ValidationError(format!(
+                "a {address_type} address cannot be the default {role} address"
+            )));
+        }
+        let now = Utc::now();
+        if role.covers_shipping() {
+            sqlx::query(
+                "UPDATE customers SET default_shipping_address_id = $1, updated_at = $2 WHERE id = $3",
+            )
+            .bind(address_id)
+            .bind(now)
+            .bind(customer_id.into_uuid())
+            .execute(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+        }
+        if role.covers_billing() {
+            sqlx::query(
+                "UPDATE customers SET default_billing_address_id = $1, updated_at = $2 WHERE id = $3",
+            )
+            .bind(address_id)
+            .bind(now)
+            .bind(customer_id.into_uuid())
+            .execute(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+        }
+        Self::sync_default_flags(conn, customer_id).await
+    }
+
+    /// Clear any customer pointer that references `address_id`.
+    async fn clear_pointers_to_tx(
+        conn: &mut PgConnection,
+        customer_id: CustomerId,
+        address_id: Uuid,
+        clear_shipping: bool,
+        clear_billing: bool,
+    ) -> Result<()> {
+        let now = Utc::now();
+        if clear_shipping {
+            sqlx::query(
+                "UPDATE customers SET default_shipping_address_id = NULL, updated_at = $1 WHERE id = $2 AND default_shipping_address_id = $3",
+            )
+            .bind(now)
+            .bind(customer_id.into_uuid())
+            .bind(address_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+        }
+        if clear_billing {
+            sqlx::query(
+                "UPDATE customers SET default_billing_address_id = NULL, updated_at = $1 WHERE id = $2 AND default_billing_address_id = $3",
+            )
+            .bind(now)
+            .bind(customer_id.into_uuid())
+            .bind(address_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+        }
+        Ok(())
+    }
+
+    /// Get a customer by email, creating one if it doesn't exist.
+    ///
+    /// Returns `(customer, created)`. Safe under concurrency: the insert is
+    /// conflict-tolerant on EVERY unique constraint (the `email_key` index and
+    /// the legacy raw `UNIQUE(email)` from migration 001, which a legacy
+    /// case-duplicate can still trip), and the loser re-reads the winner
+    /// inside the same transaction rather than through a second pool
+    /// checkout that might see a different snapshot.
+    pub async fn get_or_create_by_email_async(
+        &self,
+        input: CreateCustomer,
+    ) -> Result<(Customer, bool)> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let resolved = get_or_create_customer_with_conn_pg(tx.as_mut(), &input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(resolved)
+    }
+
+    /// Create a new customer (async)
+    pub async fn create_async(&self, input: CreateCustomer) -> Result<Customer> {
+        Self::validate_customer_input(&input)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let customer = Self::insert_customer_tx(tx.as_mut(), &input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(customer)
     }
 
     /// Get a customer by ID (async)
@@ -283,10 +600,10 @@ impl PgCustomerRepository {
         }
     }
 
-    /// Get a customer by email (async)
+    /// Get a live customer by (case-insensitive) email (async)
     pub async fn get_by_email_async(&self, email: &str) -> Result<Option<Customer>> {
-        let result = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE email = $1")
-            .bind(email)
+        let result = sqlx::query_as::<_, CustomerRow>(LIVE_CUSTOMER_BY_EMAIL)
+            .bind(Customer::normalize_email(email))
             .fetch_optional(&self.pool)
             .await
             .map_err(map_db_error)?;
@@ -299,121 +616,67 @@ impl PgCustomerRepository {
 
     /// Update a customer (async)
     pub async fn update_async(&self, id: CustomerId, input: UpdateCustomer) -> Result<Customer> {
-        let now = Utc::now();
-
-        let existing_row =
-            sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
-                .bind(id.into_uuid())
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(map_db_error)?
-                .ok_or(CommerceError::CustomerNotFound(id.into_uuid()))?;
-        let current_version = existing_row.version;
-        let existing = Self::row_to_customer(existing_row)?;
-
-        if let Some(email) = &input.email {
-            validate_email(email)?;
-            let existing_id: Option<Uuid> =
-                sqlx::query_scalar("SELECT id FROM customers WHERE email = $1")
-                    .bind(email)
-                    .fetch_optional(&self.pool)
-                    .await
-                    .map_err(map_db_error)?;
-            if let Some(existing_id) = existing_id {
-                if existing_id != id.into_uuid() {
-                    return Err(CommerceError::EmailAlreadyExists(email.clone()));
-                }
-            }
-        }
-        if let Some(first_name) = &input.first_name {
-            validate_required_text("customer.first_name", first_name, 100)?;
-        }
-        if let Some(last_name) = &input.last_name {
-            validate_required_text("customer.last_name", last_name, 100)?;
-        }
-        if let Some(phone) = &input.phone {
-            validate_phone(phone)?;
-        }
-
-        let new_email = input.email.unwrap_or(existing.email);
-        let new_first_name = input.first_name.unwrap_or(existing.first_name);
-        let new_last_name = input.last_name.unwrap_or(existing.last_name);
-        let new_phone = input.phone.or(existing.phone);
-        let new_status = input.status.unwrap_or(existing.status);
-        let new_accepts_marketing = input.accepts_marketing.unwrap_or(existing.accepts_marketing);
-        let new_tags = input.tags.unwrap_or(existing.tags);
-        let new_metadata = input.metadata.or(existing.metadata);
-
-        let tags_json = serde_json::to_value(&new_tags).unwrap_or_default();
-
-        let result = sqlx::query(
-            r#"
-            UPDATE customers
-            SET email = $1, first_name = $2, last_name = $3, phone = $4,
-                status = $5, accepts_marketing = $6, tags = $7, metadata = $8, updated_at = $9, version = version + 1
-            WHERE id = $10 AND version = $11
-            "#,
-        )
-        .bind(&new_email)
-        .bind(&new_first_name)
-        .bind(&new_last_name)
-        .bind(&new_phone)
-        .bind(new_status.to_string())
-        .bind(new_accepts_marketing)
-        .bind(&tags_json)
-        .bind(&new_metadata)
-        .bind(now)
-        .bind(id.into_uuid())
-        .bind(current_version)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-        if result.rows_affected() == 0 {
-            return Err(CommerceError::VersionConflict {
-                entity: "customer".to_string(),
-                id: id.to_string(),
-                expected_version: current_version,
-            });
-        }
-
-        self.get_async(id).await?.ok_or(CommerceError::CustomerNotFound(id.into_uuid()))
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let customer = Self::update_customer_tx(tx.as_mut(), id, &input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(customer)
     }
 
-    /// List customers (async)
-    pub async fn list_async(&self, filter: CustomerFilter) -> Result<Vec<Customer>> {
-        let CustomerFilter {
-            email,
-            status,
-            tag,
-            accepts_marketing,
-            limit,
-            offset,
-            after_cursor: _,
-        } = filter;
-
-        let mut builder = QueryBuilder::new("SELECT * FROM customers WHERE 1=1");
-
-        if let Some(status) = status {
+    fn push_list_filters(builder: &mut QueryBuilder<'_, sqlx::Postgres>, filter: &CustomerFilter) {
+        if let Some(status) = filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
         } else {
             builder.push(" AND status != 'deleted'");
         }
-        if let Some(email) = email {
-            let pattern = format!("%{}%", email);
+        if let Some(email) = &filter.email {
+            let pattern = format!("%{}%", Customer::normalize_email(email));
             builder.push(" AND email ILIKE ").push_bind(pattern);
         }
-        if let Some(tag) = tag {
-            builder.push(" AND tags ? ").push_bind(tag);
+        if let Some(tag) = &filter.tag {
+            builder.push(" AND tags ? ").push_bind(tag.clone());
         }
-        if let Some(accepts_marketing) = accepts_marketing {
+        if let Some(accepts_marketing) = filter.accepts_marketing {
             builder.push(" AND accepts_marketing = ").push_bind(accepts_marketing);
         }
+    }
 
-        builder.push(" ORDER BY created_at DESC");
+    /// List customers (async).
+    ///
+    /// Ordered by `(created_at DESC, id DESC)` and paginated by the same
+    /// keyset cursor as SQLite (`after_cursor = (created_at RFC 3339, id)`);
+    /// `offset` applies only when no cursor is supplied.
+    pub async fn list_async(&self, filter: CustomerFilter) -> Result<Vec<Customer>> {
+        let mut builder = QueryBuilder::new("SELECT * FROM customers WHERE 1=1");
+        Self::push_list_filters(&mut builder, &filter);
 
-        builder.push(" LIMIT ").push_bind(super::effective_limit(limit));
-        if let Some(offset) = offset {
-            builder.push(" OFFSET ").push_bind(offset as i64);
+        if let Some((cursor_created, cursor_id)) = &filter.after_cursor {
+            let cursor_created: DateTime<Utc> =
+                DateTime::parse_from_rfc3339(cursor_created).map(Into::into).map_err(|e| {
+                    CommerceError::ValidationError(format!(
+                        "invalid after_cursor created_at '{cursor_created}': {e}"
+                    ))
+                })?;
+            let cursor_id: Uuid = cursor_id.parse().map_err(|e| {
+                CommerceError::ValidationError(format!(
+                    "invalid after_cursor id '{cursor_id}': {e}"
+                ))
+            })?;
+            builder
+                .push(" AND (created_at < ")
+                .push_bind(cursor_created)
+                .push(" OR (created_at = ")
+                .push_bind(cursor_created)
+                .push(" AND id < ")
+                .push_bind(cursor_id)
+                .push("))");
+        }
+
+        builder.push(" ORDER BY created_at DESC, id DESC");
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
+        if filter.after_cursor.is_none() {
+            if let Some(offset) = filter.offset {
+                builder.push(" OFFSET ").push_bind(i64::from(offset));
+            }
         }
 
         let rows = builder
@@ -427,14 +690,49 @@ impl PgCustomerRepository {
 
     /// Delete a customer (soft delete, async)
     pub async fn delete_async(&self, id: CustomerId) -> Result<()> {
-        sqlx::query("UPDATE customers SET status = 'deleted', updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::delete_customer_tx(tx.as_mut(), id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Anonymise a customer (async): soft delete plus PII scrub.
+    pub async fn anonymize_async(&self, id: CustomerId) -> Result<Customer> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM customers WHERE id = $1)")
+                .bind(id.into_uuid())
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if !exists {
+            return Err(CommerceError::CustomerNotFound(id.into_uuid()));
+        }
+
+        Self::delete_customer_tx(tx.as_mut(), id).await?;
+
+        sqlx::query(
+            "UPDATE customers SET first_name = 'Deleted', last_name = 'Customer', phone = NULL,
+                    accepts_marketing = false, email_verified = false, tags = '[]'::jsonb, metadata = NULL,
+                    default_shipping_address_id = NULL, default_billing_address_id = NULL,
+                    updated_at = $1, version = version + 1
+             WHERE id = $2",
+        )
+        .bind(Utc::now())
+        .bind(id.into_uuid())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        sqlx::query("DELETE FROM customer_addresses WHERE customer_id = $1")
             .bind(id.into_uuid())
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
-        Ok(())
+        let customer = Self::fetch_customer(tx.as_mut(), id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(customer)
     }
 
     /// Add a customer address (async)
@@ -447,12 +745,22 @@ impl PgCustomerRepository {
         let is_default = input.is_default.unwrap_or(false);
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        let customer_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM customers WHERE id = $1)")
+                .bind(input.customer_id.into_uuid())
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if !customer_exists {
+            return Err(CommerceError::CustomerNotFound(input.customer_id.into_uuid()));
+        }
+
         sqlx::query(
             r#"
             INSERT INTO customer_addresses (id, customer_id, address_type, first_name, last_name,
                                             company, line1, line2, city, state, postal_code,
                                             country, phone, is_default, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, false, $14, $15)
             "#,
         )
         .bind(id)
@@ -468,7 +776,6 @@ impl PgCustomerRepository {
         .bind(&input.postal_code)
         .bind(&input.country)
         .bind(&input.phone)
-        .bind(is_default)
         .bind(now)
         .bind(now)
         .execute(tx.as_mut())
@@ -476,88 +783,24 @@ impl PgCustomerRepository {
         .map_err(map_db_error)?;
 
         if is_default {
-            let clear_sql = match address_type {
-                AddressType::Shipping => {
-                    "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1 AND (address_type = 'shipping' OR address_type = 'both')"
-                }
-                AddressType::Billing => {
-                    "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1 AND (address_type = 'billing' OR address_type = 'both')"
-                }
-                AddressType::Both => {
-                    "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1"
-                }
-                _ => "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1",
-            };
-            sqlx::query(clear_sql)
-                .bind(input.customer_id.into_uuid())
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-
-            sqlx::query("UPDATE customer_addresses SET is_default = true WHERE id = $1")
-                .bind(id)
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-
-            match address_type {
-                AddressType::Shipping => {
-                    sqlx::query(
-                        "UPDATE customers SET default_shipping_address_id = $1, updated_at = $2 WHERE id = $3",
-                    )
-                    .bind(id)
-                    .bind(now)
-                    .bind(input.customer_id.into_uuid())
-                    .execute(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-                }
-                AddressType::Billing => {
-                    sqlx::query(
-                        "UPDATE customers SET default_billing_address_id = $1, updated_at = $2 WHERE id = $3",
-                    )
-                    .bind(id)
-                    .bind(now)
-                    .bind(input.customer_id.into_uuid())
-                    .execute(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-                }
-                AddressType::Both => {
-                    sqlx::query(
-                        "UPDATE customers SET default_shipping_address_id = $1, default_billing_address_id = $1, updated_at = $2 WHERE id = $3",
-                    )
-                    .bind(id)
-                    .bind(now)
-                    .bind(input.customer_id.into_uuid())
-                    .execute(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-                }
-                _ => {}
-            }
+            Self::set_default_pointer_tx(
+                tx.as_mut(),
+                input.customer_id,
+                id,
+                address_type,
+                address_type,
+            )
+            .await?;
         }
 
-        tx.commit().await.map_err(map_db_error)?;
+        let row = sqlx::query_as::<_, AddressRow>("SELECT * FROM customer_addresses WHERE id = $1")
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
 
-        Ok(CustomerAddress {
-            id,
-            customer_id: input.customer_id,
-            address_type,
-            first_name: input.first_name,
-            last_name: input.last_name,
-            company: input.company,
-            line1: input.line1,
-            line2: input.line2,
-            city: input.city,
-            state: input.state,
-            postal_code: input.postal_code,
-            country: input.country,
-            phone: input.phone,
-            is_default,
-            created_at: now,
-            updated_at: now,
-        })
+        tx.commit().await.map_err(map_db_error)?;
+        Self::row_to_address(row)
     }
 
     /// Get customer addresses (async)
@@ -576,7 +819,8 @@ impl PgCustomerRepository {
         rows.into_iter().map(Self::row_to_address).collect::<Result<Vec<_>>>()
     }
 
-    /// Update a customer address (async)
+    /// Update a customer address (async) — may also change its type and
+    /// default flag, keeping the customer's default pointers consistent.
     pub async fn update_address_async(
         &self,
         address_id: Uuid,
@@ -585,34 +829,40 @@ impl PgCustomerRepository {
         Self::validate_address_input(&input)?;
 
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let owner: Option<Uuid> =
-            sqlx::query_scalar("SELECT customer_id FROM customer_addresses WHERE id = $1")
-                .bind(address_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(map_db_error)?;
-        match owner {
-            Some(customer_id) if customer_id != input.customer_id.into_uuid() => {
-                return Err(CommerceError::ValidationError(
-                    "Address does not belong to customer".into(),
-                ));
-            }
-            None => {
-                return Err(CommerceError::NotFound);
-            }
-            _ => {}
+        let current: Option<(Uuid, String)> = sqlx::query_as(
+            "SELECT customer_id, address_type FROM customer_addresses WHERE id = $1 FOR UPDATE",
+        )
+        .bind(address_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        let Some((owner, current_type)) = current else {
+            return Err(CommerceError::NotFound);
+        };
+        if owner != input.customer_id.into_uuid() {
+            return Err(CommerceError::ValidationError(
+                "Address does not belong to customer".into(),
+            ));
         }
+        let current_type: AddressType = current_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid customer_address.address_type '{current_type}': {e}"
+            ))
+        })?;
+        let new_type = input.address_type.unwrap_or(current_type);
 
         sqlx::query(
             r#"
             UPDATE customer_addresses
-            SET first_name = $1, last_name = $2, company = $3,
-                line1 = $4, line2 = $5, city = $6, state = $7,
-                postal_code = $8, country = $9, phone = $10, updated_at = $11
-            WHERE id = $12
+            SET address_type = $1, first_name = $2, last_name = $3, company = $4,
+                line1 = $5, line2 = $6, city = $7, state = $8,
+                postal_code = $9, country = $10, phone = $11, updated_at = $12
+            WHERE id = $13
             "#,
         )
+        .bind(new_type.to_string())
         .bind(&input.first_name)
         .bind(&input.last_name)
         .bind(&input.company)
@@ -625,85 +875,70 @@ impl PgCustomerRepository {
         .bind(&input.phone)
         .bind(now)
         .bind(address_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        Self::clear_pointers_to_tx(
+            tx.as_mut(),
+            input.customer_id,
+            address_id,
+            !new_type.covers_shipping(),
+            !new_type.covers_billing(),
+        )
+        .await?;
+        match input.is_default {
+            Some(true) => {
+                Self::set_default_pointer_tx(
+                    tx.as_mut(),
+                    input.customer_id,
+                    address_id,
+                    new_type,
+                    new_type,
+                )
+                .await?;
+            }
+            Some(false) => {
+                Self::clear_pointers_to_tx(tx.as_mut(), input.customer_id, address_id, true, true)
+                    .await?;
+                Self::sync_default_flags(tx.as_mut(), input.customer_id).await?;
+            }
+            None => Self::sync_default_flags(tx.as_mut(), input.customer_id).await?,
+        }
+
         let row = sqlx::query_as::<_, AddressRow>("SELECT * FROM customer_addresses WHERE id = $1")
             .bind(address_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
             .ok_or(CommerceError::NotFound)?;
-
+        tx.commit().await.map_err(map_db_error)?;
         Self::row_to_address(row)
     }
 
     /// Delete a customer address (async)
     pub async fn delete_address_async(&self, address_id: Uuid) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let now = Utc::now();
 
-        let row: Option<(Uuid, String, bool)> = sqlx::query_as(
-            "SELECT customer_id, address_type, is_default FROM customer_addresses WHERE id = $1",
+        let owner: Option<Uuid> = sqlx::query_scalar(
+            "SELECT customer_id FROM customer_addresses WHERE id = $1 FOR UPDATE",
         )
         .bind(address_id)
         .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-
-        let (customer_id, address_type, is_default) = match row {
-            Some(values) => values,
-            None => return Err(CommerceError::NotFound),
+        let Some(owner) = owner else {
+            return Err(CommerceError::NotFound);
         };
+        let customer_id = CustomerId::from(owner);
 
-        if is_default {
-            let parsed_type: AddressType = address_type.parse().map_err(|e| {
-                CommerceError::DatabaseError(format!(
-                    "Invalid customer_address.address_type '{}': {}",
-                    address_type, e
-                ))
-            })?;
-            match parsed_type {
-                AddressType::Shipping => {
-                    sqlx::query(
-                        "UPDATE customers SET default_shipping_address_id = NULL, updated_at = $1 WHERE id = $2",
-                    )
-                    .bind(now)
-                    .bind(customer_id)
-                    .execute(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-                }
-                AddressType::Billing => {
-                    sqlx::query(
-                        "UPDATE customers SET default_billing_address_id = NULL, updated_at = $1 WHERE id = $2",
-                    )
-                    .bind(now)
-                    .bind(customer_id)
-                    .execute(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-                }
-                AddressType::Both => {
-                    sqlx::query(
-                        "UPDATE customers SET default_shipping_address_id = NULL, default_billing_address_id = NULL, updated_at = $1 WHERE id = $2",
-                    )
-                    .bind(now)
-                    .bind(customer_id)
-                    .execute(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-                }
-                _ => {}
-            }
-        }
-
+        Self::clear_pointers_to_tx(tx.as_mut(), customer_id, address_id, true, true).await?;
         sqlx::query("DELETE FROM customer_addresses WHERE id = $1")
             .bind(address_id)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+        Self::sync_default_flags(tx.as_mut(), customer_id).await?;
 
         tx.commit().await.map_err(map_db_error)?;
         Ok(())
@@ -717,86 +952,30 @@ impl PgCustomerRepository {
         address_type: AddressType,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let now = Utc::now();
 
-        let owner: Option<Uuid> =
-            sqlx::query_scalar("SELECT customer_id FROM customer_addresses WHERE id = $1")
-                .bind(address_id)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        match owner {
-            Some(id) if id != customer_id.into_uuid() => {
-                return Err(CommerceError::ValidationError(
-                    "Address does not belong to customer".into(),
-                ));
-            }
-            None => {
-                return Err(CommerceError::NotFound);
-            }
-            _ => {}
-        }
-
-        let clear_sql = match address_type {
-            AddressType::Shipping => {
-                "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1 AND (address_type = 'shipping' OR address_type = 'both')"
-            }
-            AddressType::Billing => {
-                "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1 AND (address_type = 'billing' OR address_type = 'both')"
-            }
-            AddressType::Both => {
-                "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1"
-            }
-            _ => "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1",
+        let row: Option<(Uuid, String)> = sqlx::query_as(
+            "SELECT customer_id, address_type FROM customer_addresses WHERE id = $1 FOR UPDATE",
+        )
+        .bind(address_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        let Some((owner, row_type)) = row else {
+            return Err(CommerceError::NotFound);
         };
-        sqlx::query(clear_sql)
-            .bind(customer_id.into_uuid())
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-        sqlx::query("UPDATE customer_addresses SET is_default = true WHERE id = $1")
-            .bind(address_id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-        match address_type {
-            AddressType::Shipping => {
-                sqlx::query(
-                    "UPDATE customers SET default_shipping_address_id = $1, updated_at = $2 WHERE id = $3",
-                )
-                .bind(address_id)
-                .bind(now)
-                .bind(customer_id.into_uuid())
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-            }
-            AddressType::Billing => {
-                sqlx::query(
-                    "UPDATE customers SET default_billing_address_id = $1, updated_at = $2 WHERE id = $3",
-                )
-                .bind(address_id)
-                .bind(now)
-                .bind(customer_id.into_uuid())
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-            }
-            AddressType::Both => {
-                sqlx::query(
-                    "UPDATE customers SET default_shipping_address_id = $1, default_billing_address_id = $1, updated_at = $2 WHERE id = $3",
-                )
-                .bind(address_id)
-                .bind(now)
-                .bind(customer_id.into_uuid())
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-            }
-            _ => {}
+        if owner != customer_id.into_uuid() {
+            return Err(CommerceError::ValidationError(
+                "Address does not belong to customer".into(),
+            ));
         }
+        let row_type: AddressType = row_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid customer_address.address_type '{row_type}': {e}"
+            ))
+        })?;
+
+        Self::set_default_pointer_tx(tx.as_mut(), customer_id, address_id, row_type, address_type)
+            .await?;
 
         tx.commit().await.map_err(map_db_error)?;
         Ok(())
@@ -804,33 +983,8 @@ impl PgCustomerRepository {
 
     /// Count customers (async)
     pub async fn count_async(&self, filter: CustomerFilter) -> Result<u64> {
-        let CustomerFilter {
-            email,
-            status,
-            tag,
-            accepts_marketing,
-            limit: _,
-            offset: _,
-            after_cursor: _,
-        } = filter;
-
         let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM customers WHERE 1=1");
-
-        if let Some(status) = status {
-            builder.push(" AND status = ").push_bind(status.to_string());
-        } else {
-            builder.push(" AND status != 'deleted'");
-        }
-        if let Some(email) = email {
-            let pattern = format!("%{}%", email);
-            builder.push(" AND email ILIKE ").push_bind(pattern);
-        }
-        if let Some(tag) = tag {
-            builder.push(" AND tags ? ").push_bind(tag);
-        }
-        if let Some(accepts_marketing) = accepts_marketing {
-            builder.push(" AND accepts_marketing = ").push_bind(accepts_marketing);
-        }
+        Self::push_list_filters(&mut builder, &filter);
 
         let count: (i64,) =
             builder.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
@@ -867,72 +1021,15 @@ impl PgCustomerRepository {
         inputs: Vec<CreateCustomer>,
     ) -> Result<Vec<Customer>> {
         validate_batch_size(&inputs)?;
+        for input in &inputs {
+            Self::validate_customer_input(input)?;
+        }
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut customers = Vec::with_capacity(inputs.len());
 
-        for input in inputs {
-            Self::validate_customer_input(&input)?;
-
-            let id = CustomerId::new();
-            let now = Utc::now();
-            let tags = input.tags.clone().unwrap_or_default();
-            let accepts_marketing = input.accepts_marketing.unwrap_or(false);
-
-            // Check email uniqueness within transaction
-            let exists: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM customers WHERE email = $1")
-                .bind(&input.email)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-
-            if exists.0 > 0 {
-                return Err(CommerceError::EmailAlreadyExists(input.email));
-            }
-
-            let tags_json = serde_json::to_value(&tags).unwrap_or_default();
-            let metadata_json = input.metadata.clone();
-
-            sqlx::query(
-                r#"
-                INSERT INTO customers (id, email, first_name, last_name, phone, status,
-                                       accepts_marketing, email_verified, tags, metadata,
-                                       created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                "#,
-            )
-            .bind(id.into_uuid())
-            .bind(&input.email)
-            .bind(&input.first_name)
-            .bind(&input.last_name)
-            .bind(&input.phone)
-            .bind("active")
-            .bind(accepts_marketing)
-            .bind(false)
-            .bind(&tags_json)
-            .bind(&metadata_json)
-            .bind(now)
-            .bind(now)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            customers.push(Customer {
-                id,
-                email: input.email,
-                first_name: input.first_name,
-                last_name: input.last_name,
-                phone: input.phone,
-                status: CustomerStatus::Active,
-                accepts_marketing,
-                email_verified: false,
-                tags,
-                metadata: input.metadata,
-                default_shipping_address_id: None,
-                default_billing_address_id: None,
-                created_at: now,
-                updated_at: now,
-            });
+        for input in &inputs {
+            customers.push(Self::insert_customer_tx(tx.as_mut(), input).await?);
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -968,95 +1065,8 @@ impl PgCustomerRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut customers = Vec::with_capacity(updates.len());
 
-        for (id, input) in updates {
-            let now = Utc::now();
-
-            let existing_row =
-                sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
-                    .bind(id.into_uuid())
-                    .fetch_optional(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?
-                    .ok_or(CommerceError::CustomerNotFound(id.into_uuid()))?;
-            let current_version = existing_row.version;
-            let existing = Self::row_to_customer(existing_row)?;
-
-            if let Some(email) = &input.email {
-                validate_email(email)?;
-                let existing_id: Option<Uuid> =
-                    sqlx::query_scalar("SELECT id FROM customers WHERE email = $1")
-                        .bind(email)
-                        .fetch_optional(tx.as_mut())
-                        .await
-                        .map_err(map_db_error)?;
-                if let Some(existing_id) = existing_id {
-                    if existing_id != id.into_uuid() {
-                        return Err(CommerceError::EmailAlreadyExists(email.clone()));
-                    }
-                }
-            }
-            if let Some(first_name) = &input.first_name {
-                validate_required_text("customer.first_name", first_name, 100)?;
-            }
-            if let Some(last_name) = &input.last_name {
-                validate_required_text("customer.last_name", last_name, 100)?;
-            }
-            if let Some(phone) = &input.phone {
-                validate_phone(phone)?;
-            }
-
-            let new_email = input.email.unwrap_or(existing.email);
-            let new_first_name = input.first_name.unwrap_or(existing.first_name);
-            let new_last_name = input.last_name.unwrap_or(existing.last_name);
-            let new_phone = input.phone.or(existing.phone);
-            let new_status = input.status.unwrap_or(existing.status);
-            let new_accepts_marketing =
-                input.accepts_marketing.unwrap_or(existing.accepts_marketing);
-            let new_tags = input.tags.unwrap_or(existing.tags);
-            let new_metadata = input.metadata.or(existing.metadata);
-
-            let tags_json = serde_json::to_value(&new_tags).unwrap_or_default();
-
-            let result = sqlx::query(
-                r#"
-                UPDATE customers
-                SET email = $1, first_name = $2, last_name = $3, phone = $4,
-                    status = $5, accepts_marketing = $6, tags = $7, metadata = $8, updated_at = $9, version = version + 1
-                WHERE id = $10 AND version = $11
-                "#,
-            )
-            .bind(&new_email)
-            .bind(&new_first_name)
-            .bind(&new_last_name)
-            .bind(&new_phone)
-            .bind(new_status.to_string())
-            .bind(new_accepts_marketing)
-            .bind(&tags_json)
-            .bind(&new_metadata)
-            .bind(now)
-            .bind(id.into_uuid())
-            .bind(current_version)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            if result.rows_affected() == 0 {
-                return Err(CommerceError::VersionConflict {
-                    entity: "customer".to_string(),
-                    id: id.to_string(),
-                    expected_version: current_version,
-                });
-            }
-
-            // Fetch the updated customer
-            let updated_row =
-                sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
-                    .bind(id.into_uuid())
-                    .fetch_one(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-
-            customers.push(Self::row_to_customer(updated_row)?);
+        for (id, input) in &updates {
+            customers.push(Self::update_customer_tx(tx.as_mut(), *id, input).await?);
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -1090,16 +1100,11 @@ impl PgCustomerRepository {
             return Ok(());
         }
 
-        let now = Utc::now();
-
-        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
-        sqlx::query("UPDATE customers SET status = 'deleted', updated_at = $1 WHERE id = ANY($2)")
-            .bind(now)
-            .bind(&raw_ids)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        for id in &ids {
+            Self::delete_customer_tx(tx.as_mut(), *id).await?;
+        }
+        tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
 
@@ -1135,6 +1140,10 @@ impl CustomerRepository for PgCustomerRepository {
         super::block_on(self.get_by_email_async(email))
     }
 
+    fn get_or_create_by_email(&self, input: CreateCustomer) -> Result<(Customer, bool)> {
+        super::block_on(self.get_or_create_by_email_async(input))
+    }
+
     fn update(&self, id: CustomerId, input: UpdateCustomer) -> Result<Customer> {
         super::block_on(self.update_async(id, input))
     }
@@ -1145,6 +1154,10 @@ impl CustomerRepository for PgCustomerRepository {
 
     fn delete(&self, id: CustomerId) -> Result<()> {
         super::block_on(self.delete_async(id))
+    }
+
+    fn anonymize(&self, id: CustomerId) -> Result<Customer> {
+        super::block_on(self.anonymize_async(id))
     }
 
     fn add_address(&self, input: CreateCustomerAddress) -> Result<CustomerAddress> {

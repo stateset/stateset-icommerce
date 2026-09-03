@@ -425,6 +425,21 @@ impl AsyncTax {
         self.db.tax().get_customer_exemptions_async(customer_id).await
     }
 
+    /// Mark an exemption certificate as verified, or revoke that
+    /// verification. Exemptions are created unverified and tax calculation
+    /// honours only verified ones, so this is the step that makes a
+    /// certificate take effect.
+    pub async fn verify_exemption(&self, id: Uuid, verified: bool) -> Result<TaxExemption> {
+        self.db.tax().verify_exemption_async(id, verified).await
+    }
+
+    /// Whether the customer has an exemption tax calculation would honour on
+    /// `date` — active, verified and inside its validity window.
+    pub async fn customer_is_exempt_on(&self, customer_id: Uuid, date: NaiveDate) -> Result<bool> {
+        let exemptions = self.get_customer_exemptions(customer_id).await?;
+        Ok(exemptions.iter().any(|e| e.is_effective_on(date)))
+    }
+
     pub async fn get_settings(&self) -> Result<TaxSettings> {
         self.db.tax().get_settings_async().await
     }
@@ -679,6 +694,36 @@ impl AsyncSubscriptions {
         input: SkipBillingCycle,
     ) -> Result<Subscription> {
         self.db.subscriptions().skip_billing_cycle_async(id.into(), input).await
+    }
+
+    /// Read-only view of the subscriptions due for billing at `before`
+    /// (excluding any under a live billing lease). Never claims anything.
+    pub async fn get_due_for_billing(
+        &self,
+        before: DateTime<Utc>,
+        limit: Option<u32>,
+    ) -> Result<Vec<Subscription>> {
+        self.db.subscriptions().get_due_for_billing_async(before, limit).await
+    }
+
+    /// Atomically claim up to `limit` due subscriptions for `worker_id`,
+    /// leasing each for `lease_secs` seconds (`SELECT ... FOR UPDATE SKIP
+    /// LOCKED`): concurrent workers receive disjoint batches. Bill with
+    /// `create_billing_cycle` passing `claimed_by: Some(worker_id)`, then
+    /// [`Self::release_billing_claim`].
+    pub async fn claim_due_for_billing(
+        &self,
+        limit: u32,
+        worker_id: &str,
+        lease_secs: i64,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Subscription>> {
+        self.db.subscriptions().claim_due_for_billing_async(limit, worker_id, lease_secs, now).await
+    }
+
+    /// Release the billing lease `worker_id` holds on `id`.
+    pub async fn release_billing_claim(&self, id: Uuid, worker_id: &str) -> Result<bool> {
+        self.db.subscriptions().release_billing_claim_async(id.into(), worker_id).await
     }
 
     pub async fn record_event(

@@ -19,7 +19,17 @@ pub trait OrderRepository: Send + Sync {
     /// Get order by order number
     fn get_by_number(&self, order_number: &str) -> Result<Option<Order>>;
 
-    /// Update an order
+    /// Update an order (field patches and/or a status transition) in one
+    /// transaction, with every side effect of the transition.
+    ///
+    /// Cancelling (`status: Some(Cancelled)`) releases the order's inventory
+    /// reservations and backorders, and is subject to the money rule: while
+    /// any payment against the order still holds money (in flight or
+    /// captured, see [`crate::PaymentRepository::open_captures_for_order`]) the
+    /// cancel is refused with a `ValidationError` naming the outstanding
+    /// amount, unless [`crate::UpdateOrder::void_payments`] is set — then in-flight
+    /// payments are voided in the same transaction and settled ones are left
+    /// for an explicit refund.
     fn update(&self, id: OrderId, input: UpdateOrder) -> Result<Order>;
 
     /// Ship an order, fully or per line.
@@ -36,14 +46,40 @@ pub trait OrderRepository: Send + Sync {
     /// List orders with filter
     fn list(&self, filter: OrderFilter) -> Result<Vec<Order>>;
 
-    /// Delete an order
+    /// Delete an order and everything it holds (lines, reservations,
+    /// backorders). A missing id is a no-op.
+    ///
+    /// Refused with `Conflict` when the order is a fulfilment record
+    /// (shipped/delivered/refunded, [`crate::OrderStatus::allows_delete`]) or a
+    /// financial record: its `payment_status` holds money
+    /// ([`crate::PaymentStatus::holds_money`]) or any payment row references it.
     fn delete(&self, id: OrderId) -> Result<()>;
 
-    /// Add item to order
+    /// Add a line to a pre-fulfilment order: inserts the line, reserves its
+    /// stock (backordering any shortfall), recomputes the total and writes an
+    /// `orders.item_added.v1` outbox event, all in one transaction.
     fn add_item(&self, order_id: OrderId, item: CreateOrderItem) -> Result<OrderItem>;
 
-    /// Remove item from order
-    fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()>;
+    /// Remove a line from a pre-fulfilment order: releases the line's own
+    /// reservations, cancels its backorder, recomputes the total and writes
+    /// an `orders.item_removed.v1` outbox event, all in one transaction.
+    ///
+    /// Subject to the money rule of [`crate::RemoveOrderItem`]: refused with
+    /// [`crate::CommerceError::OrderTotalBelowCaptured`] when the order's new
+    /// total would fall below the money already captured against it.
+    /// [`Self::remove_item_with`] can opt out.
+    fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()> {
+        self.remove_item_with(order_id, item_id, RemoveOrderItem::default())
+    }
+
+    /// [`Self::remove_item`] with explicit handling of the order's captured
+    /// money; see [`crate::RemoveOrderItem::allow_overpayment`].
+    fn remove_item_with(
+        &self,
+        order_id: OrderId,
+        item_id: OrderItemId,
+        input: RemoveOrderItem,
+    ) -> Result<()>;
 
     /// Count orders matching filter
     fn count(&self, filter: OrderFilter) -> Result<u64>;
@@ -108,6 +144,9 @@ pub trait CartRepository: Send + Sync {
 
     /// Get items for a cart
     fn get_items(&self, cart_id: CartId) -> Result<Vec<CartItem>>;
+
+    /// Get a single cart line by its id (any cart)
+    fn get_item(&self, item_id: Uuid) -> Result<Option<CartItem>>;
 
     /// Clear all items from cart
     fn clear_items(&self, cart_id: CartId) -> Result<()>;

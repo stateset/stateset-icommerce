@@ -49,6 +49,15 @@ pub struct BackorderFulfillment {
 }
 
 /// Backorder allocation (reserved inventory for backorder).
+///
+/// An allocation is backed by a real inventory reservation
+/// (`reference_type = "backorder"`, `reference_id = backorder_id`) whose id is
+/// `reservation_id`; the reserved units are counted in
+/// `inventory_balances.quantity_allocated` and cannot be taken by carts or
+/// orders. Releasing / expiring the allocation releases the reservation;
+/// fulfilling the backorder consumes it (on-hand is decremented).
+/// `reservation_id` is `None` only for legacy rows written before the
+/// allocation was wired to inventory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackorderAllocation {
     pub id: Uuid,
@@ -60,6 +69,8 @@ pub struct BackorderAllocation {
     pub status: AllocationStatus,
     pub allocated_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub reservation_id: Option<Uuid>,
 }
 
 // ============================================================================
@@ -140,6 +151,16 @@ pub enum AllocationStatus {
     Confirmed,
     Released,
     Expired,
+    /// The allocated units were consumed by a fulfilment (on-hand decremented).
+    Fulfilled,
+}
+
+impl AllocationStatus {
+    /// Whether the allocation still holds inventory (its reservation is open).
+    #[must_use]
+    pub const fn is_open(self) -> bool {
+        matches!(self, Self::Reserved | Self::Confirmed)
+    }
 }
 
 // ============================================================================

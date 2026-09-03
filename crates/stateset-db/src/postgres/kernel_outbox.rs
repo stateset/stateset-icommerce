@@ -1,3 +1,4 @@
+use crate::kernel::SealedAuditEntry;
 use crate::kernel_outbox::{
     KernelAuditCheckpoint, KernelAuditVerification, KernelOutboxEvent, KernelOutboxHealth,
     KernelReceiptRecord, audit_checkpoint_hash_is_valid, build_audit_checkpoint,
@@ -436,19 +437,21 @@ impl PgKernelOutboxRepository {
         let expected_hash = checkpoint.head_hash.as_deref().ok_or_else(|| {
             CommerceError::ValidationError("non-empty checkpoint is missing head_hash".into())
         })?;
-        let Ok(expected_sequence) = i64::try_from(checkpoint.entries) else {
+        // Address the entry by ordinal position, not by `sequence` value: a
+        // rolled-back append still consumes a BIGSERIAL value, so the chain
+        // may legitimately contain gaps.
+        let Ok(offset) = i64::try_from(checkpoint.entries - 1) else {
             return Ok(false);
         };
         let local_hash = sqlx::query_scalar::<_, String>(
             "SELECT audit_hash FROM kernel_receipt_audit_log
-             WHERE sequence = $1 AND audit_hash = $2",
+             ORDER BY sequence OFFSET $1 LIMIT 1",
         )
-        .bind(expected_sequence)
-        .bind(expected_hash)
+        .bind(offset)
         .fetch_optional(&self.pool)
         .await
         .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-        Ok(local_hash == checkpoint.head_hash)
+        Ok(local_hash.as_deref() == Some(expected_hash))
     }
 }
 
@@ -587,4 +590,76 @@ pub(crate) async fn append_kernel_receipt_tx(
     .await
     .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
     Ok(audit_hash)
+}
+
+/// Load the sealed audit-log entry a materialized receipt claims through its
+/// `audit_hash`, for replay verification.
+pub(crate) async fn sealed_audit_entry_tx(
+    tx: &mut sqlx::PgConnection,
+    existing: &KernelReceiptRecord,
+) -> Result<Option<SealedAuditEntry>> {
+    let Some(audit_hash) = existing.receipt.get("audit_hash").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    sqlx::query_as::<_, (Option<String>, String)>(
+        "SELECT previous_audit_hash, request_hash FROM kernel_receipt_audit_log
+         WHERE audit_hash = $1",
+    )
+    .bind(audit_hash)
+    .fetch_optional(tx)
+    .await
+    .map(|row| {
+        row.map(|(previous_audit_hash, request_hash)| SealedAuditEntry {
+            previous_audit_hash,
+            request_hash,
+        })
+    })
+    .map_err(|error| CommerceError::DatabaseError(error.to_string()))
+}
+
+/// Drive one audit-chain future to completion for a synchronous caller.
+///
+/// [`super::block_on`] refuses to run inside *any* Tokio context, including the
+/// blocking pool that an async caller correctly hands this work to
+/// (`tokio::task::spawn_blocking` threads still carry a runtime handle). This
+/// instead spawns onto the shared runtime and waits on a plain channel, which
+/// is safe from a blocking-pool thread and from a thread with no runtime at
+/// all. It must not be called from an async worker, whose thread it would
+/// block — see the [`crate::kernel::KernelAuditChain`] impl below.
+fn drive_audit<T: Send + 'static>(
+    future: impl std::future::Future<Output = Result<T>> + Send + 'static,
+) -> Result<T> {
+    let runtime = super::shared_runtime()?;
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    runtime.spawn(async move {
+        let _ = sender.send(future.await);
+    });
+    receiver.recv().map_err(|error| {
+        CommerceError::DatabaseError(format!("kernel audit chain task failed: {error}"))
+    })?
+}
+
+/// Synchronous audit-chain access for callers holding an erased
+/// [`crate::Database`], so a Postgres-backed `Commerce` verifies and
+/// checkpoints the same receipt chain a SQLite one does.
+///
+/// Each call drives the async implementation on the shared runtime, so it must
+/// run on a blocking thread rather than an async worker; the HTTP handlers use
+/// `AppState::run_blocking` for exactly that reason.
+impl crate::kernel::KernelAuditChain for PgKernelOutboxRepository {
+    fn verify_chain(&self) -> Result<KernelAuditVerification> {
+        let repository = self.clone();
+        drive_audit(async move { repository.verify_audit_chain_async().await })
+    }
+
+    fn checkpoint(&self) -> Result<KernelAuditCheckpoint> {
+        let repository = self.clone();
+        drive_audit(async move { repository.audit_checkpoint_async().await })
+    }
+
+    fn verify_checkpoint(&self, checkpoint: &KernelAuditCheckpoint) -> Result<bool> {
+        let repository = self.clone();
+        let checkpoint = checkpoint.clone();
+        drive_audit(async move { repository.verify_audit_checkpoint_async(&checkpoint).await })
+    }
 }

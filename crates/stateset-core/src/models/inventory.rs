@@ -82,19 +82,48 @@ pub enum TransactionType {
     CycleCount,
 }
 
-/// Reservation status enumeration
+/// Reservation status enumeration.
+///
+/// A reservation **holds stock** (it is counted in
+/// `inventory_balances.quantity_allocated`) while it is [`Pending`],
+/// [`Confirmed`] or [`Allocated`]; see [`ReservationStatus::holds_stock`].
+/// Every other status is terminal and has already handed its units back
+/// (`Released`, `Cancelled`, `Expired`) or consumed them (`Fulfilled`: both
+/// `quantity_on_hand` and `quantity_allocated` were decremented).
+///
+/// [`Pending`]: ReservationStatus::Pending
+/// [`Confirmed`]: ReservationStatus::Confirmed
+/// [`Allocated`]: ReservationStatus::Allocated
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
 pub enum ReservationStatus {
+    /// Open hold on stock (the only status the engine writes on creation).
     Pending,
+    /// Committed hold (order shipped / allocation confirmed); still counted
+    /// in `quantity_allocated` until fulfilled or released.
     Confirmed,
+    /// Legacy synonym of [`Self::Pending`] kept for rows written by earlier
+    /// releases; the engine never writes it, but reads/expires it like
+    /// `pending`.
     Allocated,
     #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
     Released,
     Expired,
+    /// The reserved units were consumed (shipped / backorder fulfilled):
+    /// on-hand and allocated were both decremented by the reservation.
+    Fulfilled,
+}
+
+impl ReservationStatus {
+    /// Whether a reservation in this status is still counted in
+    /// `quantity_allocated` (and therefore reduces `quantity_available`).
+    #[must_use]
+    pub const fn holds_stock(self) -> bool {
+        matches!(self, Self::Pending | Self::Confirmed | Self::Allocated)
+    }
 }
 
 impl Default for ReservationStatus {
@@ -112,6 +141,31 @@ pub struct AdjustInventory {
     pub reason: String,
     pub reference_type: Option<String>,
     pub reference_id: Option<String>,
+}
+
+impl Validate for AdjustInventory {
+    /// An adjustment needs a well-formed SKU, a non-zero quantity (a zero
+    /// adjustment would write a meaningless ledger row) and a non-blank
+    /// reason (the ledger row is the audit trail for the stock movement).
+    fn validate(&self) -> Result<()> {
+        crate::validate_sku(&self.sku)?;
+        if self.quantity.is_zero() {
+            return Err(crate::CommerceError::ValidationError(
+                "Adjustment quantity cannot be zero".into(),
+            ));
+        }
+        if self.reason.trim().is_empty() {
+            return Err(crate::CommerceError::ValidationError(
+                "Adjustment reason cannot be empty".into(),
+            ));
+        }
+        if self.location_id.is_some_and(|id| id <= 0) {
+            return Err(crate::CommerceError::ValidationError(
+                "location_id must be positive".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Input for reserving inventory
@@ -208,14 +262,20 @@ pub struct InventoryFilter {
 }
 
 impl InventoryBalance {
-    /// Check if stock is below reorder point
+    /// The level below which the balance needs reordering: `reorder_point`
+    /// raised by `safety_stock` (the buffer that must stay untouched), or
+    /// `None` when no reorder point is set. Both backends' `get_reorder_needed`
+    /// use exactly this threshold.
+    #[must_use]
+    pub fn reorder_threshold(&self) -> Option<Decimal> {
+        self.reorder_point.map(|point| point + self.safety_stock.unwrap_or(Decimal::ZERO))
+    }
+
+    /// Check if stock is below the reorder threshold (reorder point plus
+    /// safety stock).
     #[must_use]
     pub fn needs_reorder(&self) -> bool {
-        if let Some(reorder_point) = self.reorder_point {
-            self.quantity_available < reorder_point
-        } else {
-            false
-        }
+        self.reorder_threshold().is_some_and(|threshold| self.quantity_available < threshold)
     }
 
     /// Calculate available quantity
@@ -245,6 +305,64 @@ mod tests {
     #[test]
     fn reservation_status_from_str() {
         assert_eq!(ReservationStatus::from_str("allocated").unwrap(), ReservationStatus::Allocated);
+        assert_eq!(ReservationStatus::from_str("fulfilled").unwrap(), ReservationStatus::Fulfilled);
         assert!(ReservationStatus::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn reservation_status_holds_stock_only_while_open() {
+        assert!(ReservationStatus::Pending.holds_stock());
+        assert!(ReservationStatus::Confirmed.holds_stock());
+        assert!(ReservationStatus::Allocated.holds_stock());
+        assert!(!ReservationStatus::Released.holds_stock());
+        assert!(!ReservationStatus::Cancelled.holds_stock());
+        assert!(!ReservationStatus::Expired.holds_stock());
+        assert!(!ReservationStatus::Fulfilled.holds_stock());
+    }
+
+    fn adjust(quantity: Decimal, reason: &str) -> AdjustInventory {
+        AdjustInventory {
+            sku: "SKU-1".into(),
+            location_id: None,
+            quantity,
+            reason: reason.into(),
+            reference_type: None,
+            reference_id: None,
+        }
+    }
+
+    #[test]
+    fn adjust_inventory_validation() {
+        assert!(adjust(Decimal::ONE, "cycle count").validate().is_ok());
+        assert!(adjust(Decimal::ZERO, "cycle count").validate().is_err());
+        assert!(adjust(Decimal::ONE, "   ").validate().is_err());
+        let mut bad_sku = adjust(Decimal::ONE, "ok");
+        bad_sku.sku = String::new();
+        assert!(bad_sku.validate().is_err());
+        let mut bad_location = adjust(Decimal::ONE, "ok");
+        bad_location.location_id = Some(0);
+        assert!(bad_location.validate().is_err());
+    }
+
+    #[test]
+    fn reorder_threshold_includes_safety_stock() {
+        let balance = InventoryBalance {
+            id: 1,
+            item_id: 1,
+            location_id: 1,
+            quantity_on_hand: Decimal::from(12),
+            quantity_allocated: Decimal::ZERO,
+            quantity_available: Decimal::from(12),
+            reorder_point: Some(Decimal::from(10)),
+            safety_stock: Some(Decimal::from(5)),
+            version: 1,
+            last_counted_at: None,
+            updated_at: Utc::now(),
+        };
+        assert_eq!(balance.reorder_threshold(), Some(Decimal::from(15)));
+        assert!(balance.needs_reorder());
+        let no_point = InventoryBalance { reorder_point: None, ..balance };
+        assert_eq!(no_point.reorder_threshold(), None);
+        assert!(!no_point.needs_reorder());
     }
 }

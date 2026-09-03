@@ -331,6 +331,13 @@ impl Credit {
     // ========================================================================
 
     /// Record a credit transaction.
+    ///
+    /// The `running_balance` is derived from the account's current balance
+    /// under a row lock held for the insert. Errors [`CommerceError::NotFound`]
+    /// if the customer has no credit account, rather than booking an entry at
+    /// an invented zero balance.
+    ///
+    /// [`CommerceError::NotFound`]: stateset_core::CommerceError::NotFound
     pub fn record_transaction(&self, input: RecordCreditTransaction) -> Result<CreditTransaction> {
         self.db.credit().record_transaction(input)
     }

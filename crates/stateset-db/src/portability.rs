@@ -622,6 +622,18 @@ fn import_product(
         variants,
     };
     let created = db.products().create(input)?;
+    // `CreateProduct` carries no status, so a product always lands as Draft.
+    // Carrying the exported status across is the difference between restoring
+    // a catalogue and silently unpublishing it.
+    let status: Option<stateset_core::ProductStatus> = field_as(record, "status")?;
+    if let Some(status) = status {
+        if status != created.status {
+            db.products().update(
+                created.id,
+                stateset_core::UpdateProduct { status: Some(status), ..Default::default() },
+            )?;
+        }
+    }
     remap.record("products", &old_id, created.id.to_string());
     Ok(Outcome::Created)
 }

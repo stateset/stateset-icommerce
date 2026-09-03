@@ -6,15 +6,40 @@ use super::general_ledger::{JournalEntryLineRow, JournalEntryRow, PgGeneralLedge
 use super::inventory::{PgInventoryRepository, ReservationConfirmOutcome, ReservationRow};
 use super::kernel_outbox::{
     append_kernel_event_tx, append_kernel_receipt_tx, receipt_by_idempotency_key_tx,
+    sealed_audit_entry_tx,
 };
 use super::orders::{OrderItemRow, OrderRow, PgOrderRepository, ShipMode};
 use super::payments::{
     PaymentRow, PgPaymentRepository, RefundRow, check_order_capture_capacity_pg,
+    open_captures_for_order_pg, void_in_flight_payments_for_order_pg,
 };
 use super::returns::{PgReturnRepository, ReturnItemRow, ReturnRow};
 use super::subscriptions::{BillingCycleRow, PgSubscriptionRepository};
 use super::x402_payment_intents::{IntentRow, PgX402PaymentIntentRepository};
-use crate::kernel_outbox::semantic_request_hash;
+use crate::kernel::plans::PlanOutcome;
+use crate::kernel::plans::catalog::{create_inventory_item_guard, create_product_guard};
+use crate::kernel::plans::escrow::{
+    ESCROW_UNVERSIONED, create_escrow_guard, dispute_escrow_guard, escrow_id_guard,
+    escrow_legacy_amount, escrow_settlement_guard, file_dispute_guard, plan_fund_escrow,
+    resolve_dispute_guard, submit_evidence_guard,
+};
+use crate::kernel::plans::finance::{
+    BILLING_CYCLE_UNVERSIONED, CART_UNVERSIONED, JOURNAL_ENTRY_UNVERSIONED,
+    X402_INTENT_UNVERSIONED, charge_subscription_guard, commit_checkout_guard,
+    post_journal_entry_guard, settle_x402_guard,
+};
+use crate::kernel::plans::inventory::{reservation_lifecycle_guard, reserve_inventory_guard};
+use crate::kernel::plans::orders::{
+    OrderTransitionSnapshot, ShipOrderSnapshot, plan_order_transition, plan_ship_order,
+    reservation_expired_during_shipment, ship_order_guard, transition_order_guard,
+};
+use crate::kernel::plans::payments::{RefundSnapshot, create_payment_guard, plan_refund};
+use crate::kernel::plans::returns::transition_return_guard;
+use crate::kernel::receipt::{
+    attach_command_context, checkout_error_code, preview_receipt, principal_kind_name,
+    receipt_record, rejected_receipt, succeeded_receipt,
+};
+use crate::kernel::{CommandRun, EnvelopeGuard, Replay, resolve_replay};
 use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::Utc;
 use serde::{Serialize, de::DeserializeOwned};
@@ -27,12 +52,12 @@ use stateset_core::{
     CreateA2AEscrow, CreateInventoryItem, CreatePayment, CreateProduct, CreateRefund,
     DisputeA2AEscrow, ExecutionMode, ExecutionReceipt, ExecutionStatus, FileA2ADispute,
     FundA2AEscrow, InventoryItem, InventoryReservation, JournalEntry, JournalEntryStatus,
-    KernelPolicy, Order, OrderStatus, Payment, PaymentStatus, PaymentTransactionStatus,
-    PostJournalEntry, Product, ProductId, ProductStatus, Refund, RefundA2AEscrow, RefundStatus,
-    ReleaseA2AEscrow, ReleaseInventoryReservation, ReservationStatus, ReserveInventory,
-    ResolveA2ADispute, Result, RetryDisposition, Return, SettleX402Intent, ShipOrderCommand,
-    SubmitA2ADisputeEvidence, SubscriptionCharge, SubscriptionStatus, TransitionOrder,
-    TransitionReturn, Validate, X402IntentStatus, X402PaymentIntent,
+    KernelPolicy, Order, OrderStatus, Payment, PaymentTransactionStatus, PostJournalEntry, Product,
+    ProductId, ProductStatus, Refund, RefundA2AEscrow, RefundStatus, ReleaseA2AEscrow,
+    ReleaseInventoryReservation, ReservationStatus, ReserveInventory, ResolveA2ADispute, Result,
+    RetryDisposition, Return, SettleX402Intent, ShipOrderCommand, SubmitA2ADisputeEvidence,
+    SubscriptionCharge, SubscriptionStatus, TransitionOrder, TransitionReturn, Validate,
+    X402IntentStatus, X402PaymentIntent,
 };
 use uuid::Uuid;
 
@@ -135,58 +160,37 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<CreateInventoryItem>,
     ) -> Result<ExecutionReceipt<InventoryItem>> {
-        command
-            .validate_contract()
-            .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
         let input = command.payload.clone();
-        let request_hash = semantic_request_hash(command, &input)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != CREATE_INVENTORY_ITEM_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected inventory.item.create command type".into(),
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "create commands cannot carry an expected aggregate version".into(),
-            ))
-        } else if let Err(error) = input.validate() {
-            Some(("commerce.validation_failed", error.to_string()))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_INVENTORY_ITEM_COMMAND),
+            "inventory_item",
+        )?
+        .then_guard(|_| create_inventory_item_guard(&input));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         let location_id = input.location_id.unwrap_or(1);
         let initial_quantity = input.initial_quantity.unwrap_or_default();
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(format!("kernel:inventory-sku:{}", input.sku))
-            .execute(tx.as_mut())
-            .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        advisory_lock_pg(tx.as_mut(), LOCK_NS_INVENTORY_SKU, &input.sku).await?;
 
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored = replay_or_conflict(command, &request_hash, existing, "inventory_item")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "inventory_item")
+                    .await?
+            {
                 tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
                 return Ok(stored);
             }
         }
-        if let Some((code, message)) = guard {
-            let mut receipt =
-                rejected_receipt(command, Some(policy), code, &message, "inventory_item");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
@@ -215,8 +219,14 @@ impl PgKernelExecutor {
                     format!("inventory location {location_id} does not exist"),
                 )
             };
-            let mut receipt =
-                rejected_receipt(command, Some(policy), code, &message, "inventory_item");
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy),
+                code,
+                &message,
+                RetryDisposition::Never,
+                "inventory_item",
+            );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
@@ -283,33 +293,18 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<CreateProduct>,
     ) -> Result<ExecutionReceipt<Product>> {
-        command
-            .validate_contract()
-            .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
-
         let input = command.payload.clone();
-        let request_hash = semantic_request_hash(command, &input)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != CREATE_PRODUCT_COMMAND {
-            Some(("kernel.command_type_mismatch", "expected products.create command type".into()))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "create commands cannot carry an expected aggregate version".into(),
-            ))
-        } else if let Err(error) = input.validate() {
-            Some(("commerce.validation_failed", error.to_string()))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_PRODUCT_COMMAND),
+            "product",
+        )?
+        .then_guard(|_| create_product_guard(&input));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         let slug = input.slug.clone().unwrap_or_else(|| Product::generate_slug(&input.name));
 
         let mut tx = self
@@ -320,11 +315,7 @@ impl PgKernelExecutor {
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         // Serialize semantic uniqueness keys so two distinct command keys cannot
         // race through the preview/check window and surface an unsealed SQL error.
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(format!("kernel:product-slug:{slug}"))
-            .execute(tx.as_mut())
-            .await
-            .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+        advisory_lock_pg(tx.as_mut(), LOCK_NS_PRODUCT_SLUG, &slug).await?;
         let mut skus = input
             .variants
             .as_ref()
@@ -333,18 +324,15 @@ impl PgKernelExecutor {
         skus.sort();
         skus.dedup();
         for sku in &skus {
-            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-                .bind(format!("kernel:product-sku:{sku}"))
-                .execute(tx.as_mut())
-                .await
-                .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+            advisory_lock_pg(tx.as_mut(), LOCK_NS_PRODUCT_SKU, sku).await?;
         }
 
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored = replay_or_conflict(command, &request_hash, existing, "product")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "product").await?
+            {
                 tx.commit()
                     .await
                     .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
@@ -352,8 +340,7 @@ impl PgKernelExecutor {
             }
         }
 
-        if let Some((code, message)) = guard {
-            let mut receipt = rejected_receipt(command, Some(policy), code, &message, "product");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
             return Ok(receipt);
@@ -383,7 +370,14 @@ impl PgKernelExecutor {
                 let sku = duplicate_sku.as_deref().unwrap_or_default();
                 ("commerce.product.sku_conflict", format!("product SKU '{sku}' already exists"))
             };
-            let mut receipt = rejected_receipt(command, Some(policy), code, &message, "product");
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy),
+                code,
+                &message,
+                RetryDisposition::Never,
+                "product",
+            );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
             return Ok(receipt);
@@ -507,93 +501,38 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<CreatePayment>,
     ) -> Result<ExecutionReceipt<Payment>> {
-        command
-            .validate_contract()
-            .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
-
-        let key_mismatch = command
-            .payload
-            .idempotency_key
-            .as_deref()
-            .is_some_and(|key| key != command.idempotency_key);
         let mut input = command.payload.clone();
-        if !key_mismatch {
+        if input.idempotency_key.is_none() {
             input.idempotency_key = Some(command.idempotency_key.clone());
         }
-        let request_hash = semantic_request_hash(command, &input)?;
-        let now = Utc::now();
-        let policy = self.policy.evaluate(command, now);
-        let guard = if key_mismatch {
-            Some((
-                "kernel.idempotency_key_mismatch",
-                "payload idempotency key does not match the command envelope".to_string(),
-            ))
-        } else if command.command_type != CREATE_PAYMENT_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected payments.create command type".to_string(),
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= now) {
-            Some((
-                "kernel.deadline_exceeded",
-                "command deadline elapsed before execution".to_string(),
-            ))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "create commands cannot carry an expected aggregate version".to_string(),
-            ))
-        } else if let Err(error) = input.validate() {
-            Some(("commerce.validation_failed", error.to_string()))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_PAYMENT_COMMAND)
+                .with_payload_key(input.idempotency_key.as_deref()),
+            "payment",
+        )?
+        .then_guard(|_| create_payment_guard(&input));
+        let request_hash = run.request_hash.clone();
 
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-        // PostgreSQL does not gap-lock a missing unique key. Serialize each
-        // retry key explicitly so concurrent first attempts cannot both run.
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(&command.idempotency_key)
-            .execute(tx.as_mut())
-            .await
-            .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "payment").await?
         {
-            let receipt = replay_or_conflict(command, &request_hash, existing, "payment")?;
-            if receipt.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply
-            {
-                tx.commit()
-                    .await
-                    .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-                return Ok(receipt);
-            }
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
         }
-
-        if let Some((code, message)) = guard {
-            let mut receipt = rejected_receipt(command, Some(policy), code, &message, "payment");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+            tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
-
-        if command.mode == ExecutionMode::Preview {
-            let mut receipt = preview_receipt(command, policy, "payment");
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-            return Ok(receipt);
-        }
-
+        // Every check apply performs must run before the preview answer is
+        // sealed, or a preview would promise a capture apply refuses.
         if let Some(order_id) = input.order_id {
             check_order_capture_capacity_pg(
                 tx.as_mut(),
@@ -603,6 +542,12 @@ impl PgKernelExecutor {
                 input.currency.unwrap_or_default(),
             )
             .await?;
+        }
+        if run.is_preview() {
+            let mut receipt = run.previewed();
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
         }
 
         let id = Uuid::new_v4();
@@ -642,7 +587,7 @@ impl PgKernelExecutor {
         .bind(created_at)
         .execute(tx.as_mut())
         .await
-        .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+        .map_err(pg_err)?;
 
         let row = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
@@ -655,10 +600,10 @@ impl PgKernelExecutor {
         .bind(id)
         .fetch_one(tx.as_mut())
         .await
-        .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+        .map_err(pg_err)?;
         let payment = PgPaymentRepository::row_to_payment(row)?;
 
-        let mut event = KernelOutboxEvent::domain(
+        let event = run.event(
             "payments.created.v1",
             "payment",
             id.to_string(),
@@ -670,34 +615,12 @@ impl PgKernelExecutor {
                 "currency": payment.currency.as_str(),
                 "status": payment.status.to_string(),
             }),
-            Some(command.idempotency_key.clone()),
         );
-        attach_command_context(&mut event, command);
         append_kernel_event_tx(tx.as_mut(), &event).await?;
-
-        let mut receipt = ExecutionReceipt {
-            contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-            receipt_id: Uuid::new_v4(),
-            command_id: command.command_id,
-            idempotency_key: command.idempotency_key.clone(),
-            command_type: command.command_type.clone(),
-            status: ExecutionStatus::Succeeded,
-            result: Some(payment),
-            error_code: None,
-            error_message: None,
-            retry: RetryDisposition::SameKey,
-            aggregate_type: Some("payment".into()),
-            aggregate_id: Some(id.to_string()),
-            version_before: None,
-            version_after: Some(1),
-            event_ids: vec![event.id],
-            policy: Some(policy),
-            audit_hash: None,
-            started_at: now,
-            completed_at: Utc::now(),
-        };
+        let mut receipt =
+            run.succeeded(payment, Some(id.to_string()), None, Some(1), vec![event.id]);
         append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-        tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+        tx.commit().await.map_err(pg_err)?;
         Ok(receipt)
     }
 
@@ -706,83 +629,37 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<CreateRefund>,
     ) -> Result<ExecutionReceipt<Refund>> {
-        command
-            .validate_contract()
-            .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
-
-        let key_mismatch = command
-            .payload
-            .idempotency_key
-            .as_deref()
-            .is_some_and(|key| key != command.idempotency_key);
         let mut input = command.payload.clone();
-        if !key_mismatch {
+        if input.idempotency_key.is_none() {
             input.idempotency_key = Some(command.idempotency_key.clone());
         }
-        let request_hash = semantic_request_hash(command, &input)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let static_guard = if key_mismatch {
-            Some((
-                "kernel.idempotency_key_mismatch",
-                "payload idempotency key does not match the command envelope".to_string(),
-            ))
-        } else if command.command_type != CREATE_REFUND_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected payments.create_refund command type".to_string(),
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some((
-                "kernel.deadline_exceeded",
-                "command deadline elapsed before execution".to_string(),
-            ))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "create commands cannot carry an expected aggregate version".to_string(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_REFUND_COMMAND)
+                .with_payload_key(input.idempotency_key.as_deref()),
+            "refund",
+        )?;
+        let request_hash = run.request_hash.clone();
+        let payment_id = input.payment_id.into_uuid();
 
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(&command.idempotency_key)
-            .execute(tx.as_mut())
-            .await
-            .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "refund").await?
         {
-            let stored: ExecutionReceipt<Refund> =
-                replay_or_conflict(command, &request_hash, existing, "refund")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
-                tx.commit()
-                    .await
-                    .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-                return Ok(stored);
-            }
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
         }
-
-        if let Some((code, message)) = static_guard {
-            let mut receipt = rejected_receipt(command, Some(policy), code, &message, "refund");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+            tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
 
-        let payment_id = input.payment_id.into_uuid();
         let payment_row = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
                     amount, currency, amount_refunded, external_id, idempotency_key, processor,
@@ -794,64 +671,61 @@ impl PgKernelExecutor {
         .bind(payment_id)
         .fetch_optional(tx.as_mut())
         .await
-        .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-        let Some(payment_row) = payment_row else {
-            let mut receipt = rejected_receipt(
-                command,
-                Some(policy),
-                "commerce.payment_not_found",
-                "payment does not exist",
-                "refund",
-            );
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-            return Ok(receipt);
-        };
-        let mut payment = PgPaymentRepository::row_to_payment(payment_row)?;
-        if let Err(error) = input.validate_for_currency(payment.currency) {
-            let mut receipt = rejected_receipt(
-                command,
-                Some(policy),
-                "commerce.refund_validation_failed",
-                &error.to_string(),
-                "refund",
-            );
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit()
+        .map_err(pg_err)?;
+        let snapshot = match payment_row {
+            Some(row) => {
+                let payment = PgPaymentRepository::row_to_payment(row)?;
+                let open_dispute: Option<(String, Option<String>)> = sqlx::query_as(
+                    "SELECT e.id,
+                            COALESCE(e.dispute_id, (
+                                SELECT d.id FROM a2a_disputes d
+                                WHERE d.escrow_id = e.id
+                                  AND d.status IN ('filed', 'evidence_period', 'under_review', 'escalated')
+                                LIMIT 1
+                            ))
+                     FROM a2a_escrows e
+                     WHERE e.payment_id = $1
+                       AND (
+                            e.status = 'disputed'
+                            OR EXISTS (
+                                SELECT 1 FROM a2a_disputes d
+                                WHERE d.escrow_id = e.id
+                                  AND d.status IN ('filed', 'evidence_period', 'under_review', 'escalated')
+                            )
+                       )
+                     LIMIT 1",
+                )
+                .bind(payment_id.to_string())
+                .fetch_optional(tx.as_mut())
                 .await
-                .map_err(|db_error| CommerceError::DatabaseError(db_error.to_string()))?;
-            return Ok(receipt);
-        }
-
-        let in_flight: rust_decimal::Decimal = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(amount), 0) FROM refunds
-             WHERE payment_id = $1 AND status IN ($2, $3)",
-        )
-        .bind(payment_id)
-        .bind(RefundStatus::Pending.to_string())
-        .bind(RefundStatus::Processing.to_string())
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-        payment.amount_refunded += in_flight;
-        let refund_amount = match payment.validate_refund(input.amount) {
-            Ok(amount) => amount,
-            Err(error) => {
-                let code = error.invariant_code().unwrap_or("commerce.refund_rejected");
-                let mut receipt =
-                    rejected_receipt(command, Some(policy), code, &error.to_string(), "refund");
+                .map_err(pg_err)?;
+                let in_flight_refunds: rust_decimal::Decimal = sqlx::query_scalar(
+                    "SELECT COALESCE(SUM(amount), 0) FROM refunds
+                     WHERE payment_id = $1 AND status IN ($2, $3)",
+                )
+                .bind(payment_id)
+                .bind(RefundStatus::Pending.to_string())
+                .bind(RefundStatus::Processing.to_string())
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(pg_err)?;
+                Some(RefundSnapshot { payment, in_flight_refunds, open_dispute })
+            }
+            None => None,
+        };
+        let effects = match plan_refund(&input, snapshot.as_ref()) {
+            PlanOutcome::Reject { rejection, .. } => {
+                let mut receipt = run.rejected_by(&rejection);
                 append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-                tx.commit()
-                    .await
-                    .map_err(|db_error| CommerceError::DatabaseError(db_error.to_string()))?;
+                tx.commit().await.map_err(pg_err)?;
                 return Ok(receipt);
             }
+            PlanOutcome::Proceed(effects) => effects,
         };
-
-        if command.mode == ExecutionMode::Preview {
-            let mut receipt = preview_receipt(command, policy, "refund");
+        if run.is_preview() {
+            let mut receipt = run.previewed();
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+            tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
 
@@ -867,8 +741,8 @@ impl PgKernelExecutor {
         .bind(&refund_number)
         .bind(payment_id)
         .bind(RefundStatus::Pending.to_string())
-        .bind(refund_amount)
-        .bind(payment.currency)
+        .bind(effects.amount)
+        .bind(effects.currency)
         .bind(&input.reason)
         .bind(&input.external_id)
         .bind(&input.idempotency_key)
@@ -877,7 +751,7 @@ impl PgKernelExecutor {
         .bind(created_at)
         .execute(tx.as_mut())
         .await
-        .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+        .map_err(pg_err)?;
         let row = sqlx::query_as::<_, RefundRow>(
             "SELECT id, refund_number, payment_id, status, amount, currency, reason, external_id,
                     idempotency_key, failure_reason, notes, refunded_at, created_at, updated_at
@@ -886,9 +760,9 @@ impl PgKernelExecutor {
         .bind(id)
         .fetch_one(tx.as_mut())
         .await
-        .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+        .map_err(pg_err)?;
         let refund = PgPaymentRepository::row_to_refund(row)?;
-        let mut event = KernelOutboxEvent::domain(
+        let event = run.event(
             "payments.refund_created.v1",
             "refund",
             id.to_string(),
@@ -900,34 +774,12 @@ impl PgKernelExecutor {
                 "currency": refund.currency.as_str(),
                 "status": refund.status.to_string(),
             }),
-            Some(command.idempotency_key.clone()),
         );
-        attach_command_context(&mut event, command);
         append_kernel_event_tx(tx.as_mut(), &event).await?;
-
-        let mut receipt = ExecutionReceipt {
-            contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-            receipt_id: Uuid::new_v4(),
-            command_id: command.command_id,
-            idempotency_key: command.idempotency_key.clone(),
-            command_type: command.command_type.clone(),
-            status: ExecutionStatus::Succeeded,
-            result: Some(refund),
-            error_code: None,
-            error_message: None,
-            retry: RetryDisposition::SameKey,
-            aggregate_type: Some("refund".into()),
-            aggregate_id: Some(id.to_string()),
-            version_before: None,
-            version_after: Some(1),
-            event_ids: vec![event.id],
-            policy: Some(policy),
-            audit_hash: None,
-            started_at,
-            completed_at: Utc::now(),
-        };
+        let mut receipt =
+            run.succeeded(refund, Some(id.to_string()), None, Some(1), vec![event.id]);
         append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-        tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+        tx.commit().await.map_err(pg_err)?;
         Ok(receipt)
     }
 
@@ -936,72 +788,44 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<ReserveInventory>,
     ) -> Result<ExecutionReceipt<InventoryReservation>> {
-        command
-            .validate_contract()
-            .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
         let input = &command.payload;
-        let request_hash = semantic_request_hash(command, input)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let static_guard = if command.command_type != RESERVE_INVENTORY_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected inventory.reserve command type".to_string(),
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some((
-                "kernel.deadline_exceeded",
-                "command deadline elapsed before execution".to_string(),
-            ))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if input.sku.trim().is_empty()
-            || input.reference_type.trim().is_empty()
-            || input.reference_id.trim().is_empty()
-        {
-            Some((
-                "commerce.inventory_validation_failed",
-                "sku, reference_type, and reference_id are required".to_string(),
-            ))
-        } else if input.expires_in_seconds.is_some_and(|seconds| seconds <= 0) {
-            Some((
-                "commerce.inventory_validation_failed",
-                "expires_in_seconds must be greater than zero".to_string(),
-            ))
-        } else if let Err(error) = stateset_core::validate_quantity(input.quantity) {
-            Some(("commerce.inventory_validation_failed", error.to_string()))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::aggregate(RESERVE_INVENTORY_COMMAND),
+            "inventory_reservation",
+        )?
+        .then_guard(|_| reserve_inventory_guard(input));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
 
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(&command.idempotency_key)
-            .execute(tx.as_mut())
-            .await
-            .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored: ExecutionReceipt<InventoryReservation> =
-                replay_or_conflict(command, &request_hash, existing, "inventory_reservation")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) = replay_or_conflict(
+                tx.as_mut(),
+                command,
+                &request_hash,
+                existing,
+                "inventory_reservation",
+            )
+            .await?
+            {
                 tx.commit()
                     .await
                     .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
                 return Ok(stored);
             }
         }
-        if let Some((code, message)) = static_guard {
-            let mut receipt =
-                rejected_receipt(command, Some(policy), code, &message, "inventory_reservation");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
             return Ok(receipt);
@@ -1019,6 +843,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.inventory_item_not_found",
                 "inventory item does not exist",
+                RetryDisposition::Never,
                 "inventory_reservation",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -1041,6 +866,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.inventory_balance_not_found",
                 "inventory balance does not exist at the requested location",
+                RetryDisposition::Never,
                 "inventory_reservation",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -1067,9 +893,9 @@ impl PgKernelExecutor {
                 Some(policy),
                 "kernel.version_conflict",
                 "inventory balance version does not match expected_version",
+                RetryDisposition::AfterConflict,
                 "inventory_reservation",
             );
-            receipt.retry = RetryDisposition::AfterConflict;
             receipt.version_before = Some(version_before);
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
@@ -1081,6 +907,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.insufficient_stock",
                 &format!("requested {}, available {}", input.quantity, effective_available),
+                RetryDisposition::Never,
                 "inventory_reservation",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -1185,68 +1012,47 @@ impl PgKernelExecutor {
         expected_command_type: &str,
         action: InventoryLifecycleAction,
     ) -> Result<ExecutionReceipt<InventoryReservation>> {
-        command
-            .validate_contract()
-            .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let static_guard = if command.command_type != expected_command_type {
-            Some((
-                "kernel.command_type_mismatch",
-                format!("expected {expected_command_type} command type"),
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some((
-                "kernel.deadline_exceeded",
-                "command deadline elapsed before execution".to_string(),
-            ))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if reservation_id.is_nil() {
-            Some((
-                "commerce.inventory_validation_failed",
-                "reservation_id must not be nil".to_string(),
-            ))
-        } else if let InventoryLifecycleAction::Confirm(Some(quantity)) = action {
-            (quantity <= rust_decimal::Decimal::ZERO).then(|| {
-                (
-                    "commerce.inventory_validation_failed",
-                    "confirmation quantity must be greater than zero".to_string(),
-                )
-            })
-        } else {
-            None
+        let confirm_quantity = match action {
+            InventoryLifecycleAction::Confirm(quantity) => quantity,
+            InventoryLifecycleAction::Release => None,
         };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::aggregate(expected_command_type),
+            "inventory_reservation",
+        )?
+        .then_guard(|_| reservation_lifecycle_guard(reservation_id, confirm_quantity));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
 
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(&command.idempotency_key)
-            .execute(tx.as_mut())
-            .await
-            .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored: ExecutionReceipt<InventoryReservation> =
-                replay_or_conflict(command, &request_hash, existing, "inventory_reservation")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) = replay_or_conflict(
+                tx.as_mut(),
+                command,
+                &request_hash,
+                existing,
+                "inventory_reservation",
+            )
+            .await?
+            {
                 tx.commit()
                     .await
                     .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
                 return Ok(stored);
             }
         }
-        if let Some((code, message)) = &static_guard {
-            let mut receipt =
-                rejected_receipt(command, Some(policy), code, message, "inventory_reservation");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
             return Ok(receipt);
@@ -1265,6 +1071,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.reservation_not_found",
                 "inventory reservation does not exist",
+                RetryDisposition::Never,
                 "inventory_reservation",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -1287,9 +1094,9 @@ impl PgKernelExecutor {
                 Some(policy),
                 "kernel.version_conflict",
                 "inventory balance version does not match expected_version",
+                RetryDisposition::AfterConflict,
                 "inventory_reservation",
             );
-            receipt.retry = RetryDisposition::AfterConflict;
             receipt.version_before = Some(version_before);
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
@@ -1306,6 +1113,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.reservation_not_confirmable",
                 "released or cancelled reservations cannot be confirmed",
+                RetryDisposition::Never,
                 "inventory_reservation",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -1320,6 +1128,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.reservation_not_confirmable",
                 "an already-confirmed reservation cannot be partially confirmed",
+                RetryDisposition::Never,
                 "inventory_reservation",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -1457,170 +1266,111 @@ impl PgKernelExecutor {
         Ok(receipt)
     }
 
-    /// Preview or atomically apply a non-shipment order state transition.
+    /// Preview or atomically apply an order state-machine transition.
+    ///
+    /// Cancellations honour the same money rule as
+    /// `OrderRepository::update`: captured money must be refunded (or
+    /// `void_payments` set to void in-flight payments) before the order can
+    /// be cancelled, and every inventory hold is released atomically.
     pub async fn execute_transition_order_async(
         &self,
         command: &CommandEnvelope<TransitionOrder>,
     ) -> Result<ExecutionReceipt<Order>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != TRANSITION_ORDER_COMMAND {
-            Some(("kernel.command_type_mismatch", "expected orders.transition command type".into()))
-        } else if command.deadline.is_some_and(|d| d <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.order_id.into_uuid().is_nil() {
-            Some(("commerce.order_validation_failed", "order_id must not be nil".into()))
-        } else if matches!(
-            command.payload.status,
-            OrderStatus::Shipped | OrderStatus::PartiallyShipped
-        ) {
-            Some((
-                "commerce.shipment_command_required",
-                "shipment transitions must use orders.ship".into(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::aggregate(TRANSITION_ORDER_COMMAND),
+            "order",
+        )?
+        .then_guard(|_| transition_order_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let started_at = run.started_at;
+        let order_uuid = command.payload.order_id.into_uuid();
+        let order_id = order_uuid.to_string();
 
-        let mut tx =
-            self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(&command.idempotency_key)
-            .execute(tx.as_mut())
-            .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "order").await?
         {
-            let stored: ExecutionReceipt<Order> =
-                replay_or_conflict(command, &request_hash, existing, "order")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt = rejected_receipt(command, Some(policy), code, message, "order");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
 
         let row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1 FOR UPDATE")
-            .bind(command.payload.order_id.into_uuid())
+            .bind(order_uuid)
             .fetch_optional(tx.as_mut())
             .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let Some(row) = row else {
-            let mut receipt = rejected_receipt(
-                command,
-                Some(policy),
-                "commerce.order_not_found",
-                "order does not exist",
-                "order",
-            );
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            return Ok(receipt);
+            .map_err(pg_err)?;
+        let snapshot = match row {
+            Some(row) => {
+                let order = load_pg_order(tx.as_mut(), order_uuid, row).await?;
+                let open_captures = if command.payload.status == OrderStatus::Cancelled {
+                    open_captures_for_order_pg(tx.as_mut(), order_uuid).await?
+                } else {
+                    Vec::new()
+                };
+                Some(OrderTransitionSnapshot { order, open_captures })
+            }
+            None => None,
         };
-        let item_rows = sqlx::query_as::<_, OrderItemRow>(
-            "SELECT * FROM order_items WHERE order_id = $1 ORDER BY id",
-        )
-        .bind(command.payload.order_id.into_uuid())
-        .fetch_all(tx.as_mut())
-        .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let items = item_rows.into_iter().map(PgOrderRepository::row_to_item).collect();
-        let order = PgOrderRepository::row_to_order(row, items)?;
-        let version_before = order.version;
-        if command.expected_version.is_some_and(|v| v != version_before) {
-            let mut receipt = rejected_receipt(
-                command,
-                Some(policy),
-                "kernel.version_conflict",
-                "order version does not match expected_version",
-                "order",
-            );
-            receipt.retry = RetryDisposition::AfterConflict;
-            receipt.version_before = Some(version_before);
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            return Ok(receipt);
-        }
-        if !order.status.can_transition_to(command.payload.status) {
-            let message = format!(
-                "order cannot transition from {} to {}",
-                order.status, command.payload.status
-            );
-            let mut receipt = rejected_receipt(
-                command,
-                Some(policy),
-                "commerce.invalid_order_status_transition",
-                &message,
-                "order",
-            );
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            return Ok(receipt);
-        }
-        let next_payment = command.payload.payment_status.unwrap_or(order.payment_status);
-        if command.payload.status == OrderStatus::Refunded
-            && !matches!(
-                next_payment,
-                PaymentStatus::Paid
-                    | PaymentStatus::PartiallyPaid
-                    | PaymentStatus::Refunded
-                    | PaymentStatus::PartiallyRefunded
-            )
-        {
-            let mut receipt = rejected_receipt(
-                command,
-                Some(policy),
-                "commerce.order_not_refundable",
-                "order payment status is not refundable",
-                "order",
-            );
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            return Ok(receipt);
-        }
-        if command.mode == ExecutionMode::Preview {
-            let mut receipt = preview_receipt(command, policy, "order");
+        let effects = match plan_order_transition(command, snapshot.as_ref()) {
+            PlanOutcome::Reject { rejection, version_before, aggregate_id } => {
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.version_before = version_before;
+                receipt.aggregate_id = aggregate_id;
+                append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+                tx.commit().await.map_err(pg_err)?;
+                return Ok(receipt);
+            }
+            PlanOutcome::Proceed(effects) => effects,
+        };
+        let Some(OrderTransitionSnapshot { order, .. }) = snapshot else {
+            return Err(CommerceError::Internal(
+                "order transition planned without a loaded order".into(),
+            ));
+        };
+        let version_before = effects.version_before;
+        if run.is_preview() {
+            let mut receipt = run.previewed();
+            receipt.aggregate_id = Some(order_id.clone());
             receipt.result = Some(order);
             receipt.version_before = Some(version_before);
             receipt.version_after = Some(version_before + 1);
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
 
         let updated = sqlx::query("UPDATE orders SET status = $1, payment_status = $2, updated_at = $3, version = version + 1 WHERE id = $4 AND version = $5")
-            .bind(command.payload.status.to_string()).bind(next_payment.to_string()).bind(started_at)
-            .bind(command.payload.order_id.into_uuid()).bind(version_before)
-            .execute(tx.as_mut()).await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            .bind(effects.next_status.to_string()).bind(effects.next_payment_status.to_string()).bind(started_at)
+            .bind(order_uuid).bind(version_before)
+            .execute(tx.as_mut()).await.map_err(pg_err)?;
         if updated.rows_affected() == 0 {
             return Err(CommerceError::VersionConflict {
                 entity: "order".into(),
-                id: command.payload.order_id.to_string(),
+                id: order_id,
                 expected_version: version_before,
             });
         }
         let mut related_event_ids = Vec::new();
-        if command.payload.status == OrderStatus::Cancelled {
+        let mut voided_payment_ids = Vec::new();
+        if effects.void_in_flight_payments {
+            voided_payment_ids =
+                void_in_flight_payments_for_order_pg(tx.as_mut(), order_uuid, started_at).await?;
+        }
+        if effects.release_holds {
             let inventory = PgInventoryRepository::new(self.pool.clone());
             let reservations = inventory
-                .list_reservation_ids_by_reference_in_tx(
-                    &mut tx,
-                    "order",
-                    &command.payload.order_id.to_string(),
-                )
+                .list_reservation_ids_by_reference_in_tx(&mut tx, "order", &order_id)
                 .await?;
             for reservation_id in reservations {
                 inventory.release_reservation_in_tx(&mut tx, reservation_id).await?;
@@ -1634,7 +1384,7 @@ impl PgKernelExecutor {
                 .bind(started_at)
                 .fetch_optional(tx.as_mut())
                 .await
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                .map_err(pg_err)?;
                 if let Some(event_id) = event_id {
                     sqlx::query(
                         "UPDATE kernel_outbox SET command_id = $1, idempotency_key = $2,
@@ -1650,232 +1400,150 @@ impl PgKernelExecutor {
                     .bind(event_id)
                     .execute(tx.as_mut())
                     .await
-                    .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                    .map_err(pg_err)?;
                     related_event_ids.push(event_id);
                 }
             }
             PgBackorderRepository::new(self.pool.clone())
-                .cancel_backorders_for_order_in_tx(&mut tx, command.payload.order_id.into_uuid())
+                .cancel_backorders_for_order_in_tx(&mut tx, order_uuid)
                 .await?;
         }
-        let mut event = KernelOutboxEvent::domain(
+        let outstanding_payment_ids: Vec<String> = effects
+            .outstanding_capture_ids
+            .iter()
+            .filter(|id| !voided_payment_ids.contains(id))
+            .map(ToString::to_string)
+            .collect();
+        let event = run.event(
             "orders.updated.v1",
             "order",
-            command.payload.order_id.to_string(),
+            order_id.clone(),
             serde_json::json!({
-                "order_id": command.payload.order_id.to_string(),
-                "status_before": order.status.to_string(), "status_after": command.payload.status.to_string(),
-                "payment_status_before": order.payment_status.to_string(), "payment_status_after": next_payment.to_string(),
+                "order_id": order_id,
+                "status_before": effects.status_before.to_string(),
+                "status_after": effects.next_status.to_string(),
+                "payment_status_before": effects.payment_status_before.to_string(),
+                "payment_status_after": effects.next_payment_status.to_string(),
                 "fulfillment_status_after": order.fulfillment_status.to_string(),
-                "version_before": version_before, "version_after": version_before + 1,
+                "version_before": version_before,
+                "version_after": version_before + 1,
                 "total_amount": order.total_amount.to_string(),
+                "void_payments": command.payload.void_payments,
+                "voided_payment_ids": voided_payment_ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "outstanding_payment_ids": outstanding_payment_ids,
             }),
-            Some(command.idempotency_key.clone()),
         );
-        attach_command_context(&mut event, command);
         append_kernel_event_tx(tx.as_mut(), &event).await?;
         related_event_ids.push(event.id);
         let result_row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1")
-            .bind(command.payload.order_id.into_uuid())
+            .bind(order_uuid)
             .fetch_one(tx.as_mut())
             .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let result_items = sqlx::query_as::<_, OrderItemRow>(
-            "SELECT * FROM order_items WHERE order_id = $1 ORDER BY id",
-        )
-        .bind(command.payload.order_id.into_uuid())
-        .fetch_all(tx.as_mut())
-        .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?
-        .into_iter()
-        .map(PgOrderRepository::row_to_item)
-        .collect();
-        let result = PgOrderRepository::row_to_order(result_row, result_items)?;
-        let mut receipt = ExecutionReceipt {
-            contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-            receipt_id: Uuid::new_v4(),
-            command_id: command.command_id,
-            idempotency_key: command.idempotency_key.clone(),
-            command_type: command.command_type.clone(),
-            status: ExecutionStatus::Succeeded,
-            result: Some(result.clone()),
-            error_code: None,
-            error_message: None,
-            retry: RetryDisposition::SameKey,
-            aggregate_type: Some("order".into()),
-            aggregate_id: Some(result.id.to_string()),
-            version_before: Some(version_before),
-            version_after: Some(result.version),
-            event_ids: related_event_ids,
-            policy: Some(policy),
-            audit_hash: None,
-            started_at,
-            completed_at: Utc::now(),
-        };
+            .map_err(pg_err)?;
+        let result = load_pg_order(tx.as_mut(), order_uuid, result_row).await?;
+        let version_after = result.version;
+        let mut receipt = run.succeeded(
+            result,
+            Some(order_id),
+            Some(version_before),
+            Some(version_after),
+            related_event_ids,
+        );
         append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-        tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        tx.commit().await.map_err(pg_err)?;
         Ok(receipt)
     }
 
     /// Preview or atomically ship all or selected order-line quantities.
+    ///
+    /// A reservation that expires while it is being confirmed rolls the
+    /// shipment back to its savepoint and seals a
+    /// `commerce.reservation_expired` rejection instead of failing the call.
     pub async fn execute_ship_order_async(
         &self,
         command: &CommandEnvelope<ShipOrderCommand>,
     ) -> Result<ExecutionReceipt<Order>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != SHIP_ORDER_COMMAND {
-            Some(("kernel.command_type_mismatch", "expected orders.ship command type".to_string()))
-        } else if command.deadline.is_some_and(|d| d <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.order_id.into_uuid().is_nil() {
-            Some(("commerce.order_validation_failed", "order_id must not be nil".into()))
-        } else {
-            None
-        };
-        let mut tx =
-            self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(&command.idempotency_key)
-            .execute(tx.as_mut())
-            .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::aggregate(SHIP_ORDER_COMMAND),
+            "order",
+        )?
+        .then_guard(|_| ship_order_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let started_at = run.started_at;
+        let order_uuid = command.payload.order_id.into_uuid();
+        let order_id = order_uuid.to_string();
+
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "order").await?
         {
-            let stored: ExecutionReceipt<Order> =
-                replay_or_conflict(command, &request_hash, existing, "order")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt = rejected_receipt(command, Some(policy), code, message, "order");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            return Ok(receipt);
-        }
-        let row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1 FOR UPDATE")
-            .bind(command.payload.order_id.into_uuid())
-            .fetch_optional(tx.as_mut())
-            .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let Some(row) = row else {
-            let mut receipt = rejected_receipt(
-                command,
-                Some(policy),
-                "commerce.order_not_found",
-                "order does not exist",
-                "order",
-            );
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            return Ok(receipt);
-        };
-        let item_rows = sqlx::query_as::<_, OrderItemRow>(
-            "SELECT * FROM order_items WHERE order_id = $1 ORDER BY id",
-        )
-        .bind(command.payload.order_id.into_uuid())
-        .fetch_all(tx.as_mut())
-        .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let order = PgOrderRepository::row_to_order(
-            row,
-            item_rows.into_iter().map(PgOrderRepository::row_to_item).collect(),
-        )?;
-        let version_before = order.version;
-        if command.expected_version.is_some_and(|v| v != version_before) {
-            let mut receipt = rejected_receipt(
-                command,
-                Some(policy),
-                "kernel.version_conflict",
-                "order version does not match expected_version",
-                "order",
-            );
-            receipt.retry = RetryDisposition::AfterConflict;
-            receipt.version_before = Some(version_before);
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
         let lines = command.payload.lines.as_deref().unwrap_or_default();
         let mode = if lines.is_empty() { ShipMode::All } else { ShipMode::Lines(lines) };
-        let (resolved, deltas) = match PgOrderRepository::plan_shipment_in_tx(
-            &mut tx,
-            command.payload.order_id.into_uuid(),
-            mode,
-        )
-        .await
-        {
-            Ok(plan) => plan,
-            Err(error) => {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy),
-                    "commerce.shipment_invalid",
-                    &error.to_string(),
-                    "order",
-                );
+        let row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1 FOR UPDATE")
+            .bind(order_uuid)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(pg_err)?;
+        let snapshot = match row {
+            Some(row) => {
+                let order = load_pg_order(tx.as_mut(), order_uuid, row).await?;
+                let shipment = PgOrderRepository::plan_shipment_in_tx(&mut tx, order_uuid, mode)
+                    .await
+                    .map_err(|error| error.to_string());
+                let expired: Option<Uuid> = sqlx::query_scalar(
+                    "SELECT id FROM inventory_reservations WHERE reference_type = 'order' AND reference_id = $1
+                       AND status IN ('pending', 'confirmed', 'allocated') AND expires_at IS NOT NULL AND expires_at < $2 LIMIT 1")
+                    .bind(&order_id).bind(started_at).fetch_optional(tx.as_mut()).await
+                    .map_err(pg_err)?;
+                Some(ShipOrderSnapshot { order, shipment, expired_reservation: expired.is_some() })
+            }
+            None => None,
+        };
+        let effects = match plan_ship_order(command, snapshot.as_ref()) {
+            PlanOutcome::Reject { rejection, version_before, aggregate_id } => {
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.version_before = version_before;
+                receipt.aggregate_id = aggregate_id;
                 append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                tx.commit().await.map_err(pg_err)?;
                 return Ok(receipt);
             }
+            PlanOutcome::Proceed(effects) => effects,
         };
-        if !order.status.can_transition_to(resolved) {
-            let message = format!("order cannot transition from {} to {}", order.status, resolved);
-            let mut receipt = rejected_receipt(
-                command,
-                Some(policy),
-                "commerce.invalid_order_status_transition",
-                &message,
-                "order",
-            );
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            return Ok(receipt);
-        }
-        let inventory = PgInventoryRepository::new(self.pool.clone());
-        let reservation_ids = inventory
-            .list_reservation_ids_by_reference_in_tx(
-                &mut tx,
-                "order",
-                &command.payload.order_id.to_string(),
-            )
-            .await?;
-        let expired: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM inventory_reservations WHERE reference_type = 'order' AND reference_id = $1
-               AND status IN ('pending', 'confirmed', 'allocated') AND expires_at IS NOT NULL AND expires_at < $2 LIMIT 1")
-            .bind(command.payload.order_id.to_string()).bind(started_at).fetch_optional(tx.as_mut()).await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        if expired.is_some() {
-            let mut receipt = rejected_receipt(
-                command,
-                Some(policy),
-                "commerce.reservation_expired",
-                "an inventory reservation expired before shipment",
-                "order",
-            );
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            return Ok(receipt);
-        }
-        if command.mode == ExecutionMode::Preview {
-            let mut receipt = preview_receipt(command, policy, "order");
+        let Some(ShipOrderSnapshot { order, .. }) = snapshot else {
+            return Err(CommerceError::Internal("shipment planned without a loaded order".into()));
+        };
+        let version_before = effects.version_before;
+        if run.is_preview() {
+            let mut receipt = run.previewed();
+            receipt.aggregate_id = Some(order_id.clone());
             receipt.result = Some(order);
             receipt.version_before = Some(version_before);
             receipt.version_after = Some(version_before + 1);
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
+
+        let inventory = PgInventoryRepository::new(self.pool.clone());
+        let reservation_ids =
+            inventory.list_reservation_ids_by_reference_in_tx(&mut tx, "order", &order_id).await?;
+        sqlx::query("SAVEPOINT kernel_ship").execute(tx.as_mut()).await.map_err(pg_err)?;
+        let mut expired_during_shipment = false;
         if lines.is_empty() {
             for reservation_id in &reservation_ids {
                 if inventory
@@ -1883,19 +1551,15 @@ impl PgKernelExecutor {
                     .await?
                     == ReservationConfirmOutcome::Expired
                 {
-                    return Err(CommerceError::ReservationExpired(*reservation_id));
+                    expired_during_shipment = true;
+                    break;
                 }
             }
         } else {
-            'deltas: for delta in deltas.iter().filter(|d| d.delta > 0) {
+            'deltas: for delta in effects.deltas.iter().filter(|d| d.delta > 0) {
                 let mut remaining = rust_decimal::Decimal::from(delta.delta);
                 let open = inventory
-                    .list_open_reservations_for_sku_in_tx(
-                        &mut tx,
-                        "order",
-                        &command.payload.order_id.to_string(),
-                        &delta.sku,
-                    )
+                    .list_open_reservations_for_sku_in_tx(&mut tx, "order", &order_id, &delta.sku)
                     .await?;
                 for (reservation_id, reserved) in open {
                     if remaining <= rust_decimal::Decimal::ZERO {
@@ -1912,13 +1576,31 @@ impl PgKernelExecutor {
                         .await?
                         == ReservationConfirmOutcome::Expired
                     {
-                        return Err(CommerceError::ReservationExpired(reservation_id));
+                        expired_during_shipment = true;
+                        break 'deltas;
                     }
                     remaining -= take;
                 }
             }
         }
-        for delta in deltas.iter().filter(|d| d.delta > 0) {
+        if expired_during_shipment {
+            sqlx::query("ROLLBACK TO SAVEPOINT kernel_ship")
+                .execute(tx.as_mut())
+                .await
+                .map_err(pg_err)?;
+            sqlx::query("RELEASE SAVEPOINT kernel_ship")
+                .execute(tx.as_mut())
+                .await
+                .map_err(pg_err)?;
+            let mut receipt = run.rejected_by(&reservation_expired_during_shipment());
+            receipt.aggregate_id = Some(order_id.clone());
+            receipt.version_before = Some(version_before);
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        sqlx::query("RELEASE SAVEPOINT kernel_ship").execute(tx.as_mut()).await.map_err(pg_err)?;
+        for delta in effects.deltas.iter().filter(|d| d.delta > 0) {
             sqlx::query(
                 "UPDATE order_items SET shipped_quantity = shipped_quantity + $1 WHERE id = $2",
             )
@@ -1926,16 +1608,16 @@ impl PgKernelExecutor {
             .bind(delta.item_id)
             .execute(tx.as_mut())
             .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            .map_err(pg_err)?;
         }
         let updated = sqlx::query("UPDATE orders SET status = $1, tracking_number = COALESCE($2, tracking_number), updated_at = $3, version = version + 1 WHERE id = $4 AND version = $5")
-            .bind(resolved.to_string()).bind(&command.payload.tracking_number).bind(started_at)
-            .bind(command.payload.order_id.into_uuid()).bind(version_before).execute(tx.as_mut()).await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            .bind(effects.resolved_status.to_string()).bind(&command.payload.tracking_number).bind(started_at)
+            .bind(order_uuid).bind(version_before).execute(tx.as_mut()).await
+            .map_err(pg_err)?;
         if updated.rows_affected() == 0 {
             return Err(CommerceError::VersionConflict {
                 entity: "order".into(),
-                id: command.payload.order_id.to_string(),
+                id: order_id,
                 expected_version: version_before,
             });
         }
@@ -1945,69 +1627,44 @@ impl PgKernelExecutor {
                 "SELECT id FROM kernel_outbox WHERE created_at >= $1 AND event_type = 'inventory.reservation_confirmed.v1'
                    AND (aggregate_id = $2 OR payload->>'source_reservation_id' = $2) ORDER BY created_at, id")
                 .bind(started_at).bind(reservation_id.to_string()).fetch_all(tx.as_mut()).await
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                .map_err(pg_err)?;
             for event_id in ids {
                 sqlx::query("UPDATE kernel_outbox SET command_id = $1, idempotency_key = $2, principal_type = $3, principal_id = $4, correlation_id = $5, causation_id = $6 WHERE id = $7")
                     .bind(command.command_id).bind(&command.idempotency_key).bind(principal_kind_name(command)).bind(&command.principal.id)
                     .bind(command.correlation_id).bind(command.causation_id).bind(event_id).execute(tx.as_mut()).await
-                    .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                    .map_err(pg_err)?;
                 if !event_ids.contains(&event_id) {
                     event_ids.push(event_id);
                 }
             }
         }
-        let mut event = KernelOutboxEvent::domain(
+        let event = run.event(
             "orders.updated.v1",
             "order",
-            command.payload.order_id.to_string(),
-            serde_json::json!({"order_id": command.payload.order_id.to_string(), "status_before": order.status.to_string(),
-                "status_after": resolved.to_string(), "payment_status_before": order.payment_status.to_string(),
+            order_id.clone(),
+            serde_json::json!({"order_id": order_id, "status_before": effects.status_before.to_string(),
+                "status_after": effects.resolved_status.to_string(), "payment_status_before": order.payment_status.to_string(),
                 "payment_status_after": order.payment_status.to_string(), "fulfillment_status_after": order.fulfillment_status.to_string(),
                 "version_before": version_before, "version_after": version_before + 1, "total_amount": order.total_amount.to_string()}),
-            Some(command.idempotency_key.clone()),
         );
-        attach_command_context(&mut event, command);
         append_kernel_event_tx(tx.as_mut(), &event).await?;
         event_ids.push(event.id);
         let result_row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1")
-            .bind(command.payload.order_id.into_uuid())
+            .bind(order_uuid)
             .fetch_one(tx.as_mut())
             .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let result_items = sqlx::query_as::<_, OrderItemRow>(
-            "SELECT * FROM order_items WHERE order_id = $1 ORDER BY id",
-        )
-        .bind(command.payload.order_id.into_uuid())
-        .fetch_all(tx.as_mut())
-        .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?
-        .into_iter()
-        .map(PgOrderRepository::row_to_item)
-        .collect();
-        let result = PgOrderRepository::row_to_order(result_row, result_items)?;
-        let mut receipt = ExecutionReceipt {
-            contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-            receipt_id: Uuid::new_v4(),
-            command_id: command.command_id,
-            idempotency_key: command.idempotency_key.clone(),
-            command_type: command.command_type.clone(),
-            status: ExecutionStatus::Succeeded,
-            result: Some(result.clone()),
-            error_code: None,
-            error_message: None,
-            retry: RetryDisposition::SameKey,
-            aggregate_type: Some("order".into()),
-            aggregate_id: Some(result.id.to_string()),
-            version_before: Some(version_before),
-            version_after: Some(result.version),
+            .map_err(pg_err)?;
+        let result = load_pg_order(tx.as_mut(), order_uuid, result_row).await?;
+        let version_after = result.version;
+        let mut receipt = run.succeeded(
+            result,
+            Some(order_id),
+            Some(version_before),
+            Some(version_after),
             event_ids,
-            policy: Some(policy),
-            audit_hash: None,
-            started_at,
-            completed_at: Utc::now(),
-        };
+        );
         append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-        tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        tx.commit().await.map_err(pg_err)?;
         Ok(receipt)
     }
 
@@ -2016,46 +1673,31 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<TransitionReturn>,
     ) -> Result<ExecutionReceipt<Return>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != TRANSITION_RETURN_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected returns.transition command type".to_string(),
-            ))
-        } else if command.deadline.is_some_and(|d| d <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.return_id.into_uuid().is_nil() {
-            Some(("commerce.return_validation_failed", "return_id must not be nil".into()))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::aggregate(TRANSITION_RETURN_COMMAND),
+            "return",
+        )?
+        .then_guard(|_| transition_return_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(&command.idempotency_key)
-            .execute(tx.as_mut())
-            .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored: ExecutionReceipt<Return> =
-                replay_or_conflict(command, &request_hash, existing, "return")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "return").await?
+            {
                 tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
                 return Ok(stored);
             }
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt = rejected_receipt(command, Some(policy), code, message, "return");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
@@ -2071,6 +1713,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.return_not_found",
                 "return does not exist",
+                RetryDisposition::Never,
                 "return",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -2095,9 +1738,9 @@ impl PgKernelExecutor {
                 Some(policy),
                 "kernel.version_conflict",
                 "return version does not match expected_version",
+                RetryDisposition::AfterConflict,
                 "return",
             );
-            receipt.retry = RetryDisposition::AfterConflict;
             receipt.version_before = Some(version_before);
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
@@ -2113,6 +1756,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.invalid_return_status_transition",
                 &message,
+                RetryDisposition::Never,
                 "return",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -2192,100 +1836,42 @@ impl PgKernelExecutor {
         Ok(receipt)
     }
 
-    /// Preview or atomically post a balanced draft journal entry.
-    /// Preview or atomically create an exact-decimal A2A escrow.
+    /// Preview or atomically create an A2A escrow in `created` status.
     pub async fn execute_create_a2a_escrow_async(
         &self,
         command: &CommandEnvelope<CreateA2AEscrow>,
     ) -> Result<ExecutionReceipt<A2AEscrow>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
         let input = &command.payload;
-        let request_hash = semantic_request_hash(command, input)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let legacy_amount = i64::try_from(input.amount.normalize().mantissa()).ok();
-        let guard = if command.command_type != CREATE_A2A_ESCROW_COMMAND {
-            Some(("kernel.command_type_mismatch", "expected a2a.escrow.create command type".into()))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "create commands cannot carry an expected aggregate version".into(),
-            ))
-        } else if input.buyer_address.trim().is_empty()
-            || input.seller_address.trim().is_empty()
-            || input.asset.trim().is_empty()
-            || input.network.trim().is_empty()
-        {
-            Some((
-                "commerce.a2a.escrow.validation_failed",
-                "buyer_address, seller_address, asset, and network are required".into(),
-            ))
-        } else if input.buyer_address == input.seller_address {
-            Some((
-                "commerce.a2a.escrow.validation_failed",
-                "buyer_address and seller_address must differ".into(),
-            ))
-        } else if input.amount <= rust_decimal::Decimal::ZERO {
-            Some((
-                "commerce.a2a.escrow.validation_failed",
-                "amount must be greater than zero".into(),
-            ))
-        } else if legacy_amount.is_none() {
-            Some((
-                "commerce.a2a.escrow.validation_failed",
-                "amount exceeds the embedded escrow compatibility range".into(),
-            ))
-        } else if input.release_conditions.len() > 20 {
-            Some((
-                "commerce.a2a.escrow.validation_failed",
-                "release_conditions cannot contain more than 20 entries".into(),
-            ))
-        } else if input.expires_at <= started_at {
-            Some((
-                "commerce.a2a.escrow.validation_failed",
-                "expires_at must be in the future".into(),
-            ))
-        } else if input
-            .auto_release_after
-            .is_some_and(|at| at <= started_at || at > input.expires_at)
-        {
-            Some((
-                "commerce.a2a.escrow.validation_failed",
-                "auto_release_after must be in the future and no later than expires_at".into(),
-            ))
-        } else {
-            None
-        };
-        let mut tx =
-            self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_A2A_ESCROW_COMMAND),
+            "a2a_escrow",
+        )?
+        .then_guard(|run| create_escrow_guard(input, run.started_at));
+        let request_hash = run.request_hash.clone();
+        let started_at = run.started_at;
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "a2a_escrow")
+                    .await?
         {
-            let stored: ExecutionReceipt<A2AEscrow> =
-                replay_or_conflict(command, &request_hash, existing, "a2a_escrow")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt = rejected_receipt(command, Some(policy), code, message, "a2a_escrow");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
-        if command.mode == ExecutionMode::Preview {
-            let mut receipt = preview_receipt(command, policy, "a2a_escrow");
+        if run.is_preview() {
+            let mut receipt = run.previewed();
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
         let id = Uuid::new_v4().to_string();
@@ -2298,7 +1884,7 @@ impl PgKernelExecutor {
             payment_id: input.payment_id.clone(),
             buyer_address: input.buyer_address.clone(),
             seller_address: input.seller_address.clone(),
-            amount: legacy_amount.expect("validated legacy amount"),
+            amount: escrow_legacy_amount(input).expect("validated legacy amount"),
             amount_decimal: input.amount,
             asset: input.asset.to_uppercase(),
             network: input.network.clone(),
@@ -2340,14 +1926,14 @@ impl PgKernelExecutor {
         .bind(&created.store_id)
         .execute(tx.as_mut())
         .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        .map_err(pg_err)?;
         let mut event =
             a2a_transition_event_pg(command, &created, "a2a.escrow_created.v1", "created", None);
         attach_command_context(&mut event, command);
         append_kernel_event_tx(tx.as_mut(), &event).await?;
-        let mut receipt = succeeded_a2a_receipt_pg(command, policy, created, event.id, started_at);
+        let mut receipt = run.succeeded(created, Some(id), None, None, vec![event.id]);
         append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-        tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        tx.commit().await.map_err(pg_err)?;
         Ok(receipt)
     }
 
@@ -2356,79 +1942,57 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<FundA2AEscrow>,
     ) -> Result<ExecutionReceipt<A2AEscrow>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = a2a_transition_guard_pg(
+        let run = CommandRun::prepare(
             command,
-            &policy,
-            started_at,
-            FUND_A2A_ESCROW_COMMAND,
-            "a2a.escrow.fund",
-            &command.payload.escrow_id,
-        );
-        let mut tx =
-            self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(FUND_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
+            "a2a_escrow",
+        )?
+        .then_guard(|_| escrow_id_guard(&command.payload.escrow_id));
+        let request_hash = run.request_hash.clone();
+        let started_at = run.started_at;
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "a2a_escrow")
+                    .await?
         {
-            let stored: ExecutionReceipt<A2AEscrow> =
-                replay_or_conflict(command, &request_hash, existing, "a2a_escrow")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt = rejected_receipt(command, Some(policy), code, message, "a2a_escrow");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
-        let Some(row) = load_a2a_escrow_pg(
+        let loaded = load_a2a_escrow_pg(
             tx.as_mut(),
             &command.payload.escrow_id,
             command.principal.tenant_id.as_deref().expect("policy validated tenant"),
             command.store_id.as_deref().expect("policy validated store"),
         )
         .await?
-        else {
-            let mut receipt = rejected_receipt(
-                command,
-                Some(policy),
-                "commerce.a2a.escrow_not_found",
-                "A2A escrow does not exist",
-                "a2a_escrow",
-            );
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            return Ok(receipt);
+        .map(a2a_escrow_from_pg)
+        .transpose()?;
+        let escrow = match plan_fund_escrow(loaded, started_at) {
+            PlanOutcome::Reject { rejection, aggregate_id, .. } => {
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.aggregate_id = aggregate_id;
+                append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+                tx.commit().await.map_err(pg_err)?;
+                return Ok(receipt);
+            }
+            PlanOutcome::Proceed(escrow) => escrow,
         };
-        let mut escrow = a2a_escrow_from_pg(row)?;
-        if escrow.status != A2AEscrowStatus::Created || escrow.expires_at <= started_at {
-            let mut receipt = rejected_receipt(
-                command,
-                Some(policy),
-                "commerce.a2a.escrow_not_fundable",
-                &format!("cannot fund escrow in {} status or after expiry", escrow.status),
-                "a2a_escrow",
-            );
-            receipt.aggregate_id = Some(escrow.id);
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            return Ok(receipt);
-        }
-        escrow.status = A2AEscrowStatus::Active;
-        escrow.funded_at = Some(started_at);
-        escrow.updated_at = started_at;
-        if command.mode == ExecutionMode::Preview {
-            let mut receipt = preview_receipt(command, policy, "a2a_escrow");
+        if run.is_preview() {
+            let mut receipt = run.previewed();
             receipt.aggregate_id = Some(escrow.id.clone());
             receipt.result = Some(escrow);
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
         let updated = sqlx::query(
@@ -2439,7 +2003,7 @@ impl PgKernelExecutor {
         .bind(&escrow.id)
         .execute(tx.as_mut())
         .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        .map_err(pg_err)?;
         if updated.rows_affected() == 0 {
             return Err(CommerceError::Conflict("A2A escrow was modified concurrently".into()));
         }
@@ -2447,9 +2011,10 @@ impl PgKernelExecutor {
             a2a_transition_event_pg(command, &escrow, "a2a.escrow_funded.v1", "active", None);
         attach_command_context(&mut event, command);
         append_kernel_event_tx(tx.as_mut(), &event).await?;
-        let mut receipt = succeeded_a2a_receipt_pg(command, policy, escrow, event.id, started_at);
+        let aggregate_id = escrow.id.clone();
+        let mut receipt = run.succeeded(escrow, Some(aggregate_id), None, None, vec![event.id]);
         append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-        tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        tx.commit().await.map_err(pg_err)?;
         Ok(receipt)
     }
 
@@ -2458,39 +2023,32 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<DisputeA2AEscrow>,
     ) -> Result<ExecutionReceipt<A2AEscrow>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let mut guard = a2a_transition_guard_pg(
+        let run = CommandRun::prepare(
             command,
-            &policy,
-            started_at,
-            DISPUTE_A2A_ESCROW_COMMAND,
-            "a2a.escrow.dispute",
-            &command.payload.escrow_id,
-        );
-        if guard.is_none() && command.payload.reason.trim().is_empty() {
-            guard = Some((
-                "commerce.a2a.escrow.validation_failed",
-                "dispute reason is required".into(),
-            ));
-        }
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(DISPUTE_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
+            "a2a_escrow",
+        )?
+        .then_guard(|_| dispute_escrow_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored: ExecutionReceipt<A2AEscrow> =
-                replay_or_conflict(command, &request_hash, existing, "a2a_escrow")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "a2a_escrow")
+                    .await?
+            {
                 tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
                 return Ok(stored);
             }
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt = rejected_receipt(command, Some(policy), code, message, "a2a_escrow");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
@@ -2508,6 +2066,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.a2a.escrow_not_found",
                 "A2A escrow does not exist",
+                RetryDisposition::Never,
                 "a2a_escrow",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -2521,6 +2080,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.a2a.escrow_not_disputable",
                 &format!("cannot dispute escrow in {} status", escrow.status),
+                RetryDisposition::Never,
                 "a2a_escrow",
             );
             receipt.aggregate_id = Some(escrow.id);
@@ -2586,59 +2146,39 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<FileA2ADispute>,
     ) -> Result<ExecutionReceipt<A2ADispute>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
         let input = &command.payload;
-        let mut guard = a2a_transition_guard_pg(
+        let run = CommandRun::prepare(
             command,
-            &policy,
-            started_at,
-            FILE_A2A_DISPUTE_COMMAND,
-            "a2a.dispute.file",
-            &input.escrow_id,
-        );
-        if guard.is_none()
-            && (input.reason.trim().is_empty()
-                || input.category.trim().is_empty()
-                || input.claimant_address.trim().is_empty())
-        {
-            guard = Some((
-                "commerce.a2a.dispute.validation_failed",
-                "claimant_address, reason, and category are required".into(),
-            ));
-        }
-        if guard.is_none()
-            && (input.evidence_deadline <= started_at
-                || input.review_deadline <= input.evidence_deadline)
-        {
-            guard = Some((
-                "commerce.a2a.dispute.invalid_deadlines",
-                "evidence_deadline must be in the future and precede review_deadline".into(),
-            ));
-        }
-        if guard.is_none() && !principal_controls_address_pg(command, &input.claimant_address) {
-            guard = Some((
-                "kernel.actor_mismatch",
-                "principal or delegator must control the claimant address".into(),
-            ));
-        }
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(FILE_A2A_DISPUTE_COMMAND, ESCROW_UNVERSIONED),
+            "a2a_dispute",
+        )?
+        .then_guard(|run| {
+            file_dispute_guard(
+                input,
+                run.started_at,
+                principal_controls_address_pg(command, &input.claimant_address),
+            )
+        });
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored: ExecutionReceipt<A2ADispute> =
-                replay_or_conflict(command, &request_hash, existing, "a2a_dispute")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "a2a_dispute")
+                    .await?
+            {
                 tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
                 return Ok(stored);
             }
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt = rejected_receipt(command, Some(policy), code, message, "a2a_dispute");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
@@ -2653,6 +2193,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.a2a.escrow_not_found",
                 "A2A escrow does not exist in the command scope",
+                RetryDisposition::Never,
                 "a2a_dispute",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -2666,6 +2207,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.a2a.escrow_not_disputable",
                 &format!("cannot file dispute for escrow in {} status", escrow.status),
+                RetryDisposition::Never,
                 "a2a_dispute",
             );
             receipt.aggregate_id = Some(escrow.id);
@@ -2683,6 +2225,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.a2a.dispute.claimant_not_participant",
                 "claimant must be the escrow buyer or seller",
+                RetryDisposition::Never,
                 "a2a_dispute",
             );
             receipt.aggregate_id = Some(escrow.id);
@@ -2805,58 +2348,43 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<SubmitA2ADisputeEvidence>,
     ) -> Result<ExecutionReceipt<A2ADisputeEvidence>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
         let input = &command.payload;
-        let mut guard = a2a_transition_guard_pg(
+        let run = CommandRun::prepare(
             command,
-            &policy,
-            started_at,
-            SUBMIT_A2A_EVIDENCE_COMMAND,
-            "a2a.dispute.evidence.submit",
-            &input.dispute_id,
-        );
-        if guard.is_none()
-            && (input.submitted_by.trim().is_empty()
-                || input.evidence_type.trim().is_empty()
-                || input.title.trim().is_empty()
-                || input.content.is_empty())
-        {
-            guard = Some((
-                "commerce.a2a.dispute.evidence.validation_failed",
-                "submitted_by, evidence_type, title, and content are required".into(),
-            ));
-        }
-        if guard.is_none() && (input.title.len() > 256 || input.content.len() > 1_048_576) {
-            guard = Some((
-                "commerce.a2a.dispute.evidence.too_large",
-                "evidence title is limited to 256 bytes and content to 1 MiB".into(),
-            ));
-        }
-        if guard.is_none() && !principal_controls_address_pg(command, &input.submitted_by) {
-            guard = Some((
-                "kernel.actor_mismatch",
-                "principal or delegator must control the evidence submitter address".into(),
-            ));
-        }
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(SUBMIT_A2A_EVIDENCE_COMMAND, ESCROW_UNVERSIONED),
+            "a2a_dispute_evidence",
+        )?
+        .then_guard(|_| {
+            submit_evidence_guard(
+                input,
+                principal_controls_address_pg(command, &input.submitted_by),
+            )
+        });
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored: ExecutionReceipt<A2ADisputeEvidence> =
-                replay_or_conflict(command, &request_hash, existing, "a2a_dispute_evidence")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) = replay_or_conflict(
+                tx.as_mut(),
+                command,
+                &request_hash,
+                existing,
+                "a2a_dispute_evidence",
+            )
+            .await?
+            {
                 tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
                 return Ok(stored);
             }
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt =
-                rejected_receipt(command, Some(policy), code, message, "a2a_dispute_evidence");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
@@ -2871,6 +2399,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.a2a.dispute_not_found",
                 "A2A dispute does not exist in the command scope",
+                RetryDisposition::Never,
                 "a2a_dispute_evidence",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -2890,6 +2419,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.a2a.dispute.evidence_closed",
                 "evidence is closed for this dispute",
+                RetryDisposition::Never,
                 "a2a_dispute_evidence",
             );
             receipt.aggregate_id = Some(dispute.id);
@@ -2905,6 +2435,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.a2a.dispute.submitter_not_participant",
                 "evidence submitter must be a dispute participant",
+                RetryDisposition::Never,
                 "a2a_dispute_evidence",
             );
             receipt.aggregate_id = Some(dispute.id);
@@ -3002,50 +2533,33 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<ResolveA2ADispute>,
     ) -> Result<ExecutionReceipt<A2ADisputeResolution>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
         let input = &command.payload;
-        let mut guard = a2a_transition_guard_pg(
+        let run = CommandRun::prepare(
             command,
-            &policy,
-            started_at,
-            RESOLVE_A2A_DISPUTE_COMMAND,
-            "a2a.dispute.resolve",
-            &input.dispute_id,
-        );
-        if guard.is_none() && input.note.as_ref().is_some_and(|note| note.len() > 2_000) {
-            guard = Some((
-                "commerce.a2a.dispute.resolution_note_too_large",
-                "resolution note is limited to 2000 bytes".into(),
-            ));
-        }
-        let is_split = input.resolution_type == A2ADisputeResolutionType::Split;
-        if guard.is_none()
-            && (is_split != (input.buyer_amount.is_some() && input.seller_amount.is_some()))
-        {
-            guard = Some((
-                "commerce.a2a.dispute.invalid_allocations",
-                "split requires both exact allocations; other outcomes forbid allocations".into(),
-            ));
-        }
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(RESOLVE_A2A_DISPUTE_COMMAND, ESCROW_UNVERSIONED),
+            "a2a_dispute",
+        )?
+        .then_guard(|_| resolve_dispute_guard(input));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored: ExecutionReceipt<A2ADisputeResolution> =
-                replay_or_conflict(command, &request_hash, existing, "a2a_dispute")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "a2a_dispute")
+                    .await?
+            {
                 tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
                 return Ok(stored);
             }
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt =
-                rejected_receipt(command, Some(policy.clone()), code, message, "a2a_dispute");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
@@ -3060,6 +2574,7 @@ impl PgKernelExecutor {
                 Some(policy.clone()),
                 "commerce.a2a.dispute_not_found",
                 "A2A dispute does not exist in the command scope",
+                RetryDisposition::Never,
                 "a2a_dispute",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -3079,6 +2594,7 @@ impl PgKernelExecutor {
                 Some(policy.clone()),
                 "commerce.a2a.dispute_not_resolvable",
                 &format!("cannot resolve dispute in {} status", dispute.status),
+                RetryDisposition::Never,
                 "a2a_dispute",
             );
             receipt.aggregate_id = Some(dispute.id);
@@ -3102,6 +2618,7 @@ impl PgKernelExecutor {
                 Some(policy.clone()),
                 "commerce.a2a.dispute.escrow_state_mismatch",
                 "escrow is not frozen by this dispute",
+                RetryDisposition::Never,
                 "a2a_dispute",
             );
             receipt.aggregate_id = Some(dispute.id);
@@ -3135,6 +2652,7 @@ impl PgKernelExecutor {
                             Some(policy.clone()),
                             "commerce.a2a.dispute.allocations_do_not_balance",
                             "buyer and seller allocations must be non-negative and sum exactly to escrow amount",
+                            RetryDisposition::Never,
                             "a2a_dispute",
                         );
                         receipt.aggregate_id = Some(dispute.id);
@@ -3155,6 +2673,7 @@ impl PgKernelExecutor {
                         Some(policy.clone()),
                         "commerce.a2a.dispute.unsupported_resolution",
                         "resolution type is not supported by this kernel version",
+                        RetryDisposition::Never,
                         "a2a_dispute",
                     );
                     receipt.aggregate_id = Some(dispute.id);
@@ -3279,33 +2798,32 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<RefundA2AEscrow>,
     ) -> Result<ExecutionReceipt<A2AEscrow>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = a2a_transition_guard_pg(
+        let run = CommandRun::prepare(
             command,
-            &policy,
-            started_at,
-            REFUND_A2A_ESCROW_COMMAND,
-            "a2a.escrow.refund",
-            &command.payload.escrow_id,
-        );
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(REFUND_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
+            "a2a_escrow",
+        )?
+        .then_guard(|_| escrow_settlement_guard(&command.payload.escrow_id));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored: ExecutionReceipt<A2AEscrow> =
-                replay_or_conflict(command, &request_hash, existing, "a2a_escrow")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "a2a_escrow")
+                    .await?
+            {
                 tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
                 return Ok(stored);
             }
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt = rejected_receipt(command, Some(policy), code, message, "a2a_escrow");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
@@ -3323,6 +2841,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.a2a.escrow_not_found",
                 "A2A escrow does not exist",
+                RetryDisposition::Never,
                 "a2a_escrow",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -3342,6 +2861,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.a2a.escrow_not_refundable",
                 &format!("cannot refund escrow in {} status", escrow.status),
+                RetryDisposition::Never,
                 "a2a_escrow",
             );
             receipt.aggregate_id = Some(escrow.id);
@@ -3391,52 +2911,32 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<ReleaseA2AEscrow>,
     ) -> Result<ExecutionReceipt<A2AEscrow>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != RELEASE_A2A_ESCROW_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected a2a.escrow.release command type".into(),
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.escrow_id.trim().is_empty() {
-            Some(("commerce.a2a.escrow.validation_failed", "escrow_id is required".into()))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "A2A escrows do not expose an aggregate version".into(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(RELEASE_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
+            "a2a_escrow",
+        )?
+        .then_guard(|_| escrow_settlement_guard(&command.payload.escrow_id));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(&command.idempotency_key)
-            .execute(tx.as_mut())
-            .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored: ExecutionReceipt<A2AEscrow> =
-                replay_or_conflict(command, &request_hash, existing, "a2a_escrow")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "a2a_escrow")
+                    .await?
+            {
                 tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
                 return Ok(stored);
             }
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt =
-                rejected_receipt(command, Some(policy.clone()), code, message, "a2a_escrow");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
@@ -3461,6 +2961,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.a2a.escrow_not_found",
                 "A2A escrow does not exist",
+                RetryDisposition::Never,
                 "a2a_escrow",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -3474,6 +2975,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.a2a.escrow_not_releasable",
                 &format!("cannot release escrow in {} status", escrow.status),
+                RetryDisposition::Never,
                 "a2a_escrow",
             );
             receipt.aggregate_id = Some(escrow.id.clone());
@@ -3487,6 +2989,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.a2a.escrow_expired",
                 "escrow has reached its expiry and must be refunded",
+                RetryDisposition::Never,
                 "a2a_escrow",
             );
             receipt.aggregate_id = Some(escrow.id.clone());
@@ -3500,6 +3003,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.a2a.escrow_conditions_unmet",
                 "not all escrow release conditions are met",
+                RetryDisposition::Never,
                 "a2a_escrow",
             );
             receipt.aggregate_id = Some(escrow.id.clone());
@@ -3575,56 +3079,33 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<ChargeSubscription>,
     ) -> Result<ExecutionReceipt<SubscriptionCharge>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != CHARGE_SUBSCRIPTION_COMMAND {
-            Some((
-                "kernel.command_type_mismatch",
-                "expected subscriptions.charge command type".into(),
-            ))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.billing_cycle_id.is_nil() {
-            Some(("commerce.subscription.validation_failed", "billing_cycle_id is required".into()))
-        } else if command.payload.processor.as_deref().is_some_and(|value| value.trim().is_empty())
-        {
-            Some(("commerce.subscription.validation_failed", "processor cannot be blank".into()))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "billing cycles do not expose an aggregate version".into(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(CHARGE_SUBSCRIPTION_COMMAND, BILLING_CYCLE_UNVERSIONED),
+            "billing_cycle",
+        )?
+        .then_guard(|_| charge_subscription_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
 
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(&command.idempotency_key)
-            .execute(tx.as_mut())
-            .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored: ExecutionReceipt<SubscriptionCharge> =
-                replay_or_conflict(command, &request_hash, existing, "billing_cycle")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "billing_cycle")
+                    .await?
+            {
                 tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
                 return Ok(stored);
             }
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt =
-                rejected_receipt(command, Some(policy.clone()), code, message, "billing_cycle");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
@@ -3645,6 +3126,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.subscription.billing_cycle_not_found",
                 "billing cycle does not exist",
+                RetryDisposition::Never,
                 "billing_cycle",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -3676,6 +3158,7 @@ impl PgKernelExecutor {
                     "billing cycle in {} for {} subscription is not chargeable now",
                     cycle.status, subscription_status
                 ),
+                RetryDisposition::Never,
                 "billing_cycle",
             );
             receipt.aggregate_id = Some(cycle.id.to_string());
@@ -3689,6 +3172,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.subscription.non_positive_charge",
                 "billing cycle total must be positive before collection",
+                RetryDisposition::Never,
                 "billing_cycle",
             );
             receipt.aggregate_id = Some(cycle.id.to_string());
@@ -3722,6 +3206,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 error.invariant_code().unwrap_or("commerce.subscription.charge_validation_failed"),
                 &error.to_string(),
+                RetryDisposition::Never,
                 "billing_cycle",
             );
             receipt.aggregate_id = Some(cycle.id.to_string());
@@ -3845,50 +3330,33 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<CommitCheckout>,
     ) -> Result<ExecutionReceipt<CheckoutResult>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != COMMIT_CHECKOUT_COMMAND {
-            Some(("kernel.command_type_mismatch", "expected checkout.commit command type".into()))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.cart_id.is_nil() {
-            Some(("commerce.checkout.validation_failed", "cart_id is required".into()))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "carts do not expose an aggregate version".into(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(COMMIT_CHECKOUT_COMMAND, CART_UNVERSIONED),
+            "checkout",
+        )?
+        .then_guard(|_| commit_checkout_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
 
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(&command.idempotency_key)
-            .execute(tx.as_mut())
-            .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored: ExecutionReceipt<CheckoutResult> =
-                replay_or_conflict(command, &request_hash, existing, "checkout")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "checkout")
+                    .await?
+            {
                 tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
                 return Ok(stored);
             }
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt =
-                rejected_receipt(command, Some(policy.clone()), code, message, "checkout");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
@@ -3908,6 +3376,7 @@ impl PgKernelExecutor {
                     Some(policy.clone()),
                     checkout_error_code(&error),
                     &error.to_string(),
+                    RetryDisposition::Never,
                     "checkout",
                 );
                 receipt.aggregate_id = Some(command.payload.cart_id.to_string());
@@ -3950,6 +3419,7 @@ impl PgKernelExecutor {
                     Some(policy.clone()),
                     code,
                     &error.to_string(),
+                    RetryDisposition::Never,
                     "checkout",
                 );
                 receipt.aggregate_id = Some(command.payload.cart_id.to_string());
@@ -4006,54 +3476,32 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<PostJournalEntry>,
     ) -> Result<ExecutionReceipt<JournalEntry>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != POST_LEDGER_COMMAND {
-            Some(("kernel.command_type_mismatch", "expected ledger.post command type".to_string()))
-        } else if command.deadline.is_some_and(|d| d <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.journal_entry_id.is_nil()
-            || command.payload.posted_by.trim().is_empty()
-        {
-            Some((
-                "commerce.ledger.validation_failed",
-                "journal_entry_id and posted_by are required".into(),
-            ))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "journal entries do not expose an aggregate version".into(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(POST_LEDGER_COMMAND, JOURNAL_ENTRY_UNVERSIONED),
+            "journal_entry",
+        )?
+        .then_guard(|_| post_journal_entry_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(&command.idempotency_key)
-            .execute(tx.as_mut())
-            .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored: ExecutionReceipt<JournalEntry> =
-                replay_or_conflict(command, &request_hash, existing, "journal_entry")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "journal_entry")
+                    .await?
+            {
                 tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
                 return Ok(stored);
             }
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt =
-                rejected_receipt(command, Some(policy), code, message, "journal_entry");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
@@ -4071,6 +3519,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.ledger.entry_not_found",
                 "journal entry does not exist",
+                RetryDisposition::Never,
                 "journal_entry",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -4091,8 +3540,14 @@ impl PgKernelExecutor {
         entry.lines = lines;
         if let Err(error) = entry.ensure_postable() {
             let code = error.invariant_code().unwrap_or("commerce.ledger.entry_not_postable");
-            let mut receipt =
-                rejected_receipt(command, Some(policy), code, &error.to_string(), "journal_entry");
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy),
+                code,
+                &error.to_string(),
+                RetryDisposition::Never,
+                "journal_entry",
+            );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
@@ -4111,6 +3566,7 @@ impl PgKernelExecutor {
                 Some(policy.clone()),
                 "commerce.ledger.period_not_open",
                 &format!("cannot post journal entry: its period is {period_status}, not open"),
+                RetryDisposition::Never,
                 "journal_entry",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -4191,49 +3647,37 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<SettleX402Intent>,
     ) -> Result<ExecutionReceipt<X402PaymentIntent>> {
-        command.validate_contract().map_err(|e| CommerceError::ValidationError(e.to_string()))?;
-        let request_hash = semantic_request_hash(command, &command.payload)?;
-        let started_at = Utc::now();
-        let policy = self.policy.evaluate(command, started_at);
-        let guard = if command.command_type != SETTLE_X402_COMMAND {
-            Some(("kernel.command_type_mismatch", "expected x402.settle command type".into()))
-        } else if command.deadline.is_some_and(|deadline| deadline <= started_at) {
-            Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-        } else if !policy.allowed {
-            Some((
-                "kernel.policy_denied",
-                format!("policy denied command: {}", policy.reason_codes.join(", ")),
-            ))
-        } else if command.payload.intent_id.is_nil() || command.payload.tx_hash.trim().is_empty() {
-            Some(("commerce.x402.validation_failed", "intent_id and tx_hash are required".into()))
-        } else if command.expected_version.is_some() {
-            Some((
-                "kernel.expected_version_not_applicable",
-                "x402 payment intents do not expose an aggregate version".into(),
-            ))
-        } else {
-            None
-        };
+        let run = CommandRun::prepare(
+            command,
+            &command.payload,
+            &self.policy,
+            EnvelopeGuard::unversioned(SETTLE_X402_COMMAND, X402_INTENT_UNVERSIONED),
+            "x402_payment_intent",
+        )?
+        .then_guard(|_| settle_x402_guard(&command.payload));
+        let request_hash = run.request_hash.clone();
+        let policy = run.policy.clone();
+        let started_at = run.started_at;
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(&command.idempotency_key)
-            .execute(tx.as_mut())
-            .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         if let Some(existing) =
             receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
         {
-            let stored: ExecutionReceipt<X402PaymentIntent> =
-                replay_or_conflict(command, &request_hash, existing, "x402_payment_intent")?;
-            if stored.status != ExecutionStatus::Previewed || command.mode != ExecutionMode::Apply {
+            if let Replay::Return(stored) = replay_or_conflict(
+                tx.as_mut(),
+                command,
+                &request_hash,
+                existing,
+                "x402_payment_intent",
+            )
+            .await?
+            {
                 tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
                 return Ok(stored);
             }
         }
-        if let Some((code, message)) = &guard {
-            let mut receipt =
-                rejected_receipt(command, Some(policy), code, message, "x402_payment_intent");
+        if let Some(mut receipt) = run.guard_receipt() {
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
@@ -4253,6 +3697,7 @@ impl PgKernelExecutor {
                     Some(policy),
                     "commerce.x402.intent_not_found",
                     "x402 payment intent does not exist",
+                    RetryDisposition::Never,
                     "x402_payment_intent",
                 );
                 append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -4266,6 +3711,7 @@ impl PgKernelExecutor {
                 Some(policy),
                 "commerce.x402.intent_not_sequenced",
                 &format!("cannot settle intent in {} status", intent.status),
+                RetryDisposition::Never,
                 "x402_payment_intent",
             );
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -4343,45 +3789,51 @@ impl PgKernelExecutor {
     }
 }
 
+/// Advisory-lock namespaces. Each key family hashes with its own seed so an
+/// idempotency key can never collide with a catalog uniqueness key.
+const LOCK_NS_IDEMPOTENCY: i64 = 0x5353_4B49_4445_4D50; // "SSKIDEMP"
+const LOCK_NS_PRODUCT_SLUG: i64 = 0x5353_4B53_4C55_4700; // "SSKSLUG"
+const LOCK_NS_PRODUCT_SKU: i64 = 0x5353_4B53_4B55_0000; // "SSKSKU"
+const LOCK_NS_INVENTORY_SKU: i64 = 0x5353_4B49_4E56_534B; // "SSKINVSK"
+
+fn pg_err(error: sqlx::Error) -> CommerceError {
+    CommerceError::DatabaseError(error.to_string())
+}
+
+async fn load_pg_order(
+    tx: &mut sqlx::PgConnection,
+    order_id: Uuid,
+    row: OrderRow,
+) -> Result<Order> {
+    let items = sqlx::query_as::<_, OrderItemRow>(
+        "SELECT * FROM order_items WHERE order_id = $1 ORDER BY id",
+    )
+    .bind(order_id)
+    .fetch_all(tx)
+    .await
+    .map_err(pg_err)?
+    .into_iter()
+    .map(PgOrderRepository::row_to_item)
+    .collect();
+    PgOrderRepository::row_to_order(row, items)
+}
+
+/// Transaction-scoped advisory lock on `key` within `namespace`.
+async fn advisory_lock_pg(tx: &mut sqlx::PgConnection, namespace: i64, key: &str) -> Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))")
+        .bind(key)
+        .bind(namespace)
+        .execute(tx)
+        .await
+        .map_err(pg_err)?;
+    Ok(())
+}
+
 async fn lock_kernel_idempotency_pg(
     tx: &mut sqlx::PgConnection,
     idempotency_key: &str,
 ) -> Result<()> {
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-        .bind(idempotency_key)
-        .execute(tx)
-        .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-    Ok(())
-}
-
-fn a2a_transition_guard_pg<T>(
-    command: &CommandEnvelope<T>,
-    policy: &stateset_core::PolicyDecisionEvidence,
-    now: chrono::DateTime<Utc>,
-    expected_command: &str,
-    expected_name: &str,
-    escrow_id: &str,
-) -> Option<(&'static str, String)> {
-    if command.command_type != expected_command {
-        Some(("kernel.command_type_mismatch", format!("expected {expected_name} command type")))
-    } else if command.deadline.is_some_and(|deadline| deadline <= now) {
-        Some(("kernel.deadline_exceeded", "command deadline elapsed before execution".into()))
-    } else if !policy.allowed {
-        Some((
-            "kernel.policy_denied",
-            format!("policy denied command: {}", policy.reason_codes.join(", ")),
-        ))
-    } else if escrow_id.trim().is_empty() {
-        Some(("commerce.a2a.escrow.validation_failed", "escrow_id is required".into()))
-    } else if command.expected_version.is_some() {
-        Some((
-            "kernel.expected_version_not_applicable",
-            "A2A escrows do not expose an aggregate version".into(),
-        ))
-    } else {
-        None
-    }
+    advisory_lock_pg(tx, LOCK_NS_IDEMPOTENCY, idempotency_key).await
 }
 
 async fn load_a2a_escrow_pg(
@@ -4441,27 +3893,17 @@ fn succeeded_a2a_receipt_pg<C>(
     started_at: chrono::DateTime<Utc>,
 ) -> ExecutionReceipt<A2AEscrow> {
     let aggregate_id = escrow.id.clone();
-    ExecutionReceipt {
-        contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-        receipt_id: Uuid::new_v4(),
-        command_id: command.command_id,
-        idempotency_key: command.idempotency_key.clone(),
-        command_type: command.command_type.clone(),
-        status: ExecutionStatus::Succeeded,
-        result: Some(escrow),
-        error_code: None,
-        error_message: None,
-        retry: RetryDisposition::SameKey,
-        aggregate_type: Some("a2a_escrow".into()),
-        aggregate_id: Some(aggregate_id),
-        version_before: None,
-        version_after: None,
-        event_ids: vec![event_id],
-        policy: Some(policy),
-        audit_hash: None,
+    succeeded_receipt(
+        command,
+        policy,
+        escrow,
+        "a2a_escrow",
+        Some(aggregate_id),
+        None,
+        None,
+        vec![event_id],
         started_at,
-        completed_at: Utc::now(),
-    }
+    )
 }
 
 fn succeeded_kernel_receipt_pg<C, T>(
@@ -4473,27 +3915,17 @@ fn succeeded_kernel_receipt_pg<C, T>(
     event_ids: Vec<Uuid>,
     started_at: chrono::DateTime<Utc>,
 ) -> ExecutionReceipt<T> {
-    ExecutionReceipt {
-        contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-        receipt_id: Uuid::new_v4(),
-        command_id: command.command_id,
-        idempotency_key: command.idempotency_key.clone(),
-        command_type: command.command_type.clone(),
-        status: ExecutionStatus::Succeeded,
-        result: Some(result),
-        error_code: None,
-        error_message: None,
-        retry: RetryDisposition::SameKey,
-        aggregate_type: Some(aggregate_type.into()),
-        aggregate_id: Some(aggregate_id),
-        version_before: None,
-        version_after: None,
+    succeeded_receipt(
+        command,
+        policy,
+        result,
+        aggregate_type,
+        Some(aggregate_id),
+        None,
+        None,
         event_ids,
-        policy: Some(policy),
-        audit_hash: None,
         started_at,
-        completed_at: Utc::now(),
-    }
+    )
 }
 
 fn principal_controls_address_pg<C>(command: &CommandEnvelope<C>, address: &str) -> bool {
@@ -4637,33 +4069,15 @@ async fn a2a_release_conditions_met_pg(
     Ok(true)
 }
 
-fn checkout_error_code(error: &CommerceError) -> &'static str {
-    error.invariant_code().unwrap_or(match error {
-        CommerceError::NotFound => "commerce.checkout.cart_not_found",
-        CommerceError::ValidationError(_) => "commerce.checkout.validation_failed",
-        CommerceError::Conflict(_) => "commerce.checkout.conflict",
-        _ => "commerce.checkout.rejected",
-    })
-}
-
-fn attach_command_context<C>(event: &mut KernelOutboxEvent, command: &CommandEnvelope<C>) {
-    event.command_id = Some(command.command_id);
-    event.principal_type = Some(
-        serde_json::to_value(command.principal.kind)
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_owned))
-            .unwrap_or_else(|| "unknown".into()),
-    );
-    event.principal_id = Some(command.principal.id.clone());
-    event.correlation_id = command.correlation_id;
-    event.causation_id = command.causation_id;
-}
-
-fn principal_kind_name<C>(command: &CommandEnvelope<C>) -> String {
-    serde_json::to_value(command.principal.kind)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "unknown".into())
+async fn replay_or_conflict<C, T: DeserializeOwned>(
+    tx: &mut sqlx::PgConnection,
+    command: &CommandEnvelope<C>,
+    request_hash: &str,
+    existing: KernelReceiptRecord,
+    aggregate_type: &str,
+) -> Result<Replay<T>> {
+    let audit = sealed_audit_entry_tx(tx, &existing).await?;
+    resolve_replay(command, request_hash, existing, audit.as_ref(), aggregate_type)
 }
 
 async fn append_receipt<T: Serialize>(
@@ -4671,108 +4085,7 @@ async fn append_receipt<T: Serialize>(
     request_hash: &str,
     receipt: &mut ExecutionReceipt<T>,
 ) -> Result<()> {
-    let value = serde_json::to_value(&*receipt)
-        .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-    let audit_hash = append_kernel_receipt_tx(
-        tx,
-        &KernelReceiptRecord {
-            command_id: receipt.command_id,
-            idempotency_key: receipt.idempotency_key.clone(),
-            command_type: receipt.command_type.clone(),
-            contract_version: receipt.contract_version.clone(),
-            request_hash: request_hash.into(),
-            status: status_name(receipt.status).into(),
-            receipt: value,
-            created_at: receipt.started_at,
-            completed_at: receipt.completed_at,
-        },
-    )
-    .await?;
-    receipt.audit_hash = Some(audit_hash);
+    let record = receipt_record(request_hash, receipt)?;
+    receipt.audit_hash = Some(append_kernel_receipt_tx(tx, &record).await?);
     Ok(())
-}
-
-fn replay_or_conflict<C, T: DeserializeOwned>(
-    command: &CommandEnvelope<C>,
-    request_hash: &str,
-    existing: KernelReceiptRecord,
-    aggregate_type: &str,
-) -> Result<ExecutionReceipt<T>> {
-    if existing.request_hash != request_hash {
-        return Ok(rejected_receipt(
-            command,
-            None,
-            "kernel.idempotency_conflict",
-            "idempotency key is already bound to a different semantic request",
-            aggregate_type,
-        ));
-    }
-    serde_json::from_value(existing.receipt)
-        .map_err(|error| CommerceError::DatabaseError(error.to_string()))
-}
-
-fn preview_receipt<C, T>(
-    command: &CommandEnvelope<C>,
-    policy: stateset_core::PolicyDecisionEvidence,
-    aggregate_type: &str,
-) -> ExecutionReceipt<T> {
-    base_receipt(command, ExecutionStatus::Previewed, None, None, Some(policy), aggregate_type)
-}
-
-fn rejected_receipt<C, T>(
-    command: &CommandEnvelope<C>,
-    policy: Option<stateset_core::PolicyDecisionEvidence>,
-    code: &str,
-    message: &str,
-    aggregate_type: &str,
-) -> ExecutionReceipt<T> {
-    base_receipt(
-        command,
-        ExecutionStatus::Rejected,
-        Some(code.into()),
-        Some(message.into()),
-        policy,
-        aggregate_type,
-    )
-}
-
-fn base_receipt<C, T>(
-    command: &CommandEnvelope<C>,
-    status: ExecutionStatus,
-    error_code: Option<String>,
-    error_message: Option<String>,
-    policy: Option<stateset_core::PolicyDecisionEvidence>,
-    aggregate_type: &str,
-) -> ExecutionReceipt<T> {
-    let now = Utc::now();
-    ExecutionReceipt {
-        contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
-        receipt_id: Uuid::new_v4(),
-        command_id: command.command_id,
-        idempotency_key: command.idempotency_key.clone(),
-        command_type: command.command_type.clone(),
-        status,
-        result: None,
-        error_code,
-        error_message,
-        retry: RetryDisposition::Never,
-        aggregate_type: Some(aggregate_type.into()),
-        aggregate_id: None,
-        version_before: None,
-        version_after: None,
-        event_ids: Vec::new(),
-        policy,
-        audit_hash: None,
-        started_at: now,
-        completed_at: now,
-    }
-}
-
-const fn status_name(status: ExecutionStatus) -> &'static str {
-    match status {
-        ExecutionStatus::Previewed => "previewed",
-        ExecutionStatus::Succeeded => "succeeded",
-        ExecutionStatus::Rejected => "rejected",
-        ExecutionStatus::Failed => "failed",
-    }
 }

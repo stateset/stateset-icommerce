@@ -6,6 +6,383 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.30.0] - 2026-09-03
+
+A parity audit of the modules no earlier round had read found five defects,
+three of them money or stock, and one pattern behind all of them: a fix lands
+on a method and stops short of its sibling. This round closes the defects and
+adds a lint that fails the build on the next one.
+
+### Fixed
+- **The Postgres credit ledger stamped balances it did not hold.**
+  `record_transaction` read the balance on one pooled connection and inserted
+  on another, with no transaction and no row lock, so a payment committing in
+  between left the ledger recording a balance the account no longer had — a
+  $4,000 overstatement in the reproduction, with no reconciliation path. It
+  now reads under `FOR UPDATE` inside the transaction that writes. Recording
+  against a customer with no credit account is a typed not-found on both
+  backends rather than a raw constraint error.
+- **A transfer receipt could take in stock it never recorded.** The Postgres
+  receive path ran four autocommit statements and wrote an absolute quantity,
+  so two clerks scanning the same 100-unit receipt both passed the
+  over-receipt check and both wrote 100, leaving 100 units untracked; two
+  concurrent partial receipts lost units instead. It is now one transaction
+  with the line locked, and the write is an increment, so concurrent receipts
+  accumulate.
+- **Deleting a serial could destroy a live reservation.** The SQLite path took
+  no transaction and read the serial's status through a second pooled
+  connection, so a reservation committing in that window was deleted along
+  with the unit and its history. It now reads and deletes inside one write
+  transaction, matching Postgres.
+- **A cancelled transfer order could still take in stock.** The receive path
+  never looked at the order status, so a cancel and a full receipt raced to
+  both succeed, leaving a cancelled order holding received units. Receiving
+  now checks the order status under the same lock that cancelling takes, and
+  exactly one of the two wins.
+- **Two clerks could both cancel the same transfer order.** Both backends read
+  the status on a pooled connection, dropped it, then cancelled in a separate
+  transaction — three of six concurrent cancels won. The status is now read
+  under the write lock, so one wins and the rest are refused.
+- Batch size limits are enforced on SQLite as well as Postgres, so an
+  oversized bulk create is refused instead of starving concurrent writers.
+- SQLite hold listing honours the type filter and pagination offset, so an
+  operator filtering one queue no longer sees every hold of every type.
+
+### Added
+- **A backend transaction parity lint** (`backend_transaction_parity`) reads
+  the repository sources and fails when a method decides on what it read and
+  then writes the same table without holding it: a missing write transaction
+  on either backend, a missing `FOR UPDATE` on Postgres, or a SQLite read
+  through a second pooled connection while a transaction is open. Its
+  safe-exception list is empty, so it fails closed, and a separate test
+  asserts it still parses both backends and still rejects the pre-fix serial
+  delete, so it cannot decay into a no-op. It found two further defects on its
+  first run. The pre-existing violations it reports are tracked for repair
+  rather than blessed.
+
+
+## [1.29.0] - 2026-09-03
+
+Fourth and fifth engine rounds. The tax engine is one pure computation
+shared by both backends; carts price against the catalog and re-derive every
+coupon type; orders and payments agree on money at cancel and delete; lots
+cascade to serials and inventory; billing is claim-based; the agentic rails
+persist their credit and messaging state. Round five then settles returns
+money and stock, makes inventory adjustment transactional and its
+reservations swept, guards the product and customer lifecycle, and moves the
+kernel onto one shared guard, replay and receipt layer with verified
+replays.
+
+### ⚠️ Behaviour change
+- **Warehouse documents move stock.** Completing a put-away, a pick or a
+  shipment recorded paperwork and touched no inventory at all, so a
+  warehouse running on those documents kept a ledger that never moved while
+  returns dispositions did move it. Put-away now brings received units into
+  stock, a pick allocates them off the shelf, and a shipment releases
+  exactly what the picks allocated, each in the same transaction as the
+  status write and idempotent on a repeated completion. A pick that the
+  shelf cannot cover is refused.
+- **A return can only be deleted while nothing has happened to it** —
+  requested or approved, and only while no line carries a disposition.
+  Deleting a completed, restocked and refunded return previously freed the
+  order-line claim, so the same units became returnable and refundable
+  again while the restocked stock stayed on the shelf.
+- **Rejecting or cancelling a return is refused once any line has been
+  dispositioned**, not merely once stock moved. Scrapping or returning a
+  line to the vendor and then rejecting the return released the claim on
+  goods that were already destroyed.
+- **The engine's sweeps actually run.** The reservation and traceability
+  sweeps existed and were tested, but nothing executed them: no scheduler
+  runner existed and no deployable crate depended on the jobs crate, so
+  expired inventory holds and expired lots were only ever reclaimed by
+  traffic on the same SKU. The server now starts both in the background by
+  default (`without_background_sweeps` opts out), and an operator can run
+  them on demand through `POST /inventory/sweeps/run` or reclaim holds
+  directly through `POST /inventory/reservations/expire`.
+- **Inventory balances are held to their own identity.** Available stock
+  equalling on-hand minus allocated was never enforced, and the clamp paths
+  logged drift rather than repairing it. Migrations 092 / 099 enforce the
+  identity at the database, legacy-safe, and release now rebuilds the
+  allocated quantity from the open reservation ledger instead of clamping.
+- **Cart lines are priced and checked against the catalogue on every
+  path.** Purchasability had reached only add-item and catalogue pricing
+  only the embedded caller, so creating a cart with items, creating one in a
+  batch, or repricing a line bypassed both. All four paths now enforce them
+  inside the mutation's own transaction, on both backends. Ad-hoc SKUs that
+  are not in the catalogue keep client pricing. Raising the quantity of a
+  withdrawn SKU is refused, while shrinking or removing it is still allowed
+  so a cart cannot get stuck.
+- **Setting cart tax or shipping refuses negative and sub-minor-unit
+  amounts and refuses a cart that is not active**, and writes and reprices
+  in one locked transaction. A negative tax previously lowered the total and
+  a completed cart could still be re-taxed.
+- **Checkout preview refuses everything apply would refuse.** Preview
+  checked per-customer coupon limits against a throwaway customer rather
+  than the one apply resolves from the guest email, and never checked the
+  usage limits on automatic promotions at all, so a quote could succeed and
+  the order then fail.
+- **Unpublishing a product is guarded like archiving it.** Moving a product
+  back to draft while an active cart line, open order line or reservation
+  held its SKU was allowed, leaving carts holding something no longer
+  sellable.
+- **Product money is validated in the repositories**, not only at the
+  facade, so a direct repository caller can no longer store a negative
+  price, a compare-at price below the price, or an amount finer than the
+  canonical four decimal places.
+- **Finding or creating a customer by email is atomic**, so two concurrent
+  requests for the same address no longer leave one caller with a duplicate
+  error, and only the actual creator emits the created event.
+- **Legacy customers whose addresses differed only by letter case are
+  reachable again** (migrations 091 / 098). The oldest row keeps the
+  address; newer collisions take a suffixed key that cannot collide with a
+  real address and is reversible. Previously those accounts were invisible
+  to lookup and could not be re-registered.
+- **Changing a product's type through the API is refused** instead of being
+  silently dropped.
+- **Disabling tax now charges no tax.** `tax_settings.enabled` was
+  persisted but never read, so a store that turned tax off was still
+  charged. The disabled result is documented: zero tax, empty breakdown,
+  every line present at zero, and nothing backed out of inclusive prices.
+  `get_effective_rate` returns zero to match.
+- **Tax exemptions are reachable and honoured.** Only verified exemptions
+  reduce tax, but verification existed on no public surface, so an
+  exemption could be created and never take effect. It is now on both
+  facades and on a new exemption API. A helper that reported any stored
+  certificate as exempt now agrees with the engine's own window and
+  verification test.
+- **Local tax jurisdictions resolve.** County, city, district and special
+  rates were unreachable because only country and state were matched, so a
+  store with local rates configured silently undercharged. They now match
+  on the address's city and postal code, with prefix and range patterns,
+  and fail closed when nothing pins them.
+- **The tax breakdown is ordered broadest jurisdiction first**, matching the
+  order the money was allocated in, rather than alphabetically by
+  jurisdiction name.
+- **Each exemption reports its own totals.** A cart hitting two exemptions
+  attributed both to the first one; `applied_exemptions` now carries a row
+  per exemption.
+- **Equal-priority promotions resolve deterministically** by code then id
+  instead of by arrival order, so two equally ranked promotions no longer
+  depend on evaluation sequence.
+- **A settled billing cycle releases its worker lease immediately** instead
+  of waiting for expiry.
+- **Splitting or merging a lot now moves its placement with the units**, so
+  lots and inventory balances stay in step. Previously a split left the
+  source's placement at the full quantity and gave the child none, and a
+  merge left the target unplaced, after which **consuming a merged or split
+  lot silently stopped decrementing inventory at all**.
+- **A merged lot keeps its supplier, work-order and purchase-order
+  attribution only where every source agrees**, rather than inheriting the
+  first source's and fabricating an attribution for the rest. Provenance is
+  recovered from the new genealogy instead.
+- **Non-conformance reports refuse to move between terminal states.**
+  Closing and cancelling were unguarded blind writes, so a report cancelled
+  as opened-in-error could be laundered into a closed quality record and
+  back. Both are now idempotent and status-conditional, and a finished
+  report cannot be edited.
+- **Activating a serial is idempotent** and refused on a scrapped serial; it
+  previously wrote outside a transaction and appended a duplicate history
+  row on every call.
+- **Order lines are checked against the catalogue.** An archived product or
+  a deleted variant could still reach an order through create, batch create,
+  add-item or checkout, because the purchasability rule had only ever been
+  wired into cart add-item. It now runs inside the order-creating
+  transaction and in checkout preview, which closes the window where a cart
+  left the active state, the catalogue withdrew the SKU, and checkout
+  completed anyway. Unpublished (draft) products are refused on orders for
+  the same reason they are refused on carts, so fixtures must publish a
+  product before ordering it.
+- **Removing an order line cannot strand captured money.** Dropping a line
+  lowers the order total, which is the ceiling every capture is measured
+  against, so a paid order could be left with captures above its own total
+  and could then never be cancelled or deleted cleanly. A new invariant,
+  `commerce.order.total_below_captured`, refuses it; a caller that intends
+  to settle the overpayment itself passes `allow_overpayment`.
+- **Reusing an idempotency key with any different request field is a
+  conflict.** The comparison covered amount, order, currency and method
+  only, so a retry that changed the customer, invoice or description
+  silently replayed the first payment. It now compares every field either
+  backend persists.
+- **Every governed command enforces actor coherence.** Eleven kernel
+  operations hand-rolled their guard chain and never asked whether the
+  principal was approving its own command or acting as a self-delegated
+  agent, so `products.create`, the inventory lifecycle, `returns.transition`,
+  `a2a.escrow.release`, `subscriptions.charge`, `checkout.commit`,
+  `ledger.post` and `x402.settle` accepted a self-approving principal. All
+  22 operations now run the shared envelope guard, and a table-driven test
+  proves each rejects both self-approval and self-delegation on both
+  backends.
+- **A cart or order accepts only one x402 payment intent.** The guard was a
+  read followed by a write with no transaction and no index behind it, so
+  two simultaneous requests could both claim the same cart. Claim keys with
+  unique indexes (migrations 094 / 101) now settle it at the database, the
+  in-transaction check names the winning intent, and cancelling, failing or
+  expiring an intent frees the cart again.
+- **Tax exemptions must be verified** (`verify_exemption`) before they
+  reduce tax, and are evaluated at the transaction date. **Inclusive pricing
+  is live**: `prices_include_tax` / `calculation_method = inclusive` now back
+  tax out of gross prices instead of being ignored. Per-line and per-rate tax
+  amounts are rounded with largest-remainder allocation so lines sum to the
+  total; jurisdiction codes are stored uppercase and matched
+  case-insensitively.
+- **Cart lines that resolve to a catalog variant must carry the catalog
+  price**; a differing client price is refused. Tax follows item mutations.
+  Sub-minor-unit money on cart lines is refused instead of rounded. Every
+  coupon type (bundle, tier, buy-X-get-Y, scoped) is re-derived on each cart
+  change, and kernel checkout Preview refuses exactly what Apply refuses.
+- **Cancelling an order that holds captured money is refused** unless
+  `void_payments` is set (HTTP `?void_payments=true`), which voids in-flight
+  payments and leaves settled ones for refund. **Deleting an order** that
+  holds money or is referenced by a payment is refused. A duplicate
+  idempotency key with different amount, order, currency or method is a
+  conflict. `PaymentRepository::update` can no longer set a refunded status.
+- **Lot quarantine and failed inspections now quarantine the lot's
+  Available and Reserved serials**, and lots with a location keep
+  `inventory_balances` in step (receipt, consume, holds, expiry). `update`
+  enforces the lot state machine. Failed-inspection lot resolution is
+  SKU-scoped.
+- **Billing workers must claim subscriptions** (`claim_due_for_billing`
+  with a lease; `SELECT … FOR UPDATE SKIP LOCKED` on Postgres) before
+  creating cycles; a cycle for a subscription under another worker's live
+  lease is a conflict. Checkout drops a coupon exactly when pricing would.
+- **Refunds are refused while the payment's escrow is under an open
+  dispute.** A second x402 intent for a cart or order with an open or
+  settled intent is a conflict. `/a2a/credit` and `/a2a/messages` now
+  persist per tenant (migrations 086 / 093); enum fields are snake_case.
+- **Kernel executor (round 5)**: the kernel's own `orders.transition`
+  cancel path now enforces the order money rule — a cancel while payments
+  hold captured money is a sealed `commerce.order.captured_money_outstanding`
+  rejection unless the payload sets `void_payments: true` (new field;
+  omitted from the request hash when false), which voids in-flight payments
+  atomically and reports settled money on the `orders.updated.v1` event.
+  **Replay verifies integrity**: a stored receipt is recomputed against its
+  sealed audit-log entry before it is replayed; a tampered, rebound, or
+  unsealed row fails with `CommerceError::KernelReceiptTampered`
+  (`kernel.receipt_tampered`) instead of replaying as authoritative. The
+  envelope guard chain gains `kernel.actor_mismatch` (self-delegated agent
+  or self-approved command). Postgres `orders.ship` now seals a
+  `commerce.reservation_expired` rejection (rolled back to a savepoint,
+  committed, retry key bound) when a hold expires mid-shipment instead of
+  failing the call; the `payments.create` key-mismatch guard records policy
+  evidence on both backends; rejection receipts for loaded aggregates carry
+  `aggregate_id`. Postgres advisory locks use distinct namespaces for
+  idempotency keys, product slugs, product SKUs and inventory SKUs.
+  `Commerce::kernel_audit()` and `GET /api/v1/kernel/audit`
+  (`/checkpoint`) expose audit-chain verification and checkpoints.
+- **Returns settle money and stock (round 5).** A return's
+  `refund_amount` is capped at the sum of its line refunds, refused when
+  negative, and frozen once the return is terminal; completing a return
+  creates the payment refund in the same transaction, splitting it across
+  captures and reporting any uncovered remainder (store-credit refunds are
+  recorded but not settled through payments). Line refunds are the
+  proportional share of what was actually charged, so line discounts are
+  honoured. A return can no longer be rejected after its stock was
+  dispositioned, so the over-return claim is kept and units cannot be
+  restocked twice. Dispositions now move serials (returned to available,
+  quarantined, or scrapped) and restore lot on-hand; completion requires
+  every received item to be dispositioned unless written off; quarantine
+  without bins holds stock at the warehouse instead of doing nothing.
+  Return creation is idempotent at the database (migrations 081 / 088):
+  the same key replays the original and a different payload conflicts, and
+  concurrent full returns on one line admit exactly one.
+- **Inventory adjustments are transactional on Postgres (round 5)**, with
+  the balance locked, the ledger row written in the same transaction, a
+  retry wrapper, auto-created balances, and `receipt` recorded for positive
+  adjustments as on SQLite. SQLite release and expiry compute in decimal
+  instead of float SQL, so fractional holds round-trip exactly. Expired
+  reservations are swept by `InventoryRepository::expire_reservations` and
+  a `ReservationSweepJob` builtin, so allocated stock no longer drifts on
+  idle SKUs. **Backorder allocations now reserve real stock**: allocating
+  can fail with `InsufficientStock`, cancelling releases the reservation on
+  both backends, fulfilment decrements on-hand, and `auto_allocate_inventory`
+  is implemented. Reorder thresholds include `safety_stock`, and Postgres no
+  longer lists a SKU once per location. Balances are guarded against going
+  negative by a Postgres `CHECK` and SQLite triggers (migrations 083 / 090).
+- **Products and customers (round 5).** Archiving or deleting a product or
+  variant is refused while an open order, active cart line, or reservation
+  references its SKU. Postgres `delete_variant` is a soft delete and
+  `get_variants` filters inactive rows, matching SQLite. Customer email is
+  normalised and unique case-insensitively (migrations 085 / 092), so
+  `find_or_create` cannot duplicate an identity; deleting a customer
+  releases the address for re-registration and is terminal, and
+  `anonymize` scrubs personally identifying data. Postgres product creation
+  with variants is one transaction, keyset pagination works on Postgres for
+  products and customers, product status follows an exhaustive state
+  machine, and variant prices are validated for currency scale.
+- **Warehouse**: put-aways are validated and capped at the received
+  quantity; `complete_wave` refuses while picks are open; a receipt line
+  expecting zero accepts a blind receipt; `delete_location` returns a
+  validation error for reserved stock or history and not-found for an
+  unknown id.
+
+### Fixed
+- Deleting a warehouse location cannot race a concurrent stock write: the
+  location row is locked, and every writer that can create stock there takes
+  a shared lock, so a first adjustment for a new SKU can no longer be
+  cascaded away while both callers report success.
+- Returns expose update, reject and complete over HTTP, so refund
+  settlement and writing off undispositioned lines are reachable through the
+  API rather than only from the embedded crate.
+- Inventory reservations have an HTTP surface: reserve, read, list,
+  release, confirm and expire, previously reachable only from the embedded
+  crate.
+- Postgres backorder writes run under the inventory retry wrapper, so a
+  deadlock across the multi-row lock in auto-allocation no longer surfaces
+  to the caller; auto-allocation locks the balance it reads and skips a
+  starved candidate instead of failing the whole batch.
+- Guest checkout creates its customer through the normalised customer
+  identity, so the customer is retrievable by email afterwards and two
+  guests differing only in letter case are one customer. It previously
+  inserted rows that no email lookup could find.
+- Exporting and re-importing a database preserves product status. The
+  import built a create request, which has no status field, so a restore
+  silently unpublished every product in the catalogue.
+- Typed uniqueness conflicts name the offending slug, SKU or email rather
+  than the column, on both backends.
+- SQLite product listing filters and counts by price in SQL instead of
+  loading every row, and ignores an offset once a cursor is supplied, which
+  matches Postgres.
+- Lot genealogy is recorded for every split and merge (migrations 093 /
+  100), exposed through `get_lot_parents` / `get_lot_children` and
+  `GET /lots/{id}/genealogy`, and `trace` now walks the graph so a merged
+  lot resolves to every source lot and its receipt.
+- Deleting a serial or a lot, which previously read on the pool and then
+  wrote on the pool, runs in one locked transaction, so a concurrent
+  reservation or sale can no longer destroy a live serial.
+- Concurrent merges naming the same lots in different orders no longer risk
+  a Postgres deadlock: sources are locked in canonical id order.
+- The kernel executors share one envelope, replay, receipt and plan layer
+  across every operation: 16 more operations were converted, about 360 lines
+  per backend removed, and the parity gate now compares operation semantics
+  (the ordered sequence of guard, preview, replay, success and rejection
+  points) instead of file names, so a future divergence fails CI rather than
+  waiting for an audit.
+- Kernel preview no longer promises what apply would refuse: `payments.create`
+  ran its capture-capacity check after the preview branch.
+- Audit-chain verification works on Postgres, where `GET /kernel/audit` and
+  its checkpoint route previously returned a server error.
+- x402 payment intents have an HTTP surface, so amount reconciliation and the
+  single-claim guard are exercised at the API boundary.
+- Inventory reservations are keyed to the order line (migrations 080 /
+  087), so removing one line never releases a sibling line's hold; legacy
+  un-keyed reservations still release by SKU.
+- Line edits write `orders.item_added.v1` / `orders.item_removed.v1`
+  outbox events in the same transaction.
+- Postgres cart repricing validates the coupon on the transaction
+  connection (a size-1 pool no longer deadlocks); `CartRepository::update`
+  with a discount recomputes the grand total; Postgres cart create prices
+  through the same totals path as mutations.
+- x402 credit ledger debits are conditional on the balance the check read,
+  proven by real-thread and tokio races on both backends; x402 settle and
+  cancel/expire races now have Postgres proofs; `Batched` is a real guarded
+  transition; `link_purchase_to_order` is conditional.
+- Expired lot reservations are swept (`release_expired_reservations`) and
+  lazily on reserve/confirm; a `TraceabilitySweepJob` builtin runs the lot,
+  serial and expiry sweeps.
+- Exclusive stacking is order-independent; buy-X-get-Y refuses zero
+  quantities; bundles require the full bundle; `waves.pick_count` is
+  maintained.
+
 ## [1.28.5] - 2026-09-01
 
 Closes every open finding on the engine report card — the four critical money

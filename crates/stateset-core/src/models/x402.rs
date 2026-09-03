@@ -232,7 +232,9 @@ pub enum X402IntentStatus {
     Signed,
     /// Intent submitted to sequencer
     Sequenced,
-    /// Intent included in batch commitment
+    /// Intent included in a published batch commitment (merkle root +
+    /// inclusion proof recorded via `mark_batched`). Exempt from the
+    /// validity sweeper: its outcome follows the batch's on-chain result.
     Batched,
     /// Intent settled on-chain
     Settled,
@@ -1235,9 +1237,17 @@ pub struct CreateX402PaymentIntent {
     pub resource_method: Option<String>,
     /// Description
     pub description: Option<String>,
-    /// Associated cart ID (for checkout flows)
+    /// Associated cart ID (for checkout flows).
+    ///
+    /// Reconciliation contract (enforced by the embedded accessor, not the
+    /// bare repository): the intent must be for exactly the cart's
+    /// `grand_total`, `asset` must be a USD-pegged stablecoin and the cart
+    /// must be priced in USD, and at most one open
+    /// (`Created`/`Signed`/`Sequenced`/`Batched`) or `Settled` intent may
+    /// exist per cart.
     pub cart_id: Option<Uuid>,
-    /// Associated order ID
+    /// Associated order ID. Same reconciliation contract as `cart_id`,
+    /// against the order's `total_amount`.
     pub order_id: Option<Uuid>,
     /// Associated invoice ID
     pub invoice_id: Option<Uuid>,

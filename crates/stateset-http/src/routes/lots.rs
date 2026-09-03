@@ -111,6 +111,42 @@ pub(crate) struct LotReservationResponse {
     pub reservation_id: String,
 }
 
+/// One parent -> child edge of the lot genealogy graph.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct LotGenealogyLinkResponse {
+    pub child_lot_id: String,
+    pub child_lot_number: String,
+    pub parent_lot_id: String,
+    pub parent_lot_number: String,
+    /// `split` or `merge`.
+    pub relationship: String,
+    /// Decimal quantity as a string.
+    pub quantity: String,
+    pub created_at: String,
+}
+
+/// A lot's immediate genealogy: the lots it came from and the lots it became.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct LotGenealogyResponse {
+    pub lot_id: String,
+    /// The split parent, or every merge source. Empty for a received lot.
+    pub parents: Vec<LotGenealogyLinkResponse>,
+    /// Split children, and the merge target this lot was consumed into.
+    pub children: Vec<LotGenealogyLinkResponse>,
+}
+
+fn genealogy_resp(l: &stateset_core::LotGenealogyLink) -> LotGenealogyLinkResponse {
+    LotGenealogyLinkResponse {
+        child_lot_id: l.child_lot_id.to_string(),
+        child_lot_number: l.child_lot_number.clone(),
+        parent_lot_id: l.parent_lot_id.to_string(),
+        parent_lot_number: l.parent_lot_number.clone(),
+        relationship: l.relationship.to_string(),
+        quantity: l.quantity.to_string(),
+        created_at: l.created_at.to_rfc3339(),
+    }
+}
+
 fn to_resp(l: &stateset_core::Lot) -> LotResponse {
     LotResponse {
         id: l.id.to_string(),
@@ -177,6 +213,7 @@ pub fn router() -> Router<AppState> {
         .route("/lots/reservations/{reservation_id}/release", post(release_reservation))
         .route("/lots/{id}/quarantine", post(quarantine))
         .route("/lots/{id}/release-quarantine", post(release_quarantine))
+        .route("/lots/{id}/genealogy", get(genealogy))
 }
 
 #[utoipa::path(post, operation_id = "lots_create", path = "/api/v1/lots", tag = "lots",
@@ -275,6 +312,28 @@ pub(crate) async fn get_one(
     let lot =
         c.lots().get(id)?.ok_or_else(|| HttpError::NotFound(format!("Lot {id} not found")))?;
     Ok(Json(to_resp(&lot)))
+}
+
+#[utoipa::path(get, operation_id = "lots_genealogy", path = "/api/v1/lots/{id}/genealogy", tag = "lots",
+    params(("id" = String, Path, description = "Lot ID")),
+    responses((status = 200, body = LotGenealogyResponse), (status = 404, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn genealogy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<LotGenealogyResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    // 404 rather than an empty graph for a lot that does not exist.
+    if c.lots().get(id)?.is_none() {
+        return Err(HttpError::NotFound(format!("Lot {id} not found")));
+    }
+    Ok(Json(LotGenealogyResponse {
+        lot_id: id.to_string(),
+        parents: c.lots().get_parents(id)?.iter().map(genealogy_resp).collect(),
+        children: c.lots().get_children(id)?.iter().map(genealogy_resp).collect(),
+    }))
 }
 
 #[utoipa::path(post, operation_id = "lots_consume", path = "/api/v1/lots/{id}/consume", tag = "lots",
