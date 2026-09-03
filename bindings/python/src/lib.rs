@@ -1465,53 +1465,7 @@ impl Products {
         Ok(count as u32)
     }
 
-    /// Update a product.
-    ///
-    /// Args:
-    ///     id: Product UUID
-    ///     name: Optional new name
-    ///     slug: Optional new slug
-    ///     description: Optional new description
-    ///     status: Optional new status ("active" | "archived" | "draft")
-    ///
-    /// Returns:
-    ///     Product: The updated product
-    #[pyo3(signature = (id, name=None, slug=None, description=None, status=None))]
-    fn update(
-        &self,
-        id: String,
-        name: Option<String>,
-        slug: Option<String>,
-        description: Option<String>,
-        status: Option<String>,
-    ) -> PyResult<Product> {
-        let commerce = self
-            .commerce
-            .lock()
-            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-
-        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
-        let status = status
-            .map(|s| s.parse::<stateset_core::ProductStatus>())
-            .transpose()
-            .map_err(|_| PyValueError::new_err("Invalid product status"))?;
-
-        let product = commerce
-            .products()
-            .update(
-                uuid.into(),
-                stateset_core::UpdateProduct {
-                    name,
-                    slug,
-                    description,
-                    status,
-                    ..Default::default()
-                },
-            )
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update product: {}", e)))?;
-
-        Ok(product.into())
-    }
+    
 
     /// Activate a product (make it available for purchase).
     ///
