@@ -1465,8 +1465,6 @@ impl Products {
         Ok(count as u32)
     }
 
-    
-
     /// Activate a product (make it available for purchase).
     ///
     /// Args:
