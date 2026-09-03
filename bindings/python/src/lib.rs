@@ -1336,6 +1336,55 @@ impl Products {
         Ok(product.into())
     }
 
+    /// Update a product.
+    ///
+    /// Products are created as drafts, and only an `active` product may be
+    /// sold, so publishing one is the usual reason to call this.
+    ///
+    /// Args:
+    ///     id: Product UUID
+    ///     name: New name (optional)
+    ///     slug: New slug (optional)
+    ///     description: New description (optional)
+    ///     status: One of "draft", "active", "archived" (optional)
+    ///
+    /// Returns:
+    ///     Product: The updated product
+    #[pyo3(signature = (id, name=None, slug=None, description=None, status=None))]
+    fn update(
+        &self,
+        id: String,
+        name: Option<String>,
+        slug: Option<String>,
+        description: Option<String>,
+        status: Option<String>,
+    ) -> PyResult<Product> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| PyValueError::new_err("Invalid product UUID"))?;
+        let status = status
+            .map(|s| s.parse::<stateset_core::ProductStatus>())
+            .transpose()
+            .map_err(|_| PyValueError::new_err("Invalid product status"))?;
+        let product = commerce
+            .products()
+            .update(
+                uuid.into(),
+                stateset_core::UpdateProduct {
+                    name,
+                    slug,
+                    description,
+                    status,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update product: {}", e)))?;
+        Ok(product.into())
+    }
+
     /// Get a product by ID.
     ///
     /// Args:

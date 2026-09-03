@@ -55,6 +55,19 @@ fn main() -> Result<(), CommerceError> {
     })?;
     println!("   Created product: {} (slug: {})", gadget.name, gadget.slug);
 
+    // Publish both: `products.create` mints a `Draft` product, and only an
+    // `Active` product's SKU may be added to a cart or ordered.
+    for id in [widget.id, gadget.id] {
+        commerce.products().update(
+            id,
+            stateset_embedded::UpdateProduct {
+                status: Some(stateset_embedded::ProductStatus::Active),
+                ..Default::default()
+            },
+        )?;
+    }
+    println!("   Published both products");
+
     // 3. Create inventory
     println!("\n3. Setting up inventory...");
     commerce.inventory().create_item(CreateInventoryItem {

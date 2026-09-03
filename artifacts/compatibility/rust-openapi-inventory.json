@@ -7,10 +7,10 @@
   "openapiVersion": "3.1.0",
   "title": "StateSet Commerce API",
   "version": "1.0.4",
-  "totalPaths": 340,
-  "totalOperations": 457,
-  "totalSchemas": 441,
-  "totalTags": 62,
+  "totalPaths": 352,
+  "totalOperations": 471,
+  "totalSchemas": 455,
+  "totalTags": 64,
   "methods": [
     {
       "name": "DELETE",
@@ -18,15 +18,15 @@
     },
     {
       "name": "GET",
-      "count": 184
+      "count": 188
     },
     {
       "name": "PATCH",
-      "count": 10
+      "count": 13
     },
     {
       "name": "POST",
-      "count": 225
+      "count": 232
     },
     {
       "name": "PUT",
@@ -142,7 +142,7 @@
     {
       "name": "inventory",
       "description": "Stock and inventory management",
-      "count": 3
+      "count": 10
     },
     {
       "name": "invoices",
@@ -247,7 +247,7 @@
     {
       "name": "returns",
       "description": "Return request processing",
-      "count": 5
+      "count": 8
     },
     {
       "name": "revenue_recognition",
@@ -300,6 +300,11 @@
       "count": 4
     },
     {
+      "name": "tax",
+      "description": "Tax exemption certificates: create, list, and verify (only verified certificates reduce tax)",
+      "count": 4
+    },
+    {
       "name": "topology_snapshots",
       "description": "Network topology snapshots",
       "count": 5
@@ -343,6 +348,11 @@
       "name": "work_orders",
       "description": "Manufacturing work order lifecycle and shop-floor tasks",
       "count": 13
+    },
+    {
+      "name": "x402",
+      "description": "x402 stablecoin payment intents: create, sign, settle, and the one-claim-per-cart guard",
+      "count": 9
     }
   ],
   "schemas": [
@@ -431,6 +441,7 @@
     "CompleteJobRequest",
     "CompletePickRequest",
     "CompletePutAwayRequest",
+    "CompleteReturnRequest",
     "CompleteShipRequest",
     "CompleteWorkOrderRequest",
     "CompleteWorkOrderTaskRequest",
@@ -502,6 +513,7 @@
     "CreateReceiptItemRequest",
     "CreateReceiptRequest",
     "CreateRefundRequest",
+    "CreateReservationRequest",
     "CreateReturnItemRequest",
     "CreateReturnRequest",
     "CreateRevenueContractRequest",
@@ -514,6 +526,7 @@
     "CreateSubscriptionRequest",
     "CreateSupplierRequest",
     "CreateSupplierSkuRequest",
+    "CreateTaxExemptionRequest",
     "CreateTransferOrderItemRequest",
     "CreateTransferOrderRequest",
     "CreateUnitClassRequest",
@@ -550,6 +563,8 @@
     "ErrorDetail",
     "ExchangeRateListResponse",
     "ExchangeRateResponse",
+    "ExpireReservationsRequest",
+    "ExpireReservationsResponse",
     "FailIntentRequest",
     "FailMessageRequest",
     "FieldMappingListResponse",
@@ -677,7 +692,10 @@
     "RecordInspectionResultRequest",
     "RecordInvoicePaymentRequest",
     "RecordPaymentRequest",
+    "RejectReturnRequest",
     "ReleaseQualityHoldRequest",
+    "ReservationListResponse",
+    "ReservationResponse",
     "ReserveLotRequest",
     "ReserveSerialRequest",
     "ResolveResponse",
@@ -738,6 +756,10 @@
     "SupplierResponse",
     "SupplierSkuListResponse",
     "SupplierSkuResponse",
+    "SweepJobReport",
+    "SweepRunReport",
+    "TaxExemptionListResponse",
+    "TaxExemptionResponse",
     "TenantCacheResponse",
     "ThreeWayMatchLineResponse",
     "ThreeWayMatchResponse",
@@ -761,6 +783,7 @@
     "UpdatePriceLevelRequest",
     "UpdateProductRequest",
     "UpdatePurchaseOrderRequest",
+    "UpdateReturnRequest",
     "UpdateRevenueContractRequest",
     "UpdateSupplierRequest",
     "UpdateWarehouseRequest",
@@ -769,6 +792,7 @@
     "VendorCreditResponse",
     "VendorReturnListResponse",
     "VendorReturnResponse",
+    "VerifyTaxExemptionRequest",
     "VersionResponse",
     "WarehouseAddressBody",
     "WarehouseListResponse",
@@ -2356,6 +2380,69 @@
       "summary": "`POST /api/v1/inventory/:sku/adjust`"
     },
     {
+      "path": "/api/v1/inventory/{sku}/reservations",
+      "method": "POST",
+      "operationId": "create_reservation",
+      "tags": [
+        "inventory"
+      ],
+      "summary": "`POST /api/v1/inventory/:sku/reservations`"
+    },
+    {
+      "path": "/api/v1/inventory/reservations",
+      "method": "GET",
+      "operationId": "list_reservations",
+      "tags": [
+        "inventory"
+      ],
+      "summary": "`GET /api/v1/inventory/reservations?reference_type=order&reference_id=...`"
+    },
+    {
+      "path": "/api/v1/inventory/reservations/{reservation_id}",
+      "method": "GET",
+      "operationId": "get_reservation",
+      "tags": [
+        "inventory"
+      ],
+      "summary": "`GET /api/v1/inventory/reservations/:reservation_id`"
+    },
+    {
+      "path": "/api/v1/inventory/reservations/{reservation_id}/confirm",
+      "method": "POST",
+      "operationId": "confirm_reservation",
+      "tags": [
+        "inventory"
+      ],
+      "summary": "`POST /api/v1/inventory/reservations/:reservation_id/confirm`"
+    },
+    {
+      "path": "/api/v1/inventory/reservations/{reservation_id}/release",
+      "method": "POST",
+      "operationId": "release_reservation",
+      "tags": [
+        "inventory"
+      ],
+      "summary": "`POST /api/v1/inventory/reservations/:reservation_id/release`"
+    },
+    {
+      "path": "/api/v1/inventory/reservations/expire",
+      "method": "POST",
+      "operationId": "expire_reservations",
+      "tags": [
+        "inventory"
+      ],
+      "summary": "`POST /api/v1/inventory/reservations/expire`"
+    },
+    {
+      "path": "/api/v1/inventory/sweeps/run",
+      "method": "POST",
+      "operationId": "run_sweeps",
+      "tags": [
+        "inventory"
+      ],
+      "summary": "`POST /api/v1/inventory/sweeps/run`"
+    },
+    {
       "path": "/api/v1/invoices",
       "method": "GET",
       "operationId": "list_invoices",
@@ -3598,6 +3685,15 @@
       "summary": "`GET /api/v1/returns/:id`"
     },
     {
+      "path": "/api/v1/returns/{id}",
+      "method": "PATCH",
+      "operationId": "return_update",
+      "tags": [
+        "returns"
+      ],
+      "summary": "`PATCH /api/v1/returns/:id`"
+    },
+    {
       "path": "/api/v1/returns/{id}/approve",
       "method": "PATCH",
       "operationId": "approve_return",
@@ -3607,6 +3703,15 @@
       "summary": "`PATCH /api/v1/returns/:id/approve`"
     },
     {
+      "path": "/api/v1/returns/{id}/complete",
+      "method": "PATCH",
+      "operationId": "return_complete",
+      "tags": [
+        "returns"
+      ],
+      "summary": "`PATCH /api/v1/returns/:id/complete`"
+    },
+    {
       "path": "/api/v1/returns/{id}/items/{item_id}/disposition",
       "method": "POST",
       "operationId": "return_item_set_disposition",
@@ -3614,6 +3719,15 @@
         "returns"
       ],
       "summary": "`POST /api/v1/returns/:id/items/:item_id/disposition`"
+    },
+    {
+      "path": "/api/v1/returns/{id}/reject",
+      "method": "PATCH",
+      "operationId": "return_reject",
+      "tags": [
+        "returns"
+      ],
+      "summary": "`PATCH /api/v1/returns/:id/reject`"
     },
     {
       "path": "/api/v1/revenue-contracts",
@@ -4143,6 +4257,42 @@
       "operationId": "purchase_orders_update_supplier",
       "tags": [
         "purchase_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/tax/exemptions",
+      "method": "GET",
+      "operationId": "list_exemptions",
+      "tags": [
+        "tax"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/tax/exemptions",
+      "method": "POST",
+      "operationId": "create_exemption",
+      "tags": [
+        "tax"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/tax/exemptions/{id}",
+      "method": "GET",
+      "operationId": "get_exemption",
+      "tags": [
+        "tax"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/tax/exemptions/{id}/verify",
+      "method": "POST",
+      "operationId": "verify_exemption",
+      "tags": [
+        "tax"
       ],
       "summary": ""
     },

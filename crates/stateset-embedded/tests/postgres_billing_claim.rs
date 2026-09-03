@@ -199,10 +199,14 @@ async fn postgres_concurrent_claims_are_disjoint_and_bill_each_subscription_once
                 )
                 .await
                 .expect("mark paid");
+                // Settling the cycle already released the lease, so an
+                // explicit release is a no-op that reports it was not held.
                 assert!(
-                    subs.release_billing_claim(sub.id.into_uuid(), &worker_id)
+                    !subs
+                        .release_billing_claim(sub.id.into_uuid(), &worker_id)
                         .await
-                        .expect("release")
+                        .expect("release"),
+                    "paying the cycle should have released the lease already"
                 );
                 billed.push(sub.id);
             }

@@ -16,19 +16,19 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | OpenAPI version | `3.1.0` |
 | API title | StateSet Commerce API |
 | API version | `1.0.4` |
-| Paths | 340 |
-| Operations | 457 |
-| Schemas | 441 |
-| Tags | 62 |
+| Paths | 352 |
+| Operations | 471 |
+| Schemas | 455 |
+| Tags | 64 |
 
 ## Method Counts
 
 | Method | Operations |
 | --- | --- |
 | DELETE | 25 |
-| GET | 184 |
-| PATCH | 10 |
-| POST | 225 |
+| GET | 188 |
+| PATCH | 13 |
+| POST | 232 |
 | PUT | 13 |
 
 ## Tag Counts
@@ -56,7 +56,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `inbound_shipments` | 7 | Inbound shipment receiving |
 | `integration_field_mappings` | 8 | Integration field-level mappings |
 | `integration_mappings` | 7 | External integration record mappings |
-| `inventory` | 3 | Stock and inventory management |
+| `inventory` | 10 | Stock and inventory management |
 | `invoices` | 5 | Invoice management |
 | `kernel` | 2 | Kernel receipt audit chain verification and checkpoints |
 | `lots` | 10 | Lot/batch tracking: creation, consumption, reservations, quarantine, and expiry queries |
@@ -77,7 +77,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `quality` | 15 | Quality control: inspections, non-conformance reports, and quality holds |
 | `receiving` | 12 | Inbound receiving: goods receipts, item receipt, and put-away tasks |
 | `reports` | 5 | Computed business reports |
-| `returns` | 5 | Return request processing |
+| `returns` | 8 | Return request processing |
 | `revenue_recognition` | 8 | Revenue contracts, performance obligations, and recognition schedules (ASC 606) |
 | `reviews` | 4 | Product review management |
 | `segments` | 6 | Customer segment management |
@@ -88,6 +88,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `store_credits` | 5 | Store credit management |
 | `subscriptions` | 6 | Recurring subscription management |
 | `supplier_skus` | 4 | Supplier SKU catalog |
+| `tax` | 4 | Tax exemption certificates: create, list, and verify (only verified certificates reduce tax) |
 | `topology_snapshots` | 5 | Network topology snapshots |
 | `transfer_orders` | 6 | Inter-warehouse transfer orders |
 | `units_of_measure` | 6 | Unit of measure definitions |
@@ -97,6 +98,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `warranties` | 3 | Product warranty management |
 | `wishlists` | 6 | Customer wishlist management |
 | `work_orders` | 13 | Manufacturing work order lifecycle and shop-floor tasks |
+| `x402` | 9 | x402 stablecoin payment intents: create, sign, settle, and the one-claim-per-cart guard |
 
 ## Operations
 
@@ -276,6 +278,13 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `GET` | `/api/v1/inventory` | `inventory` | `list_inventory` | `GET /api/v1/inventory` |
 | `GET` | `/api/v1/inventory/{sku}` | `inventory` | `get_stock` | `GET /api/v1/inventory/:sku` |
 | `POST` | `/api/v1/inventory/{sku}/adjust` | `inventory` | `adjust_stock` | `POST /api/v1/inventory/:sku/adjust` |
+| `POST` | `/api/v1/inventory/{sku}/reservations` | `inventory` | `create_reservation` | `POST /api/v1/inventory/:sku/reservations` |
+| `GET` | `/api/v1/inventory/reservations` | `inventory` | `list_reservations` | `GET /api/v1/inventory/reservations?reference_type=order&reference_id=...` |
+| `GET` | `/api/v1/inventory/reservations/{reservation_id}` | `inventory` | `get_reservation` | `GET /api/v1/inventory/reservations/:reservation_id` |
+| `POST` | `/api/v1/inventory/reservations/{reservation_id}/confirm` | `inventory` | `confirm_reservation` | `POST /api/v1/inventory/reservations/:reservation_id/confirm` |
+| `POST` | `/api/v1/inventory/reservations/{reservation_id}/release` | `inventory` | `release_reservation` | `POST /api/v1/inventory/reservations/:reservation_id/release` |
+| `POST` | `/api/v1/inventory/reservations/expire` | `inventory` | `expire_reservations` | `POST /api/v1/inventory/reservations/expire` |
+| `POST` | `/api/v1/inventory/sweeps/run` | `inventory` | `run_sweeps` | `POST /api/v1/inventory/sweeps/run` |
 | `GET` | `/api/v1/invoices` | `invoices` | `list_invoices` | `GET /api/v1/invoices` |
 | `POST` | `/api/v1/invoices` | `invoices` | `create_invoice` | `POST /api/v1/invoices` |
 | `GET` | `/api/v1/invoices/{id}` | `invoices` | `get_invoice` | `GET /api/v1/invoices/:id` |
@@ -414,8 +423,11 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `GET` | `/api/v1/returns` | `returns` | `list_returns` | `GET /api/v1/returns` |
 | `POST` | `/api/v1/returns` | `returns` | `create_return` | `POST /api/v1/returns` |
 | `GET` | `/api/v1/returns/{id}` | `returns` | `get_return` | `GET /api/v1/returns/:id` |
+| `PATCH` | `/api/v1/returns/{id}` | `returns` | `return_update` | `PATCH /api/v1/returns/:id` |
 | `PATCH` | `/api/v1/returns/{id}/approve` | `returns` | `approve_return` | `PATCH /api/v1/returns/:id/approve` |
+| `PATCH` | `/api/v1/returns/{id}/complete` | `returns` | `return_complete` | `PATCH /api/v1/returns/:id/complete` |
 | `POST` | `/api/v1/returns/{id}/items/{item_id}/disposition` | `returns` | `return_item_set_disposition` | `POST /api/v1/returns/:id/items/:item_id/disposition` |
+| `PATCH` | `/api/v1/returns/{id}/reject` | `returns` | `return_reject` | `PATCH /api/v1/returns/:id/reject` |
 | `GET` | `/api/v1/revenue-contracts` | `revenue_recognition` | `revenue_recognition_list_contracts` | — |
 | `POST` | `/api/v1/revenue-contracts` | `revenue_recognition` | `revenue_recognition_create_contract` | — |
 | `GET` | `/api/v1/revenue-contracts/{id}` | `revenue_recognition` | `revenue_recognition_get_contract` | — |
@@ -477,6 +489,10 @@ expired credits, and insufficient balance. |
 | `DELETE` | `/api/v1/suppliers/{id}` | `purchase_orders` | `purchase_orders_delete_supplier` | — |
 | `GET` | `/api/v1/suppliers/{id}` | `purchase_orders` | `purchase_orders_get_supplier` | — |
 | `PUT` | `/api/v1/suppliers/{id}` | `purchase_orders` | `purchase_orders_update_supplier` | — |
+| `GET` | `/api/v1/tax/exemptions` | `tax` | `list_exemptions` | — |
+| `POST` | `/api/v1/tax/exemptions` | `tax` | `create_exemption` | — |
+| `GET` | `/api/v1/tax/exemptions/{id}` | `tax` | `get_exemption` | — |
+| `POST` | `/api/v1/tax/exemptions/{id}/verify` | `tax` | `verify_exemption` | — |
 | `GET` | `/api/v1/topology-snapshots` | `topology_snapshots` | `topology_snapshots_list` | — |
 | `POST` | `/api/v1/topology-snapshots` | `topology_snapshots` | `topology_snapshots_capture` | — |
 | `DELETE` | `/api/v1/topology-snapshots/{id}` | `topology_snapshots` | `topology_snapshots_delete_one` | — |

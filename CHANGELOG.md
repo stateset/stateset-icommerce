@@ -6,6 +6,8 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.29.0] - 2026-09-03
+
 Fourth and fifth engine rounds. The tax engine is one pure computation
 shared by both backends; carts price against the catalog and re-derive every
 coupon type; orders and payments agree on money at cancel and delete; lots
