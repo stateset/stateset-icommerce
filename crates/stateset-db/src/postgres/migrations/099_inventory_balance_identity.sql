@@ -10,7 +10,7 @@
 -- LEGACY-SAFE: the CHECK is added NOT VALID, so the ALTER never inspects
 -- existing rows and a deployment whose balances already drifted still
 -- migrates — but every new write is validated from now on. It is then
--- VALIDATEd only when no violating row exists, so a clean database ends up
+-- validated only when no violating row exists, so a clean database ends up
 -- with a fully validated constraint and a drifted one keeps the NOT VALID
 -- guard until the rows are repaired (the engine's clamp paths now repair
 -- them instead of only logging the drift; re-running this migration after a

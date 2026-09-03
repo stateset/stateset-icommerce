@@ -963,7 +963,7 @@ impl SqliteReturnRepository {
     ///
     /// Guarded by [`Return::check_deletable`]: only a `requested` or `approved`
     /// return with no dispositioned item may be deleted. The guard and the
-    /// DELETEs share the `IMMEDIATE` write transaction, so a disposition or a
+    /// Both deletes share the `IMMEDIATE` write transaction, so a disposition or a
     /// status change landing between them cannot be deleted out from under.
     fn delete(&self, id: Uuid) -> Result<()> {
         let mut conn = self.conn()?;

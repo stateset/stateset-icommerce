@@ -2538,7 +2538,7 @@ pub(crate) fn ensure_cart_coupon_consumable_with_conn(
     }
 
     // The total limits consumption advances under, checked the way the guarded
-    // UPDATEs check them (`usage_count < limit`).
+    // The guarded updates check them (`usage_count < limit`).
     let promotion: Option<(Option<i64>, i64)> = conn
         .query_row(
             "SELECT total_usage_limit, usage_count FROM promotions WHERE id = ?",

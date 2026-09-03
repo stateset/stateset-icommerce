@@ -17,7 +17,7 @@
 -- that already drifted still migrates, still loads, and can still be
 -- repaired in place (the engine's clamp paths now rewrite such rows instead
 -- of only logging them) — while every write that starts from a clean row is
--- held to the identity. INSERTs are always held to it: a brand-new balance
+-- held to the identity. Every insert is always held to it: a brand-new balance
 -- has no legacy to protect.
 --
 -- The columns are TEXT decimals, so the comparison casts to REAL and allows
