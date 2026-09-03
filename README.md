@@ -151,7 +151,7 @@ autonomous agents actually need to transact safely:
   hops between agent and runtime.
 
 Most of the differentiators above are *not* "coming soon" — they're shipping in
-v1.0.x. See [`AGENTIC_COMMERCE.md`](./AGENTIC_COMMERCE.md) for the full A2A
+v1.29.x. See [`AGENTIC_COMMERCE.md`](./AGENTIC_COMMERCE.md) for the full A2A
 case study and [`TRUST_FOUNDATION.md`](./TRUST_FOUNDATION.md) for the security
 and verification architecture (including the explicit gap inventory: PQC hard
 finality and SOC 2 are honest "in progress" items, not aspirational claims).
@@ -762,6 +762,7 @@ admin | cli
 
 - `cli/` is a large Node 20.20+ runtime with the MCP server, tool registry, sync/x402 logic, agent routing, messaging channels, and scaffolding flows.
 - `admin/` is a Next.js surface that depends on the local Node binding package and loads `@stateset/embedded` at runtime.
+- `stateset-http` runs the engine's background sweeps on a `stateset-jobs` scheduler: expired inventory reservations and backorder allocations, and expired lots and serial reservations. They start with the server unless `ServerBuilder::without_background_sweeps()` is set, and an operator can run them on demand with `POST /api/v1/inventory/sweeps/run`.
 - The root `npm run check` pipeline validates release hygiene, Rust fmt/tests/lints/feature-matrix checks, shell scripts, the Node binding, the admin app, and the CLI.
 - `npm run check:release` is the authoritative local release preflight; it extends `npm run check` with doc-tool validation and generated inventory checks before a tag is cut.
 
@@ -1388,6 +1389,8 @@ Operational notes:
 - Payments are recorded as ledger events; integrate a PCI-compliant PSP for capture and store tokens/last4 only.
 - Sync is event-ordered and can surface conflicts; for order/payment state use a single writer or a sequenced event log.
 - Treat external processor IDs and webhook IDs as idempotency keys and de-dupe on ingest to avoid double charges/refunds.
+- Leave the background sweeps enabled. Reservations and lot holds also expire lazily when traffic touches the same SKU, but a SKU that goes quiet keeps its stock allocated until a sweep reclaims it. Multi-tenant deployments that resolve a database per tenant are not swept in the background — schedule `POST /api/v1/inventory/sweeps/run` per tenant instead.
+- Publish a product before selling it. Products are created as drafts, and cart and order lines are checked against the catalogue, so a draft or archived SKU is refused. SKUs absent from the catalogue are treated as ad-hoc lines and keep the price the caller supplies.
 
 ---
 
@@ -1440,7 +1443,7 @@ tool access are generated from code in the
 
 ## Key Features
 
-A capability matrix — what ships in v1.0.x, with depth links. The agentic
+A capability matrix — what ships in v1.29.x, with depth links. The agentic
 primitives that distinguish iCommerce from a generic commerce engine
 ([A2A](./AGENTIC_COMMERCE.md), [x402](./docs/src/payments/x402.md),
 [VES v1.0](./docs/PQC_INITIAL_SPEC.md), [Policy DSL](./crates/stateset-policy/),
