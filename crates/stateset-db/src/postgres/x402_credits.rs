@@ -266,13 +266,32 @@ impl PgX402CreditRepository {
 
         let now = Utc::now();
 
-        sqlx::query("UPDATE x402_credit_accounts SET balance = $1, updated_at = $2 WHERE id = $3")
-            .bind(new_balance)
-            .bind(now)
-            .bind(account.id)
-            .execute(&mut *tx)
-            .await
-            .map_err(map_db_error)?;
+        // The row is locked `FOR UPDATE` above; the predicate additionally
+        // makes the write conditional on the exact balance it was computed
+        // from (and, for a debit, on the row still covering the amount) so a
+        // balance can never go negative even for a writer that skips the lock.
+        let min_balance = match input.direction {
+            X402CreditDirection::Debit => amount_i64,
+            _ => 0i64,
+        };
+        let affected = sqlx::query(
+            "UPDATE x402_credit_accounts SET balance = $1, updated_at = $2
+             WHERE id = $3 AND balance = $4 AND balance >= $5",
+        )
+        .bind(new_balance)
+        .bind(now)
+        .bind(account.id)
+        .bind(account.balance)
+        .bind(min_balance)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if affected != 1 {
+            return Err(CommerceError::Conflict(
+                "x402 credit balance changed concurrently; retry the adjustment".to_string(),
+            ));
+        }
 
         let tx_id = Uuid::new_v4();
         let direction_str = input.direction.to_string();

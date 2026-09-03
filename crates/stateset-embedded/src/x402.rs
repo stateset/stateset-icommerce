@@ -83,8 +83,51 @@ const fn asset_fiat_currency(asset: X402Asset) -> Option<stateset_core::Currency
     }
 }
 
+/// Statuses under which an intent still claims (or has already collected)
+/// the cart/order it is linked to. A second intent in one of these states
+/// for the same cart/order would be a double charge.
+pub(crate) const CLAIMING_STATUSES: [X402IntentStatus; 5] = [
+    X402IntentStatus::Created,
+    X402IntentStatus::Signed,
+    X402IntentStatus::Sequenced,
+    X402IntentStatus::Batched,
+    X402IntentStatus::Settled,
+];
+
+/// Refuse a new cart/order-linked intent while one of `existing` still
+/// claims (or has settled) the same source. The error names the existing
+/// intent so a caller can reuse or cancel it (idempotent-style).
+pub(crate) fn refuse_duplicate_claim(
+    source: &str,
+    source_id: Uuid,
+    existing: &[X402PaymentIntent],
+) -> Result<()> {
+    use stateset_core::CommerceError;
+    if let Some(open) = existing.iter().find(|i| CLAIMING_STATUSES.contains(&i.status)) {
+        let verb = if open.status == X402IntentStatus::Settled {
+            "was already paid by"
+        } else {
+            "already has an open"
+        };
+        return Err(CommerceError::Conflict(format!(
+            "{source} {source_id} {verb} x402 intent {} ({}); reuse or cancel it instead of creating another",
+            open.id, open.status
+        )));
+    }
+    Ok(())
+}
+
 /// Check that `input.amount` (in the asset's smallest unit) equals `expected`
 /// in `currency`, the amount the referenced cart/order actually charges.
+///
+/// Reconciliation contract for cart/order-linked intents:
+/// * the intent must be for **exactly** the cart `grand_total` / order
+///   `total_amount` — no partial or over-payments;
+/// * only USD-pegged stablecoins (`USDC`, `USDT`, `DAI`, `ssUSD`, `wssUSD`)
+///   can be reconciled, and only against a source priced in `USD`. A cart or
+///   order in any other currency, or a volatile asset such as ETH, is refused
+///   with a [`CommerceError::ValidationError`](stateset_core::CommerceError)
+///   naming both currencies.
 pub(crate) fn reconcile_intent_amount(
     input: &CreateX402PaymentIntent,
     source: &str,
@@ -141,6 +184,20 @@ impl X402 {
     /// Creates an unsigned payment intent that must be signed by the payer
     /// before it can be submitted for settlement.
     ///
+    /// # Cart / order reconciliation
+    ///
+    /// An intent carrying `cart_id` / `order_id` is checked against the
+    /// referenced cart or order before it exists:
+    /// * the amount must equal the cart `grand_total` / order `total_amount`
+    ///   **exactly** (no partial or over-payments);
+    /// * the asset must be a USD-pegged stablecoin and the cart/order must be
+    ///   priced in `USD` — any other currency pairing is refused with a
+    ///   `ValidationError` naming both currencies;
+    /// * at most one intent may claim a cart/order at a time: if an intent in
+    ///   `Created`/`Signed`/`Sequenced`/`Batched` status is still open, or a
+    ///   `Settled` intent already paid it, the call fails with a `Conflict`
+    ///   naming that intent so the caller can reuse or cancel it.
+    ///
     /// # Example
     ///
     /// ```rust,ignore
@@ -172,6 +229,7 @@ impl X402 {
                 ))
             })?;
             reconcile_intent_amount(input, "cart", cart_id, cart.grand_total, cart.currency)?;
+            refuse_duplicate_claim("cart", cart_id, &self.intents_for_cart(cart_id)?)?;
         }
         if let Some(order_id) = input.order_id {
             let order = self.db.orders().get(order_id.into())?.ok_or_else(|| {
@@ -180,6 +238,7 @@ impl X402 {
                 ))
             })?;
             reconcile_intent_amount(input, "order", order_id, order.total_amount, order.currency)?;
+            refuse_duplicate_claim("order", order_id, &self.intents_for_order(order_id)?)?;
         }
         Ok(())
     }
@@ -246,6 +305,21 @@ impl X402 {
         block_number: u64,
     ) -> Result<X402PaymentIntent> {
         self.db.x402_payment_intents().mark_settled(id, tx_hash, block_number)
+    }
+
+    /// Mark a sequenced intent as included in a published batch commitment
+    ///
+    /// Records the batch merkle root and this intent's inclusion proof and
+    /// moves the intent `Sequenced -> Batched`. Batched intents are exempt
+    /// from the validity sweeper: their outcome is decided by the batch's
+    /// on-chain result (`mark_settled` / `mark_failed`).
+    pub fn mark_batched(
+        &self,
+        id: Uuid,
+        batch_merkle_root: &str,
+        inclusion_proof: Vec<String>,
+    ) -> Result<X402PaymentIntent> {
+        self.db.x402_payment_intents().mark_batched(id, batch_merkle_root, inclusion_proof)
     }
 
     /// Mark an intent as failed
@@ -505,6 +579,108 @@ impl X402 {
     }
 
     // ========================================================================
+    // A2A Credit Terms (durable net-30/60/90 lines between agents)
+    // ========================================================================
+
+    /// Open a tenant-scoped credit line between two agents.
+    pub fn create_credit_terms(
+        &self,
+        input: stateset_core::CreateA2ACreditTerms,
+    ) -> Result<stateset_core::A2ACreditTerms> {
+        self.db.a2a_credit_terms().create_terms(input)
+    }
+
+    /// Fetch a credit line by id within a tenant.
+    pub fn get_credit_terms(
+        &self,
+        tenant_id: &str,
+        id: Uuid,
+    ) -> Result<Option<stateset_core::A2ACreditTerms>> {
+        self.db.a2a_credit_terms().get_terms(tenant_id, id)
+    }
+
+    /// List credit lines within a tenant.
+    pub fn list_credit_terms(
+        &self,
+        filter: stateset_core::A2ACreditTermsFilter,
+    ) -> Result<Vec<stateset_core::A2ACreditTerms>> {
+        self.db.a2a_credit_terms().list_terms(filter)
+    }
+
+    /// Draw on a credit line (atomic; refused past the available credit).
+    pub fn charge_credit_terms(
+        &self,
+        input: stateset_core::A2ACreditMovement,
+    ) -> Result<(stateset_core::A2ACreditTerms, stateset_core::A2ACreditEntry)> {
+        self.db.a2a_credit_terms().charge(input)
+    }
+
+    /// Pay down a credit line.
+    pub fn record_credit_terms_payment(
+        &self,
+        input: stateset_core::A2ACreditMovement,
+    ) -> Result<(stateset_core::A2ACreditTerms, stateset_core::A2ACreditEntry)> {
+        self.db.a2a_credit_terms().record_payment(input)
+    }
+
+    /// Journal entries for a credit line, oldest first.
+    pub fn list_credit_terms_entries(
+        &self,
+        tenant_id: &str,
+        terms_id: Uuid,
+    ) -> Result<Vec<stateset_core::A2ACreditEntry>> {
+        self.db.a2a_credit_terms().list_entries(tenant_id, terms_id)
+    }
+
+    // ========================================================================
+    // A2A Agent Messaging (durable conversations)
+    // ========================================================================
+
+    /// Persist a message, allocating its sequence number in the conversation.
+    pub fn send_agent_message(
+        &self,
+        input: stateset_core::SendA2AAgentMessage,
+    ) -> Result<stateset_core::A2AAgentMessage> {
+        self.db.a2a_messages().send_message(input)
+    }
+
+    /// Fetch a message by id within a tenant.
+    pub fn get_agent_message(
+        &self,
+        tenant_id: &str,
+        id: Uuid,
+    ) -> Result<Option<stateset_core::A2AAgentMessage>> {
+        self.db.a2a_messages().get_message(tenant_id, id)
+    }
+
+    /// List messages within a tenant.
+    pub fn list_agent_messages(
+        &self,
+        filter: stateset_core::A2AAgentMessageFilter,
+    ) -> Result<Vec<stateset_core::A2AAgentMessage>> {
+        self.db.a2a_messages().list_messages(filter)
+    }
+
+    /// Acknowledge a pending/delivered message.
+    pub fn acknowledge_agent_message(
+        &self,
+        tenant_id: &str,
+        id: Uuid,
+    ) -> Result<stateset_core::A2AAgentMessage> {
+        self.db.a2a_messages().acknowledge_message(tenant_id, id)
+    }
+
+    /// Record a delivery failure for a message.
+    pub fn fail_agent_message(
+        &self,
+        tenant_id: &str,
+        id: Uuid,
+        error: &str,
+    ) -> Result<stateset_core::A2AAgentMessage> {
+        self.db.a2a_messages().fail_message(tenant_id, id, error)
+    }
+
+    // ========================================================================
     // Agent Card Operations
     // ========================================================================
 
@@ -670,15 +846,7 @@ impl X402 {
     /// Returns the most recent non-failed, non-expired intent for the cart.
     pub fn active_intent_for_cart(&self, cart_id: Uuid) -> Result<Option<X402PaymentIntent>> {
         let intents = self.intents_for_cart(cart_id)?;
-        Ok(intents.into_iter().find(|i| {
-            matches!(
-                i.status,
-                X402IntentStatus::Created
-                    | X402IntentStatus::Signed
-                    | X402IntentStatus::Sequenced
-                    | X402IntentStatus::Settled
-            )
-        }))
+        Ok(intents.into_iter().find(|i| CLAIMING_STATUSES.contains(&i.status)))
     }
 
     /// Check if an intent is ready for settlement
@@ -719,6 +887,27 @@ mod tests {
 
     fn setup_commerce() -> crate::Commerce {
         crate::Commerce::in_memory().unwrap()
+    }
+
+    /// Drive an intent through the real `sign` + `mark_sequenced` path.
+    fn advance_to_sequenced(commerce: &crate::Commerce, id: Uuid) -> X402PaymentIntent {
+        let mut locally_signed = commerce.x402().get_intent(id).unwrap().unwrap();
+        sign_locally_with_hybrid(&mut locally_signed);
+        commerce
+            .x402()
+            .sign_intent(
+                id,
+                SignX402PaymentIntent {
+                    intent_id: id,
+                    signature_scheme: None,
+                    signature: locally_signed.payer_signature.clone().unwrap(),
+                    public_key: locally_signed.payer_public_key.clone().unwrap(),
+                    signature_bundle: locally_signed.payer_signature_bundle.clone(),
+                    public_key_bundle: locally_signed.payer_public_key_bundle.clone(),
+                },
+            )
+            .unwrap();
+        commerce.x402().mark_sequenced(id, 1, Uuid::new_v4()).unwrap()
     }
 
     fn sign_locally_with_hybrid(intent: &mut X402PaymentIntent) {
@@ -1186,6 +1375,187 @@ mod tests {
             })
             .expect_err("ETH has no fiat peg");
         assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "{err:?}");
+    }
+
+    #[test]
+    fn test_cart_payment_refuses_non_usd_cart_with_clear_message() {
+        use stateset_core::{AddCartItem, CreateCart};
+        let commerce = setup_commerce();
+        let cart = commerce
+            .carts()
+            .create(CreateCart {
+                currency: Some(CurrencyCode::EUR),
+                items: Some(vec![AddCartItem {
+                    sku: "SKU-EUR".to_string(),
+                    name: "euro item".to_string(),
+                    quantity: 1,
+                    unit_price: rust_decimal_macros::dec!(12.50),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .unwrap();
+        let cart_id: Uuid = cart.id.into();
+
+        let err = commerce
+            .x402()
+            .create_cart_payment(
+                cart_id,
+                "0xPayerCart",
+                "0xPayeeCart",
+                rust_decimal_macros::dec!(12.50),
+                X402Network::SetChain,
+                X402Asset::Usdc,
+            )
+            .expect_err("a USD stablecoin cannot pay a EUR cart");
+        match err {
+            stateset_core::CommerceError::ValidationError(message) => {
+                assert!(message.contains("USD"), "{message}");
+                assert!(message.contains("EUR"), "{message}");
+                assert!(message.contains(&cart_id.to_string()), "{message}");
+            }
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
+        assert!(commerce.x402().intents_for_cart(cart_id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_second_intent_for_same_cart_is_refused_while_first_is_open_or_settled() {
+        let commerce = setup_commerce();
+        let cart_id = cart_with_total(&commerce, rust_decimal_macros::dec!(12.50));
+        let pay = || {
+            commerce.x402().create_cart_payment(
+                cart_id,
+                "0xPayerCart",
+                "0xPayeeCart",
+                rust_decimal_macros::dec!(12.50),
+                X402Network::SetChain,
+                X402Asset::Usdc,
+            )
+        };
+        let first = pay().expect("first intent");
+
+        // Open (Created) intent blocks a second full-amount intent and names it.
+        let err = pay().expect_err("double-pay must be refused");
+        match &err {
+            stateset_core::CommerceError::Conflict(message) => {
+                assert!(message.contains(&first.id.to_string()), "{message}");
+                assert!(message.contains("created"), "{message}");
+            }
+            other => panic!("expected Conflict, got {other:?}"),
+        }
+        assert_eq!(commerce.x402().intents_for_cart(cart_id).unwrap().len(), 1);
+
+        // Cancelling the first frees the cart for a new intent.
+        commerce.x402().cancel_intent(first.id).expect("cancel");
+        let second = pay().expect("cart is free again after cancel");
+        assert_ne!(second.id, first.id);
+
+        // A settled intent blocks forever (the cart has been paid).
+        advance_to_sequenced(&commerce, second.id);
+        commerce.x402().mark_settled(second.id, "0xtx-double-pay", 1).expect("settle");
+        let err = pay().expect_err("paid cart must not accept another intent");
+        match &err {
+            stateset_core::CommerceError::Conflict(message) => {
+                assert!(message.contains(&second.id.to_string()), "{message}");
+                assert!(message.contains("already paid"), "{message}");
+            }
+            other => panic!("expected Conflict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_second_intent_for_same_order_is_refused() {
+        use stateset_core::{CreateCustomer, CreateOrder, CreateOrderItem, ProductId};
+        let commerce = setup_commerce();
+        let customer = commerce
+            .customers()
+            .create(CreateCustomer {
+                email: "x402-double@example.com".into(),
+                first_name: "X".into(),
+                last_name: "Payer".into(),
+                ..Default::default()
+            })
+            .expect("customer");
+        let order = commerce
+            .orders()
+            .create(CreateOrder {
+                customer_id: customer.id,
+                currency: Some(CurrencyCode::USD),
+                items: vec![CreateOrderItem {
+                    product_id: ProductId::new(),
+                    sku: "SKU-ORD".to_string(),
+                    name: "order item".to_string(),
+                    quantity: 1,
+                    unit_price: rust_decimal_macros::dec!(20.00),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+        let make = || CreateX402PaymentIntent {
+            payer_address: "0xPayerOrder".into(),
+            payee_address: "0xPayeeOrder".into(),
+            amount: 20_000_000,
+            asset: X402Asset::Usdc,
+            network: X402Network::SetChain,
+            order_id: Some(order.id.into()),
+            ..Default::default()
+        };
+        let first = commerce.x402().create_intent(make()).expect("first");
+        let err = commerce.x402().create_intent(make()).expect_err("second refused");
+        match err {
+            stateset_core::CommerceError::Conflict(message) => {
+                assert!(message.contains(&first.id.to_string()), "{message}");
+            }
+            other => panic!("expected Conflict, got {other:?}"),
+        }
+        assert_eq!(commerce.x402().intents_for_order(order.id.into()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_mark_batched_transitions_sequenced_intent_and_settles_from_batched() {
+        let commerce = setup_commerce();
+        let intent = commerce
+            .x402()
+            .create_intent(CreateX402PaymentIntent {
+                payer_address: "0xPayerBatch".into(),
+                payee_address: "0xPayeeBatch".into(),
+                amount: 1_000_000,
+                asset: X402Asset::Usdc,
+                network: X402Network::SetChain,
+                ..Default::default()
+            })
+            .unwrap();
+
+        // Only Sequenced intents can be batched.
+        let err = commerce
+            .x402()
+            .mark_batched(intent.id, "0xroot", vec!["0xa".into()])
+            .expect_err("created intent cannot be batched");
+        assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "{err:?}");
+
+        advance_to_sequenced(&commerce, intent.id);
+        let err = commerce
+            .x402()
+            .mark_batched(intent.id, "  ", vec![])
+            .expect_err("merkle root required");
+        assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "{err:?}");
+
+        let batched = commerce
+            .x402()
+            .mark_batched(intent.id, "0xroot", vec!["0xa".into(), "0xb".into()])
+            .expect("batch");
+        assert_eq!(batched.status, X402IntentStatus::Batched);
+        assert_eq!(batched.batch_merkle_root.as_deref(), Some("0xroot"));
+        assert_eq!(batched.inclusion_proof, Some(vec!["0xa".to_string(), "0xb".to_string()]));
+
+        // Batching twice is refused; settlement from Batched succeeds.
+        let err =
+            commerce.x402().mark_batched(intent.id, "0xroot", vec![]).expect_err("already batched");
+        assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "{err:?}");
+        let settled = commerce.x402().mark_settled(intent.id, "0xtx-batched", 7).expect("settle");
+        assert_eq!(settled.status, X402IntentStatus::Settled);
     }
 
     #[test]

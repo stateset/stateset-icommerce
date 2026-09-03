@@ -823,6 +823,49 @@ impl PgKernelExecutor {
             return Ok(receipt);
         }
 
+        // A payment held by an A2A escrow under an open dispute cannot be
+        // refunded directly: the funds are frozen until the dispute is
+        // resolved (`a2a.dispute.resolve`), which settles the escrow itself.
+        let open_dispute: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT e.id,
+                    COALESCE(e.dispute_id, (
+                        SELECT d.id FROM a2a_disputes d
+                        WHERE d.escrow_id = e.id
+                          AND d.status IN ('filed', 'evidence_period', 'under_review', 'escalated')
+                        LIMIT 1
+                    ))
+             FROM a2a_escrows e
+             WHERE e.payment_id = $1
+               AND (
+                    e.status = 'disputed'
+                    OR EXISTS (
+                        SELECT 1 FROM a2a_disputes d
+                        WHERE d.escrow_id = e.id
+                          AND d.status IN ('filed', 'evidence_period', 'under_review', 'escalated')
+                    )
+               )
+             LIMIT 1",
+        )
+        .bind(payment_id.to_string())
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+        if let Some((escrow_id, dispute_id)) = open_dispute {
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy),
+                "commerce.refund.escrow_disputed",
+                &format!(
+                    "payment is held by escrow {escrow_id} under open dispute {}; resolve the dispute instead of refunding directly",
+                    dispute_id.as_deref().unwrap_or("(unfiled)")
+                ),
+                "refund",
+            );
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+            return Ok(receipt);
+        }
+
         let in_flight: rust_decimal::Decimal = sqlx::query_scalar(
             "SELECT COALESCE(SUM(amount), 0) FROM refunds
              WHERE payment_id = $1 AND status IN ($2, $3)",

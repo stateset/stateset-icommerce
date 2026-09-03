@@ -179,6 +179,14 @@ pub trait LotRepository: Send + Sync {
     /// regardless of whether this sweeper has run.
     fn expire_lots(&self, now: chrono::DateTime<chrono::Utc>) -> Result<u64>;
 
+    /// Sweep lot reservations that expired before `now` without being
+    /// confirmed or released: close each one and hand its units back to the
+    /// lot (and to the linked inventory balance). Returns the number of
+    /// reservations released. Idempotent; `reserve` and `confirm_reservation`
+    /// also expire stale reservations lazily on the lot they touch, so the
+    /// sweeper only has to catch lots nobody is looking at.
+    fn release_expired_reservations(&self, now: chrono::DateTime<chrono::Utc>) -> Result<u64>;
+
     /// Get lots with available quantity for SKU
     fn get_available_lots_for_sku(&self, sku: &str) -> Result<Vec<Lot>>;
 
@@ -230,7 +238,14 @@ pub trait SerialRepository: Send + Sync {
     /// Reserve a serial
     fn reserve(&self, input: ReserveSerialNumber) -> Result<SerialReservation>;
 
-    /// Release reservation
+    /// Release a reservation, returning the serial to `Available`.
+    ///
+    /// Allowed while the reservation still holds the unit — i.e. the serial is
+    /// `Reserved` — **including after `confirm_reservation`**: confirmation is
+    /// a commitment on the row, not a movement of the unit, so an order
+    /// cancelled after confirmation but before `mark_shipped` / `mark_sold`
+    /// can still hand the serial back. Once the unit has shipped or sold the
+    /// reservation is consumed and release is refused with `Conflict`.
     fn release_reservation(&self, reservation_id: Uuid) -> Result<()>;
 
     /// Confirm reservation

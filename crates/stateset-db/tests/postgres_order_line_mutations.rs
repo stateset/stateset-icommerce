@@ -536,3 +536,176 @@ async fn postgres_create_validates_order_level_money() {
         .expect("zero total is allowed");
     assert_eq!(free.total_amount, Decimal::ZERO);
 }
+
+// ---------------------------------------------------------------------------
+// Round 4 mirrors: line-keyed reservations (migration 087), line-edit outbox
+// events, and the money guard on delete.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn postgres_remove_item_releases_only_its_own_reservation_when_lines_share_a_sku() {
+    let Some(ctx) = setup().await else { return };
+    let order = ctx
+        .db
+        .orders()
+        .create_async(CreateOrder {
+            customer_id: ctx.customer_id,
+            items: vec![line(&ctx.sku_a, 5, dec!(1.00)), line(&ctx.sku_a, 1, dec!(1.00))],
+            ..Default::default()
+        })
+        .await
+        .expect("create order");
+    let id = order.id.into_uuid();
+    let line_a = order.items.iter().find(|i| i.quantity == 5).expect("line A").id;
+    let line_b = order.items.iter().find(|i| i.quantity == 1).expect("line B").id;
+    assert_eq!(ctx.open_reserved_qty(id).await, dec!(6));
+    assert_eq!(ctx.available(&ctx.sku_a).await, dec!(4));
+
+    ctx.db.orders().remove_item_async(id, line_b.into_uuid()).await.expect("remove line B");
+
+    assert_eq!(ctx.open_reserved_qty(id).await, dec!(5), "line A's reservation must survive");
+    assert_eq!(ctx.available(&ctx.sku_a).await, dec!(5));
+    let after = ctx.get(id).await;
+    assert_eq!(after.items.len(), 1);
+    assert_eq!(after.items[0].id, line_a);
+
+    ctx.db.orders().remove_item_async(id, line_a.into_uuid()).await.expect("remove line A");
+    assert_eq!(ctx.open_reserved_qty(id).await, Decimal::ZERO);
+    assert_eq!(ctx.available(&ctx.sku_a).await, dec!(10));
+}
+
+#[tokio::test]
+async fn postgres_legacy_unkeyed_reservations_still_release_by_sku() {
+    let Some(ctx) = setup().await else { return };
+    let order = ctx.order_with_order_level_money().await;
+    let id = order.id.into_uuid();
+    sqlx::query("UPDATE inventory_reservations SET order_item_id = NULL WHERE reference_id = $1")
+        .bind(id.to_string())
+        .execute(ctx.db.pool())
+        .await
+        .expect("strip line keys");
+    assert_eq!(ctx.open_reserved_qty(id).await, dec!(2));
+
+    ctx.db
+        .orders()
+        .remove_item_async(id, order.items[0].id.into_uuid())
+        .await
+        .expect("remove legacy line");
+    assert_eq!(ctx.open_reserved_qty(id).await, Decimal::ZERO);
+    assert_eq!(ctx.available(&ctx.sku_a).await, dec!(10));
+}
+
+#[tokio::test]
+async fn postgres_line_edits_write_kernel_outbox_events_in_the_same_transaction() {
+    let Some(ctx) = setup().await else { return };
+    let order = ctx.order_with_order_level_money().await;
+    let id = order.id.into_uuid();
+    let added = ctx
+        .db
+        .orders()
+        .add_item_async(id, line(&ctx.sku_b, 3, dec!(2.00)))
+        .await
+        .expect("add item");
+    ctx.db.orders().remove_item_async(id, added.id.into_uuid()).await.expect("remove item");
+
+    let events = ctx.db.kernel_outbox().pending_async(1000).await.expect("pending");
+    let added_event = events
+        .iter()
+        .find(|e| e.event_type == "orders.item_added.v1" && e.aggregate_id == id.to_string())
+        .expect("orders.item_added.v1 event");
+    assert_eq!(added_event.aggregate_type, "order");
+    assert_eq!(added_event.payload["order_item_id"], added.id.to_string());
+    assert_eq!(added_event.payload["sku"], ctx.sku_b);
+    assert_eq!(added_event.payload["quantity"], 3);
+    assert_eq!(added_event.payload["total_amount"], "30.5000", "24.50 + 3 × 2.00");
+    let removed_event = events
+        .iter()
+        .find(|e| e.event_type == "orders.item_removed.v1" && e.aggregate_id == id.to_string())
+        .expect("orders.item_removed.v1 event");
+    assert_eq!(removed_event.payload["order_item_id"], added.id.to_string());
+    assert_eq!(removed_event.payload["total_amount"], "24.5000");
+
+    // A refused edit writes nothing.
+    assert!(ctx.db.orders().remove_item_async(id, Uuid::new_v4()).await.is_err());
+    let removed_count = ctx
+        .db
+        .kernel_outbox()
+        .pending_async(1000)
+        .await
+        .expect("pending")
+        .iter()
+        .filter(|e| e.event_type == "orders.item_removed.v1" && e.aggregate_id == id.to_string())
+        .count();
+    assert_eq!(removed_count, 1);
+}
+
+#[tokio::test]
+async fn postgres_delete_refuses_an_order_whose_payment_status_holds_money() {
+    let Some(ctx) = setup().await else { return };
+    let order = ctx.order_with_order_level_money().await;
+    let id = order.id.into_uuid();
+    ctx.db
+        .orders()
+        .update_async(
+            id,
+            UpdateOrder {
+                payment_status: Some(stateset_core::PaymentStatus::Paid),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("mark paid");
+
+    let err = ctx.db.orders().delete_async(id).await.expect_err("paid orders are records");
+    assert!(matches!(err, CommerceError::Conflict(ref m) if m.contains("paid")), "{err:?}");
+    assert!(ctx.db.orders().get_async(id).await.unwrap().is_some());
+    assert_eq!(ctx.open_reserved_qty(id).await, dec!(2), "nothing released on a refused delete");
+
+    ctx.db
+        .orders()
+        .update_async(
+            id,
+            UpdateOrder {
+                status: Some(OrderStatus::Cancelled),
+                payment_status: Some(stateset_core::PaymentStatus::PartiallyRefunded),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("cancel");
+    let err = ctx.db.orders().delete_async(id).await.expect_err("partially refunded is a record");
+    assert!(matches!(err, CommerceError::Conflict(_)), "{err:?}");
+    assert!(ctx.db.orders().get_async(id).await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn postgres_delete_refuses_an_order_referenced_by_a_payment_row() {
+    use stateset_core::{CreatePayment, PaymentMethodType};
+    let Some(ctx) = setup().await else { return };
+    let order = ctx.order_with_order_level_money().await;
+    let id = order.id.into_uuid();
+    let payment = ctx
+        .db
+        .payments()
+        .create_async(CreatePayment {
+            order_id: Some(order.id),
+            payment_method: PaymentMethodType::CreditCard,
+            amount: dec!(10.00),
+            ..Default::default()
+        })
+        .await
+        .expect("create payment");
+    ctx.db
+        .payments()
+        .mark_failed_async(payment.id.into_uuid(), "declined", None)
+        .await
+        .expect("fail payment");
+
+    let err = ctx.db.orders().delete_async(id).await.expect_err("orders with payment rows");
+    assert!(matches!(err, CommerceError::Conflict(ref m) if m.contains("payments")), "{err:?}");
+    assert!(ctx.db.orders().get_async(id).await.unwrap().is_some());
+    assert_eq!(ctx.db.payments().for_order_async(id).await.unwrap().len(), 1);
+
+    let err = ctx.db.orders().delete_batch_atomic_async(vec![id]).await.expect_err("batch");
+    assert!(matches!(err, CommerceError::Conflict(_)), "{err:?}");
+}

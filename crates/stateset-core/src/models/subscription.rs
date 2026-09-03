@@ -486,6 +486,14 @@ pub struct Subscription {
     /// Number of failed payment attempts in current cycle
     pub failed_payment_attempts: i32,
 
+    // Billing claim lease (see `SubscriptionRepository::claim_due_for_billing`)
+    /// Worker that currently holds the billing lease, if any.
+    #[serde(default)]
+    pub billing_lease_owner: Option<String>,
+    /// When the billing lease expires; a lease past this instant is dead.
+    #[serde(default)]
+    pub billing_lease_until: Option<DateTime<Utc>>,
+
     // Items
     pub items: Vec<SubscriptionItem>,
 
@@ -735,6 +743,13 @@ pub struct CreateBillingCycle {
     pub cycle_number: i32,
     pub period_start: DateTime<Utc>,
     pub period_end: DateTime<Utc>,
+    /// The billing worker creating this cycle, when it holds a claim lease
+    /// from `claim_due_for_billing`. A subscription whose LIVE lease belongs
+    /// to a different worker refuses the cycle with `Conflict`; `None` is
+    /// treated as an unclaimed caller and is refused while any live lease
+    /// exists.
+    #[serde(default)]
+    pub claimed_by: Option<String>,
 }
 
 /// Governed request to begin collecting a subscription billing cycle.
@@ -955,6 +970,69 @@ mod tests {
         assert!(!Archived.can_transition_to(Draft));
         assert!(!Active.can_transition_to(Draft));
         assert!(Archived.is_terminal());
+    }
+
+    #[test]
+    fn resumed_schedule_carries_the_paid_remainder_forward() {
+        // Paid on Jan 1 for the calendar month (period end Feb 1), paused on
+        // Jan 10 with 22 paid days left, resumed on Jan 20: the next bill is
+        // Jan 20 + 22 days = Feb 11, not Feb 20 (a fresh interval) and not
+        // Feb 1 (the original anchor, which would forfeit the pause).
+        let period_end = Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap();
+        let paused_at = Utc.with_ymd_and_hms(2026, 1, 10, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 1, 20, 0, 0, 0).unwrap();
+        let (next, status, trial) = resumed_schedule(now, Some(paused_at), period_end, None);
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 2, 11, 0, 0, 0).unwrap());
+        assert_eq!(status, SubscriptionStatus::Active);
+        assert_eq!(trial, None);
+        // A 31-day custom period paid Jan 1 ends Feb 1 as well; a 30-day one
+        // ends Jan 31, leaving 21 days: resume Jan 20 -> Feb 10.
+        let period_end_30 = Utc.with_ymd_and_hms(2026, 1, 31, 0, 0, 0).unwrap();
+        let (next, _, _) = resumed_schedule(now, Some(paused_at), period_end_30, None);
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 2, 10, 0, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn resumed_schedule_never_forfeits_or_backdates() {
+        let period_end = Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 3, 15, 0, 0, 0).unwrap();
+        // Paused past the paid-through date (overdue): resumes due NOW, never
+        // in the past.
+        let paused_late = Utc.with_ymd_and_hms(2026, 2, 5, 0, 0, 0).unwrap();
+        let (next, status, _) = resumed_schedule(now, Some(paused_late), period_end, None);
+        assert_eq!(next, now);
+        assert_eq!(status, SubscriptionStatus::Active);
+        // Exactly at the paid-through date: zero remainder, due now.
+        let (next, _, _) = resumed_schedule(now, Some(period_end), period_end, None);
+        assert_eq!(next, now);
+        // No recorded pause instant: the remainder is measured from `now`, so
+        // a still-paid subscription keeps its original paid-through date.
+        let early = Utc.with_ymd_and_hms(2026, 1, 20, 0, 0, 0).unwrap();
+        let (next, _, _) = resumed_schedule(early, None, period_end, None);
+        assert_eq!(next, period_end);
+    }
+
+    #[test]
+    fn resumed_schedule_keeps_a_mid_trial_pause_in_trial() {
+        // Trial ends Jan 15 (= paid-through), paused Jan 10 with 5 trial days
+        // left, resumed Jan 20: back into Trial, trial now ends Jan 25.
+        let trial_end = Utc.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap();
+        let paused_at = Utc.with_ymd_and_hms(2026, 1, 10, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 1, 20, 0, 0, 0).unwrap();
+        let (next, status, trial) =
+            resumed_schedule(now, Some(paused_at), trial_end, Some(trial_end));
+        let expected = Utc.with_ymd_and_hms(2026, 1, 25, 0, 0, 0).unwrap();
+        assert_eq!(next, expected);
+        assert_eq!(status, SubscriptionStatus::Trial);
+        assert_eq!(trial, Some(expected));
+        // A trial that had already ended before the pause resumes Active and
+        // leaves `trial_ends_at` alone.
+        let old_trial = Utc.with_ymd_and_hms(2025, 12, 1, 0, 0, 0).unwrap();
+        let period_end = Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap();
+        let (_, status, trial) =
+            resumed_schedule(now, Some(paused_at), period_end, Some(old_trial));
+        assert_eq!(status, SubscriptionStatus::Active);
+        assert_eq!(trial, None);
     }
 
     #[test]

@@ -234,6 +234,27 @@ impl SqliteFulfillmentRepository {
         let id = Uuid::new_v4();
         let id_str = id.to_string();
 
+        // Count the pick on its wave. A wave that is already completed or
+        // cancelled cannot take new picks: they would never be reflected in
+        // its counters and `complete_wave` could no longer reconcile them.
+        if let Some(wave_id) = input.wave_id {
+            let wave_id_str = wave_id.to_string();
+            let changed = tx.execute(
+                "UPDATE waves SET pick_count = pick_count + 1
+                 WHERE id = ?1 AND status IN ('draft', 'released', 'in_progress')",
+                params![wave_id_str],
+            )?;
+            if changed == 0 {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "waves",
+                    "wave",
+                    &wave_id_str,
+                    "add a pick to",
+                ));
+            }
+        }
+
         tx.execute(
             "INSERT INTO pick_tasks (id, wave_id, order_id, order_item_id, warehouse_id, status, sku, product_name,
              source_location_id, quantity_requested, lot_id, serial_number, priority, notes, created_at, updated_at)
@@ -549,6 +570,11 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
     /// a `Draft` wave was never on the floor, and a `Cancelled` or already
     /// `Completed` wave is terminal. Completing a cancelled wave used to
     /// succeed, resurrecting it with counters that describe nothing.
+    ///
+    /// A wave also cannot complete while any of its picks is still open
+    /// (`pending`/`assigned`/`in_progress`): the predicate is computed from the
+    /// `pick_tasks` table rather than the `pick_count` counter so waves created
+    /// before the counter was maintained are judged correctly.
     fn complete_wave(&self, id: FulfillmentId) -> Result<Wave> {
         let now = Utc::now().to_rfc3339();
         let id_str = id.to_string();
@@ -556,10 +582,30 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         with_immediate_transaction(&self.pool, |tx| {
             let changed = tx.execute(
                 "UPDATE waves SET status = ?1, completed_at = ?2
-                 WHERE id = ?3 AND status IN ('released', 'in_progress')",
+                 WHERE id = ?3 AND status IN ('released', 'in_progress')
+                   AND NOT EXISTS (
+                       SELECT 1 FROM pick_tasks
+                       WHERE wave_id = waves.id
+                         AND status IN ('pending', 'assigned', 'in_progress'))",
                 params![WaveStatus::Completed.to_string(), now, id_str],
             )?;
             if changed == 0 {
+                let open: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM pick_tasks WHERE wave_id = ?1
+                     AND status IN ('pending', 'assigned', 'in_progress')",
+                    params![id_str],
+                    |row| row.get(0),
+                )?;
+                let status: Option<String> = tx
+                    .query_row("SELECT status FROM waves WHERE id = ?1", params![id_str], |row| {
+                        row.get(0)
+                    })
+                    .ok();
+                if open > 0 && matches!(status.as_deref(), Some("released" | "in_progress")) {
+                    return Err(Self::smuggle(CommerceError::ValidationError(format!(
+                        "cannot complete wave {id_str}: {open} pick task(s) still open"
+                    ))));
+                }
                 return Err(Self::transition_conflict(tx, "waves", "wave", &id_str, "complete"));
             }
             Self::read_wave_by_id_tx(tx, &id_str)
@@ -907,7 +953,15 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
                     "cancel",
                 ));
             }
-            Self::read_pick_by_id_tx(tx, &id_str)
+            let pick = Self::read_pick_by_id_tx(tx, &id_str)?;
+            // A cancelled pick no longer counts toward the wave's workload.
+            if let Some(wave_id) = pick.wave_id {
+                tx.execute(
+                    "UPDATE waves SET pick_count = MAX(pick_count - 1, 0) WHERE id = ?1",
+                    params![wave_id.to_string()],
+                )?;
+            }
+            Ok(pick)
         })
     }
 
@@ -1936,5 +1990,123 @@ mod tests {
     fn get_unknown_pick_returns_none() {
         let repo = fresh_repo();
         assert!(repo.get_pick(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    // ----- W2: waves.pick_count is maintained and gates completion -----
+
+    #[test]
+    fn pick_count_tracks_inserted_and_cancelled_picks() {
+        let (repo, wh_id, loc_id) = fresh_setup();
+        let order = OrderId::new();
+        let wave = make_wave(&repo, wh_id, vec![order]);
+        assert_eq!(wave.pick_count, 0);
+
+        let a = make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "SKU-A");
+        let _b = make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "SKU-B");
+        let w = repo.get_wave(wave.id).expect("get").expect("exists");
+        assert_eq!(w.pick_count, 2);
+
+        repo.cancel_pick(a.id).expect("cancel");
+        let w = repo.get_wave(wave.id).expect("get").expect("exists");
+        assert_eq!(w.pick_count, 1);
+
+        // Picks without a wave never touch a counter.
+        make_pick(&repo, wh_id, loc_id, None, order, "SKU-C");
+        let w = repo.get_wave(wave.id).expect("get").expect("exists");
+        assert_eq!(w.pick_count, 1);
+    }
+
+    #[test]
+    fn complete_wave_refuses_while_picks_are_open() {
+        let (repo, wh_id, loc_id) = fresh_setup();
+        let order = OrderId::new();
+        let wave = make_wave(&repo, wh_id, vec![order]);
+        let p1 = make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "SKU-A");
+        let p2 = make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "SKU-B");
+        repo.release_wave(wave.id).expect("release");
+
+        let err = repo.complete_wave(wave.id).expect_err("0 of 2 picks done");
+        assert!(
+            matches!(err, CommerceError::ValidationError(ref m) if m.contains("2 pick task(s) still open")),
+            "got {err:?}"
+        );
+        let w = repo.get_wave(wave.id).expect("get").expect("exists");
+        assert_eq!(w.status, WaveStatus::Released, "status must be unchanged");
+
+        repo.complete_pick(CompletePick {
+            pick_id: p1.id,
+            quantity_picked: dec!(5),
+            quantity_short: None,
+            short_reason: None,
+            lot_id: None,
+            serial_number: None,
+            completed_by: None,
+        })
+        .expect("complete p1");
+        assert!(repo.complete_wave(wave.id).is_err(), "1 of 2 picks done");
+
+        // A cancelled pick is no longer open, so the wave can complete.
+        repo.cancel_pick(p2.id).expect("cancel p2");
+        let done = repo.complete_wave(wave.id).expect("all picks finalized");
+        assert_eq!(done.status, WaveStatus::Completed);
+        assert_eq!(done.pick_count, 1);
+        assert_eq!(done.completed_pick_count, 1);
+    }
+
+    #[test]
+    fn complete_wave_treats_short_picks_as_finalized() {
+        let (repo, wh_id, loc_id) = fresh_setup();
+        let order = OrderId::new();
+        let wave = make_wave(&repo, wh_id, vec![order]);
+        let p = make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "SKU-A");
+        repo.release_wave(wave.id).expect("release");
+        repo.report_short(p.id, dec!(5), "out of stock").expect("short");
+        repo.complete_wave(wave.id).expect("short pick is finalized");
+    }
+
+    #[test]
+    fn create_pick_rejects_completed_or_cancelled_wave() {
+        let (repo, wh_id, loc_id) = fresh_setup();
+        let order = OrderId::new();
+        let wave = make_wave(&repo, wh_id, vec![order]);
+        repo.release_wave(wave.id).expect("release");
+        repo.complete_wave(wave.id).expect("complete empty wave");
+
+        let err = repo
+            .create_pick(CreatePickTask {
+                wave_id: Some(wave.id),
+                order_id: order,
+                order_item_id: OrderItemId::new(),
+                warehouse_id: wh_id,
+                sku: "SKU-LATE".into(),
+                product_name: None,
+                source_location_id: loc_id,
+                quantity_requested: dec!(1),
+                lot_id: None,
+                serial_number: None,
+                priority: None,
+                notes: None,
+            })
+            .expect_err("wave is completed");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        assert!(repo.get_picks_for_wave(wave.id).expect("picks").is_empty(), "insert rolled back");
+
+        let err = repo
+            .create_pick(CreatePickTask {
+                wave_id: Some(FulfillmentId::new()),
+                order_id: order,
+                order_item_id: OrderItemId::new(),
+                warehouse_id: wh_id,
+                sku: "SKU-NOWAVE".into(),
+                product_name: None,
+                source_location_id: loc_id,
+                quantity_requested: dec!(1),
+                lot_id: None,
+                serial_number: None,
+                priority: None,
+                notes: None,
+            })
+            .expect_err("wave does not exist");
+        assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
     }
 }

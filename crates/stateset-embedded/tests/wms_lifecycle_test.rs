@@ -810,6 +810,8 @@ fn start_receiving_and_delete_receipt_are_guarded() {
 fn complete_put_away_rejects_cancelled_task_and_leaves_receipt_total_alone() {
     let wms = wms();
     let (receipt, items) = wms.receipt(&[dec!(10)]);
+    // Put-aways are capped at the received quantity, so receive the line first.
+    wms.receive(&receipt, &[(items[0].id, dec!(10))]).expect("receive");
     let task = wms.put_away(&receipt, &items[0], dec!(10));
 
     wms.commerce.receiving().cancel_put_away(task.id).expect("cancel");
@@ -837,6 +839,8 @@ fn complete_put_away_rejects_cancelled_task_and_leaves_receipt_total_alone() {
 fn complete_put_away_folds_quantity_into_receipt_exactly_once() {
     let wms = wms();
     let (receipt, items) = wms.receipt(&[dec!(10)]);
+    // Put-aways are capped at the received quantity, so receive the line first.
+    wms.receive(&receipt, &[(items[0].id, dec!(10))]).expect("receive");
     let task = wms.put_away(&receipt, &items[0], dec!(10));
 
     let done = wms
@@ -870,6 +874,7 @@ fn complete_put_away_folds_quantity_into_receipt_exactly_once() {
 fn put_away_assign_start_cancel_are_guarded() {
     let wms = wms();
     let (receipt, items) = wms.receipt(&[dec!(10)]);
+    wms.receive(&receipt, &[(items[0].id, dec!(10))]).expect("receive");
 
     let completed = wms.put_away(&receipt, &items[0], dec!(4));
     wms.commerce

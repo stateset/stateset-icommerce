@@ -16,9 +16,9 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | OpenAPI version | `3.1.0` |
 | API title | StateSet Commerce API |
 | API version | `1.0.4` |
-| Paths | 326 |
-| Operations | 442 |
-| Schemas | 430 |
+| Paths | 329 |
+| Operations | 445 |
+| Schemas | 432 |
 | Tags | 61 |
 
 ## Method Counts
@@ -26,16 +26,16 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | Method | Operations |
 | --- | --- |
 | DELETE | 25 |
-| GET | 175 |
+| GET | 177 |
 | PATCH | 10 |
-| POST | 219 |
+| POST | 220 |
 | PUT | 13 |
 
 ## Tag Counts
 
 | Tag | Operations | Description |
 | --- | --- | --- |
-| `a2a` | 8 | Agent-to-agent messaging and credit terms |
+| `a2a` | 11 | Agent-to-agent messaging and credit terms |
 | `accounts_payable` | 14 | Supplier bills, AP payments and allocations, payment runs, and AP aging |
 | `accounts_receivable` | 15 | AR aging, payment application, credit memos, write-offs, dunning, and customer statements |
 | `activity_logs` | 4 | Record-level activity history |
@@ -105,10 +105,13 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `POST` | `/api/v1/a2a/credit` | `a2a` | `create_terms` | `POST /api/v1/a2a/credit` |
 | `GET` | `/api/v1/a2a/credit/{id}` | `a2a` | `get_terms` | `GET /api/v1/a2a/credit/:id` |
 | `POST` | `/api/v1/a2a/credit/{id}/charge` | `a2a` | `charge_credit` | `POST /api/v1/a2a/credit/:id/charge` |
+| `GET` | `/api/v1/a2a/credit/{id}/entries` | `a2a` | `list_entries` | `GET /api/v1/a2a/credit/:id/entries` |
 | `POST` | `/api/v1/a2a/credit/{id}/payment` | `a2a` | `record_payment` | `POST /api/v1/a2a/credit/:id/payment` |
 | `GET` | `/api/v1/a2a/messages` | `a2a` | `list_messages` | `GET /api/v1/a2a/messages` |
 | `POST` | `/api/v1/a2a/messages` | `a2a` | `send_message` | `POST /api/v1/a2a/messages` |
+| `GET` | `/api/v1/a2a/messages/{id}` | `a2a` | `get_message` | `GET /api/v1/a2a/messages/:id` |
 | `POST` | `/api/v1/a2a/messages/{id}/acknowledge` | `a2a` | `acknowledge_message` | `POST /api/v1/a2a/messages/:id/acknowledge` |
+| `POST` | `/api/v1/a2a/messages/{id}/fail` | `a2a` | `fail_message` | `POST /api/v1/a2a/messages/:id/fail` |
 | `GET` | `/api/v1/activity-logs` | `activity_logs` | `activity_logs_list` | — |
 | `POST` | `/api/v1/activity-logs` | `activity_logs` | `activity_logs_record` | — |
 | `GET` | `/api/v1/activity-logs/{id}` | `activity_logs` | `activity_logs_get_one` | — |

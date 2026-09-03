@@ -223,6 +223,18 @@ impl PgInventoryRepository {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         input: &ReserveInventory,
     ) -> Result<(InventoryReservation, Uuid)> {
+        self.reserve_for_line_in_tx(tx, input, None).await
+    }
+
+    /// [`Self::reserve_in_tx`] keyed to the order line that holds the stock
+    /// (`inventory_reservations.order_item_id`, migration 087). Mirrors the
+    /// SQLite implementation.
+    pub(crate) async fn reserve_for_line_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        input: &ReserveInventory,
+        order_item_id: Option<Uuid>,
+    ) -> Result<(InventoryReservation, Uuid)> {
         validate_quantity(input.quantity)?;
 
         let now = Utc::now();
@@ -268,8 +280,9 @@ impl PgInventoryRepository {
         sqlx::query(
             r#"
             INSERT INTO inventory_reservations (id, item_id, location_id, quantity, status,
-                                                reference_type, reference_id, expires_at, created_at)
-            VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8)
+                                                reference_type, reference_id, expires_at, created_at,
+                                                order_item_id)
+            VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8, $9)
             "#,
         )
         .bind(id)
@@ -280,6 +293,7 @@ impl PgInventoryRepository {
         .bind(&input.reference_id)
         .bind(expires_at)
         .bind(now)
+        .bind(order_item_id)
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
@@ -583,6 +597,51 @@ impl PgInventoryRepository {
         .map_err(map_db_error)
     }
 
+    /// Open (`pending`/`allocated`) reservations keyed to one order line
+    /// (migration 087), oldest first, as `(reservation_id, quantity)`.
+    pub(crate) async fn list_open_reservations_for_line_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        order_item_id: Uuid,
+    ) -> Result<Vec<(Uuid, Decimal)>> {
+        sqlx::query_as(
+            "SELECT id, quantity FROM inventory_reservations
+             WHERE order_item_id = $1 AND status IN ('pending', 'allocated')
+             ORDER BY created_at, id",
+        )
+        .bind(order_item_id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)
+    }
+
+    /// [`Self::list_open_reservations_for_sku_in_tx`] restricted to LEGACY rows
+    /// (not keyed to an order line); the orders module's fallback after the
+    /// line-keyed lookup, so a SKU-based release never takes another line's
+    /// keyed hold.
+    pub(crate) async fn list_open_legacy_reservations_for_sku_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        reference_type: &str,
+        reference_id: &str,
+        sku: &str,
+    ) -> Result<Vec<(Uuid, Decimal)>> {
+        sqlx::query_as(
+            "SELECT r.id, r.quantity FROM inventory_reservations r
+             JOIN inventory_items i ON i.id = r.item_id
+             WHERE r.reference_type = $1 AND r.reference_id = $2 AND i.sku = $3
+               AND r.order_item_id IS NULL
+               AND r.status IN ('pending', 'allocated')
+             ORDER BY r.created_at, r.id",
+        )
+        .bind(reference_type)
+        .bind(reference_id)
+        .bind(sku)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)
+    }
+
     /// Confirm `quantity` units of a reservation, splitting it when `quantity`
     /// is less than the reserved amount (the shipped units become a new
     /// `confirmed` row; the original keeps the `pending` remainder). Mirrors the
@@ -650,8 +709,10 @@ impl PgInventoryRepository {
         sqlx::query(
             r#"
             INSERT INTO inventory_reservations (id, item_id, location_id, quantity, status,
-                                                reference_type, reference_id, expires_at, created_at)
-            VALUES ($1, $2, $3, $4, 'confirmed', $5, $6, NULL, $7)
+                                                reference_type, reference_id, expires_at, created_at,
+                                                order_item_id)
+            VALUES ($1, $2, $3, $4, 'confirmed', $5, $6, NULL, $7,
+                    (SELECT order_item_id FROM inventory_reservations WHERE id = $8))
             "#,
         )
         .bind(confirmed_id)
@@ -661,6 +722,7 @@ impl PgInventoryRepository {
         .bind(&res.reference_type)
         .bind(&res.reference_id)
         .bind(now)
+        .bind(reservation_id)
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;

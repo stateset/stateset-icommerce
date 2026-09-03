@@ -109,9 +109,134 @@ impl Carts {
         // Reject obviously-invalid input (negative prices, non-positive
         // quantities) before persisting any line items.
         input.validate()?;
+        if let Some(items) = &input.items {
+            for item in items {
+                self.enforce_catalog_price(item)?;
+            }
+        }
         let cart = self.db.carts().create(input)?;
         self.metrics.record_cart_created(&cart.id.to_string());
         Ok(cart)
+    }
+
+    /// Catalog price for the line `item` names, if it names a catalog line.
+    ///
+    /// Resolution order: the explicit `variant_id`, then the SKU (catalog
+    /// SKUs are variant-level). A `product_id` alone does not carry a price.
+    fn catalog_price(&self, item: &AddCartItem) -> Result<Option<Decimal>> {
+        let products = self.db.products();
+        if let Some(variant_id) = item.variant_id {
+            if let Some(variant) = products.get_variant(variant_id)? {
+                return Ok(Some(variant.price));
+            }
+        }
+        if !item.sku.trim().is_empty() {
+            if let Some(variant) = products.get_variant_by_sku(&item.sku)? {
+                return Ok(Some(variant.price));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Prices are never client-trusted for catalog lines: when the line's
+    /// variant / SKU resolves to a catalog product, the caller's `unit_price`
+    /// must equal the catalog price or the line is refused. Ad-hoc lines (no
+    /// catalog match) keep the caller's price.
+    fn enforce_catalog_price(&self, item: &AddCartItem) -> Result<()> {
+        if let Some(catalog) = self.catalog_price(item)? {
+            if catalog != item.unit_price {
+                return Err(stateset_core::CommerceError::ValidationError(format!(
+                    "unit_price {} for SKU '{}' does not match the catalog price {catalog}; \
+                     catalog lines are priced from the catalog",
+                    item.unit_price, item.sku
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Self::enforce_catalog_price`] for a line already in the cart whose
+    /// price is being changed.
+    fn enforce_catalog_price_on_update(&self, item_id: Uuid, input: &UpdateCartItem) -> Result<()> {
+        let Some(new_price) = input.unit_price else {
+            return Ok(());
+        };
+        let Some(line) = self.find_item(item_id)? else {
+            return Ok(());
+        };
+        let probe = AddCartItem {
+            variant_id: line.variant_id,
+            sku: line.sku,
+            unit_price: new_price,
+            ..Default::default()
+        };
+        self.enforce_catalog_price(&probe)
+    }
+
+    /// The cart line `item_id`, if it exists.
+    fn find_item(&self, item_id: Uuid) -> Result<Option<CartItem>> {
+        self.db.carts().get_item(item_id)
+    }
+
+    /// Re-run the tax engine for a cart that carries a tax context (a tax
+    /// amount was set and it has a shipping address) after its lines changed.
+    ///
+    /// The storage layer has already carried the tax proportionally to the
+    /// new subtotal (see `rescale_tax` in the cart repositories); this
+    /// replaces that estimate with the engine's figure whenever the engine
+    /// can price the cart. When no tax rate covers the address the engine
+    /// has nothing to say and the proportional estimate stands, so a tax set
+    /// manually via `set_tax` is not silently zeroed.
+    fn refresh_tax(&self, cart_id: CartId) -> Result<()> {
+        use stateset_core::{ProductTaxCategory, TaxAddress, TaxCalculationRequest, TaxLineItem};
+        let Some(cart) = self.db.carts().get(cart_id)? else {
+            return Ok(());
+        };
+        if cart.tax_amount <= Decimal::ZERO {
+            return Ok(());
+        }
+        let Some(address) = cart.shipping_address else {
+            return Ok(());
+        };
+        let request = TaxCalculationRequest {
+            line_items: cart
+                .items
+                .iter()
+                .map(|item| TaxLineItem {
+                    id: item.id.to_string(),
+                    sku: Some(item.sku.clone()),
+                    product_id: item.product_id,
+                    quantity: Decimal::from(item.quantity),
+                    unit_price: item.unit_price,
+                    discount_amount: item.discount_amount,
+                    tax_category: ProductTaxCategory::Standard,
+                    tax_code: None,
+                    description: Some(item.name.clone()),
+                })
+                .collect(),
+            shipping_address: TaxAddress {
+                country: address.country,
+                state: address.state,
+                city: Some(address.city),
+                postal_code: Some(address.postal_code),
+                line1: Some(address.line1),
+                line2: address.line2,
+            },
+            customer_id: cart.customer_id.map(Into::into),
+            currency: cart.currency,
+            shipping_amount: Some(cart.shipping_amount),
+            ..Default::default()
+        };
+        let Ok(result) = self.db.tax().calculate_tax(request) else {
+            return Ok(());
+        };
+        if result.tax_breakdown.is_empty() && result.total_tax <= Decimal::ZERO {
+            return Ok(());
+        }
+        if result.total_tax != cart.tax_amount {
+            self.db.carts().set_tax(cart_id, result.total_tax)?;
+        }
+        Ok(())
     }
 
     /// Get a cart by ID
@@ -173,17 +298,28 @@ impl Carts {
     pub fn add_item(&self, cart_id: CartId, item: AddCartItem) -> Result<CartItem> {
         // Reject a negative price or non-positive quantity before persisting.
         item.validate()?;
-        self.db.carts().add_item(cart_id, item)
+        self.enforce_catalog_price(&item)?;
+        let added = self.db.carts().add_item(cart_id, item)?;
+        self.refresh_tax(cart_id)?;
+        Ok(added)
     }
 
     /// Update a cart item (quantity, etc.)
     pub fn update_item(&self, item_id: Uuid, input: UpdateCartItem) -> Result<CartItem> {
-        self.db.carts().update_item(item_id, input)
+        self.enforce_catalog_price_on_update(item_id, &input)?;
+        let updated = self.db.carts().update_item(item_id, input)?;
+        self.refresh_tax(updated.cart_id)?;
+        Ok(updated)
     }
 
     /// Remove an item from the cart
     pub fn remove_item(&self, item_id: Uuid) -> Result<()> {
-        self.db.carts().remove_item(item_id)
+        let cart_id = self.find_item(item_id)?.map(|item| item.cart_id);
+        self.db.carts().remove_item(item_id)?;
+        if let Some(cart_id) = cart_id {
+            self.refresh_tax(cart_id)?;
+        }
+        Ok(())
     }
 
     /// Get all items in the cart
@@ -193,7 +329,8 @@ impl Carts {
 
     /// Clear all items from the cart
     pub fn clear_items(&self, cart_id: CartId) -> Result<()> {
-        self.db.carts().clear_items(cart_id)
+        self.db.carts().clear_items(cart_id)?;
+        self.refresh_tax(cart_id)
     }
 
     // === Address Operations ===

@@ -998,21 +998,54 @@ impl A2ACommerceRepository for SqliteA2ARepository {
     }
 
     fn link_purchase_to_order(&self, purchase_id: Uuid, order_id: Uuid) -> Result<A2APurchase> {
-        let affected = self
-            .conn()?
+        // Linking is conditional: a purchase that is already cancelled or
+        // completed keeps its (lack of) order, and a purchase already linked
+        // to a different order is never silently re-pointed. Re-linking the
+        // same order is an idempotent no-op.
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let existing = tx
+            .query_row(
+                "SELECT status, order_id FROM a2a_purchases WHERE id = ?",
+                [purchase_id.to_string()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()
+            .map_err(map_db_error)?;
+        let Some((status, current_order)) = existing else {
+            return Err(CommerceError::NotFound);
+        };
+        if let Some(current) = current_order.as_deref()
+            && current != order_id.to_string()
+        {
+            return Err(CommerceError::Conflict(format!(
+                "purchase {purchase_id} is already linked to order {current}"
+            )));
+        }
+        if matches!(status.as_str(), "cancelled" | "completed") {
+            return Err(CommerceError::ValidationError(format!(
+                "cannot link an order to a purchase in {status} status"
+            )));
+        }
+        let affected = tx
             .execute(
-                "UPDATE a2a_purchases SET order_id = ?, updated_at = ? WHERE id = ?",
+                "UPDATE a2a_purchases SET order_id = ?, updated_at = ?
+                 WHERE id = ? AND status NOT IN ('cancelled', 'completed')
+                   AND (order_id IS NULL OR order_id = ?)",
                 rusqlite::params![
                     order_id.to_string(),
                     Utc::now().to_rfc3339(),
-                    purchase_id.to_string()
+                    purchase_id.to_string(),
+                    order_id.to_string(),
                 ],
             )
             .map_err(map_db_error)?;
-
-        if affected == 0 {
-            return Err(CommerceError::NotFound);
+        if affected != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "purchase {purchase_id} changed concurrently; cannot link order"
+            )));
         }
+        tx.commit().map_err(map_db_error)?;
 
         self.get_purchase(purchase_id)?.ok_or(CommerceError::NotFound)
     }

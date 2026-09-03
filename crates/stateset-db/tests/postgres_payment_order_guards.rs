@@ -101,6 +101,23 @@ async fn cancel_order(db: &PostgresDatabase, order_id: Uuid) {
     assert_eq!(order.status, OrderStatus::Cancelled);
 }
 
+async fn force_cancel_order(db: &PostgresDatabase, order_id: Uuid) -> stateset_core::Order {
+    let order = db
+        .orders()
+        .update_async(
+            order_id,
+            UpdateOrder {
+                status: Some(OrderStatus::Cancelled),
+                void_payments: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("forced cancel");
+    assert_eq!(order.status, OrderStatus::Cancelled);
+    order
+}
+
 fn payment_input(order_id: Option<Uuid>, amount: Decimal) -> CreatePayment {
     CreatePayment {
         order_id: order_id.map(Into::into),
@@ -233,18 +250,28 @@ async fn postgres_completing_a_payment_after_its_order_was_cancelled_is_refused(
     let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD).await;
     let pending = payment(&db, Some(order_id), dec!(100.00)).await;
     let pending_id = pending.id.into_uuid();
-    // NOTE: once the orders module consults `open_captures_for_order` before
-    // cancelling, this cancel will itself be refused (the pending capture is
-    // outstanding) and this test should fail the payment first instead.
-    cancel_order(&db, order_id).await;
+    // A plain cancel is refused while the pending capture is outstanding; a
+    // forced cancel voids it in the same transaction, so a live capture can
+    // never complete against a cancelled order.
+    let err = db
+        .orders()
+        .update_async(
+            order_id,
+            UpdateOrder { status: Some(OrderStatus::Cancelled), ..Default::default() },
+        )
+        .await
+        .expect_err("plain cancel is refused while a capture is in flight");
+    assert_validation_mentioning(&err, "100.00 USD");
+    force_cancel_order(&db, order_id).await;
+    assert_eq!(status(&db, pending_id).await, PaymentTransactionStatus::Cancelled, "voided");
 
     let err = db
         .payments()
         .mark_completed_async(pending_id)
         .await
-        .expect_err("completing a capture against a cancelled order orphans the money");
-    assert_validation_mentioning(&err, "cancelled");
-    assert_eq!(status(&db, pending_id).await, PaymentTransactionStatus::Pending);
+        .expect_err("a voided capture cannot complete");
+    assert!(matches!(err, CommerceError::Conflict(_)), "{err:?}");
+    assert_eq!(status(&db, pending_id).await, PaymentTransactionStatus::Cancelled);
 }
 
 // ============================================================================
@@ -411,4 +438,306 @@ async fn postgres_update_batch_atomic_aborts_the_whole_batch_on_an_illegal_trans
 
     assert_eq!(status(&db, pending.id.into_uuid()).await, PaymentTransactionStatus::Pending);
     assert_eq!(status(&db, settled.id.into_uuid()).await, PaymentTransactionStatus::Completed);
+}
+
+// ============================================================================
+// Round 4 mirrors — PG batch-create against a cancelled order, defaulted
+// currency, cancel money rule, idempotency fingerprint, refund-by-flip.
+// ============================================================================
+
+#[tokio::test]
+async fn postgres_atomic_batch_create_against_a_cancelled_order_is_refused() {
+    let db = require_db!();
+    let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD).await;
+    cancel_order(&db, order_id).await;
+
+    let err = db
+        .payments()
+        .create_batch_atomic_async(vec![payment_input(Some(order_id), dec!(50.00))])
+        .await
+        .expect_err("atomic batch create shares the order guards");
+    assert_validation_mentioning(&err, "cancelled");
+    assert!(payments_for(&db, order_id).await.is_empty());
+}
+
+#[tokio::test]
+async fn postgres_defaulted_payment_currency_is_checked_against_a_non_usd_order() {
+    let db = require_db!();
+    let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::EUR).await;
+
+    // `currency: None` defaults to USD, which does not match a EUR order.
+    let err = db
+        .payments()
+        .create_async(payment_input(Some(order_id), dec!(100.00)))
+        .await
+        .expect_err("defaulted USD does not match a EUR order");
+    assert_validation_mentioning(&err, "EUR");
+    assert!(payments_for(&db, order_id).await.is_empty());
+
+    let ok = db
+        .payments()
+        .create_async(CreatePayment {
+            currency: Some(CurrencyCode::EUR),
+            ..payment_input(Some(order_id), dec!(100.00))
+        })
+        .await
+        .expect("EUR on a EUR order");
+    assert_eq!(ok.currency, CurrencyCode::EUR);
+}
+
+#[tokio::test]
+async fn postgres_cancelling_an_order_with_open_captures_is_refused_without_void_payments() {
+    let db = require_db!();
+    let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD).await;
+    let captured = completed_payment(&db, Some(order_id), dec!(60.00)).await;
+    let captured_id = captured.id.into_uuid();
+
+    let err = db
+        .orders()
+        .update_async(
+            order_id,
+            UpdateOrder { status: Some(OrderStatus::Cancelled), ..Default::default() },
+        )
+        .await
+        .expect_err("captured money must not be orphaned by a cancel");
+    assert_validation_mentioning(&err, "60.00 USD");
+    assert_validation_mentioning(&err, "void_payments");
+    let order = db.orders().get_async(order_id).await.expect("get").expect("exists");
+    assert_eq!(order.status, OrderStatus::Pending, "cancel rolled back");
+    assert_eq!(status(&db, captured_id).await, PaymentTransactionStatus::Completed);
+
+    // Once the money is returned the plain cancel goes through.
+    let refund = db
+        .payments()
+        .create_refund_async(CreateRefund {
+            payment_id: captured.id,
+            amount: None,
+            ..Default::default()
+        })
+        .await
+        .expect("refund");
+    db.payments().complete_refund_async(refund.id).await.expect("complete refund");
+    cancel_order(&db, order_id).await;
+}
+
+#[tokio::test]
+async fn postgres_forced_cancel_voids_in_flight_payments_and_leaves_settled_ones_for_refund() {
+    let db = require_db!();
+    let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD).await;
+    let settled = completed_payment(&db, Some(order_id), dec!(60.00)).await;
+    let in_flight = payment(&db, Some(order_id), dec!(30.00)).await;
+    let processing = payment(&db, Some(order_id), dec!(10.00)).await;
+    db.payments().mark_processing_async(processing.id.into_uuid()).await.expect("processing");
+
+    force_cancel_order(&db, order_id).await;
+
+    assert_eq!(status(&db, in_flight.id.into_uuid()).await, PaymentTransactionStatus::Cancelled);
+    assert_eq!(status(&db, processing.id.into_uuid()).await, PaymentTransactionStatus::Cancelled);
+    assert_eq!(status(&db, settled.id.into_uuid()).await, PaymentTransactionStatus::Completed);
+    assert_eq!(open_ids(&db, order_id).await, vec![settled.id.into_uuid()]);
+
+    let event = db
+        .kernel_outbox()
+        .pending_async(500)
+        .await
+        .expect("pending")
+        .into_iter()
+        .find(|e| {
+            e.event_type == "orders.updated.v1"
+                && e.aggregate_id == order_id.to_string()
+                && e.payload["status_after"] == "cancelled"
+        })
+        .expect("orders.updated.v1 for the cancel");
+    assert_eq!(event.payload["void_payments"], true);
+    let voided: Vec<String> = event.payload["voided_payment_ids"]
+        .as_array()
+        .expect("array")
+        .iter()
+        .map(|v| v.as_str().expect("uuid").to_string())
+        .collect();
+    assert_eq!(voided.len(), 2);
+    assert!(voided.contains(&in_flight.id.to_string()));
+    assert!(voided.contains(&processing.id.to_string()));
+    assert_eq!(
+        event.payload["outstanding_payment_ids"],
+        serde_json::json!([settled.id.to_string()])
+    );
+    let outstanding: Decimal =
+        event.payload["outstanding_captured"].as_str().expect("string money").parse().unwrap();
+    assert_eq!(outstanding, dec!(60));
+
+    let refund = db
+        .payments()
+        .create_refund_async(CreateRefund {
+            payment_id: settled.id,
+            amount: None,
+            ..Default::default()
+        })
+        .await
+        .expect("refund after cancel");
+    db.payments().complete_refund_async(refund.id).await.expect("complete refund");
+    assert!(open_ids(&db, order_id).await.is_empty());
+}
+
+#[tokio::test]
+async fn postgres_update_batch_atomic_cancel_shares_the_money_rule() {
+    let db = require_db!();
+    let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD).await;
+    completed_payment(&db, Some(order_id), dec!(100.00)).await;
+    let err = db
+        .orders()
+        .update_batch_atomic_async(vec![(
+            order_id,
+            UpdateOrder { status: Some(OrderStatus::Cancelled), ..Default::default() },
+        )])
+        .await
+        .expect_err("batch cancel is refused like a single cancel");
+    assert_validation_mentioning(&err, "100.00 USD");
+    let order = db.orders().get_async(order_id).await.expect("get").expect("exists");
+    assert_eq!(order.status, OrderStatus::Pending);
+}
+
+#[tokio::test]
+async fn postgres_duplicate_idempotency_key_with_different_parameters_is_a_conflict() {
+    let db = require_db!();
+    let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD).await;
+    let key = format!("idem-{}", Uuid::new_v4());
+    let first = db
+        .payments()
+        .create_async(CreatePayment {
+            idempotency_key: Some(key.clone()),
+            ..payment_input(Some(order_id), dec!(25.00))
+        })
+        .await
+        .expect("first");
+    let replay = db
+        .payments()
+        .create_async(CreatePayment {
+            idempotency_key: Some(key.clone()),
+            ..payment_input(Some(order_id), dec!(25.00))
+        })
+        .await
+        .expect("identical replay");
+    assert_eq!(replay.id, first.id);
+
+    let other_order = order_totalling(&db, dec!(100.00), CurrencyCode::USD).await;
+    for (label, input) in [
+        ("amount", payment_input(Some(order_id), dec!(26.00))),
+        ("order", payment_input(Some(other_order), dec!(25.00))),
+        ("no order", payment_input(None, dec!(25.00))),
+        (
+            "currency",
+            CreatePayment {
+                currency: Some(CurrencyCode::EUR),
+                ..payment_input(Some(order_id), dec!(25.00))
+            },
+        ),
+        (
+            "method",
+            CreatePayment {
+                payment_method: PaymentMethodType::BankTransfer,
+                ..payment_input(Some(order_id), dec!(25.00))
+            },
+        ),
+    ] {
+        let err = db
+            .payments()
+            .create_async(CreatePayment { idempotency_key: Some(key.clone()), ..input })
+            .await
+            .expect_err("a different request under a used key must conflict");
+        assert!(
+            matches!(err, CommerceError::Conflict(ref m) if m.contains(&key) && m.contains(&first.id.to_string())),
+            "{label}: {err:?}"
+        );
+    }
+    let stored = db.payments().get_async(first.id.into_uuid()).await.expect("get").expect("exists");
+    assert_eq!(stored.amount, dec!(25.00));
+    assert_eq!(payments_for(&db, order_id).await.len(), 1);
+}
+
+#[tokio::test]
+async fn postgres_concurrent_duplicate_idempotency_key_with_different_amounts_conflicts() {
+    let db = require_db!();
+    let key = format!("idem-{}", Uuid::new_v4());
+    let input = |amount: Decimal| CreatePayment {
+        idempotency_key: Some(key.clone()),
+        ..payment_input(None, amount)
+    };
+
+    // Both futures pass the pre-transaction lookup before either INSERT lands;
+    // the loser trips the UNIQUE index, reads the winner's row and must see
+    // that its own request differs.
+    let payments = db.payments();
+    let (a, b) = tokio::join!(
+        payments.create_async(input(dec!(25.00))),
+        payments.create_async(input(dec!(26.00)))
+    );
+    let results = [a, b];
+    let ok = results.iter().filter(|r| r.is_ok()).count();
+    let conflicts = results
+        .iter()
+        .filter(|r| matches!(r, Err(CommerceError::Conflict(m)) if m.contains(&key)))
+        .count();
+    assert_eq!(ok, 1, "exactly one caller wins: {results:?}");
+    assert_eq!(conflicts, 1, "the other is told the key was used differently: {results:?}");
+    let by_key = db
+        .payments()
+        .list_async(PaymentFilter::default())
+        .await
+        .expect("list")
+        .into_iter()
+        .filter(|p| p.idempotency_key.as_deref() == Some(key.as_str()))
+        .count();
+    assert_eq!(by_key, 1);
+}
+
+#[tokio::test]
+async fn postgres_refunded_cannot_be_reached_through_update() {
+    let db = require_db!();
+    let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD).await;
+    let p = completed_payment(&db, Some(order_id), dec!(100.00)).await;
+    let pid = p.id.into_uuid();
+    set_status(&db, pid, PaymentTransactionStatus::Disputed).await.expect("dispute");
+
+    let err = set_status(&db, pid, PaymentTransactionStatus::Refunded)
+        .await
+        .expect_err("refund by status flip is refused");
+    assert_validation_mentioning(&err, "complete_refund");
+    assert_eq!(status(&db, pid).await, PaymentTransactionStatus::Disputed);
+    assert_eq!(open_ids(&db, order_id).await, vec![pid]);
+
+    set_status(&db, pid, PaymentTransactionStatus::Completed).await.expect("dispute won");
+    for target in [PaymentTransactionStatus::Refunded, PaymentTransactionStatus::PartiallyRefunded]
+    {
+        let err = set_status(&db, pid, target).await.expect_err("refused");
+        assert_validation_mentioning(&err, "complete_refund");
+    }
+    assert_eq!(status(&db, pid).await, PaymentTransactionStatus::Completed);
+
+    let refund = db
+        .payments()
+        .create_refund_async(CreateRefund { payment_id: p.id, amount: None, ..Default::default() })
+        .await
+        .expect("refund");
+    db.payments().complete_refund_async(refund.id).await.expect("complete");
+    let after = db.payments().get_async(pid).await.unwrap().unwrap();
+    assert_eq!(after.status, PaymentTransactionStatus::Refunded);
+    assert_eq!(after.amount_refunded, dec!(100.00));
+    assert!(open_ids(&db, order_id).await.is_empty());
+
+    // Batch path shares the rule.
+    let p2 = completed_payment(&db, None, dec!(10.00)).await;
+    let err = db
+        .payments()
+        .update_batch_atomic_async(vec![(
+            p2.id,
+            UpdatePayment {
+                status: Some(PaymentTransactionStatus::Refunded),
+                ..Default::default()
+            },
+        )])
+        .await
+        .expect_err("batch refused");
+    assert_validation_mentioning(&err, "complete_refund");
+    assert_eq!(status(&db, p2.id.into_uuid()).await, PaymentTransactionStatus::Completed);
 }

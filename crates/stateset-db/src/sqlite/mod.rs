@@ -1,6 +1,8 @@
 //! SQLite database implementation
 
 mod a2a;
+mod a2a_credit_terms;
+mod a2a_messaging;
 mod accounts_payable;
 mod accounts_receivable;
 mod activity_logs;
@@ -83,6 +85,8 @@ mod zone_shipping_methods;
 mod vector;
 
 pub use a2a::*;
+pub use a2a_credit_terms::*;
+pub use a2a_messaging::*;
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
 pub use activity_logs::*;
@@ -640,6 +644,18 @@ impl SqliteDatabase {
     #[must_use]
     pub fn a2a_purchases(&self) -> SqliteA2ARepository {
         SqliteA2ARepository::new(self.pool.clone())
+    }
+
+    /// Get durable A2A credit terms repository
+    #[must_use]
+    pub fn a2a_credit_terms(&self) -> SqliteA2ACreditTermsRepository {
+        SqliteA2ACreditTermsRepository::new(self.pool.clone())
+    }
+
+    /// Get durable A2A agent messaging repository
+    #[must_use]
+    pub fn a2a_messages(&self) -> SqliteA2AMessagingRepository {
+        SqliteA2AMessagingRepository::new(self.pool.clone())
     }
 
     /// Get agent card repository

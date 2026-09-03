@@ -56,7 +56,9 @@ pub struct ReceiptItem {
     pub description: Option<String>,
     /// Reference to PO line if applicable
     pub po_line_id: Option<Uuid>,
-    /// Expected from ASN/PO
+    /// Expected from ASN/PO. `0` marks a blind receipt: no quantity to
+    /// check against, so any positive received quantity is accepted and the
+    /// line becomes `received` in full.
     pub expected_quantity: Decimal,
     pub received_quantity: Decimal,
     pub rejected_quantity: Decimal,

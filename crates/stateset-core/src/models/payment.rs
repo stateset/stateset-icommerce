@@ -362,6 +362,48 @@ impl Payment {
         self.amount - self.amount_refunded
     }
 
+    /// Check that a `create` request replayed under this payment's idempotency
+    /// key is the SAME request.
+    ///
+    /// An idempotency key promises "this exact operation, at most once". A
+    /// second request with the same key but a different amount, order,
+    /// currency or payment method is not a retry — it is a different payment
+    /// that would silently be answered with the first one's row (and money).
+    /// Both backends call this before returning the stored payment for a
+    /// duplicate key, on the fast path and on the UNIQUE-conflict race path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::CommerceError::Conflict`] naming the first differing
+    /// field when the request does not match the stored payment.
+    pub fn check_idempotent_replay(&self, input: &CreatePayment) -> crate::Result<()> {
+        use crate::CommerceError;
+
+        let key = self.idempotency_key.as_deref().unwrap_or_default();
+        let mismatch = if self.amount != input.amount {
+            Some(format!("amount {} != {}", self.amount, input.amount))
+        } else if self.order_id != input.order_id {
+            Some(format!(
+                "order_id {} != {}",
+                self.order_id.map_or_else(|| "none".to_string(), |id| id.to_string()),
+                input.order_id.map_or_else(|| "none".to_string(), |id| id.to_string())
+            ))
+        } else if self.currency != input.currency.unwrap_or_default() {
+            Some(format!("currency {} != {}", self.currency, input.currency.unwrap_or_default()))
+        } else if self.payment_method != input.payment_method {
+            Some(format!("payment_method {} != {}", self.payment_method, input.payment_method))
+        } else {
+            None
+        };
+        match mismatch {
+            Some(diff) => Err(CommerceError::Conflict(format!(
+                "Idempotency key '{key}' was already used for payment {} with different parameters ({diff})",
+                self.id
+            ))),
+            None => Ok(()),
+        }
+    }
+
     /// Validate and resolve a refund request against this payment.
     ///
     /// `requested` is the caller-supplied refund amount; when `None` the full
@@ -904,6 +946,55 @@ mod tests {
             version: 1,
             created_at: now,
             updated_at: now,
+        }
+    }
+
+    #[test]
+    fn validate_refund_rejects_disputed_payment_even_with_captured_balance() {
+        use rust_decimal_macros::dec;
+        // A disputed payment still holds captured money, but it must be
+        // resolved (won -> Completed, lost -> Cancelled) before a refund can
+        // be issued against it.
+        let payment = payment_for_refund(PaymentTransactionStatus::Disputed, dec!(100), dec!(0));
+        assert_eq!(payment.refundable_remaining(), dec!(100));
+        let err = payment.validate_refund(None).expect_err("disputed must be rejected");
+        assert!(
+            matches!(err, crate::CommerceError::ValidationError(ref m) if m.contains("disputed")),
+            "{err:?}"
+        );
+        let err = payment.validate_refund(Some(dec!(1))).expect_err("disputed must be rejected");
+        assert!(matches!(err, crate::CommerceError::ValidationError(_)), "{err:?}");
+    }
+
+    #[test]
+    fn idempotent_replay_accepts_same_request_and_rejects_different_one() {
+        use rust_decimal_macros::dec;
+        let mut stored = payment_for_refund(PaymentTransactionStatus::Pending, dec!(100), dec!(0));
+        stored.idempotency_key = Some("key-1".into());
+        stored.order_id = Some(OrderId::new());
+        let same = CreatePayment {
+            order_id: stored.order_id,
+            amount: dec!(100),
+            currency: None, // defaults to USD, which is what the payment stores
+            payment_method: stored.payment_method,
+            idempotency_key: Some("key-1".into()),
+            ..Default::default()
+        };
+        stored.check_idempotent_replay(&same).expect("identical replay is idempotent");
+
+        for (label, different) in [
+            ("amount", CreatePayment { amount: dec!(99), ..same.clone() }),
+            ("order", CreatePayment { order_id: Some(OrderId::new()), ..same.clone() }),
+            ("currency", CreatePayment { currency: Some(CurrencyCode::EUR), ..same.clone() }),
+            ("method", CreatePayment { payment_method: PaymentMethodType::BankTransfer, ..same }),
+        ] {
+            let err = stored
+                .check_idempotent_replay(&different)
+                .expect_err("a different request under the same key must conflict");
+            assert!(
+                matches!(err, crate::CommerceError::Conflict(ref m) if m.contains("key-1")),
+                "{label}: {err:?}"
+            );
         }
     }
 

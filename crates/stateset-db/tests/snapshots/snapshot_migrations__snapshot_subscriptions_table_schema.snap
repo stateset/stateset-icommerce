@@ -262,5 +262,21 @@ Ok(
             ),
             0,
         ),
+        (
+            30,
+            "billing_lease_owner",
+            "TEXT",
+            0,
+            None,
+            0,
+        ),
+        (
+            31,
+            "billing_lease_until",
+            "TEXT",
+            0,
+            None,
+            0,
+        ),
     ],
 )

@@ -207,17 +207,35 @@ fn completing_a_payment_after_its_order_was_cancelled_is_refused() {
     let db = db();
     let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD);
     let pending = payment(&db, Some(order_id), dec!(100.00));
-    // NOTE: once the orders module consults `open_captures_for_order` before
-    // cancelling, this cancel will itself be refused (the pending capture is
-    // outstanding) and this test should fail the payment first instead.
-    cancel_order(&db, order_id);
-
+    // The orders module now consults `open_captures_for_order` before
+    // cancelling: a plain cancel is refused while the pending capture is
+    // outstanding, and a forced cancel voids it in the same transaction — so
+    // there is no window in which a live capture can complete against a
+    // cancelled order.
     let err = db
-        .payments()
-        .mark_completed(pending.id)
-        .expect_err("completing a capture against a cancelled order orphans the money");
-    assert_validation_mentioning(&err, "cancelled");
-    assert_eq!(status(&db, pending.id), PaymentTransactionStatus::Pending);
+        .orders()
+        .update(
+            order_id,
+            UpdateOrder { status: Some(OrderStatus::Cancelled), ..Default::default() },
+        )
+        .expect_err("plain cancel is refused while a capture is in flight");
+    assert_validation_mentioning(&err, "100.00 USD");
+    db.orders()
+        .update(
+            order_id,
+            UpdateOrder {
+                status: Some(OrderStatus::Cancelled),
+                void_payments: true,
+                ..Default::default()
+            },
+        )
+        .expect("forced cancel");
+    assert_eq!(status(&db, pending.id), PaymentTransactionStatus::Cancelled, "voided");
+
+    let err =
+        db.payments().mark_completed(pending.id).expect_err("a voided capture cannot complete");
+    assert!(matches!(err, CommerceError::Conflict(_)), "{err:?}");
+    assert_eq!(status(&db, pending.id), PaymentTransactionStatus::Cancelled);
 }
 
 #[test]
@@ -437,4 +455,322 @@ fn update_batch_atomic_aborts_the_whole_batch_on_an_illegal_transition() {
     // The legal first write was rolled back with the batch.
     assert_eq!(status(&db, pending.id), PaymentTransactionStatus::Pending);
     assert_eq!(status(&db, settled.id), PaymentTransactionStatus::Completed);
+}
+
+// ============================================================================
+// Round 4 — order cancel cannot orphan money
+// ============================================================================
+
+#[test]
+fn cancelling_an_order_with_open_captures_is_refused_without_void_payments() {
+    let db = db();
+    let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD);
+    let captured = completed_payment(&db, Some(order_id), dec!(60.00));
+
+    let err = db
+        .orders()
+        .update(
+            order_id,
+            UpdateOrder { status: Some(OrderStatus::Cancelled), ..Default::default() },
+        )
+        .expect_err("captured money must not be orphaned by a cancel");
+    assert_validation_mentioning(&err, "60.00 USD");
+    assert_validation_mentioning(&err, "void_payments");
+
+    let order = db.orders().get(order_id).expect("get").expect("exists");
+    assert_eq!(order.status, OrderStatus::Pending, "cancel rolled back");
+    assert_eq!(status(&db, captured.id), PaymentTransactionStatus::Completed);
+
+    // Once the money is returned the plain cancel goes through.
+    let refund = db
+        .payments()
+        .create_refund(CreateRefund { payment_id: captured.id, amount: None, ..Default::default() })
+        .expect("refund");
+    db.payments().complete_refund(refund.id).expect("complete refund");
+    cancel_order(&db, order_id);
+}
+
+#[test]
+fn an_in_flight_payment_also_blocks_a_plain_cancel() {
+    let db = db();
+    let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD);
+    let pending = payment(&db, Some(order_id), dec!(100.00));
+
+    let err = db
+        .orders()
+        .update(
+            order_id,
+            UpdateOrder { status: Some(OrderStatus::Cancelled), ..Default::default() },
+        )
+        .expect_err("a pending capture still holds the order total");
+    assert_validation_mentioning(&err, "100.00 USD");
+    assert_eq!(status(&db, pending.id), PaymentTransactionStatus::Pending);
+}
+
+#[test]
+fn forced_cancel_voids_in_flight_payments_and_leaves_settled_ones_for_refund() {
+    let db = db();
+    let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD);
+    let settled = completed_payment(&db, Some(order_id), dec!(60.00));
+    let in_flight = payment(&db, Some(order_id), dec!(30.00));
+    let processing = payment(&db, Some(order_id), dec!(10.00));
+    db.payments().mark_processing(processing.id).expect("processing");
+
+    let order = db
+        .orders()
+        .update(
+            order_id,
+            UpdateOrder {
+                status: Some(OrderStatus::Cancelled),
+                void_payments: true,
+                ..Default::default()
+            },
+        )
+        .expect("forced cancel");
+    assert_eq!(order.status, OrderStatus::Cancelled);
+
+    assert_eq!(status(&db, in_flight.id), PaymentTransactionStatus::Cancelled, "voided");
+    assert_eq!(status(&db, processing.id), PaymentTransactionStatus::Cancelled, "voided");
+    assert_eq!(status(&db, settled.id), PaymentTransactionStatus::Completed, "left for refund");
+    let open = db.payments().open_captures_for_order(order_id).expect("open");
+    assert_eq!(open.iter().map(|p| p.id).collect::<Vec<_>>(), vec![settled.id]);
+
+    // The outbox event records what happened to the money.
+    let event = db
+        .kernel_outbox()
+        .pending(100)
+        .expect("pending")
+        .into_iter()
+        .find(|e| {
+            e.event_type == "orders.updated.v1"
+                && e.aggregate_id == order_id.to_string()
+                && e.payload["status_after"] == "cancelled"
+        })
+        .expect("orders.updated.v1 for the cancel");
+    assert_eq!(event.payload["void_payments"], true);
+    let voided: Vec<String> = event.payload["voided_payment_ids"]
+        .as_array()
+        .expect("array")
+        .iter()
+        .map(|v| v.as_str().expect("uuid").to_string())
+        .collect();
+    assert_eq!(voided.len(), 2);
+    assert!(voided.contains(&in_flight.id.to_string()));
+    assert!(voided.contains(&processing.id.to_string()));
+    assert_eq!(
+        event.payload["outstanding_payment_ids"],
+        serde_json::json!([settled.id.to_string()])
+    );
+    assert_eq!(event.payload["outstanding_captured"], "60.00");
+
+    // The settled money can still be refunded after the cancel.
+    let refund = db
+        .payments()
+        .create_refund(CreateRefund { payment_id: settled.id, amount: None, ..Default::default() })
+        .expect("refund after cancel");
+    db.payments().complete_refund(refund.id).expect("complete refund");
+    assert!(db.payments().open_captures_for_order(order_id).expect("open").is_empty());
+}
+
+#[test]
+fn plain_cancel_event_reports_no_money_movement() {
+    let db = db();
+    let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD);
+    cancel_order(&db, order_id);
+    let event = db
+        .kernel_outbox()
+        .pending(100)
+        .expect("pending")
+        .into_iter()
+        .find(|e| e.event_type == "orders.updated.v1" && e.aggregate_id == order_id.to_string())
+        .expect("event");
+    assert_eq!(event.payload["void_payments"], false);
+    assert_eq!(event.payload["voided_payment_ids"], serde_json::json!([]));
+    assert_eq!(event.payload["outstanding_captured"], "0");
+}
+
+#[test]
+fn update_batch_atomic_cancel_shares_the_money_rule() {
+    let db = db();
+    let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD);
+    completed_payment(&db, Some(order_id), dec!(100.00));
+    let err = db
+        .orders()
+        .update_batch_atomic(vec![(
+            order_id,
+            UpdateOrder { status: Some(OrderStatus::Cancelled), ..Default::default() },
+        )])
+        .expect_err("batch cancel is refused like a single cancel");
+    assert_validation_mentioning(&err, "100.00 USD");
+    assert_eq!(db.orders().get(order_id).unwrap().unwrap().status, OrderStatus::Pending);
+}
+
+// ============================================================================
+// Round 4 — idempotency keys fingerprint the request
+// ============================================================================
+
+#[test]
+fn duplicate_idempotency_key_with_different_parameters_is_a_conflict() {
+    let db = db();
+    let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD);
+    let key = format!("idem-{}", Uuid::new_v4());
+    let first = db
+        .payments()
+        .create(CreatePayment {
+            idempotency_key: Some(key.clone()),
+            ..payment_input(Some(order_id), dec!(25.00))
+        })
+        .expect("first");
+
+    // Same request → same payment, no new row.
+    let replay = db
+        .payments()
+        .create(CreatePayment {
+            idempotency_key: Some(key.clone()),
+            ..payment_input(Some(order_id), dec!(25.00))
+        })
+        .expect("identical replay");
+    assert_eq!(replay.id, first.id);
+
+    // Different amount / order / currency / method → Conflict, and the stored
+    // payment is untouched.
+    let other_order = order_totalling(&db, dec!(100.00), CurrencyCode::USD);
+    for (label, input) in [
+        ("amount", payment_input(Some(order_id), dec!(26.00))),
+        ("order", payment_input(Some(other_order), dec!(25.00))),
+        ("no order", payment_input(None, dec!(25.00))),
+        (
+            "currency",
+            CreatePayment {
+                currency: Some(CurrencyCode::EUR),
+                ..payment_input(Some(order_id), dec!(25.00))
+            },
+        ),
+        (
+            "method",
+            CreatePayment {
+                payment_method: PaymentMethodType::BankTransfer,
+                ..payment_input(Some(order_id), dec!(25.00))
+            },
+        ),
+    ] {
+        let err = db
+            .payments()
+            .create(CreatePayment { idempotency_key: Some(key.clone()), ..input })
+            .expect_err("a different request under a used key must conflict");
+        assert!(
+            matches!(err, CommerceError::Conflict(ref m) if m.contains(&key) && m.contains(&first.id.to_string())),
+            "{label}: {err:?}"
+        );
+    }
+    let stored = db.payments().get(first.id).expect("get").expect("exists");
+    assert_eq!(stored.amount, dec!(25.00));
+    assert_eq!(db.payments().for_order(order_id).expect("list").len(), 1);
+}
+
+#[test]
+fn concurrent_duplicate_idempotency_key_with_different_amounts_yields_one_payment_and_one_conflict()
+{
+    let db = Arc::new(db());
+    let key = format!("idem-{}", Uuid::new_v4());
+    let barrier = Arc::new(Barrier::new(2));
+
+    let handles: Vec<_> = [dec!(25.00), dec!(26.00)]
+        .into_iter()
+        .map(|amount| {
+            let db = Arc::clone(&db);
+            let key = key.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                db.payments().create(CreatePayment {
+                    idempotency_key: Some(key),
+                    ..payment_input(None, amount)
+                })
+            })
+        })
+        .collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+
+    let ok: Vec<_> = results.iter().filter_map(|r| r.as_ref().ok()).collect();
+    let conflicts = results
+        .iter()
+        .filter(|r| matches!(r, Err(CommerceError::Conflict(m)) if m.contains(&key)))
+        .count();
+    assert_eq!(ok.len(), 1, "exactly one caller wins: {results:?}");
+    assert_eq!(conflicts, 1, "the other is told the key was used differently: {results:?}");
+    let count = db.payments().count(stateset_core::PaymentFilter::default()).expect("count");
+    assert_eq!(count, 1);
+}
+
+// ============================================================================
+// Round 4 — refund statuses are ledger states, never bare status flips
+// ============================================================================
+
+#[test]
+fn refunded_cannot_be_reached_through_update() {
+    let db = db();
+    let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD);
+    let p = completed_payment(&db, Some(order_id), dec!(100.00));
+    set_status(&db, p.id, PaymentTransactionStatus::Disputed).expect("dispute");
+
+    // Disputed -> Refunded is a legal state-machine edge, but as a status
+    // flip it leaves amount_refunded at 0 and the capture "outstanding".
+    let err = set_status(&db, p.id, PaymentTransactionStatus::Refunded)
+        .expect_err("refund by status flip is refused");
+    assert_validation_mentioning(&err, "complete_refund");
+    assert_eq!(status(&db, p.id), PaymentTransactionStatus::Disputed);
+    assert_eq!(db.payments().open_captures_for_order(order_id).unwrap().len(), 1);
+
+    // Same for Completed -> Refunded / PartiallyRefunded.
+    set_status(&db, p.id, PaymentTransactionStatus::Completed).expect("dispute won");
+    for target in [PaymentTransactionStatus::Refunded, PaymentTransactionStatus::PartiallyRefunded]
+    {
+        let err = set_status(&db, p.id, target).expect_err("refused");
+        assert_validation_mentioning(&err, "complete_refund");
+    }
+    assert_eq!(status(&db, p.id), PaymentTransactionStatus::Completed);
+
+    // The real path: create_refund + complete_refund writes amount_refunded.
+    let refund = db
+        .payments()
+        .create_refund(CreateRefund { payment_id: p.id, amount: None, ..Default::default() })
+        .expect("refund");
+    db.payments().complete_refund(refund.id).expect("complete");
+    let after = db.payments().get(p.id).unwrap().unwrap();
+    assert_eq!(after.status, PaymentTransactionStatus::Refunded);
+    assert_eq!(after.amount_refunded, dec!(100.00));
+    assert!(db.payments().open_captures_for_order(order_id).unwrap().is_empty());
+
+    // A same-status write on a refunded payment (metadata patch) still works.
+    let patched = db
+        .payments()
+        .update(
+            p.id,
+            UpdatePayment {
+                status: Some(PaymentTransactionStatus::Refunded),
+                metadata: Some("{\"note\":\"ok\"}".into()),
+                ..Default::default()
+            },
+        )
+        .expect("no-op status with metadata");
+    assert_eq!(patched.metadata.as_deref(), Some("{\"note\":\"ok\"}"));
+}
+
+#[test]
+fn update_batch_atomic_refuses_refund_by_status_flip() {
+    let db = db();
+    let p = completed_payment(&db, None, dec!(10.00));
+    let err = db
+        .payments()
+        .update_batch_atomic(vec![(
+            p.id,
+            UpdatePayment {
+                status: Some(PaymentTransactionStatus::Refunded),
+                ..Default::default()
+            },
+        )])
+        .expect_err("batch refused");
+    assert_validation_mentioning(&err, "complete_refund");
+    assert_eq!(status(&db, p.id), PaymentTransactionStatus::Completed);
 }

@@ -718,31 +718,70 @@ impl PgWarehouseRepository {
         rows.into_iter().map(Self::row_to_location).collect::<Result<Vec<_>>>()
     }
 
+    /// Delete a location.
+    ///
+    /// Refused (`ValidationError`) while the location holds on-hand or
+    /// reserved stock, or while any `inventory_movements`, pick task, put-away
+    /// or cycle count still references it — those rows are the audit trail
+    /// and would otherwise fail on the foreign key as an opaque database
+    /// error. Such a location should be deactivated instead. A missing id is
+    /// `NotFound`. The guards and the DELETE share one transaction, so an
+    /// adjustment landing between them cannot have its stock silently
+    /// cascaded away by a delete that read zero on-hand.
     pub async fn delete_location_async(&self, id: i32) -> Result<()> {
-        // Check-then-delete: the stock guard and the DELETE share one
-        // transaction, so an adjustment landing between them cannot have its
-        // stock silently cascaded away by a delete that read zero on-hand.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM location_inventory WHERE location_id = $1 AND quantity_on_hand > 0",
+        let (on_hand, reserved): (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*) FILTER (WHERE quantity_on_hand > 0),
+                    COUNT(*) FILTER (WHERE quantity_reserved > 0)
+             FROM location_inventory WHERE location_id = $1",
         )
         .bind(id)
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-
-        if count.0 > 0 {
+        if on_hand > 0 {
             return Err(CommerceError::ValidationError(
                 "Cannot delete location with inventory".into(),
             ));
         }
+        if reserved > 0 {
+            return Err(CommerceError::ValidationError(
+                "Cannot delete location with reserved inventory".into(),
+            ));
+        }
 
-        sqlx::query("DELETE FROM locations WHERE id = $1")
+        let history: [(&str, &str); 4] = [
+            (
+                "movement history",
+                "SELECT COUNT(*) FROM inventory_movements WHERE from_location_id = $1 OR to_location_id = $1",
+            ),
+            ("pick tasks", "SELECT COUNT(*) FROM pick_tasks WHERE source_location_id = $1"),
+            (
+                "put-aways",
+                "SELECT COUNT(*) FROM put_aways WHERE from_location_id = $1 OR to_location_id = $1",
+            ),
+            ("cycle counts", "SELECT COUNT(*) FROM cycle_counts WHERE location_id = $1"),
+        ];
+        for (what, sql) in history {
+            let (count,): (i64,) =
+                sqlx::query_as(sql).bind(id).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+            if count > 0 {
+                return Err(CommerceError::ValidationError(format!(
+                    "Cannot delete location {id}: it has {what}; deactivate it instead"
+                )));
+            }
+        }
+
+        let deleted = sqlx::query("DELETE FROM locations WHERE id = $1")
             .bind(id)
             .execute(tx.as_mut())
             .await
-            .map_err(map_db_error)?;
+            .map_err(map_db_error)?
+            .rows_affected();
+        if deleted == 0 {
+            return Err(CommerceError::NotFound);
+        }
 
         tx.commit().await.map_err(map_db_error)?;
 

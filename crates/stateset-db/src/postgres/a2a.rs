@@ -923,13 +923,45 @@ impl PgA2ARepository {
         purchase_id: Uuid,
         order_id: Uuid,
     ) -> Result<A2APurchase> {
-        sqlx::query("UPDATE a2a_purchases SET order_id = $1, updated_at = $2 WHERE id = $3")
-            .bind(order_id)
-            .bind(Utc::now())
-            .bind(purchase_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        // Linking is conditional: a purchase that is already cancelled or
+        // completed keeps its (lack of) order, and a purchase already linked
+        // to a different order is never silently re-pointed. Re-linking the
+        // same order is an idempotent no-op.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let existing = Self::get_purchase_for_update(tx.as_mut(), purchase_id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
+        if let Some(current) = existing.order_id
+            && current != order_id
+        {
+            return Err(CommerceError::Conflict(format!(
+                "purchase {purchase_id} is already linked to order {current}"
+            )));
+        }
+        if matches!(existing.status, PurchaseStatus::Cancelled | PurchaseStatus::Completed) {
+            return Err(CommerceError::ValidationError(format!(
+                "cannot link an order to a purchase in {} status",
+                existing.status
+            )));
+        }
+        let affected = sqlx::query(
+            "UPDATE a2a_purchases SET order_id = $1, updated_at = $2
+             WHERE id = $3 AND status NOT IN ('cancelled', 'completed')
+               AND (order_id IS NULL OR order_id = $1)",
+        )
+        .bind(order_id)
+        .bind(Utc::now())
+        .bind(purchase_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if affected != 1 {
+            return Err(CommerceError::Conflict(format!(
+                "purchase {purchase_id} changed concurrently; cannot link order"
+            )));
+        }
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_purchase_async(purchase_id).await?.ok_or(CommerceError::NotFound)
     }

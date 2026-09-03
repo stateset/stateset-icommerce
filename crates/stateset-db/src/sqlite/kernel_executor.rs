@@ -21,6 +21,7 @@ use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::OptionalExtension;
 use rusqlite::params;
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -750,6 +751,29 @@ impl SqliteKernelExecutor {
                     Some(policy.clone()),
                     "commerce.refund_validation_failed",
                     &error.to_string(),
+                    RetryDisposition::Never,
+                    "refund",
+                );
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+
+            // A payment held by an A2A escrow under an open dispute cannot be
+            // refunded directly: the funds are frozen until the dispute is
+            // resolved (`a2a.dispute.resolve`), which settles the escrow
+            // itself. Refunding here would pay the buyer back while the
+            // seller may still win the dispute.
+            if let Some((escrow_id, dispute_id)) =
+                open_dispute_for_payment(tx, &input.payment_id.to_string())?
+            {
+                let mut receipt = rejected_receipt(
+                    command,
+                    Some(policy.clone()),
+                    "commerce.refund.escrow_disputed",
+                    &format!(
+                        "payment is held by escrow {escrow_id} under open dispute {}; resolve the dispute instead of refunding directly",
+                        dispute_id.as_deref().unwrap_or("(unfiled)")
+                    ),
                     RetryDisposition::Never,
                     "refund",
                 );
@@ -3822,9 +3846,7 @@ impl SqliteKernelExecutor {
             }
 
             if command.mode == ExecutionMode::Preview {
-                if let Err(error) =
-                    SqliteCartRepository::validate_checkout_in_tx(tx, command.payload.cart_id)
-                {
+                if let Err(error) = cart_repo.validate_checkout_in_tx(tx, command.payload.cart_id) {
                     if let Some(commerce_error) = sqlite_commerce_error(&error) {
                         let mut receipt = rejected_receipt(
                             command,
@@ -4801,6 +4823,38 @@ fn preview_receipt<C, T>(
         started_at: now,
         completed_at: now,
     }
+}
+
+/// Escrow (and its dispute id, if one was filed) that holds `payment_id` and
+/// is currently frozen: either the escrow itself is `disputed` or a dispute
+/// row for it is still open. Returns `None` when the payment is unencumbered.
+fn open_dispute_for_payment(
+    tx: &rusqlite::Transaction<'_>,
+    payment_id: &str,
+) -> rusqlite::Result<Option<(String, Option<String>)>> {
+    tx.query_row(
+        "SELECT e.id,
+                COALESCE(e.dispute_id, (
+                    SELECT d.id FROM a2a_disputes d
+                    WHERE d.escrow_id = e.id
+                      AND d.status IN ('filed', 'evidence_period', 'under_review', 'escalated')
+                    LIMIT 1
+                ))
+         FROM a2a_escrows e
+         WHERE e.payment_id = ?
+           AND (
+                e.status = 'disputed'
+                OR EXISTS (
+                    SELECT 1 FROM a2a_disputes d
+                    WHERE d.escrow_id = e.id
+                      AND d.status IN ('filed', 'evidence_period', 'under_review', 'escalated')
+                )
+           )
+         LIMIT 1",
+        [payment_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .optional()
 }
 
 fn rejected_receipt<C, T>(

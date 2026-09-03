@@ -307,6 +307,11 @@ impl Subscriptions {
     ///
     /// This is typically called by the billing system when processing
     /// subscription renewals.
+    ///
+    /// A subscription under another worker's live billing lease (see
+    /// [`Self::claim_due_for_billing`]) refuses the cycle with `Conflict`;
+    /// a worker that holds the lease must use
+    /// [`Self::create_claimed_billing_cycle`].
     pub fn create_billing_cycle(
         &self,
         subscription_id: SubscriptionId,
@@ -319,6 +324,26 @@ impl Subscriptions {
             cycle_number,
             period_start,
             period_end,
+            claimed_by: None,
+        })
+    }
+
+    /// Create a billing cycle as `worker_id`, the holder of the
+    /// subscription's billing lease from [`Self::claim_due_for_billing`].
+    pub fn create_claimed_billing_cycle(
+        &self,
+        worker_id: &str,
+        subscription_id: SubscriptionId,
+        cycle_number: i32,
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+    ) -> Result<BillingCycle> {
+        self.db.subscriptions().create_billing_cycle(CreateBillingCycle {
+            subscription_id,
+            cycle_number,
+            period_start,
+            period_end,
+            claimed_by: Some(worker_id.to_string()),
         })
     }
 
@@ -414,32 +439,48 @@ impl Subscriptions {
         if let Some(sub) = self.get(id)? { Ok(sub.is_in_trial()) } else { Ok(false) }
     }
 
-    /// Get subscriptions due for billing.
+    /// Get subscriptions due for billing — a READ-ONLY view.
     ///
     /// Returns `Active` subscriptions whose `next_billing_date` is on or
     /// before `before`, plus `Trial` subscriptions whose trial has ended by
     /// then (their `next_billing_date` is the trial end) — billing the first
     /// post-trial cycle is what moves them to `Active`
-    /// (see [`Self::create_billing_cycle`] / `mark_cycle_paid`). Trials used
-    /// to be filtered out here, so a trial subscription was never billed.
+    /// (see [`Self::create_billing_cycle`] / `mark_cycle_paid`). Subscriptions
+    /// under a live billing lease are excluded.
+    ///
+    /// This never claims anything: two workers polling it see the same rows.
+    /// A billing worker must go through [`Self::claim_due_for_billing`]
+    /// before charging, so only one of them bills each subscription.
     pub fn get_due_for_billing(&self, before: DateTime<Utc>) -> Result<Vec<Subscription>> {
-        use stateset_core::SubscriptionStatus;
+        self.db.subscriptions().get_due_for_billing(before, None)
+    }
 
-        let mut due = Vec::new();
-        for status in [SubscriptionStatus::Active, SubscriptionStatus::Trial] {
-            let subs =
-                self.list(SubscriptionFilter { status: Some(status), ..Default::default() })?;
-            due.extend(subs.into_iter().filter(|s| {
-                match s.status {
-                    SubscriptionStatus::Trial => s
-                        .next_billing_date
-                        .or(s.trial_ends_at)
-                        .is_some_and(|trial_end| trial_end <= before),
-                    _ => s.next_billing_date.is_some_and(|next| next <= before),
-                }
-            }));
-        }
-        Ok(due)
+    /// Atomically claim up to `limit` subscriptions due at `now` for
+    /// `worker_id`, leasing each for `lease_secs` seconds.
+    ///
+    /// The claim is the concurrency control for billing: the same due set as
+    /// [`Self::get_due_for_billing`] is selected and stamped with the lease
+    /// in ONE database transaction, so concurrent workers receive disjoint
+    /// batches and a subscription is charged by at most one of them. Bill the
+    /// batch with [`Self::create_claimed_billing_cycle`] (a cycle created by
+    /// anyone else is refused while the lease is live), then
+    /// [`Self::release_billing_claim`]; a lease that is never released dies
+    /// on its own at `now + lease_secs`, so a crashed worker cannot wedge a
+    /// subscription.
+    pub fn claim_due_for_billing(
+        &self,
+        limit: u32,
+        worker_id: &str,
+        lease_secs: i64,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Subscription>> {
+        self.db.subscriptions().claim_due_for_billing(limit, worker_id, lease_secs, now)
+    }
+
+    /// Release the billing lease `worker_id` holds on `id`. Returns `false`
+    /// when there was nothing to release (no lease, or another worker's).
+    pub fn release_billing_claim(&self, id: SubscriptionId, worker_id: &str) -> Result<bool> {
+        self.db.subscriptions().release_billing_claim(id, worker_id)
     }
 
     /// Get subscriptions with trials ending soon.

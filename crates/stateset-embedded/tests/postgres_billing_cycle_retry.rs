@@ -73,6 +73,7 @@ async fn postgres_failed_cycle_increments_retry_and_stamps_billed_at() {
             cycle_number: 2,
             period_start,
             period_end: period_start + chrono::Duration::days(30),
+            claimed_by: None,
         })
         .await
         .expect("create billing cycle");

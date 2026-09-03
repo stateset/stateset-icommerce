@@ -31,6 +31,7 @@
 
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use stateset_core::CommerceError;
 use stateset_embedded::{
     AdjustLocationInventory, Commerce, CreateCycleCount, CreateCycleCountLine, CreateLocation,
     CreateWarehouse, CycleCount, CycleCountStatus, Location, LocationInventoryFilter, LocationType,
@@ -734,15 +735,16 @@ fn delete_location_with_inventory_is_rejected() {
     );
     assert!(commerce.warehouse().get_location(loc.id).expect("get").is_some());
 
-    // Draining the stock clears the WMS guard, but the location still cannot be
-    // deleted: `inventory_movements.to_location_id` references `locations(id)`
-    // without a cascade, so the audit trail pins the row. That is schema-level,
-    // pre-existing behaviour (the pre-transaction code hit the identical
-    // foreign-key error) — asserted here so a later schema change is a
-    // deliberate decision rather than a silent audit-trail deletion.
+    // Draining the stock clears the stock guard, but the location still cannot
+    // be deleted: `inventory_movements` references it, and that audit trail
+    // pins the row. The repository now reports this as a `ValidationError`
+    // pointing at deactivation instead of surfacing the raw foreign-key error.
     commerce.warehouse().adjust_inventory(adjustment(loc.id, "DEL-SKU", dec!(-3))).expect("drain");
     let err = commerce.warehouse().delete_location(loc.id).expect_err("movement history pins it");
-    assert!(err.to_string().contains("FOREIGN KEY"), "unexpected error: {err}");
+    assert!(
+        matches!(err, CommerceError::ValidationError(ref m) if m.contains("movement history") && m.contains("deactivate")),
+        "unexpected error: {err:?}"
+    );
     assert!(commerce.warehouse().get_location(loc.id).expect("get").is_some());
 
     // A location that never moved stock deletes cleanly.

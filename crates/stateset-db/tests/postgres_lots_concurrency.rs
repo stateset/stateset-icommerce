@@ -439,7 +439,7 @@ async fn postgres_available_lots_for_sku_is_fefo() {
 }
 
 /// L5: confirming the last units marks the lot Consumed; an expired
-/// reservation cannot be confirmed but can be released.
+/// reservation cannot be confirmed — confirming it releases it on the spot.
 #[tokio::test]
 async fn postgres_confirm_marks_consumed_and_refuses_expired_reservation() {
     use stateset_core::LotStatus;
@@ -460,11 +460,9 @@ async fn postgres_confirm_marks_consumed_and_refuses_expired_reservation() {
     let lot = create_lot(&db, &sku, dec!(10), None).await;
     let res = reserve_units(&db, &lot, dec!(4), Some(-60)).await;
     let err = db.lots().confirm_reservation_async(res).await.expect_err("expired reservation");
-    assert_validation_mentions(&err, &["expired"]);
-    let mid = db.lots().get_async(lot.id).await.unwrap().unwrap();
-    assert_eq!(mid.quantity_reserved, dec!(4), "held until released");
-    db.lots().release_reservation_async(res).await.expect("release frees units");
+    assert_validation_mentions(&err, &["expired", "released"]);
     let done = db.lots().get_async(lot.id).await.unwrap().unwrap();
-    assert_eq!(done.quantity_reserved, dec!(0));
+    assert_eq!(done.quantity_reserved, dec!(0), "released lazily by confirm");
     assert_eq!(done.quantity_remaining, dec!(10));
+    assert!(matches!(db.lots().release_reservation_async(res).await, Err(CommerceError::NotFound)));
 }

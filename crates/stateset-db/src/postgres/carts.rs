@@ -8,10 +8,10 @@ use stateset_core::{
     AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartId, CartItem, CartPaymentStatus,
     CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError, CreateCart,
     CreateOrder, CreateOrderItem, CurrencyCode, CustomerId, FulfillmentType, OrderStatus,
-    PaymentStatus, PromotionType, Result, SetCartPayment, SetCartShipping, SetCartX402Payment,
-    ShippingRate, UpdateCart, UpdateCartItem, X402Asset, X402AwaitingSettlementData,
-    X402CheckoutResult, X402IntentCreatedData, X402IntentStatus, X402Network,
-    X402PaymentRequiredData, validate_batch_size, validate_email, validate_phone, validate_price,
+    PaymentStatus, Result, SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate,
+    UpdateCart, UpdateCartItem, X402Asset, X402AwaitingSettlementData, X402CheckoutResult,
+    X402IntentCreatedData, X402IntentStatus, X402Network, X402PaymentRequiredData,
+    validate_batch_size, validate_email, validate_money_scale, validate_phone, validate_price,
     validate_required_text,
 };
 use uuid::Uuid;
@@ -453,6 +453,7 @@ impl PgCartRepository {
         cart_id: Uuid,
     ) -> Result<()> {
         let row = Self::lock_cart_in_tx(tx, cart_id).await?;
+        let (previous_subtotal, previous_tax) = (row.subtotal, row.tax_amount);
 
         // Calculate subtotal from pre-tax line amounts to avoid double-counting tax.
         let subtotal: Decimal = sqlx::query_scalar(
@@ -476,21 +477,24 @@ impl PgCartRepository {
                 .map_err(map_db_error)?;
         let mut cart = row.into_cart(item_rows.into_iter().map(Into::into).collect())?;
         cart.subtotal = subtotal;
+        // Tax follows the lines it was computed on (see `rescale_tax`).
+        cart.tax_amount = rescale_tax(previous_tax, previous_subtotal, subtotal);
 
         // The discount is derived from the cart as it is NOW, never a frozen
         // snapshot: a coupon is re-validated and re-priced against the new
         // contents, and any discount is capped at what the cart can cover.
-        let derived = self.derive_discount(&cart).await?;
+        let derived = self.derive_discount(tx.as_mut(), &cart).await?;
         let grand_total = derived.grand_total(&cart);
 
         sqlx::query(
             "UPDATE carts SET subtotal = $1, discount_amount = $2, discount_description = $3,
-             grand_total = $4, updated_at = $5 WHERE id = $6",
+             grand_total = $4, tax_amount = $5, updated_at = $6 WHERE id = $7",
         )
         .bind(subtotal)
         .bind(derived.amount)
         .bind(&derived.description)
         .bind(grand_total)
+        .bind(cart.tax_amount)
         .bind(Utc::now())
         .bind(cart_id)
         .execute(tx.as_mut())
@@ -510,24 +514,28 @@ impl PgCartRepository {
     /// cart's `discount_description` says why; checkout refuses the cart while
     /// it is in that state (see [`DerivedDiscount::coupon_error`]).
     ///
-    /// Promotion types this path cannot price (bundles, tiers, ...) keep the
-    /// discount recorded by full promotion evaluation. Every discount, coupon
-    /// or manual, is capped at `subtotal + tax + shipping` so the cart never
-    /// hands an order a discount larger than the order can absorb. Mirrors the
-    /// SQLite twin.
-    async fn derive_discount(&self, cart: &Cart) -> Result<DerivedDiscount> {
+    /// Every promotion type is priced by the core evaluator
+    /// ([`stateset_core::Promotion::calculate_discount`]) against the current
+    /// lines, so a bundle, tier or Buy-X-Get-Y coupon loses its discount the
+    /// moment the cart stops qualifying. Every discount, coupon or manual, is
+    /// capped at `subtotal + tax + shipping` so the cart never hands an order
+    /// a discount larger than the order can absorb. Mirrors the SQLite twin.
+    ///
+    /// Runs on `conn` — the caller's cart-mutation / checkout transaction —
+    /// so coupon and usage reads are consistent with the locked cart row and
+    /// no second pooled connection is taken.
+    async fn derive_discount(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        cart: &Cart,
+    ) -> Result<DerivedDiscount> {
         let Some(code) = cart.coupon_code.as_deref() else {
             return Ok(DerivedDiscount::capped(cart, cart.discount_amount, None));
         };
         let promo_repo = PgPromotionRepository::new(self.pool.clone());
-        match promo_repo.validate_coupon_for_cart_async(cart, code, Utc::now()).await {
+        match promo_repo.validate_coupon_for_cart_in_tx(conn, cart, code, Utc::now()).await {
             Ok((_coupon, promotion)) => {
-                let amount = match promotion.promotion_type {
-                    PromotionType::PercentageOff | PromotionType::FixedAmountOff => {
-                        coupon_discount_amount(&promotion, cart)
-                    }
-                    _ => cart.discount_amount,
-                };
+                let amount = coupon_discount_amount(&promotion, cart);
                 Ok(DerivedDiscount::capped(cart, amount, Some(promotion.name)))
             }
             Err(CommerceError::ValidationError(reason)) => Ok(DerivedDiscount {
@@ -593,31 +601,15 @@ impl PgCartRepository {
         .await
         .map_err(map_db_error)?;
 
-        // Add initial items if provided
-        let mut items = vec![];
+        // Add initial items if provided, then price the cart through the
+        // same totals path every later mutation uses (parity with SQLite).
         if let Some(input_items) = &input.items {
             for item_input in input_items {
-                let item = self.add_item_internal(&mut tx, id, item_input.clone()).await?;
-                items.push(item);
+                validate_add_item_money(currency, item_input)?;
+                self.add_item_internal(&mut tx, id, item_input.clone()).await?;
             }
+            self.update_cart_totals_in_tx(&mut tx, id).await?;
         }
-
-        // Update totals
-        let subtotal: Decimal = sqlx::query_scalar(
-            "SELECT COALESCE(SUM((quantity * unit_price) - discount_amount), 0) FROM cart_items WHERE cart_id = $1",
-        )
-        .bind(id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        sqlx::query("UPDATE carts SET subtotal = $1, grand_total = $2 WHERE id = $3")
-            .bind(subtotal)
-            .bind(subtotal)
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -713,8 +705,17 @@ impl PgCartRepository {
 
     pub async fn update_async(&self, id: Uuid, input: UpdateCart) -> Result<Cart> {
         let now = Utc::now();
+        if let Some(discount) = input.discount_amount {
+            if discount < Decimal::ZERO {
+                return Err(CommerceError::ValidationError(format!(
+                    "Cart discount must not be negative, got {discount}"
+                )));
+            }
+        }
 
-        sqlx::query(
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::lock_cart_in_tx(&mut tx, id).await?;
+        let rows = sqlx::query(
             r#"UPDATE carts SET
                 customer_id = COALESCE($1, customer_id),
                 customer_email = COALESCE($2, customer_email),
@@ -751,9 +752,17 @@ impl PgCartRepository {
         .bind(&input.metadata)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            return Err(CommerceError::NotFound);
+        }
+        // A discount / coupon written here must land in grand_total too:
+        // never store a discount the totals do not reflect.
+        self.update_cart_totals_in_tx(&mut tx, id).await?;
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -865,7 +874,8 @@ impl PgCartRepository {
     pub async fn add_item_async(&self, cart_id: Uuid, item: AddCartItem) -> Result<CartItem> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         // Serialize with other mutations of this cart before touching its lines.
-        Self::lock_cart_in_tx(&mut tx, cart_id).await?;
+        let row = Self::lock_cart_in_tx(&mut tx, cart_id).await?;
+        validate_add_item_money(row.currency, &item)?;
         let result = self.add_item_internal(&mut tx, cart_id, item).await?;
         self.update_cart_totals_in_tx(&mut tx, cart_id).await?;
         tx.commit().await.map_err(map_db_error)?;
@@ -890,7 +900,8 @@ impl PgCartRepository {
             .await
             .map_err(map_db_error)?;
         // Serialize with other mutations of this cart before touching its lines.
-        Self::lock_cart_in_tx(&mut tx, cart_id).await?;
+        let row = Self::lock_cart_in_tx(&mut tx, cart_id).await?;
+        validate_update_cart_item_money(row.currency, &input)?;
 
         // Update item fields
         if let Some(qty) = input.quantity {
@@ -988,6 +999,15 @@ impl PgCartRepository {
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(())
+    }
+
+    pub async fn get_item_async(&self, item_id: Uuid) -> Result<Option<CartItem>> {
+        let row: Option<CartItemRow> = sqlx::query_as("SELECT * FROM cart_items WHERE id = $1")
+            .bind(item_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+        Ok(row.map(Into::into))
     }
 
     pub async fn get_items_async(&self, cart_id: Uuid) -> Result<Vec<CartItem>> {
@@ -1278,7 +1298,7 @@ impl PgCartRepository {
 
     pub async fn apply_discount_async(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
         // Get the cart first to calculate the discount off its subtotal.
-        let cart = self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)?;
+        let mut cart = self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)?;
 
         // Resolve the coupon and its promotion, and refuse anything that is
         // not redeemable right now (inactive/expired/exhausted coupon,
@@ -1289,6 +1309,7 @@ impl PgCartRepository {
         let (_coupon, promotion) =
             promo_repo.validate_coupon_for_cart_async(&cart, coupon_code, Utc::now()).await?;
 
+        cart.coupon_code = Some(coupon_code.to_uppercase());
         let discount_amount = coupon_discount_amount(&promotion, &cart);
 
         let discount_description = promotion.name;
@@ -1412,9 +1433,18 @@ impl PgCartRepository {
         if !cart.is_ready_for_checkout() {
             return Err(CommerceError::ValidationError("Cart is not ready for checkout".into()));
         }
-        // Never hand the order a discount it cannot absorb (see `cap_discount`).
+        // Same coupon re-validation / discount derivation as
+        // `complete_checkout_in_tx`, so a Preview never succeeds where Apply
+        // would refuse (and reports the same error).
         let mut cart = cart;
-        cart.discount_amount = cap_discount(&cart, cart.discount_amount);
+        let derived = self.derive_discount(tx.as_mut(), &cart).await?;
+        if let Some(reason) = derived.coupon_error {
+            return Err(CommerceError::ValidationError(format!(
+                "Coupon {} is no longer valid: {reason}",
+                cart.coupon_code.as_deref().unwrap_or_default()
+            )));
+        }
+        cart.discount_amount = derived.amount;
         let customer_id = if let Some(id) = cart.customer_id {
             id
         } else {
@@ -1518,7 +1548,7 @@ impl PgCartRepository {
         // coupon grants RIGHT NOW (not a snapshot from `apply_discount`), a
         // coupon that stopped qualifying since it was applied refuses the
         // checkout, and no discount ever exceeds what the order can absorb.
-        let derived = self.derive_discount(&cart).await?;
+        let derived = self.derive_discount(tx.as_mut(), &cart).await?;
         if let Some(reason) = derived.coupon_error {
             return Err(CommerceError::ValidationError(format!(
                 "Coupon {} is no longer valid: {reason}",
@@ -2155,6 +2185,10 @@ impl CartRepository for PgCartRepository {
         super::block_on(self.remove_item_async(item_id))
     }
 
+    fn get_item(&self, item_id: Uuid) -> Result<Option<CartItem>> {
+        super::block_on(self.get_item_async(item_id))
+    }
+
     fn get_items(&self, cart_id: CartId) -> Result<Vec<CartItem>> {
         super::block_on(self.get_items_async(cart_id.into_uuid()))
     }
@@ -2300,22 +2334,73 @@ impl CartRepository for PgCartRepository {
     }
 }
 
-/// Order-level discount a coupon-activated promotion grants on `cart`,
-/// rounded to the cart currency's precision (mirrors the SQLite twin so the
-/// two backends agree to the cent).
+/// Discount a coupon-activated promotion grants on `cart` RIGHT NOW, priced
+/// by the core evaluator ([`stateset_core::Promotion::calculate_discount`])
+/// against the cart's current lines — so bundle, tier, Buy-X-Get-Y and
+/// product-scoped promotions are re-derived exactly like percentage / fixed
+/// ones — then capped at what the cart can cover and rounded to the cart
+/// currency's precision. Mirrors the SQLite twin so the two backends agree to
+/// the cent.
 pub(crate) fn coupon_discount_amount(promotion: &stateset_core::Promotion, cart: &Cart) -> Decimal {
-    let subtotal = cart.subtotal;
-    let raw = match promotion.promotion_type {
-        PromotionType::PercentageOff => {
-            let discount = subtotal * promotion.percentage_off.unwrap_or(Decimal::ZERO);
-            promotion.max_discount_amount.map_or(discount, |max| discount.min(max))
-        }
-        PromotionType::FixedAmountOff => {
-            promotion.fixed_amount_off.unwrap_or(Decimal::ZERO).min(subtotal)
-        }
-        _ => Decimal::ZERO, // Other types are priced by full promotion evaluation
-    };
+    let request = stateset_core::ApplyPromotionsRequest::from_cart(
+        cart,
+        cart.coupon_code.as_deref().unwrap_or_default(),
+    );
+    let raw = promotion.calculate_discount(&request, Decimal::ZERO);
     cap_discount(cart, raw).round_dp(u32::from(cart.currency.decimal_places()))
+}
+
+/// Carry a cart's tax across a change of its lines.
+///
+/// The cart stores only a tax *amount* (set by `set_tax`, normally from the
+/// tax engine), not the rate or jurisdiction it came from, so the storage
+/// layer cannot re-run the engine. It keeps the effective rate instead: the
+/// stored tax is scaled by `new_subtotal / previous_subtotal`, which is exact
+/// for a single-rate cart and a best-effort estimate for mixed-rate lines —
+/// the embedded cart accessor re-runs the tax engine after each mutation when
+/// it can and overwrites this estimate. Tax that was never set (zero) stays
+/// zero, and a cart emptied of lines carries no tax.
+pub(crate) fn rescale_tax(
+    previous_tax: Decimal,
+    previous_subtotal: Decimal,
+    new_subtotal: Decimal,
+) -> Decimal {
+    if previous_tax <= Decimal::ZERO || previous_subtotal <= Decimal::ZERO {
+        return previous_tax.max(Decimal::ZERO);
+    }
+    if new_subtotal == previous_subtotal {
+        return previous_tax;
+    }
+    if new_subtotal <= Decimal::ZERO {
+        return Decimal::ZERO;
+    }
+    (previous_tax * new_subtotal / previous_subtotal).round_dp(2)
+}
+
+/// Invariant M1 (`commerce.money.scale_exceeds_currency`) for a line being
+/// added: no money input may carry more decimals than the cart currency's
+/// minor unit, because the line total and cart subtotal are rounded to it
+/// and a sub-minor-unit price would silently lose money.
+pub(crate) fn validate_add_item_money(currency: CurrencyCode, item: &AddCartItem) -> Result<()> {
+    validate_money_scale(currency, item.unit_price)?;
+    if let Some(original) = item.original_price {
+        validate_money_scale(currency, original)?;
+    }
+    Ok(())
+}
+
+/// Invariant M1 for a line update (see [`validate_add_item_money`]).
+pub(crate) fn validate_update_cart_item_money(
+    currency: CurrencyCode,
+    input: &UpdateCartItem,
+) -> Result<()> {
+    if let Some(unit_price) = input.unit_price {
+        validate_money_scale(currency, unit_price)?;
+    }
+    if let Some(discount) = input.discount_amount {
+        validate_money_scale(currency, discount)?;
+    }
+    Ok(())
 }
 
 /// Outcome of [`PgCartRepository::derive_discount`].

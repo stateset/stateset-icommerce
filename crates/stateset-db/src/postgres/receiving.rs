@@ -612,7 +612,10 @@ impl PgReceivingRepository {
             let new_received = cur_received + line.quantity_received;
             let new_rejected = cur_rejected + reject_qty;
 
-            if new_received > expected {
+            // `expected_quantity = 0` marks a blind receipt: any positive
+            // quantity is accepted and the line is `received` in full.
+            let blind = expected == Decimal::ZERO;
+            if !blind && new_received > expected {
                 return Err(CommerceError::ValidationError(format!(
                     "Receiving {new_received} would exceed expected quantity {expected} for receipt item {}",
                     line.receipt_item_id
@@ -798,9 +801,56 @@ impl PgReceivingRepository {
         Ok(row.0 as u64)
     }
 
+    /// Create a put-away task against a received line.
+    ///
+    /// Guards (inside one transaction, with `SELECT ... FOR UPDATE` on the
+    /// receipt line so two concurrent put-aways serialize on the cap):
+    /// 1. `quantity` must be positive;
+    /// 2. `receipt_item_id` must be a line of `receipt_id`;
+    /// 3. the requested quantity plus every non-cancelled put-away already
+    ///    planned for the line may not exceed the line's `received_quantity`.
     pub async fn create_put_away_async(&self, input: CreatePutAway) -> Result<PutAway> {
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Put-away quantity must be greater than zero".into(),
+            ));
+        }
         let now = Utc::now();
         let id = Uuid::new_v4();
+        let item_id = input.receipt_item_id;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let (owner, received): (Uuid, Decimal) = sqlx::query_as(
+            "SELECT receipt_id, received_quantity FROM receipt_items WHERE id = $1 FOR UPDATE",
+        )
+        .bind(item_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        if owner != input.receipt_id {
+            return Err(CommerceError::ValidationError(format!(
+                "Receipt item {item_id} does not belong to receipt {}",
+                input.receipt_id
+            )));
+        }
+
+        let (planned,): (Decimal,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(quantity), 0) FROM put_aways
+             WHERE receipt_item_id = $1 AND status != 'cancelled'",
+        )
+        .bind(item_id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        if planned + input.quantity > received {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot put away {} of receipt item {item_id}: {received} received, {planned} already planned, {} available",
+                input.quantity,
+                received - planned
+            )));
+        }
 
         sqlx::query(
             r#"
@@ -812,7 +862,7 @@ impl PgReceivingRepository {
         )
         .bind(id)
         .bind(input.receipt_id)
-        .bind(input.receipt_item_id)
+        .bind(item_id)
         .bind(&input.sku)
         .bind(input.from_location_id)
         .bind(input.to_location_id)
@@ -821,13 +871,11 @@ impl PgReceivingRepository {
         .bind(&input.assigned_to)
         .bind(&input.notes)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        self.get_put_away_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to create put-away".into()))
+        Self::commit_and_read_put_away(tx, id).await
     }
 
     pub async fn get_put_away_async(&self, id: Uuid) -> Result<Option<PutAway>> {

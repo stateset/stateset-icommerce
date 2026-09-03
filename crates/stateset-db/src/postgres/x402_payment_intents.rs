@@ -668,6 +668,47 @@ impl PgX402PaymentIntentRepository {
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    pub async fn mark_batched_async(
+        &self,
+        id: Uuid,
+        batch_merkle_root: &str,
+        inclusion_proof: Vec<String>,
+    ) -> Result<X402PaymentIntent> {
+        if batch_merkle_root.trim().is_empty() {
+            return Err(CommerceError::ValidationError(
+                "batch_merkle_root is required to batch an x402 intent".to_string(),
+            ));
+        }
+        let proof_json = serde_json::to_value(&inclusion_proof)
+            .map_err(|e| CommerceError::ValidationError(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let intent =
+            Self::load_for_transition(tx.as_mut(), id, &[X402IntentStatus::Sequenced], "batch")
+                .await?;
+        // A commitment published after the validity window is meaningless
+        // on-chain, exactly like a late settlement.
+        Self::ensure_not_expired(&intent, "batch")?;
+
+        let affected = sqlx::query(
+            "UPDATE x402_payment_intents SET status = $1, batch_merkle_root = $2, inclusion_proof = $3, updated_at = $4 WHERE id = $5 AND status = $6",
+        )
+        .bind(X402IntentStatus::Batched.to_string())
+        .bind(batch_merkle_root)
+        .bind(proof_json)
+        .bind(Utc::now())
+        .bind(id)
+        .bind(X402IntentStatus::Sequenced.to_string())
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        Self::check_transition(id, affected, "batch")?;
+
+        tx.commit().await.map_err(map_db_error)?;
+
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
+    }
+
     pub async fn mark_settled_async(
         &self,
         id: Uuid,
@@ -675,9 +716,13 @@ impl PgX402PaymentIntentRepository {
         block_number: u64,
     ) -> Result<X402PaymentIntent> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let intent =
-            Self::load_for_transition(tx.as_mut(), id, &[X402IntentStatus::Sequenced], "settle")
-                .await?;
+        let intent = Self::load_for_transition(
+            tx.as_mut(),
+            id,
+            &[X402IntentStatus::Sequenced, X402IntentStatus::Batched],
+            "settle",
+        )
+        .await?;
         Self::ensure_not_expired(&intent, "settle")?;
 
         // One on-chain transaction settles at most one intent. Checked here
@@ -707,7 +752,7 @@ impl PgX402PaymentIntentRepository {
         .bind(Utc::now())
         .bind(Utc::now())
         .bind(id)
-        .bind(X402IntentStatus::Sequenced.to_string())
+        .bind(intent.status.to_string())
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?
@@ -1086,6 +1131,15 @@ impl X402PaymentIntentRepository for PgX402PaymentIntentRepository {
         batch_id: Uuid,
     ) -> Result<X402PaymentIntent> {
         block_on(self.mark_sequenced_async(id, sequence_number, batch_id))
+    }
+
+    fn mark_batched(
+        &self,
+        id: Uuid,
+        batch_merkle_root: &str,
+        inclusion_proof: Vec<String>,
+    ) -> Result<X402PaymentIntent> {
+        block_on(self.mark_batched_async(id, batch_merkle_root, inclusion_proof))
     }
 
     fn mark_settled(

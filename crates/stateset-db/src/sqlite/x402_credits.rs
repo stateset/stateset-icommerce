@@ -250,10 +250,34 @@ impl X402CreditRepository for SqliteX402CreditRepository {
             let now = Utc::now();
             let now_str = now.to_rfc3339();
 
-            tx.execute(
-                "UPDATE x402_credit_accounts SET balance = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![new_balance, now_str, account_id.to_string()],
+            // The read above runs under BEGIN IMMEDIATE, so it is already
+            // serialized against other writers; the predicate makes the write
+            // conditional on the exact balance it was computed from (and, for
+            // a debit, on the row still covering the amount) so a balance can
+            // never go negative even for a caller that bypasses the lock.
+            let min_balance = match direction {
+                X402CreditDirection::Debit => amount_i64,
+                _ => 0i64,
+            };
+            let affected = tx.execute(
+                "UPDATE x402_credit_accounts SET balance = ?, updated_at = ?
+                 WHERE id = ? AND balance = ? AND balance >= ?",
+                rusqlite::params![
+                    new_balance,
+                    now_str,
+                    account_id.to_string(),
+                    current_balance,
+                    min_balance
+                ],
             )?;
+            if affected != 1 {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict(
+                        "x402 credit balance changed concurrently; retry the adjustment"
+                            .to_string(),
+                    ),
+                )));
+            }
 
             let tx_id = Uuid::new_v4();
             let asset_str = asset.to_string().to_lowercase();
