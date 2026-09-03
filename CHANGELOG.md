@@ -6,6 +6,8 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.30.0] - 2026-09-03
+
 A parity audit of the modules no earlier round had read found five defects,
 three of them money or stock, and one pattern behind all of them: a fix lands
 on a method and stops short of its sibling. This round closes the defects and
