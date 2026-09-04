@@ -127,7 +127,7 @@ Item {
   }
 
   function secureStateFiles() {
-    if (!statePermissionsProcess.running) statePermissionsProcess.running = true
+    statePermissionsTimer.restart()
   }
 
   function loadNotificationState(text) {
@@ -507,6 +507,16 @@ Item {
     id: statePermissionsProcess
     command: ["/usr/bin/chmod", "600", "--", root.notificationStatePath, root.snapshotStatePath]
     running: false
+  }
+
+  Timer {
+    id: statePermissionsTimer
+    interval: 50
+    repeat: false
+    onTriggered: {
+      if (statePermissionsProcess.running) restart()
+      else statePermissionsProcess.running = true
+    }
   }
 
   FileView {
