@@ -19,7 +19,7 @@ import {
   createPaymentReceipt,
   executeMppToolWithPayment,
 } from '../mpp/index.js';
-import { replayEventHash } from './audit-envelope.js';
+import { attachCommerceExecutionEvidence, replayEventHash } from './audit-envelope.js';
 import { attachPaymentMetadataToResponse } from './mpp-payment.js';
 import { buildDeterministicMutationManifest } from './mutation-manifest.js';
 import { normalizeToolName } from './policy-helpers.js';
@@ -116,7 +116,7 @@ export function createToolDispatch({
                 payload?.permission || permission,
                 status,
               );
-        await addAgenticReplayEvent({
+        const event = {
           eventId: randomUUID(),
           tool: name,
           status,
@@ -139,7 +139,9 @@ export function createToolDispatch({
           }),
           source: 'mcp_server',
           agentic: true,
-        });
+        };
+        await addAgenticReplayEvent(event);
+        return event;
       };
       const baseToolContext = {
         tool: name,
@@ -405,7 +407,7 @@ export function createToolDispatch({
             sessionId: effectiveSessionId,
           });
         }
-        await logEvent('success', {
+        const replayEvent = await logEvent('success', {
           params: nextArgs,
           permission,
           charge,
@@ -433,7 +435,7 @@ export function createToolDispatch({
             credentialId: mpp?.credential?.credentialId || null,
           });
         }
-        return maybeStructured;
+        return attachCommerceExecutionEvidence(maybeStructured, replayEvent);
       } catch (error) {
         if (hookRunner?.hasHooks?.('after_tool_call')) {
           await hookRunner.run('after_tool_call', {

@@ -101,6 +101,10 @@ describe('wrapTool', () => {
     const out = await wrapped.handler({ customerId: 'c1' }, { requestId: 'req-1' });
     assert.deepEqual(out._structured, { status: 'success', name: 'create_order' });
     assert.equal(out.content[0].type, 'text');
+    assert.equal(out._meta['com.stateset/commerce'].event_id, d.events[0].eventId);
+    assert.equal(out._meta['com.stateset/commerce'].tool, 'create_order');
+    assert.match(out._meta['com.stateset/commerce'].params_sha256, /^sha256:[a-f0-9]{64}$/);
+    assert.match(out._meta['com.stateset/commerce'].result_sha256, /^sha256:[a-f0-9]{64}$/);
 
     assert.equal(d.events.length, 1);
     const evt = d.events[0];
