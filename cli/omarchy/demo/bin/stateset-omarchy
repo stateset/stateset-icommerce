@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCENARIOS = {"healthy", "attention", "empty", "partial", "governed", "unavailable"}
+CONTRACT = json.loads((ROOT.parent / "contract.json").read_text())
+
+
+def fail(message, code=2):
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def scenario():
+    return os.environ.get("STATESET_DEMO_SCENARIO", "attention")
+
+
+def state_path():
+    directory = Path(os.environ.get("STATESET_DEMO_STATE_DIR", "/tmp/stateset-omarchy-demo"))
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / "service.json"
+
+
+def load_service():
+    path = state_path()
+    if not path.exists():
+        return {"installed": True, "active": True, "state": "active"}
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {"installed": False, "active": False, "state": "unknown"}
+
+
+def save_service(value):
+    path = state_path()
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value))
+    temporary.replace(path)
+
+
+def print_status():
+    name = scenario()
+    if name == "timeout":
+        time.sleep(20)
+    if name == "oversized":
+        print("x" * 70000)
+        return
+    if name == "controller-missing":
+        fail("stateset-omarchy: command not found", 127)
+    if name not in SCENARIOS:
+        fail(f"Unknown demo scenario: {name}")
+    payload = json.loads((ROOT / "fixtures" / f"{name}.json").read_text())
+    payload["controllerVersion"] = CONTRACT["controllerVersion"]
+    payload["capabilities"] = CONTRACT["capabilities"]
+    print(json.dumps(payload))
+
+
+def service_action(action, wants_json):
+    value = load_service()
+    if action == "status":
+        pass
+    elif action == "install":
+        value = {"installed": True, "active": True, "state": "active"}
+        save_service(value)
+        print("Service unit: /tmp/stateset-demo/stateset-icommerce-mcp.service")
+        print("Service enabled and started.")
+        return
+    elif action == "start":
+        if not value.get("installed"):
+            fail("Service is not installed", 1)
+        value.update(active=True, state="active")
+        save_service(value)
+    elif action == "stop":
+        if not value.get("installed"):
+            fail("Service is not installed", 1)
+        value.update(active=False, state="inactive")
+        save_service(value)
+    elif action == "restart":
+        if not value.get("installed"):
+            fail("Service is not installed", 1)
+        value.update(active=True, state="active")
+        save_service(value)
+    else:
+        fail(f"Unsupported demo service action: {action}")
+
+    if wants_json:
+        print(json.dumps(value))
+    else:
+        print(f"Service: {value.get('state', 'unknown')}")
+
+
+def main():
+    args = sys.argv[1:]
+    if args == ["status", "--json"]:
+        print_status()
+        return
+    if args and args[0] == "service":
+        service_action(args[1] if len(args) > 1 else "install", "--json" in args)
+        return
+    if args and args[0] in {
+        "agent", "attention", "backup", "configure", "dashboard", "doctor", "remediate"
+    }:
+        print("Demo only: " + " ".join(args))
+        return
+    fail("Unsupported demo command: " + " ".join(args))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "configured": true,
+  "dbPath": "/tmp/stateset-demo/missing.db",
+  "mode": "preview",
+  "message": "Configured commerce store is not readable",
+  "sizeBytes": 0,
+  "counts": {},
+  "alerts": {},
+  "signalsComplete": false,
+  "unavailableSignals": ["orders", "payments", "pendingReturns", "lowStockItems"]
+}
