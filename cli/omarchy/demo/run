@@ -100,8 +100,7 @@ shell_instances() {
 }
 
 wait_for_shell() {
-  local attempt
-  for attempt in $(seq 1 150); do
+  for _ in $(seq 1 150); do
     if OMARCHY_PATH="$omarchy_path" OMARCHY_SHELL_IPC_TIMEOUT=0.5s \
         omarchy-shell shell ping >/dev/null 2>&1; then
       return 0
