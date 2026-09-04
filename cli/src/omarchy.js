@@ -3,10 +3,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { CLI_VERSION } from './config.js';
 import { createCommerce } from './commerce.js';
 
 export const OMARCHY_PLUGIN_ID = 'com.stateset.icommerce';
 export const OMARCHY_CONFIG_DIRNAME = 'stateset-omarchy';
+const OMARCHY_CONTRACT = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../omarchy/contract.json', import.meta.url)), 'utf8'));
+export const OMARCHY_CAPABILITIES = Object.freeze([...OMARCHY_CONTRACT.capabilities]);
 export const OMARCHY_SERVICE_UNIT = 'stateset-icommerce-mcp.service';
 
 const STORE_FILENAMES = ['store.db', 'stateset.db', 'commerce.db'];
@@ -216,6 +219,9 @@ export async function getStoreStatus(options = {}) {
     Boolean(dbPath) &&
     path.resolve(config.dbPath) === path.resolve(dbPath);
   const base = {
+    schemaVersion: OMARCHY_CONTRACT.schemaVersion,
+    controllerVersion: CLI_VERSION,
+    capabilities: [...OMARCHY_CAPABILITIES],
     ok: false,
     configured: Boolean(dbPath),
     dbPath,
