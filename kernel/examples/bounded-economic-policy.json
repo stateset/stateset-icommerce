@@ -1,0 +1,29 @@
+{
+  "version": "bounded-economic-v1",
+  "commands": {
+    "payments.create": {
+      "required_capabilities": ["payments.create"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:acme"],
+      "allowed_store_ids": ["store:production"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": true,
+      "requires_mandate": true,
+      "requires_budget": true,
+      "max_amount": {
+        "amount": "25000.00",
+        "currency": "USD"
+      },
+      "approval_above": {
+        "amount": "2500.00",
+        "currency": "USD"
+      },
+      "allowed_counterparty_ids": []
+    }
+  },
+  "trusted_authority_keys": {
+    "operator-key-2026": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

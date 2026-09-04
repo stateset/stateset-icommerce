@@ -109,6 +109,34 @@ impl Commerce {
             .map_err(|error| Error::from_reason(format!("Kernel execution failed: {error}")))
     }
 
+    /// Provision immutable, durable monetary authority for governed commands.
+    /// This is an operator API and should not be exposed as a model tool.
+    #[napi]
+    pub async fn provision_economic_budget(
+        &self,
+        budget: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let budget: stateset_core::EconomicBudget = serde_json::from_value(budget)
+            .map_err(|error| Error::from_reason(format!("Invalid economic budget: {error}")))?;
+        let commerce = self.inner.lock().await;
+        let status = commerce
+            .provision_economic_budget(&budget)
+            .map_err(|error| Error::from_reason(format!("Budget provisioning failed: {error}")))?;
+        serde_json::to_value(status)
+            .map_err(|error| Error::from_reason(format!("Budget serialization failed: {error}")))
+    }
+
+    /// Read exact committed and available balances for a durable budget.
+    #[napi]
+    pub async fn economic_budget_status(&self, budget_id: String) -> Result<serde_json::Value> {
+        let commerce = self.inner.lock().await;
+        let status = commerce
+            .economic_budget_status(&budget_id)
+            .map_err(|error| Error::from_reason(format!("Budget lookup failed: {error}")))?;
+        serde_json::to_value(status)
+            .map_err(|error| Error::from_reason(format!("Budget serialization failed: {error}")))
+    }
+
     /// Get the customers API
     #[napi(getter)]
     pub fn customers(&self) -> Customers {

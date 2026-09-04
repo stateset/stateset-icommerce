@@ -19,27 +19,34 @@ use super::x402_payment_intents::{IntentRow, PgX402PaymentIntentRepository};
 use crate::kernel::plans::PlanOutcome;
 use crate::kernel::plans::catalog::{create_inventory_item_guard, create_product_guard};
 use crate::kernel::plans::escrow::{
-    ESCROW_UNVERSIONED, create_escrow_guard, dispute_escrow_guard, escrow_id_guard,
-    escrow_legacy_amount, escrow_settlement_guard, file_dispute_guard, plan_fund_escrow,
-    resolve_dispute_guard, submit_evidence_guard,
+    ESCROW_UNVERSIONED, canonical_escrow_asset, create_escrow_guard, dispute_escrow_guard,
+    economic_asset_guard, escrow_id_guard, escrow_legacy_amount, escrow_settlement_guard,
+    file_dispute_guard, plan_fund_escrow, resolve_dispute_guard, submit_evidence_guard,
 };
 use crate::kernel::plans::finance::{
     BILLING_CYCLE_UNVERSIONED, CART_UNVERSIONED, JOURNAL_ENTRY_UNVERSIONED,
     X402_INTENT_UNVERSIONED, charge_subscription_guard, commit_checkout_guard,
     post_journal_entry_guard, settle_x402_guard,
 };
-use crate::kernel::plans::inventory::{reservation_lifecycle_guard, reserve_inventory_guard};
+use crate::kernel::plans::inventory::{
+    economic_quantity_guard, reservation_lifecycle_guard, reserve_inventory_guard,
+};
 use crate::kernel::plans::orders::{
     OrderTransitionSnapshot, ShipOrderSnapshot, plan_order_transition, plan_ship_order,
     reservation_expired_during_shipment, ship_order_guard, transition_order_guard,
 };
-use crate::kernel::plans::payments::{RefundSnapshot, create_payment_guard, plan_refund};
+use crate::kernel::plans::payments::{
+    RefundSnapshot, create_payment_guard, economic_counterparty_guard, economic_money_guard,
+    plan_refund,
+};
 use crate::kernel::plans::returns::transition_return_guard;
 use crate::kernel::receipt::{
     attach_command_context, checkout_error_code, preview_receipt, principal_kind_name,
     receipt_record, rejected_receipt, succeeded_receipt,
 };
-use crate::kernel::{CommandRun, EnvelopeGuard, Replay, resolve_replay};
+use crate::kernel::{
+    BudgetSnapshot, CommandRun, EnvelopeGuard, Replay, plan_budget, resolve_replay,
+};
 use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::Utc;
 use serde::{Serialize, de::DeserializeOwned};
@@ -50,14 +57,15 @@ use stateset_core::{
     A2ADisputeStatus, A2AEscrow, A2AEscrowStatus, BillingCycleStatus, ChargeSubscription,
     CheckoutResult, CommandEnvelope, CommerceError, CommitCheckout, ConfirmInventoryReservation,
     CreateA2AEscrow, CreateInventoryItem, CreatePayment, CreateProduct, CreateRefund,
-    DisputeA2AEscrow, ExecutionMode, ExecutionReceipt, ExecutionStatus, FileA2ADispute,
-    FundA2AEscrow, InventoryItem, InventoryReservation, JournalEntry, JournalEntryStatus,
-    KernelPolicy, Order, OrderStatus, Payment, PaymentTransactionStatus, PostJournalEntry, Product,
-    ProductId, ProductStatus, Refund, RefundA2AEscrow, RefundStatus, ReleaseA2AEscrow,
-    ReleaseInventoryReservation, ReservationStatus, ReserveInventory, ResolveA2ADispute, Result,
-    RetryDisposition, Return, SettleX402Intent, ShipOrderCommand, SubmitA2ADisputeEvidence,
-    SubscriptionCharge, SubscriptionStatus, TransitionOrder, TransitionReturn, Validate,
-    X402IntentStatus, X402PaymentIntent,
+    DisputeA2AEscrow, EconomicBudget, EconomicBudgetStatus, ExecutionMode, ExecutionReceipt,
+    ExecutionStatus, FileA2ADispute, FundA2AEscrow, InventoryItem, InventoryReservation,
+    JournalEntry, JournalEntryStatus, KernelPolicy, Money, Order, OrderStatus, Payment,
+    PaymentTransactionStatus, PostJournalEntry, Product, ProductId, ProductStatus, Refund,
+    RefundA2AEscrow, RefundStatus, ReleaseA2AEscrow, ReleaseInventoryReservation,
+    ReservationStatus, ReserveInventory, ResolveA2ADispute, Result, RetryDisposition, Return,
+    SettleX402Intent, ShipOrderCommand, SubmitA2ADisputeEvidence, SubscriptionCharge,
+    SubscriptionStatus, TransitionOrder, TransitionReturn, Validate, X402IntentStatus,
+    X402PaymentIntent,
 };
 use uuid::Uuid;
 
@@ -143,6 +151,19 @@ struct A2ADisputeRow {
     resolved_at: Option<chrono::DateTime<Utc>>,
 }
 
+#[derive(sqlx::FromRow)]
+struct EconomicBudgetRow {
+    budget_id: String,
+    principal_id: String,
+    tenant_id: Option<String>,
+    store_id: Option<String>,
+    limit_amount: rust_decimal::Decimal,
+    committed_amount: rust_decimal::Decimal,
+    currency: stateset_core::CurrencyCode,
+    valid_from: chrono::DateTime<Utc>,
+    expires_at: chrono::DateTime<Utc>,
+}
+
 /// Async kernel executor with transactionally durable receipts.
 #[derive(Debug, Clone)]
 pub struct PgKernelExecutor {
@@ -153,6 +174,68 @@ pub struct PgKernelExecutor {
 impl PgKernelExecutor {
     pub(crate) const fn new(pool: PgPool, policy: KernelPolicy) -> Self {
         Self { pool, policy }
+    }
+
+    /// Provision immutable monetary authority for a principal.
+    pub async fn provision_economic_budget(
+        &self,
+        budget: &EconomicBudget,
+    ) -> Result<EconomicBudgetStatus> {
+        let limit =
+            budget.validate().map_err(|error| CommerceError::ValidationError(error.to_string()))?;
+        let now = Utc::now();
+        let inserted = sqlx::query(
+            "INSERT INTO kernel_economic_budgets (
+                budget_id, principal_id, tenant_id, store_id, limit_amount,
+                committed_amount, currency, valid_from, expires_at, created_at, updated_at
+             ) VALUES ($1, $2, $3, $4, $5, 0, $6, $7, $8, $9, $9)
+             ON CONFLICT (budget_id) DO NOTHING",
+        )
+        .bind(&budget.budget_id)
+        .bind(&budget.principal_id)
+        .bind(&budget.tenant_id)
+        .bind(&budget.store_id)
+        .bind(limit.amount())
+        .bind(limit.currency())
+        .bind(budget.valid_from)
+        .bind(budget.expires_at)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(pg_err)?;
+        if inserted.rows_affected() == 0 {
+            let existing =
+                self.economic_budget_status(&budget.budget_id).await?.ok_or_else(|| {
+                    CommerceError::DatabaseError("conflicting economic budget disappeared".into())
+                })?;
+            if existing.budget == *budget {
+                return Ok(existing);
+            }
+            return Err(CommerceError::Conflict(format!(
+                "economic budget `{}` already exists with a different definition",
+                budget.budget_id
+            )));
+        }
+        self.economic_budget_status(&budget.budget_id).await?.ok_or_else(|| {
+            CommerceError::DatabaseError("provisioned economic budget disappeared".into())
+        })
+    }
+
+    /// Read the exact committed and available balance of a durable budget.
+    pub async fn economic_budget_status(
+        &self,
+        budget_id: &str,
+    ) -> Result<Option<EconomicBudgetStatus>> {
+        let row = sqlx::query_as::<_, EconomicBudgetRow>(
+            "SELECT budget_id, principal_id, tenant_id, store_id, limit_amount,
+                    committed_amount, currency, valid_from, expires_at
+             FROM kernel_economic_budgets WHERE budget_id = $1",
+        )
+        .bind(budget_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(pg_err)?;
+        row.map(budget_status_from_pg_row).transpose()
     }
 
     /// Preview or atomically create a SKU master and its exact initial stock.
@@ -513,7 +596,18 @@ impl PgKernelExecutor {
                 .with_payload_key(input.idempotency_key.as_deref()),
             "payment",
         )?
-        .then_guard(|_| create_payment_guard(&input));
+        .then_guard(|_| create_payment_guard(&input))
+        .then_guard(|_| {
+            economic_money_guard(
+                command.commitment.as_ref(),
+                input.amount,
+                input.currency.unwrap_or_default(),
+            )
+        })
+        .then_guard(|_| {
+            let counterparty = input.customer_id.map(|id| format!("customer:{id}"));
+            economic_counterparty_guard(command.commitment.as_ref(), counterparty.as_deref())
+        });
         let request_hash = run.request_hash.clone();
 
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
@@ -542,6 +636,20 @@ impl PgKernelExecutor {
                 input.currency.unwrap_or_default(),
             )
             .await?;
+        }
+        if let Some(rejection) = enforce_budget_pg(
+            tx.as_mut(),
+            command,
+            input.amount,
+            input.currency.unwrap_or_default(),
+            !run.is_preview(),
+        )
+        .await?
+        {
+            let mut receipt = run.rejected_by(&rejection);
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
         }
         if run.is_preview() {
             let mut receipt = run.previewed();
@@ -722,6 +830,40 @@ impl PgKernelExecutor {
             }
             PlanOutcome::Proceed(effects) => effects,
         };
+        if let Some(rejection) =
+            economic_money_guard(command.commitment.as_ref(), effects.amount, effects.currency)
+        {
+            let mut receipt = run.rejected_by(&rejection);
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        let counterparty = snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.payment.customer_id)
+            .map(|id| format!("customer:{id}"));
+        if let Some(rejection) =
+            economic_counterparty_guard(command.commitment.as_ref(), counterparty.as_deref())
+        {
+            let mut receipt = run.rejected_by(&rejection);
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        if let Some(rejection) = enforce_budget_pg(
+            tx.as_mut(),
+            command,
+            effects.amount,
+            effects.currency,
+            !run.is_preview(),
+        )
+        .await?
+        {
+            let mut receipt = run.rejected_by(&rejection);
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
         if run.is_preview() {
             let mut receipt = run.previewed();
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -796,7 +938,8 @@ impl PgKernelExecutor {
             EnvelopeGuard::aggregate(RESERVE_INVENTORY_COMMAND),
             "inventory_reservation",
         )?
-        .then_guard(|_| reserve_inventory_guard(input));
+        .then_guard(|_| reserve_inventory_guard(input))
+        .then_guard(|_| economic_quantity_guard(command.commitment.as_ref(), input.quantity));
         let request_hash = run.request_hash.clone();
         let policy = run.policy.clone();
         let started_at = run.started_at;
@@ -968,6 +1111,7 @@ impl PgKernelExecutor {
             version_after: Some(version_after),
             event_ids: vec![event_id],
             policy: Some(policy),
+            economic_context: Some(stateset_core::EconomicReceiptContext::from_command(command)),
             audit_hash: None,
             started_at,
             completed_at: Utc::now(),
@@ -1257,6 +1401,7 @@ impl PgKernelExecutor {
             version_after: Some(version_after),
             event_ids: event.as_ref().map(|(id, _)| *id).into_iter().collect(),
             policy: Some(policy),
+            economic_context: Some(stateset_core::EconomicReceiptContext::from_command(command)),
             audit_hash: None,
             started_at,
             completed_at: Utc::now(),
@@ -1827,6 +1972,7 @@ impl PgKernelExecutor {
             version_after: Some(result.version),
             event_ids: vec![event.id],
             policy: Some(policy),
+            economic_context: Some(stateset_core::EconomicReceiptContext::from_command(command)),
             audit_hash: None,
             started_at,
             completed_at: Utc::now(),
@@ -1849,7 +1995,14 @@ impl PgKernelExecutor {
             EnvelopeGuard::create(CREATE_A2A_ESCROW_COMMAND),
             "a2a_escrow",
         )?
-        .then_guard(|run| create_escrow_guard(input, run.started_at));
+        .then_guard(|run| create_escrow_guard(input, run.started_at))
+        .then_guard(|_| {
+            economic_asset_guard(
+                command.commitment.as_ref(),
+                input.amount,
+                &canonical_escrow_asset(&input.asset),
+            )
+        });
         let request_hash = run.request_hash.clone();
         let started_at = run.started_at;
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
@@ -1886,7 +2039,7 @@ impl PgKernelExecutor {
             seller_address: input.seller_address.clone(),
             amount: escrow_legacy_amount(input).expect("validated legacy amount"),
             amount_decimal: input.amount,
-            asset: input.asset.to_uppercase(),
+            asset: canonical_escrow_asset(&input.asset),
             network: input.network.clone(),
             release_conditions: input.release_conditions.clone(),
             funded_at: None,
@@ -1987,6 +2140,15 @@ impl PgKernelExecutor {
             }
             PlanOutcome::Proceed(escrow) => escrow,
         };
+        if let Some(rejection) =
+            economic_asset_guard(command.commitment.as_ref(), escrow.amount_decimal, &escrow.asset)
+        {
+            let mut receipt = run.rejected_by(&rejection);
+            receipt.aggregate_id = Some(escrow.id);
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
         if run.is_preview() {
             let mut receipt = run.previewed();
             receipt.aggregate_id = Some(escrow.id.clone());
@@ -3065,6 +3227,7 @@ impl PgKernelExecutor {
             version_after: None,
             event_ids: vec![event.id],
             policy: Some(policy),
+            economic_context: Some(stateset_core::EconomicReceiptContext::from_command(command)),
             audit_hash: None,
             started_at,
             completed_at: Utc::now(),
@@ -3180,6 +3343,25 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
+        if let Some(rejection) =
+            economic_money_guard(command.commitment.as_ref(), cycle.total, cycle.currency)
+        {
+            let mut receipt = run.rejected_by(&rejection);
+            receipt.aggregate_id = Some(cycle.id.to_string());
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        let counterparty = format!("customer:{customer_id}");
+        if let Some(rejection) =
+            economic_counterparty_guard(command.commitment.as_ref(), Some(&counterparty))
+        {
+            let mut receipt = run.rejected_by(&rejection);
+            receipt.aggregate_id = Some(cycle.id.to_string());
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
         let payment_input = CreatePayment {
             customer_id: Some(customer_id.into()),
             payment_method: command.payload.payment_method,
@@ -3212,6 +3394,16 @@ impl PgKernelExecutor {
             receipt.aggregate_id = Some(cycle.id.to_string());
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            return Ok(receipt);
+        }
+        if let Some(rejection) =
+            enforce_budget_pg(tx.as_mut(), command, cycle.total, cycle.currency, !run.is_preview())
+                .await?
+        {
+            let mut receipt = run.rejected_by(&rejection);
+            receipt.aggregate_id = Some(cycle.id.to_string());
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
         if command.mode == ExecutionMode::Preview {
@@ -3316,6 +3508,7 @@ impl PgKernelExecutor {
             version_after: None,
             event_ids: vec![event.id],
             policy: Some(policy),
+            economic_context: Some(stateset_core::EconomicReceiptContext::from_command(command)),
             audit_hash: None,
             started_at,
             completed_at: Utc::now(),
@@ -3364,24 +3557,45 @@ impl PgKernelExecutor {
 
         if command.mode == ExecutionMode::Preview {
             let cart_repo = PgCartRepository::new(self.pool.clone());
-            if let Err(error) = cart_repo
-                .validate_checkout_in_tx(&mut tx, command.payload.cart_id.into_uuid())
+            let (amount, currency) = match cart_repo
+                .checkout_money_in_tx(&mut tx, command.payload.cart_id.into_uuid())
                 .await
             {
-                if matches!(error, CommerceError::DatabaseError(_)) {
-                    return Err(error);
+                Ok(money) => money,
+                Err(error) => {
+                    if matches!(error, CommerceError::DatabaseError(_)) {
+                        return Err(error);
+                    }
+                    let mut receipt = rejected_receipt(
+                        command,
+                        Some(policy.clone()),
+                        checkout_error_code(&error),
+                        &error.to_string(),
+                        RetryDisposition::Never,
+                        "checkout",
+                    );
+                    receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+                    append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+                    tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                    return Ok(receipt);
                 }
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    checkout_error_code(&error),
-                    &error.to_string(),
-                    RetryDisposition::Never,
-                    "checkout",
-                );
+            };
+            if let Some(rejection) =
+                economic_money_guard(command.commitment.as_ref(), amount, currency)
+            {
+                let mut receipt = run.rejected_by(&rejection);
                 receipt.aggregate_id = Some(command.payload.cart_id.to_string());
                 append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                tx.commit().await.map_err(pg_err)?;
+                return Ok(receipt);
+            }
+            if let Some(rejection) =
+                enforce_budget_pg(tx.as_mut(), command, amount, currency, false).await?
+            {
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+                append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+                tx.commit().await.map_err(pg_err)?;
                 return Ok(receipt);
             }
             let mut receipt = preview_receipt(command, policy, "checkout");
@@ -3391,11 +3605,31 @@ impl PgKernelExecutor {
             return Ok(receipt);
         }
 
+        let cart_repo = PgCartRepository::new(self.pool.clone());
+        if let Err(error) =
+            cart_repo.checkout_money_in_tx(&mut tx, command.payload.cart_id.into_uuid()).await
+        {
+            if matches!(error, CommerceError::DatabaseError(_)) {
+                return Err(error);
+            }
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy.clone()),
+                checkout_error_code(&error),
+                &error.to_string(),
+                RetryDisposition::Never,
+                "checkout",
+            );
+            receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+
         sqlx::query("SAVEPOINT kernel_checkout_apply")
             .execute(tx.as_mut())
             .await
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let cart_repo = PgCartRepository::new(self.pool.clone());
         let attempted = cart_repo
             .complete_checkout_in_tx(&mut tx, command.payload.cart_id.into_uuid(), false, false)
             .await;
@@ -3428,6 +3662,44 @@ impl PgKernelExecutor {
                 return Ok(receipt);
             }
         };
+
+        if let Some(rejection) = economic_money_guard(
+            command.commitment.as_ref(),
+            checkout.total_charged,
+            checkout.currency,
+        ) {
+            sqlx::query("ROLLBACK TO SAVEPOINT kernel_checkout_apply")
+                .execute(tx.as_mut())
+                .await
+                .map_err(pg_err)?;
+            sqlx::query("RELEASE SAVEPOINT kernel_checkout_apply")
+                .execute(tx.as_mut())
+                .await
+                .map_err(pg_err)?;
+            let mut receipt = run.rejected_by(&rejection);
+            receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        if let Some(rejection) =
+            enforce_budget_pg(tx.as_mut(), command, checkout.total_charged, checkout.currency, true)
+                .await?
+        {
+            sqlx::query("ROLLBACK TO SAVEPOINT kernel_checkout_apply")
+                .execute(tx.as_mut())
+                .await
+                .map_err(pg_err)?;
+            sqlx::query("RELEASE SAVEPOINT kernel_checkout_apply")
+                .execute(tx.as_mut())
+                .await
+                .map_err(pg_err)?;
+            let mut receipt = run.rejected_by(&rejection);
+            receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
 
         sqlx::query("RELEASE SAVEPOINT kernel_checkout_apply")
             .execute(tx.as_mut())
@@ -3463,6 +3735,7 @@ impl PgKernelExecutor {
             version_after: None,
             event_ids: vec![event.id],
             policy: Some(policy),
+            economic_context: Some(stateset_core::EconomicReceiptContext::from_command(command)),
             audit_hash: None,
             started_at,
             completed_at: Utc::now(),
@@ -3633,6 +3906,7 @@ impl PgKernelExecutor {
             version_after: None,
             event_ids: vec![event.id],
             policy: Some(policy),
+            economic_context: Some(stateset_core::EconomicReceiptContext::from_command(command)),
             audit_hash: None,
             started_at,
             completed_at: Utc::now(),
@@ -3779,6 +4053,7 @@ impl PgKernelExecutor {
             version_after: None,
             event_ids: vec![event.id],
             policy: Some(policy),
+            economic_context: Some(stateset_core::EconomicReceiptContext::from_command(command)),
             audit_hash: None,
             started_at,
             completed_at: Utc::now(),
@@ -3798,6 +4073,96 @@ const LOCK_NS_INVENTORY_SKU: i64 = 0x5353_4B49_4E56_534B; // "SSKINVSK"
 
 fn pg_err(error: sqlx::Error) -> CommerceError {
     CommerceError::DatabaseError(error.to_string())
+}
+
+fn budget_snapshot_from_pg_row(row: EconomicBudgetRow) -> BudgetSnapshot {
+    BudgetSnapshot {
+        budget_id: row.budget_id,
+        principal_id: row.principal_id,
+        tenant_id: row.tenant_id,
+        store_id: row.store_id,
+        limit: row.limit_amount,
+        committed: row.committed_amount,
+        currency: row.currency,
+        valid_from: row.valid_from,
+        expires_at: row.expires_at,
+    }
+}
+
+fn budget_status_from_pg_row(row: EconomicBudgetRow) -> Result<EconomicBudgetStatus> {
+    let snapshot = budget_snapshot_from_pg_row(row);
+    let available = snapshot
+        .limit
+        .checked_sub(snapshot.committed)
+        .ok_or_else(|| CommerceError::DatabaseError("economic budget balance overflow".into()))?;
+    Ok(EconomicBudgetStatus {
+        budget: EconomicBudget {
+            budget_id: snapshot.budget_id,
+            principal_id: snapshot.principal_id,
+            tenant_id: snapshot.tenant_id,
+            store_id: snapshot.store_id,
+            limit: Money::new(snapshot.limit, snapshot.currency).to_wire(),
+            valid_from: snapshot.valid_from,
+            expires_at: snapshot.expires_at,
+        },
+        committed: Money::new(snapshot.committed, snapshot.currency).to_wire(),
+        available: Money::new(available, snapshot.currency).to_wire(),
+    })
+}
+
+async fn enforce_budget_pg<C>(
+    tx: &mut sqlx::PgConnection,
+    command: &CommandEnvelope<C>,
+    amount: rust_decimal::Decimal,
+    currency: stateset_core::CurrencyCode,
+    apply: bool,
+) -> Result<Option<crate::kernel::GuardRejection>> {
+    let budget_id =
+        command.commitment.as_ref().and_then(|commitment| commitment.budget_id.as_deref());
+    let row = match budget_id {
+        None => None,
+        Some(budget_id) => sqlx::query_as::<_, EconomicBudgetRow>(
+            "SELECT budget_id, principal_id, tenant_id, store_id, limit_amount,
+                    committed_amount, currency, valid_from, expires_at
+             FROM kernel_economic_budgets WHERE budget_id = $1 FOR UPDATE",
+        )
+        .bind(budget_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(pg_err)?,
+    };
+    let snapshot = row.map(budget_snapshot_from_pg_row);
+    let debit = match plan_budget(command, amount, currency, snapshot.as_ref(), Utc::now()) {
+        Ok(debit) => debit,
+        Err(rejection) => return Ok(Some(rejection)),
+    };
+    if apply && let Some(debit) = debit {
+        sqlx::query(
+            "UPDATE kernel_economic_budgets
+             SET committed_amount = $1, updated_at = $2 WHERE budget_id = $3",
+        )
+        .bind(debit.committed_after)
+        .bind(Utc::now())
+        .bind(&debit.budget_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(pg_err)?;
+        sqlx::query(
+            "INSERT INTO kernel_budget_commitments (
+                command_id, idempotency_key, budget_id, amount, currency, created_at
+             ) VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(command.command_id)
+        .bind(&command.idempotency_key)
+        .bind(&debit.budget_id)
+        .bind(debit.amount)
+        .bind(debit.currency)
+        .bind(Utc::now())
+        .execute(&mut *tx)
+        .await
+        .map_err(pg_err)?;
+    }
+    Ok(None)
 }
 
 async fn load_pg_order(

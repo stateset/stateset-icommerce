@@ -118,9 +118,24 @@ test('Intent → Quote → Accept → Fulfill → SettlementReceipt', async () =
     body: JSON.stringify({}),
   });
   assert.equal(r2.status, 200);
-  const { funding } = await r2.json();
+  const accepted = await r2.json();
+  const { funding, order, inventory_reservation: reservation } = accepted;
   assert.ok(funding.escrow_id.startsWith('0x'));
   assert.equal(funding.chain, 'base-sepolia');
+  assert.ok(order.order_id.startsWith('ord_'));
+  assert.equal(order.status, 'authorized');
+  assert.equal(reservation.status, 'reserved');
+  assert.equal(reservation.items[0].available_after, 45);
+
+  const retry = await fetch(`${baseUrl}/icp/v1/quotes/${quote.quote_id}/accept`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(retry.status, 200);
+  const retried = await retry.json();
+  assert.equal(retried.order.order_id, order.order_id);
+  assert.deepEqual(retried.inventory_reservation, reservation);
 
   // 3. Fulfill (stub auto-funds + auto-releases for demo)
   const r3 = await fetch(`${baseUrl}/icp/v1/escrows/${funding.escrow_id}/fulfill`, {

@@ -4681,6 +4681,13 @@ export declare class Commerce {
    * be copied from model-generated tool arguments.
    */
   executeKernelCommand(command: any, policy: any): Promise<any>
+  /**
+   * Provision immutable, durable monetary authority for governed commands.
+   * This is an operator API and should not be exposed as a model tool.
+   */
+  provisionEconomicBudget(budget: any): Promise<any>
+  /** Read exact committed and available balances for a durable budget. */
+  economicBudgetStatus(budgetId: string): Promise<any>
   /** Get the customers API */
   get customers(): Customers
   /** Get the orders API */

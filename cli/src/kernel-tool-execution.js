@@ -357,12 +357,22 @@ export function createKernelToolExecutor({ commerce, kernel, allowApply, agentCo
       policy_version: kernelConfig.policy.version || null,
       approval: null,
       authority: null,
+      mandate: null,
+      commitment: null,
       deadline: executionOptions.deadline || null,
       trace_id: executionOptions.traceId || null,
       mode: allowApply ? 'apply' : 'preview',
       payload,
       issued_at: issuedAt.toISOString(),
     };
+    const mandateSource = executionOptions.mandate ?? kernelConfig.mandate;
+    command.mandate =
+      typeof mandateSource === 'function' ? await mandateSource(command) : mandateSource || null;
+    const commitmentSource = executionOptions.commitment ?? kernelConfig.commitment;
+    command.commitment =
+      typeof commitmentSource === 'function'
+        ? await commitmentSource(command)
+        : commitmentSource || null;
     const approvalSource = executionOptions.approval ?? kernelConfig.approval;
     command.approval =
       typeof approvalSource === 'function' ? await approvalSource(command) : approvalSource || null;

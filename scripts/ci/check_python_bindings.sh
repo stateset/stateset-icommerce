@@ -18,6 +18,18 @@ if [[ -z "$PYTHON_BIN" ]]; then
   fi
 fi
 
+# A repository-local virtualenv may contain an extension compiled from an older
+# checkout. Rebuild it before exercising source tests so the local release gate
+# validates the current Rust binding rather than stale site-packages. CI installs
+# a freshly built wheel into its system interpreter in the preceding workflow
+# step, so it intentionally skips this developer-only refresh.
+if [[ "$PYTHON_BIN" == "$PYTHON_BINDINGS_DIR/.venv/bin/python" ]]; then
+  (
+    cd "$PYTHON_BINDINGS_DIR"
+    "$PYTHON_BIN" -m maturin develop --quiet
+  )
+fi
+
 "$PYTHON_BIN" -m py_compile \
   "$PYTHON_BINDINGS_DIR/python/stateset_embedded/agent_toolkit.py" \
   "$PYTHON_BINDINGS_DIR/python/stateset_embedded/langchain.py" \

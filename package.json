@@ -7,6 +7,8 @@
     "npm": ">=10.0.0"
   },
   "scripts": {
+    "demo:marketplace": "node examples/sequencer-marketplace/demo.mjs",
+    "test:marketplace-demo": "node examples/sequencer-marketplace/demo.mjs --self-test",
     "prepare": "husky",
     "format": "prettier --write 'cli/{src,bin}/**/*.js'",
     "format:check": "prettier --check 'cli/{src,bin}/**/*.js'",

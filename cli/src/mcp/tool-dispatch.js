@@ -490,6 +490,8 @@ export function createToolDispatch({
         expectedVersion: options.expectedVersion,
         deadline: options.deadline,
         traceId: options.traceId,
+        mandate: options.mandate,
+        commitment: options.commitment,
         approval: options.approval,
         authority: options.authority,
         authorize: options.authorize,

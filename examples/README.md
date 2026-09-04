@@ -1,26 +1,36 @@
 # StateSet iCommerce Examples
 
+## Sequenced multi-agent marketplace
+
+[`sequencer-marketplace/demo.mjs`](sequencer-marketplace/demo.mjs) demonstrates
+five agents negotiating an RFQ and completing award, inventory reservation,
+x402 settlement authorization, order creation, and an economic receipt over a
+shared StateSet Sequencer event board. Every marketplace message is signed.
+The reusable `@stateset/cli/marketplace` bridge turns accepted awards into
+idempotent, policy-governed kernel commands. The demo can run against the real
+sequencer or exercise the complete protocol locally with `--self-test`.
+
 Complete examples, guides, and scripts for the embedded iCommerce engine.
 
 ## Documentation
 
-| Guide | Description |
-|-------|-------------|
-| **[CLI Reference](./cli-reference.md)** | Complete command reference (all commands, examples) |
-| **[Getting Started with Sync](./getting-started-sync.md)** | Full setup guide for CLI + Sequencer |
-| **[Common Workflows](./workflows.md)** | Step-by-step guides (checkout, returns, inventory, etc.) |
-| **[Troubleshooting](./troubleshooting.md)** | Solutions to common problems |
-| **`examples/agents/openai-embedded-toolkit.mjs`** | Minimal embedded agent example using OpenAI-style JSON-schema tools |
-| **`examples/agents/custom-framework-adapter.mjs`** | Framework-neutral `{ name, description, schema, execute }` adapter surface for custom runtimes |
-| **`examples/agents/framework-adapters.mjs`** | Minimal Vercel AI and LangChain adapter example using the embedded toolkit |
-| **`examples/python/agent_toolkit.py`** | Native Python agent-toolkit example for OpenAI-compatible and framework-neutral runtimes |
-| **`examples/python/openai_tools.py`** | Focused OpenAI-compatible Python example using `stateset_embedded.openai` |
-| **`examples/python/generic_tools.py`** | Focused framework-neutral Python example using `stateset_embedded.generic` |
-| **`examples/python/langchain_tools.py`** | Focused LangChain Python adapter example using `stateset_embedded.langchain` |
-| **`examples/python/crewai_tools.py`** | Focused CrewAI Python adapter example using `stateset_embedded.crewai` |
-| **`examples/python/autogen_tools.py`** | Focused AutoGen Python adapter example using `stateset_embedded.autogen` |
-| **`examples/python/framework_adapters.py`** | Native Python framework-module example for LangChain, CrewAI, and AutoGen-style runtimes |
-| **[`examples/agents/README.md`](./agents/README.md)** | Runnable x402 agent demo flows: paid HTTP, local intents, and metered credits |
+| Guide                                                      | Description                                                                                    |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **[CLI Reference](./cli-reference.md)**                    | Complete command reference (all commands, examples)                                            |
+| **[Getting Started with Sync](./getting-started-sync.md)** | Full setup guide for CLI + Sequencer                                                           |
+| **[Common Workflows](./workflows.md)**                     | Step-by-step guides (checkout, returns, inventory, etc.)                                       |
+| **[Troubleshooting](./troubleshooting.md)**                | Solutions to common problems                                                                   |
+| **`examples/agents/openai-embedded-toolkit.mjs`**          | Minimal embedded agent example using OpenAI-style JSON-schema tools                            |
+| **`examples/agents/custom-framework-adapter.mjs`**         | Framework-neutral `{ name, description, schema, execute }` adapter surface for custom runtimes |
+| **`examples/agents/framework-adapters.mjs`**               | Minimal Vercel AI and LangChain adapter example using the embedded toolkit                     |
+| **`examples/python/agent_toolkit.py`**                     | Native Python agent-toolkit example for OpenAI-compatible and framework-neutral runtimes       |
+| **`examples/python/openai_tools.py`**                      | Focused OpenAI-compatible Python example using `stateset_embedded.openai`                      |
+| **`examples/python/generic_tools.py`**                     | Focused framework-neutral Python example using `stateset_embedded.generic`                     |
+| **`examples/python/langchain_tools.py`**                   | Focused LangChain Python adapter example using `stateset_embedded.langchain`                   |
+| **`examples/python/crewai_tools.py`**                      | Focused CrewAI Python adapter example using `stateset_embedded.crewai`                         |
+| **`examples/python/autogen_tools.py`**                     | Focused AutoGen Python adapter example using `stateset_embedded.autogen`                       |
+| **`examples/python/framework_adapters.py`**                | Native Python framework-module example for LangChain, CrewAI, and AutoGen-style runtimes       |
+| **[`examples/agents/README.md`](./agents/README.md)**      | Runnable x402 agent demo flows: paid HTTP, local intents, and metered credits                  |
 
 ## Engine-First Examples
 
@@ -56,14 +66,15 @@ available too.
 
 ## Scripts
 
-| Script | Description |
-|--------|-------------|
-| `setup-sync.sh` | Automated setup (tenant, sync, keys) |
-| `seed-demo-data.sh` | Create demo data (10 customers, 20 products, 15 orders) |
-| `verify-setup.sh` | Verify all components work |
-| `docker-compose.full.yml` | Full stack Docker setup |
+| Script                    | Description                                             |
+| ------------------------- | ------------------------------------------------------- |
+| `setup-sync.sh`           | Automated setup (tenant, sync, keys)                    |
+| `seed-demo-data.sh`       | Create demo data (10 customers, 20 products, 15 orders) |
+| `verify-setup.sh`         | Verify all components work                              |
+| `docker-compose.full.yml` | Full stack Docker setup                                 |
 
 Quick start:
+
 ```bash
 # Generate credentials first
 export ADMIN_API_KEY=$(openssl rand -hex 32)
@@ -80,6 +91,7 @@ docker-compose -f docker-compose.full.yml up -d
 ## Language Examples
 
 Complete examples in 9 programming languages, each showing the same workflow:
+
 1. Initialize commerce engine
 2. Create customers
 3. Create products with variants
@@ -128,7 +140,7 @@ cd examples/kotlin
 ./gradlew run
 # Or build a jar:
 ./gradlew jar
-java -jar build/libs/kotlin-1.30.0.jar
+java -jar build/libs/kotlin-1.31.0.jar
 ```
 
 ### Swift
@@ -160,8 +172,8 @@ cd examples/java
 # With Maven
 mvn compile exec:java -Dexec.mainClass="com.stateset.examples.BasicUsage"
 # Or compile manually
-javac -d . -cp path/to/stateset-embedded-1.30.0.jar BasicUsage.java
-java -cp .:path/to/stateset-embedded-1.30.0.jar com.stateset.examples.BasicUsage
+javac -d . -cp path/to/stateset-embedded-1.31.0.jar BasicUsage.java
+java -cp .:path/to/stateset-embedded-1.31.0.jar com.stateset.examples.BasicUsage
 ```
 
 ## Example Output
@@ -212,29 +224,29 @@ Orders: 1
 
 ## What Each Example Demonstrates
 
-| Feature | Description |
-|---------|-------------|
+| Feature            | Description                                              |
+| ------------------ | -------------------------------------------------------- |
 | **Initialization** | Create commerce instance with SQLite (in-memory or file) |
-| **Customers** | Create customer profiles with contact info |
-| **Products** | Create products with SKUs, pricing, descriptions |
-| **Inventory** | Track stock levels, create items, adjust quantities |
-| **Orders** | Create orders with line items, process status changes |
-| **Fulfillment** | Reserve inventory, ship orders with tracking |
-| **Analytics** | Sales summaries, revenue metrics, order counts |
+| **Customers**      | Create customer profiles with contact info               |
+| **Products**       | Create products with SKUs, pricing, descriptions         |
+| **Inventory**      | Track stock levels, create items, adjust quantities      |
+| **Orders**         | Create orders with line items, process status changes    |
+| **Fulfillment**    | Reserve inventory, ship orders with tracking             |
+| **Analytics**      | Sales summaries, revenue metrics, order counts           |
 
 ## Platform Support
 
-| Language | Platforms |
-|----------|-----------|
-| Rust | Linux, macOS, Windows |
-| Node.js | Linux, macOS, Windows |
-| Python | Linux, macOS, Windows |
-| Go | Linux, macOS, Windows |
-| Kotlin | Linux, macOS, Windows, Android |
-| Swift | Linux, macOS, iOS |
-| C# | Linux, macOS, Windows |
-| Ruby | Linux, macOS, Windows |
-| Java | Linux, macOS, Windows, Android |
+| Language | Platforms                      |
+| -------- | ------------------------------ |
+| Rust     | Linux, macOS, Windows          |
+| Node.js  | Linux, macOS, Windows          |
+| Python   | Linux, macOS, Windows          |
+| Go       | Linux, macOS, Windows          |
+| Kotlin   | Linux, macOS, Windows, Android |
+| Swift    | Linux, macOS, iOS              |
+| C#       | Linux, macOS, Windows          |
+| Ruby     | Linux, macOS, Windows          |
+| Java     | Linux, macOS, Windows, Android |
 
 ## Building from Source
 

@@ -1,6 +1,6 @@
 {
   "name": "@stateset/embedded-darwin-arm64",
-  "version": "1.30.0",
+  "version": "1.31.0",
   "os": [
     "darwin"
   ],

@@ -23,27 +23,34 @@ use super::{
 use crate::kernel::plans::PlanOutcome;
 use crate::kernel::plans::catalog::{create_inventory_item_guard, create_product_guard};
 use crate::kernel::plans::escrow::{
-    ESCROW_UNVERSIONED, create_escrow_guard, dispute_escrow_guard, escrow_id_guard,
-    escrow_legacy_amount, escrow_settlement_guard, file_dispute_guard, plan_fund_escrow,
-    resolve_dispute_guard, submit_evidence_guard,
+    ESCROW_UNVERSIONED, canonical_escrow_asset, create_escrow_guard, dispute_escrow_guard,
+    economic_asset_guard, escrow_id_guard, escrow_legacy_amount, escrow_settlement_guard,
+    file_dispute_guard, plan_fund_escrow, resolve_dispute_guard, submit_evidence_guard,
 };
 use crate::kernel::plans::finance::{
     BILLING_CYCLE_UNVERSIONED, CART_UNVERSIONED, JOURNAL_ENTRY_UNVERSIONED,
     X402_INTENT_UNVERSIONED, charge_subscription_guard, commit_checkout_guard,
     post_journal_entry_guard, settle_x402_guard,
 };
-use crate::kernel::plans::inventory::{reservation_lifecycle_guard, reserve_inventory_guard};
+use crate::kernel::plans::inventory::{
+    economic_quantity_guard, reservation_lifecycle_guard, reserve_inventory_guard,
+};
 use crate::kernel::plans::orders::{
     OrderTransitionSnapshot, ShipOrderSnapshot, plan_order_transition, plan_ship_order,
     reservation_expired_during_shipment, ship_order_guard, transition_order_guard,
 };
-use crate::kernel::plans::payments::{RefundSnapshot, create_payment_guard, plan_refund};
+use crate::kernel::plans::payments::{
+    RefundSnapshot, create_payment_guard, economic_counterparty_guard, economic_money_guard,
+    plan_refund,
+};
 use crate::kernel::plans::returns::transition_return_guard;
 use crate::kernel::receipt::{
     attach_command_context, checkout_error_code, preview_receipt, principal_kind_name,
     receipt_record, rejected_receipt, succeeded_receipt,
 };
-use crate::kernel::{CommandRun, EnvelopeGuard, Replay, resolve_replay};
+use crate::kernel::{
+    BudgetSnapshot, CommandRun, EnvelopeGuard, Replay, plan_budget, resolve_replay,
+};
 use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::Utc;
 use r2d2::Pool;
@@ -57,14 +64,15 @@ use stateset_core::{
     A2ADisputeStatus, A2AEscrow, A2AEscrowStatus, BillingCycleStatus, ChargeSubscription,
     CheckoutResult, CommandEnvelope, CommerceError, CommitCheckout, ConfirmInventoryReservation,
     CreateA2AEscrow, CreateInventoryItem, CreatePayment, CreateProduct, CreateRefund,
-    DisputeA2AEscrow, ExecutionMode, ExecutionReceipt, ExecutionStatus, FileA2ADispute,
-    FundA2AEscrow, InventoryItem, InventoryReservation, JournalEntry, JournalEntryStatus,
-    KernelPolicy, Order, OrderStatus, Payment, PaymentTransactionStatus, PostJournalEntry, Product,
-    ProductId, ProductStatus, Refund, RefundA2AEscrow, RefundStatus, ReleaseA2AEscrow,
-    ReleaseInventoryReservation, ReservationStatus, ReserveInventory, ResolveA2ADispute, Result,
-    RetryDisposition, Return, SettleX402Intent, ShipOrderCommand, SubmitA2ADisputeEvidence,
-    SubscriptionCharge, SubscriptionStatus, TransitionOrder, TransitionReturn, Validate,
-    X402IntentStatus, X402PaymentIntent,
+    DisputeA2AEscrow, EconomicBudget, EconomicBudgetStatus, ExecutionMode, ExecutionReceipt,
+    ExecutionStatus, FileA2ADispute, FundA2AEscrow, InventoryItem, InventoryReservation,
+    JournalEntry, JournalEntryStatus, KernelPolicy, Money, Order, OrderStatus, Payment,
+    PaymentTransactionStatus, PostJournalEntry, Product, ProductId, ProductStatus, Refund,
+    RefundA2AEscrow, RefundStatus, ReleaseA2AEscrow, ReleaseInventoryReservation,
+    ReservationStatus, ReserveInventory, ResolveA2ADispute, Result, RetryDisposition, Return,
+    SettleX402Intent, ShipOrderCommand, SubmitA2ADisputeEvidence, SubscriptionCharge,
+    SubscriptionStatus, TransitionOrder, TransitionReturn, Validate, X402IntentStatus,
+    X402PaymentIntent,
 };
 use uuid::Uuid;
 
@@ -95,6 +103,150 @@ fn to_sql_err(error: CommerceError) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(error))
 }
 
+type EconomicBudgetSqliteRow =
+    (String, String, Option<String>, Option<String>, String, String, String, String, String);
+
+fn budget_snapshot_tx(
+    connection: &rusqlite::Connection,
+    budget_id: &str,
+) -> rusqlite::Result<Option<BudgetSnapshot>> {
+    let row: Option<EconomicBudgetSqliteRow> = connection
+        .query_row(
+            "SELECT budget_id, principal_id, tenant_id, store_id, limit_amount,
+                    committed_amount, currency, valid_from, expires_at
+             FROM kernel_economic_budgets WHERE budget_id = ?",
+            [budget_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            },
+        )
+        .optional()?;
+    row.map(
+        |(
+            budget_id,
+            principal_id,
+            tenant_id,
+            store_id,
+            limit,
+            committed,
+            currency,
+            valid_from,
+            expires_at,
+        )| {
+            Ok(BudgetSnapshot {
+                budget_id,
+                principal_id,
+                tenant_id,
+                store_id,
+                limit: limit.parse().map_err(|error| {
+                    to_sql_err(CommerceError::DatabaseError(format!(
+                        "invalid economic budget limit: {error}"
+                    )))
+                })?,
+                committed: committed.parse().map_err(|error| {
+                    to_sql_err(CommerceError::DatabaseError(format!(
+                        "invalid economic budget committed amount: {error}"
+                    )))
+                })?,
+                currency: currency.parse().map_err(|error| {
+                    to_sql_err(CommerceError::DatabaseError(format!(
+                        "invalid economic budget currency: {error}"
+                    )))
+                })?,
+                valid_from: chrono::DateTime::parse_from_rfc3339(&valid_from)
+                    .map_err(|error| {
+                        to_sql_err(CommerceError::DatabaseError(format!(
+                            "invalid economic budget valid_from: {error}"
+                        )))
+                    })?
+                    .with_timezone(&Utc),
+                expires_at: chrono::DateTime::parse_from_rfc3339(&expires_at)
+                    .map_err(|error| {
+                        to_sql_err(CommerceError::DatabaseError(format!(
+                            "invalid economic budget expires_at: {error}"
+                        )))
+                    })?
+                    .with_timezone(&Utc),
+            })
+        },
+    )
+    .transpose()
+}
+
+fn budget_status_tx(
+    connection: &rusqlite::Connection,
+    budget_id: &str,
+) -> rusqlite::Result<Option<EconomicBudgetStatus>> {
+    budget_snapshot_tx(connection, budget_id)?
+        .map(|snapshot| {
+            let available = snapshot.limit.checked_sub(snapshot.committed).ok_or_else(|| {
+                to_sql_err(CommerceError::DatabaseError("economic budget balance overflow".into()))
+            })?;
+            Ok(EconomicBudgetStatus {
+                budget: EconomicBudget {
+                    budget_id: snapshot.budget_id,
+                    principal_id: snapshot.principal_id,
+                    tenant_id: snapshot.tenant_id,
+                    store_id: snapshot.store_id,
+                    limit: Money::new(snapshot.limit, snapshot.currency).to_wire(),
+                    valid_from: snapshot.valid_from,
+                    expires_at: snapshot.expires_at,
+                },
+                committed: Money::new(snapshot.committed, snapshot.currency).to_wire(),
+                available: Money::new(available, snapshot.currency).to_wire(),
+            })
+        })
+        .transpose()
+}
+
+fn enforce_budget_tx<C>(
+    tx: &rusqlite::Transaction<'_>,
+    command: &CommandEnvelope<C>,
+    amount: rust_decimal::Decimal,
+    currency: stateset_core::CurrencyCode,
+    apply: bool,
+) -> rusqlite::Result<Option<crate::kernel::GuardRejection>> {
+    let budget_id =
+        command.commitment.as_ref().and_then(|commitment| commitment.budget_id.as_deref());
+    let snapshot =
+        budget_id.map(|budget_id| budget_snapshot_tx(tx, budget_id)).transpose()?.flatten();
+    let debit = match plan_budget(command, amount, currency, snapshot.as_ref(), Utc::now()) {
+        Ok(debit) => debit,
+        Err(rejection) => return Ok(Some(rejection)),
+    };
+    if apply && let Some(debit) = debit {
+        tx.execute(
+            "UPDATE kernel_economic_budgets
+             SET committed_amount = ?, updated_at = ? WHERE budget_id = ?",
+            params![debit.committed_after.to_string(), Utc::now().to_rfc3339(), debit.budget_id],
+        )?;
+        tx.execute(
+            "INSERT INTO kernel_budget_commitments (
+                command_id, idempotency_key, budget_id, amount, currency, created_at
+             ) VALUES (?, ?, ?, ?, ?, ?)",
+            params![
+                command.command_id.to_string(),
+                command.idempotency_key,
+                debit.budget_id,
+                debit.amount.to_string(),
+                debit.currency,
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+    }
+    Ok(None)
+}
+
 #[derive(Clone, Copy)]
 enum InventoryLifecycleAction {
     Confirm(Option<rust_decimal::Decimal>),
@@ -111,6 +263,62 @@ pub struct SqliteKernelExecutor {
 impl SqliteKernelExecutor {
     pub(crate) const fn new(pool: Pool<SqliteConnectionManager>, policy: KernelPolicy) -> Self {
         Self { pool, policy }
+    }
+
+    /// Provision immutable monetary authority for a principal.
+    ///
+    /// This is an operator API and is intentionally outside the governed agent
+    /// command catalog. Reusing an identifier is rejected rather than silently
+    /// resetting already committed spend.
+    pub fn provision_economic_budget(
+        &self,
+        budget: &EconomicBudget,
+    ) -> Result<EconomicBudgetStatus> {
+        let limit =
+            budget.validate().map_err(|error| CommerceError::ValidationError(error.to_string()))?;
+        let now = Utc::now();
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = budget_status_tx(tx, &budget.budget_id)? {
+                if existing.budget == *budget {
+                    return Ok(existing);
+                }
+                return Err(to_sql_err(CommerceError::Conflict(format!(
+                    "economic budget `{}` already exists with a different definition",
+                    budget.budget_id
+                ))));
+            }
+            tx.execute(
+                "INSERT INTO kernel_economic_budgets (
+                    budget_id, principal_id, tenant_id, store_id, limit_amount,
+                    committed_amount, currency, valid_from, expires_at, created_at, updated_at
+                 ) VALUES (?, ?, ?, ?, ?, '0', ?, ?, ?, ?, ?)",
+                params![
+                    budget.budget_id,
+                    budget.principal_id,
+                    budget.tenant_id,
+                    budget.store_id,
+                    limit.amount().to_string(),
+                    limit.currency(),
+                    budget.valid_from.to_rfc3339(),
+                    budget.expires_at.to_rfc3339(),
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )?;
+            budget_status_tx(tx, &budget.budget_id)?.ok_or_else(|| {
+                to_sql_err(CommerceError::DatabaseError(
+                    "provisioned economic budget disappeared".into(),
+                ))
+            })
+        })
+    }
+
+    /// Read the exact committed and available balance of a durable budget.
+    pub fn economic_budget_status(&self, budget_id: &str) -> Result<Option<EconomicBudgetStatus>> {
+        let connection =
+            self.pool.get().map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+        budget_status_tx(&connection, budget_id)
+            .map_err(|error| CommerceError::DatabaseError(error.to_string()))
     }
 
     /// Preview or atomically create a SKU master, initial exact quantity,
@@ -445,7 +653,18 @@ impl SqliteKernelExecutor {
                 .with_payload_key(input.idempotency_key.as_deref()),
             "payment",
         )?
-        .then_guard(|_| create_payment_guard(&input));
+        .then_guard(|_| create_payment_guard(&input))
+        .then_guard(|_| {
+            economic_money_guard(
+                command.commitment.as_ref(),
+                input.amount,
+                input.currency.unwrap_or_default(),
+            )
+        })
+        .then_guard(|_| {
+            let counterparty = input.customer_id.map(|id| format!("customer:{id}"));
+            economic_counterparty_guard(command.commitment.as_ref(), counterparty.as_deref())
+        });
         let request_hash = run.request_hash.clone();
         let started_at = run.started_at;
 
@@ -470,6 +689,17 @@ impl SqliteKernelExecutor {
                     input.amount,
                     input.currency.unwrap_or_default(),
                 )?;
+            }
+            if let Some(rejection) = enforce_budget_tx(
+                tx,
+                command,
+                input.amount,
+                input.currency.unwrap_or_default(),
+                !run.is_preview(),
+            )? {
+                let mut receipt = run.rejected_by(&rejection);
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
             }
             if run.is_preview() {
                 let mut receipt = run.previewed();
@@ -609,6 +839,31 @@ impl SqliteKernelExecutor {
                 }
                 PlanOutcome::Proceed(effects) => effects,
             };
+            if let Some(rejection) =
+                economic_money_guard(command.commitment.as_ref(), effects.amount, effects.currency)
+            {
+                let mut receipt = run.rejected_by(&rejection);
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            let counterparty = snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.payment.customer_id)
+                .map(|id| format!("customer:{id}"));
+            if let Some(rejection) =
+                economic_counterparty_guard(command.commitment.as_ref(), counterparty.as_deref())
+            {
+                let mut receipt = run.rejected_by(&rejection);
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            if let Some(rejection) =
+                enforce_budget_tx(tx, command, effects.amount, effects.currency, !run.is_preview())?
+            {
+                let mut receipt = run.rejected_by(&rejection);
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
             if run.is_preview() {
                 let mut receipt = run.previewed();
                 append_receipt(tx, &request_hash, &mut receipt)?;
@@ -676,7 +931,8 @@ impl SqliteKernelExecutor {
             EnvelopeGuard::aggregate(RESERVE_INVENTORY_COMMAND),
             "inventory_reservation",
         )?
-        .then_guard(|_| reserve_inventory_guard(input));
+        .then_guard(|_| reserve_inventory_guard(input))
+        .then_guard(|_| economic_quantity_guard(command.commitment.as_ref(), input.quantity));
         let request_hash = run.request_hash.clone();
         let policy = run.policy.clone();
         let started_at = run.started_at;
@@ -838,6 +1094,9 @@ impl SqliteKernelExecutor {
                 version_after: Some(version_after),
                 event_ids: vec![event_id],
                 policy: Some(policy.clone()),
+                economic_context: Some(stateset_core::EconomicReceiptContext::from_command(
+                    command,
+                )),
                 audit_hash: None,
                 started_at,
                 completed_at: Utc::now(),
@@ -1080,6 +1339,9 @@ impl SqliteKernelExecutor {
                 version_after: Some(version_after),
                 event_ids: event_id.into_iter().collect(),
                 policy: Some(policy.clone()),
+                economic_context: Some(stateset_core::EconomicReceiptContext::from_command(
+                    command,
+                )),
                 audit_hash: None,
                 started_at,
                 completed_at: Utc::now(),
@@ -1629,6 +1891,9 @@ impl SqliteKernelExecutor {
                 version_after: Some(returned.version),
                 event_ids: vec![event.id],
                 policy: Some(policy.clone()),
+                economic_context: Some(stateset_core::EconomicReceiptContext::from_command(
+                    command,
+                )),
                 audit_hash: None,
                 started_at,
                 completed_at: Utc::now(),
@@ -1651,7 +1916,14 @@ impl SqliteKernelExecutor {
             EnvelopeGuard::create(CREATE_A2A_ESCROW_COMMAND),
             "a2a_escrow",
         )?
-        .then_guard(|run| create_escrow_guard(input, run.started_at));
+        .then_guard(|run| create_escrow_guard(input, run.started_at))
+        .then_guard(|_| {
+            economic_asset_guard(
+                command.commitment.as_ref(),
+                input.amount,
+                &canonical_escrow_asset(&input.asset),
+            )
+        });
         let request_hash = run.request_hash.clone();
         let started_at = run.started_at;
 
@@ -1684,7 +1956,7 @@ impl SqliteKernelExecutor {
                 seller_address: input.seller_address.clone(),
                 amount: escrow_legacy_amount(input).expect("validated legacy amount"),
                 amount_decimal: input.amount,
-                asset: input.asset.to_uppercase(),
+                asset: canonical_escrow_asset(&input.asset),
                 network: input.network.clone(),
                 release_conditions: input.release_conditions.clone(),
                 funded_at: None,
@@ -1797,6 +2069,16 @@ impl SqliteKernelExecutor {
                 }
                 PlanOutcome::Proceed(escrow) => escrow,
             };
+            if let Some(rejection) = economic_asset_guard(
+                command.commitment.as_ref(),
+                escrow.amount_decimal,
+                &escrow.asset,
+            ) {
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.aggregate_id = Some(escrow.id);
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
             if run.is_preview() {
                 let mut receipt = run.previewed();
                 receipt.aggregate_id = Some(escrow.id.clone());
@@ -2819,6 +3101,9 @@ impl SqliteKernelExecutor {
                 version_after: None,
                 event_ids: vec![event.id],
                 policy: Some(policy.clone()),
+                economic_context: Some(stateset_core::EconomicReceiptContext::from_command(
+                    command,
+                )),
                 audit_hash: None,
                 started_at,
                 completed_at: Utc::now(),
@@ -2932,6 +3217,23 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
+            if let Some(rejection) =
+                economic_money_guard(command.commitment.as_ref(), cycle.total, cycle.currency)
+            {
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.aggregate_id = Some(cycle.id.to_string());
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            let counterparty = format!("customer:{customer_id}");
+            if let Some(rejection) =
+                economic_counterparty_guard(command.commitment.as_ref(), Some(&counterparty))
+            {
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.aggregate_id = Some(cycle.id.to_string());
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
             let payment_input = CreatePayment {
                 customer_id: Some(customer_id),
                 payment_method: command.payload.payment_method,
@@ -2963,6 +3265,14 @@ impl SqliteKernelExecutor {
                     RetryDisposition::Never,
                     "billing_cycle",
                 );
+                receipt.aggregate_id = Some(cycle.id.to_string());
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            if let Some(rejection) =
+                enforce_budget_tx(tx, command, cycle.total, cycle.currency, !run.is_preview())?
+            {
+                let mut receipt = run.rejected_by(&rejection);
                 receipt.aggregate_id = Some(cycle.id.to_string());
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
@@ -3058,6 +3368,9 @@ impl SqliteKernelExecutor {
                 version_after: None,
                 event_ids: vec![event.id],
                 policy: Some(policy.clone()),
+                economic_context: Some(stateset_core::EconomicReceiptContext::from_command(
+                    command,
+                )),
                 audit_hash: None,
                 started_at,
                 completed_at: Utc::now(),
@@ -3099,26 +3412,61 @@ impl SqliteKernelExecutor {
             }
 
             if command.mode == ExecutionMode::Preview {
-                if let Err(error) = cart_repo.validate_checkout_in_tx(tx, command.payload.cart_id) {
-                    if let Some(commerce_error) = sqlite_commerce_error(&error) {
-                        let mut receipt = rejected_receipt(
-                            command,
-                            Some(policy.clone()),
-                            checkout_error_code(commerce_error),
-                            &commerce_error.to_string(),
-                            RetryDisposition::Never,
-                            "checkout",
-                        );
-                        receipt.aggregate_id = Some(command.payload.cart_id.to_string());
-                        append_receipt(tx, &request_hash, &mut receipt)?;
-                        return Ok(receipt);
-                    }
-                    return Err(error);
+                let (amount, currency) =
+                    match cart_repo.checkout_money_in_tx(tx, command.payload.cart_id) {
+                        Ok(money) => money,
+                        Err(error) => {
+                            if let Some(commerce_error) = sqlite_commerce_error(&error) {
+                                let mut receipt = rejected_receipt(
+                                    command,
+                                    Some(policy.clone()),
+                                    checkout_error_code(commerce_error),
+                                    &commerce_error.to_string(),
+                                    RetryDisposition::Never,
+                                    "checkout",
+                                );
+                                receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+                                append_receipt(tx, &request_hash, &mut receipt)?;
+                                return Ok(receipt);
+                            }
+                            return Err(error);
+                        }
+                    };
+                if let Some(rejection) =
+                    economic_money_guard(command.commitment.as_ref(), amount, currency)
+                {
+                    let mut receipt = run.rejected_by(&rejection);
+                    receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+                    append_receipt(tx, &request_hash, &mut receipt)?;
+                    return Ok(receipt);
+                }
+                if let Some(rejection) = enforce_budget_tx(tx, command, amount, currency, false)? {
+                    let mut receipt = run.rejected_by(&rejection);
+                    receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+                    append_receipt(tx, &request_hash, &mut receipt)?;
+                    return Ok(receipt);
                 }
                 let mut receipt = preview_receipt(command, policy.clone(), "checkout");
                 receipt.aggregate_id = Some(command.payload.cart_id.to_string());
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
+            }
+
+            if let Err(error) = cart_repo.checkout_money_in_tx(tx, command.payload.cart_id) {
+                if let Some(commerce_error) = sqlite_commerce_error(&error) {
+                    let mut receipt = rejected_receipt(
+                        command,
+                        Some(policy.clone()),
+                        checkout_error_code(commerce_error),
+                        &commerce_error.to_string(),
+                        RetryDisposition::Never,
+                        "checkout",
+                    );
+                    receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+                    append_receipt(tx, &request_hash, &mut receipt)?;
+                    return Ok(receipt);
+                }
+                return Err(error);
             }
 
             // A savepoint lets expected business rejections become durable
@@ -3151,6 +3499,31 @@ impl SqliteKernelExecutor {
                     return Err(error);
                 }
             };
+
+            if let Some(rejection) = economic_money_guard(
+                command.commitment.as_ref(),
+                checkout.total_charged,
+                checkout.currency,
+            ) {
+                tx.execute_batch(
+                    "ROLLBACK TO SAVEPOINT kernel_checkout_apply; RELEASE SAVEPOINT kernel_checkout_apply",
+                )?;
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            if let Some(rejection) =
+                enforce_budget_tx(tx, command, checkout.total_charged, checkout.currency, true)?
+            {
+                tx.execute_batch(
+                    "ROLLBACK TO SAVEPOINT kernel_checkout_apply; RELEASE SAVEPOINT kernel_checkout_apply",
+                )?;
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
 
             tx.execute_batch("RELEASE SAVEPOINT kernel_checkout_apply")?;
 
@@ -3187,6 +3560,9 @@ impl SqliteKernelExecutor {
                 version_after: None,
                 event_ids: vec![event.id],
                 policy: Some(policy.clone()),
+                economic_context: Some(stateset_core::EconomicReceiptContext::from_command(
+                    command,
+                )),
                 audit_hash: None,
                 started_at,
                 completed_at: Utc::now(),
@@ -3332,6 +3708,9 @@ impl SqliteKernelExecutor {
                 version_after: None,
                 event_ids: vec![event.id],
                 policy: Some(policy.clone()),
+                economic_context: Some(stateset_core::EconomicReceiptContext::from_command(
+                    command,
+                )),
                 audit_hash: None,
                 started_at,
                 completed_at: Utc::now(),
@@ -3454,6 +3833,9 @@ impl SqliteKernelExecutor {
                 version_after: None,
                 event_ids: vec![event.id],
                 policy: Some(policy.clone()),
+                economic_context: Some(stateset_core::EconomicReceiptContext::from_command(
+                    command,
+                )),
                 audit_hash: None,
                 started_at,
                 completed_at: Utc::now(),

@@ -10,15 +10,15 @@ use stateset_core::{
     CreateJournalEntryLine, CreateOrder, CreateOrderItem, CreatePayment, CreateProduct,
     CreateProductVariant, CreateRefund, CreateReturn, CreateReturnItem, CreateSubscription,
     CreateSubscriptionPlan, CreateX402PaymentIntent, CurrencyCode, CustomerRepository,
-    DisputeA2AEscrow, ExecutionMode, ExecutionStatus, FileA2ADispute, FundA2AEscrow,
-    GeneralLedgerRepository, InventoryRepository, JournalEntryStatus, KernelCommandPolicy,
-    KernelPolicy, KernelPrincipal, OrderRepository, OrderStatus, PaymentMethodType,
-    PaymentRepository, PostJournalEntry, PrincipalKind, ProductId, ProductRepository,
-    RefundA2AEscrow, ReleaseA2AEscrow, ReleaseInventoryReservation, ReservationStatus,
-    ReserveInventory, ResolveA2ADispute, ReturnRepository, ReturnStatus, SetCartPayment,
-    SettleX402Intent, ShipOrderCommand, ShipmentLineInput, SubmitA2ADisputeEvidence,
-    TransitionOrder, TransitionReturn, UpdateOrder, X402Asset, X402IntentStatus, X402Network,
-    X402PaymentIntentRepository,
+    DisputeA2AEscrow, EconomicCommitment, ExecutionMode, ExecutionStatus, FileA2ADispute,
+    FundA2AEscrow, GeneralLedgerRepository, InventoryRepository, JournalEntryStatus,
+    KernelCommandPolicy, KernelPolicy, KernelPrincipal, OrderRepository, OrderStatus,
+    PaymentMethodType, PaymentRepository, PostJournalEntry, PrincipalKind, ProductId,
+    ProductRepository, RefundA2AEscrow, ReleaseA2AEscrow, ReleaseInventoryReservation,
+    ReservationStatus, ReserveInventory, ResolveA2ADispute, ReturnRepository, ReturnStatus,
+    SetCartPayment, SettleX402Intent, ShipOrderCommand, ShipmentLineInput,
+    SubmitA2ADisputeEvidence, TransitionOrder, TransitionReturn, UpdateOrder, X402Asset,
+    X402IntentStatus, X402Network, X402PaymentIntentRepository,
 };
 use stateset_db::SqliteDatabase;
 use uuid::Uuid;
@@ -976,6 +976,37 @@ fn kernel_inventory_preview_promotes_applies_and_replays_exactly_once() {
     assert_eq!(events[0].command_id, Some(apply.command_id));
     assert_eq!(events[0].principal_id.as_deref(), Some("agent:allocator-1"));
     assert_eq!(events[0].payload["quantity"], "2.500");
+}
+
+#[test]
+fn kernel_inventory_rejects_award_quantity_substitution() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+    create_stock(&db, "KERNEL-AWARD-1", dec!(100));
+    let mut command = inventory_command("marketplace-award-1", "KERNEL-AWARD-1", dec!(75));
+    command.mode = ExecutionMode::Apply;
+    command.commitment = Some(EconomicCommitment {
+        budget_id: None,
+        amount: None,
+        asset_amount: None,
+        counterparty_id: Some("agent:buyer".into()),
+        quantity: Some("50".into()),
+        evidence: vec!["award:1".into()],
+    });
+
+    let receipt = db
+        .kernel_executor(payment_policy())
+        .execute_reserve_inventory(&command)
+        .expect("sealed rejection");
+    assert_eq!(receipt.status, ExecutionStatus::Rejected);
+    assert_eq!(receipt.error_code.as_deref(), Some("kernel.commitment_quantity_mismatch"));
+    assert_eq!(
+        db.inventory()
+            .get_stock("KERNEL-AWARD-1")
+            .expect("stock query")
+            .expect("stock")
+            .total_allocated,
+        dec!(0)
+    );
 }
 
 #[test]

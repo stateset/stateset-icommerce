@@ -3,7 +3,49 @@
 use super::PlanOutcome;
 use crate::kernel::envelope::GuardRejection;
 use rust_decimal::Decimal;
-use stateset_core::{CreatePayment, CreateRefund, CurrencyCode, Payment, Validate};
+use stateset_core::{
+    CreatePayment, CreateRefund, CurrencyCode, EconomicCommitment, Payment, Validate,
+};
+
+/// Bind an authorization-time money declaration to the amount the domain
+/// executor actually observed. This prevents an agent from declaring a small
+/// commitment to policy while placing a larger amount in the payload.
+#[must_use]
+pub fn economic_money_guard(
+    commitment: Option<&EconomicCommitment>,
+    amount: Decimal,
+    currency: CurrencyCode,
+) -> Option<GuardRejection> {
+    commitment.and_then(|commitment| {
+        (!commitment.binds_money(amount, currency)).then(|| {
+            GuardRejection::never(
+                "kernel.commitment_amount_mismatch",
+                "declared economic commitment does not match the exact domain amount",
+            )
+        })
+    })
+}
+
+/// Bind a declared counterparty to the canonical identity observed by the
+/// domain executor. A declaration without a resolvable target fails closed.
+#[must_use]
+pub fn economic_counterparty_guard(
+    commitment: Option<&EconomicCommitment>,
+    observed_counterparty: Option<&str>,
+) -> Option<GuardRejection> {
+    let declared = commitment.and_then(|commitment| commitment.counterparty_id.as_deref())?;
+    match observed_counterparty {
+        Some(observed) if observed == declared => None,
+        Some(_) => Some(GuardRejection::never(
+            "kernel.commitment_counterparty_mismatch",
+            "declared economic counterparty does not match the domain target",
+        )),
+        None => Some(GuardRejection::never(
+            "kernel.commitment_counterparty_unresolved",
+            "the domain command does not expose a counterparty for the declared commitment",
+        )),
+    }
+}
 
 /// Static payload checks for `payments.create` (after key normalisation).
 #[must_use]

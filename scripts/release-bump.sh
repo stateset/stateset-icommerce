@@ -2,7 +2,7 @@
 # Version-bump every synced release surface, in the right order, with the
 # exclusions that hand-run seds kept getting wrong.
 #
-#   scripts/release-bump.sh 1.30.0 1.30.0
+#   scripts/release-bump.sh <from-version> <to-version>
 #
 # What this encodes (each learned the hard way during the 1.23.x line):
 #   * Never touch ANY Cargo.lock with the sed — including the STANDALONE
@@ -56,6 +56,8 @@ if ! [[ "${FROM}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "${TO}" =~ ^[0-9]+\.[0-9]+\.[0-
 fi
 
 FROM_RE="${FROM//./\\.}"
+FROM_LINE="${FROM%.*}"
+TO_LINE="${TO%.*}"
 
 echo "==> Bumping tracked surfaces ${FROM} -> ${TO}"
 mapfile -t files < <(git grep -l "${FROM_RE}" -- . \
@@ -73,6 +75,11 @@ for f in "${files[@]}"; do
   sed -i "s/${FROM_RE}/${TO}/g" "$f"
 done
 echo "    ${#files[@]} tracked files"
+
+# Composer's branch alias follows the release line rather than the exact
+# release. Keep it synchronized explicitly so the release gate cannot discover
+# the mismatch only after the rest of the workspace has been bumped.
+sed -i "s/${FROM_LINE//./\\.}\\.x-dev/${TO_LINE}.x-dev/g" bindings/php/composer.json
 
 echo "==> Bumping npm platform package dirs (may be untracked on new platforms)"
 for f in bindings/node/npm/*/package.json; do

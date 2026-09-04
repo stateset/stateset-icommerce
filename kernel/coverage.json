@@ -32,7 +32,7 @@
       "capability": "a2a.escrow.create",
       "sqliteExecutor": "execute_create_a2a_escrow",
       "postgresExecutor": "execute_create_a2a_escrow_async",
-      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "observed_asset"]
     },
     {
       "name": "a2a.escrow.dispute",
@@ -48,7 +48,7 @@
       "capability": "a2a.escrow.fund",
       "sqliteExecutor": "execute_fund_a2a_escrow",
       "postgresExecutor": "execute_fund_a2a_escrow_async",
-      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "observed_asset"]
     },
     {
       "name": "a2a.escrow.refund",
@@ -72,7 +72,7 @@
       "capability": "checkout.commit",
       "sqliteExecutor": "execute_commit_checkout",
       "postgresExecutor": "execute_commit_checkout_async",
-      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "atomic_inventory"]
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "observed_amount", "durable_budget", "atomic_inventory"]
     },
     {
       "name": "inventory.item.create",
@@ -136,7 +136,7 @@
       "capability": "payments.create",
       "sqliteExecutor": "execute_create_payment",
       "postgresExecutor": "execute_create_payment_async",
-      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "observed_amount", "observed_counterparty", "durable_budget"]
     },
     {
       "name": "payments.create_refund",
@@ -144,7 +144,7 @@
       "capability": "payments.create_refund",
       "sqliteExecutor": "execute_create_refund",
       "postgresExecutor": "execute_create_refund_async",
-      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "observed_amount", "observed_counterparty", "durable_budget"]
     },
     {
       "name": "products.create",
@@ -168,7 +168,7 @@
       "capability": "subscriptions.charge",
       "sqliteExecutor": "execute_charge_subscription",
       "postgresExecutor": "execute_charge_subscription_async",
-      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "pending_payment_only"]
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "observed_amount", "observed_counterparty", "durable_budget", "pending_payment_only"]
     },
     {
       "name": "x402.settle",

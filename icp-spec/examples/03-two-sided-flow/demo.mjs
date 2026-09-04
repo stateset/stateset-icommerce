@@ -121,23 +121,28 @@ let handlerPort, settlerPort;
 
 try {
   h(1, 'Spawn both servers');
-  para(`Each server runs in its own process with its own Ed25519 signing key. Neither knows about the other.`);
-
-  const handler = await spawnServer('icp-handler', HANDLER, { PORT: '0' });
-  handlerProc = handler.child;
-  handlerPort = handler.port;
-  out(`\`icp-handler\` → http://127.0.0.1:${handlerPort}\n\n`);
+  para(`Each server runs in its own process with its own Ed25519 signing key. The merchant is provisioned only with the Settler's public trust root, never its private key.`);
 
   const settler = await spawnServer('settler-stateset', SETTLER, { PORT: '0' });
   settlerProc = settler.child;
   settlerPort = settler.port;
   out(`\`settler-stateset\` → http://127.0.0.1:${settlerPort}\n\n`);
 
+  const settlerInfo = await (await fetch(`http://127.0.0.1:${settlerPort}/.well-known/icp-settler`)).json();
+  const handler = await spawnServer('icp-handler', HANDLER, {
+    PORT: '0',
+    ICP_SETTLER_KEYS_JSON: JSON.stringify({
+      [settlerInfo.settler_id]: settlerInfo.signing_keys[0].pub_hex,
+    }),
+  });
+  handlerProc = handler.child;
+  handlerPort = handler.port;
+  out(`\`icp-handler\` → http://127.0.0.1:${handlerPort}\n\n`);
+
   // -------------------------------------------------------------------
   h(2, 'Discover both parties (independently)');
   para(`The buyer fetches each entity's \`.well-known/\` endpoint and records its public key. These keys are SEPARATE — different processes, different generations, different bytes.`);
   const merchantInfo = await (await fetch(`http://127.0.0.1:${handlerPort}/icp/v1/.well-known/icp`)).json();
-  const settlerInfo = await (await fetch(`http://127.0.0.1:${settlerPort}/.well-known/icp-settler`)).json();
   json({
     merchant_aid: merchantInfo.merchant_aid,
     merchant_pubkey: merchantInfo.merchant_pubkey.raw_hex.slice(0, 32) + '…',
@@ -153,18 +158,41 @@ try {
   para(`Buyer generates its own keypair, derives its AID per spec §4.2.`);
   const buyerEdKp = generateKeyPairSync('ed25519');
   const buyerXKp = generateKeyPairSync('x25519');
+  const principalKp = generateKeyPairSync('ed25519');
   const buyerEdPubRaw = publicKeyToRaw(buyerEdKp.publicKey);
   const buyerXPubRaw = publicKeyToRaw(buyerXKp.publicKey);
   const buyerAid = `aid:v1:z${base58btcEncode(createHash('sha256').update(
     Buffer.concat([buyerEdPubRaw, Buffer.from([0x00]), buyerXPubRaw])
   ).digest())}`;
-  json({ buyer_aid: buyerAid, ed25519_pubkey_hex: buyerEdPubRaw.toString('hex').slice(0, 32) + '…' });
+  const principalPubRaw = publicKeyToRaw(principalKp.publicKey);
+  json({
+    buyer_aid: buyerAid,
+    principal: 'did:web:acme.example',
+    role: 'procurement',
+    ed25519_pubkey_hex: buyerEdPubRaw.toString('hex').slice(0, 32) + '…',
+  });
 
   // -------------------------------------------------------------------
   h(4, 'Submit purchase Intent to merchant Backend');
   para(`The buyer signs an Intent and POSTs it to the handler. The handler verifies the signature, runs pricing, and returns a signed Quote.`);
   const now = new Date();
   const exp = new Date(now.getTime() + 300 * 1000);
+  const principalBindingBody = {
+    principal: 'did:web:acme.example',
+    agent: buyerAid,
+    role: 'procurement',
+    authority: { max_per_intent: { amount: '5000.00', currency: 'USDC' }, verbs: ['purchase.create'] },
+    expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
+    revocation: 'https://acme.example/agent-delegations/revoke',
+  };
+  const principalBinding = {
+    ...principalBindingBody,
+    signature: {
+      alg: 'ed25519',
+      kid: 'acme-procurement-delegation-v1',
+      sig: signEd25519(canonicalJson(principalBindingBody), principalKp.privateKey),
+    },
+  };
   const intent = {
     v: 'icp-1.0',
     verb: 'purchase.create',
@@ -172,17 +200,10 @@ try {
     buyer: buyerAid,
     merchant: merchantInfo.merchant_aid,
     settler: 'settler:stateset.usdc.base-sepolia',
-    items: [{ sku: 'TWO-SIDED-DEMO', quantity: 1, unit_price: { amount: '100.00', currency: 'USDC' } }],
-    max_total: { amount: '110.00', currency: 'USDC' },
+    items: [{ sku: 'SKU-100', quantity: 50, unit_price: { amount: '88.57', currency: 'USDC' } }],
+    max_total: { amount: '5000.00', currency: 'USDC' },
     expiry: exp.toISOString(),
-    principal_binding: {
-      principal: 'did:web:two-sided-demo.example',
-      agent: buyerAid,
-      authority: { max_per_intent: { amount: '500', currency: 'USDC' }, verbs: ['purchase.create'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://example.com/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+    principal_binding: principalBinding,
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),
@@ -198,11 +219,14 @@ try {
       signature: { alg: 'ed25519', kid: buyerAid, sig: buyerSig },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
       _x_pubkey_hex: buyerXPubRaw.toString('hex'),
+      _principal_pubkey_hex: principalPubRaw.toString('hex'),
     }),
   });
   const submitted = await submitRes.json();
   if (submitRes.status !== 200) throw new Error(`submit failed: ${JSON.stringify(submitted)}`);
   json({
+    requested: '50 × SKU-100',
+    authority_ceiling: intent.max_total,
     quote_id: submitted.quote.quote_id,
     total: submitted.quote.total,
     merchant_signature_alg: submitted.signature.alg,
@@ -216,14 +240,33 @@ try {
   const merchantSigOk = verifyEd25519(quoteCanonical, submitted.signature.sig, merchantPubRaw);
   out(`Merchant Quote signature verified independently: **${merchantSigOk ? 'PASS ✓' : 'FAIL ✗'}**\n\n`);
   // Tamper test
-  const tamperedQuote = quoteCanonical.replace('"100.00"', '"1.00"');
+  const tamperedQuote = canonicalJson({
+    ...submitted.quote,
+    total: { ...submitted.quote.total, amount: '46.50' },
+  });
   const tamperedOk = verifyEd25519(tamperedQuote, submitted.signature.sig, merchantPubRaw);
   out(`Tampered Quote rejected by signature check: **${!tamperedOk ? 'PASS ✓' : 'FAIL ✗ (security bug!)'}**\n\n`);
+  if (tamperedOk) throw new Error('tampered merchant quote passed signature verification');
 
   // -------------------------------------------------------------------
-  h(6, 'Settler-side: simulate the chain');
+  h(6, 'Accept quote, reserve inventory, create order, and fund');
+  const acceptRes = await fetch(
+    `http://127.0.0.1:${handlerPort}/icp/v1/quotes/${submitted.quote.quote_id}/accept`,
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
+  );
+  const accepted = await acceptRes.json();
+  if (acceptRes.status !== 200) throw new Error(`accept failed: ${JSON.stringify(accepted)}`);
+  const escrowId = accepted.funding.escrow_id;
+  json({
+    order: accepted.order,
+    inventory_reservation: accepted.inventory_reservation,
+    funding: {
+      escrow_id: escrowId,
+      rail: accepted.funding.chain,
+      amount: accepted.funding.args.amount,
+    },
+  });
   para(`In production, the buyer's wallet would broadcast a \`fund\` transaction against the \`ICPEscrow.sol\` contract; the Settler daemon would observe it on Base Sepolia and sign the corresponding ICP EscrowEvent. For the demo we POST a mock \`fund\` event directly to the Settler — simulating what the chain watcher would do.`);
-  const escrowId = `0x${'d'.repeat(60)}${Date.now().toString(16).slice(-4)}`;
   const fundRes = await fetch(`http://127.0.0.1:${settlerPort}/admin/escrow/event`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -256,7 +299,7 @@ try {
 
   // -------------------------------------------------------------------
   h(8, 'Walk the lifecycle');
-  para(`Buyer drives the rest of the state machine via Settler mock injections (fulfill → release). At release time the Settler produces a co-signed SettlementReceipt.`);
+  para(`Buyer drives the rest of the state machine via Settler mock injections (fulfill → release). At release the Settler signs a SettlementReceipt; the merchant verifies its configured Settler key and the signed Quote amount before adding the second signature.`);
   const ff = await fetch(`http://127.0.0.1:${settlerPort}/admin/escrow/event`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -267,21 +310,70 @@ try {
   const rr = await fetch(`http://127.0.0.1:${settlerPort}/admin/escrow/event`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ escrow_id: escrowId, kind: 'release' }),
+    body: JSON.stringify({
+      escrow_id: escrowId,
+      kind: 'release',
+      rail_event: { rail: 'base-sepolia', block_number: 18342919, tx_hash: '0x82' + 'ab'.repeat(31) },
+    }),
   });
-  const { event: releaseEvent } = await rr.json();
+  const { event: releaseEvent, receipt: settlerReceipt } = await rr.json();
 
   const events = [fundEvent, fulfillEvent, releaseEvent];
   code('text', events.map((e) =>
     `  seq=${e.seq}  ${e.from_state} → ${e.to_state}  (${e.trigger.kind})  kid=${e.settler_signature.kid}`
   ).join('\n'));
 
+  // Merchant verifies the configured Settler trust root and exact quoted
+  // amount before adding its independent signature.
+  const refusedCosign = await fetch(`http://127.0.0.1:${handlerPort}/icp/v1/settlements/cosign`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      receipt: { ...settlerReceipt, amount: { ...settlerReceipt.amount, amount: '46.50' } },
+    }),
+  });
+  if (refusedCosign.status !== 401) {
+    throw new Error(`merchant accepted a tampered Settler receipt (${refusedCosign.status})`);
+  }
+  const cosignRes = await fetch(`http://127.0.0.1:${handlerPort}/icp/v1/settlements/cosign`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ receipt: settlerReceipt }),
+  });
+  const cosigned = await cosignRes.json();
+  if (cosignRes.status !== 200) throw new Error(`co-sign failed: ${JSON.stringify(cosigned)}`);
+  const settlementReceipt = cosigned.receipt;
+
   // -------------------------------------------------------------------
   h(9, 'Two-sided settlement audit');
   para(`A regulator or auditor presented with the SettlementReceipt + the discovery documents from both entities can independently verify:`);
-  out(`- ✓ Merchant's Quote signature against \`merchant_pubkey\` in the handler's \`.well-known/icp\`\n`);
-  out(`- ✓ Settler's EscrowEvent signatures (one per state transition) against \`signing_keys[0].pub_hex\` in the Settler's \`.well-known/icp-settler\`\n`);
-  out(`- ✓ Settler's SettlementReceipt signature against the same Settler key\n\n`);
+  const { merchant_signature, settler_signature: receiptSettlerSignature, ...receiptBody } = settlementReceipt;
+  const receiptCanonical = canonicalJson(receiptBody);
+  const receiptMerchantOk = verifyEd25519(receiptCanonical, merchant_signature.sig, merchantPubRaw);
+  const receiptSettlerOk = verifyEd25519(receiptCanonical, receiptSettlerSignature.sig, settlerPubRaw);
+  const tamperedReceiptOk = verifyEd25519(
+    canonicalJson({ ...receiptBody, amount: { ...receiptBody.amount, amount: '46.50' } }),
+    merchant_signature.sig,
+    merchantPubRaw,
+  );
+  out(`- ${receiptMerchantOk ? '✓' : '✗'} Merchant SettlementReceipt signature independently verified\n`);
+  out(`- ${receiptSettlerOk ? '✓' : '✗'} Settler SettlementReceipt signature independently verified\n`);
+  out(`- ✓ Merchant refused to co-sign a tampered Settler receipt\n`);
+  out(`- ${!tamperedReceiptOk ? '✓' : '✗'} Tampered amount rejected\n`);
+  json({
+    agent: buyerAid,
+    principal: principalBinding.principal,
+    intent: 'Purchase 50 × SKU-100 under 5000.00 USDC',
+    decision: 'APPROVED',
+    amount: settlementReceipt.amount,
+    rail: settlementReceipt.rail,
+    transaction: settlementReceipt.rail_txid,
+    merchant_signature: merchant_signature.kid,
+    settler_signature: receiptSettlerSignature.kid,
+  });
+  if (!receiptMerchantOk || !receiptSettlerOk || tamperedReceiptOk) {
+    throw new Error('economic receipt verification failed');
+  }
   para(`No need to trust the handler. No need to trust the Settler. **Only trust the public keys.** This is the load-bearing property the entire two-sided architecture rests on, and this demo just verified it from outside both servers.`);
 
   // -------------------------------------------------------------------
@@ -290,12 +382,15 @@ try {
 
 - Ran **2 servers** (handler + Settler) as separate processes on separate ports with separate signing keys
 - Generated a fresh buyer Agent with its own keypair
-- Submitted a purchase Intent → received a signed Quote from the handler
+- Submitted a delegated request for **50 × SKU-100 under 5,000 USDC** → received a signed Quote
 - **Independently verified** the handler's merchant signature against \`merchant_pubkey\` published in \`.well-known/icp\` (and confirmed tampering is detected)
+- Accepted the quote, reserved 50 units in the reference merchant state, and created an authorized order
 - Injected mock chain events into the Settler daemon (simulating Base Sepolia \`ICPEscrow.sol\` event observation)
 - Received signed EscrowEvents from the Settler with monotonic \`seq\` and Settler signature
 - **Independently verified** the Settler's signature against \`signing_keys[0].pub_hex\` published in \`.well-known/icp-settler\` (and confirmed tampering is detected)
-- Walked the full lifecycle: fund → fulfill → release → co-signed SettlementReceipt
+- Walked the full lifecycle: fund → fulfill → release
+- Required the merchant to verify the configured Settler key and quoted amount before co-signing
+- Independently verified both signatures on the same canonical Economic Receipt and rejected tampering
 
 **Two separate processes. Two separate keys. Independent verifiability of every signature.** That's the trust model production ICP rests on. This demo just executed it end-to-end with cryptographic proof.
 

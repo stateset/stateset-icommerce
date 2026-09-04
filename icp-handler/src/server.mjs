@@ -83,6 +83,16 @@ const ALLOWED_SETTLERS = new Set([
   'settler:circle.usdc.base',            // future production
 ]);
 
+// Operator-owned trust roots for co-signing externally settled receipts.
+// Shape: { "settler:id": "<32-byte Ed25519 public key hex>" }.
+// Never accept a public key from the receipt being authorized.
+let TRUSTED_SETTLER_KEYS = new Map();
+try {
+  TRUSTED_SETTLER_KEYS = new Map(Object.entries(JSON.parse(process.env.ICP_SETTLER_KEYS_JSON ?? '{}')));
+} catch (error) {
+  throw new Error(`ICP_SETTLER_KEYS_JSON must be a JSON object: ${error.message}`);
+}
+
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
@@ -95,6 +105,7 @@ const routes = [
   ['POST', /^\/icp\/v1\/quotes\/([^/]+)\/accept$/,             handleAcceptQuote],
   ['POST', /^\/icp\/v1\/escrows\/([^/]+)\/fulfill$/,           handleFulfill],
   ['POST', /^\/icp\/v1\/escrows\/([^/]+)\/dispute$/,           handleDispute],
+  ['POST', '/icp/v1/settlements/cosign',                         handleCosignSettlement],
   ['GET',  /^\/icp\/v1\/escrows\/([^/]+)\/events$/,            handleObserve],
   ['GET',  /^\/icp\/v1\/settlements\/([^/]+)$/,                handleGetSettlement],
   ['GET',  /^\/icp\/v1\/channels\/([^/]+)$/,                   handleGetChannel],
@@ -230,6 +241,29 @@ async function handleSubmitIntent(req, res) {
     return reply(res, 401, err('signature.invalid', 'Ed25519 verification failed'));
   }
 
+  // Optional reference resolver for the demo: when the caller supplies the
+  // principal's already-resolved public key, verify that the principal signed
+  // this exact delegation. Production resolves the DID/organization key from
+  // trusted identity infrastructure rather than accepting it from the body.
+  if (body._principal_pubkey_hex) {
+    const binding = intent.principal_binding;
+    if (!binding?.signature?.sig) {
+      return reply(res, 401, err('delegation.signature_missing', 'principal binding signature is required'));
+    }
+    if (binding.agent !== intent.buyer || !binding.authority?.verbs?.includes(intent.verb)) {
+      return reply(res, 403, err('delegation.scope_mismatch', 'principal binding does not authorize this agent and verb'));
+    }
+    if (Date.parse(binding.expiry) <= now) {
+      return reply(res, 403, err('delegation.expired', 'principal binding has expired'));
+    }
+    const { signature: _bindingSignature, ...unsignedBinding } = binding;
+    const principalKey = Buffer.from(body._principal_pubkey_hex, 'hex');
+    if (principalKey.length !== 32
+        || !verifyEd25519(canonicalJson(unsignedBinding), binding.signature.sig, principalKey)) {
+      return reply(res, 401, err('delegation.signature_invalid', 'principal binding signature failed'));
+    }
+  }
+
   // 4b. Nonce replay (§5.3) — only consume a nonce AFTER the signature is
   // proven valid, so an attacker can't burn a victim's nonce with a forged
   // message. Keyed on the bound signer AID so distinct agents may reuse the
@@ -352,6 +386,23 @@ async function handleAcceptQuote(req, res, _url, [quoteId]) {
   // (In prod we'd verify the buyer's Accept signature; the stub trusts the body shape.)
 
   const funding = stubFundingInstructions(quote);
+  const existingEscrow = state.getEscrow(funding.escrow_id);
+  if (existingEscrow) {
+    return reply(res, 200, {
+      funding,
+      order: {
+        order_id: existingEscrow.order_id,
+        status: 'authorized',
+        quote_id: quoteId,
+      },
+      inventory_reservation: state.getInventoryReservation(funding.escrow_id),
+    });
+  }
+  const inventoryReservation = state.reserveInventory(funding.escrow_id, quote.lines);
+  if (!inventoryReservation) {
+    return reply(res, 409, err('inventory.insufficient', 'quoted inventory is no longer available'));
+  }
+  const orderId = newId('ord');
   state.createEscrow(funding.escrow_id, {
     state: 'pending',
     intent_id: intentId,
@@ -359,6 +410,8 @@ async function handleAcceptQuote(req, res, _url, [quoteId]) {
     amount: quote.total,
     settler: quote.settler,
     seq: 0,
+    order_id: orderId,
+    inventory_reservation_id: inventoryReservation.reservation_id,
   });
   appendSignedEscrowEvent(funding.escrow_id, {
     type: 'icp.escrow.event',
@@ -372,7 +425,11 @@ async function handleAcceptQuote(req, res, _url, [quoteId]) {
     iat: new Date().toISOString(),
   });
 
-  return reply(res, 200, { funding });
+  return reply(res, 200, {
+    funding,
+    order: { order_id: orderId, status: 'authorized', quote_id: quoteId },
+    inventory_reservation: inventoryReservation,
+  });
 }
 
 async function handleFulfill(req, res, _url, [escrowId]) {
@@ -442,6 +499,59 @@ async function handleFulfill(req, res, _url, [escrowId]) {
   });
 
   return reply(res, 200, { receipt });
+}
+
+async function handleCosignSettlement(req, res) {
+  const body = await readJson(req);
+  const receipt = body?.receipt;
+  if (!receipt || receipt.type !== 'icp.settlement.receipt') {
+    return reply(res, 400, err('format.missing_field', 'receipt is required'));
+  }
+  if (!ALLOWED_SETTLERS.has(receipt.settler)) {
+    return reply(res, 400, err('policy.settler.not_allowed', `settler ${receipt.settler} not in allowlist`));
+  }
+  const trustedKeyHex = TRUSTED_SETTLER_KEYS.get(receipt.settler);
+  if (!trustedKeyHex) {
+    return reply(res, 503, err('settler.key_unavailable', `no operator-owned key for ${receipt.settler}`));
+  }
+  if (!receipt.settler_signature?.sig) {
+    return reply(res, 400, err('format.missing_field', 'settler_signature is required'));
+  }
+  const { merchant_signature: _merchant, settler_signature: _settler, ...unsigned } = receipt;
+  let settlerKey;
+  try {
+    settlerKey = Buffer.from(trustedKeyHex, 'hex');
+    if (settlerKey.length !== 32) throw new Error('key must contain 32 bytes');
+  } catch (error) {
+    return reply(res, 503, err('settler.key_invalid', error.message));
+  }
+  const canonical = canonicalJson(unsigned);
+  if (!verifyEd25519(canonical, receipt.settler_signature.sig, settlerKey)) {
+    return reply(res, 401, err('settlement.settler_signature_invalid', 'settler receipt signature failed'));
+  }
+  const intentRecord = state.getIntent(receipt.intent_id);
+  const quoteRecord = state.getQuoteByIntent(receipt.intent_id);
+  if (!intentRecord || !quoteRecord) {
+    return reply(res, 404, err('format.unknown_intent', `intent ${receipt.intent_id} is not known`));
+  }
+  if (receipt.amount?.amount !== quoteRecord.quote.total?.amount
+      || receipt.amount?.currency !== quoteRecord.quote.total?.currency) {
+    return reply(res, 409, err('settlement.amount_mismatch', 'receipt amount does not match the signed quote'));
+  }
+  if (receipt.final_state !== 'released' && receipt.final_state !== 'refunded') {
+    return reply(res, 409, err('settlement.not_final', `cannot co-sign ${receipt.final_state}`));
+  }
+  const coSigned = {
+    ...unsigned,
+    settler_signature: receipt.settler_signature,
+    merchant_signature: {
+      alg: 'ed25519',
+      kid: merchantAid,
+      sig: signEd25519(canonical, merchantKp.privateKey),
+    },
+  };
+  state.recordSettlement(coSigned);
+  return reply(res, 200, { receipt: coSigned });
 }
 
 async function handleDispute(req, res, _url, [escrowId]) {

@@ -8,8 +8,8 @@ use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use stateset_core::{
-    CommandEnvelope, CommerceError, ExecutionReceipt, ExecutionStatus, PolicyDecisionEvidence,
-    RetryDisposition,
+    CommandEnvelope, CommerceError, EconomicReceiptContext, ExecutionReceipt, ExecutionStatus,
+    PolicyDecisionEvidence, RetryDisposition,
 };
 use uuid::Uuid;
 
@@ -48,6 +48,7 @@ fn base<C, T>(
         version_after: None,
         event_ids: Vec::new(),
         policy,
+        economic_context: Some(EconomicReceiptContext::from_command(command)),
         audit_hash: None,
         started_at,
         completed_at: Utc::now(),

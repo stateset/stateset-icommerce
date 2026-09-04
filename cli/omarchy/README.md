@@ -11,7 +11,7 @@ Install the version-matched controller explicitly, then add the plugin from its
 public repository:
 
 ```bash
-npm install --global @stateset/cli@1.30.0
+npm install --global @stateset/cli@1.31.0
 omarchy plugin add https://github.com/stateset/stateset-omarchy-plugin.git --enable
 ```
 

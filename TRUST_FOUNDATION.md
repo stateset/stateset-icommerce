@@ -1,7 +1,7 @@
 # Trust Foundation
 
 Status: active repo policy
-Last reviewed: 2026-04-08
+Last reviewed: 2026-09-04
 Applies to: `stateset-icommerce` and the adjacent trilogy repos referenced from this workspace
 
 This document is the canonical trust inventory for this repository.
@@ -23,7 +23,7 @@ This workspace is the application-layer repo in a larger documented stack:
 - `stateset-stark`: STARK proving and verification
 - `set`: settlement chain, registry contracts, anchor service
 
-The current workspace release line is `1.30.0`.
+The current workspace release line is `1.31.0`.
 
 ## Trust Levels
 
@@ -54,7 +54,7 @@ Do not collapse those into a single "post-quantum" claim.
 
 ## Compatibility Contract
 
-The current workspace release line is `1.30.0`, so the published artifacts are
+The current workspace release line is `1.31.0`, so the published artifacts are
 on the first stable `v1.x` compatibility line.
 
 The `v1.0.0` compatibility contract is frozen and remains active:
@@ -69,8 +69,8 @@ The `v1.0.0` compatibility contract is frozen and remains active:
   supported for at least two minor releases and 90 days before removal in the
   next major;
 - `v1.0.x` is the initial stabilization/LTS line: critical regressions and
-  security fixes are eligible for backport there until `v1.30.0` ships;
-- after `v1.30.0`, the latest `v1.y` and previous `v1.(y-1)` lines receive
+  security fixes are eligible for backport there until `v1.31.0` ships;
+- after `v1.31.0`, the latest `v1.y` and previous `v1.(y-1)` lines receive
   security and release-blocking bug backports.
 
 ## Evidence Matrix
@@ -86,6 +86,10 @@ The `v1.0.0` compatibility contract is frozen and remains active:
 | Observability primitives | implemented in this repo | `crates/stateset-observability`, `deploy/grafana`, `deploy/prometheus` | published SLOs, runbooks, correlated production dashboards, chaos results |
 | Bench harness and perf gates | implemented in this repo | `crates/stateset-benches`, `perf-gates.json` | published benchmark report with hardware, workload, and repeatable methodology |
 | A2A discovery and reputation data model | implemented in this repo | agent-card, identity, and reputation traits and models exist in core crates | standalone normative spec, conformance suite, multi-language reference agents |
+| Economic agent identity and authority | implemented for operator-owned runtime configuration | `EconomicAgent` binds principal, role, scope, capabilities, credentials, keys, and budgets; `EconomicAuthority` compiles autonomous/approval/deny tiers into kernel policy | external organizational identity resolution, revocation distribution, hosted credential lifecycle |
+| Portable economic receipts | implemented for local execution and reference ICP co-signing | `EconomicReceipt` binds canonical result hashes, policy decisions, commitments, audit anchors, settlement evidence, and independent Ed25519 signatures; the two-sided demo verifies merchant and Settler signatures | hosted key registry, public transparency service, hard-finality anchor integration |
+| Canonical transaction vocabulary | implemented as a framework-neutral intent facade | `quote/buy/sell/pay/fulfill/return/refund/subscribe` create scoped `EconomicIntent` values; governed adapters execute the currently mapped domain commands | governed executor coverage for every verb as one atomic orchestration |
+| Two-agent purchase demonstration | executable reference implementation | `icp-spec/examples/03-two-sided-flow` exercises delegated intent, quote ceiling, inventory reservation, order state, mock rail lifecycle, verified co-signing, and tamper rejection | replace in-memory merchant state and mock chain injection with embedded production state and a live rail |
 | Regulatory and compliance posture | partially documented | compliance, GDPR, AML, and audit guidance exist in docs | jurisdiction-by-jurisdiction mapping, legal opinions, hosted-service controls, code-verified tool inventory |
 | Hosted control environment | open gap in this repo | no SOC 2 report, DPA, retention schedule, or control matrix is linked from this workspace | SOC 2 Type II, retention and deletion map, evidence collection policy |
 
@@ -113,6 +117,10 @@ These are defensible claims today:
 - documented PQ migration strategy with explicit residual classical dependencies;
 - observability primitives, benchmark harnesses, and deployment assets present in-repo;
 - A2A identity, discovery, and reputation primitives in code;
+- operator-owned economic agent identities and tiered authority compiled into
+  fail-closed kernel policy;
+- result-bound, independently co-signable economic receipts and an executable
+  two-agent reference flow using a simulated rail;
 - a frozen `v1.0` OSS compatibility contract with documented deprecation and backport rules;
 - a defined vulnerability-reporting process.
 
