@@ -8,7 +8,9 @@ import { createCommerce } from './commerce.js';
 
 export const OMARCHY_PLUGIN_ID = 'com.stateset.icommerce';
 export const OMARCHY_CONFIG_DIRNAME = 'stateset-omarchy';
-const OMARCHY_CONTRACT = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../omarchy/contract.json', import.meta.url)), 'utf8'));
+const OMARCHY_CONTRACT = JSON.parse(
+  fs.readFileSync(fileURLToPath(new URL('../omarchy/contract.json', import.meta.url)), 'utf8'),
+);
 export const OMARCHY_CAPABILITIES = Object.freeze([...OMARCHY_CONTRACT.capabilities]);
 export const OMARCHY_SERVICE_UNIT = 'stateset-icommerce-mcp.service';
 
