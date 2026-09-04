@@ -113,7 +113,6 @@ wait_for_shell() {
 }
 
 stop_shell() {
-  local attempt
   for _ in $(seq 1 5); do
     (( $(shell_instances | jq 'length') == 0 )) && return 0
     timeout 5 quickshell kill -p "$omarchy_path/shell" --any-display >/dev/null 2>&1 || return 1
