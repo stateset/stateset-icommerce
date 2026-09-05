@@ -212,7 +212,7 @@
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "@whiskeysockets/baileys": "7.0.0-rc14",
-    "better-sqlite3": "^11.7.0",
+    "better-sqlite3": "^13.0.3",
     "botbuilder": "^4.23.0",
     "discord.js": "^14.14.0",
     "googleapis": "^130.0.0",
