@@ -6,6 +6,135 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.33.0] - 2026-09-05
+
+### Added
+
+- Simple agent commerce purchase API with operator-owned currency, payer and
+  budget mapping, exact asset validation, and payment-evidence binding.
+- Cart checkout fingerprints enforced inside SQLite and PostgreSQL kernel
+  transactions, with native capability discovery and strict bridge checks.
+- Set batch-settlement adapter verifying individual payment events, canonical
+  blocks and RPC finality before completing a purchase.
+- Durable SQLite submission journal with shared payer nonce allocation,
+  immutable signing plans, validated signed artifacts, and identical-byte recovery.
+- Concrete EIP-712 payer authorization, single-payment batch encoding and
+  EIP-1559 relayer transaction verification with operator gas ceilings.
+- Opt-in sequencer UUID identity profile with capability-gated submission;
+  existing SHA-256 payment identities remain the default.
+- Real process-kill recovery tests and cross-repository integration documentation.
+
+### Compatibility and release boundaries
+
+- Rust `CommitCheckout` literals require `expected_cart_fingerprint: None` for
+  legacy behavior; omitted JSON fields retain compatibility.
+- Never switch payment identity profiles for unresolved durable operations.
+  The UUID profile requires coordinated sequencer capability support, maintained
+  in its separate repository; this release does not publish that repository.
+- Submission remains operator opt-in. No live-money settlement is certified.
+  The HTTP gateway, admission-time payer authorization verification, PostgreSQL
+  cross-service concurrency and full three-system settlement tests remain gates.
+- Finality relies on the operator's trusted RPC, not an independent light client.
+
+## [1.32.0] - 2026-09-05
+
+### Added
+
+- Durable Node purchase coordination with exact shared budgets, persisted dispatch,
+  scoped recovery, authoritative outcome lookup, and compensation.
+- Opt-in SQLite reference merchant storage with pinned signing identity, durable
+  replay protection, atomic acceptance, and restart/concurrent-worker tests.
+- Native merchant checkout bridge: governed orders, inventory and budget commits,
+  receipt-based recovery, and operator-selected strict-stock enforcement.
+- Native Node `kernelFeatures()` discovery. Strict checkout requires
+  `checkout.stock_policy.v1`; older binaries cannot silently weaken saved intents.
+- Optional `checkout.commit` stock policy on SQLite and PostgreSQL, with aggregate
+  duplicate-SKU preview checks and concurrent-buyer regression coverage.
+- Economic receipt verification against operator-required signer roles, key
+  ownership, validity windows, and revocation.
+
+### Fixed
+
+- Buyer-authenticated quote acceptance across JavaScript, Rust, and Python clients;
+  immutable intent identities prevent replacement under a fresh nonce.
+- Exact reference quote, subscription, return and payout arithmetic, including
+  sub-cent limits and fee conservation. Signing failures do not debit balances.
+- Stable acceptance/settlement replay and rollback of partial merchant state.
+
+### Compatibility and release boundaries
+
+- Rust `CommitCheckout` literals require `stock_policy: None` for legacy behavior.
+  JSON requests omitting the field preserve their serialization and backorders.
+- Quote acceptance requires a buyer-signed envelope; empty legacy bodies must be
+  upgraded. Discounted unit prices can contain more than two fractional digits.
+- Native checkout leaves payment pending. Reference settlement remains simulated;
+  the native bridge is not yet wired into the reference HTTP merchant. Live rails,
+  immutable quoted carts, and independent assurance remain explicit release gates.
+
+## [1.31.0] - 2026-09-04
+
+This release turns the economic-agent kernel from a collection of governed
+commerce operations into a coherent public runtime: identity and delegation,
+bounded authority, durable budgets, canonical transaction intents, portable
+receipts, and a complete two-agent transaction that exercises the stack.
+
+### Added
+
+- **First-class economic agents and delegation.** `EconomicAgent` binds an
+  autonomous actor to its operator-owned principal, role, tenant, store,
+  capabilities, budgets, credentials, and optional Ed25519 key. Agent identity
+  remains trusted runtime configuration rather than a model-controlled field.
+- **Three-tier economic authority.** `EconomicAuthority` compiles exact fiat or
+  asset limits into deny-by-default kernel policy: act autonomously through one
+  ceiling, require explicit approval through a second, and deny above it.
+  Counterparty allowlists and durable-budget requirements are part of the same
+  rule rather than application-side convention.
+- **A canonical eight-verb transaction API.** `quote`, `buy`, `sell`, `pay`,
+  `fulfill`, `return_order`, `refund`, and `subscribe` produce portable
+  `EconomicIntent` values while the larger domain and MCP surface remains an
+  implementation detail. The embedded runtime exposes these intents from a
+  validated agent identity and compiled authority.
+- **Portable economic receipts.** `EconomicReceipt` binds the agent, delegating
+  principal, intent, exact commitment, policy decision, domain result, audit
+  anchor, and settlement evidence into one deterministic RFC 8785/SHA-256
+  artifact. Independent agent, merchant, and settler Ed25519 signatures verify
+  against caller-owned trusted keys; mutating any committed fact invalidates
+  every signature.
+- **Durable exact-money budgets on SQLite and PostgreSQL.** Operator-provisioned
+  budgets are immutable, scoped, validity-bounded, and atomically debited with
+  checkout, payment, refund, and subscription mutations. Preview checks without
+  spending; concurrent commands cannot overspend; failures roll back; replay
+  cannot debit twice. Node and Python bindings expose provisioning and status.
+- **A definitive buyer-to-merchant demo.** The two-process ICP flow now creates
+  a buyer intent, obtains a merchant quote, reserves real inventory, creates the
+  order, obtains independent merchant and settler signatures, and verifies the
+  final receipt rather than merely claiming that a co-signature exists.
+- **A sequenced multi-agent marketplace demo.** Five economic actors use the
+  StateSet Sequencer as an ordered shared message board for an RFQ, competing
+  bids, counteroffer, award, inventory reservation, x402 authorization, order,
+  and receipt. Every message is Ed25519 signed. A reusable durable bridge turns
+  awards into buyer escrow and merchant inventory kernel commands with stable
+  idempotency, fail-closed identity/scope checks, and receipt publication. The
+  live PostgreSQL path and an in-memory CI state machine share the same protocol,
+  and bid ranking uses exact integer minor units.
+
+### Security
+
+- Economic mandates bind objectives to their issuing principal, assigned agent,
+  allowed commands, tenant/store scope, and validity window. Mandatory mandates
+  reject issuer or subject substitution, scope reuse, and expiry.
+- Exact commitments distinguish fiat money from non-fiat assets. Payments,
+  refunds, subscriptions, checkout, and escrow compare signed declarations with
+  executor-observed amounts, assets, and counterparties before mutation.
+  Unsupported authority bindings fail closed instead of trusting declarations.
+- Inventory reservation binds its executor-observed quantity to the economic
+  commitment, while policy can independently cap it with `max_quantity`. This
+  prevents an award for one quantity from reserving another or exceeding the
+  merchant agent's unit authority.
+- Checkout apply re-prices inside its savepoint and only the original kernel
+  idempotency key may replay a completed cart, preventing stale authorization,
+  duplicate budget consumption, and cross-command success reuse.
+
 ## [1.30.0] - 2026-09-03
 
 A parity audit of the modules no earlier round had read found five defects,
@@ -14,6 +143,7 @@ on a method and stops short of its sibling. This round closes the defects and
 adds a lint that fails the build on the next one.
 
 ### Fixed
+
 - **The Postgres credit ledger stamped balances it did not hold.**
   `record_transaction` read the balance on one pooled connection and inserted
   on another, with no transaction and no row lock, so a payment committing in
@@ -49,6 +179,7 @@ adds a lint that fails the build on the next one.
   operator filtering one queue no longer sees every hold of every type.
 
 ### Added
+
 - **A backend transaction parity lint** (`backend_transaction_parity`) reads
   the repository sources and fails when a method decides on what it read and
   then writes the same table without holding it: a missing write transaction
@@ -59,7 +190,6 @@ adds a lint that fails the build on the next one.
   delete, so it cannot decay into a no-op. It found two further defects on its
   first run. The pre-existing violations it reports are tracked for repair
   rather than blessed.
-
 
 ## [1.29.0] - 2026-09-03
 
@@ -74,6 +204,7 @@ kernel onto one shared guard, replay and receipt layer with verified
 replays.
 
 ### ⚠️ Behaviour change
+
 - **Warehouse documents move stock.** Completing a put-away, a pick or a
   shipment recorded paperwork and touched no inventory at all, so a
   warehouse running on those documents kept a ledger that never moved while
@@ -316,6 +447,7 @@ replays.
   unknown id.
 
 ### Fixed
+
 - Deleting a warehouse location cannot race a concurrent stock write: the
   location row is locked, and every writer that can create stock there takes
   a shared lock, so a first adjustment for a new SKU can no longer be
@@ -391,6 +523,7 @@ deeper re-audit of orders, carts, payments, growth, traceability and agentic
 commerce, on both storage backends.
 
 ### ⚠️ Behaviour change
+
 - **Coupon discounts are re-derived, never frozen.** Changing a cart's
   contents re-validates its coupon and re-prices the discount; a coupon that
   no longer qualifies contributes nothing and checkout refuses the cart
@@ -443,6 +576,7 @@ commerce, on both storage backends.
   and `eligible_customer_groups`, which is now enforced too.
 
 ### Fixed
+
 - **a2a purchase and quote transitions are atomic** (one transaction,
   status-conditional update, loser gets a conflict), and delivery can be
   confirmed once, from a shipped purchase only.
@@ -516,6 +650,7 @@ suite holds: every state change is a guarded transition, every
 multi-statement mutation is one transaction, on both storage backends.
 
 ### Fixed
+
 - **Receiving no longer bypasses purchase-order approval.** `receive` is
   now bounded by the PO state machine (derived from
   `PurchaseOrderStatus::can_transition_to`), so goods cannot be booked
@@ -577,10 +712,10 @@ multi-statement mutation is one transaction, on both storage backends.
   `dispute` transition. Terminal statuses are still reset so write-off
   reversal continues to work.
 
-
 ## [1.28.3] - 2026-09-01
 
 ### Added
+
 - **Real AP payment runs** (SQLite and Postgres): `create_payment_run`
   validates bills atomically (payable status, positive balance, no
   duplicate bill ids, exclusivity against other active runs);
@@ -600,6 +735,7 @@ multi-statement mutation is one transaction, on both storage backends.
   the enforced invariants across GL, AP, and AR/revenue recognition.
 
 ### Fixed
+
 - **As-of-date reports**: trial balance, balance sheet, and dated
   account balances derive from posted/reversed journal lines dated on
   or before the requested date instead of echoing the live running
@@ -633,6 +769,7 @@ multi-statement mutation is one transaction, on both storage backends.
 ## [1.28.2] - 2026-08-31
 
 ### Fixed
+
 - **General ledger money-integrity guards** (SQLite, Postgres, and the
   governed kernel `ledger.post` path):
   - Every `auto_post_*` operation (invoice, payment, bill, bill payment,
@@ -667,6 +804,7 @@ multi-statement mutation is one transaction, on both storage backends.
 ## [1.28.1] - 2026-08-28
 
 ### Added
+
 - **Marketplace-verified Omarchy distribution.** The native shell surface is
   available as the public `stateset/stateset-omarchy-plugin` Git repository and
   is listed as `approved-and-verified` in the Omarchy community marketplace.
@@ -674,12 +812,14 @@ multi-statement mutation is one transaction, on both storage backends.
   review-first synchronization workflow for immutable `cli-v*` releases.
 
 ### Changed
+
 - `stateset-omarchy install` detects and preserves plugins installed through
   Omarchy's Git plugin manager, leaving updates under `omarchy plugin update`.
   Shell and menu actions require a separately installed, version-matched
   controller and never download packages during routine operation.
 
 ### Security
+
 - Controller status execution now has an eight-second producer deadline, an
   independent ten-second shell watchdog, forced termination, and matching
   producer/consumer output caps. Status JSON is constrained by size, depth,
@@ -692,6 +832,7 @@ multi-statement mutation is one transaction, on both storage backends.
 ## [1.28.0] - 2026-08-27
 
 ### Added
+
 - **Native Omarchy integration.** `stateset-omarchy install` adds a shell bar
   widget and operator panel, Super-key Commerce actions, persistent store
   discovery, consistent backups, and project-local MCP configuration for
@@ -710,6 +851,7 @@ multi-statement mutation is one transaction, on both storage backends.
 ## [1.27.0] - 2026-08-27
 
 ### Added
+
 - **Production-oriented embedded storefront.** `create-stateset-app` now emits
   a verified Next.js 16 storefront with exact-money cart and checkout flows,
   server-verified Base USDC settlement, wallet ownership challenges, product
@@ -731,6 +873,7 @@ multi-statement mutation is one transaction, on both storage backends.
   ACP/UCP wire-conformance claims.
 
 ### Changed
+
 - **Cart checkout is durably idempotent.** SQLite and PostgreSQL order creation
   can key an order to its cart, so retries and concurrent settlement delivery
   converge on one customer, order, payment, inventory reservation, and closed
@@ -744,6 +887,7 @@ multi-statement mutation is one transaction, on both storage backends.
   and workspace inventories during release.
 
 ### Security
+
 - Base payments require the exact token, payer, recipient, amount, successful
   receipt, and configured confirmation depth. Transaction/log idempotency,
   cross-cart replay rejection, normalized identity checks, and server-side tax
@@ -755,6 +899,7 @@ multi-statement mutation is one transaction, on both storage backends.
 ## [1.26.0] - 2026-08-26
 
 ### Added
+
 - **Governed AI-commerce kernel.** A versioned `CommandEnvelope` and sealed
   `ExecutionReceipt` boundary now governs 22 high-risk commands across SQLite
   and PostgreSQL: checkout, payments/refunds, exact product and inventory
@@ -793,7 +938,7 @@ multi-statement mutation is one transaction, on both storage backends.
   for the allowed scale; new `stateset_core::validate_money_scale` and
   `CreateOrder::validate_money_scale` implement the check, and both the SQLite and
   Postgres `validate_order_input` call it before the first write, so a rejected order
-  writes nothing. Scale is *significant* scale — trailing zeros do not count, so
+  writes nothing. Scale is _significant_ scale — trailing zeros do not count, so
   `10.9900` is still valid USD (vectors `scale07`/`scale08`). Payments, refunds,
   invoices, carts and `orders().add_item` remain unguarded; see the `†` footnote in
   `docs/src/advanced/invariants.md`.
@@ -821,11 +966,11 @@ multi-statement mutation is one transaction, on both storage backends.
   unchanged, so no existing client breaks. Human-readable messages and the SQLite /
   Postgres behaviour are byte-for-byte preserved apart from the refund message, which now
   names the payment and its captured / already-refunded amounts.
-- **Ledger invariant codes are live.** `JournalEntry::ensure_postable()` reports *which*
+- **Ledger invariant codes are live.** `JournalEntry::ensure_postable()` reports _which_
   posting precondition failed instead of the single bool `can_post()` collapsed them
   into (`can_post()` is kept as a wrapper over it). Posting an entry whose debits do not
   equal its credits now returns `CommerceError::JournalEntryUnbalanced { entry_id,
-  total_debits, total_credits }` (`commerce.ledger.entry_unbalanced`), and a journal line
+total_debits, total_credits }` (`commerce.ledger.entry_unbalanced`), and a journal line
   that is not a pure debit or a pure credit returns
   `CommerceError::JournalLineNotSingleSided { entry_id, line_number }`
   (`commerce.ledger.line_not_single_sided`) — from `create_journal_entry` and from
@@ -840,6 +985,7 @@ multi-statement mutation is one transaction, on both storage backends.
 ## [1.25.0] - 2026-08-25
 
 ### Added
+
 - **Per-line shipped quantities and partial shipments.** `order_items.shipped_quantity`
   (SQLite migration `067_order_item_shipped_quantity`, Postgres `072_order_item_shipped_quantity`;
   backfilled to `quantity` for orders already shipped/delivered/completed) and
@@ -864,13 +1010,13 @@ multi-statement mutation is one transaction, on both storage backends.
   holds; `move_between_bins` is stock-neutral and rejects insufficient source quantity; `reconcile`
   reports any drift. Reservations stay at the warehouse level. New `BinRepository` trait
   (SQLite + Postgres), `Database::bins()`, `Commerce::warehouse().{create_bin, get_bin,
-  get_bin_by_code, update_bin, list_bins, count_bins, delete_bin, get_bin_levels,
-  get_bin_levels_for_sku, adjust_bin_level, move_between_bins, reconcile_bins}` (sync + async),
+get_bin_by_code, update_bin, list_bins, count_bins, delete_bin, get_bin_levels,
+get_bin_levels_for_sku, adjust_bin_level, move_between_bins, reconcile_bins}` (sync + async),
   and REST `POST/GET /api/v1/warehouse-bins`, `GET/PUT/DELETE /api/v1/warehouse-bins/{id}`,
   `GET /api/v1/warehouse-bins/{id}/levels`, `POST /api/v1/warehouse-bins/adjust`,
   `POST /api/v1/warehouse-bins/move`, `GET /api/v1/warehouse-bins/reconcile`.
 - **Returns disposition.** `ReturnDisposition { restock, refurbish, scrap, return_to_vendor,
-  quarantine }` recorded per return item (`return_items.disposition` / `disposition_at` /
+quarantine }` recorded per return item (`return_items.disposition` / `disposition_at` /
   `disposition_by`, nullable). `restock` increments warehouse on-hand (into the returns or
   quarantine bin when bins exist); `quarantine` puts stock into a quarantine bin as on-hand +
   allocated (held, not sellable) and is a record-only no-op without bins; `refurbish`, `scrap` and
@@ -892,6 +1038,7 @@ multi-statement mutation is one transaction, on both storage backends.
   64 cases by default (`PROPTEST_CASES` overrides) plus one deterministic regression per invariant.
 
 ### Security
+
 - **Breaking: HTTP authorization now fails closed for unmapped routes.** When an authz engine is
   configured, any `/api/v1` request the path→(resource, action) mapper cannot classify is denied
   with `403 {"error":{"code":"authz_unmapped_route"}}` instead of bypassing authorization.
@@ -927,6 +1074,7 @@ multi-statement mutation is one transaction, on both storage backends.
   warning explains that limiting is per-process. `ServerBuilder::with_rate_limit_trusting_proxy_headers`.
 
 ### Fixed
+
 - **`fail_refund` on a completed refund corrupted the books** (SQLite + Postgres): it flipped the
   refund to `failed` while the payment kept the money in `amount_refunded`, so Σ completed refunds
   no longer matched. Only `pending`/`processing` refunds can fail now (a typed `ValidationError`
@@ -950,6 +1098,7 @@ multi-statement mutation is one transaction, on both storage backends.
   `initialize` no longer pays the tool-schema build under a client timeout.
 
 ### Changed
+
 - `stateset-ffi::sync_api` split from one 2,885-line file into a directory module (`handles`,
   `executor`, `lifecycle`, `record`, `transport`, `status`, `confirmations`, `dead_letters`, `buffer`,
   `tests`). All 42 `extern "C"` symbols and signatures are unchanged; every non-test `unsafe` block
@@ -983,6 +1132,7 @@ multi-statement mutation is one transaction, on both storage backends.
 ## [1.24.0] - 2026-07-30
 
 ### Changed
+
 - **`stateset-mcp-http` now serves MCP protocol revision 2026-07-28, and
   is stateless.** The server is built on the MCP SDK's `createMcpHandler`,
   which serves that revision from a per-request server factory: every
@@ -993,7 +1143,7 @@ multi-statement mutation is one transaction, on both storage backends.
   envelope plus `Mcp-Method` / `Mcp-Name` headers. Serving is per-request
   in both eras, so the 2025 session verbs `GET` and `DELETE` answer `405`.
 - **2025-era clients keep working** on the SDK's stateless legacy leg,
-  driven by the *same* tool factory so the two revisions cannot drift
+  driven by the _same_ tool factory so the two revisions cannot drift
   apart. `--strict-protocol` makes the endpoint modern-only.
 - **The commerce store replaces the session as the unit of state.** All
   requests share one store (`--db`, default `:memory:`, seeded with demo
@@ -1004,11 +1154,13 @@ multi-statement mutation is one transaction, on both storage backends.
   `--allowed-host` is given.
 
 ### Removed
+
 - **`--session-ttl` / `--max-sessions`, and the per-session isolated store
   they configured.** Sessions were per-process state that prevented
   horizontal scaling; the legacy leg now serves those clients statelessly.
 
 ### Added
+
 - `@modelcontextprotocol/server` + `@modelcontextprotocol/node` (v2)
   alongside the existing v1 SDK, and `src/mcp/v2-server.js`, which
   registers the existing tool surface on a v2 server. Tool schemas are
@@ -1023,6 +1175,7 @@ and lockfiles after the 1.23.4/1.23.5 distribution work.
 ## [1.23.5] - 2026-07-28
 
 ### Added
+
 - **`stateset-mcp-http`** — hosted agent sandbox: the full commerce tool
   surface over MCP Streamable HTTP with an isolated, demo-seeded store
   per session. Writes are enabled by default because every session gets
@@ -1034,6 +1187,7 @@ and lockfiles after the 1.23.4/1.23.5 distribution work.
 ## [1.23.4] - 2026-07-28
 
 ### Added
+
 - **`stateset-mcp`** — the canonical stdio MCP server binary. The docs
   and the Smithery listing have referenced this command for several
   releases without it existing; it now serves the full commerce tool
@@ -1044,6 +1198,7 @@ and lockfiles after the 1.23.4/1.23.5 distribution work.
   README.
 
 ### Fixed
+
 - `:memory:` databases are now backed by private temp files instead of
   SQLite shared-cache, whose table-level locks do not fully serialize
   read-modify-write transactions — an intermittent weighted-average-cost
@@ -1052,6 +1207,7 @@ and lockfiles after the 1.23.4/1.23.5 distribution work.
   faster.
 
 ### Changed
+
 - `async_commerce` decomposed from a single 5,828-line file into nine
   thematic modules; fourteen async accessors (Tax, Promotions, Quality,
   Warehouse, AP/AR, and more) are now exported at the crate root.
@@ -1066,6 +1222,7 @@ wheel coverage, and release gates that prevent the fresh-consumer
 regressions this line just fixed.
 
 ### Changed
+
 - **npm: per-platform distribution.** `@stateset/embedded` no longer
   bundles all eight native binaries (184 MB unpacked); each platform's
   `.node` ships in its own `@stateset/embedded-<platform>` package
@@ -1084,6 +1241,7 @@ regressions this line just fixed.
   still builds anywhere with a Rust toolchain).
 
 ### Added
+
 - Publish pipeline gates: an unlocked-resolution check (fresh dependency
   resolution with no lockfile — what docs.rs and every `cargo add` do)
   before publishing, and a fresh-consumer registry smoke (new cargo
@@ -1093,6 +1251,7 @@ regressions this line just fixed.
 ## [1.23.2] - 2026-07-27
 
 ### Fixed
+
 - **docs.rs builds** for the 14 crates carrying
   `#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]`: nightly 1.92
   removed `doc_auto_cfg` (merged into `doc_cfg`), turning the attribute
@@ -1102,6 +1261,7 @@ regressions this line just fixed.
 ## [1.23.1] - 2026-07-27
 
 ### Fixed
+
 - **Every published version of the Rust crates was uncompilable for fresh
   consumers** with default features: stateset-crypto depended on
   pre-release `ml-dsa 0.1.0-rc.8` / `ml-kem 0.3.0-rc.1`, and cargo's
@@ -1119,6 +1279,7 @@ The trunk-health release: first-ever green core CI on master, plus the
 engine and CLI fixes that surfaced on the way there.
 
 ### Fixed
+
 - **GL auto-posting config was nondeterministic on PostgreSQL**:
   `set_auto_posting_config` inserted a new active row every call without
   deactivating prior rows (SQLite deactivates first), and the getter had
@@ -1138,6 +1299,7 @@ engine and CLI fixes that surfaced on the way there.
   dismissals, recorded in `docs/security/codeql-triage.md`.
 
 ### Added
+
 - **26 tool domains gained CLI command modules** via a tool-backed
   command factory: same zod validation and `--apply` guard as the MCP
   tools, actions derived from tool names, key=value parameters. API
@@ -1152,6 +1314,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.22.0] - 2026-07-21
 
 ### Added
+
 - **Core-commerce surface completion**: the customers, products, and
   returns domains exposed only 5–6 methods to the Node binding (and
   3–5 MCP tools) over 13–17-method engine accessors — the everyday
@@ -1165,6 +1328,7 @@ engine and CLI fixes that surfaced on the way there.
   tool and domain counts.
 
 ### Notes
+
 - `update_return` is intentionally not exposed as a single tool (its
   `UpdateReturn` input is complex and unbound); the status-transition
   tools cover the practical paths.
@@ -1172,6 +1336,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.21.0] - 2026-07-21
 
 ### Fixed
+
 - **Seven list-filter fields were accepted but silently ignored** by
   the stores — `purchase_orders` (date and total ranges),
   `quality` inspections and NCRs (date ranges, reference/inspector/
@@ -1182,6 +1347,7 @@ engine and CLI fixes that surfaced on the way there.
   500/1000 policy.
 
 ### Added
+
 - `purchaseOrders.list`, `workOrders.list`, `quality.listInspections`
   and `listNcrs` now accept optional filter/pagination arguments across
   the embedded accessor, both bindings, and the CLI tools (zero-arg
@@ -1190,9 +1356,8 @@ engine and CLI fixes that surfaced on the way there.
   traceability (lots with expiry highlighting, serial numbers,
   receipts) pages — admin suite at 951 tests, ~17 domains now exposed.
 
-
-
 ### Added
+
 - **Backup, restore, and portable export/import** — the recovery layer.
   `maintenance().backup_to()` takes a consistent snapshot via SQLite
   `VACUUM INTO` (safe under concurrent writers) and writes a sidecar
@@ -1215,11 +1380,13 @@ engine and CLI fixes that surfaced on the way there.
   earlier today (~5,900 lines); pytest 103 → 138.
 
 ### Fixed
+
 - The SQLite migration-count test now derives its expectation from the
   migration registry instead of a hardcoded number, which had gone
   stale three times.
 
 ### Known limitations
+
 - Import is content-preserving, not identity-preserving: repository
   `create` methods mint new IDs, so foreign keys are remapped in
   dependency order. Use a backup/restore for identity-preserving
@@ -1231,10 +1398,11 @@ engine and CLI fixes that surfaced on the way there.
 
 ## [1.20.0] - 2026-07-21
 
-*Backfilled 2026-07-26 — this release shipped (tag `v1.20.0`, commit
-`077f2ea3`) but its changelog entry was never written.*
+_Backfilled 2026-07-26 — this release shipped (tag `v1.20.0`, commit
+`077f2ea3`) but its changelog entry was never written._
 
 ### Added
+
 - **Backup, restore, and portable export/import — the recovery layer.**
   `VACUUM INTO` snapshots with a verified checksum + schema manifest;
   restore refuses schema-too-new, non-empty targets, and the live
@@ -1248,6 +1416,7 @@ engine and CLI fixes that surfaced on the way there.
 - New CLI skills: commerce-finance, commerce-warehouse, commerce-edi.
 
 ### Changed
+
 - Two fail-closed drift gates with demonstrated failures:
   capability-matrix-vs-store-files (Rust) and
   binding-vs-embedded-accessors (Node).
@@ -1257,6 +1426,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.19.0] - 2026-07-21
 
 ### Added
+
 - **Complete Node binding coverage**: the final 16 embedded accessors
   are now bound — activity logs, channels, companies, units of measure,
   shipping zones, stock snapshots, print stations, integration mappings
@@ -1269,6 +1439,7 @@ engine and CLI fixes that surfaced on the way there.
   (documented default preserved).
 
 ### Fixed
+
 - **Two capability lies**: `shipping_zones` and `search_config` both
   reported `isSupported() == true` on SQLite while every call failed
   with `no such table` — their tables existed only in PostgreSQL and in
@@ -1282,6 +1453,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.18.0] - 2026-07-21
 
 ### Added
+
 - **MCP tool parity with the binding surface**: 71 new tools across 9
   new domain modules (EDI documents, prepayments, vendor credits, price
   schedules, price levels, transfer orders, production batches,
@@ -1292,6 +1464,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.17.0] - 2026-07-21
 
 ### Added
+
 - **Full PostgreSQL domain parity**: all 34 repository capabilities now
   return real stores — 12 new implementations (channels, companies,
   activity logs, payment obligations, prepayments, price levels, price
@@ -1305,6 +1478,7 @@ engine and CLI fixes that surfaced on the way there.
   (~4,900 lines; Node 139 and Python 103 binding tests green).
 
 ### Changed
+
 - README refreshed to the v1.16 series (version pins, real tool counts,
   thematic What's New); admin/CLI/binding package versions aligned with
   the workspace; payment-metrics signatures take `Decimal` instead of
@@ -1313,6 +1487,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.16.0] - 2026-07-21
 
 ### Changed
+
 - Final query-hygiene pass: the last four per-row child-loading N+1s
   batched (BOM components, subscription plan/subscription items,
   promotion conditions, cycle-count lines); the last unbounded lists
@@ -1326,6 +1501,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.15.0] - 2026-07-20
 
 ### Changed
+
 - **CLI harness decomposed**: `claude-harness.js` reduced from 3,649 to
   1,170 lines, extracting 13 dependency-injected modules
   (`cli/src/harness/`) with unchanged public exports; the 38-test
@@ -1341,6 +1517,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.14.0] - 2026-07-20
 
 ### Added
+
 - **Durable idempotency**: `Idempotency-Key` replays now survive
   restarts and work across replicas (DB-backed store on both backends,
   first-write-wins, TTL sweep); keys are required by default on
@@ -1358,6 +1535,7 @@ engine and CLI fixes that surfaced on the way there.
   added and wired into the admin close page.
 
 ### Changed
+
 - **Transaction discipline**: all 99 SQLite write-transaction sites now
   use `BEGIN IMMEDIATE` (24 files), eliminating deferred-upgrade
   deadlock/lost-update risk.
@@ -1368,6 +1546,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.13.0] - 2026-07-20
 
 ### Added
+
 - **Admin Finance module** (six pages): Ledger (chart of accounts,
   journal entries, trial balance), Bills (AP aging + status filter),
   Close (dry-run per-step report with typed-confirmation real close),
@@ -1386,6 +1565,7 @@ engine and CLI fixes that surfaced on the way there.
   extended to all 40 domains.
 
 ### Security
+
 - **Fail-closed API auth**: non-loopback binds refuse to start without
   configured bearer auth (explicit `allow_unauthenticated` opt-out via
   builder or `STATESET_HTTP_ALLOW_UNAUTHENTICATED`); optional strict
@@ -1399,6 +1579,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.12.0] - 2026-07-20
 
 ### Added
+
 - **Python binding parity** for the new domains: `fixed_assets`,
   `revenue_recognition`, `cycle_counts`, `accounts_payable.three_way_match`,
   `general_ledger.revalue` / `close_month` (+ chart-of-accounts and
@@ -1410,6 +1591,7 @@ engine and CLI fixes that surfaced on the way there.
   and a balanced balance sheet after close.
 
 ### Fixed
+
 - `generate_revenue_schedule` could emit a negative final entry (a
   spurious revenue reversal) when per-period rounding rounded up;
   periods are now capped at the remaining amount. Found by the new
@@ -1423,6 +1605,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.11.0] - 2026-07-20
 
 ### Added
+
 - **Month-end close orchestration** (`POST /gl/close-month`,
   `general_ledger().close_month(period_id, options)`): one operation
   running depreciation posting → revenue recognition → FX revaluation →
@@ -1440,10 +1623,11 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.10.0] - 2026-07-20
 
 ### Added
+
 - **Async API parity for the new domains**: `AsyncCommerce::fixed_assets()`
   (create/get/list/update, place-in-service, dispose, write-off,
   depreciation schedules, post-depreciation), `AsyncCommerce::
-  revenue_recognition()` (contracts, obligations, schedules, recognize),
+revenue_recognition()` (contracts, obligations, schedules, recognize),
   and cycle-count methods on `AsyncWarehouse` — matching the sync
   accessor surface.
 - Live-Postgres tests now exercise dispose (gain/loss) and cycle-count
@@ -1452,6 +1636,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.9.0] - 2026-07-20
 
 ### Added
+
 - **Carts/checkout API** (10 endpoints): cart sessions, items, shipping,
   payment, completion, cancellation.
 - **Backorders API** (5 endpoints): create, list, fulfill, cancel.
@@ -1467,6 +1652,7 @@ engine and CLI fixes that surfaced on the way there.
   all nine parity stores.
 
 ### Fixed
+
 - Terminal-state guard on transfer-order and inbound-shipment
   cancellation (both backends): received or already-cancelled documents
   can no longer be cancelled.
@@ -1474,6 +1660,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.8.0] - 2026-07-20
 
 ### Added
+
 - **~140 new REST endpoints** exposing previously API-invisible backends:
   purchase orders + suppliers (18), general ledger (18 — journals with
   post/void/reverse, trial balance, balance sheet, income statement, period
@@ -1503,8 +1690,8 @@ engine and CLI fixes that surfaced on the way there.
   entries (depreciation expense / accumulated depreciation; deferred →
   sales revenue).
 - **Purchase-order state machine**: `PurchaseOrderStatus::can_transition_to`
-  + `validate()`, enforced in the SQLite store (illegal transitions now
-  return validation errors).
+  - `validate()`, enforced in the SQLite store (illegal transitions now
+    return validation errors).
 - **PostgreSQL parity** for nine formerly SQLite-only stores: stock
   snapshots, transfer orders, units of measure, inbound shipments, print
   stations, production batches, supplier SKUs, vendor returns, vendor
@@ -1514,6 +1701,7 @@ engine and CLI fixes that surfaced on the way there.
   quality, accounts receivable, invoice).
 
 ### Fixed
+
 - SQLite `adjust_inventory`/`move_inventory` failed with a NOT NULL
   constraint on the first lot-less adjustment for a location; lot-less
   rows now use the empty-string lot key consistently.
@@ -1522,6 +1710,7 @@ engine and CLI fixes that surfaced on the way there.
 - Zero clippy warnings across the entire workspace (all targets).
 
 ### Added (pre-1.8.0 unreleased items)
+
 - **Node binding: gift cards.** The `gift_cards` domain (create, get,
   get_by_code, update, list, charge, refund, disable, get_transactions,
   is_supported) is now exposed on `@stateset/embedded` — it existed in the
@@ -1593,12 +1782,13 @@ engine and CLI fixes that surfaced on the way there.
   is_supported) is now exposed on `stateset_embedded` as `commerce.segments`, at
   Node/Python parity — completing all six self-contained storefront domains
   across both bindings. Rules are passed as `SegmentRuleInput(field, operator,
-  value)` objects (operator validated) and read back as nested `SegmentRule`s;
+value)` objects (operator validated) and read back as nested `SegmentRule`s;
   memberships as `SegmentMembership`. Typed `.pyi` stubs, package re-exports, and
   pytest coverage (rules round-trip, invalid-operator rejection, member
   add/is_member/list/remove).
 
 ### Docs
+
 - **`bindings/MONEY_PRECISION.md`** — decision doc for the systemic `f64`
   money representation in the older Node and Python binding output structs
   (~50 fields each). Money crosses those surfaces as IEEE-754 floats rather
@@ -1606,11 +1796,12 @@ engine and CLI fixes that surfaced on the way there.
   strings. Documents the extent and migration options for an owner decision.
 
 ### Fixed
+
 - **BOM `list`/`count` filter divergences + a rapid-creation collision (BOM domain
   brought to full parity).** Four issues, fixed together:
   - **Postgres treated `product_id` and `status` as mutually exclusive.** `list_async`/
     `count_async` used `if product_id {} else if status {}`, so a
-    `list(product_id=X, status=Active)` returned BOMs of *every* status for X (SQLite
+    `list(product_id=X, status=Active)` returned BOMs of _every_ status for X (SQLite
     correctly ANDs them). Both now build the `WHERE` clause cumulatively.
   - **Postgres ignored the `search` filter entirely.** SQLite applies
     `name`/`bom_number` `LIKE`; Postgres had no search handling, so a BOM search
@@ -1624,12 +1815,12 @@ engine and CLI fixes that surfaced on the way there.
   - **`generate_bom_number` collided within one second.** It was second-granularity
     (`BOM-%Y%m%d%H%M%S`) with no uniqueness suffix, so two BOMs created in the same
     wall-clock second collided on the `UNIQUE bom_number` constraint and the second
-    `create` hard-failed on *both* backends. Now includes a millisecond timestamp +
+    `create` hard-failed on _both_ backends. Now includes a millisecond timestamp +
     UUID suffix (matching the already-hardened `generate_work_order_number`).
-  Verified with SQLite unit tests (`count_applies_search_filter`,
-  `load_components_orders_by_position`) and a live-Postgres test
-  (`postgres_bom_filters`) asserting product/status/search compose and that
-  `count` matches the filtered `list`.
+    Verified with SQLite unit tests (`count_applies_search_filter`,
+    `load_components_orders_by_position`) and a live-Postgres test
+    (`postgres_bom_filters`) asserting product/status/search compose and that
+    `count` matches the filtered `list`.
 - **`warranties::list`/`count` silently dropped five `WarrantyFilter` fields on both
   backends.** Both SQLite (`list`/`count`) and Postgres (`list_async`/`count_async`)
   applied only `customer_id`/`status`/`active_only`, ignoring `order_id`,
@@ -1676,7 +1867,7 @@ engine and CLI fixes that surfaced on the way there.
 - **Postgres agent-reputation and agent-validation emitted malformed SQL (whole
   domains broken on Postgres).** Several multi-line SQL string literals ended their
   lines with a bare `\` (a Rust string-continuation escape) with no space before it,
-  so the escape stripped the newline *and* the next line's leading whitespace and
+  so the escape stripped the newline _and_ the next line's leading whitespace and
   fused adjacent tokens — e.g. `... FROM agent_feedback\` + `WHERE …` became
   `agent_feedbackWHERE`, and `... revoked_at\` + `FROM …` became `revoked_atFROM`.
   Every feedback write/read (`give_feedback`, `revoke_feedback`, `read_feedback`,
@@ -1721,7 +1912,7 @@ engine and CLI fixes that surfaced on the way there.
   back at midnight UTC, while SQLite stored the full RFC3339 timestamp — so a bill or
   payment created with a timed date (e.g. `2026-03-10T14:30:00Z`) read back
   differently (`…14:30:00Z` vs `…00:00:00Z`). SQLite now truncates these columns to
-  midnight UTC before storing, keeping the RFC3339 *format* (so every existing
+  midnight UTC before storing, keeping the RFC3339 _format_ (so every existing
   reader, including the auto-posting date parsers, is unaffected) while agreeing with
   Postgres. Verified with matching SQLite (`ap_date_truncation`) and live-Postgres
   (`postgres_ap_date_truncation`) tests. This clears the last catalogued
@@ -1787,7 +1978,7 @@ engine and CLI fixes that surfaced on the way there.
   `SELECT * FROM ap_payment_runs ORDER BY created_at DESC`, dropping `status`
   (Postgres applies it) and `limit`/`offset` (no pagination — every call returned
   every run). It now applies `status` and `LIMIT`/`OFFSET` (using `LIMIT -1 OFFSET
-  n` for SQLite's offset-without-limit case), matching Postgres. Verified with
+n` for SQLite's offset-without-limit case), matching Postgres. Verified with
   matching SQLite (`ap_list_payment_runs_filters`) and live-Postgres
   (`postgres_ap_list_payment_runs_filters`) tests. This completes the accounts-
   payable list/count filter-parity cluster (`list_bills`, `count_bills`,
@@ -1826,7 +2017,7 @@ engine and CLI fixes that surfaced on the way there.
   `auto_post_inventory_cost` (1) selected `transaction_date`, a column that does not
   exist on `cost_transactions` — the date is `created_at` (Postgres reads
   `created_at`), so the query failed at runtime with "no such column:
-  transaction_date"; (2) parsed that RFC3339 timestamp directly as a `NaiveDate`;
+  transaction*date"; (2) parsed that RFC3339 timestamp directly as a `NaiveDate`;
   and (3) treated only `transaction_type == "sale"` as a COGS-debit issue, whereas
   Postgres treats `"issue"` OR `"sale"` — so an `"issue"` cost transaction (the
   common inventory-consumption case) posted with the debit and credit **reversed**
@@ -1834,9 +2025,9 @@ engine and CLI fixes that surfaced on the way there.
   inventory-value balances. All three are fixed to match Postgres. Verified with
   matching SQLite (`gl_auto_post_inventory_cost`) and live-Postgres
   (`postgres_gl_auto_post_inventory_cost`) regression tests that assert the posted
-  lines put the debit on COGS and the credit on Inventory. **This completes the GL
-  auto-posting cluster: all five `auto_post_*` methods (invoice, payment received,
-  bill, bill payment, inventory cost) now work on SQLite and match Postgres.**
+  lines put the debit on COGS and the credit on Inventory. \*\*This completes the GL
+  auto-posting cluster: all five `auto_post*\*` methods (invoice, payment received,
+  bill, bill payment, inventory cost) now work on SQLite and match Postgres.\*\*
 - **Auto-posting a bill payment to the general ledger was completely broken on
   SQLite (two bugs).** `auto_post_bill_payment` read the payment with
   `SELECT amount, payment_date FROM bill_payments`, but there is no `bill_payments`
@@ -1917,7 +2108,7 @@ engine and CLI fixes that surfaced on the way there.
   (The `from_date`/`to_date` filters are left for a follow-up: they're entangled
   with a separate AP date-storage divergence.) Verified with RED→GREEN regression
   tests on both backends (`sqlite/accounts_payable.rs::
-  list_bills_honors_po_amount_and_offset_filters` + live-PG
+list_bills_honors_po_amount_and_offset_filters` + live-PG
   `postgres_list_bills_filters`).
 - **SQLite could mint gift cards and store credits with negative/zero balances.**
   The SQLite `create` paths had no amount validation, so a gift card with a
@@ -1928,10 +2119,10 @@ engine and CLI fixes that surfaced on the way there.
   backends now reject non-positive issuance up front with a clean
   `ValidationError` (gift-card balance must be ≥ 0; store-credit amount must be
   > 0, matching the existing Postgres constraints). Verified with RED→GREEN
-  regression tests on both backends
-  (`sqlite/gift_cards.rs::create_rejects_negative_initial_balance`,
-  `sqlite/store_credits.rs::create_rejects_non_positive_amount`, and live-PG
-  `postgres_issuance_amount_guard`).
+  > regression tests on both backends
+  > (`sqlite/gift_cards.rs::create_rejects_negative_initial_balance`,
+  > `sqlite/store_credits.rs::create_rejects_non_positive_amount`, and live-PG
+  > `postgres_issuance_amount_guard`).
 - **Creating a subscription seeded no initial billing cycle on Postgres.** SQLite
   created an initial billing cycle (cycle 1) for the subscription's current period
   at creation, but the Postgres path committed the subscription and returned
@@ -1943,7 +2134,7 @@ engine and CLI fixes that surfaced on the way there.
   live-PG `postgres_subscription_initial_cycle`).
 - **`get_average_days_to_pay` computed a different value on each backend.**
   SQLite averaged the fractional day difference (`JULIANDAY(applied) -
-  JULIANDAY(invoice)`), while Postgres used `EXTRACT(DAY FROM (applied - invoice))`
+JULIANDAY(invoice)`), while Postgres used `EXTRACT(DAY FROM (applied - invoice))`
   — which returns only the whole-day component of each interval, flooring every
   invoice's pay-latency before averaging. So two invoices paid at 10.5 and 11.5
   days averaged to 11 on SQLite but 10 on Postgres. Postgres now averages
@@ -1969,11 +2160,11 @@ engine and CLI fixes that surfaced on the way there.
   and paginate with `offset` + a default limit of 100. Verified with RED→GREEN
   regression tests on both backends
   (`sqlite/purchase_orders.rs::list_suppliers_applies_offset_and_default_limit`
-  + live-PG `postgres_list_suppliers_filters`).
+  - live-PG `postgres_list_suppliers_filters`).
 - **SQLite `get_locations_for_warehouse` silently hid inactive locations.** It
   passed `is_active: Some(true)` to the underlying list, so a deactivated location
   disappeared from a method whose contract (and the Postgres backend) is to return
-  *all* locations for a warehouse — filtered subsets have their own accessors
+  _all_ locations for a warehouse — filtered subsets have their own accessors
   (`get_pickable_locations`, `get_receivable_locations`). SQLite now returns all
   locations, active and inactive, matching Postgres. Verified with RED→GREEN
   regression tests on both backends
@@ -2001,13 +2192,13 @@ engine and CLI fixes that surfaced on the way there.
   receipts serialize and every one is recorded, while the over-receipt and
   positive-quantity guards still hold. Verified with RED→GREEN regression tests on
   both backends (`sqlite/purchase_orders.rs::
-  receive_accumulates_concurrent_partial_receipts_without_lost_updates` +
+receive_accumulates_concurrent_partial_receipts_without_lost_updates` +
   `receive_updates_quantities_and_rejects_over_receipt` + live-PG
   `postgres_po_receive_concurrency`).
 - **`get_available_for_sku` allocated serials newest-first (LIFO) on SQLite but
   oldest-first (FIFO) on Postgres, so the two backends handed out different
   physical units.** SQLite delegated to `list`, which orders `created_at DESC`,
-  while Postgres orders `created_at ASC`. Allocating the *newest* stock first is
+  while Postgres orders `created_at ASC`. Allocating the _newest_ stock first is
   the wrong inventory behavior and diverged from Postgres. SQLite now uses a
   dedicated FIFO query (`ORDER BY created_at ASC`), independent of `list`'s
   newest-first view, so both backends allocate the oldest available serial first.
@@ -2031,7 +2222,7 @@ engine and CLI fixes that surfaced on the way there.
   (e.g. `offset = 1`) returned the whole list on SQLite, and an uncapped query
   returned every row on SQLite versus the first 100 on Postgres. SQLite now
   applies `offset` and the same default limit of 100. (The `from_date` /
-  `to_date` / `min_total` / `max_total` filter fields are ignored by *both*
+  `to_date` / `min_total` / `max_total` filter fields are ignored by _both_
   backends — a symmetric gap, not a divergence — and were left unchanged.)
   Verified with RED→GREEN regression tests on both backends
   (`sqlite/purchase_orders.rs::list_applies_offset_and_pagination` + live-PG
@@ -2046,7 +2237,7 @@ engine and CLI fixes that surfaced on the way there.
   `count_locations` now applies the same predicates as `list_locations`. Verified
   with a RED→GREEN regression test asserting `count == list().len()` for each
   previously-ignored filter (`sqlite/warehouse.rs::
-  count_locations_honors_same_filters_as_list_locations`).
+count_locations_honors_same_filters_as_list_locations`).
 - **SQLite `list` for invoices silently ignored 9 of the `InvoiceFilter` fields,
   returning the wrong set.** The SQLite implementation only applied
   `customer_id`, `order_id`, `status`, and `overdue_only`; `invoice_type`, the
@@ -2080,7 +2271,7 @@ engine and CLI fixes that surfaced on the way there.
   serial with no post-creation history destroyed it. Postgres now applies the
   same existence + `Available`-status guards. Verified with RED→GREEN regression
   tests on both backends (`sqlite/serials.rs::
-  delete_rejects_missing_and_non_available_serials` + live-PG
+delete_rejects_missing_and_non_available_serials` + live-PG
   `postgres_serial_delete_guards`).
 - **Postgres per-customer promotion usage limit could be exceeded under
   concurrency.** `record_usage` enforces `per_customer_limit` with a
@@ -2105,7 +2296,7 @@ engine and CLI fixes that surfaced on the way there.
   unknown customer, matching Postgres. Verified with RED→GREEN regression tests
   on both backends
   (`sqlite/accounts_receivable.rs::get_customer_aging_returns_zeros_for_existing_customer_without_invoices`
-  + live-PG `postgres_ar_customer_aging`).
+  - live-PG `postgres_ar_customer_aging`).
 - **SQLite `get_aging_report` silently ignored the `min_balance` and
   `aging_bucket` filters, returning the wrong customer set.** The SQLite
   implementation only honored `customer_id`, `overdue_only`, `offset`, and
@@ -2165,7 +2356,7 @@ engine and CLI fixes that surfaced on the way there.
   Postgres (`postgres_currency_no_seed`).
 - **SQLite x402 credit could overflow `i64` on a Credit adjustment (panic/wrap
   instead of a clean error).** The Credit path added `current_balance +
-  amount_i64` unchecked, which panics on overflow in debug builds and silently
+amount_i64` unchecked, which panics on overflow in debug builds and silently
   wraps to a negative balance in release — unlike Postgres, which used
   `checked_add`. It now uses `checked_add` and rejects the overflow with a
   `ValidationError` ("x402 balance overflow"), matching Postgres. (Reachable only
@@ -2268,7 +2459,7 @@ engine and CLI fixes that surfaced on the way there.
   completions serialize and every one is counted. Verified with concurrency
   regression tests on both backends (RED: completions lost; GREEN: the total
   equals the number of completions). (This fixes only the lost-update race; the
-  separate question of whether to *cap* cumulative completions at the build target
+  separate question of whether to _cap_ cumulative completions at the build target
   is left unchanged, as manufacturing overage can be legitimate.)
 - **Postgres `complete_receiving` didn't mark line items received (diverged from
   SQLite).** On completion SQLite marks every non-rejected `receipt_items` row
@@ -2389,7 +2580,7 @@ engine and CLI fixes that surfaced on the way there.
   stores `total_amount`. The shared `OrderItem::calculate_total` returned the raw
   `unit_price × qty − discount + tax` **unrounded**, so a line could persist a
   non-money value like `9.999`. The order total was then computed inconsistently:
-  SQLite's single-create rounded per line and summed (so `total_amount` did *not*
+  SQLite's single-create rounded per line and summed (so `total_amount` did _not_
   equal the sum of the stored unrounded line totals — the order didn't foot — and
   the total silently changed the first time `update_order_total` re-summed the
   unrounded lines); SQLite's batch path and both Postgres paths rounded nothing.
@@ -2404,7 +2595,7 @@ engine and CLI fixes that surfaced on the way there.
   parity test.
 - **Postgres: applying a coupon to a cart did nothing (discount silently
   dropped, invalid coupons accepted).** `PgCartRepository::apply_discount` only
-  stamped the coupon *string* onto the cart — it never looked the coupon up,
+  stamped the coupon _string_ onto the cart — it never looked the coupon up,
   never resolved its promotion, never computed a `discount_amount`, and never
   recalculated the grand total. So on the Postgres backend a valid coupon left
   the buyer charged full price, and an unknown coupon code was accepted without
@@ -2420,7 +2611,7 @@ engine and CLI fixes that surfaced on the way there.
   `unit_price × quantity` for each line without ever checking the line against
   its order item — so a caller could return 100 units of a 2-unit purchase, keep
   returning the same item across separate returns past the ordered quantity, or
-  return an `order_item_id` belonging to a *different* order, each producing an
+  return an `order_item_id` belonging to a _different_ order, each producing an
   inflated or illegitimate refund. Every return-creation path (SQLite `create`
   and `create_batch_atomic`, Postgres `create` and `create_batch_atomic`) now
   validates each line inside the write transaction: the order item must belong to
@@ -2443,7 +2634,7 @@ engine and CLI fixes that surfaced on the way there.
   embedded regression test that runs migrations the production way.
 - **Scoped percentage/tiered/BOGO discounts could bleed past their scoped
   items.** A discount scoped to a set of products was capped at the eligible
-  items' worth only for the *fixed-amount* type; a *percentage* (or tiered or
+  items' worth only for the _fixed-amount_ type; a _percentage_ (or tiered or
   BuyXGetY) discount was not. A misconfigured percentage over 100% (an admin
   data-entry error, unvalidated) therefore discounted more than the scoped
   items were worth, eating into out-of-scope line-item value — e.g. a 150%
@@ -2459,7 +2650,7 @@ engine and CLI fixes that surfaced on the way there.
   regression test added.
 - **Postgres tiered discounts depended on tier list order.** For open-ended
   tiers (no `max_value`), the Postgres `calculate_tiered_discount` kept the
-  *last* matching tier in the list, while SQLite kept the one with the highest
+  _last_ matching tier in the list, while SQLite kept the one with the highest
   floor. A "spend more, save more" promotion whose tiers were stored high-to-low
   therefore gave a $100 order the $0 tier's 5% on Postgres and the $100 tier's
   20% on SQLite — the same input, two different discounts. Postgres now selects
@@ -2470,8 +2661,8 @@ engine and CLI fixes that surfaced on the way there.
   round-tripped but never consulted: `calculate_tax` on both backends always
   used `round_dp`, whose default strategy is banker's rounding (round half to
   even). So `$0.125` of tax rounded to `$0.12` regardless of the configured
-  mode, *even though the default mode is `"half_up"`, which should yield
-  `$0.13`*. Tax rounding now honors the setting via the new
+  mode, _even though the default mode is `"half_up"`, which should yield
+  `$0.13`_. Tax rounding now honors the setting via the new
   `TaxSettings::rounding_strategy()` (`half_up` — the default — plus
   `half_even`/`bankers`, `half_down`, `up`, `down`/`truncate`, `ceil`, `floor`;
   unknown values fall back to `half_up`). **Behavior change:** stores on default
@@ -2487,13 +2678,13 @@ engine and CLI fixes that surfaced on the way there.
   (the Postgres one verified against a live database).
 - **Invoice `record_payment` could report failure for a payment that actually
   committed (both backends).** The payment's balance write happened inside a
-  transaction, but the updated invoice was then read back on a *separate*
-  connection *after* commit. Under contention that post-commit read could fail
+  transaction, but the updated invoice was then read back on a _separate_
+  connection _after_ commit. Under contention that post-commit read could fail
   (SQLite "database table is locked"; a transient Postgres read error), so
   `record_payment` returned an error even though the money had already landed —
   and a caller treating the error as "payment failed" would retry and
   **double-pay** the invoice. Both backends now read the updated invoice back
-  *inside* the transaction and return it, so a payment commits if and only if it
+  _inside_ the transaction and return it, so a payment commits if and only if it
   returns Ok. Proven by restoring the strict `amount_paid == 10 × successes`
   concurrency assertion (which flaked before the fix) and passing it 20/20 in
   isolation plus two full parallel-suite runs; live-Postgres test also passes.
@@ -2523,7 +2714,7 @@ engine and CLI fixes that surfaced on the way there.
   backend, so customers with equal outstanding balances came back in a
   non-deterministic order (SQLite's `HashMap` iteration order; Postgres's
   arbitrary row order) that also differed between the two backends. Because both
-  backends apply `LIMIT`/`OFFSET` *after* this sort, the instability meant
+  backends apply `LIMIT`/`OFFSET` _after_ this sort, the instability meant
   paging through the report could silently **skip or duplicate** tied customers.
   Both backends now break ties by `customer_id` for a total, backend-identical
   order. A SQLite test (5 equal-balance customers — 12/12 runs failed before the
@@ -2555,7 +2746,7 @@ engine and CLI fixes that surfaced on the way there.
   charge, store-credit apply, `charge_credit`, `reserve_credit`). A negative
   invoice payment drove `amount_paid` down and the balance up — un-paying a
   settled invoice — and a negative credit payment computed
-  `(balance − (−x)).max(0) = balance + x`, *inflating* the credit balance past
+  `(balance − (−x)).max(0) = balance + x`, _inflating_ the credit balance past
   the limit (apply-payment does not re-check the limit). Both now reject
   non-positive amounts with a validation error before touching any state.
   SQLite unit tests plus a live-Postgres test cover zero and negative on both
@@ -2591,7 +2782,7 @@ engine and CLI fixes that surfaced on the way there.
 - **Concurrent invoice payments were lost (or errored) on both backends.**
   `record_payment` reads `amount_paid`, adds the payment, and writes the new
   total — but neither backend serialized that read-modify-write. On SQLite it
-  ran in a *deferred* transaction, so simultaneous payments collided on the
+  ran in a _deferred_ transaction, so simultaneous payments collided on the
   write lock and all but one failed with "database table is locked"; on
   Postgres the row was read without `FOR UPDATE`, so concurrent payments read
   the same stale `amount_paid` and silently overwrote each other. Ten $10
@@ -2603,6 +2794,7 @@ engine and CLI fixes that surfaced on the way there.
   test both assert every payment is recorded and the invoice ends fully paid.
 
 ### Testing
+
 - **Concurrency tests no longer flake under heavy parallel load.** The 12
   SQLite concurrency tests (gift cards, store credits, loyalty, credit, invoice
   and AP/AR payments, credit-memo application, promotion redemption, GL posting)
@@ -2610,7 +2802,7 @@ engine and CLI fixes that surfaced on the way there.
   parallel test suite's CPU contention a legitimately-should-succeed operation
   can exhaust the write-lock retry budget and return a retryable "database table
   is locked" error, which is correct production behavior (the caller retries) but
-  made the exact-count assertions flaky. They now assert the *safety* invariants
+  made the exact-count assertions flaky. They now assert the _safety_ invariants
   they exist to protect — no overspend, no double-apply, no lost update, balances
   equal to the successful operations — while tolerating that a transient lock may
   reduce the success count. The bug-catching power is unchanged (the safety
@@ -2618,8 +2810,8 @@ engine and CLI fixes that surfaced on the way there.
   counts were removed. Verified flake-free across repeated full-suite runs.
 - **Concurrency tests: tolerate "committed-but-errored" money operations.** The
   invoice- and credit-payment concurrency tests asserted `amount == unit ×
-  successes` exactly. But a payment can commit its balance write inside the
-  transaction and then hit "database table is locked" on the *post-commit*
+successes` exactly. But a payment can commit its balance write inside the
+  transaction and then hit "database table is locked" on the _post-commit_
   read-back / ledger step, surfacing as an `Err` even though its money landed —
   so the applied total can legitimately exceed `unit × successes`. The
   assertions now check the true no-lost-update invariant (applied total is at
@@ -2634,6 +2826,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.7.0] - 2026-07-14
 
 ### Changed
+
 - **BREAKING: cart checkout no longer marks orders paid without a payment
   record.** `carts().complete()` now mints the order as `Confirmed` with
   `payment_status: Pending`; record the payment through the payments API. The
@@ -2645,6 +2838,7 @@ engine and CLI fixes that surfaced on the way there.
   could previously revenue-recognize orders with no payment trail.
 
 ### Security
+
 - **HTTP rate limiting is now per-client.** The single global token bucket
   (one abusive client could starve every tenant) is replaced by independent
   buckets keyed on peer IP, bounded at 10k tracked clients with
@@ -2657,6 +2851,7 @@ engine and CLI fixes that surfaced on the way there.
   rejected instead while live entries are retained for their full TTL.
 
 ### Fixed
+
 - **Inventory: committed reservation mutations could surface as errors.** With
   the default `events` feature, `reserve()`, `release_reservation()`, and
   `confirm_reservation()` performed fallible balance/lookup reads after the
@@ -2727,6 +2922,7 @@ engine and CLI fixes that surfaced on the way there.
   to disable at all 4 sites.
 
 ### Security
+
 - **ICP handler: enforce the two verification MUSTs it was violating.**
   Nonce-replay rejection (ICP-1.0-DRAFT §5.3) via a bounded per-`(aid, nonce)`
   LRU returning `replay.nonce_seen`, and AID→pubkey binding (§4.2) — the
@@ -2761,6 +2957,7 @@ engine and CLI fixes that surfaced on the way there.
   remains a documented follow-up (no repository traits exist yet).
 
 ### Changed
+
 - **crypto: hand-rolled RFC 8785 canonicalizer replaces serde_jcs.**
   serde_jcs 0.1.0 sorts object keys by their JSON-escaped form rather than
   UTF-16 code units (§3.2.3 violation on escaped/control/astral keys); the new
@@ -2793,6 +2990,7 @@ engine and CLI fixes that surfaced on the way there.
   module.
 
 ### Removed
+
 - **Dead code:** bit-rotted orphan route files `routes/tax.rs` and
   `routes/manufacturing.rs` (never mounted, ~18 compile errors against
   redesigned core models; git history preserves them) and the unreferenced
@@ -2804,6 +3002,7 @@ engine and CLI fixes that surfaced on the way there.
   `cli/.claude/CLAUDE.md` corrected (737 tools / 63 domains).
 
 ### Added
+
 - **ICPIP-0006: idempotency & pagination.** Draft specifying `purchase.create`
   idempotency keyed on `intent_id` (duplicate id + identical canonical payload
   → idempotent replay; same id, different payload → registered error) and
@@ -2819,6 +3018,7 @@ engine and CLI fixes that surfaced on the way there.
   header, delegating to `stateset-crypto`.
 
 ### Testing
+
 - **13 orphaned `cli/test/mcp/` files (246 tests) now run in CI** via the
   `npm test` glob. Admin suite grew to 849 tests (auth-guard + refetch-loop
   regressions). `stateset-http` at 524 tests including 4 new OpenAPI
@@ -2827,6 +3027,7 @@ engine and CLI fixes that surfaced on the way there.
 ## [1.6.0] - 2026-05-19
 
 ### Added
+
 - **CLI: extracted 6 focused modules from `cli/src/mcp-server.js`.**
   The orchestrator was 4,051 lines of one giant `createStatesetMcpServer`
   closure. Pulled 837 lines into per-server factory modules under
@@ -2852,6 +3053,7 @@ engine and CLI fixes that surfaced on the way there.
   `icp-spec/README.md` layout table.
 
 ### Added
+
 - **Rust SDK: `verify_settlement_receipt` helper.** Completes
   three-language symmetry on the dual-signature receipt verifier.
   Same algorithm as the JS + Python helpers — strip both signature
@@ -2871,10 +3073,11 @@ engine and CLI fixes that surfaced on the way there.
   primitives a partner needs.
 
 ### Added
+
 - **Python SDK: `verify_settlement_receipt` helper.** Mirrors the
   JS helper byte-for-byte: takes
   `(receipt, merchant_pubkey_raw, settler_pubkey_raw,
-  require_settler=True)`, strips both signature fields,
+require_settler=True)`, strips both signature fields,
   canonicalizes via RFC 8785 JCS, verifies both signatures against
   the supplied raw 32-byte Ed25519 pubkeys, returns the receipt
   unchanged on success or raises a typed `ICPError`. Same three
@@ -2882,7 +3085,7 @@ engine and CLI fixes that surfaced on the way there.
   failure), `settlement.settler_signature_invalid` (settler failure).
   Lives in `packages/icp-python-client/icp_client/settlement.py`,
   exported from the package root so `from icp_client import
-  verify_settlement_receipt` Just Works. **7 unit tests** mirror
+verify_settlement_receipt` Just Works. **7 unit tests** mirror
   the JS suite, including the regression test that asserts both
   signatures cover byte-identical canonical input (no field-ordering
   drift). Python SDK suite now **33/33 PASS** (was 26/26). The
@@ -2891,6 +3094,7 @@ engine and CLI fixes that surfaced on the way there.
   partners get. Rust symmetric helper is the natural next tick.
 
 ### Added
+
 - **JS SDK: `verifySettlementReceipt` helper.** The
   `SettlementReceipt` is the single most load-bearing artifact in
   ICP — co-signed by merchant AND Settler, it's what proves
@@ -2917,6 +3121,7 @@ engine and CLI fixes that surfaced on the way there.
   Symmetric Python + Rust helpers are the natural next ticks.
 
 ### Added
+
 - **`subscription.canceled` state-transition publisher.** Third
   publisher hooked into the protocol (after `settlement.released` in
   tick 39 and `dispute.opened` in tick 53). Successful
@@ -2934,6 +3139,7 @@ engine and CLI fixes that surfaced on the way there.
   (was 49/49).
 
 ### Added
+
 - **ICPIP-0005 quickstart guide** (`icp-spec/guides/icpip-0005-quickstart.md`).
   Synthesizes ~15 ticks of ICPIP-0005 work into a single 5-minute
   partner-facing artifact. Shows the three-call client pattern
@@ -2992,13 +3198,14 @@ engine and CLI fixes that surfaced on the way there.
   default schedule; `opts.scheduler` injects a fake clock for
   tests. **6 new tests** in `test/channel-emitter-retry.test.mjs`
   cover: 5xx retries-to-exhaustion with monotonic `delivery_attempt`
-  + re-signed bodies; 4xx terminal-without-retry; 408/429
-  retryable; network-error → eventual-2xx happy path; recovery log
-  serves first-attempt canonical form; sequence still monotonic
-  across failed deliveries. Handler suite now **49/49 PASS** (was
-  43/43).
+  - re-signed bodies; 4xx terminal-without-retry; 408/429
+    retryable; network-error → eventual-2xx happy path; recovery log
+    serves first-attempt canonical form; sequence still monotonic
+    across failed deliveries. Handler suite now **49/49 PASS** (was
+    43/43).
 
 ### Added
+
 - **`dispute.opened` state-transition publisher.** Tick 39 wired
   `settlement.released` into `handleFulfill`; this tick generalizes
   the pattern to `handleDispute`. Opening a dispute now mints a
@@ -3006,7 +3213,7 @@ engine and CLI fixes that surfaced on the way there.
   AND fires `publishToSubscribers('dispute.opened', ...)` to every
   webhook channel that subscribed for it. Payload carries
   `{dispute_id, escrow_id, intent_id, reason, amount, opened_at,
-  prior_state}` — everything an agent needs to react. The handler
+prior_state}` — everything an agent needs to react. The handler
   response now also surfaces the new `dispute_id` so callers can
   correlate. **1 new live test** in `test/channel-publish.test.mjs`
   drives the full register → purchase → accept → dispute flow and
@@ -3019,11 +3226,12 @@ engine and CLI fixes that surfaced on the way there.
   a few-line repeat per transition.
 
 ### Changed (breaking for codegen consumers, no-op for SDK users)
+
 - **OpenAPI 3.1 reconciliation — `WellKnown` discovery shape now
   matches handler wire reality.** Closes the third and final
   load-bearing schema drift. The new `WellKnown` requires
   `{spec, handler, handler_version, merchant_aid, merchant_pubkey,
-  capabilities, settler_allowlist}` — exactly what
+capabilities, settler_allowlist}` — exactly what
   `GET /icp/v1/.well-known/icp` returns. `merchant_pubkey` is now a
   proper `{alg, raw_hex}` object (not a flat `ed25519_pubkey_hex`
   string); `capabilities` is a nested object with `verbs`,
@@ -3043,11 +3251,12 @@ engine and CLI fixes that surfaced on the way there.
   discovery on the first try, no manual fix-ups.
 
 ### Changed (breaking for codegen consumers, no-op for SDK users)
+
 - **OpenAPI 3.1 reconciliation — verb response shapes now match
   handler wire reality.** Tick 50 reconciled the request envelope;
   this tick closes the response side. Every `/icp/v1/intents` 200
   body is now correctly modeled as `{<payload_key>: <inner>,
-  signature: Signature}`:
+signature: Signature}`:
   - `purchase.create` → `PurchaseCreateResponse` (`{quote, signature}`)
   - `purchase.return` → `PurchaseReturnResponse` (`{authorization, signature}`)
   - `subscription.create` → `SubscriptionCreateResponse` (`{authorization, signature}`)
@@ -3056,23 +3265,24 @@ engine and CLI fixes that surfaced on the way there.
   - `quote.request` → `QuoteRequestResponse` (`{proposal, signature}`)
   - `payout.request` → `PayoutRequestResponse` (`{authorization, signature}`)
   - `channel.register` → `ChannelRegisterResponse` (`{channel, signature}`)
-  Inner payload objects keep `additionalProperties: true` pending the
-  same follow-up ICPIP that will lift inner-field shapes out of the
-  SDKs into per-verb JSON Schemas. The shared `Signature` schema
-  (`{alg, kid, sig}`) introduced in tick 50 is now referenced from
-  every response wrapper. Stale flat `signature_hex`/`merchant_signature_hex`
-  fields removed from `SettlementReceipt`, `Dispute`, `Escrow`, and
-  the old per-verb response schemas. `SettlementReceipt` now uses two
-  `Signature` objects (`merchant_signature`, `settler_signature`)
-  reflecting how the handler stub returns them. **New drift-guard
-  test** asserts every wrapper schema declares the correct payload
-  key + signature pair, and asserts no `required: [..., signature_hex]`
-  flat-shape lines remain in any response schema. Handler suite now
-  **41/41 PASS** (was 40/40). Codegen partners running
-  `openapi-generator generate -i openapi.yaml -g <lang>` now get
-  clients that can deserialize handler responses on the first try.
+    Inner payload objects keep `additionalProperties: true` pending the
+    same follow-up ICPIP that will lift inner-field shapes out of the
+    SDKs into per-verb JSON Schemas. The shared `Signature` schema
+    (`{alg, kid, sig}`) introduced in tick 50 is now referenced from
+    every response wrapper. Stale flat `signature_hex`/`merchant_signature_hex`
+    fields removed from `SettlementReceipt`, `Dispute`, `Escrow`, and
+    the old per-verb response schemas. `SettlementReceipt` now uses two
+    `Signature` objects (`merchant_signature`, `settler_signature`)
+    reflecting how the handler stub returns them. **New drift-guard
+    test** asserts every wrapper schema declares the correct payload
+    key + signature pair, and asserts no `required: [..., signature_hex]`
+    flat-shape lines remain in any response schema. Handler suite now
+    **41/41 PASS** (was 40/40). Codegen partners running
+    `openapi-generator generate -i openapi.yaml -g <lang>` now get
+    clients that can deserialize handler responses on the first try.
 
 ### Changed (breaking for codegen consumers, no-op for SDK users)
+
 - **OpenAPI 3.1 reconciliation — IntentEnvelope shape now matches
   handler wire reality.** Closes long-standing drift between
   `icp-handler/openapi.yaml` and what the handler actually accepts.
@@ -3087,7 +3297,7 @@ engine and CLI fixes that surfaced on the way there.
   - `IntentBase` fields: `v`/`verb`/`intent_id`/`buyer`/`merchant`/
     `settler`/`expiry`/`principal_binding`/`nonce`/`iat`/`exp` —
     RFC 3339 timestamps where applicable; `additionalProperties:
-    true` so verb-specific fields don't break validation. Verb
+true` so verb-specific fields don't break validation. Verb
     enum gained `channel.register`.
   - `PrincipalBinding`: `principal`/`agent`/`authority`/`expiry`/
     `revocation`/`signature` (was `agent`/`authority_caps` only).
@@ -3107,23 +3317,24 @@ engine and CLI fixes that surfaced on the way there.
     39/39).
 
 ### Added
+
 - **Rust SDK: `fetch_channel_events` method** completing three-language
   symmetry on the recovery API. `client.fetch_channel_events(channel_id,
-  since)` verifies by default (returns `Vec<Value>` of envelopes);
+since)` verifies by default (returns `Vec<Value>` of envelopes);
   `fetch_channel_events_raw(...)` returns the underlying
   `{envelope, signature}` pairs for callers that want to delegate
   verification. Uses the existing `Error::SignatureInvalid` variant
   on per-envelope verification failure and the typed `Error::Icp
-  { code: "channel.*", … }` for handler error responses. The
+{ code: "channel.*", … }` for handler error responses. The
   integration test grew from 11 to 13 wire flows: full recovery
   roundtrip (register channel with unreachable URL → drive purchase
   → accept → fulfill → fetch missed event → verify), plus unknown-
-  channel `channel.not_found` assertion. Rust SDK still **20 unit
-  + 1 integration + 1 doctest, 0 clippy warnings**. Combined SDK
-  footprint: JS 23 tests, Python 26 tests, Rust 22 tests — all
-  green. **Three-language ICPIP-0005 client symmetry complete**:
-  every first-party SDK exposes `registerWebhook`, `verifyWebhook`,
-  and `fetchChannelEvents` as one-call methods.
+  channel `channel.not_found` assertion. Rust SDK still \*\*20 unit
+  - 1 integration + 1 doctest, 0 clippy warnings**. Combined SDK
+    footprint: JS 23 tests, Python 26 tests, Rust 22 tests — all
+    green. **Three-language ICPIP-0005 client symmetry complete\*\*:
+    every first-party SDK exposes `registerWebhook`, `verifyWebhook`,
+    and `fetchChannelEvents` as one-call methods.
 - **Python SDK: `fetch_channel_events` method** mirroring the JS helper.
   `client.fetch_channel_events(channel_id, since=0, *, verify=True)`
   GETs the ICPIP-0005 §5 recovery API, parses, and (by default)
@@ -3141,7 +3352,7 @@ engine and CLI fixes that surfaced on the way there.
   `fetch_channel_events`.
 - **JS SDK: `fetchChannelEvents` method** for the ICPIP-0005 §5
   recovery API. `client.fetchChannelEvents(channelId, since=0,
-  {verify=true})` GETs `/icp/v1/channels/:id/events?since=N`,
+{verify=true})` GETs `/icp/v1/channels/:id/events?since=N`,
   parses the response, and (by default) verifies each envelope
   signature against the cached merchant pubkey from `.well-known/icp`
   before returning the array. Returns verified envelope objects, or
@@ -3169,7 +3380,7 @@ engine and CLI fixes that surfaced on the way there.
   algorithm as live webhooks. Returns `409 channel.sequence_gap` when
   `since` is before the retained window (agent must re-register),
   `404 channel.not_found` for unknown channels, `400
-  format.bad_query_param` for malformed `since`. **3 new tests** in
+format.bad_query_param` for malformed `since`. **3 new tests** in
   `test/channel-recovery.test.mjs` cover happy-path slicing, unknown
   channel, malformed query — including envelope-signature
   verification on every returned event. Handler suite now **39/39
@@ -3178,7 +3389,7 @@ engine and CLI fixes that surfaced on the way there.
   via the emitter, plus authoritative backfill via the recovery API.
 - **Rust SDK: `register_webhook` method** completing three-language
   symmetry on both ICPIP-0005 ends. `client.register_webhook(merchant,
-  settler, channel_type, url, event_filters)` builds the
+settler, channel_type, url, event_filters)` builds the
   `channel.register` Intent, signs + submits via the existing
   `post_intent` path, returns a `SignedResponse` whose merchant
   signature can be verified via `client.verify_signed_response(...)`.
@@ -3193,7 +3404,7 @@ engine and CLI fixes that surfaced on the way there.
   in JavaScript, Python, and Rust.
 - **Python SDK: `register_webhook` method** mirroring the JS SDK helper.
   `client.register_webhook(merchant, settler, *, url=None, type='webhook',
-  event_filters=[], delivery=None, auth=None)`. Builds the
+event_filters=[], delivery=None, auth=None)`. Builds the
   `channel.register` Intent, signs it, POSTs to `/icp/v1/intents`, and
   transparently verifies the merchant signature on the returned
   ChannelRegistration via the existing `_verify_merchant` pipeline.
@@ -3203,7 +3414,7 @@ engine and CLI fixes that surfaced on the way there.
   ICPError. Python SDK suite now **24/24 PASS** (was 21/21).
 - **JS SDK: `registerWebhook` method** for ICPIP-0005 channel
   registration. Accepts `{merchant, settler, type?, url?,
-  event_filters?, delivery?, auth?}`, builds the `channel.register`
+event_filters?, delivery?, auth?}`, builds the `channel.register`
   Intent, signs it, POSTs to `/icp/v1/intents`, verifies the
   merchant signature on the returned ChannelRegistration. Without
   this, devs had to hand-build the channel.register Intent envelope
@@ -3258,11 +3469,11 @@ engine and CLI fixes that surfaced on the way there.
 - **ICPIP-0005 state-transition publisher** — wires the webhook
   emitter into actual handler state transitions, closing the
   server-side loop. New `publishToSubscribers(store, eventType,
-  payload, opts)` iterates the channel store, filters by event-type
+payload, opts)` iterates the channel store, filters by event-type
   subscription + expiry, and fan-outs in parallel via the existing
   emitter. The fulfill handler now publishes `settlement.released`
   with `{settlement_id, escrow_id, intent_id, amount, final_state,
-  settled_at}` — fire-and-forget so the synchronous response doesn't
+settled_at}` — fire-and-forget so the synchronous response doesn't
   block on receiver round-trips. **2 new end-to-end tests** in
   `test/channel-publish.test.mjs` prove the full loop: register a
   webhook subscribed to `settlement.released` → POST a purchase
@@ -3333,12 +3544,13 @@ engine and CLI fixes that surfaced on the way there.
   `original_settlement_id`/`desired_outcome` for return,
   `platform`/`max_per_payout` for payout, etc.). Integration test
   expanded to exercise all 7 verbs end-to-end with merchant signature
-  verification on every response. **Tests: 11 unit + 1 integration
-  + 1 doctest, 0 clippy warnings.** Closes the trust gap — the
-  Rust SDK now refuses any response whose merchant signature doesn't
-  verify against the published `.well-known/icp` pubkey.
+  verification on every response. \*\*Tests: 11 unit + 1 integration
+  - 1 doctest, 0 clippy warnings.\*\* Closes the trust gap — the
+    Rust SDK now refuses any response whose merchant signature doesn't
+    verify against the published `.well-known/icp` pubkey.
 
 ### Added (prior)
+
 - **`stateset-icp-client` Rust SDK** (`crates/stateset-icp-client`).
   Third-language ICP-1.0 client SDK alongside `@stateset/icp-client`
   (npm) and `icp-client` (PyPI). API surface mirrors both. **Produces
@@ -3348,9 +3560,9 @@ engine and CLI fixes that surfaced on the way there.
   All 7 ICP verbs implemented: `inventory()`, `purchase()`,
   `subscribe()`, `cancel()`, `return_purchase()`, `request_quote()`,
   `payout()`. Built on `ed25519-dalek` + `x25519-dalek` + `serde_jcs`
-  + `ureq`. **11 unit tests + 1 live integration test, 0 clippy
-  warnings.** Unlocks the entire Rust ecosystem: Solana / Aptos / Sui
-  infra, payment processors, high-throughput merchants.
+  - `ureq`. **11 unit tests + 1 live integration test, 0 clippy
+    warnings.** Unlocks the entire Rust ecosystem: Solana / Aptos / Sui
+    infra, payment processors, high-throughput merchants.
 - **OpenAPI 3.1 spec for icp-handler** (`icp-handler/openapi.yaml`).
   Normative HTTP API surface for the 9 handler routes and all 7 ICP
   verbs (as a discriminated union over `IntentEnvelope`). Maps every
@@ -3386,6 +3598,7 @@ OpenAI Agents, LangChain, LangGraph). Mirror of the JavaScript
 by tests.
 
 ### Added
+
 - **`packages/icp-python-client/`** — pip-installable Python SDK.
   Single `cryptography` dependency, otherwise stdlib-only.
 - `ICPClient.create(handler_url, principal, ...)` mirroring the JS
@@ -3411,21 +3624,24 @@ by tests.
   ICP as Anthropic-API tools.
 
 ### Changed
+
 - Synced workspace, bindings, examples, templates, docs, and release
   metadata to 1.5.0.
 
 ### Adopter surface
-| Target | Path |
-|---|---|
-| JS / TS / Node / browser | `npm install @stateset/icp-client` |
-| Python / Anthropic / OpenAI Agents / LangChain | `pip install icp-client` |
-| MCP-compatible client (Claude Desktop / Cursor / Windsurf) | `mcpServers` config → icp-mcp |
-| Raw HTTP (any language) | `POST /icp/v1/intents` with manual codec |
+
+| Target                                                     | Path                                     |
+| ---------------------------------------------------------- | ---------------------------------------- |
+| JS / TS / Node / browser                                   | `npm install @stateset/icp-client`       |
+| Python / Anthropic / OpenAI Agents / LangChain             | `pip install icp-client`                 |
+| MCP-compatible client (Claude Desktop / Cursor / Windsurf) | `mcpServers` config → icp-mcp            |
+| Raw HTTP (any language)                                    | `POST /icp/v1/intents` with manual codec |
 
 ### Test count
+
 Cumulative protocol-layer test count: **114 distinct PASS signals per
 CI run** (handler 20, MCP 6, Settler 9, chain-watcher 8, JS SDK 11,
-**Python SDK 12** *(new)*, Foundry contract 15, conformance 8, Docker
+**Python SDK 12** _(new)_, Foundry contract 15, conformance 8, Docker
 integration 17, demos 8).
 
 ## [1.4.0] - 2026-05-12
@@ -3437,6 +3653,7 @@ returns, B2B wholesale RFQ, and marketplace seller payouts. Total
 addressable commerce flow ≈ $31T/year.
 
 ### Added
+
 - **`quote.request` verb runtime impl** (reference implementation of
   ICPIP-0003). Backend stub with volume-tier pricing (1–99 catalog,
   100–499 −10%, 500+ −20%), 30-day proposal validity. `from_proposal_id`
@@ -3460,6 +3677,7 @@ addressable commerce flow ≈ $31T/year.
   so SDK callers don't have to.
 
 ### Changed
+
 - Handler accepts **7 ICP verbs** (was 5); MCP and SDK match. Capability
   advertisement at `.well-known/icp` reflects the full set.
 - `stubQuote()` honors `from_proposal_id` when present, with three
@@ -3468,12 +3686,14 @@ addressable commerce flow ≈ $31T/year.
   metadata to 1.4.0.
 
 ### Test count
+
 Cumulative protocol-layer test count: **102 distinct PASS signals per
 CI run**. Handler 20/20 (was 14), MCP 6/6, SDK 11/11, Settler 9/9,
 chain-watcher 8/8, Foundry contract 15/15, conformance 8/8 (4 IUTs × 2
 vectors), Docker integration 17/17, demos 8.
 
 ### Coverage note
+
 With this release, ICP-1.0 hits **100% commerce verb coverage**:
 discovery (`inventory.query`), one-shot retail (`purchase.create`),
 recurring revenue (`subscription.create` + `subscription.cancel`),
@@ -3490,6 +3710,7 @@ the **client SDK**, the **`subscription.cancel` verb**, the
 (ICPIP-0001 Process + ICPIP-0002 Hybrid PQC mandate).
 
 ### Added
+
 - **`packages/icp-client/`** — npm-publishable client SDK
   (`@stateset/icp-client`). Zero runtime dependencies. `ICPClient.create()`
   returns a client with `.capabilities()`, `.inventory()`, `.purchase()`,
@@ -3535,6 +3756,7 @@ the **client SDK**, the **`subscription.cancel` verb**, the
   covers 100% of commerce verb surface.
 
 ### Changed
+
 - Synced workspace, bindings, examples, templates, docs, and release
   metadata to 1.3.0.
 - Handler accepts 5 ICP verbs (was 4); MCP and SDK match.
@@ -3549,6 +3771,7 @@ the **client SDK**, the **`subscription.cancel` verb**, the
   excluded via `.gitignore`.
 
 ### Coverage note
+
 ICP-1.0 now ships **5 verbs covering ~99% of commerce dollar volume**:
 `inventory.query` (discovery), `purchase.create` (one-shot retail),
 `subscription.create` + `subscription.cancel` (recurring revenue +
@@ -3559,6 +3782,7 @@ ICPIP-0001 lifecycle, ICP covers 100% of commerce verb surface
 (~$31T in addressable annual commerce flow).
 
 ### Test count
+
 Cumulative protocol-layer test count: **97 distinct PASS signals per
 CI run** across the 11 jobs in `.github/workflows/icp-conformance.yml`.
 
@@ -3568,6 +3792,7 @@ Minor release adding the **`inventory.query`** verb — the fourth ICP-1.0
 intent verb and the highest-call-volume verb in B2B agentic commerce.
 
 ### Added
+
 - **`inventory.query` verb** (spec §6.3 normative; was a 1.1 stub). A
   read-only, signed query for inventory availability + pricing that
   returns a merchant-signed `InventorySnapshot` with a `valid_until`
@@ -3587,10 +3812,12 @@ intent verb and the highest-call-volume verb in B2B agentic commerce.
   `in_stock_only` filter; **handler 12/12 PASS, MCP 6/6 PASS**.
 
 ### Changed
+
 - Synced workspace, bindings, examples, templates, docs, and release
   metadata to 1.2.0.
 
 ### Coverage note
+
 ICP-1.0 now covers ~99% of commerce dollar volume across four verbs:
 discovery (`inventory.query`), one-shot retail (`purchase.create`),
 recurring revenue (`subscription.create`), and returns/refunds
@@ -3606,6 +3833,7 @@ agentic-AI commerce (quote, escrow, fulfillment, dispute, settlement).
 The 250k-LOC commerce engine is unchanged; ICP is additive infrastructure.
 
 ### Added
+
 - **ICP-1.0 normative specification** (`icp-spec/ICP-1.0-DRAFT.md`):
   wire format, canonical serialization rules (CBOR + JSON), 60+ error
   codes, signatures (Ed25519 + optional ML-DSA-65 hybrid), AID
@@ -3646,6 +3874,7 @@ The 250k-LOC commerce engine is unchanged; ICP is additive infrastructure.
   `.github/workflows/icp-conformance.yml`.
 
 ### Changed
+
 - Synced workspace, bindings, examples, templates, docs, and release
   metadata to 1.1.0.
 - README adds an ICP hero block + comprehensive `What's New in v1.1.0`
@@ -3656,10 +3885,12 @@ The 250k-LOC commerce engine is unchanged; ICP is additive infrastructure.
 Patch release for CLI outbound security hardening.
 
 ### Changed
+
 - Synced workspace, bindings, examples, templates, docs, and release metadata to 1.0.3.
 - Changed BlueBubbles authentication to prefer header delivery while retaining the legacy query-token fallback.
 
 ### Fixed
+
 - Hardened outbound CLI fetch paths against DNS private-address resolution and unchecked redirects across A2A webhooks, MPP, x402, and marketplace catalog/package flows.
 - Hardened remote skill marketplace installs with package size caps, checksum enforcement, and archive path preflight.
 - Added regression coverage for DNS and redirect SSRF blocks, webhook retry validation, marketplace package limits, and iMessage auth fallback.
@@ -3669,10 +3900,12 @@ Patch release for CLI outbound security hardening.
 Patch release for the v1 release-readiness track.
 
 ### Changed
+
 - Synced workspace, bindings, examples, templates, docs, and release metadata to 1.0.2.
 - Documented the admin trusted-proxy rate-limit configuration flag for deployments that terminate traffic behind a controlled proxy boundary.
 
 ### Fixed
+
 - Hardened admin rate limiting so spoofable `x-forwarded-for` and `x-real-ip` headers are ignored unless trusted proxy mode is explicitly enabled.
 - Synced Agent OS status output to the package version instead of reporting a hardcoded stale version.
 - Escaped generated runbook skill frontmatter so multiline descriptions cannot corrupt `SKILL.md` metadata.
@@ -3682,15 +3915,18 @@ Patch release for the v1 release-readiness track.
 Patch release for the agent operating-system release track.
 
 ### Added
+
 - Added the workspace Agent OS CLI surface for setup, readiness, context, skills, sessions, memory, and runbook creation.
 - Added generated inventory coverage for the new Agent OS source and CLI binary.
 
 ### Changed
+
 - Hardened dependency policy by removing stale OpenSSL exceptions and pinning known duplicate-dependency skips to exact versions.
 - Documented the temporary RustSec rand advisory ignore in CI until upstream consumers converge on patched releases.
 - Synced workspace, bindings, examples, templates, docs, and release metadata to 1.0.1.
 
 ### Fixed
+
 - Restored clean release-hygiene validation after the Agent OS source and CLI binary expanded the workspace inventory.
 
 ## [1.0.0] - 2026-04-28
@@ -3700,12 +3936,14 @@ First stable release of the StateSet iCommerce engine. This release starts the
 flags, MCP tool names and schemas, policy YAML, and additive SQLite migrations.
 
 ### Added
+
 - Added a `stateset_embedded::prelude` module to define the stable direct
   embedded Rust surface for core commerce flows.
 - Added compile-time coverage that locks the embedded prelude imports and
   default-constructible create types.
 
 ### Changed
+
 - Promoted the workspace, bindings, admin app, CLI, examples, templates, docs,
   generated compatibility inventories, and release metadata from `0.9.9` to
   `1.0.0`.
@@ -3715,6 +3953,7 @@ flags, MCP tool names and schemas, policy YAML, and additive SQLite migrations.
   install and audit path stays focused on the core package.
 
 ### Fixed
+
 - Removed the non-Claude provider cold-start race in the CLI by awaiting
   provider auto-registration before first use.
 - Hardened CLI SQLite backup and restore to handle WAL sidecar files.
@@ -3740,6 +3979,7 @@ the real 1.0.0 cut can be a deliberate polish + `stateset-acp-handler`
 pair release.
 
 ### Added
+
 - Engine-first agent toolkit helpers, adapter modules, and runnable
   examples across the Node and Python bindings so OpenAI, LangChain,
   generic tool runtimes, CrewAI, and AutoGen-style integrations can embed
@@ -3758,11 +3998,13 @@ pair release.
 - x402 agent demo flows end-to-end.
 
 ### Changed
+
 - Promoted the workspace, bindings, admin app, CLI, examples, templates,
   lockfiles, docs, and release metadata from `0.9.8` to `0.9.9`.
 - Documentation refresh across API references and getting-started guides.
 
 ### Fixed
+
 - Corrected stale release references across install snippets, examples,
   daemon guidance, API docs, and versioned metadata so the shipped repo
   surfaces match the `0.9.9` line.
@@ -3772,14 +4014,17 @@ pair release.
 ## [0.9.8] - 2026-04-08
 
 ### Added
+
 - Added a CI-safe `cargo_ci.sh` helper so repo-wide Rust lint and feature-matrix checks run without incremental-cache bloat.
 - Added explicit x402 intent signature-scheme configuration support in the Node binding and database coverage for strict `ml_dsa65` intents.
 
 ### Changed
+
 - Bumped workspace, bindings, admin app, CLI, examples, templates, docs, inventories, and release metadata from `0.9.7` to `0.9.8`.
 - Created the `docs/versions/v0.9.8` snapshot from the latest mdBook sources for this release line.
 
 ### Fixed
+
 - Aligned admin authentication and request handling by allowing bearer-token API access through middleware, enforcing request-size limits against actual streamed bodies, and preserving gateway query strings.
 - Cleared the CLI quality-gate blockers in the x402 and sync surfaces so `npm --prefix cli run check` passes cleanly.
 - Fixed the Node x402 strict-signature flow so strict `ml_dsa65` signatures can be used against intents created with the matching stored policy.
@@ -3787,39 +4032,48 @@ pair release.
 ## [0.9.7] - 2026-04-06
 
 ### Added
+
 - Added the new authenticated admin dashboard app with analytics, operations, gateway, billing, integrations, and session-management surfaces, plus the supporting API routes and test coverage.
 - Published generated MCP tool inventory artifacts for compatibility tracking in both JSON and mdBook appendix form.
 
 ### Changed
+
 - Bumped workspace, bindings, admin app, CLI, examples, templates, docs, and release metadata from `0.9.6` to `0.9.7`.
 - Updated the sync and x402 client paths so the latest CLI, gateway, and embedded binding flows stay aligned across real runtime usage and regression coverage.
 
 ### Fixed
+
 - Tightened sync configuration security coverage and x402 payment-intent persistence coverage around the refreshed client behavior.
 
 ## [0.9.6] - 2026-04-04
 
 ### Added
+
 - Added raw-binding compatibility regression coverage for getter-style `commerce.x402` and mixed A2A/x402 commerce surfaces so agent-payment flows are validated against the real Node binding shape.
 
 ### Changed
+
 - Bumped workspace, bindings, admin app, CLI, examples, templates, docs, and release metadata from `0.9.5` to `0.9.6`.
 - Normalized the shared commerce API access layer so A2A runtimes, MCP tools, the x402 CLI, and the MCP server all support both getter-style and callable-style embedded bindings.
 
 ### Fixed
+
 - Persisted x402 signing hashes at intent creation and tightened settlement-state validation so intents cannot skip directly to `Settled`.
 - Fixed the shipped x402/A2A payment tooling to work against the real embedded Node binding, including local signing, sequencer submission payloads, settlement updates, and agent-card/runtime compatibility.
 
 ## [0.9.5] - 2026-04-03
 
 ### Added
+
 - Published repo-native trust and strategy documentation, including `TRUST_FOUNDATION.md`, distribution planning, outcomes modeling, and competitive-landscape notes to make the project posture more explicit.
 
 ### Changed
+
 - Bumped workspace, bindings, admin app, CLI, templates, docs, and release metadata from `0.9.4` to `0.9.5`.
 - Synced install snippets, deployment examples, and current-release references to the `0.9.5` release.
 
 ### Fixed
+
 - Hardened MCP permission enforcement so unknown tools fail closed instead of silently defaulting to read access, and aligned tool permission metadata with the runtime permission map.
 - Replaced silent in-memory downgrade paths with durable JSON fallback persistence for audit logs, credentials, treasury records, channel identity/session state, agent sessions, conversation memory, and ERC-8004 identity storage when the native SQLite binding is unavailable.
 - Enforced session retention caps correctly and fixed channel-session fallback upsert field ordering to preserve session integrity under degraded runtime conditions.
@@ -3827,6 +4081,7 @@ pair release.
 ## [0.9.4] - 2026-04-02
 
 ### Added
+
 - x402 v2 exact-EVM payment support across the CLI, including standards-shaped `PAYMENT-SIGNATURE` retries, exact `PaymentPayload` construction, and exported exact/facilitator/resource-server helpers.
 - Facilitator primitives and HTTP endpoints for `/supported`, `/verify`, and `/settle`, plus runnable exact-flow facilitator and resource-server examples.
 - Exact resource-server helpers that emit `payment-required`, validate incoming `PAYMENT-SIGNATURE` payloads, settle accepted payments, and return `PAYMENT-RESPONSE`.
@@ -3834,11 +4089,13 @@ pair release.
 - Release hygiene automation for CI and publish workflows, including `check_release_hygiene.sh`, regression coverage for the helper, and `actionlint` workflow linting.
 
 ### Changed
+
 - Bumped workspace and cross-language package metadata from `0.9.3` to `0.9.4`.
 - Synced docs, examples, templates, and lockfiles to the `0.9.4` release.
 - Updated release and publish workflows to gate on shared release-hygiene checks instead of version-sync alone.
 
 ### Fixed
+
 - Aligned JavaScript x402 signing-hash verification with the Rust implementation by binding `resourceUri` and `resourceMethod` into signed legacy payment intents.
 - Removed the legacy sequencer requirement for exact x402 MCP calls while preserving explicit errors for legacy sequencer-backed flows.
 - Corrected the VES docs to describe the intended cross-language x402 hashing parity more precisely.
@@ -3846,6 +4103,7 @@ pair release.
 ## [0.9.3] - 2026-04-01
 
 ### Added
+
 - Native post-quantum VES cryptography in `stateset-crypto` for hybrid `ed25519+mldsa65` and `x25519+mlkem768` flows, plus `pqc-strict` `mldsa65` and `mlkem768` modes for key generation, signing, verification, recipient wrapping, payload encryption/decryption, and proof-of-possession.
 - Sync-layer PQC security profiles (`legacy`, `hybrid`, `pqc-strict`) across config validation, key management, outbox signing/encryption, pulled-event decryption, and sequencer receipt verification.
 - Native Node binding exports for hybrid and strict PQC operations, including signing, verification, payload encryption/decryption, recipient key generation, and signing proof-of-possession helpers.
@@ -3853,6 +4111,7 @@ pair release.
 - PQC validation assets: cross-language Node/Rust test vectors, strict-profile tests, expanded Rust crypto coverage, Criterion PQC benches, and the initial migration spec in `docs/PQC_INITIAL_SPEC.md`.
 
 ### Changed
+
 - Enforced TLS for PQC-enabled sync profiles and blocked unforced profile downgrades so future events cannot silently lose post-quantum protection.
 - Bumped workspace and cross-language package metadata from `0.9.1` to `0.9.3`.
 - Synced docs, examples, templates, and lockfiles to the `0.9.3` release.
@@ -3860,6 +4119,7 @@ pair release.
 ## [0.9.1] - 2026-03-26
 
 ### Added
+
 - **Agentic Commerce**: Negotiation engine with auto-accept/reject thresholds, A2A messaging with retry, credit terms (net 15/30/60/90), inventory commitments, dispute rules engine
 - **V9 Migration**: 8 new tables for agent commerce (a2a_messages, a2a_negotiations, inventory_commitments, a2a_credit_terms, a2a_tax_obligations, a2a_dispute_rules)
 - **5 Negotiation REST endpoints**: create, get, counter-offer, accept, reject
@@ -3868,6 +4128,7 @@ pair release.
 ## [0.9.0] - 2026-03-26
 
 ### Added
+
 - **11 V4 entity implementations**: reviews, wishlists, gift cards, loyalty, fraud, segments, store credits, shipping zones, rewards, search configs, zone shipping methods (was 11 stubs)
 - **18 V4 HTTP endpoints**: reviews, wishlists, gift cards, loyalty CRUD + actions
 - **Clippy pedantic fixes** across 174 files (1,377 insertions)
@@ -3876,6 +4137,7 @@ pair release.
 ## [0.8.8] - 2026-03-25
 
 ### Added
+
 - **Pricing engine** wired into order creation with currency-aware rounding
 - **Audit log** (V8 migration) with record_audit() function
 - **Graceful DB shutdown** (WAL checkpoint + PRAGMA optimize)
@@ -3886,12 +4148,14 @@ pair release.
 ## [0.8.5] - 2026-03-25
 
 ### Fixed
+
 - **Inventory reservation race condition**: atomic quantity+version check in UPDATE WHERE clause
 - **SQLITE_FULL detection**: maps to StorageFull error instead of generic 500
 - **UNIQUE constraint violations**: return 409 Conflict instead of 500
 - **LIKE wildcard escaping** in product search
 
 ### Added
+
 - **V6 Migration**: 3 idempotency constraints (order_items, reservations, cart checkout)
 - **Health check**: GET /health/deep with DB latency + metrics
 - **Slow query logging**: transactions >500ms emit tracing::warn
@@ -3900,6 +4164,7 @@ pair release.
 ## [0.8.4] - 2026-03-25
 
 ### Added
+
 - **13 new REST endpoints**: PATCH/DELETE for customers and products, POST for shipments, payments, invoices with action endpoints (deliver, complete, refund, send, record-payment)
 - **V5 Migration**: 12 composite database indexes for common query patterns
 - **29 error messages** now include valid enum values
@@ -3908,6 +4173,7 @@ pair release.
 ## [0.8.2] - 2026-03-25
 
 ### Changed
+
 - **Performance**: 8 rounds of autoresearch-driven optimization (~3x all 20 Criterion benchmarks)
   - SQLite: PRAGMA tuning, prepare_cached, mmap, WAL autocheckpoint, deferred FK
   - EventBus: lazy event_type allocation, deferred receiver_count, inline publish
@@ -3920,37 +4186,44 @@ pair release.
 ## [0.8.1] - 2026-03-18
 
 ### Added
+
 - Added native Bitcoin settlement flows for autonomous agent payments, including wallet, signing, execution, and observability plumbing.
 - Added shielded Zcash settlement support for agent-to-agent payments through wallet-enabled JSON-RPC flows.
 - Added Machine Payments Protocol support across MCP and HTTP, including challenge/credential/receipt handling, discovery metadata, and client retry helpers.
 - Added embedded toolkit support for remote payable HTTP route discovery and paid execution.
 
 ### Changed
+
 - Bumped workspace and cross-language release metadata from `0.8.0` to `0.8.1`.
 - Synced docs, templates, examples, and packaging references around the `0.8.1` native payments and MPP release.
 
 ## [0.8.0] - 2026-03-11
 
 ### Added
+
 - Added an embedded agent onboarding quickstart with `@stateset/cli/agent-toolkit`, OpenAI-style JSON-schema tool export, and framework adapter examples for server-side agent runtimes.
 - Added package export regression coverage for the standalone and embedded agent toolkit surfaces.
 
 ### Changed
+
 - Bumped workspace and cross-language release metadata from `0.7.25` to `0.8.0`.
 - Synced docs, examples, and release notes around the `0.8.0` embedded agent onboarding flow.
 
 ### Fixed
+
 - Published `@stateset/cli/agent-toolkit` as a first-class package export so the documented embedded agent import path works for installed consumers.
 - Hardened release smoke tests to verify package self-reference imports for `@stateset/cli/standalone` and `@stateset/cli/agent-toolkit` before publish.
 
 ## [0.7.23] - 2026-03-10
 
 ### Changed
+
 - Bumped workspace and cross-language release metadata from `0.7.22` to `0.7.23`.
 - Tightened root quality gates so `npm run check` enforces the admin lane plus the CLI supported typecheck lane under explicit Node/npm runtime guards.
 - Expanded the CLI supported typecheck surface to cover the x402 package, `src/x402-mcp-server.js`, `src/tools/x402.js`, and `src/sync/crypto.js`.
 
 ### Fixed
+
 - Reduced type drift across the x402/runtime surfaces, including crypto helpers, lazy dependency loading, and chain helper JSDoc contracts.
 - Added admin test-suite typechecking and fixed test/runtime mismatches needed for the stricter gate to pass cleanly.
 - Fixed the stale migration snapshot and hardened cart number generation to avoid collisions during fast concurrent test runs.
@@ -3958,12 +4231,14 @@ pair release.
 ## [0.7.22] - 2026-03-06
 
 ### Added
+
 - Added `stateset simulate` and the A2A simulation runtime for sandboxed scenario execution with virtual time, snapshots, and failure injection.
 - Added the built-in `supplier-goes-offline` scenario plus simulation-focused CLI and unit coverage.
 - Added CI `version-sync` gate (`scripts/ci/check_version_sync.sh`) and wired it into root `npm run check`.
 - Added Rust crate publish automation: `scripts/publish-rust-crates.sh` and `.github/workflows/publish-rust-crates.yml`.
 
 ### Changed
+
 - Bumped workspace and cross-language release metadata from `0.7.21` to `0.7.22`.
 - Updated CLI/runtime version references and packaging metadata to `0.7.22` across manifests, config constants, templates, and version assertion tests.
 - Raised Rust threshold in `.github/workflows/coverage.yml` from 70% to 80% to match primary CI policy.
@@ -3971,17 +4246,20 @@ pair release.
 - Expanded `RELEASING.md` with Rust crates.io release flow and generalized binding release examples to `vX.Y.Z`.
 
 ### Removed
+
 - Removed tracked SQLite WAL/SHM artifacts from `cli/` (`checkout-demo`, `demo`, `store`) to keep repository state clean.
 
 ## [0.7.14] - 2026-02-28
 
 ### Changed
+
 - Bumped workspace and cross-language release metadata from `0.7.13` to `0.7.14`.
 - Bumped CLI/runtime version references and packaging metadata to `0.7.14` across manifests, config constants, templates, and version assertion tests.
 - Added MCP gateway readiness and Prometheus metrics endpoints (`/ready`, `/metrics`) and updated Kubernetes/Prometheus deployment wiring.
 - Tightened CI quality gates by failing coverage jobs on undetermined coverage values.
 
 ### Fixed
+
 - Enforced tenant-aware API access in `stateset-http`: authenticated `/api/v1/*` requests now require validated `x-tenant-id`.
 - Added bearer-token tenant binding support and rejection of tenant/token mismatches for principal isolation.
 - Implemented per-tenant SQLite routing in `stateset-http` (`<tenant>.db`) and added integration tests proving cross-tenant data isolation.
@@ -3991,35 +4269,41 @@ pair release.
 ## [0.7.13] - 2026-02-27
 
 ### Changed
+
 - Bumped workspace and cross-language release metadata from `0.7.12` to `0.7.13`.
 - Bumped CLI/runtime version references from `0.7.8` to `0.7.13`.
 - Added `stateset-setup --quickstart` preset for one-command agent onboarding (`--demo --agent openclaw --starter-pack ops --agent-only --verify`).
 - Expanded onboarding artifacts with generated launch/health scripts (`start-mcp.sh`, `check-mcp.sh`) and handoff launch commands.
 
 ### Fixed
+
 - Improved onboarding verification coverage to validate handoff launch command readiness.
 - Improved setup next-step guidance with direct launch and health-check commands for faster agent time-to-value.
 
 ## [0.7.10] - 2026-02-27
 
 ### Changed
+
 - Expanded CI quality gates with Postgres parity matrix lanes, FFI sanitizer lanes, perf regression reporting, and crate compatibility governance reporting.
 - Added cross-language FFI ABI contract fixtures/tests for C, C++, Python, and Swift.
 - Added observability conventions plus RED/SLO metrics primitives and documentation updates.
 - Added perf-gate benchmarks and strengthened property/chaos style test coverage in protocol/sync/pricing/primitives/jobs crates.
 
 ### Fixed
+
 - Hardened A2A and embedded webhook SSRF protections (allowlists, ambiguous IPv4 encodings, IPv4-mapped IPv6 handling, and DNS rebinding coverage).
 - Fixed webhook host IP parsing behavior for deterministic IPv4/IPv6 safety checks.
 
 ## [0.7.9] - 2026-02-27
 
 ### Changed
+
 - Bumped workspace and cross-language release metadata from `0.7.8` to `0.7.9`.
 - Updated binding package versions across Node, Python, Ruby, PHP, Java, Kotlin, Swift, .NET, and wasm artifacts.
 - Updated SDK/FFI surfaced version references to `0.7.9`.
 
 ### Fixed
+
 - Hardened policy evaluation semantics, rule ordering, and authz rate-limit key handling.
 - Hardened A2A/embedded webhook SSRF protections and added mapped-IPv6 regression coverage.
 - Fixed sync pagination/cursor behavior and strengthened protocol integrity hashing/ordering guarantees.
@@ -4030,12 +4314,14 @@ pair release.
 ## [0.7.8] - 2026-02-25
 
 ### Changed
+
 - Bumped workspace and cross-language release metadata from `0.7.7` to `0.7.8`.
 - Updated CLI/runtime version references (`CLI_VERSION`, gateway config/version fallback, scaffold templates, WhatsApp user agent, and update messaging) to `0.7.8`.
 - Updated lockfile and packaging metadata for CLI and language bindings to `0.7.8`.
 - Enabled Swift bindings CI checks on pull requests without requiring the `ci-swift` label.
 
 ### Fixed
+
 - Hardened `/browser/evaluate`: disabled by default and gated expression execution with strict read-only policy validation.
 - Hardened marketplace remote installs with HTTPS/public-host validation, catalog base URL restrictions, checksum verification, and redirect blocking.
 - Fixed MCP structured tool metadata to preserve `sessionId` for direct tool-handler invocations.
@@ -4046,9 +4332,11 @@ pair release.
 ## [0.7.6] - 2026-02-24
 
 ### Changed
+
 - Bumped workspace and cross-language release metadata from `0.7.5` to `0.7.6`.
 
 ### Fixed
+
 - Fixed policy engine domain index replacement behavior when re-registering a policy set with the same ID.
 - Implemented sync engine conflict resolution effects for local-vs-remote event handling.
 - Implemented paginated pull handling in sync full-sync flows.
@@ -4057,11 +4345,13 @@ pair release.
 ## [0.7.4] - 2026-02-22
 
 ### Added
+
 - Added a `stateset-setup` CLI binary entry in `package.json`.
 - Added `@clack/prompts` dependency to support interactive CLI UI flows.
 - Added `stateset-crypto` to the workspace dependency set and Node wrapper dependency graph.
 
 ### Changed
+
 - Bumped workspace and cross-language release metadata from `0.7.2` to `0.7.4` across Rust crates, CLI packages, language bindings, examples, and docs.
 - Updated CLI/version runtime references (`CLI_VERSION`, health endpoint fallback, scaffold templates, WhatsApp user agent) to `0.7.4`.
 - Updated npm lockfiles and package manifests to reference `0.7.4`.
@@ -4069,17 +4359,20 @@ pair release.
 - Updated lockfile dependency graph for crypto-related workspace crates.
 
 ### Fixed
+
 - Aligned version checks and dependency specifiers in examples to `0.7.4`.
 
 ## [0.7.2] - 2026-02-20
 
 ### Changed
+
 - Bumped the workspace and cross-language release metadata to `0.7.2` across Rust crates, CLI, language bindings, and examples.
 - Updated docs and configuration references to reflect the `0.7.2` version line (including npm/cargo/composer/gradle packaging metadata and SDK version checks).
 
 ## [0.7.0] - 2026-02-07
 
 ### Added
+
 - **1,842 automated tests** (1,581 CLI + 261 admin) with 0 failures — up from ~76 in v0.6.0.
 - 40+ new CLI unit test files covering permissions, telemetry, errors, HTTP gateway/auth, channels subsystem (middleware, rich-messages, templates, event-bridge, gateway-methods, notifier, handoff, metrics, adapter-types), context, credentials, session persistence, MCP schema validator, command queue, and more.
 - ESLint flat config for CLI with `eslint-config-prettier` integration.
@@ -4097,6 +4390,7 @@ pair release.
 - Provider overrides for non-Claude calls (`apiKey`, `getApiKey`, `signal`) and stream session event emission.
 
 ### Changed
+
 - 168+ MCP tools mapped to permission gates (was 64).
 - `@modelcontextprotocol/sdk` upgraded ^1.25.4 to ^1.26.0 (fixes GHSA-345p-7cg4-v4c7).
 - `Math.random()` replaced with `crypto.randomUUID()` in mcp-conversation-context, mcp-tool-composer, and error boundary.
@@ -4111,6 +4405,7 @@ pair release.
 - Language bindings updated across Node, Python, WASM, Ruby, PHP, Java, Kotlin, Swift, .NET, and Go.
 
 ### Fixed
+
 - `mcp-schema-validator.js`: `.optional().regex()` reordered to `.regex().optional()` (Zod API).
 - `x402/budget.js`: `DEFAULT_STATE` shared mutable references replaced with deep copy.
 - `credentials.js`: silent `.catch(() => {})` replaced with `console.warn`.
@@ -4122,6 +4417,7 @@ pair release.
 ## [0.6.0] - 2026-02-04
 
 ### Added
+
 - Treasury engine with SQLite-backed ledger for agent funding, swaps, and fees (stablecoin-first).
 - `stateset-treasury` CLI for wallets, deposits, balances, ledger, token registry, and pricing rules.
 - ERC-8004 identity registry helpers (SQLite) with CLI + MCP tools.
@@ -4130,17 +4426,20 @@ pair release.
 - CLI flags and env support for treasury + ERC-8004 binding.
 
 ### Changed
+
 - Stablecoin payments now record treasury withdrawals when executed.
 - Tool pricing can auto-debit treasury balances when `--apply` is set.
 
 ## [0.5.0] - 2026-02-02
 
 ### Changed
+
 - Version alignment across workspace crates, bindings, CLI, docs, and examples.
 
 ## [0.3.1] - 2026-01-29
 
 ### Added
+
 - API key authentication for HTTP gateway (Bearer token + query param).
 - Per-route permission levels (none / read / preview / write / delete / admin).
 - Sandbox mode to block browser and shell routes.
@@ -4153,6 +4452,7 @@ pair release.
 ## [0.2.4] - 2026-01-26
 
 ### Added
+
 - Vector search models and APIs across core, db, and embedded crates.
 - Embeddings service wiring for generating/querying vectors.
 - SQLite vector search migration and query helpers.
@@ -4161,44 +4461,52 @@ pair release.
 ## [0.2.0] - 2026-01-16
 
 ### Added
+
 - PostgreSQL migration coverage test and CI target for the postgres feature.
 - CLI test job in CI.
 - Supply-chain checks via cargo-deny, Dependabot, and SBOM generation.
 - Benchmarks for core, db, and embedded crates in CI.
 
 ### Changed
+
 - Version alignment across bindings, CLI templates, and installers.
 - Security policy now supports the 0.2.x line.
 
 ## [0.1.9] - 2025-01-09
 
 ### Fixed
+
 - Safer Decimal to f64 conversions across all bindings (Node, Python, Ruby, PHP, Java, Kotlin, Swift) using `to_f64_or_nan` helper instead of `unwrap_or(0.0)`.
 - Improved JNI error handling in Java bindings with `jni_or_throw` helper for better exception propagation.
 - General Ledger parsing now uses proper error propagation (`parse_required`, `parse_optional`) instead of silent defaults.
 
 ### Changed
+
 - All binding code now consistently handles numeric conversion edge cases.
 
 ## [0.1.8] - 2025-01-01
 
 ### Added
+
 - mdBook-based documentation scaffold with API reference pointers and versioning notes.
 - Docs build and version snapshot scripts under `docs/scripts/`.
 
 ## [0.1.7] - 2025-12-20
 
 ### Added
+
 - 34 new MCP tools across Payments, Shipments, Suppliers/POs, Invoices, Warranties, and Manufacturing.
 - Expanded agent and CLI coverage for additional commerce domains.
 
 ## [0.1.6] - 2025-12-20
 
 ### Added
+
 - Java bindings via JNI.
 - Ruby and PHP binding releases with native extensions.
 
 ### Fixed
+
 - JNI memory management for thread-safe handles.
 - Product variant handling in the Product API.
 - Cart total calculations using `grand_total`.

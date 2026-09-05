@@ -145,9 +145,14 @@ class ICPClient:
 
     def accept(self, quote_id: str, body: dict | None = None) -> dict:
         """Accept a Quote; returns on-chain funding instructions."""
+        acceptance = {"type": "quote.accept", "quote_id": quote_id, "buyer": self.identity.aid}
+        envelope = {**(body or {}), "acceptance": acceptance, "signature": {
+            "alg": "ed25519", "kid": self.identity.aid,
+            "sig": sign_ed25519(canonical_json(acceptance), self.identity),
+        }}
         return self._post(
             f"{self.handler_url}/icp/v1/quotes/{quote_id}/accept",
-            body or {},
+            envelope,
         )
 
     def subscribe(
@@ -440,6 +445,7 @@ class ICPClient:
             "intent": intent,
             "signature": {"alg": "ed25519", "kid": self.identity.aid, "sig": sig},
             "_pubkey_hex": self.identity.ed25519_pubkey.hex(),
+            "_x_pubkey_hex": self.identity.x25519_pubkey.hex(),
         }
         return self._post(f"{self.handler_url}/icp/v1/intents", body)
 

@@ -10,6 +10,7 @@
 
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
+import { signQuoteAcceptance } from '../src/codec.mjs';
 import { createServer } from 'node:http';
 import { generateKeyPairSync, createHash, createPublicKey, verify as nodeVerify } from 'node:crypto';
 
@@ -182,7 +183,7 @@ test('fulfill → publishes signed settlement.released to subscribed webhook', a
   const acceptResp = await fetch(`${handlerBaseUrl}/icp/v1/quotes/${quote.quote_id}/accept`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: '{}',
+    body: JSON.stringify(signQuoteAcceptance(quote.quote_id, agentAid, agentKp.privateKey)),
   });
   assert.equal(acceptResp.status, 200);
   const acceptJson = await acceptResp.json();
@@ -258,7 +259,7 @@ test('fulfill with no matching subscribers is a no-op (no webhook fired)', async
   const accept = await (await fetch(`${handlerBaseUrl}/icp/v1/quotes/${quote.quote_id}/accept`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: '{}',
+    body: JSON.stringify(signQuoteAcceptance(quote.quote_id, agentAid, agentKp.privateKey)),
   })).json();
   const escrowId = accept.funding?.escrow_id ?? accept.escrow_id ?? accept.escrow;
 
@@ -306,7 +307,7 @@ test('dispute → publishes signed dispute.opened to subscribed webhook', async 
   const purchaseBody = buildIntentEnvelope({
     ...baseIntent('purchase.create'),
     items: [
-      { sku: 'WIDGET-DISP', quantity: 1, unit_price: { amount: '40.00', currency: 'USDC' } },
+      { sku: 'WIDGET-003', quantity: 1, unit_price: { amount: '40.00', currency: 'USDC' } },
     ],
     max_total: { amount: '50.00', currency: 'USDC' },
   });
@@ -319,7 +320,7 @@ test('dispute → publishes signed dispute.opened to subscribed webhook', async 
   const acceptResp = await fetch(`${handlerBaseUrl}/icp/v1/quotes/${quote.quote_id}/accept`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: '{}',
+    body: JSON.stringify(signQuoteAcceptance(quote.quote_id, agentAid, agentKp.privateKey)),
   });
   const acceptJson = await acceptResp.json();
   const escrowId = acceptJson.funding?.escrow_id ?? acceptJson.escrow_id ?? acceptJson.escrow;

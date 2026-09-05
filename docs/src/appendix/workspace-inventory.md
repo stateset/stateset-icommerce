@@ -13,7 +13,7 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 
 | Metric | Value |
 | --- | --- |
-| Workspace version | `1.30.0` |
+| Workspace version | `1.33.0` |
 | Workspace members | 30 |
 | Default members | 19 |
 | Rust crates in workspace | 22 |
@@ -80,7 +80,7 @@ workspace membership because they require host runtimes or headers.
 
 | Metric | Value |
 | --- | --- |
-| Top-level source groups | 106 |
+| Top-level source groups | 107 |
 | Tool modules | 93 |
 | A2A modules | 61 |
 | JS dependencies | 13 |
@@ -99,8 +99,8 @@ workspace membership because they require host runtimes or headers.
 | `sync` | 18 |
 | `utils` | 15 |
 | `harness` | 14 |
+| `x402` | 10 |
 | `chains` | 9 |
-| `x402` | 9 |
 | `knowledge` | 6 |
 | `memory` | 6 |
 | `skills` | 5 |
@@ -115,6 +115,7 @@ workspace membership because they require host runtimes or headers.
 | `workflows` | 3 |
 | `approvals` | 2 |
 | `coverage` | 2 |
+| `marketplace` | 2 |
 | `webhooks` | 2 |
 | `whatsapp` | 2 |
 | `agent-catalog.js` | 1 |

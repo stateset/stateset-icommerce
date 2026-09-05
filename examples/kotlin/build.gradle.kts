@@ -4,14 +4,14 @@ plugins {
 }
 
 group = "com.stateset.examples"
-version = "1.30.0"
+version = "1.33.0"
 
 repositories {
     mavenCentral()
 }
 
 dependencies {
-    implementation("com.stateset:embedded-kotlin:1.30.0")
+    implementation("com.stateset:embedded-kotlin:1.33.0")
 }
 
 application {

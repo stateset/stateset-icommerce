@@ -2,7 +2,7 @@
 
 use crate::kernel::envelope::GuardRejection;
 use rust_decimal::Decimal;
-use stateset_core::ReserveInventory;
+use stateset_core::{EconomicCommitment, ReserveInventory};
 use uuid::Uuid;
 
 const VALIDATION: &str = "commerce.inventory_validation_failed";
@@ -25,6 +25,27 @@ pub fn reserve_inventory_guard(input: &ReserveInventory) -> Option<GuardRejectio
     Some(GuardRejection::never(VALIDATION, message))
 }
 
+/// Bind the quantity declared at the authorization boundary to the quantity
+/// the inventory executor will actually reserve.
+#[must_use]
+pub fn economic_quantity_guard(
+    commitment: Option<&EconomicCommitment>,
+    observed_quantity: Decimal,
+) -> Option<GuardRejection> {
+    let declared = commitment.and_then(|commitment| commitment.quantity.as_deref())?;
+    match declared.parse::<Decimal>() {
+        Ok(quantity) if quantity == observed_quantity => None,
+        Ok(_) => Some(GuardRejection::never(
+            "kernel.commitment_quantity_mismatch",
+            "declared economic quantity does not match the domain quantity",
+        )),
+        Err(_) => Some(GuardRejection::never(
+            "kernel.commitment_quantity_invalid",
+            "declared economic quantity is not an exact decimal",
+        )),
+    }
+}
+
 /// Static payload checks shared by `inventory.reservation.confirm` and
 /// `inventory.reservation.release`. `confirm_quantity` is the optional partial
 /// confirmation amount; `None` means release, or confirm-in-full.
@@ -41,4 +62,27 @@ pub fn reservation_lifecycle_guard(
         return None;
     };
     Some(GuardRejection::never(VALIDATION, message))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quantity_commitments_bind_exactly() {
+        let commitment = EconomicCommitment {
+            budget_id: None,
+            amount: None,
+            asset_amount: None,
+            counterparty_id: None,
+            quantity: Some("50.00".into()),
+            evidence: vec![],
+        };
+        assert!(economic_quantity_guard(Some(&commitment), Decimal::new(5_000, 2)).is_none());
+        assert_eq!(
+            economic_quantity_guard(Some(&commitment), Decimal::new(5_001, 2))
+                .map(|guard| guard.code),
+            Some("kernel.commitment_quantity_mismatch")
+        );
+    }
 }

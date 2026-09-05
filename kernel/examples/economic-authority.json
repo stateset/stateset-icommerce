@@ -1,0 +1,31 @@
+{
+  "version": "acme-procurement-v4",
+  "commands": {
+    "payments.create": {
+      "capability": "payments.create",
+      "autonomous_up_to": { "amount": "2500.00", "currency": "USD" },
+      "approval_up_to": { "amount": "25000.00", "currency": "USD" },
+      "requires_budget": true,
+      "allowed_counterparty_ids": []
+    },
+    "a2a.escrow.create": {
+      "capability": "a2a.escrow.create",
+      "autonomous_up_to": { "amount": "2500.00", "asset": "USDC" },
+      "approval_up_to": { "amount": "5000.00", "asset": "USDC" },
+      "requires_budget": false,
+      "allowed_counterparty_ids": []
+    },
+    "a2a.escrow.fund": {
+      "capability": "a2a.escrow.fund",
+      "autonomous_up_to": { "amount": "2500.00", "asset": "USDC" },
+      "approval_up_to": { "amount": "5000.00", "asset": "USDC" },
+      "requires_budget": false,
+      "allowed_counterparty_ids": []
+    }
+  },
+  "requires_mandate": true,
+  "requires_signed_authority": true,
+  "trusted_authority_keys": {
+    "acme-operator-key-v1": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

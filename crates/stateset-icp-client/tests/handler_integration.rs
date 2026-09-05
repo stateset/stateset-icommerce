@@ -267,7 +267,9 @@ fn rust_sdk_roundtrips_against_js_handler() {
             &merchant_aid,
             &settler,
             vec![LineItem {
-                sku: "WIDGET-RUST-RECOV".to_string(),
+                // Use a real catalog item: quote acceptance now performs an
+                // inventory reservation and must reject synthetic SKUs.
+                sku: "WIDGET-003".to_string(),
                 quantity: 1,
                 unit_price: Money { amount: "12.00".to_string(), currency: "USDC".to_string() },
             }],

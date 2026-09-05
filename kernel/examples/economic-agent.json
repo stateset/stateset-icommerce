@@ -1,0 +1,15 @@
+{
+  "id": "agent:acme:procurement:7",
+  "principal_id": "company:acme",
+  "role": "procurement",
+  "tenant_id": "tenant:acme",
+  "store_id": "store:production",
+  "capabilities": [
+    "payments.create",
+    "a2a.escrow.create",
+    "a2a.escrow.fund"
+  ],
+  "budget_ids": ["budget:procurement:2026-09"],
+  "credentials": [],
+  "public_key": null
+}

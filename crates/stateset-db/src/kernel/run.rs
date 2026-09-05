@@ -48,9 +48,39 @@ impl<'a, C: Serialize> CommandRun<'a, C> {
             .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
         let request_hash = semantic_request_hash(command, hash_payload)?;
         let started_at = Utc::now();
-        let policy = policy.evaluate(command, started_at);
-        let guard = guard.evaluate(command, &policy, started_at);
-        Ok(Self { command, request_hash, started_at, policy, guard, aggregate_type })
+        let mut policy_decision = policy.evaluate(command, started_at);
+        if policy.commands.get(&command.command_type).is_some_and(|rule| {
+            (rule.requires_budget || rule.max_amount.is_some() || rule.approval_above.is_some())
+                && !supports_observed_money_binding(&command.command_type)
+        }) {
+            policy_decision.allowed = false;
+            policy_decision.reason_codes.push("policy.money_binding_unsupported".to_string());
+        }
+        if policy.commands.get(&command.command_type).is_some_and(|rule| {
+            !rule.allowed_counterparty_ids.is_empty()
+                && !supports_observed_counterparty_binding(&command.command_type)
+        }) {
+            policy_decision.allowed = false;
+            policy_decision
+                .reason_codes
+                .push("policy.counterparty_binding_unsupported".to_string());
+        }
+        if policy.commands.get(&command.command_type).is_some_and(|rule| {
+            (rule.max_asset_amount.is_some() || rule.approval_above_asset.is_some())
+                && !supports_observed_asset_binding(&command.command_type)
+        }) {
+            policy_decision.allowed = false;
+            policy_decision.reason_codes.push("policy.asset_binding_unsupported".to_string());
+        }
+        let guard = guard.evaluate(command, &policy_decision, started_at);
+        Ok(Self {
+            command,
+            request_hash,
+            started_at,
+            policy: policy_decision,
+            guard,
+            aggregate_type,
+        })
     }
 
     /// Append domain-level static checks after the envelope chain. Runs only
@@ -150,5 +180,235 @@ impl<'a, C: Serialize> CommandRun<'a, C> {
         payload: serde_json::Value,
     ) -> KernelOutboxEvent {
         command_event(self.command, event_type, aggregate_type, aggregate_id, payload)
+    }
+}
+
+/// Whether the executor binds the signed, declared monetary commitment to
+/// the amount observed in the domain payload before allowing execution.
+///
+/// Monetary policy must fail closed for every command not listed here. A
+/// model-provided commitment is authorization intent, not proof of the value
+/// the underlying mutation will actually commit.
+fn supports_observed_money_binding(command_type: &str) -> bool {
+    matches!(
+        command_type,
+        "checkout.commit" | "payments.create" | "payments.create_refund" | "subscriptions.charge"
+    )
+}
+
+/// Whether the executor maps its domain target to a canonical economic ID and
+/// checks that identity against the signed commitment before mutation.
+fn supports_observed_counterparty_binding(command_type: &str) -> bool {
+    matches!(command_type, "payments.create" | "payments.create_refund" | "subscriptions.charge")
+}
+
+/// Whether the executor binds a declared exact asset amount to domain state
+/// while the kernel can still prevent the custody transition.
+fn supports_observed_asset_binding(command_type: &str) -> bool {
+    matches!(command_type, "a2a.escrow.create" | "a2a.escrow.fund")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal::Decimal;
+    use stateset_core::{EconomicCommitment, KernelCommandPolicy, KernelPrincipal, PrincipalKind};
+
+    fn principal() -> KernelPrincipal {
+        KernelPrincipal {
+            id: "operator".into(),
+            kind: PrincipalKind::Human,
+            tenant_id: Some("tenant".into()),
+            delegated_by: None,
+            capabilities: vec![],
+        }
+    }
+
+    #[test]
+    fn monetary_rules_fail_closed_without_observed_payload_binding() {
+        let mut command = CommandEnvelope::preview(
+            "orders.transition",
+            "money-binding-guard",
+            principal(),
+            serde_json::json!({}),
+        );
+        command.store_id = Some("store".into());
+        let policy = KernelPolicy::new("p1").allow(
+            "orders.transition",
+            KernelCommandPolicy::requiring([] as [&str; 0]).with_budget(),
+        );
+
+        let run = CommandRun::prepare(
+            &command,
+            &command.payload,
+            &policy,
+            EnvelopeGuard::aggregate("orders.transition"),
+            "order",
+        )
+        .expect("prepare");
+
+        assert!(!run.policy.allowed);
+        assert!(run.policy.reason_codes.iter().any(|code| code == "policy.budget_required"));
+        assert!(
+            run.policy.reason_codes.iter().any(|code| code == "policy.money_binding_unsupported")
+        );
+        assert_eq!(run.guard.as_ref().map(|guard| guard.code), Some("kernel.policy_denied"));
+    }
+
+    #[test]
+    fn asset_rules_fail_closed_after_external_settlement() {
+        let mut command = CommandEnvelope::preview(
+            "x402.settle",
+            "asset-binding-guard",
+            principal(),
+            serde_json::json!({}),
+        );
+        command.store_id = Some("store".into());
+        command.commitment = Some(EconomicCommitment::for_asset(Decimal::ONE, "USDC"));
+        let policy = KernelPolicy::new("p1").allow(
+            "x402.settle",
+            KernelCommandPolicy::requiring([] as [&str; 0])
+                .with_max_asset_amount(Decimal::new(100, 0), "USDC"),
+        );
+
+        let run = CommandRun::prepare(
+            &command,
+            &command.payload,
+            &policy,
+            EnvelopeGuard::aggregate("x402.settle"),
+            "x402_intent",
+        )
+        .expect("prepare");
+
+        assert!(!run.policy.allowed);
+        assert!(
+            run.policy.reason_codes.iter().any(|code| code == "policy.asset_binding_unsupported")
+        );
+    }
+
+    #[test]
+    fn escrow_asset_rules_reach_the_observed_binding_layer() {
+        let mut command = CommandEnvelope::preview(
+            "a2a.escrow.create",
+            "asset-binding-supported",
+            principal(),
+            serde_json::json!({}),
+        );
+        command.store_id = Some("store".into());
+        command.commitment = Some(EconomicCommitment::for_asset(Decimal::ONE, "USDC"));
+        let policy = KernelPolicy::new("p1").allow(
+            "a2a.escrow.create",
+            KernelCommandPolicy::requiring([] as [&str; 0])
+                .with_max_asset_amount(Decimal::new(100, 0), "USDC"),
+        );
+
+        let run = CommandRun::prepare(
+            &command,
+            &command.payload,
+            &policy,
+            EnvelopeGuard::create("a2a.escrow.create"),
+            "a2a_escrow",
+        )
+        .expect("prepare");
+
+        assert!(run.policy.allowed);
+        assert!(
+            !run.policy.reason_codes.iter().any(|code| code == "policy.asset_binding_unsupported")
+        );
+    }
+
+    #[test]
+    fn payment_monetary_rules_reach_the_observed_binding_layer() {
+        let mut command = CommandEnvelope::preview(
+            "payments.create",
+            "money-binding-supported",
+            principal(),
+            serde_json::json!({}),
+        );
+        command.store_id = Some("store".into());
+        let policy = KernelPolicy::new("p1")
+            .allow("payments.create", KernelCommandPolicy::requiring([] as [&str; 0]));
+
+        let run = CommandRun::prepare(
+            &command,
+            &command.payload,
+            &policy,
+            EnvelopeGuard::create("payments.create"),
+            "payment",
+        )
+        .expect("prepare");
+
+        assert!(run.policy.allowed);
+        assert!(
+            !run.policy.reason_codes.iter().any(|code| code == "policy.money_binding_unsupported")
+        );
+    }
+
+    #[test]
+    fn counterparty_allowlists_reach_supported_observed_target_binding() {
+        let mut command = CommandEnvelope::preview(
+            "payments.create",
+            "counterparty-binding-guard",
+            principal(),
+            serde_json::json!({}),
+        );
+        command.store_id = Some("store".into());
+        let policy = KernelPolicy::new("p1").allow(
+            "payments.create",
+            KernelCommandPolicy::requiring([] as [&str; 0])
+                .for_counterparties(["counterparty:allowed"]),
+        );
+
+        let run = CommandRun::prepare(
+            &command,
+            &command.payload,
+            &policy,
+            EnvelopeGuard::create("payments.create"),
+            "payment",
+        )
+        .expect("prepare");
+
+        assert!(!run.policy.allowed);
+        assert!(run.policy.reason_codes.iter().any(|code| code == "policy.counterparty_required"));
+        assert!(
+            !run.policy
+                .reason_codes
+                .iter()
+                .any(|code| code == "policy.counterparty_binding_unsupported")
+        );
+    }
+
+    #[test]
+    fn counterparty_allowlists_fail_closed_for_unbound_commands() {
+        let mut command = CommandEnvelope::preview(
+            "orders.transition",
+            "counterparty-binding-unsupported",
+            principal(),
+            serde_json::json!({}),
+        );
+        command.store_id = Some("store".into());
+        let policy = KernelPolicy::new("p1").allow(
+            "orders.transition",
+            KernelCommandPolicy::requiring([] as [&str; 0])
+                .for_counterparties(["counterparty:allowed"]),
+        );
+
+        let run = CommandRun::prepare(
+            &command,
+            &command.payload,
+            &policy,
+            EnvelopeGuard::aggregate("orders.transition"),
+            "order",
+        )
+        .expect("prepare");
+
+        assert!(!run.policy.allowed);
+        assert!(
+            run.policy
+                .reason_codes
+                .iter()
+                .any(|code| code == "policy.counterparty_binding_unsupported")
+        );
+        assert_eq!(run.guard.as_ref().map(|guard| guard.code), Some("kernel.policy_denied"));
     }
 }

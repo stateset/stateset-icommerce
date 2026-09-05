@@ -15,6 +15,49 @@ run_logged() {
   "$@" 2>&1 | tee -a "${LOG_PATH}"
 }
 
+# `npm audit` exits non-zero both when it finds vulnerabilities and when the
+# registry's audit endpoint is unreachable, so a registry outage used to read
+# as "the storefront has a high-severity vulnerability" and fail the gate. Tell
+# the two apart: a real report is JSON we can parse, a service error is not.
+# Retry the transport, then fail only on findings we can actually see.
+run_audit_with_retries() {
+  local attempt output rc
+  for attempt in 1 2 3; do
+    echo "+ npm audit --audit-level=high --json (attempt ${attempt})" | tee -a "${LOG_PATH}"
+    set +e
+    output="$(npm audit --audit-level=high --json 2>&1)"
+    rc=$?
+    set -e
+    printf '%s\n' "${output}" >> "${LOG_PATH}"
+
+    # A parseable report means the endpoint answered; rc then reflects findings.
+    if printf '%s' "${output}" | node -e '
+      let raw = "";
+      process.stdin.on("data", (c) => { raw += c; });
+      process.stdin.on("end", () => {
+        try {
+          const parsed = JSON.parse(raw);
+          process.exit(parsed && parsed.metadata ? 0 : 1);
+        } catch {
+          process.exit(1);
+        }
+      });
+    ' 2>/dev/null; then
+      if [[ ${rc} -eq 0 ]]; then
+        return 0
+      fi
+      echo "error: npm audit reported high-severity vulnerabilities" >&2
+      return 1
+    fi
+
+    echo "warning: npm audit endpoint did not return a report (attempt ${attempt})" | tee -a "${LOG_PATH}"
+    [[ ${attempt} -lt 3 ]] && sleep $((attempt * 5))
+  done
+
+  echo "error: npm audit endpoint unreachable after 3 attempts -- registry issue, not a finding" >&2
+  return 1
+}
+
 cd "${REPO_ROOT}"
 : > "${LOG_PATH}"
 run_logged node ./scripts/check-node.mjs 20.20.0
@@ -47,7 +90,7 @@ if [[ "${SKIP_DEPENDENCIES}" != "1" ]]; then
   run_logged npm install --no-fund --no-audit
   cp package-lock.json "${OUTPUT_DIR}/resolved-package-lock.json"
   RESOLVED_LOCK_SHA256="$(sha256sum package-lock.json | cut -d ' ' -f 1)"
-  run_logged npm audit --audit-level=high
+  run_audit_with_retries
   run_logged npm run seed
   # The single-quoted JavaScript intentionally contains JS template literals.
   # shellcheck disable=SC2016

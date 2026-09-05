@@ -51,6 +51,7 @@
 //! Extracting those state machines into `plans::` is the remaining work.
 
 pub mod audit;
+pub mod budget;
 pub mod envelope;
 pub mod plans;
 pub mod receipt;
@@ -58,6 +59,7 @@ pub mod replay;
 pub mod run;
 
 pub use audit::KernelAuditChain;
+pub use budget::{BudgetDebit, BudgetSnapshot, plan_budget};
 pub use envelope::{EnvelopeGuard, GuardRejection, VersionExpectation};
 pub use plans::PlanOutcome;
 pub use replay::{Replay, SealedAuditEntry, resolve_replay, verify_sealed_receipt};

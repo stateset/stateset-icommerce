@@ -2010,11 +2010,29 @@ impl SqliteCartRepository {
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
     }
 
-    pub(crate) fn validate_checkout_in_tx(
+    /// Validate checkout exactly as apply does and return the re-derived money
+    /// that the order would commit, without mutating the cart.
+    #[cfg(test)]
+    pub(crate) fn checkout_money_in_tx(
         &self,
         tx: &rusqlite::Transaction<'_>,
         cart_id: CartId,
-    ) -> std::result::Result<(), rusqlite::Error> {
+    ) -> std::result::Result<(Decimal, CurrencyCode), rusqlite::Error> {
+        self.checkout_money_with_policy_in_tx(
+            tx,
+            cart_id,
+            stateset_core::StockPolicy::default(),
+            None,
+        )
+    }
+
+    pub(crate) fn checkout_money_with_policy_in_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        cart_id: CartId,
+        stock_policy: stateset_core::StockPolicy,
+        expected_cart_fingerprint: Option<&str>,
+    ) -> std::result::Result<(Decimal, CurrencyCode), rusqlite::Error> {
         let mut cart = tx.query_row(
             "SELECT * FROM carts WHERE id = ?",
             [cart_id.to_string()],
@@ -2022,8 +2040,14 @@ impl SqliteCartRepository {
         )?;
         cart.items = Self::load_cart_items_with_conn(tx, cart_id)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        cart.verify_checkout_fingerprint(expected_cart_fingerprint)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
         if cart.status == CartStatus::Completed {
-            return Ok(());
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                CommerceError::Conflict(
+                    "cart was already checked out under a different economic command".into(),
+                ),
+            )));
         }
         if !cart.is_checkoutable_status() {
             return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -2085,6 +2109,7 @@ impl SqliteCartRepository {
         // carry their own usage limits; Preview must refuse those too.
         SqlitePromotionRepository::ensure_cart_promotions_consumable_with_conn(tx, &cart, redeemer)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let checkout_money = (derived.grand_total(&cart), cart.currency);
         let input = CreateOrder {
             customer_id,
             items: cart
@@ -2119,9 +2144,10 @@ impl SqliteCartRepository {
             tax_amount: Some(cart.tax_amount),
             shipping_amount: Some(cart.shipping_amount),
             discount_amount: Some(cart.discount_amount),
-            stock_policy: stateset_core::StockPolicy::default(),
+            stock_policy,
         };
-        SqliteOrderRepository::validate_create_order_in_tx(tx, &input)
+        SqliteOrderRepository::validate_create_order_in_tx(tx, &input)?;
+        Ok(checkout_money)
     }
 
     /// `mark_paid` promotes the minted order straight to `PaymentStatus::Paid`
@@ -2136,6 +2162,23 @@ impl SqliteCartRepository {
         cart_id: CartId,
         x402_settled: bool,
         mark_paid: bool,
+    ) -> std::result::Result<CheckoutResult, rusqlite::Error> {
+        self.complete_checkout_with_policy_in_tx(
+            tx,
+            cart_id,
+            x402_settled,
+            mark_paid,
+            stateset_core::StockPolicy::default(),
+        )
+    }
+
+    pub(crate) fn complete_checkout_with_policy_in_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        cart_id: CartId,
+        x402_settled: bool,
+        mark_paid: bool,
+        stock_policy: stateset_core::StockPolicy,
     ) -> std::result::Result<CheckoutResult, rusqlite::Error> {
         let mut cart = match tx.query_row(
             "SELECT * FROM carts WHERE id = ?",
@@ -2256,7 +2299,7 @@ impl SqliteCartRepository {
                 tax_amount: Some(cart.tax_amount),
                 shipping_amount: Some(cart.shipping_amount),
                 discount_amount: Some(cart.discount_amount),
-                stock_policy: stateset_core::StockPolicy::default(),
+                stock_policy,
             },
         )?;
 
@@ -4018,13 +4061,13 @@ mod tests {
             assert_refused(f.carts.apply_discount(other.id, "CHECKOUT10"), "usage limit");
         }
 
-        /// Run the kernel's PREVIEW path (`validate_checkout_in_tx`) against a
+        /// Run the kernel's PREVIEW path (`checkout_money_in_tx`) against a
         /// cart and return what it decided, rolling back whatever it touched.
         /// The refusal message, if it refused.
         fn preview_checkout(f: &Fixture, cart_id: CartId) -> std::result::Result<(), String> {
             let mut conn = f.carts.conn().expect("conn");
             let tx = crate::sqlite::begin_immediate(&mut conn).expect("begin");
-            let outcome = f.carts.validate_checkout_in_tx(&tx, cart_id);
+            let outcome = f.carts.checkout_money_in_tx(&tx, cart_id).map(|_| ());
             tx.rollback().expect("preview writes nothing");
             outcome.map_err(|error| match &error {
                 rusqlite::Error::ToSqlConversionFailure(source) => source
@@ -4492,7 +4535,7 @@ mod tests {
             assert_eq!(cart.grand_total, dec!(95));
         }
 
-        /// The kernel's checkout Preview (`validate_checkout_in_tx`) runs the
+        /// The kernel's checkout Preview (`checkout_money_in_tx`) runs the
         /// same coupon re-validation as Apply, so it cannot succeed where
         /// Apply would refuse, and it reports the same error.
         #[test]
@@ -4510,7 +4553,7 @@ mod tests {
                 .expect("reprice");
 
             let preview = crate::sqlite::with_immediate_transaction(&f.carts.pool, |tx| {
-                f.carts.validate_checkout_in_tx(tx, cart.id)
+                f.carts.checkout_money_in_tx(tx, cart.id).map(|_| ())
             });
             let apply = f.carts.complete(cart.id);
             let (preview_err, apply_err) = match (preview, apply) {
