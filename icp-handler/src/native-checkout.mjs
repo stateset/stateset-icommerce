@@ -24,6 +24,7 @@ export class NativeMerchantCheckout {
     readReceipt,
     allowApply = false,
     stockPolicy = 'allow_backorder',
+    requireCartFingerprint = false,
   }) {
     this.store = store;
     this.commerce = commerce;
@@ -41,6 +42,7 @@ export class NativeMerchantCheckout {
     if (!['allow_backorder', 'reject_if_insufficient'].includes(stockPolicy))
       throw new Error('invalid checkout stock policy');
     this.stockPolicy = stockPolicy;
+    this.requireCartFingerprint = requireCartFingerprint === true;
     this.scope = hash([principal.id, principal.tenant_id, storeId]);
     this.operations = store.collection('native_checkout_operations');
     this.claims = store.collection('native_checkout_carts');
@@ -74,6 +76,16 @@ export class NativeMerchantCheckout {
       throw new Error('invalid or expired native checkout quote');
     }
     required(quote.cartId, 'quote cartId');
+    if (this.requireCartFingerprint && !quote.cartFingerprint)
+      throw new Error('quoted cart fingerprint is required');
+    if (quote.cartFingerprint !== undefined) {
+      if (
+        typeof quote.cartFingerprint !== 'string' ||
+        !/^sha256:[0-9a-f]{64}$/.test(quote.cartFingerprint)
+      )
+        throw new Error('invalid quoted cart fingerprint');
+      await this.requireFeature('checkout.cart_fingerprint.v1');
+    }
     const command = {
       contract_version: '1.0',
       command_id: randomUUID(),
@@ -97,6 +109,8 @@ export class NativeMerchantCheckout {
     // Preserve legacy command serialization when backorders are permitted.
     if (this.stockPolicy === 'reject_if_insufficient')
       command.payload.stock_policy = this.stockPolicy;
+    if (quote.cartFingerprint !== undefined)
+      command.payload.expected_cart_fingerprint = quote.cartFingerprint;
     if (!this.allowApply) {
       command.idempotency_key = `native-checkout-preview:${randomUUID()}`;
       return {
@@ -131,9 +145,15 @@ export class NativeMerchantCheckout {
     try {
       receipt = await this.readReceipt(command.idempotency_key);
       if (receipt === null) {
+        if (this.requireCartFingerprint && !command.payload.expected_cart_fingerprint)
+          throw new Error(
+            'quoted cart fingerprint is required; legacy intent cannot be dispatched',
+          );
         // Check the persisted policy, not current constructor defaults. A
         // restart or binary downgrade must never weaken an accepted intent.
         await this.requireStockPolicySupport(command.payload.stock_policy);
+        if (command.payload.expected_cart_fingerprint !== undefined)
+          await this.requireFeature('checkout.cart_fingerprint.v1');
         receipt = await this.commerce.executeKernelCommand(
           structuredClone(command),
           structuredClone(this.policy),
@@ -167,13 +187,15 @@ export class NativeMerchantCheckout {
   async requireStockPolicySupport(policy) {
     if (policy === undefined || policy === 'allow_backorder') return;
     if (policy !== 'reject_if_insufficient') throw new Error('invalid checkout stock policy');
+    await this.requireFeature('checkout.stock_policy.v1');
+  }
+
+  async requireFeature(feature) {
     const features =
       typeof this.commerce.kernelFeatures === 'function'
         ? await this.commerce.kernelFeatures()
         : null;
-    if (!Array.isArray(features) || !features.includes('checkout.stock_policy.v1'))
-      throw new Error(
-        'native binary does not advertise checkout.stock_policy.v1; rebuild or upgrade',
-      );
+    if (!Array.isArray(features) || !features.includes(feature))
+      throw new Error(`native binary does not advertise ${feature}; rebuild or upgrade`);
   }
 }

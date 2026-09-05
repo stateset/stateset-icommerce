@@ -3562,6 +3562,7 @@ impl PgKernelExecutor {
                     &mut tx,
                     command.payload.cart_id.into_uuid(),
                     command.payload.stock_policy.unwrap_or_default(),
+                    command.payload.expected_cart_fingerprint.as_deref(),
                 )
                 .await
             {
@@ -3615,6 +3616,7 @@ impl PgKernelExecutor {
                 &mut tx,
                 command.payload.cart_id.into_uuid(),
                 command.payload.stock_policy.unwrap_or_default(),
+                command.payload.expected_cart_fingerprint.as_deref(),
             )
             .await
         {

@@ -30,6 +30,8 @@ const REQUIRED_PACKED_FILES = [
   'toolkit-helpers.mjs',
   'purchase-runtime.mjs',
   'purchase-runtime.d.ts',
+  'set-payment.mjs',
+  'set-submission.mjs',
 ];
 
 function runPackDryRun() {
@@ -131,6 +133,9 @@ async function verifyPackedImports(packageDir) {
   assert.equal(typeof purchase.PurchaseRuntime, 'function');
   assert.equal(typeof purchase.SqlitePurchaseStore, 'function');
   assert.equal(typeof purchase.createKernelPurchaseAdapter, 'function');
+  assert.equal(typeof purchase.createAgentCommerce, 'function');
+  assert.equal(typeof purchase.createSetPaymentAdapter, 'function');
+  assert.equal(typeof purchase.createDurableSetSubmission, 'function');
   const rootModule = await import(pathToFileURL(path.join(packageDir, 'index.js')).href);
   const Commerce = rootModule.Commerce || rootModule.default?.Commerce;
   assert.equal(typeof Commerce, 'function', 'Packed root module should expose Commerce.');

@@ -4675,6 +4675,11 @@ export declare class Commerce {
    */
   kernelFeatures(): Array<string>
   /**
+   * Read exact quote terms and their fingerprint from the same cart snapshot.
+   * Keep this result with the issued quote; never recalculate it at acceptance.
+   */
+  checkoutSnapshot(cartId: string): Promise<any>
+  /**
    * Create a new Commerce instance with a database path
    * Use ":memory:" for an in-memory database
    */

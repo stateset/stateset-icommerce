@@ -848,7 +848,7 @@ mod tests {
                 delegated_by: Some("user:test".into()),
                 capabilities: vec!["checkout.commit".into()],
             },
-            CommitCheckout { cart_id: cart.id, stock_policy: None },
+            CommitCheckout::new(cart.id),
         );
         command.store_id = Some("store:test".into());
         command.commitment = Some(EconomicCommitment::for_money(

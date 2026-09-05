@@ -85,7 +85,23 @@ impl Commerce {
     /// this before relying on optional safety fields that old binaries ignore.
     #[napi]
     pub fn kernel_features(&self) -> Vec<String> {
-        vec!["checkout.stock_policy.v1".to_owned()]
+        vec!["checkout.stock_policy.v1".to_owned(), "checkout.cart_fingerprint.v1".to_owned()]
+    }
+
+    /// Read exact quote terms and their fingerprint from the same cart snapshot.
+    /// Keep this result with the issued quote; never recalculate it at acceptance.
+    #[napi]
+    pub async fn checkout_snapshot(&self, cart_id: String) -> Result<serde_json::Value> {
+        let id: CartId = cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?;
+        let commerce = self.inner.lock().await;
+        let cart = commerce
+            .carts()
+            .get(id)
+            .map_err(|error| Error::from_reason(error.to_string()))?
+            .ok_or_else(|| Error::from_reason("Cart not found"))?;
+        let fingerprint =
+            cart.checkout_fingerprint().map_err(|error| Error::from_reason(error.to_string()))?;
+        Ok(serde_json::json!({ "cart": cart, "fingerprint": fingerprint }))
     }
 
     /// Create a new Commerce instance with a database path

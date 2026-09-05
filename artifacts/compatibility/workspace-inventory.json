@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.32.0",
+    "version": "1.33.0",
     "memberCount": 30,
     "defaultMemberCount": 19,
     "rustCrateCount": 22,
@@ -594,11 +594,11 @@
         "count": 14
       },
       {
-        "name": "chains",
-        "count": 9
+        "name": "x402",
+        "count": 10
       },
       {
-        "name": "x402",
+        "name": "chains",
         "count": 9
       },
       {

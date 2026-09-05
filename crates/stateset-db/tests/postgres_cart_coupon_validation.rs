@@ -996,7 +996,7 @@ async fn postgres_checkout_preview_refuses_coupon_that_stopped_qualifying() {
             delegated_by: Some("user-postgres".into()),
             capabilities: vec!["checkout.commit".into()],
         },
-        CommitCheckout { cart_id: cart.id, stock_policy: None },
+        CommitCheckout::new(cart.id),
     );
     preview.store_id = Some("store-postgres".into());
     preview.policy_version = Some("commerce-policy-1".into());
@@ -1599,7 +1599,7 @@ fn checkout_command(
             delegated_by: Some("user-1".into()),
             capabilities: vec!["checkout.commit".into()],
         },
-        stateset_core::CommitCheckout { cart_id, stock_policy: None },
+        stateset_core::CommitCheckout::new(cart_id),
     );
     command.store_id = Some("store-1".into());
     command.policy_version = Some("cart-round6".into());

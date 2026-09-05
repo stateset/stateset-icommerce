@@ -6,6 +6,36 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.33.0] - 2026-09-05
+
+### Added
+
+- Simple agent commerce purchase API with operator-owned currency, payer and
+  budget mapping, exact asset validation, and payment-evidence binding.
+- Cart checkout fingerprints enforced inside SQLite and PostgreSQL kernel
+  transactions, with native capability discovery and strict bridge checks.
+- Set batch-settlement adapter verifying individual payment events, canonical
+  blocks and RPC finality before completing a purchase.
+- Durable SQLite submission journal with shared payer nonce allocation,
+  immutable signing plans, validated signed artifacts, and identical-byte recovery.
+- Concrete EIP-712 payer authorization, single-payment batch encoding and
+  EIP-1559 relayer transaction verification with operator gas ceilings.
+- Opt-in sequencer UUID identity profile with capability-gated submission;
+  existing SHA-256 payment identities remain the default.
+- Real process-kill recovery tests and cross-repository integration documentation.
+
+### Compatibility and release boundaries
+
+- Rust `CommitCheckout` literals require `expected_cart_fingerprint: None` for
+  legacy behavior; omitted JSON fields retain compatibility.
+- Never switch payment identity profiles for unresolved durable operations.
+  The UUID profile requires coordinated sequencer capability support, maintained
+  in its separate repository; this release does not publish that repository.
+- Submission remains operator opt-in. No live-money settlement is certified.
+  The HTTP gateway, admission-time payer authorization verification, PostgreSQL
+  cross-service concurrency and full three-system settlement tests remain gates.
+- Finality relies on the operator's trusted RPC, not an independent light client.
+
 ## [1.32.0] - 2026-09-05
 
 ### Added

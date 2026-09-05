@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,7 @@ import { Commerce } from '../../../bindings/node/index.js';
 import { SqliteProtocolStore } from '../../../icp-handler/src/sqlite-store.mjs';
 import { NativeMerchantCheckout } from '../../../icp-handler/src/native-checkout.mjs';
 import { amount } from '../../../icp-handler/src/quote-money.mjs';
+import { canonicalJson } from '../../../icp-handler/src/codec.mjs';
 
 async function fixture(initialQuantity = 10) {
   const dir = mkdtempSync(join(tmpdir(), 'native-merchant-'));
@@ -92,6 +93,134 @@ async function fixture(initialQuantity = 10) {
   };
 }
 const request = { quoteId: 'quote:native', idempotencyKey: 'accept:native' };
+
+test('required cart binding rejects missing terms and incompatible engines before journaling', async () => {
+  const f = await fixture();
+  try {
+    const runtime = new NativeMerchantCheckout({ ...f.options, requireCartFingerprint: true });
+    await assert.rejects(runtime.accept(request), /fingerprint is required/);
+    f.quote.cartFingerprint = 'sha256:invalid';
+    await assert.rejects(runtime.accept(request), /invalid quoted cart fingerprint/);
+    f.quote.cartFingerprint = `sha256:${'a'.repeat(64)}`;
+    let calls = 0;
+    const incompatible = new NativeMerchantCheckout({
+      ...f.options,
+      requireCartFingerprint: true,
+      commerce: {
+        kernelFeatures: () => [],
+        executeKernelCommand() {
+          calls++;
+        },
+      },
+    });
+    await assert.rejects(incompatible.accept(request), /does not advertise/);
+    assert.equal(calls, 0);
+    assert.equal(f.options.store.collection('native_checkout_operations').size, 0);
+    assert.equal(f.options.store.collection('native_checkout_carts').size, 0);
+  } finally {
+    f.close();
+  }
+});
+
+for (const mutation of [
+  "UPDATE cart_items SET sku='SAME-PRICE-SUBSTITUTION'",
+  "UPDATE carts SET customer_email='another@example.com'",
+  "UPDATE carts SET shipping_address=json_set(shipping_address,'$.line1','Another address')",
+]) {
+  test(`quoted snapshot rejects changed terms: ${mutation}`, async () => {
+    const f = await fixture();
+    try {
+      const snapshot = await f.commerce.checkoutSnapshot(f.cart.id);
+      assert.equal(snapshot.cart.id, f.cart.id);
+      assert.equal(typeof snapshot.cart.grand_total, 'string');
+      assert.equal(amount(snapshot.cart.grand_total), amount(f.quote.amount));
+      assert.equal(typeof snapshot.cart.items[0].unit_price, 'string');
+      assert.match(snapshot.fingerprint, /^sha256:[0-9a-f]{64}$/);
+      const canonicalCart = structuredClone(snapshot.cart);
+      canonicalCart.items.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      assert.equal(
+        snapshot.fingerprint,
+        `sha256:${createHash('sha256')
+          .update(canonicalJson(['stateset.checkout.cart.v1', canonicalCart]))
+          .digest('hex')}`,
+      );
+      f.quote.cartFingerprint = snapshot.fingerprint;
+      f.db.exec(mutation);
+      const runtime = new NativeMerchantCheckout({ ...f.options, requireCartFingerprint: true });
+      const result = await runtime.accept(request);
+      assert.equal(result.status, 'rejected', JSON.stringify(result));
+      assert.match(result.receipt.error_message, /fingerprint/);
+      assert.equal(f.db.prepare('SELECT COUNT(*) AS count FROM orders').get().count, 0);
+      assert.equal((await f.commerce.inventory.getStock('NATIVE-100')).totalAllocated, '0');
+    } finally {
+      f.close();
+    }
+  });
+}
+
+test('bound checkout survives lost response and binary downgrade without redispatch', async () => {
+  const f = await fixture();
+  try {
+    f.quote.cartFingerprint = (await f.commerce.checkoutSnapshot(f.cart.id)).fingerprint;
+    const interrupted = new NativeMerchantCheckout({
+      ...f.options,
+      requireCartFingerprint: true,
+      commerce: {
+        kernelFeatures: () => f.commerce.kernelFeatures(),
+        executeKernelCommand() {
+          throw new Error('before dispatch');
+        },
+      },
+    });
+    const first = await interrupted.accept(request);
+    assert.equal(first.status, 'reconciling');
+    let calls = 0;
+    const downgraded = new NativeMerchantCheckout({
+      ...f.options,
+      commerce: {
+        executeKernelCommand() {
+          calls++;
+        },
+      },
+    });
+    const blocked = await downgraded.resume(first.id);
+    assert.equal(blocked.status, 'reconciling');
+    assert.match(blocked.error, /does not advertise/);
+    const restored = await new NativeMerchantCheckout(f.options).resume(first.id);
+    assert.equal(restored.status, 'accepted', JSON.stringify(restored));
+    assert.deepEqual(await downgraded.resume(first.id), restored);
+    assert.equal(calls, 0);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS count FROM orders').get().count, 1);
+  } finally {
+    f.close();
+  }
+});
+
+test('requiring fingerprints on restart blocks unresolved legacy intents but permits receipt recovery', async () => {
+  const f = await fixture();
+  try {
+    const legacy = new NativeMerchantCheckout({
+      ...f.options,
+      commerce: {
+        executeKernelCommand() {
+          throw new Error('before dispatch');
+        },
+      },
+    });
+    const first = await legacy.accept(request);
+    assert.equal(first.status, 'reconciling');
+    const strict = new NativeMerchantCheckout({ ...f.options, requireCartFingerprint: true });
+    const blocked = await strict.resume(first.id);
+    assert.equal(blocked.status, 'reconciling');
+    assert.match(blocked.error, /legacy intent cannot be dispatched/);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS count FROM orders').get().count, 0);
+    const completed = await f.runtime.resume(first.id);
+    assert.equal(completed.status, 'accepted');
+    assert.deepEqual(await strict.resume(first.id), completed);
+  } finally {
+    f.close();
+  }
+});
 
 test('strict checkout fails closed on missing or malformed native feature support', async () => {
   const f = await fixture();

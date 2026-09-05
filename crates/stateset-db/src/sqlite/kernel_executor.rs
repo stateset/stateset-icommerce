@@ -3416,6 +3416,7 @@ impl SqliteKernelExecutor {
                     tx,
                     command.payload.cart_id,
                     command.payload.stock_policy.unwrap_or_default(),
+                    command.payload.expected_cart_fingerprint.as_deref(),
                 ) {
                     Ok(money) => money,
                     Err(error) => {
@@ -3459,6 +3460,7 @@ impl SqliteKernelExecutor {
                 tx,
                 command.payload.cart_id,
                 command.payload.stock_policy.unwrap_or_default(),
+                command.payload.expected_cart_fingerprint.as_deref(),
             ) {
                 if let Some(commerce_error) = sqlite_commerce_error(&error) {
                     let mut receipt = rejected_receipt(

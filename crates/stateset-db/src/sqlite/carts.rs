@@ -2018,7 +2018,12 @@ impl SqliteCartRepository {
         tx: &rusqlite::Transaction<'_>,
         cart_id: CartId,
     ) -> std::result::Result<(Decimal, CurrencyCode), rusqlite::Error> {
-        self.checkout_money_with_policy_in_tx(tx, cart_id, stateset_core::StockPolicy::default())
+        self.checkout_money_with_policy_in_tx(
+            tx,
+            cart_id,
+            stateset_core::StockPolicy::default(),
+            None,
+        )
     }
 
     pub(crate) fn checkout_money_with_policy_in_tx(
@@ -2026,6 +2031,7 @@ impl SqliteCartRepository {
         tx: &rusqlite::Transaction<'_>,
         cart_id: CartId,
         stock_policy: stateset_core::StockPolicy,
+        expected_cart_fingerprint: Option<&str>,
     ) -> std::result::Result<(Decimal, CurrencyCode), rusqlite::Error> {
         let mut cart = tx.query_row(
             "SELECT * FROM carts WHERE id = ?",
@@ -2033,6 +2039,8 @@ impl SqliteCartRepository {
             Self::row_to_cart,
         )?;
         cart.items = Self::load_cart_items_with_conn(tx, cart_id)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        cart.verify_checkout_fingerprint(expected_cart_fingerprint)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
         if cart.status == CartStatus::Completed {
             return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(

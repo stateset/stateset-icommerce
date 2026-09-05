@@ -71,10 +71,11 @@ merchant processes competing for inventory in the same database.
 using the embedded engine. This is **not yet connected to the reference HTTP
 launcher**. Its operator-owned constructor accepts `commerce`, a
 `SqliteProtocolStore`, `principal`, `storeId`, `policy`, `resolveQuote`,
-`readReceipt`, optional `stockPolicy`, and an explicit `allowApply: true` to enable writes.
+`readReceipt`, optional `stockPolicy` and `requireCartFingerprint`, and an explicit
+`allowApply: true` to enable writes.
 
 Agents supply only `{ quoteId, idempotencyKey }` to `accept()`. The trusted quote
-resolver supplies `{ quoteId, cartId, amount, currency, expiresAt, budgetId? }`.
+resolver supplies `{ quoteId, cartId, amount, currency, expiresAt, budgetId?, cartFingerprint? }`.
 Amounts are decimal strings; currency must be supported by native checkout.
 There is no implicit conversion from USDC to USD. Configure the kernel policy
 with `requires_budget: true` and provision a scoped economic budget when budget
@@ -126,10 +127,35 @@ and return `null` only for authoritative absence. Lookup errors return
 checkpoints, not a distributed transaction. Preview can record a native preview
 receipt, but creates no order, stock allocation or journal claim.
 
-The host must authenticate the buyer and authorize quote access in its resolver,
-dedicate the cart to that quote, and prevent other writers from changing it.
-The native commitment checks total, currency and deadline; it does not freeze
-line items or customer identity against same-total cart changes. Cart claims
+### Binding quoted terms
+
+With rebuilt native bindings, call `commerce.checkoutSnapshot(cartId)` when
+issuing the quote. This read-only method returns `{ cart, fingerprint }` from
+the same snapshot, with exact decimal strings and native snake-case field names.
+Derive the offered terms from that returned cart and persist the fingerprint
+with the immutable quote. **Never recompute the fingerprint at acceptance**:
+doing so would authorize terms the buyer did not accept.
+
+Configure `requireCartFingerprint: true` on the bridge and return the saved
+`cartFingerprint` from the operator-owned resolver. The kernel compares it inside
+the checkout transaction, before economic effects, in both preview and apply.
+Same-price SKU substitutions and changes to customer, address, quantity or expiry
+are rejected. The versioned commitment covers the complete cart, including
+metadata and timestamps; even a harmless timestamp update requires a fresh quote.
+Line query order does not affect the commitment. Existing committed operations
+replay their original receipt even though checkout itself changed the cart.
+
+The bridge requires `checkout.cart_fingerprint.v1` feature support whenever a
+fingerprint is present, including recovery of an unresolved saved command. Old
+binaries can retrieve committed receipts but cannot dispatch bound commands.
+Enabling `requireCartFingerprint` also blocks dispatch of unresolved legacy
+commands without a fingerprint; committed legacy receipts remain recoverable.
+Omitting the fingerprint retains legacy behavior for existing callers: only
+total, currency and deadline are checked. Production hosts should require it.
+
+The host must still authenticate the buyer and authorize quote access in its
+resolver. A cart hash does not authenticate the buyer, merchant or payment rail.
+Cart claims
 remain bound after rejection, so another acceptance key cannot bypass the
 original result. Policy changes require an explicit operator recovery decision.
 This bridge does not implement payment capture, refunds or escrow settlement.

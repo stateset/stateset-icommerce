@@ -1440,6 +1440,7 @@ impl PgCartRepository {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         id: Uuid,
         stock_policy: stateset_core::StockPolicy,
+        expected_cart_fingerprint: Option<&str>,
     ) -> Result<(Decimal, CurrencyCode)> {
         let row: CartRow = sqlx::query_as("SELECT * FROM carts WHERE id = $1 FOR NO KEY UPDATE")
             .bind(id)
@@ -1454,6 +1455,7 @@ impl PgCartRepository {
                 .await
                 .map_err(map_db_error)?;
         let cart = row.into_cart(item_rows.into_iter().map(Into::into).collect())?;
+        cart.verify_checkout_fingerprint(expected_cart_fingerprint)?;
         if cart.status == CartStatus::Completed {
             return Err(CommerceError::Conflict(
                 "cart was already checked out under a different economic command".into(),

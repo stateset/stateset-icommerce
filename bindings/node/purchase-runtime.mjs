@@ -3,6 +3,8 @@
  * authoritative lookup. A lost response is reconciled before resubmission.
  */
 import { createHash, randomUUID } from 'node:crypto';
+export { createSetPaymentAdapter } from './set-payment.mjs';
+export { createDurableSetSubmission } from './set-submission.mjs';
 
 const SCALE = 10n ** 18n;
 function units(value) {
@@ -44,6 +46,115 @@ const REQUIRED_EVIDENCE = {
   confirm_inventory: 'reservation_id',
   release_inventory: 'reservation_id',
 };
+
+/** Agent-facing purchase surface. Configuration and adapters belong to the host,
+ * not the model. This is an EVM token profile, not a wallet or chain verifier.
+ */
+export function createAgentCommerce({ currencies, ...options }) {
+  const address = /^0x[0-9a-fA-F]{40}$/;
+  const bindings = structuredClone(currencies);
+  if (
+    !bindings ||
+    typeof bindings !== 'object' ||
+    Array.isArray(bindings) ||
+    !Object.keys(bindings).length
+  )
+    throw new Error('operator currency bindings are required');
+  const assets = new Map();
+  for (const [currency, binding] of Object.entries(bindings)) {
+    if (
+      !/^[A-Z][A-Z0-9]{1,11}$/.test(currency) ||
+      !/^eip155:[1-9]\d*\/erc20:0x[0-9a-fA-F]{40}$/.test(binding?.asset) ||
+      !address.test(binding?.payer) ||
+      !Number.isInteger(binding?.decimals) ||
+      binding.decimals < 0 ||
+      binding.decimals > 18
+    )
+      throw new Error('invalid operator currency binding');
+    text(binding.budgetId, 'operator budgetId');
+    if (assets.has(binding.asset.toLowerCase())) throw new Error('duplicate asset binding');
+    assets.set(binding.asset.toLowerCase(), binding);
+  }
+  function precision(value, binding) {
+    if (units(value) % 10n ** BigInt(18 - binding.decimals) !== 0n)
+      throw new Error('amount exceeds configured token precision');
+  }
+  function checkQuote(quote) {
+    const binding = assets.get(quote?.asset?.toLowerCase());
+    if (!binding || binding.asset !== quote.asset || !address.test(quote.payee))
+      throw new Error('quote requires a configured asset and explicit payee');
+    precision(quote.amount, binding);
+    return binding;
+  }
+  const payment = options.adapters?.pay;
+  if (
+    typeof options.resolveQuote !== 'function' ||
+    typeof payment?.execute !== 'function' ||
+    typeof payment?.lookup !== 'function'
+  )
+    throw new Error('operator quote resolver and payment adapter are required');
+  const checkedPayment = Object.fromEntries(
+    ['execute', 'lookup'].map((method) => [
+      method,
+      async (context) => {
+        const binding = checkQuote(context.operation.quote);
+        const expectedPayee = context.operation.quote.payee.toLowerCase();
+        const result = await payment[method](structuredClone(context));
+        if (result?.status === 'succeeded') {
+          const evidence = result.evidence;
+          if (
+            !address.test(evidence?.payer) ||
+            !address.test(evidence?.payee) ||
+            evidence.payer.toLowerCase() !== binding.payer.toLowerCase() ||
+            evidence.payee.toLowerCase() !== expectedPayee
+          )
+            throw new Error('payment evidence does not match authorized payer and quoted payee');
+        }
+        return result;
+      },
+    ]),
+  );
+  const runtime = new PurchaseRuntime({
+    ...options,
+    adapters: { ...options.adapters, pay: checkedPayment },
+    resolveQuote: async (...args) => {
+      const quote = structuredClone(await options.resolveQuote(...args));
+      checkQuote(quote);
+      return quote;
+    },
+  });
+  return Object.freeze({
+    scope: runtime.scope,
+    async buy(input) {
+      if (
+        !input ||
+        Object.keys(input).some(
+          (key) => !['quoteId', 'idempotencyKey', 'maxTotal'].includes(key),
+        ) ||
+        !input.maxTotal ||
+        Object.keys(input.maxTotal).some((key) => !['amount', 'currency'].includes(key))
+      )
+        throw new Error('unknown purchase argument');
+      const binding = Object.hasOwn(bindings, input.maxTotal.currency)
+        ? bindings[input.maxTotal.currency]
+        : null;
+      if (!binding) throw new Error('currency is not enabled by the operator');
+      precision(input.maxTotal.amount, binding);
+      return runtime.buy({
+        quoteId: input.quoteId,
+        idempotencyKey: input.idempotencyKey,
+        maxAmount: input.maxTotal.amount,
+        asset: binding.asset,
+        budgetId: binding.budgetId,
+      });
+    },
+    get: (id) => runtime.get(id),
+    resume: (id) => runtime.resume(id),
+    cancel: (id) => runtime.cancel(id),
+    pending: (query) => runtime.pending(query),
+    recover: (query) => runtime.recover(query),
+  });
+}
 
 /** Caller owns the better-sqlite3-compatible handle and its backup lifecycle.
  * All balance/operation changes use one immediate transaction. Distinct agents

@@ -6,6 +6,11 @@ A high tool count or passing unit suite does not establish safe autonomous
 commerce. Release readiness requires evidence for the full economic lifecycle.
 These gates track the source tree, including unreleased changes.
 
+The [Set integration review](set-integration-gates.md) identifies a blocking
+intent-identity/signing-order mismatch between the sequencer and Set. Local
+signature verification now uses real cryptography, but does not resolve that
+cross-service protocol mismatch or establish production readiness.
+
 | Gate                      | Current evidence                                                                                                                                 | Required before claiming production completeness                                                                           |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
 | Exact money               | Rust decimal primitives; reference quote, subscription, return and payout arithmetic uses integers; malformed input and conservation regressions | Audit every provider conversion and enforce asset precision at payment boundaries                                          |
@@ -25,8 +30,11 @@ These gates track the source tree, including unreleased changes.
    replay and two-worker inventory contention (see [durable merchant](durable-merchant.md)).
    A separate `NativeMerchantCheckout` bridge now commits native orders, stock,
    budgets, outbox and receipts with lost-response recovery tests. It is not yet
-   wired into the HTTP merchant, and host-owned quote/cart immutability remains
-   required. A source-tree transactional checkout stock policy is now implemented
+   wired into the HTTP merchant. The source tree now supports a versioned cart
+   fingerprint checked inside native checkout; hosts must save it when issuing
+   the quote and enable `requireCartFingerprint` on the bridge. This binds full
+   cart terms, not just total and currency. A source-tree transactional checkout
+   stock policy is implemented
    for SQLite and PostgreSQL. The Node bridge supports strict-stock acceptance
    for tracked SKUs and checks native feature support before dispatch; HTTP
    merchant integration and live PostgreSQL verification remain pending.

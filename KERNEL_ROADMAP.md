@@ -11,7 +11,7 @@ adoption, and adoption is earned in a specific order.*
 
 ## Thesis
 
-### Implementation update — September 2026 (source release 1.32.0)
+### Implementation update — September 2026 (source release 1.33.0)
 
 The source tree now includes a [durable Node purchase coordinator](docs/src/durable-purchases.md):
 shared exact asset budgets, persisted per-step dispatch, authoritative outcome

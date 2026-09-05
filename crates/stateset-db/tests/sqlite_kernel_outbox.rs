@@ -2086,7 +2086,7 @@ fn checkout_command(key: &str, cart_id: stateset_core::CartId) -> CommandEnvelop
             delegated_by: Some("user-1".into()),
             capabilities: vec!["checkout.commit".into()],
         },
-        CommitCheckout { cart_id, stock_policy: None },
+        CommitCheckout::new(cart_id),
     );
     command.store_id = Some("store-1".into());
     command.policy_version = Some("commerce-policy-1".into());
@@ -2154,6 +2154,72 @@ fn ready_checkout_cart(db: &SqliteDatabase, email: &str) -> stateset_core::CartI
         )
         .expect("set payment");
     cart.id
+}
+
+#[test]
+fn kernel_checkout_fingerprint_rejects_changed_terms_without_economic_effects() {
+    for mutation in [
+        "UPDATE cart_items SET sku = 'SUBSTITUTED-SAME-PRICE'",
+        "UPDATE carts SET customer_email = 'other@example.com'",
+        "UPDATE carts SET shipping_address = json_set(shipping_address, '$.line1', 'Different destination')",
+        "UPDATE carts SET expires_at = '2099-01-01T00:00:00Z'",
+    ] {
+        let db = SqliteDatabase::in_memory().unwrap();
+        create_stock(&db, "KERNEL-CHECKOUT-SKU", dec!(2));
+        let id = ready_checkout_cart(&db, "fingerprint@example.com");
+        let quoted = db.carts().get(id).unwrap().unwrap().checkout_fingerprint().unwrap();
+        db.pool().get().unwrap().execute_batch(mutation).unwrap();
+        for mode in [ExecutionMode::Preview, ExecutionMode::Apply] {
+            let mut command = checkout_command(&format!("fingerprint-{mode:?}"), id);
+            command.mode = mode;
+            command.payload.expected_cart_fingerprint = Some(quoted.clone());
+            let receipt =
+                db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+            assert_eq!(receipt.status, ExecutionStatus::Rejected, "{mutation}: {receipt:?}");
+            assert!(receipt.error_message.as_deref().unwrap().contains("fingerprint"));
+        }
+        let conn = db.pool().get().unwrap();
+        for table in ["orders", "inventory_reservations", "backorders"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 0, "{mutation}: {table}");
+        }
+    }
+}
+
+#[test]
+fn kernel_checkout_fingerprint_commits_exact_snapshot_and_replays_after_cart_changes() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let id = ready_checkout_cart(&db, "fingerprint-valid@example.com");
+    let mut command = checkout_command("fingerprint-valid", id);
+    command.mode = ExecutionMode::Apply;
+    command.payload.expected_cart_fingerprint =
+        Some(db.carts().get(id).unwrap().unwrap().checkout_fingerprint().unwrap());
+    let receipt = db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded);
+    let replay = db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+    assert_eq!(receipt.receipt_id, replay.receipt_id);
+    command.payload.expected_cart_fingerprint = Some("sha256:invalid".into());
+    assert_eq!(
+        db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap().status,
+        ExecutionStatus::Rejected
+    );
+}
+
+#[test]
+fn kernel_checkout_fingerprint_is_independent_of_line_query_order() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let id = ready_checkout_cart(&db, "fingerprint-order@example.com");
+    let mut cart = db.carts().get(id).unwrap().unwrap();
+    let mut another = cart.items[0].clone();
+    another.id = Uuid::new_v4();
+    cart.items.push(another);
+    let fingerprint = cart.checkout_fingerprint().unwrap();
+    cart.items.reverse();
+    assert_eq!(cart.checkout_fingerprint().unwrap(), fingerprint);
+    cart.items[0].name = "Substituted description".into();
+    assert_ne!(cart.checkout_fingerprint().unwrap(), fingerprint);
 }
 
 #[test]
