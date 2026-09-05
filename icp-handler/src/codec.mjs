@@ -13,6 +13,14 @@ import {
 const ED25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
+/** Acceptance is bound to the immutable quote ID and its original buyer. */
+export function signQuoteAcceptance(quoteId, buyer, privateKey) {
+  const acceptance = { type: 'quote.accept', quote_id: quoteId, buyer };
+  return { acceptance, signature: {
+    alg: 'ed25519', kid: buyer, sig: signEd25519(canonicalJson(acceptance), privateKey),
+  } };
+}
+
 export function privateKeyFromSeed(seed32) {
   if (seed32.length !== 32) throw new Error('seed must be 32 bytes');
   const der = Buffer.concat([ED25519_PKCS8_PREFIX, seed32]);

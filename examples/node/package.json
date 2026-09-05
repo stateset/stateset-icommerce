@@ -1,6 +1,6 @@
 {
   "name": "stateset-node-examples",
-  "version": "1.31.0",
+  "version": "1.32.0",
   "description": "StateSet iCommerce Node.js Examples - Comprehensive examples demonstrating all features",
   "main": "01_getting_started.js",
   "scripts": {
@@ -30,6 +30,6 @@
   "author": "StateSet <support@stateset.com>",
   "license": "MIT OR Apache-2.0",
   "dependencies": {
-    "@stateset/embedded": "^1.31.0"
+    "@stateset/embedded": "^1.32.0"
   }
 }

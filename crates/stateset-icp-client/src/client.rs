@@ -379,7 +379,18 @@ impl Client {
     /// `POST /icp/v1/quotes/:id/accept` — accept a quote and open an escrow.
     pub fn accept_quote(&self, quote_id: &str) -> Result<Value, Error> {
         let url = format!("{}/icp/v1/quotes/{}/accept", self.handler_url, quote_id);
-        let resp = self.agent.post(&url).send_json(json!({})).map_err(map_ureq)?;
+        let acceptance = json!({
+            "type": "quote.accept", "quote_id": quote_id, "buyer": self.identity.aid()
+        });
+        let signature = self.identity.sign_hex(canonical_json(&acceptance)?.as_bytes());
+        let resp = self
+            .agent
+            .post(&url)
+            .send_json(json!({
+                "acceptance": acceptance,
+                "signature": { "alg": "ed25519", "kid": self.identity.aid(), "sig": signature }
+            }))
+            .map_err(map_ureq)?;
         let text = resp.into_string().map_err(|e| Error::Network(e.to_string()))?;
         parse_value(&text)
     }

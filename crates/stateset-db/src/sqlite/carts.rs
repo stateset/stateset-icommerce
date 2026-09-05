@@ -2012,10 +2012,20 @@ impl SqliteCartRepository {
 
     /// Validate checkout exactly as apply does and return the re-derived money
     /// that the order would commit, without mutating the cart.
+    #[cfg(test)]
     pub(crate) fn checkout_money_in_tx(
         &self,
         tx: &rusqlite::Transaction<'_>,
         cart_id: CartId,
+    ) -> std::result::Result<(Decimal, CurrencyCode), rusqlite::Error> {
+        self.checkout_money_with_policy_in_tx(tx, cart_id, stateset_core::StockPolicy::default())
+    }
+
+    pub(crate) fn checkout_money_with_policy_in_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        cart_id: CartId,
+        stock_policy: stateset_core::StockPolicy,
     ) -> std::result::Result<(Decimal, CurrencyCode), rusqlite::Error> {
         let mut cart = tx.query_row(
             "SELECT * FROM carts WHERE id = ?",
@@ -2126,7 +2136,7 @@ impl SqliteCartRepository {
             tax_amount: Some(cart.tax_amount),
             shipping_amount: Some(cart.shipping_amount),
             discount_amount: Some(cart.discount_amount),
-            stock_policy: stateset_core::StockPolicy::default(),
+            stock_policy,
         };
         SqliteOrderRepository::validate_create_order_in_tx(tx, &input)?;
         Ok(checkout_money)
@@ -2144,6 +2154,23 @@ impl SqliteCartRepository {
         cart_id: CartId,
         x402_settled: bool,
         mark_paid: bool,
+    ) -> std::result::Result<CheckoutResult, rusqlite::Error> {
+        self.complete_checkout_with_policy_in_tx(
+            tx,
+            cart_id,
+            x402_settled,
+            mark_paid,
+            stateset_core::StockPolicy::default(),
+        )
+    }
+
+    pub(crate) fn complete_checkout_with_policy_in_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        cart_id: CartId,
+        x402_settled: bool,
+        mark_paid: bool,
+        stock_policy: stateset_core::StockPolicy,
     ) -> std::result::Result<CheckoutResult, rusqlite::Error> {
         let mut cart = match tx.query_row(
             "SELECT * FROM carts WHERE id = ?",
@@ -2264,7 +2291,7 @@ impl SqliteCartRepository {
                 tax_amount: Some(cart.tax_amount),
                 shipping_amount: Some(cart.shipping_amount),
                 discount_amount: Some(cart.discount_amount),
-                stock_policy: stateset_core::StockPolicy::default(),
+                stock_policy,
             },
         )?;
 

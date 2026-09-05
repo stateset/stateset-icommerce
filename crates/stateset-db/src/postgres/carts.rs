@@ -1435,10 +1435,11 @@ impl PgCartRepository {
 
     /// Validate checkout exactly as apply does and return the re-derived money
     /// that the order would commit, without mutating the cart.
-    pub(crate) async fn checkout_money_in_tx(
+    pub(crate) async fn checkout_money_with_policy_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         id: Uuid,
+        stock_policy: stateset_core::StockPolicy,
     ) -> Result<(Decimal, CurrencyCode)> {
         let row: CartRow = sqlx::query_as("SELECT * FROM carts WHERE id = $1 FOR NO KEY UPDATE")
             .bind(id)
@@ -1517,7 +1518,7 @@ impl PgCartRepository {
             tax_amount: Some(cart.tax_amount),
             shipping_amount: Some(cart.shipping_amount),
             discount_amount: Some(cart.discount_amount),
-            stock_policy: stateset_core::StockPolicy::default(),
+            stock_policy,
         };
         PgOrderRepository::validate_create_order_in_tx(tx, &input).await?;
         Ok(checkout_money)
@@ -1532,6 +1533,24 @@ impl PgCartRepository {
         id: Uuid,
         x402_settled: bool,
         mark_paid: bool,
+    ) -> Result<CheckoutResult> {
+        self.complete_checkout_with_policy_in_tx(
+            tx,
+            id,
+            x402_settled,
+            mark_paid,
+            stateset_core::StockPolicy::default(),
+        )
+        .await
+    }
+
+    pub(crate) async fn complete_checkout_with_policy_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+        x402_settled: bool,
+        mark_paid: bool,
+        stock_policy: stateset_core::StockPolicy,
     ) -> Result<CheckoutResult> {
         // Lock the cart row so only one checkout can run at a time.
 
@@ -1634,7 +1653,7 @@ impl PgCartRepository {
                     tax_amount: Some(cart.tax_amount),
                     shipping_amount: Some(cart.shipping_amount),
                     discount_amount: Some(cart.discount_amount),
-                    stock_policy: stateset_core::StockPolicy::default(),
+                    stock_policy,
                 },
             )
             .await?;

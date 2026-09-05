@@ -455,6 +455,29 @@ local receipt.
 transaction hash and block number to the intent, causal event, receipt, and
 audit chain. Retries return the original anchored settlement receipt.
 
+`checkout.commit` accepts an optional `payload.stock_policy`:
+
+```json
+{ "cart_id": "<cart UUID>", "stock_policy": "reject_if_insufficient" }
+```
+
+For tracked inventory SKUs, `reject_if_insufficient` requires enough stock for
+the entire checkout inside the database transaction. Preview checks the combined
+demand of repeated SKU lines. Omit the field, or specify `allow_backorder`, to
+retain historical backorder behavior. Untracked SKUs remain non-inventory lines.
+This source-tree addition requires rebuilt native bindings; do not rely on older
+binaries to enforce new payload fields. Rust `CommitCheckout` literals now need
+`stock_policy: None` for the legacy behavior.
+
+Strict shortage rejections carry `commerce.inventory.insufficient_available`. Retrying the
+same command returns its original receipt; changing stock policy under the same
+idempotency key is a conflict, not permission to retry with weaker constraints.
+Run the SQLite checkout regressions with:
+
+```bash
+cargo test -p stateset-db --test sqlite_kernel_outbox kernel_checkout
+```
+
 `checkout.commit` runs customer resolution, order and line creation, inventory
 reservation/backorder decisions, order confirmation, cart completion, causal
 event emission, and receipt sealing in one transaction on both databases. Its

@@ -28,6 +28,8 @@ const REQUIRED_PACKED_FILES = [
   'vercel-ai.mjs',
   'vercel-ai.d.ts',
   'toolkit-helpers.mjs',
+  'purchase-runtime.mjs',
+  'purchase-runtime.d.ts',
 ];
 
 function runPackDryRun() {
@@ -125,6 +127,10 @@ function stageHostNativeBinding(packageDir) {
 }
 
 async function verifyPackedImports(packageDir) {
+  const purchase = await import(pathToFileURL(path.join(packageDir, 'purchase-runtime.mjs')).href);
+  assert.equal(typeof purchase.PurchaseRuntime, 'function');
+  assert.equal(typeof purchase.SqlitePurchaseStore, 'function');
+  assert.equal(typeof purchase.createKernelPurchaseAdapter, 'function');
   const rootModule = await import(pathToFileURL(path.join(packageDir, 'index.js')).href);
   const Commerce = rootModule.Commerce || rootModule.default?.Commerce;
   assert.equal(typeof Commerce, 'function', 'Packed root module should expose Commerce.');

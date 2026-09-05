@@ -6,6 +6,41 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.32.0] - 2026-09-05
+
+### Added
+
+- Durable Node purchase coordination with exact shared budgets, persisted dispatch,
+  scoped recovery, authoritative outcome lookup, and compensation.
+- Opt-in SQLite reference merchant storage with pinned signing identity, durable
+  replay protection, atomic acceptance, and restart/concurrent-worker tests.
+- Native merchant checkout bridge: governed orders, inventory and budget commits,
+  receipt-based recovery, and operator-selected strict-stock enforcement.
+- Native Node `kernelFeatures()` discovery. Strict checkout requires
+  `checkout.stock_policy.v1`; older binaries cannot silently weaken saved intents.
+- Optional `checkout.commit` stock policy on SQLite and PostgreSQL, with aggregate
+  duplicate-SKU preview checks and concurrent-buyer regression coverage.
+- Economic receipt verification against operator-required signer roles, key
+  ownership, validity windows, and revocation.
+
+### Fixed
+
+- Buyer-authenticated quote acceptance across JavaScript, Rust, and Python clients;
+  immutable intent identities prevent replacement under a fresh nonce.
+- Exact reference quote, subscription, return and payout arithmetic, including
+  sub-cent limits and fee conservation. Signing failures do not debit balances.
+- Stable acceptance/settlement replay and rollback of partial merchant state.
+
+### Compatibility and release boundaries
+
+- Rust `CommitCheckout` literals require `stock_policy: None` for legacy behavior.
+  JSON requests omitting the field preserve their serialization and backorders.
+- Quote acceptance requires a buyer-signed envelope; empty legacy bodies must be
+  upgraded. Discounted unit prices can contain more than two fractional digits.
+- Native checkout leaves payment pending. Reference settlement remains simulated;
+  the native bridge is not yet wired into the reference HTTP merchant. Live rails,
+  immutable quoted carts, and independent assurance remain explicit release gates.
+
 ## [1.31.0] - 2026-09-04
 
 This release turns the economic-agent kernel from a collection of governed

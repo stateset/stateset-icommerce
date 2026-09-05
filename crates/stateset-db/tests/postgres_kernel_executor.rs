@@ -638,7 +638,7 @@ async fn postgres_kernel_checkout_preview_and_concurrent_apply_commit_once() {
             delegated_by: Some("user-postgres".into()),
             capabilities: vec!["checkout.commit".into()],
         },
-        CommitCheckout { cart_id: cart.id },
+        CommitCheckout { cart_id: cart.id, stock_policy: None },
     );
     preview.store_id = Some("store-postgres".into());
     preview.policy_version = Some("commerce-policy-1".into());

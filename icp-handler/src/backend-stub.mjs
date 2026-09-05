@@ -9,6 +9,13 @@
 //   dispute(escrow_id, dispute_intent) -> DisputeOutcome | error
 
 import { canonicalJson, signEd25519, newId, newNonceHex } from './codec.mjs';
+import { createHash } from 'node:crypto';
+import { priceDemoQuote, amount, exactMoney, roundCents, quantity } from './quote-money.mjs';
+import { availableInventory, collection } from './state.mjs';
+
+function invalidMoney(error) {
+  return { ok: false, error: { type: 'icp.error', code: 'format.invalid_money', message: error.message } };
+}
 
 /**
  * Build, sign, and return a Quote for an Intent. The stub:
@@ -33,10 +40,15 @@ export function stubQuote(intent, merchantSigningKey) {
         error: { type: 'icp.error', code: 'quote.proposal_expired', message: `proposal ${intent.from_proposal_id} expired at ${proposal.valid_until}` },
       };
     }
-    if (proposal.total.amount !== intent.max_total.amount) {
+    let exceedsMaximum;
+    try {
+      exceedsMaximum = proposal.total.currency !== intent.max_total.currency
+        || amount(proposal.total.amount) > amount(intent.max_total.amount);
+    } catch (error) { return invalidMoney(error); }
+    if (exceedsMaximum || proposal.merchant !== intent.merchant) {
       return {
         ok: false,
-        error: { type: 'icp.error', code: 'quote.proposal_total_mismatch', message: `purchase.create max_total ${intent.max_total.amount} does not match proposal.total ${proposal.total.amount}` },
+        error: { type: 'icp.error', code: 'quote.proposal_total_mismatch', message: 'proposal violates the purchase ceiling, currency, or merchant constraints' },
       };
     }
     // Use proposal prices verbatim.
@@ -63,13 +75,15 @@ export function stubQuote(intent, merchantSigningKey) {
     return { ok: true, quote, canonical, signatureHex };
   }
 
-  let total = 0;
-  for (const item of intent.items) {
-    total += item.quantity * Number(item.unit_price.amount);
+  let priced;
+  try {
+    priced = priceDemoQuote(intent.items, intent.max_total);
+  } catch (error) {
+    return { ok: false, error: { type: 'icp.error', code: 'format.invalid_money', message: error.message } };
   }
-  total = Math.round(total * 1.05 * 100) / 100; // 5% fee, 2dp
+  const total = priced.amount;
 
-  if (total > Number(intent.max_total.amount)) {
+  if (priced.exceedsMaximum) {
     return {
       ok: false,
       error: {
@@ -89,16 +103,8 @@ export function stubQuote(intent, merchantSigningKey) {
     quote_id: newId('icp_qt'),
     intent_id: intent.intent_id,
     merchant: intent.merchant,
-    total: { amount: total.toFixed(2), currency: intent.max_total.currency },
-    lines: intent.items.map((it) => ({
-      sku: it.sku,
-      quantity: it.quantity,
-      unit_price: it.unit_price,
-      line_total: {
-        amount: (it.quantity * Number(it.unit_price.amount)).toFixed(2),
-        currency: it.unit_price.currency,
-      },
-    })),
+    total: { amount: total, currency: intent.max_total.currency },
+    lines: priced.lines,
     settler: intent.settler,
     escrow_terms: {
       release_on: 'fulfilled+24h',
@@ -128,14 +134,16 @@ export function stubQuote(intent, merchantSigningKey) {
  *   - Rejects max_total_per_period > $1000/period (demo policy cap)
  */
 export function stubSubscriptionAuthorize(intent, merchantSigningKey, merchantAid) {
-  const cap = Number(intent.max_total_per_period.amount);
-  if (cap > 1000) {
+  let cap;
+  try { cap = amount(intent.max_total_per_period.amount); }
+  catch (error) { return invalidMoney(error); }
+  if (cap > amount('1000')) {
     return {
       ok: false,
       error: {
         type: 'icp.error',
         code: 'policy.value_above_kyc_floor',
-        message: `subscription max_total_per_period $${cap} exceeds stub policy cap of $1000`,
+        message: `subscription max_total_per_period $${exactMoney(cap)} exceeds stub policy cap of $1000`,
       },
     };
   }
@@ -185,16 +193,19 @@ export function stubSubscriptionAuthorize(intent, merchantSigningKey, merchantAi
  */
 export function stubReturnAuthorize(intent, merchantSigningKey, merchantAid) {
   // Compute refund amount.
-  const itemsTotal = intent.items.reduce((sum, it) => sum + it.quantity * 10, 0); // demo: $10/item
-  let refundAmount = itemsTotal;
-  if (intent.max_refund) {
-    const cap = Number(intent.max_refund.amount);
-    if (refundAmount > cap) refundAmount = cap;
-  }
+  let refundAmount;
+  try {
+    if (!Array.isArray(intent.items) || !intent.items.length) throw new Error('return items required');
+    refundAmount = intent.items.reduce((sum, it) => sum + quantity(it.quantity) * amount('10'), 0n);
+    if (intent.max_refund) {
+      const cap = amount(intent.max_refund.amount);
+      if (refundAmount > cap) refundAmount = cap;
+    }
+  } catch (error) { return invalidMoney(error); }
 
   // Demo policy: large no-fault returns get rejected.
   const hasNoFault = intent.items.some((it) => it.reason === 'no-longer-needed');
-  if (hasNoFault && refundAmount > 500) {
+  if (hasNoFault && refundAmount > amount('500')) {
     return {
       ok: false,
       error: {
@@ -219,7 +230,7 @@ export function stubReturnAuthorize(intent, merchantSigningKey, merchantAid) {
       intent.desired_outcome === 'replacement'
         ? null
         : {
-            amount: { amount: refundAmount.toFixed(2), currency },
+            amount: { amount: exactMoney(refundAmount), currency },
             rail: 'base-sepolia',
             release_to: '<buyer-wallet-address>',
             expected_settlement_within: '5d',
@@ -256,6 +267,11 @@ export function stubInventoryQuery(intent, merchantSigningKey, merchantAid) {
     'GADGET-A':   { available_quantity: 200, unit_price: { amount: '4.99',  currency: 'USDC' }, metadata: { category: 'consumable' } },
     'GADGET-B':   { available_quantity: 100, unit_price: { amount: '9.99',  currency: 'USDC' }, metadata: { category: 'consumable' } },
   };
+
+  // Report the same balances that acceptance reserves, not catalog seed counts.
+  for (const [sku, entry] of Object.entries(CATALOG)) {
+    entry.available_quantity = availableInventory(sku);
+  }
 
   // Filter SKUs.
   let skuList;
@@ -352,7 +368,7 @@ export function stubSubscriptionCancel(intent, merchantSigningKey, merchantAid) 
 // In-memory store of issued PriceProposals (keyed by proposal_id) so the
 // from_proposal_id flow can validate non-expired proposals. Production
 // handlers persist this via the engine.
-const _proposalStore = new Map();
+const _proposalStore = collection('proposals');
 
 /**
  * Sign a PriceProposal for a quote.request Intent (§6.4 / ICPIP-0003).
@@ -375,9 +391,11 @@ export function stubQuoteRequest(intent, merchantSigningKey, merchantAid) {
     'GADGET-B':      { unit_price: { amount: '9.99',  currency: 'USDC' } },
   };
 
-  let total = 0;
+  let total = 0n;
   const lineItems = [];
+  if (!Array.isArray(intent.items) || !intent.items.length) return invalidMoney(new Error('quote items required'));
   for (const item of intent.items) {
+    try { quantity(item.quantity); } catch (error) { return invalidMoney(error); }
     if (item.quantity > 10000) {
       return {
         ok: false,
@@ -400,16 +418,16 @@ export function stubQuoteRequest(intent, merchantSigningKey, merchantAid) {
       };
     }
     // Volume-tier discount.
-    const basePrice = Number(catalog.unit_price.amount);
-    const discount = item.quantity >= 500 ? 0.20 : item.quantity >= 100 ? 0.10 : 0;
-    const tieredUnitPrice = basePrice * (1 - discount);
-    const lineTotal = tieredUnitPrice * item.quantity;
+    const basePrice = amount(catalog.unit_price.amount);
+    const percent = item.quantity >= 500 ? 80n : item.quantity >= 100 ? 90n : 100n;
+    const tieredUnitPrice = basePrice * percent / 100n;
+    const lineTotal = roundCents(tieredUnitPrice * quantity(item.quantity));
     total += lineTotal;
     lineItems.push({
       sku: item.sku,
       quantity: item.quantity,
-      unit_price: { amount: tieredUnitPrice.toFixed(2), currency: catalog.unit_price.currency },
-      line_total: { amount: lineTotal.toFixed(2), currency: catalog.unit_price.currency },
+      unit_price: { amount: exactMoney(tieredUnitPrice), currency: catalog.unit_price.currency },
+      line_total: { amount: exactMoney(lineTotal), currency: catalog.unit_price.currency },
       volume_tier: item.quantity >= 500 ? '500+' : item.quantity >= 100 ? '100-499' : '1-99',
     });
   }
@@ -426,7 +444,7 @@ export function stubQuoteRequest(intent, merchantSigningKey, merchantAid) {
     issued_at: now.toISOString(),
     valid_until: validUntil.toISOString(),
     items: lineItems,
-    total: { amount: total.toFixed(2), currency: 'USDC' },
+    total: { amount: exactMoney(total), currency: 'USDC' },
     payment_terms: { net_days: 30, early_pay_discount: { percent: '2', if_paid_within_days: 10 } },
     fulfillment_terms: { lead_time_days: 7, shipping_method: 'ground' },
     return_policy_summary: '30 days, full refund, buyer pays return shipping',
@@ -450,13 +468,13 @@ export function getProposal(proposal_id) {
 // In-memory seller balance ledger for payout.request (§6.6 / ICPIP-0004).
 // In production this maps to the platform's actual held-funds ledger.
 // Demo: every seller starts with $5000 USDC available unless overridden.
-const _sellerBalances = new Map();
+const _sellerBalances = collection('seller_balances');
 
 function getSellerBalance(sellerAid) {
   if (!_sellerBalances.has(sellerAid)) {
-    _sellerBalances.set(sellerAid, 5000.0); // demo: every seller starts with $5000
+    _sellerBalances.set(sellerAid, '5000'); // demo balance, never real funds
   }
-  return _sellerBalances.get(sellerAid);
+  return amount(_sellerBalances.get(sellerAid));
 }
 
 /**
@@ -470,7 +488,17 @@ function getSellerBalance(sellerAid) {
  *   - Computes approved_amount = available_balance - sum(fees)
  */
 export function stubPayoutRequest(intent, merchantSigningKey, platformAid) {
-  const requested = Number(intent.amount.amount);
+  let requested;
+  const maxPerPayout = intent.principal_binding?.authority?.max_per_payout;
+  let maximum;
+  try {
+    requested = amount(intent.amount.amount);
+    if (requested === 0n || intent.amount.currency !== 'USDC') throw new Error('positive USDC payout required');
+    if (maxPerPayout) {
+      if (maxPerPayout.currency !== intent.amount.currency) throw new Error('payout authority currency mismatch');
+      maximum = amount(maxPerPayout.amount);
+    }
+  } catch (error) { return invalidMoney(error); }
   const available = getSellerBalance(intent.seller);
 
   if (requested > available) {
@@ -479,28 +507,27 @@ export function stubPayoutRequest(intent, merchantSigningKey, platformAid) {
       error: {
         type: 'icp.error',
         code: 'policy.payout.insufficient_balance',
-        message: `requested ${requested} ${intent.amount.currency} exceeds available balance ${available.toFixed(2)}`,
+        message: `requested ${exactMoney(requested)} ${intent.amount.currency} exceeds available balance ${exactMoney(available)}`,
       },
     };
   }
 
   // Honor max_per_payout from PrincipalBinding (OPTIONAL field per ICPIP-0004).
-  const maxPerPayout = intent.principal_binding?.authority?.max_per_payout;
-  if (maxPerPayout && requested > Number(maxPerPayout.amount)) {
+  if (maxPerPayout && requested > maximum) {
     return {
       ok: false,
       error: {
         type: 'icp.error',
         code: 'policy.payout.exceeds_max_per_payout',
-        message: `requested ${requested} exceeds principal binding max_per_payout ${maxPerPayout.amount}`,
+        message: `requested ${exactMoney(requested)} exceeds principal binding max_per_payout ${maxPerPayout.amount}`,
       },
     };
   }
 
   // Fees: 3% platform commission + 1% chargeback reserve (release after 90 days).
-  const commission = +(requested * 0.03).toFixed(2);
-  const reserve = +(requested * 0.01).toFixed(2);
-  const approved = +(requested - commission - reserve).toFixed(2);
+  const commission = roundCents(requested * 3n / 100n);
+  const reserve = roundCents(requested / 100n);
+  const approved = requested - commission - reserve;
 
   const now = new Date();
   const releaseAt = new Date(now.getTime() + 90 * 86400 * 1000);
@@ -512,17 +539,17 @@ export function stubPayoutRequest(intent, merchantSigningKey, platformAid) {
     intent_id: intent.intent_id,
     seller: intent.seller,
     platform: intent.platform,
-    available_balance: { amount: available.toFixed(2), currency: intent.amount.currency },
-    approved_amount: { amount: approved.toFixed(2), currency: intent.amount.currency },
+    available_balance: { amount: exactMoney(available), currency: intent.amount.currency },
+    approved_amount: { amount: exactMoney(approved), currency: intent.amount.currency },
     fees: [
       {
         type: 'platform_commission',
-        amount: { amount: commission.toFixed(2), currency: intent.amount.currency },
+        amount: { amount: exactMoney(commission), currency: intent.amount.currency },
         description: 'Standard 3% platform commission',
       },
       {
         type: 'chargeback_reserve',
-        amount: { amount: reserve.toFixed(2), currency: intent.amount.currency },
+        amount: { amount: exactMoney(reserve), currency: intent.amount.currency },
         description: '1% chargeback reserve (released after 90 days)',
         release_at: releaseAt.toISOString(),
       },
@@ -533,17 +560,16 @@ export function stubPayoutRequest(intent, merchantSigningKey, platformAid) {
     issued_at: now.toISOString(),
   };
 
-  // Deduct from seller's balance.
-  _sellerBalances.set(intent.seller, available - requested);
-
   const canonical = canonicalJson(auth);
   const signatureHex = signEd25519(canonical, merchantSigningKey);
+  // Do not debit if receipt signing fails.
+  _sellerBalances.set(intent.seller, exactMoney(available - requested));
   return { ok: true, authorization: auth, canonical, signatureHex };
 }
 
 /** For testing: set a seller's available balance directly. */
-export function _seedSellerBalance(sellerAid, amount) {
-  _sellerBalances.set(sellerAid, amount);
+export function _seedSellerBalance(sellerAid, value) {
+  _sellerBalances.set(sellerAid, exactMoney(amount(value)));
 }
 
 /**
@@ -656,10 +682,8 @@ export function stubChannelRegister(intent, merchantSigningKey, merchantAid, cha
  *  ICPEscrow contract; production would compute escrowId and surface
  *  the funding tx encoder. */
 export function stubFundingInstructions(quote) {
-  const escrowId = '0x' + Buffer.from(`${quote.intent_id}:${quote.quote_id}`)
-    .toString('hex')
-    .padEnd(64, '0')
-    .slice(0, 64);
+  const escrowId = '0x' + createHash('sha256')
+    .update(canonicalJson(['icp.reference.escrow.v1', quote.intent_id, quote.quote_id])).digest('hex');
 
   return {
     escrow_id: escrowId,
@@ -672,10 +696,9 @@ export function stubFundingInstructions(quote) {
       buyer: '<buyer-wallet-address>',
       merchant: '<merchant-payout-address>',
       amount: quote.total.amount,
-      fulfillmentDeadline: Math.floor(Date.now() / 1000) + 86400,
+      fulfillmentDeadline: Math.floor(Date.parse(quote.iat) / 1000) + 86400,
       disputeWindow: 7 * 86400,
-      quoteHash: '0x' + canonicalJson(quote).split('').reduce((h, c) =>
-        ((h << 5) - h + c.charCodeAt(0)) | 0, 0).toString(16).padStart(64, '0').slice(0, 64),
+      quoteHash: '0x' + createHash('sha256').update(canonicalJson(quote)).digest('hex'),
     },
     note: 'STUB. Production handler returns a fully-encoded calldata blob.',
   };

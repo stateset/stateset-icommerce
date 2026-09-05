@@ -3558,7 +3558,11 @@ impl PgKernelExecutor {
         if command.mode == ExecutionMode::Preview {
             let cart_repo = PgCartRepository::new(self.pool.clone());
             let (amount, currency) = match cart_repo
-                .checkout_money_in_tx(&mut tx, command.payload.cart_id.into_uuid())
+                .checkout_money_with_policy_in_tx(
+                    &mut tx,
+                    command.payload.cart_id.into_uuid(),
+                    command.payload.stock_policy.unwrap_or_default(),
+                )
                 .await
             {
                 Ok(money) => money,
@@ -3606,8 +3610,13 @@ impl PgKernelExecutor {
         }
 
         let cart_repo = PgCartRepository::new(self.pool.clone());
-        if let Err(error) =
-            cart_repo.checkout_money_in_tx(&mut tx, command.payload.cart_id.into_uuid()).await
+        if let Err(error) = cart_repo
+            .checkout_money_with_policy_in_tx(
+                &mut tx,
+                command.payload.cart_id.into_uuid(),
+                command.payload.stock_policy.unwrap_or_default(),
+            )
+            .await
         {
             if matches!(error, CommerceError::DatabaseError(_)) {
                 return Err(error);
@@ -3631,7 +3640,13 @@ impl PgKernelExecutor {
             .await
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let attempted = cart_repo
-            .complete_checkout_in_tx(&mut tx, command.payload.cart_id.into_uuid(), false, false)
+            .complete_checkout_with_policy_in_tx(
+                &mut tx,
+                command.payload.cart_id.into_uuid(),
+                false,
+                false,
+                command.payload.stock_policy.unwrap_or_default(),
+            )
             .await;
         let checkout = match attempted {
             Ok(checkout) => checkout,

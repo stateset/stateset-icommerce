@@ -30,6 +30,7 @@ import { generateKeyPairSync, createHash } from 'node:crypto';
 import {
   canonicalJson,
   signEd25519,
+  signQuoteAcceptance,
   verifyEd25519,
   publicKeyToRaw,
   newId,
@@ -252,7 +253,8 @@ try {
   h(6, 'Accept quote, reserve inventory, create order, and fund');
   const acceptRes = await fetch(
     `http://127.0.0.1:${handlerPort}/icp/v1/quotes/${submitted.quote.quote_id}/accept`,
-    { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
+    { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(signQuoteAcceptance(submitted.quote.quote_id, buyerAid, buyerEdKp.privateKey)) },
   );
   const accepted = await acceptRes.json();
   if (acceptRes.status !== 200) throw new Error(`accept failed: ${JSON.stringify(accepted)}`);

@@ -81,6 +81,13 @@ pub struct Commerce {
 
 #[napi]
 impl Commerce {
+    /// Execution features implemented by this native binary. Hosts must check
+    /// this before relying on optional safety fields that old binaries ignore.
+    #[napi]
+    pub fn kernel_features(&self) -> Vec<String> {
+        vec!["checkout.stock_policy.v1".to_owned()]
+    }
+
     /// Create a new Commerce instance with a database path
     /// Use ":memory:" for an in-memory database
     #[napi(constructor)]

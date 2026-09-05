@@ -17,7 +17,7 @@ let baseUrl;
 let client;
 
 before(async () => {
-  proc = spawn('node', [HANDLER], { env: { ...process.env, PORT: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  proc = spawn(process.execPath, [HANDLER], { env: { ...process.env, PORT: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let buf = '';
   baseUrl = await new Promise((res, rej) => {
     const onErr = (d) => {
@@ -84,7 +84,7 @@ test('accept() returns funding instructions', async () => {
   const r = await client.purchase({
     merchant: caps.merchant_aid,
     settler: 'settler:stateset.usdc.base-sepolia',
-    items: [{ sku: 'X', quantity: 1, unit_price: { amount: '10.00', currency: 'USDC' } }],
+    items: [{ sku: 'GADGET-A', quantity: 1, unit_price: { amount: '10.00', currency: 'USDC' } }],
     max_total: { amount: '12.00', currency: 'USDC' },
   });
   const funding = await client.accept(r.quote.quote_id);
@@ -141,7 +141,7 @@ test('full lifecycle: purchase → accept → fulfill → settlement → observe
   const purchaseRes = await client.purchase({
     merchant: caps.merchant_aid,
     settler: 'settler:stateset.usdc.base-sepolia',
-    items: [{ sku: 'WIDGET-LIFECYCLE', quantity: 1, unit_price: { amount: '20.00', currency: 'USDC' } }],
+    items: [{ sku: 'GADGET-A', quantity: 1, unit_price: { amount: '20.00', currency: 'USDC' } }],
     max_total: { amount: '25.00', currency: 'USDC' },
   });
   const accepted = await client.accept(purchaseRes.quote.quote_id);
@@ -237,7 +237,7 @@ test('fetchChannelEvents returns verified envelopes after fulfill triggers a pub
   const purchase = await client.purchase({
     merchant: caps.merchant_aid,
     settler: 'settler:stateset.usdc.base-sepolia',
-    items: [{ sku: 'WIDGET-RECOV', quantity: 1, unit_price: { amount: '15.00', currency: 'USDC' } }],
+    items: [{ sku: 'GADGET-A', quantity: 1, unit_price: { amount: '15.00', currency: 'USDC' } }],
     max_total: { amount: '20.00', currency: 'USDC' },
   });
   const accepted = await client.accept(purchase.quote.quote_id);

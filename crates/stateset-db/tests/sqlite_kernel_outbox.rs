@@ -2086,7 +2086,7 @@ fn checkout_command(key: &str, cart_id: stateset_core::CartId) -> CommandEnvelop
             delegated_by: Some("user-1".into()),
             capabilities: vec!["checkout.commit".into()],
         },
-        CommitCheckout { cart_id },
+        CommitCheckout { cart_id, stock_policy: None },
     );
     command.store_id = Some("store-1".into());
     command.policy_version = Some("commerce-policy-1".into());
@@ -2154,6 +2154,170 @@ fn ready_checkout_cart(db: &SqliteDatabase, email: &str) -> stateset_core::CartI
         )
         .expect("set payment");
     cart.id
+}
+
+#[test]
+fn kernel_checkout_stock_policy_wire_compatibility() {
+    let legacy = serde_json::json!({"cart_id": stateset_core::CartId::new()});
+    let command: CommitCheckout = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(command.stock_policy, None);
+    // Keep old request hashes stable when the optional field is omitted.
+    assert_eq!(serde_json::to_value(command).unwrap(), legacy);
+    let invalid = serde_json::json!({"cart_id": stateset_core::CartId::new(), "stock_policy": "ignore_stock"});
+    assert!(serde_json::from_value::<CommitCheckout>(invalid).is_err());
+}
+
+#[test]
+fn kernel_checkout_strict_stock_preview_aggregates_duplicate_skus() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    create_stock(&db, "KERNEL-CHECKOUT-SKU", dec!(3));
+    let cart_id = ready_checkout_cart(&db, "strict-duplicate@example.com");
+    db.carts()
+        .add_item(
+            cart_id,
+            AddCartItem {
+                product_id: Some(ProductId::new()),
+                sku: "KERNEL-CHECKOUT-SKU".into(),
+                name: "Another line of the same SKU".into(),
+                quantity: 2,
+                unit_price: dec!(19.99),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    for mode in [ExecutionMode::Preview, ExecutionMode::Apply] {
+        let mut command = checkout_command(&format!("strict-duplicate-{mode:?}"), cart_id);
+        command.mode = mode;
+        command.payload.stock_policy = Some(stateset_core::StockPolicy::RejectIfInsufficient);
+        let result =
+            db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+        assert_eq!(result.status, ExecutionStatus::Rejected, "{result:?}");
+        assert_eq!(result.error_code.as_deref(), Some("commerce.inventory.insufficient_available"));
+    }
+    let conn = db.pool().get().unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM inventory_reservations", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn kernel_checkout_strict_stock_rejects_preview_and_apply_without_effects() {
+    let db = SqliteDatabase::in_memory().expect("database");
+    create_stock(&db, "KERNEL-CHECKOUT-SKU", dec!(1));
+    let cart_id = ready_checkout_cart(&db, "strict-short@example.com");
+    for mode in [ExecutionMode::Preview, ExecutionMode::Apply] {
+        let mut command = checkout_command(&format!("strict-short-{mode:?}"), cart_id);
+        command.mode = mode;
+        command.payload.stock_policy = Some(stateset_core::StockPolicy::RejectIfInsufficient);
+        let result =
+            db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+        assert_eq!(result.status, ExecutionStatus::Rejected, "{result:?}");
+        let replay =
+            db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+        assert_eq!(result.receipt_id, replay.receipt_id);
+    }
+    let conn = db.pool().get().unwrap();
+    for table in ["orders", "inventory_reservations", "backorders"] {
+        let count: i64 =
+            conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0, "unexpected effect in {table}");
+    }
+}
+
+#[test]
+fn kernel_checkout_default_still_backorders_shortages() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    create_stock(&db, "KERNEL-CHECKOUT-SKU", dec!(1));
+    let cart_id = ready_checkout_cart(&db, "legacy-backorder@example.com");
+    let mut command = checkout_command("legacy-backorder", cart_id);
+    command.mode = ExecutionMode::Apply;
+    let result = db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+    assert_eq!(result.status, ExecutionStatus::Succeeded);
+    assert_eq!(
+        db.inventory().get_stock("KERNEL-CHECKOUT-SKU").unwrap().unwrap().total_allocated,
+        dec!(1)
+    );
+    let conn = db.pool().get().unwrap();
+    let count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM backorders", [], |row| row.get(0)).unwrap();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn kernel_checkout_strict_stock_concurrent_buyers_cannot_oversell() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    create_stock(&db, "KERNEL-CHECKOUT-SKU", dec!(3));
+    let carts = [
+        ready_checkout_cart(&db, "strict-race-a@example.com"),
+        ready_checkout_cart(&db, "strict-race-b@example.com"),
+    ];
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let executor = db.kernel_executor(payment_policy());
+    let handles: Vec<_> = carts
+        .into_iter()
+        .enumerate()
+        .map(|(index, cart_id)| {
+            let executor = executor.clone();
+            let barrier = barrier.clone();
+            let mut command = checkout_command(&format!("strict-race-{index}"), cart_id);
+            command.mode = ExecutionMode::Apply;
+            command.payload.stock_policy = Some(stateset_core::StockPolicy::RejectIfInsufficient);
+            std::thread::spawn(move || {
+                barrier.wait();
+                let receipt = executor.execute_commit_checkout(&command).unwrap();
+                let replay = executor.execute_commit_checkout(&command).unwrap();
+                assert_eq!(receipt.receipt_id, replay.receipt_id);
+                receipt
+            })
+        })
+        .collect();
+    barrier.wait();
+    let results: Vec<_> = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
+    assert_eq!(results.iter().filter(|r| r.status == ExecutionStatus::Succeeded).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|r| r.error_code.as_deref() == Some("commerce.inventory.insufficient_available"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        db.inventory().get_stock("KERNEL-CHECKOUT-SKU").unwrap().unwrap().total_allocated,
+        dec!(2)
+    );
+    let conn = db.pool().get().unwrap();
+    let orders: i64 = conn.query_row("SELECT COUNT(*) FROM orders", [], |row| row.get(0)).unwrap();
+    let backorders: i64 =
+        conn.query_row("SELECT COUNT(*) FROM backorders", [], |row| row.get(0)).unwrap();
+    assert_eq!((orders, backorders), (1, 0));
+}
+
+#[test]
+fn kernel_checkout_strict_stock_succeeds_and_policy_changes_conflict() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    create_stock(&db, "KERNEL-CHECKOUT-SKU", dec!(2));
+    let cart_id = ready_checkout_cart(&db, "strict-enough@example.com");
+    let mut command = checkout_command("strict-enough", cart_id);
+    command.payload.stock_policy = Some(stateset_core::StockPolicy::RejectIfInsufficient);
+    assert_eq!(
+        db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap().status,
+        ExecutionStatus::Previewed
+    );
+    command.mode = ExecutionMode::Apply;
+    command.command_id = Uuid::new_v4();
+    let result = db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+    assert_eq!(result.status, ExecutionStatus::Succeeded);
+    assert_eq!(
+        db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap().receipt_id,
+        result.receipt_id
+    );
+    command.payload.stock_policy = Some(stateset_core::StockPolicy::AllowBackorder);
+    let changed = db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+    assert_eq!(changed.status, ExecutionStatus::Rejected);
+    let conn = db.pool().get().unwrap();
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM orders", [], |row| row.get(0)).unwrap();
+    assert_eq!(count, 1);
 }
 
 #[test]

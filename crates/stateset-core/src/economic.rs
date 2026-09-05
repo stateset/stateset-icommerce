@@ -604,6 +604,19 @@ pub struct EconomicReceiptSignature {
     pub signature: String,
 }
 
+/// Operator-owned identity and lifecycle of a receipt verification key.
+/// Roles and signer identity are never taken from the untrusted receipt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EconomicReceiptKey {
+    pub signer_id: String,
+    pub roles: BTreeSet<String>,
+    pub public_key: [u8; 32],
+    pub valid_from: DateTime<Utc>,
+    pub valid_until: DateTime<Utc>,
+    /// Revocation is immediate, including receipts signed before revocation.
+    pub revoked: bool,
+}
+
 /// Canonical, result-bound proof of an economic action.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EconomicReceipt {
@@ -696,7 +709,9 @@ impl EconomicReceipt {
         Ok(())
     }
 
-    /// Verify all signatures against a trusted key registry indexed by key ID.
+    /// Verify signature bytes only against keys indexed by key ID.
+    /// Use `verify_authorized_signatures` to enforce signer identity, required
+    /// counterparties, roles, key validity, and revocation.
     #[must_use]
     pub fn verify_signatures(&self, trusted_keys: &BTreeMap<String, [u8; 32]>) -> bool {
         if self.signatures.is_empty() || self.validate().is_err() {
@@ -722,6 +737,51 @@ impl EconomicReceipt {
                 verifying_key.verify(&hash, &Signature::from_bytes(&signature_bytes)).is_ok()
             })
         })
+    }
+
+    /// Verify signatures and the required role-to-signer assignments supplied
+    /// by the operator for this transaction (for example merchant and settler).
+    /// An empty requirement set fails closed. Rotation overlap is supported by
+    /// registering multiple live keys for the same signer.
+    #[must_use]
+    pub fn verify_authorized_signatures(
+        &self,
+        trusted_keys: &BTreeMap<String, EconomicReceiptKey>,
+        required_signers: &BTreeMap<String, String>,
+        now: DateTime<Utc>,
+    ) -> bool {
+        if required_signers.is_empty()
+            || self.timestamp > now
+            || required_signers
+                .iter()
+                .any(|(role, signer)| role.trim().is_empty() || signer.trim().is_empty())
+        {
+            return false;
+        }
+        let mut keys = BTreeMap::new();
+        let mut observed = BTreeSet::new();
+        for signature in &self.signatures {
+            let Some(key) = trusted_keys.get(&signature.key_id) else {
+                return false;
+            };
+            if key.revoked
+                || key.signer_id != signature.signer_id
+                || key.signer_id.trim().is_empty()
+                || key.valid_from > self.timestamp
+                || self.timestamp >= key.valid_until
+                || now >= key.valid_until
+                || keys.insert(signature.key_id.clone(), key.public_key).is_some()
+            {
+                return false;
+            }
+            for role in &key.roles {
+                observed.insert((role.clone(), key.signer_id.clone()));
+            }
+        }
+        required_signers
+            .iter()
+            .all(|(role, signer)| observed.contains(&(role.clone(), signer.clone())))
+            && self.verify_signatures(&keys)
     }
 
     fn validate(&self) -> Result<(), KernelContractError> {
@@ -858,6 +918,60 @@ mod tests {
             ("merchant-key".into(), merchant_key.verifying_key().to_bytes()),
         ]);
         assert!(receipt.verify_signatures(&keys));
+
+        let now = Utc::now();
+        let trusted = BTreeMap::from([
+            (
+                "buyer-key".into(),
+                EconomicReceiptKey {
+                    signer_id: "agent:buyer".into(),
+                    roles: BTreeSet::from(["buyer".into()]),
+                    public_key: agent_key.verifying_key().to_bytes(),
+                    valid_from: now - chrono::Duration::hours(1),
+                    valid_until: now + chrono::Duration::hours(1),
+                    revoked: false,
+                },
+            ),
+            (
+                "merchant-key".into(),
+                EconomicReceiptKey {
+                    signer_id: "agent:merchant".into(),
+                    roles: BTreeSet::from(["merchant".into()]),
+                    public_key: merchant_key.verifying_key().to_bytes(),
+                    valid_from: now - chrono::Duration::hours(1),
+                    valid_until: now + chrono::Duration::hours(1),
+                    revoked: false,
+                },
+            ),
+        ]);
+        let required = BTreeMap::from([
+            ("buyer".into(), "agent:buyer".into()),
+            ("merchant".into(), "agent:merchant".into()),
+        ]);
+        assert!(receipt.verify_authorized_signatures(&trusted, &required, now));
+        assert!(!receipt.verify_authorized_signatures(&trusted, &BTreeMap::new(), now));
+        let mut forged = receipt.clone();
+        forged.signatures[1].signer_id = "agent:other-merchant".into();
+        // A label change leaves the raw signature valid but cannot change ownership.
+        assert!(forged.verify_signatures(&keys));
+        assert!(!forged.verify_authorized_signatures(&trusted, &required, now));
+        let mut missing = receipt.clone();
+        missing.signatures.pop();
+        assert!(!missing.verify_authorized_signatures(&trusted, &required, now));
+        let mut revoked = trusted.clone();
+        revoked.get_mut("merchant-key").unwrap().revoked = true;
+        assert!(!receipt.verify_authorized_signatures(&revoked, &required, now));
+        let mut wrong_role = trusted.clone();
+        wrong_role.get_mut("merchant-key").unwrap().roles = BTreeSet::from(["settler".into()]);
+        assert!(!receipt.verify_authorized_signatures(&wrong_role, &required, now));
+        assert!(!receipt.verify_authorized_signatures(
+            &trusted,
+            &required,
+            now + chrono::Duration::hours(2)
+        ));
+        let mut duplicate = receipt.clone();
+        duplicate.signatures.push(duplicate.signatures[0].clone());
+        assert!(!duplicate.verify_authorized_signatures(&trusted, &required, now));
 
         receipt.settlement.as_mut().expect("settlement").transaction_id = "0xtampered".into();
         assert!(!receipt.verify_signatures(&keys));

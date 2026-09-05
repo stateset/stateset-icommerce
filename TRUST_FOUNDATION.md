@@ -1,7 +1,7 @@
 # Trust Foundation
 
 Status: active repo policy
-Last reviewed: 2026-09-04
+Last reviewed: 2026-09-05
 Applies to: `stateset-icommerce` and the adjacent trilogy repos referenced from this workspace
 
 This document is the canonical trust inventory for this repository.
@@ -23,7 +23,37 @@ This workspace is the application-layer repo in a larger documented stack:
 - `stateset-stark`: STARK proving and verification
 - `set`: settlement chain, registry contracts, anchor service
 
-The current workspace release line is `1.31.0`.
+The current workspace release line is `1.32.0`.
+
+### Source release 1.32.0 purchase hardening
+
+The [durable Node purchase runtime](docs/src/durable-purchases.md) adds local
+SQLite coordination, exact shared asset-budget holds, idempotent adapter steps,
+reconciliation and compensation. Its summary digest binds local evidence but
+is not a settlement signature. Payment tests use simulated providers; live
+settlement and merchant order adoption remain operator integrations. Its budget
+ledger governs this entrypoint only, not every commerce mutation.
+
+Core `EconomicReceipt::verify_authorized_signatures` checks operator-required
+role/signer pairs, key ownership, validity and revocation in addition to signature
+bytes. The old `verify_signatures` remains a cryptographic-only check. The new
+check requires keys to remain valid at verification time; archival verification
+after key expiry needs a separately defined historical trust policy.
+
+The reference ICP handler now requires buyer-signed quote acceptance. JavaScript,
+Rust and Python clients send this envelope; clients sending an empty acceptance
+body must upgrade. Intent IDs cannot be overwritten with a fresh nonce. This
+does not make the handler's demo principal bindings or simulated settlement
+production-ready. Optional [SQLite reference mode](docs/src/durable-merchant.md)
+persists protocol state, nonces and acceptance/settlement transactions with pinned
+merchant keys. Its tests exercise process kills, rollback and competing workers;
+it remains separate from native order aggregates and disables channel registration.
+Reference purchase/proposal quotes, subscription
+caps, returns and payouts now use exact integer money arithmetic; regression
+tests cover malformed input, sub-cent ceilings, fee conservation and signing
+failure without debiting funds. Inventory snapshots use current reservation
+balances. Provider conversions and asset precision still require verification.
+The remaining [release gates](docs/src/kernel-release-gates.md) are explicit.
 
 ## Trust Levels
 
@@ -54,7 +84,7 @@ Do not collapse those into a single "post-quantum" claim.
 
 ## Compatibility Contract
 
-The current workspace release line is `1.31.0`, so the published artifacts are
+The current workspace release line is `1.32.0`, so the published artifacts are
 on the first stable `v1.x` compatibility line.
 
 The `v1.0.0` compatibility contract is frozen and remains active:
@@ -69,8 +99,8 @@ The `v1.0.0` compatibility contract is frozen and remains active:
   supported for at least two minor releases and 90 days before removal in the
   next major;
 - `v1.0.x` is the initial stabilization/LTS line: critical regressions and
-  security fixes are eligible for backport there until `v1.31.0` ships;
-- after `v1.31.0`, the latest `v1.y` and previous `v1.(y-1)` lines receive
+  security fixes are eligible for backport there until `v1.32.0` ships;
+- after `v1.32.0`, the latest `v1.y` and previous `v1.(y-1)` lines receive
   security and release-blocking bug backports.
 
 ## Evidence Matrix

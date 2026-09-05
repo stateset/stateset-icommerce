@@ -37,14 +37,32 @@ and proof remain stable.
 
 ## Start here
 
+Building a sandboxed purchasing agent? The new source-tree
+[durable purchase runtime](docs/src/durable-purchases.md) provides shared asset
+budgets, persisted execution, reconciliation and kernel-command adapters through
+one `buy()` API. It is preview-first and CLI-independent. Live payment and
+merchant adapters remain operator integrations; the recovery tests simulate
+payments and do not move funds. This API is included in source release 1.32.0;
+Node package availability depends on the separate package release pipeline.
+
+For restart and concurrency testing, the [durable reference merchant](docs/src/durable-merchant.md)
+persists quote acceptance, inventory reservations, replay protection and signed
+events in one SQLite transaction. It is loopback-only, uses simulated settlement,
+and does not yet create native engine order aggregates.
+The separate [native checkout bridge](docs/src/durable-merchant.md#native-checkout-bridge-separate-integration)
+creates real orders through governed `checkout.commit`, with atomic budget
+consumption and receipt-based recovery. HTTP integration and live settlement
+remain pending. Operators can opt into strict-stock acceptance for tracked SKUs;
+the bridge requires explicit support from the loaded native binary.
+
 Install the engine for your application:
 
 ```bash
 cargo add stateset-sdk --features full   # Rust
-npm install @stateset/embedded@1.31.0     # Node.js
-pip install stateset-embedded==1.31.0     # Python
-npm install -g @stateset/cli@1.31.0       # CLI and MCP servers
-gem install stateset_embedded -v 1.31.0   # Ruby
+npm install @stateset/embedded@1.32.0     # Node.js
+pip install stateset-embedded==1.32.0     # Python
+npm install -g @stateset/cli@1.32.0       # CLI and MCP servers
+gem install stateset_embedded -v 1.32.0   # Ruby
 ```
 
 Then create durable commerce state directly in process:
@@ -142,7 +160,7 @@ LangChain, CrewAI, AutoGen, and generic adapters in Python.
 - [Engine-First Adoption](#engine-first-adoption) — embed it, don't service-mesh it
 - [Embedded Agent Toolkit](#embedded-agent-toolkit-openai--langgraph--server-side-agents) — OpenAI / LangGraph / server-side
 - [MCP Server](#mcp-server-claude-desktop--cursor--windsurf) — Claude Desktop / Cursor / Windsurf
-- [What's New in v1.31.0](#whats-new-in-v1310)
+- [What's New in v1.32.0](#whats-new-in-v1320)
 - [Architecture](#architecture) — Rust kernel, language bindings, operator runtime
 - [Quick Start](#quick-start) — working snippets in every language
 - [Production Notes](#production-notes) — running on Postgres, scaling, observability
@@ -283,7 +301,7 @@ examples before release.
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/embedded@1.31.0 @stateset/cli@1.31.0
+npm install @stateset/embedded@1.32.0 @stateset/cli@1.32.0
 ```
 
 ```javascript
@@ -407,40 +425,25 @@ admin surfaces under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v1.31.0
+## What's New in v1.32.0
 
-**v1.31.0 makes bounded economic autonomy a concrete runtime contract. An
-agent now has a delegated identity, exact authority, durable budgets, a small
-transaction vocabulary, and a receipt that independent parties can verify.**
+This release hardens the path from an agent's intent to durable economic state.
 
-- **Agents are economic actors, not request metadata.** `EconomicAgent` binds
-  the actor to an operator-owned principal, role, tenant, store, capabilities,
-  budgets, credentials, and an optional Ed25519 key. `EconomicAuthority` turns
-  exact fiat or asset ceilings into autonomous, approval-required, and denied
-  ranges under a deny-by-default policy.
-- **Eight verbs sit above the tool catalog.** `quote`, `buy`, `sell`, `pay`,
-  `fulfill`, `return_order`, `refund`, and `subscribe` create stable,
-  framework-neutral intents. Identity, scope, idempotency, policy, commitments,
-  execution, and proof travel through one kernel contract.
-- **Money budgets are durable and atomic.** SQLite and PostgreSQL provision
-  immutable, scoped budgets and debit them in the same transaction as checkout,
-  payment, refund, and subscription mutations. Preview never spends; concurrent
-  commands cannot overspend; failures roll back; replay cannot double-debit.
-- **Every consequential action can produce an economic receipt.** The receipt
-  seals the agent, principal, intent, exact commitment, decision, result, audit
-  anchor, and settlement evidence under a deterministic digest. Agent, merchant,
-  and settler signatures verify against caller-owned trusted keys, and changing
-  any committed fact breaks verification.
-- **The two-agent demo now proves the whole path.** A buyer intent obtains a
-  merchant quote, reserves actual inventory, creates an order, settles, collects
-  independent merchant and settler signatures, and verifies the final receipt.
-  Signed declarations are compared with executor-observed money, assets, and
-  counterparties; unsupported authority bindings fail closed.
-- **Agents can negotiate on a shared sequenced board.** The
-  [`sequencer-marketplace`](./examples/sequencer-marketplace/) demo has a buyer,
-  three merchants, and a payment agent exchange structured RFQs, bids,
-  counteroffers, awards, and commerce events through the StateSet Sequencer.
-  Every message is persistent, idempotent, tenant-scoped, and totally ordered.
+- **Recoverable purchases:** shared exact budgets, persisted execution steps,
+  authoritative outcome lookup, scoped recovery, and compensation.
+- **Durable reference merchants:** SQLite protocol state, pinned signing keys,
+  replay protection, atomic acceptance, and process-crash recovery tests.
+- **Native governed checkout:** real orders, stock allocation, budget consumption,
+  and receipts in the kernel transaction. Operators can require strict stock for
+  tracked SKUs; the bridge refuses unsupported native binaries.
+- **Stronger transaction trust:** buyer-signed quote acceptance, immutable intent
+  identities, exact reference money, and role-aware economic receipt verification.
+- **Explicit boundaries:** settlement in the reference demo is simulated. Native
+  checkout leaves payment pending. HTTP/native integration, immutable quoted
+  carts, live settlement verification, and independent assurance remain open.
+
+See the [changelog](CHANGELOG.md) for compatibility notes and the
+[release gates](docs/src/kernel-release-gates.md) for remaining production work.
 
 **v1.29.0 wires up what was built and guards what was open. Three more
 rounds of verified, both-backend work took every module past the defects a
@@ -1583,7 +1586,7 @@ Platform-specific notes that don't fit either:
   <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>1.31.0</version>
+    <version>1.32.0</version>
   </dependency>
   ```
 
@@ -1593,7 +1596,7 @@ Platform-specific notes that don't fit either:
   the autoloaded stubs throw at runtime.
 
 - **Swift** — Swift Package Manager is the supported path. CocoaPods is
-  community-maintained at `pod 'StateSet', '~> 1.31.0'`.
+  community-maintained at `pod 'StateSet', '~> 1.32.0'`.
 
 - **CLI** — clone the repo, then `cd cli && npm install && npm link`. After
   that, `stateset --help` works anywhere.
@@ -1606,16 +1609,16 @@ StateSet provides a Rust SDK plus native runtime bindings built from the same Ru
 
 | Language      | Package                              | Install                                                                                                                       | Docs                                                                                         |
 | ------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| **Rust**      | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.31.0"`                                                    | [docs.rs](https://docs.rs/stateset-sdk)                                                      |
-| **Node.js**   | `@stateset/embedded`                 | `npm install @stateset/embedded@1.31.0`                                                                                       | [npm](https://www.npmjs.com/package/@stateset/embedded)                                      |
+| **Rust**      | `stateset-sdk` / `stateset-embedded` | `cargo add stateset-sdk --features full` or `stateset-embedded = "1.32.0"`                                                    | [docs.rs](https://docs.rs/stateset-sdk)                                                      |
+| **Node.js**   | `@stateset/embedded`                 | `npm install @stateset/embedded@1.32.0`                                                                                       | [npm](https://www.npmjs.com/package/@stateset/embedded)                                      |
 | **Python**    | `stateset-embedded`                  | `pip install stateset-embedded`                                                                                               | [PyPI](https://pypi.org/project/stateset-embedded/)                                          |
 | **Ruby**      | `stateset_embedded`                  | `gem install stateset_embedded`                                                                                               | [RubyGems](https://rubygems.org/gems/stateset_embedded)                                      |
 | **PHP**       | `stateset/embedded`                  | `composer require stateset/embedded`                                                                                          | [Packagist](https://packagist.org/packages/stateset/embedded)                                |
-| **Java**      | `com.stateset:embedded`              | `implementation 'com.stateset:embedded:1.31.0'`                                                                               | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded)                 |
-| **Kotlin**    | `com.stateset:embedded-kotlin`       | `implementation("com.stateset:embedded-kotlin:1.31.0")`                                                                       | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin)          |
-| **Swift**     | `StateSet`                           | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.31.0")`                                             | [GitHub](https://github.com/stateset/stateset-swift)                                         |
-| **C# / .NET** | `StateSet.Embedded`                  | `dotnet add package StateSet.Embedded --version 1.31.0` / `<PackageReference Include="StateSet.Embedded" Version="1.31.0" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded)                                    |
-| **Go**        | `stateset`                           | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.31.0`                                                  | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
+| **Java**      | `com.stateset:embedded`              | `implementation 'com.stateset:embedded:1.32.0'`                                                                               | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded)                 |
+| **Kotlin**    | `com.stateset:embedded-kotlin`       | `implementation("com.stateset:embedded-kotlin:1.32.0")`                                                                       | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin)          |
+| **Swift**     | `StateSet`                           | `.package(url: "https://github.com/stateset/stateset-swift.git", from: "1.32.0")`                                             | [GitHub](https://github.com/stateset/stateset-swift)                                         |
+| **C# / .NET** | `StateSet.Embedded`                  | `dotnet add package StateSet.Embedded --version 1.32.0` / `<PackageReference Include="StateSet.Embedded" Version="1.32.0" />` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded)                                    |
+| **Go**        | `stateset`                           | `go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v1.32.0`                                                  | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
 | **WASM**      | `@stateset/embedded-wasm`            | `npm install @stateset/embedded-wasm`                                                                                         | [npm](https://www.npmjs.com/package/@stateset/embedded-wasm)                                 |
 
 For Rust specifically, `stateset-sdk` is the recommended facade crate. Use

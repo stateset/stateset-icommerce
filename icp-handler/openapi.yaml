@@ -197,8 +197,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/QuoteId'
       requestBody:
-        required: false
-        description: Optional acceptance metadata (e.g. delivery address).
+        required: true
+        description: Acceptance signed by the original buyer; unsigned acceptance is rejected.
         content:
           application/json:
             schema:
@@ -211,6 +211,8 @@ paths:
               schema: { $ref: '#/components/schemas/Escrow' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/EscrowConflict' }
+        '401':
+          description: Missing or invalid original-buyer acceptance signature
         '503': { $ref: '#/components/responses/SettlerUnavailable' }
 
   /icp/v1/escrows/{escrow_id}/fulfill:
@@ -984,7 +986,22 @@ components:
 
     AcceptQuoteRequest:
       type: object
+      required: [acceptance, signature]
       properties:
+        acceptance:
+          type: object
+          required: [type, quote_id, buyer]
+          properties:
+            type: { type: string, enum: [quote.accept] }
+            quote_id: { type: string }
+            buyer: { $ref: '#/components/schemas/AID' }
+        signature:
+          type: object
+          required: [alg, kid, sig]
+          properties:
+            alg: { type: string, enum: [ed25519] }
+            kid: { $ref: '#/components/schemas/AID' }
+            sig: { type: string, pattern: '^[a-fA-F0-9]{128}$' }
         delivery_address: { type: object, additionalProperties: true }
         notes: { type: string }
 

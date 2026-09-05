@@ -66,6 +66,7 @@ mapfile -t files < <(git grep -l "${FROM_RE}" -- . \
   ':(exclude)*package-lock.json' \
   ':(exclude)artifacts/*' \
   ':(exclude)docs/src/appendix/*' \
+  ':(exclude)docs/versions/*' \
   ':(exclude)supply-chain/*' \
   ':(exclude)bindings/php/Cargo.lock' \
   ':(exclude)bindings/ruby/Cargo.lock' \

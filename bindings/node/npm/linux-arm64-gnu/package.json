@@ -1,6 +1,6 @@
 {
   "name": "@stateset/embedded-linux-arm64-gnu",
-  "version": "1.31.0",
+  "version": "1.32.0",
   "os": [
     "linux"
   ],

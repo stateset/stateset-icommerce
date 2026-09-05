@@ -17,7 +17,8 @@
 
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { generateKeyPairSync } from 'node:crypto';
+import { generateKeyPairSync, createPrivateKey, createPublicKey } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import {
   canonicalJson,
@@ -59,10 +60,13 @@ const PORT = Number(process.env.PORT ?? 8787);
 // deployments back this with a shared/durable store; the reference impl is
 // per-process in-memory, which is correct for a single-instance handler.
 // ---------------------------------------------------------------------------
-const replayGuard = new ReplayGuard({
+const nonceOptions = {
   ttlMs: Number(process.env.ICP_NONCE_TTL_MS ?? 86_400_000),
   maxEntries: Number(process.env.ICP_NONCE_MAX_ENTRIES ?? 100_000),
-});
+};
+const replayGuard = state.isDurable()
+  ? state.durableReplayGuard(nonceOptions)
+  : new ReplayGuard(nonceOptions);
 
 // ---------------------------------------------------------------------------
 // Merchant identity (this handler's signing key, used to sign Quotes,
@@ -70,9 +74,22 @@ const replayGuard = new ReplayGuard({
 // In production this comes from a KMS or HSM.
 // ---------------------------------------------------------------------------
 
-const merchantKp = generateKeyPairSync('ed25519');
+if (state.isDurable() && (!process.env.ICP_MERCHANT_KEY_FILE || !process.env.ICP_MERCHANT_AID)) {
+  throw new Error(
+    'durable handler requires operator-owned ICP_MERCHANT_KEY_FILE and ICP_MERCHANT_AID',
+  );
+}
+const configuredKey = process.env.ICP_MERCHANT_KEY_FILE
+  ? createPrivateKey(readFileSync(process.env.ICP_MERCHANT_KEY_FILE))
+  : null;
+if (configuredKey && configuredKey.asymmetricKeyType !== 'ed25519')
+  throw new Error('merchant key must be Ed25519');
+const merchantKp = configuredKey
+  ? { privateKey: configuredKey, publicKey: createPublicKey(configuredKey) }
+  : generateKeyPairSync('ed25519');
 const merchantPubRaw = publicKeyToRaw(merchantKp.publicKey);
-const merchantAid = `aid:v1:zMerchantHandlerInstance${process.pid}`;
+const merchantAid = process.env.ICP_MERCHANT_AID || `aid:v1:zMerchantHandlerInstance${process.pid}`;
+state.bindIdentity({ aid: merchantAid, publicKey: merchantPubRaw.toString('hex') });
 
 // ---------------------------------------------------------------------------
 // Allowed Settlers (governance allowlist subset).
@@ -80,7 +97,7 @@ const merchantAid = `aid:v1:zMerchantHandlerInstance${process.pid}`;
 
 const ALLOWED_SETTLERS = new Set([
   'settler:stateset.usdc.base-sepolia', // bootstrap
-  'settler:circle.usdc.base',            // future production
+  'settler:circle.usdc.base', // future production
 ]);
 
 // Operator-owned trust roots for co-signing externally settled receipts.
@@ -88,7 +105,9 @@ const ALLOWED_SETTLERS = new Set([
 // Never accept a public key from the receipt being authorized.
 let TRUSTED_SETTLER_KEYS = new Map();
 try {
-  TRUSTED_SETTLER_KEYS = new Map(Object.entries(JSON.parse(process.env.ICP_SETTLER_KEYS_JSON ?? '{}')));
+  TRUSTED_SETTLER_KEYS = new Map(
+    Object.entries(JSON.parse(process.env.ICP_SETTLER_KEYS_JSON ?? '{}')),
+  );
 } catch (error) {
   throw new Error(`ICP_SETTLER_KEYS_JSON must be a JSON object: ${error.message}`);
 }
@@ -98,35 +117,54 @@ try {
 // ---------------------------------------------------------------------------
 
 const routes = [
-  ['GET',  '/healthz',                                          handleHealthz],
-  ['GET',  '/icp/v1/.well-known/icp',                          handleWellKnown],
-  ['GET',  '/icp/v1/settlers',                                  handleSettlers],
-  ['POST', '/icp/v1/intents',                                   handleSubmitIntent],
-  ['POST', /^\/icp\/v1\/quotes\/([^/]+)\/accept$/,             handleAcceptQuote],
-  ['POST', /^\/icp\/v1\/escrows\/([^/]+)\/fulfill$/,           handleFulfill],
-  ['POST', /^\/icp\/v1\/escrows\/([^/]+)\/dispute$/,           handleDispute],
-  ['POST', '/icp/v1/settlements/cosign',                         handleCosignSettlement],
-  ['GET',  /^\/icp\/v1\/escrows\/([^/]+)\/events$/,            handleObserve],
-  ['GET',  /^\/icp\/v1\/settlements\/([^/]+)$/,                handleGetSettlement],
-  ['GET',  /^\/icp\/v1\/channels\/([^/]+)$/,                   handleGetChannel],
-  ['GET',  /^\/icp\/v1\/channels\/([^/]+)\/events$/,           handleGetChannelEvents],
+  ['GET', '/healthz', handleHealthz],
+  ['GET', '/icp/v1/.well-known/icp', handleWellKnown],
+  ['GET', '/icp/v1/settlers', handleSettlers],
+  ['POST', '/icp/v1/intents', handleSubmitIntent],
+  ['POST', /^\/icp\/v1\/quotes\/([^/]+)\/accept$/, handleAcceptQuote],
+  ['POST', /^\/icp\/v1\/escrows\/([^/]+)\/fulfill$/, handleFulfill],
+  ['POST', /^\/icp\/v1\/escrows\/([^/]+)\/dispute$/, handleDispute],
+  ['POST', '/icp/v1/settlements/cosign', handleCosignSettlement],
+  ['GET', /^\/icp\/v1\/escrows\/([^/]+)\/events$/, handleObserve],
+  ['GET', /^\/icp\/v1\/settlements\/([^/]+)$/, handleGetSettlement],
+  ['GET', /^\/icp\/v1\/channels\/([^/]+)$/, handleGetChannel],
+  ['GET', /^\/icp\/v1\/channels\/([^/]+)\/events$/, handleGetChannelEvents],
 ];
 
 const server = createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  for (const [method, pattern, handler] of routes) {
-    if (req.method !== method) continue;
-    if (typeof pattern === 'string') {
-      if (url.pathname === pattern) return handler(req, res, url, []);
-    } else {
-      const m = pattern.exec(url.pathname);
-      if (m) return handler(req, res, url, m.slice(1));
+  try {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    for (const [method, pattern, handler] of routes) {
+      if (req.method !== method) continue;
+      if (typeof pattern === 'string') {
+        if (url.pathname === pattern) return await handler(req, res, url, []);
+      } else {
+        const m = pattern.exec(url.pathname);
+        if (m) return await handler(req, res, url, m.slice(1));
+      }
     }
+    return reply(res, 404, { type: 'icp.error', code: 'format.unknown_route', message: req.url });
+  } catch {
+    if (!res.headersSent)
+      return reply(
+        res,
+        500,
+        err(
+          'internal.transaction_failed',
+          'operation failed; retry with the same identity and intent',
+        ),
+      );
+    res.destroy();
   }
-  return reply(res, 404, { type: 'icp.error', code: 'format.unknown_route', message: req.url });
 });
 
-server.listen(PORT, () => {
+// Construct a response inside the transaction, send it only after commit.
+function transactionReply(res, fn) {
+  const outcome = state.atomic(() => fn((_res, status, body) => ({ status, body })));
+  return reply(res, outcome.status, outcome.body);
+}
+
+server.listen(PORT, state.isDurable() ? '127.0.0.1' : undefined, () => {
   const addr = server.address();
   console.error(`icp-handler listening on http://127.0.0.1:${addr.port}`);
   console.error(`  merchant_aid: ${merchantAid}`);
@@ -139,7 +177,12 @@ server.listen(PORT, () => {
 // ---------------------------------------------------------------------------
 
 function handleHealthz(req, res) {
-  reply(res, 200, { ok: true, ...state.counts() });
+  reply(res, 200, {
+    ok: true,
+    storage: state.isDurable() ? 'sqlite' : 'memory',
+    settlement: 'simulated',
+    ...state.counts(),
+  });
 }
 
 function handleWellKnown(req, res) {
@@ -162,10 +205,10 @@ function handleWellKnown(req, res) {
         'quote.request',
         'payout.request',
         'channel.register',
-      ],
+      ].filter((verb) => !state.isDurable() || verb !== 'channel.register'),
       transports: ['http'],
       pqc_hybrid: false,
-      push_channels: ['webhook', 'sse'],
+      push_channels: state.isDurable() ? [] : ['webhook', 'sse'],
     },
     settler_allowlist: [...ALLOWED_SETTLERS],
     docs: 'https://github.com/stateset/icp-spec',
@@ -185,9 +228,17 @@ async function handleSubmitIntent(req, res) {
   if (!intent || !signature) {
     return reply(res, 400, err('format.missing_field', 'expected { intent, signature }'));
   }
+  if (state.isDurable() && intent.verb === 'channel.register') {
+    return reply(
+      res,
+      503,
+      err('channel.durable_delivery_unavailable', 'durable channel delivery is not configured'),
+    );
+  }
 
   // 1. Spec-shape sanity
-  if (intent.v !== 'icp-1.0') return reply(res, 400, err('version.unsupported', `unknown spec version ${intent.v}`));
+  if (intent.v !== 'icp-1.0')
+    return reply(res, 400, err('version.unsupported', `unknown spec version ${intent.v}`));
   const supportedVerbs = new Set([
     'purchase.create',
     'subscription.create',
@@ -199,12 +250,20 @@ async function handleSubmitIntent(req, res) {
     'channel.register',
   ]);
   if (!supportedVerbs.has(intent.verb)) {
-    return reply(res, 400, err('format.unknown_verb', `verb ${intent.verb} not implemented in stub`));
+    return reply(
+      res,
+      400,
+      err('format.unknown_verb', `verb ${intent.verb} not implemented in stub`),
+    );
   }
 
   // 2. Settler allowlist
   if (!ALLOWED_SETTLERS.has(intent.settler)) {
-    return reply(res, 400, err('policy.settler.not_allowed', `settler ${intent.settler} not in allowlist`));
+    return reply(
+      res,
+      400,
+      err('policy.settler.not_allowed', `settler ${intent.settler} not in allowlist`),
+    );
   }
 
   // 3. Replay window
@@ -214,7 +273,8 @@ async function handleSubmitIntent(req, res) {
   if (!Number.isFinite(iat) || !Number.isFinite(exp)) {
     return reply(res, 400, err('format.bad_timestamp', 'iat/exp must be RFC 3339'));
   }
-  if (exp - iat > 600_000) return reply(res, 400, err('replay.window_too_long', 'exp-iat must be <= 600s'));
+  if (exp - iat > 600_000)
+    return reply(res, 400, err('replay.window_too_long', 'exp-iat must be <= 600s'));
   if (now > exp) return reply(res, 400, err('replay.expired', 'Intent has expired'));
 
   // 3b. Nonce presence (§5.3 — every payload MUST carry a nonce).
@@ -229,6 +289,9 @@ async function handleSubmitIntent(req, res) {
   // Ed25519 signature under the now-bound key. This closes the hole where any
   // key could verify as any AID.
   const signerAid = signature.kid;
+  if (intent.verb === 'purchase.create' && signerAid !== intent.buyer) {
+    return reply(res, 401, err('auth.buyer_mismatch', 'intent signer must be its buyer'));
+  }
   let edPubRaw;
   try {
     edPubRaw = resolveAidPubkey(signerAid, body._pubkey_hex, body._x_pubkey_hex);
@@ -248,19 +311,36 @@ async function handleSubmitIntent(req, res) {
   if (body._principal_pubkey_hex) {
     const binding = intent.principal_binding;
     if (!binding?.signature?.sig) {
-      return reply(res, 401, err('delegation.signature_missing', 'principal binding signature is required'));
+      return reply(
+        res,
+        401,
+        err('delegation.signature_missing', 'principal binding signature is required'),
+      );
     }
     if (binding.agent !== intent.buyer || !binding.authority?.verbs?.includes(intent.verb)) {
-      return reply(res, 403, err('delegation.scope_mismatch', 'principal binding does not authorize this agent and verb'));
+      return reply(
+        res,
+        403,
+        err(
+          'delegation.scope_mismatch',
+          'principal binding does not authorize this agent and verb',
+        ),
+      );
     }
     if (Date.parse(binding.expiry) <= now) {
       return reply(res, 403, err('delegation.expired', 'principal binding has expired'));
     }
     const { signature: _bindingSignature, ...unsignedBinding } = binding;
     const principalKey = Buffer.from(body._principal_pubkey_hex, 'hex');
-    if (principalKey.length !== 32
-        || !verifyEd25519(canonicalJson(unsignedBinding), binding.signature.sig, principalKey)) {
-      return reply(res, 401, err('delegation.signature_invalid', 'principal binding signature failed'));
+    if (
+      principalKey.length !== 32 ||
+      !verifyEd25519(canonicalJson(unsignedBinding), binding.signature.sig, principalKey)
+    ) {
+      return reply(
+        res,
+        401,
+        err('delegation.signature_invalid', 'principal binding signature failed'),
+      );
     }
   }
 
@@ -268,332 +348,420 @@ async function handleSubmitIntent(req, res) {
   // proven valid, so an attacker can't burn a victim's nonce with a forged
   // message. Keyed on the bound signer AID so distinct agents may reuse the
   // same nonce bytes without colliding.
-  if (!replayGuard.checkAndRecord(signerAid, intent.nonce)) {
-    return reply(res, 400, err('replay.nonce_seen', `nonce already used by ${signerAid} within the replay window`));
-  }
+  return transactionReply(res, (reply) => {
+    if (!replayGuard.checkAndRecord(signerAid, intent.nonce)) {
+      return reply(
+        res,
+        400,
+        err('replay.nonce_seen', `nonce already used by ${signerAid} within the replay window`),
+      );
+    }
+    // A fresh nonce must not replace the buyer/key binding of a quoted intent.
+    if (state.getIntent(intent.intent_id)) {
+      return reply(
+        res,
+        409,
+        err('replay.intent_seen', 'intent identity is immutable; use a new intent ID'),
+      );
+    }
 
-  // 5. Hand to backend — branch by verb
-  if (intent.verb === 'subscription.create') {
-    const result = stubSubscriptionAuthorize(intent, merchantKp.privateKey, merchantAid);
+    // 5. Hand to backend — branch by verb
+    if (intent.verb === 'subscription.create') {
+      const result = stubSubscriptionAuthorize(intent, merchantKp.privateKey, merchantAid);
+      if (!result.ok) return reply(res, 422, result.error);
+      state.recordIntent(intent, signature.sig);
+      return reply(res, 200, {
+        authorization: result.authorization,
+        signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+      });
+    }
+
+    if (intent.verb === 'purchase.return') {
+      const result = stubReturnAuthorize(intent, merchantKp.privateKey, merchantAid);
+      if (!result.ok) return reply(res, 422, result.error);
+      state.recordIntent(intent, signature.sig);
+      return reply(res, 200, {
+        authorization: result.authorization,
+        signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+      });
+    }
+
+    if (intent.verb === 'inventory.query') {
+      const result = stubInventoryQuery(intent, merchantKp.privateKey, merchantAid);
+      if (!result.ok) return reply(res, 422, result.error);
+      state.recordIntent(intent, signature.sig);
+      return reply(res, 200, {
+        snapshot: result.snapshot,
+        signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+      });
+    }
+
+    if (intent.verb === 'subscription.cancel') {
+      const result = stubSubscriptionCancel(intent, merchantKp.privateKey, merchantAid);
+      if (!result.ok) return reply(res, 422, result.error);
+      state.recordIntent(intent, signature.sig);
+
+      // ICPIP-0005: fan out subscription.canceled to every subscribed
+      // webhook (same fire-and-forget pattern as fulfill + dispute).
+      state.afterCommit(() =>
+        publishToSubscribers(
+          channelStore,
+          'subscription.canceled',
+          {
+            subscription_id: result.authorization.subscription_id,
+            intent_id: intent.intent_id,
+            effective_at:
+              result.authorization.effective_at ?? result.authorization.canceled_at ?? null,
+            final_charge_at: result.authorization.final_charge_at ?? null,
+            refund_amount: result.authorization.refund_amount ?? null,
+          },
+          { signingKey: merchantKp.privateKey, sourceAid: merchantAid },
+        ).catch((err) => {
+          console.error(
+            `publishToSubscribers(subscription.canceled) failed: ${err?.message ?? err}`,
+          );
+        }),
+      );
+
+      return reply(res, 200, {
+        authorization: result.authorization,
+        signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+      });
+    }
+
+    if (intent.verb === 'quote.request') {
+      const result = stubQuoteRequest(intent, merchantKp.privateKey, merchantAid);
+      if (!result.ok) return reply(res, 422, result.error);
+      state.recordIntent(intent, signature.sig);
+      return reply(res, 200, {
+        proposal: result.proposal,
+        signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+      });
+    }
+
+    if (intent.verb === 'payout.request') {
+      const result = stubPayoutRequest(intent, merchantKp.privateKey, merchantAid);
+      if (!result.ok) return reply(res, 422, result.error);
+      state.recordIntent(intent, signature.sig);
+      return reply(res, 200, {
+        authorization: result.authorization,
+        signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+      });
+    }
+
+    if (intent.verb === 'channel.register') {
+      const result = stubChannelRegister(intent, merchantKp.privateKey, merchantAid, channelStore);
+      if (!result.ok) return reply(res, 422, result.error);
+      state.recordIntent(intent, signature.sig);
+      return reply(res, 200, {
+        channel: result.channel,
+        signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
+      });
+    }
+
+    const result = stubQuote(intent, merchantKp.privateKey);
     if (!result.ok) return reply(res, 422, result.error);
-    state.recordIntent(intent, signature.sig);
+
+    state.recordIntent(intent, signature.sig, edPubRaw);
+    state.recordQuote(result.quote, intent.intent_id, result.signatureHex);
+
     return reply(res, 200, {
-      authorization: result.authorization,
+      quote: result.quote,
       signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
     });
-  }
-
-  if (intent.verb === 'purchase.return') {
-    const result = stubReturnAuthorize(intent, merchantKp.privateKey, merchantAid);
-    if (!result.ok) return reply(res, 422, result.error);
-    state.recordIntent(intent, signature.sig);
-    return reply(res, 200, {
-      authorization: result.authorization,
-      signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
-    });
-  }
-
-  if (intent.verb === 'inventory.query') {
-    const result = stubInventoryQuery(intent, merchantKp.privateKey, merchantAid);
-    if (!result.ok) return reply(res, 422, result.error);
-    state.recordIntent(intent, signature.sig);
-    return reply(res, 200, {
-      snapshot: result.snapshot,
-      signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
-    });
-  }
-
-  if (intent.verb === 'subscription.cancel') {
-    const result = stubSubscriptionCancel(intent, merchantKp.privateKey, merchantAid);
-    if (!result.ok) return reply(res, 422, result.error);
-    state.recordIntent(intent, signature.sig);
-
-    // ICPIP-0005: fan out subscription.canceled to every subscribed
-    // webhook (same fire-and-forget pattern as fulfill + dispute).
-    publishToSubscribers(
-      channelStore,
-      'subscription.canceled',
-      {
-        subscription_id: result.authorization.subscription_id,
-        intent_id: intent.intent_id,
-        effective_at:
-          result.authorization.effective_at ?? result.authorization.canceled_at ?? null,
-        final_charge_at: result.authorization.final_charge_at ?? null,
-        refund_amount: result.authorization.refund_amount ?? null,
-      },
-      { signingKey: merchantKp.privateKey, sourceAid: merchantAid },
-    ).catch((err) => {
-      console.error(`publishToSubscribers(subscription.canceled) failed: ${err?.message ?? err}`);
-    });
-
-    return reply(res, 200, {
-      authorization: result.authorization,
-      signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
-    });
-  }
-
-  if (intent.verb === 'quote.request') {
-    const result = stubQuoteRequest(intent, merchantKp.privateKey, merchantAid);
-    if (!result.ok) return reply(res, 422, result.error);
-    state.recordIntent(intent, signature.sig);
-    return reply(res, 200, {
-      proposal: result.proposal,
-      signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
-    });
-  }
-
-  if (intent.verb === 'payout.request') {
-    const result = stubPayoutRequest(intent, merchantKp.privateKey, merchantAid);
-    if (!result.ok) return reply(res, 422, result.error);
-    state.recordIntent(intent, signature.sig);
-    return reply(res, 200, {
-      authorization: result.authorization,
-      signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
-    });
-  }
-
-  if (intent.verb === 'channel.register') {
-    const result = stubChannelRegister(intent, merchantKp.privateKey, merchantAid, channelStore);
-    if (!result.ok) return reply(res, 422, result.error);
-    state.recordIntent(intent, signature.sig);
-    return reply(res, 200, {
-      channel: result.channel,
-      signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
-    });
-  }
-
-  const result = stubQuote(intent, merchantKp.privateKey);
-  if (!result.ok) return reply(res, 422, result.error);
-
-  state.recordIntent(intent, signature.sig);
-  state.recordQuote(result.quote, intent.intent_id, result.signatureHex);
-
-  return reply(res, 200, {
-    quote: result.quote,
-    signature: { alg: 'ed25519', kid: merchantAid, sig: result.signatureHex },
   });
 }
 
 async function handleAcceptQuote(req, res, _url, [quoteId]) {
   const body = await readJson(req);
   if (!body) return reply(res, 400, errBadJson());
-  const record = state.getQuote(quoteId);
-  if (!record) return reply(res, 404, err('format.unknown_quote', `quote ${quoteId} not found`));
-  const { quote, intentId } = record;
-  if (Date.now() > Date.parse(quote.exp)) {
-    return reply(res, 410, err('replay.expired', 'Quote has expired'));
-  }
-  // (In prod we'd verify the buyer's Accept signature; the stub trusts the body shape.)
+  return transactionReply(res, (reply) => {
+    const record = state.getQuote(quoteId);
+    if (!record) return reply(res, 404, err('format.unknown_quote', `quote ${quoteId} not found`));
+    const { quote, intentId } = record;
+    const original = state.getIntent(intentId);
+    const acceptance = body.acceptance;
+    if (
+      !original?.signerPublicKey ||
+      acceptance?.type !== 'quote.accept' ||
+      acceptance.quote_id !== quoteId ||
+      acceptance.buyer !== original.intent.buyer ||
+      body.signature?.alg !== 'ed25519' ||
+      body.signature.kid !== original.intent.buyer ||
+      !verifyEd25519(canonicalJson(acceptance), body.signature.sig, original.signerPublicKey)
+    ) {
+      return reply(
+        res,
+        401,
+        err('auth.acceptance_invalid', 'quote acceptance must be signed by the original buyer'),
+      );
+    }
 
-  const funding = stubFundingInstructions(quote);
-  const existingEscrow = state.getEscrow(funding.escrow_id);
-  if (existingEscrow) {
+    const funding = stubFundingInstructions(quote);
+    const existingEscrow = state.getEscrow(funding.escrow_id);
+    if (existingEscrow) {
+      return reply(res, 200, {
+        funding: existingEscrow.funding ?? funding,
+        order: {
+          order_id: existingEscrow.order_id,
+          status: 'authorized',
+          quote_id: quoteId,
+        },
+        inventory_reservation: state.getInventoryReservation(funding.escrow_id),
+      });
+    }
+    if (Date.now() > Date.parse(quote.exp)) {
+      return reply(res, 410, err('replay.expired', 'Quote has expired'));
+    }
+    const inventoryReservation = state.reserveInventory(funding.escrow_id, quote.lines);
+    if (!inventoryReservation) {
+      return reply(
+        res,
+        409,
+        err('inventory.insufficient', 'quoted inventory is no longer available'),
+      );
+    }
+    const orderId = newId('ord');
+    state.createEscrow(funding.escrow_id, {
+      state: 'pending',
+      intent_id: intentId,
+      quote_id: quoteId,
+      amount: quote.total,
+      settler: quote.settler,
+      seq: 0,
+      order_id: orderId,
+      funding,
+      inventory_reservation_id: inventoryReservation.reservation_id,
+    });
+    appendSignedEscrowEvent(funding.escrow_id, {
+      type: 'icp.escrow.event',
+      v: 'icp-1.0',
+      escrow_id: funding.escrow_id,
+      intent_id: intentId,
+      seq: 0,
+      from_state: 'none',
+      to_state: 'pending',
+      trigger: { kind: 'quote-accepted', quote_id: quoteId },
+      iat: new Date().toISOString(),
+    });
+
     return reply(res, 200, {
       funding,
-      order: {
-        order_id: existingEscrow.order_id,
-        status: 'authorized',
-        quote_id: quoteId,
-      },
-      inventory_reservation: state.getInventoryReservation(funding.escrow_id),
+      order: { order_id: orderId, status: 'authorized', quote_id: quoteId },
+      inventory_reservation: inventoryReservation,
     });
-  }
-  const inventoryReservation = state.reserveInventory(funding.escrow_id, quote.lines);
-  if (!inventoryReservation) {
-    return reply(res, 409, err('inventory.insufficient', 'quoted inventory is no longer available'));
-  }
-  const orderId = newId('ord');
-  state.createEscrow(funding.escrow_id, {
-    state: 'pending',
-    intent_id: intentId,
-    quote_id: quoteId,
-    amount: quote.total,
-    settler: quote.settler,
-    seq: 0,
-    order_id: orderId,
-    inventory_reservation_id: inventoryReservation.reservation_id,
-  });
-  appendSignedEscrowEvent(funding.escrow_id, {
-    type: 'icp.escrow.event',
-    v: 'icp-1.0',
-    escrow_id: funding.escrow_id,
-    intent_id: intentId,
-    seq: 0,
-    from_state: 'none',
-    to_state: 'pending',
-    trigger: { kind: 'quote-accepted', quote_id: quoteId },
-    iat: new Date().toISOString(),
-  });
-
-  return reply(res, 200, {
-    funding,
-    order: { order_id: orderId, status: 'authorized', quote_id: quoteId },
-    inventory_reservation: inventoryReservation,
   });
 }
 
 async function handleFulfill(req, res, _url, [escrowId]) {
   const body = await readJson(req);
   if (!body) return reply(res, 400, errBadJson());
-  const e = state.getEscrow(escrowId);
-  if (!e) return reply(res, 404, err('format.unknown_escrow', `escrow ${escrowId} not found`));
-  if (e.state !== 'funded' && e.state !== 'pending') {
-    return reply(res, 409, err('escrow.wrong_state', `cannot fulfill from state ${e.state}`));
-  }
+  return transactionReply(res, (reply) => {
+    const e = state.getEscrow(escrowId);
+    if (!e) return reply(res, 404, err('format.unknown_escrow', `escrow ${escrowId} not found`));
+    if (e.state === 'released' && e.settlement_id)
+      return reply(res, 200, { receipt: state.getSettlement(e.settlement_id) });
+    if (e.state !== 'funded' && e.state !== 'pending') {
+      return reply(res, 409, err('escrow.wrong_state', `cannot fulfill from state ${e.state}`));
+    }
 
-  // Demo: pretend funding is confirmed at time-of-fulfill (so that this all
-  // works without a real chain).
-  if (e.state === 'pending') {
-    state.updateEscrow(escrowId, { state: 'funded' });
-    appendSignedEscrowEvent(escrowId, makeEvent(escrowId, e, 'pending', 'funded', { kind: 'rail-confirmed-mock' }));
-  }
+    // Demo: pretend funding is confirmed at time-of-fulfill (so that this all
+    // works without a real chain).
+    if (e.state === 'pending') {
+      state.updateEscrow(escrowId, { state: 'funded' });
+      appendSignedEscrowEvent(
+        escrowId,
+        makeEvent(escrowId, e, 'pending', 'funded', { kind: 'rail-confirmed-mock' }),
+      );
+    }
 
-  state.updateEscrow(escrowId, { state: 'fulfilled' });
-  appendSignedEscrowEvent(escrowId, makeEvent(escrowId, e, 'funded', 'fulfilled', {
-    kind: 'fulfillment-evidence-accepted',
-    evidence_id: body.evidence_id ?? newId('icp_ful'),
-  }));
+    state.updateEscrow(escrowId, { state: 'fulfilled' });
+    appendSignedEscrowEvent(
+      escrowId,
+      makeEvent(escrowId, e, 'funded', 'fulfilled', {
+        kind: 'fulfillment-evidence-accepted',
+        evidence_id: body.evidence_id ?? newId('icp_ful'),
+      }),
+    );
 
-  // Demo: time-lock skipped — auto-release immediately so the demo shows the receipt.
-  state.updateEscrow(escrowId, { state: 'released' });
-  appendSignedEscrowEvent(escrowId, makeEvent(escrowId, e, 'fulfilled', 'released', { kind: 'demo-auto-release' }));
+    // Demo: time-lock skipped — auto-release immediately so the demo shows the receipt.
+    state.updateEscrow(escrowId, { state: 'released' });
+    appendSignedEscrowEvent(
+      escrowId,
+      makeEvent(escrowId, e, 'fulfilled', 'released', { kind: 'demo-auto-release' }),
+    );
 
-  // Settlement receipt (co-signed merchant + this handler-as-settler stub).
-  const receipt = {
-    type: 'icp.settlement.receipt',
-    v: 'icp-1.0',
-    settlement_id: newId('icp_set'),
-    escrow_id: escrowId,
-    intent_id: e.intent_id,
-    final_state: 'released',
-    amount: e.amount,
-    rail: 'demo-mock',
-    rail_txid: '0x' + 'cafe'.repeat(16),
-    settled_at: new Date().toISOString(),
-    released_to: '<merchant-payout-address>',
-  };
-  const canonical = canonicalJson(receipt);
-  const sigHex = signEd25519(canonical, merchantKp.privateKey);
-  receipt.merchant_signature = { alg: 'ed25519', kid: merchantAid, sig: sigHex };
-  receipt.settler_signature = receipt.merchant_signature; // stub: same key for both
-  state.recordSettlement(receipt);
-
-  // ICPIP-0005: fan out settlement.released to every subscribed webhook.
-  // Fire-and-forget — the synchronous response shouldn't wait for HTTP
-  // round-trips to external receivers. In production, retries land via a
-  // durable job queue; the reference impl is single-attempt for now.
-  publishToSubscribers(
-    channelStore,
-    'settlement.released',
-    {
-      settlement_id: receipt.settlement_id,
+    // Settlement receipt (co-signed merchant + this handler-as-settler stub).
+    const receipt = {
+      type: 'icp.settlement.receipt',
+      v: 'icp-1.0',
+      settlement_id: newId('icp_set'),
       escrow_id: escrowId,
       intent_id: e.intent_id,
-      amount: e.amount,
       final_state: 'released',
-      settled_at: receipt.settled_at,
-    },
-    { signingKey: merchantKp.privateKey, sourceAid: merchantAid },
-  ).catch((err) => {
-    console.error(`publishToSubscribers failed: ${err?.message ?? err}`);
-  });
+      amount: e.amount,
+      rail: 'demo-mock',
+      rail_txid: '0x' + 'cafe'.repeat(16),
+      settled_at: new Date().toISOString(),
+      released_to: '<merchant-payout-address>',
+    };
+    const canonical = canonicalJson(receipt);
+    const sigHex = signEd25519(canonical, merchantKp.privateKey);
+    receipt.merchant_signature = { alg: 'ed25519', kid: merchantAid, sig: sigHex };
+    receipt.settler_signature = receipt.merchant_signature; // stub: same key for both
+    state.recordSettlement(receipt);
+    state.updateEscrow(escrowId, { settlement_id: receipt.settlement_id });
 
-  return reply(res, 200, { receipt });
+    // ICPIP-0005: fan out settlement.released to every subscribed webhook.
+    // Fire-and-forget — the synchronous response shouldn't wait for HTTP
+    // round-trips to external receivers. In production, retries land via a
+    // durable job queue; the reference impl is single-attempt for now.
+    state.afterCommit(() =>
+      publishToSubscribers(
+        channelStore,
+        'settlement.released',
+        {
+          settlement_id: receipt.settlement_id,
+          escrow_id: escrowId,
+          intent_id: e.intent_id,
+          amount: e.amount,
+          final_state: 'released',
+          settled_at: receipt.settled_at,
+        },
+        { signingKey: merchantKp.privateKey, sourceAid: merchantAid },
+      ).catch((err) => {
+        console.error(`publishToSubscribers failed: ${err?.message ?? err}`);
+      }),
+    );
+
+    return reply(res, 200, { receipt });
+  });
 }
 
 async function handleCosignSettlement(req, res) {
   const body = await readJson(req);
-  const receipt = body?.receipt;
-  if (!receipt || receipt.type !== 'icp.settlement.receipt') {
-    return reply(res, 400, err('format.missing_field', 'receipt is required'));
-  }
-  if (!ALLOWED_SETTLERS.has(receipt.settler)) {
-    return reply(res, 400, err('policy.settler.not_allowed', `settler ${receipt.settler} not in allowlist`));
-  }
-  const trustedKeyHex = TRUSTED_SETTLER_KEYS.get(receipt.settler);
-  if (!trustedKeyHex) {
-    return reply(res, 503, err('settler.key_unavailable', `no operator-owned key for ${receipt.settler}`));
-  }
-  if (!receipt.settler_signature?.sig) {
-    return reply(res, 400, err('format.missing_field', 'settler_signature is required'));
-  }
-  const { merchant_signature: _merchant, settler_signature: _settler, ...unsigned } = receipt;
-  let settlerKey;
-  try {
-    settlerKey = Buffer.from(trustedKeyHex, 'hex');
-    if (settlerKey.length !== 32) throw new Error('key must contain 32 bytes');
-  } catch (error) {
-    return reply(res, 503, err('settler.key_invalid', error.message));
-  }
-  const canonical = canonicalJson(unsigned);
-  if (!verifyEd25519(canonical, receipt.settler_signature.sig, settlerKey)) {
-    return reply(res, 401, err('settlement.settler_signature_invalid', 'settler receipt signature failed'));
-  }
-  const intentRecord = state.getIntent(receipt.intent_id);
-  const quoteRecord = state.getQuoteByIntent(receipt.intent_id);
-  if (!intentRecord || !quoteRecord) {
-    return reply(res, 404, err('format.unknown_intent', `intent ${receipt.intent_id} is not known`));
-  }
-  if (receipt.amount?.amount !== quoteRecord.quote.total?.amount
-      || receipt.amount?.currency !== quoteRecord.quote.total?.currency) {
-    return reply(res, 409, err('settlement.amount_mismatch', 'receipt amount does not match the signed quote'));
-  }
-  if (receipt.final_state !== 'released' && receipt.final_state !== 'refunded') {
-    return reply(res, 409, err('settlement.not_final', `cannot co-sign ${receipt.final_state}`));
-  }
-  const coSigned = {
-    ...unsigned,
-    settler_signature: receipt.settler_signature,
-    merchant_signature: {
-      alg: 'ed25519',
-      kid: merchantAid,
-      sig: signEd25519(canonical, merchantKp.privateKey),
-    },
-  };
-  state.recordSettlement(coSigned);
-  return reply(res, 200, { receipt: coSigned });
+  return transactionReply(res, (reply) => {
+    const receipt = body?.receipt;
+    if (!receipt || receipt.type !== 'icp.settlement.receipt') {
+      return reply(res, 400, err('format.missing_field', 'receipt is required'));
+    }
+    if (!ALLOWED_SETTLERS.has(receipt.settler)) {
+      return reply(
+        res,
+        400,
+        err('policy.settler.not_allowed', `settler ${receipt.settler} not in allowlist`),
+      );
+    }
+    const trustedKeyHex = TRUSTED_SETTLER_KEYS.get(receipt.settler);
+    if (!trustedKeyHex) {
+      return reply(
+        res,
+        503,
+        err('settler.key_unavailable', `no operator-owned key for ${receipt.settler}`),
+      );
+    }
+    if (!receipt.settler_signature?.sig) {
+      return reply(res, 400, err('format.missing_field', 'settler_signature is required'));
+    }
+    const { merchant_signature: _merchant, settler_signature: _settler, ...unsigned } = receipt;
+    let settlerKey;
+    try {
+      settlerKey = Buffer.from(trustedKeyHex, 'hex');
+      if (settlerKey.length !== 32) throw new Error('key must contain 32 bytes');
+    } catch (error) {
+      return reply(res, 503, err('settler.key_invalid', error.message));
+    }
+    const canonical = canonicalJson(unsigned);
+    if (!verifyEd25519(canonical, receipt.settler_signature.sig, settlerKey)) {
+      return reply(
+        res,
+        401,
+        err('settlement.settler_signature_invalid', 'settler receipt signature failed'),
+      );
+    }
+    const intentRecord = state.getIntent(receipt.intent_id);
+    const quoteRecord = state.getQuoteByIntent(receipt.intent_id);
+    if (!intentRecord || !quoteRecord) {
+      return reply(
+        res,
+        404,
+        err('format.unknown_intent', `intent ${receipt.intent_id} is not known`),
+      );
+    }
+    if (
+      receipt.amount?.amount !== quoteRecord.quote.total?.amount ||
+      receipt.amount?.currency !== quoteRecord.quote.total?.currency
+    ) {
+      return reply(
+        res,
+        409,
+        err('settlement.amount_mismatch', 'receipt amount does not match the signed quote'),
+      );
+    }
+    if (receipt.final_state !== 'released' && receipt.final_state !== 'refunded') {
+      return reply(res, 409, err('settlement.not_final', `cannot co-sign ${receipt.final_state}`));
+    }
+    const coSigned = {
+      ...unsigned,
+      settler_signature: receipt.settler_signature,
+      merchant_signature: {
+        alg: 'ed25519',
+        kid: merchantAid,
+        sig: signEd25519(canonical, merchantKp.privateKey),
+      },
+    };
+    state.recordSettlement(coSigned);
+    return reply(res, 200, { receipt: coSigned });
+  });
 }
 
 async function handleDispute(req, res, _url, [escrowId]) {
   const body = await readJson(req);
   if (!body) return reply(res, 400, errBadJson());
-  const e = state.getEscrow(escrowId);
-  if (!e) return reply(res, 404, err('format.unknown_escrow', `escrow ${escrowId} not found`));
-  if (e.state !== 'funded' && e.state !== 'fulfilled') {
-    return reply(res, 409, err('escrow.wrong_state', `cannot dispute from state ${e.state}`));
-  }
-  const priorState = e.state;
-  state.updateEscrow(escrowId, { state: 'disputed' });
-  const disputeId = newId('icp_disp');
-  const openedAt = new Date().toISOString();
-  const reason = body.reason ?? 'unspecified';
-  appendSignedEscrowEvent(escrowId, makeEvent(escrowId, e, priorState, 'disputed', {
-    kind: 'dispute-opened',
-    dispute_id: disputeId,
-    reason,
-  }));
+  return transactionReply(res, (reply) => {
+    const e = state.getEscrow(escrowId);
+    if (!e) return reply(res, 404, err('format.unknown_escrow', `escrow ${escrowId} not found`));
+    if (e.state !== 'funded' && e.state !== 'fulfilled') {
+      return reply(res, 409, err('escrow.wrong_state', `cannot dispute from state ${e.state}`));
+    }
+    const priorState = e.state;
+    state.updateEscrow(escrowId, { state: 'disputed' });
+    const disputeId = newId('icp_disp');
+    const openedAt = new Date().toISOString();
+    const reason = body.reason ?? 'unspecified';
+    appendSignedEscrowEvent(
+      escrowId,
+      makeEvent(escrowId, e, priorState, 'disputed', {
+        kind: 'dispute-opened',
+        dispute_id: disputeId,
+        reason,
+      }),
+    );
 
-  // ICPIP-0005: fan out dispute.opened to every subscribed webhook.
-  // Same fire-and-forget pattern as fulfill — receivers dedupe by
-  // envelope event_id; sequence is monotonic per channel.
-  publishToSubscribers(
-    channelStore,
-    'dispute.opened',
-    {
-      dispute_id: disputeId,
-      escrow_id: escrowId,
-      intent_id: e.intent_id,
-      reason,
-      amount: e.amount,
-      opened_at: openedAt,
-      prior_state: priorState,
-    },
-    { signingKey: merchantKp.privateKey, sourceAid: merchantAid },
-  ).catch((err) => {
-    console.error(`publishToSubscribers(dispute.opened) failed: ${err?.message ?? err}`);
+    // ICPIP-0005: fan out dispute.opened to every subscribed webhook.
+    // Same fire-and-forget pattern as fulfill — receivers dedupe by
+    // envelope event_id; sequence is monotonic per channel.
+    state.afterCommit(() =>
+      publishToSubscribers(
+        channelStore,
+        'dispute.opened',
+        {
+          dispute_id: disputeId,
+          escrow_id: escrowId,
+          intent_id: e.intent_id,
+          reason,
+          amount: e.amount,
+          opened_at: openedAt,
+          prior_state: priorState,
+        },
+        { signingKey: merchantKp.privateKey, sourceAid: merchantAid },
+      ).catch((err) => {
+        console.error(`publishToSubscribers(dispute.opened) failed: ${err?.message ?? err}`);
+      }),
+    );
+
+    return reply(res, 200, { state: 'disputed', dispute_id: disputeId });
   });
-
-  return reply(res, 200, { state: 'disputed', dispute_id: disputeId });
 }
 
 function handleObserve(req, res, _url, [escrowId]) {
@@ -617,7 +785,12 @@ function handleObserve(req, res, _url, [escrowId]) {
 
 function handleGetSettlement(req, res, _url, [settlementId]) {
   const s = state.getSettlement(settlementId);
-  if (!s) return reply(res, 404, err('format.unknown_settlement', `settlement ${settlementId} not found`));
+  if (!s)
+    return reply(
+      res,
+      404,
+      err('format.unknown_settlement', `settlement ${settlementId} not found`),
+    );
   reply(res, 200, s);
 }
 
@@ -625,7 +798,11 @@ function handleGetChannel(req, res, _url, [channelId]) {
   const ch = channelStore.get(channelId);
   if (!ch) return reply(res, 404, err('channel.not_found', `channel ${channelId} not registered`));
   if (Date.parse(ch.expires_at) < Date.now()) {
-    return reply(res, 410, err('channel.expired', `channel ${channelId} expired at ${ch.expires_at}`));
+    return reply(
+      res,
+      410,
+      err('channel.expired', `channel ${channelId} expired at ${ch.expires_at}`),
+    );
   }
   reply(res, 200, ch);
 }
@@ -638,19 +815,31 @@ function handleGetChannelEvents(req, res, url, [channelId]) {
   const ch = channelStore.get(channelId);
   if (!ch) return reply(res, 404, err('channel.not_found', `channel ${channelId} not registered`));
   if (Date.parse(ch.expires_at) < Date.now()) {
-    return reply(res, 410, err('channel.expired', `channel ${channelId} expired at ${ch.expires_at}`));
+    return reply(
+      res,
+      410,
+      err('channel.expired', `channel ${channelId} expired at ${ch.expires_at}`),
+    );
   }
   const sinceParam = url.searchParams.get('since');
   const since = sinceParam == null ? 0 : Number(sinceParam);
   if (!Number.isFinite(since) || since < 0) {
-    return reply(res, 400, err('format.bad_query_param', `since must be a non-negative integer, got ${sinceParam}`));
+    return reply(
+      res,
+      400,
+      err('format.bad_query_param', `since must be a non-negative integer, got ${sinceParam}`),
+    );
   }
   const events = fetchChannelEvents(channelId, since);
   if (events === null) {
-    return reply(res, 409, err(
-      'channel.sequence_gap',
-      `since=${since} is before retained window; channel must be re-registered`,
-    ));
+    return reply(
+      res,
+      409,
+      err(
+        'channel.sequence_gap',
+        `since=${since} is before retained window; channel must be re-registered`,
+      ),
+    );
   }
   reply(res, 200, { channel_id: channelId, since, events });
 }

@@ -1274,8 +1274,8 @@ macro_rules! for_every_op {
             execute_commit_checkout,
             execute_commit_checkout_async,
             "checkout.commit",
-            CommitCheckout { cart_id: stateset_core::CartId::new() },
-            CommitCheckout { cart_id: stateset_core::CartId::new() }
+            CommitCheckout { cart_id: stateset_core::CartId::new(), stock_policy: None },
+            CommitCheckout { cart_id: stateset_core::CartId::new(), stock_policy: None }
         );
         $apply!(
             execute_charge_subscription,

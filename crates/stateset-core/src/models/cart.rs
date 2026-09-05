@@ -456,6 +456,10 @@ pub struct CheckoutResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitCheckout {
     pub cart_id: CartId,
+    /// Inventory policy for tracked SKUs. Omission preserves historical backorders.
+    /// The policy is enforced inside the checkout transaction, in preview and apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stock_policy: Option<super::order::StockPolicy>,
 }
 
 impl Cart {

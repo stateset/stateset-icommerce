@@ -11,6 +11,39 @@ adoption, and adoption is earned in a specific order.*
 
 ## Thesis
 
+### Implementation update — September 2026 (source release 1.32.0)
+
+The source tree now includes a [durable Node purchase coordinator](docs/src/durable-purchases.md):
+shared exact asset budgets, persisted per-step dispatch, authoritative outcome
+lookup, fenced workers, cancellation and compensation. It also supports
+identity-scoped discovery and bounded recovery scans that leave operator-attention
+cases untouched. Its isolated package
+entrypoint has no CLI dependency. Tests exercise real kernel inventory receipts
+and simulated payment recovery; this is not yet a live settlement demo.
+
+The ICP reference path now authenticates quote acceptance with the original
+buyer's key, rejects replacement intent IDs, aggregates duplicate SKU demand
+before reservation, and computes reference quotes, refund caps and payouts without
+floating-point money. Proposal prices retain precision; payout debits follow
+successful signing; inventory snapshots reflect reservations. See the
+[release gates](docs/src/kernel-release-gates.md) for remaining acceptance criteria.
+Rust, JavaScript and Python clients sign the acceptance envelope. Core economic
+receipts can additionally verify required signer roles against an operator-owned
+key registry, including validity windows and revocation.
+
+Next release gates remain: production payment/order adapters and crash testing;
+governed refund/return/fulfillment workflows; unified budget enforcement across
+execution paths; durable merchant protocol state; PostgreSQL and language parity;
+key lifecycle operations; and measured end-to-end agent task evaluations.
+The campaign below is historical context, not a claim that these gates are done.
+
+The opt-in [durable reference merchant](docs/src/durable-merchant.md) now persists
+protocol records and replay protection, pins operator identity, and commits
+acceptance and simulated settlement transitions transactionally. Tests kill a
+worker inside acceptance, inject event-write failures and race two merchant
+processes against shared stock. Native Commerce aggregate adoption, real rails
+and durable channel delivery remain open; protocol projections are not native orders.
+
 Commerce infrastructure for AI agents needs three things no incumbent
 platform provides together:
 

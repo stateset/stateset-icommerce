@@ -6,6 +6,7 @@
 
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
+import { signQuoteAcceptance } from '../src/codec.mjs';
 import { generateKeyPairSync } from 'node:crypto';
 
 import {
@@ -93,6 +94,18 @@ test('GET /icp/v1/.well-known/icp advertises capabilities', async () => {
   assert.ok(Array.isArray(j.settler_allowlist) && j.settler_allowlist.length > 0);
 });
 
+test('purchase signer cannot name another buyer even with a valid signature', async () => {
+  const body = buildSignedIntent();
+  body.intent.buyer = 'aid:v1:zAnotherBuyer';
+  body.signature.sig = signEd25519(canonicalJson(body.intent), buyerKp.privateKey);
+  const response = await fetch(`${baseUrl}/icp/v1/intents`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  assert.equal(response.status, 401);
+  assert.equal((await response.json()).code, 'auth.buyer_mismatch');
+});
+
 test('Intent → Quote → Accept → Fulfill → SettlementReceipt', async () => {
   const body = buildSignedIntent();
 
@@ -111,11 +124,35 @@ test('Intent → Quote → Accept → Fulfill → SettlementReceipt', async () =
   // Total = 2 * 29.99 * 1.05 = 62.979 → 62.98
   assert.equal(quote.total.amount, '62.98');
 
+  // A fresh nonce must not let anyone replace the identity bound to this ID.
+  const replacement = structuredClone(body);
+  replacement.intent.nonce = newNonceHex();
+  replacement.signature.sig = signEd25519(canonicalJson(replacement.intent), buyerKp.privateKey);
+  const duplicate = await fetch(`${baseUrl}/icp/v1/intents`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(replacement),
+  });
+  assert.equal(duplicate.status, 409);
+  assert.equal((await duplicate.json()).code, 'replay.intent_seen');
+
   // 2. Accept Quote → get funding instructions + escrow_id
+  for (const invalid of [
+    {},
+    signQuoteAcceptance(quote.quote_id, buyerAid, generateKeyPairSync('ed25519').privateKey),
+    signQuoteAcceptance('different-quote', buyerAid, buyerKp.privateKey),
+    signQuoteAcceptance(quote.quote_id, 'different-buyer', buyerKp.privateKey),
+  ]) {
+    const rejected = await fetch(`${baseUrl}/icp/v1/quotes/${quote.quote_id}/accept`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(invalid),
+    });
+    assert.equal(rejected.status, 401);
+    assert.equal((await rejected.json()).code, 'auth.acceptance_invalid');
+  }
   const r2 = await fetch(`${baseUrl}/icp/v1/quotes/${quote.quote_id}/accept`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({}),
+    body: JSON.stringify(signQuoteAcceptance(quote.quote_id, buyerAid, buyerKp.privateKey)),
   });
   assert.equal(r2.status, 200);
   const accepted = await r2.json();
@@ -130,7 +167,7 @@ test('Intent → Quote → Accept → Fulfill → SettlementReceipt', async () =
   const retry = await fetch(`${baseUrl}/icp/v1/quotes/${quote.quote_id}/accept`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({}),
+    body: JSON.stringify(signQuoteAcceptance(quote.quote_id, buyerAid, buyerKp.privateKey)),
   });
   assert.equal(retry.status, 200);
   const retried = await retry.json();
@@ -631,7 +668,7 @@ test('quote.request → signed PriceProposal with volume tier discount', async (
   assert.equal(proposal.type, 'price.proposal');
   // 500 × $29.99 with 20% volume discount = 500 × $23.992 = $11996.00
   assert.equal(proposal.items[0].volume_tier, '500+');
-  assert.equal(proposal.items[0].unit_price.amount, '23.99');
+  assert.equal(proposal.items[0].unit_price.amount, '23.992');
   assert.equal(proposal.total.amount, '11996.00');
   assert.ok(proposal.valid_until);
   assert.ok(proposal.proposal_id.startsWith('icp_pp_'));

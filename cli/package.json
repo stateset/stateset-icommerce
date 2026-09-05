@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "1.31.0",
+  "version": "1.32.0",
   "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
@@ -100,6 +100,11 @@
     "pretest:coverage": "npm run check:env",
     "test": "node --test test/*.test.js test/unit/*.test.js test/integration/*.test.js test/e2e/*.test.js test/a2a/*.test.js test/adapters/*.test.js test/mcp/*.test.js test/x402/*.test.js tests/*.test.js",
     "test:unit": "node --test test/unit/*.test.js",
+    "test:purchase": "node --test test/unit/purchase-runtime.test.js",
+    "test:merchant": "node --test test/unit/icp-durable-store.test.js",
+    "test:native-merchant": "node --test test/unit/native-merchant-checkout.test.js",
+    "demo:merchant": "node examples/durable-merchant.mjs",
+    "demo:purchase": "node examples/durable-purchase.mjs",
     "test:integration": "node --test test/integration/*.test.js",
     "test:api-coverage": "node --test test/integration/mcp-tool-coverage.test.js test/integration/mcp-api-coverage.test.js test/integration/mcp-server-registry.test.js test/integration/tool-domain-registry.test.js test/integration/commands.test.js test/integration/api-command-coverage.test.js test/integration/tool-backed-command-coverage.test.js test/integration/tool-backed-command-dispatch.test.js test/unit/http-gateway-route-registry.test.js",
     "test:e2e": "node --test test/e2e/*.test.js",
@@ -196,7 +201,7 @@
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@modelcontextprotocol/server": "^2.0.0",
-    "@stateset/embedded": "^1.31.0",
+    "@stateset/embedded": "^1.32.0",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "ethers": "^6.16.0",

@@ -3412,26 +3412,29 @@ impl SqliteKernelExecutor {
             }
 
             if command.mode == ExecutionMode::Preview {
-                let (amount, currency) =
-                    match cart_repo.checkout_money_in_tx(tx, command.payload.cart_id) {
-                        Ok(money) => money,
-                        Err(error) => {
-                            if let Some(commerce_error) = sqlite_commerce_error(&error) {
-                                let mut receipt = rejected_receipt(
-                                    command,
-                                    Some(policy.clone()),
-                                    checkout_error_code(commerce_error),
-                                    &commerce_error.to_string(),
-                                    RetryDisposition::Never,
-                                    "checkout",
-                                );
-                                receipt.aggregate_id = Some(command.payload.cart_id.to_string());
-                                append_receipt(tx, &request_hash, &mut receipt)?;
-                                return Ok(receipt);
-                            }
-                            return Err(error);
+                let (amount, currency) = match cart_repo.checkout_money_with_policy_in_tx(
+                    tx,
+                    command.payload.cart_id,
+                    command.payload.stock_policy.unwrap_or_default(),
+                ) {
+                    Ok(money) => money,
+                    Err(error) => {
+                        if let Some(commerce_error) = sqlite_commerce_error(&error) {
+                            let mut receipt = rejected_receipt(
+                                command,
+                                Some(policy.clone()),
+                                checkout_error_code(commerce_error),
+                                &commerce_error.to_string(),
+                                RetryDisposition::Never,
+                                "checkout",
+                            );
+                            receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+                            append_receipt(tx, &request_hash, &mut receipt)?;
+                            return Ok(receipt);
                         }
-                    };
+                        return Err(error);
+                    }
+                };
                 if let Some(rejection) =
                     economic_money_guard(command.commitment.as_ref(), amount, currency)
                 {
@@ -3452,7 +3455,11 @@ impl SqliteKernelExecutor {
                 return Ok(receipt);
             }
 
-            if let Err(error) = cart_repo.checkout_money_in_tx(tx, command.payload.cart_id) {
+            if let Err(error) = cart_repo.checkout_money_with_policy_in_tx(
+                tx,
+                command.payload.cart_id,
+                command.payload.stock_policy.unwrap_or_default(),
+            ) {
                 if let Some(commerce_error) = sqlite_commerce_error(&error) {
                     let mut receipt = rejected_receipt(
                         command,
@@ -3473,8 +3480,13 @@ impl SqliteKernelExecutor {
             // receipts without retaining a partially-created order or stock
             // reservation.
             tx.execute_batch("SAVEPOINT kernel_checkout_apply")?;
-            let attempted =
-                cart_repo.complete_checkout_in_tx(tx, command.payload.cart_id, false, false);
+            let attempted = cart_repo.complete_checkout_with_policy_in_tx(
+                tx,
+                command.payload.cart_id,
+                false,
+                false,
+                command.payload.stock_policy.unwrap_or_default(),
+            );
 
             let checkout = match attempted {
                 Ok(checkout) => checkout,
