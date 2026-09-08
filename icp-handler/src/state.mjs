@@ -97,6 +97,10 @@ const seedInventory = new Map([
 ]);
 const inventory = collection('inventory');
 const reservations = collection('reservations');
+// Signer admission ledger: AID → the Ed25519 key an authenticated action bound
+// to it. §4.2 derivation proves a key/AID pair is self-consistent, not that the
+// handler ever agreed to serve that signer, so admission is tracked separately.
+const signers = collection('signers');
 
 function immutableRecord(records, id, value) {
   const prior = records.get(id);
@@ -117,6 +121,29 @@ export function initializeInventory() {
 export function availableInventory(sku) {
   initializeInventory();
   return inventory.get(sku) ?? 0;
+}
+
+/** The operator-owned key bound to a signer AID by an earlier authenticated
+ * action, or `undefined` when this handler has never admitted the AID. */
+export function getSignerKey(aid) {
+  return signers.get(aid)?.publicKey;
+}
+
+/**
+ * Admit a signer AID, binding it to the key that just authenticated.
+ *
+ * Returns `'pinned'` when the AID was already bound to this key, `'admitted'`
+ * on first sight, `'conflict'` when the AID is bound to a DIFFERENT key, and
+ * `'capacity'` when admitting another distinct signer would exceed
+ * `maxSigners` (freshly minted AIDs must not grow the ledger without limit).
+ * Call inside the request transaction, after the signature is verified.
+ */
+export function pinSigner(aid, publicKeyHex, { maxSigners = 100_000 } = {}) {
+  const record = signers.get(aid);
+  if (record) return record.publicKey === publicKeyHex ? 'pinned' : 'conflict';
+  if (signers.size >= maxSigners) return 'capacity';
+  signers.set(aid, { publicKey: publicKeyHex, admittedAt: new Date().toISOString() });
+  return 'admitted';
 }
 
 export function recordIntent(intent, signatureHex, signerPublicKey = null) {

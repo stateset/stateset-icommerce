@@ -119,6 +119,144 @@ try {
 }
 
 // ---------------------------------------------------------------------------
+// Trust mode.
+//
+// `enforce` is the posture of any real deployment: every Intent MUST carry a
+// principal binding, the principal's key is resolved from operator
+// configuration ONLY, and only registered or previously pinned signer AIDs are
+// admitted. A durable, operator-keyed handler enforces by default.
+//
+// `demo` keeps the historical permissive path for the zero-config walkthrough
+// (`cli/examples/durable-merchant.mjs --apply --demo`, or ICP_TRUST_MODE=demo),
+// where the reference client self-signs its own delegation. It is logged
+// loudly at startup and once per principal, and it is NEVER a production mode.
+// ---------------------------------------------------------------------------
+const TRUST_MODE = process.env.ICP_TRUST_MODE ?? '';
+if (TRUST_MODE && TRUST_MODE !== 'enforce' && TRUST_MODE !== 'demo') {
+  throw new Error('ICP_TRUST_MODE must be "enforce" or "demo"');
+}
+const DEMO_TRUST = TRUST_MODE === 'demo' || (!TRUST_MODE && process.argv.includes('--demo'));
+const ENFORCE_TRUST = TRUST_MODE === 'enforce' || (state.isDurable() && !DEMO_TRUST);
+
+/** Operator-owned identity → raw Ed25519 public key hex. Never caller input. */
+function keyRegistry(variable) {
+  let parsed;
+  try {
+    parsed = JSON.parse(process.env[variable] ?? '{}');
+  } catch (error) {
+    throw new Error(`${variable} must be a JSON object: ${error.message}`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${variable} must be a JSON object`);
+  }
+  const registry = new Map();
+  for (const [id, hex] of Object.entries(parsed)) {
+    if (typeof hex !== 'string' || !/^[0-9a-f]{64}$/i.test(hex)) {
+      throw new Error(`${variable}["${id}"] must be a 32-byte Ed25519 public key in hex`);
+    }
+    registry.set(id, hex.toLowerCase());
+  }
+  return registry;
+}
+// Principal (organization/DID) keys that may delegate to an agent.
+const TRUSTED_PRINCIPAL_KEYS = keyRegistry('ICP_PRINCIPAL_KEYS_JSON');
+// Agent AIDs this handler agrees to serve.
+const TRUSTED_AGENT_KEYS = keyRegistry('ICP_AGENT_KEYS_JSON');
+if (ENFORCE_TRUST && TRUSTED_PRINCIPAL_KEYS.size === 0) {
+  console.error(
+    'icp-handler: ICP_TRUST_MODE=enforce with an empty ICP_PRINCIPAL_KEYS_JSON — every delegated Intent will be rejected',
+  );
+}
+const permissiveWarned = new Set();
+function warnPermissiveDelegation(principal) {
+  if (permissiveWarned.size > 1_000 || permissiveWarned.has(principal)) return;
+  permissiveWarned.add(principal);
+  console.error(
+    `icp-handler: DEMO TRUST MODE — principal_binding for ${principal} accepted WITHOUT verification ` +
+      '(no operator-configured key). Set ICP_PRINCIPAL_KEYS_JSON and ICP_TRUST_MODE=enforce for any real deployment.',
+  );
+}
+
+/**
+ * Verify that the Intent's stated principal really delegated this agent and
+ * verb. Returns `null` when the Intent may proceed, or `{ status, body }`.
+ *
+ * The principal's public key comes from `ICP_PRINCIPAL_KEYS_JSON` only. The
+ * handler used to verify the binding against `_principal_pubkey_hex` from the
+ * request body, which authorizes an attacker with the attacker's own key.
+ */
+function checkDelegation(intent, body, now) {
+  if (body._principal_pubkey_hex !== undefined) {
+    return {
+      status: 400,
+      body: err(
+        'delegation.untrusted_key_material',
+        'principal keys are resolved from operator configuration; _principal_pubkey_hex is not accepted',
+      ),
+    };
+  }
+  const binding = intent.principal_binding;
+  if (binding === undefined || binding === null) {
+    if (!ENFORCE_TRUST) return null;
+    return {
+      status: 403,
+      body: err('delegation.required', 'principal_binding is required by this handler'),
+    };
+  }
+  const principal = binding.principal;
+  if (typeof principal !== 'string' || principal.trim() !== principal || !principal) {
+    if (!ENFORCE_TRUST) return null;
+    return {
+      status: 403,
+      body: err('delegation.required', 'principal_binding.principal must name the principal'),
+    };
+  }
+  const trustedKeyHex = TRUSTED_PRINCIPAL_KEYS.get(principal);
+  if (!trustedKeyHex) {
+    if (!ENFORCE_TRUST) {
+      warnPermissiveDelegation(principal);
+      return null;
+    }
+    return {
+      status: 403,
+      body: err(
+        'delegation.principal_unknown',
+        `no operator-configured key for principal ${principal}`,
+      ),
+    };
+  }
+  // A principal the operator DID configure is always verified, in every mode.
+  if (!binding.signature?.sig) {
+    return {
+      status: 401,
+      body: err('delegation.signature_missing', 'principal binding signature is required'),
+    };
+  }
+  if (binding.agent !== intent.buyer || !binding.authority?.verbs?.includes(intent.verb)) {
+    return {
+      status: 403,
+      body: err(
+        'delegation.scope_mismatch',
+        'principal binding does not authorize this agent and verb',
+      ),
+    };
+  }
+  if (!(Date.parse(binding.expiry) > now)) {
+    return { status: 403, body: err('delegation.expired', 'principal binding has expired') };
+  }
+  const { signature: _bindingSignature, ...unsignedBinding } = binding;
+  if (
+    !verifyEd25519(canonicalJson(unsignedBinding), binding.signature.sig, Buffer.from(trustedKeyHex, 'hex'))
+  ) {
+    return {
+      status: 401,
+      body: err('delegation.signature_invalid', 'principal binding signature failed'),
+    };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
@@ -176,6 +314,12 @@ server.listen(PORT, state.isDurable() ? '127.0.0.1' : undefined, () => {
   console.error(`  merchant_aid: ${merchantAid}`);
   console.error(`  merchant_pubkey_hex: ${merchantPubRaw.toString('hex')}`);
   console.error(`  allowed_settlers: ${[...ALLOWED_SETTLERS].join(', ')}`);
+  console.error(`  trust_mode: ${ENFORCE_TRUST ? 'enforce' : 'demo'}`);
+  if (!ENFORCE_TRUST) {
+    console.error(
+      '  WARNING: DEMO TRUST MODE — principal delegations without an operator-configured key are accepted unverified, and any caller may mint a signer AID. Not a production posture.',
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -196,6 +340,7 @@ function handleWellKnown(req, res) {
     spec: 'icp-1.0',
     handler: 'stateset-icp-handler-stub',
     handler_version: '0.1.0',
+    trust_mode: ENFORCE_TRUST ? 'enforce' : 'demo',
     merchant_aid: merchantAid,
     merchant_pubkey: {
       alg: 'ed25519',
@@ -300,7 +445,12 @@ async function handleSubmitIntent(req, res) {
   }
   let edPubRaw;
   try {
-    edPubRaw = resolveAidPubkey(signerAid, body._pubkey_hex, body._x_pubkey_hex);
+    edPubRaw = resolveAidPubkey(signerAid, body._pubkey_hex, body._x_pubkey_hex, {
+      // Operator configuration first, then any key an earlier authenticated
+      // action pinned to this AID. Never the key in this request.
+      knownKeyHex: TRUSTED_AGENT_KEYS.get(signerAid) ?? state.getSignerKey(signerAid) ?? null,
+      requireKnown: ENFORCE_TRUST,
+    });
   } catch (e) {
     const code = e instanceof AidBindingError ? e.code : 'auth.aid_resolution_failed';
     return reply(res, 401, err(code, e.message));
@@ -310,44 +460,11 @@ async function handleSubmitIntent(req, res) {
     return reply(res, 401, err('signature.invalid', 'Ed25519 verification failed'));
   }
 
-  // Optional reference resolver for the demo: when the caller supplies the
-  // principal's already-resolved public key, verify that the principal signed
-  // this exact delegation. Production resolves the DID/organization key from
-  // trusted identity infrastructure rather than accepting it from the body.
-  if (body._principal_pubkey_hex) {
-    const binding = intent.principal_binding;
-    if (!binding?.signature?.sig) {
-      return reply(
-        res,
-        401,
-        err('delegation.signature_missing', 'principal binding signature is required'),
-      );
-    }
-    if (binding.agent !== intent.buyer || !binding.authority?.verbs?.includes(intent.verb)) {
-      return reply(
-        res,
-        403,
-        err(
-          'delegation.scope_mismatch',
-          'principal binding does not authorize this agent and verb',
-        ),
-      );
-    }
-    if (Date.parse(binding.expiry) <= now) {
-      return reply(res, 403, err('delegation.expired', 'principal binding has expired'));
-    }
-    const { signature: _bindingSignature, ...unsignedBinding } = binding;
-    const principalKey = Buffer.from(body._principal_pubkey_hex, 'hex');
-    if (
-      principalKey.length !== 32 ||
-      !verifyEd25519(canonicalJson(unsignedBinding), binding.signature.sig, principalKey)
-    ) {
-      return reply(
-        res,
-        401,
-        err('delegation.signature_invalid', 'principal binding signature failed'),
-      );
-    }
+  // Principal delegation (§4.4). Runs after the Intent is proven authentic, so
+  // an unauthenticated caller can never probe the delegation registry.
+  const delegationFailure = checkDelegation(intent, body, now);
+  if (delegationFailure) {
+    return reply(res, delegationFailure.status, delegationFailure.body);
   }
 
   // 4b. Nonce replay (§5.3) — only consume a nonce AFTER the signature is
@@ -355,6 +472,25 @@ async function handleSubmitIntent(req, res) {
   // message. Keyed on the bound signer AID so distinct agents may reuse the
   // same nonce bytes without colliding.
   return transactionReply(res, (reply) => {
+    // Admit (or re-confirm) the signer before spending its nonce budget, so a
+    // key swap on a known AID can never be laundered through a fresh nonce.
+    const admission = state.pinSigner(signerAid, edPubRaw.toString('hex'), {
+      maxSigners: nonceOptions.maxSigners,
+    });
+    if (admission === 'conflict') {
+      return reply(
+        res,
+        401,
+        err('auth.aid_key_mismatch', `AID ${signerAid} is bound to a different public key`),
+      );
+    }
+    if (admission === 'capacity') {
+      return reply(
+        res,
+        503,
+        err('auth.signer_capacity', 'handler is at its signer admission bound'),
+      );
+    }
     if (!replayGuard.checkAndRecord(signerAid, intent.nonce)) {
       return reply(
         res,
