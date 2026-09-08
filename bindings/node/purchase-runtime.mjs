@@ -3,6 +3,11 @@
  * authoritative lookup. A lost response is reconciled before resubmission.
  */
 import { createHash, randomUUID } from 'node:crypto';
+import { canonicalJson } from './canonical-json.mjs';
+
+// Re-exported so every signer and verifier of commerce data (including the CLI
+// marketplace bridge) canonicalizes identically.
+export { canonicalJson };
 export { createSetPaymentAdapter } from './set-payment.mjs';
 export { createDurableSetSubmission } from './set-submission.mjs';
 
@@ -24,18 +29,7 @@ function text(value, name) {
   }
   return value;
 }
-function canonical(value) {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value !== null && typeof value === 'object') {
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
-      .join(',')}}`;
-  }
-  const encoded = JSON.stringify(value);
-  if (encoded === undefined) throw new Error('purchase data must be JSON serializable');
-  return encoded;
-}
+const canonical = canonicalJson;
 const digest = (value) => createHash('sha256').update(canonical(value)).digest('hex');
 const TERMINAL = new Set(['completed', 'cancelled']);
 const STEPS = ['reserve_inventory', 'pay', 'create_order', 'confirm_inventory'];

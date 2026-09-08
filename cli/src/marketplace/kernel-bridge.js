@@ -9,6 +9,8 @@
 
 import crypto from 'node:crypto';
 
+import { canonicalJson } from '../../../bindings/node/canonical-json.mjs';
+
 const AWARD_EVENT = 'marketplace.award.created';
 const MARKETPLACE_ENTITY = 'marketplace.negotiation';
 const MARKETPLACE_PROTOCOL = 'stateset.marketplace.v1';
@@ -29,16 +31,11 @@ function positiveDecimal(value, field) {
   return value;
 }
 
-function canonicalize(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
-  if (value !== null && typeof value === 'object') {
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
+// One canonicalizer for every commerce signature. The local copy used to emit
+// the literal text `undefined` for a missing value (JSON.stringify(undefined)
+// returns undefined), so `{ winner: undefined }` and `{ winner: 'undefined' }`
+// signed identical bytes while the purchase runtime rejected the same input.
+const canonicalize = canonicalJson;
 
 export function canonicalMarketplaceMessage(message) {
   const unsigned = { ...message };

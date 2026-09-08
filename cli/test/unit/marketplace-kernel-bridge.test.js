@@ -6,6 +6,7 @@ import {
   KernelMarketplaceBridge,
   MemoryBridgeStore,
   SqliteBridgeStore,
+  canonicalMarketplaceMessage,
   createAwardCommandPlanner,
   signMarketplaceMessage,
   verifyMarketplaceMessage,
@@ -273,4 +274,27 @@ test('SQLite bridge state survives worker reconstruction', async (t) => {
   const result = await reconstructed.pollOnce();
   assert.equal(result.outcomes.length, 0);
   assert.equal(calls.length, 1);
+});
+
+test('bridge and purchase runtime share one canonicalizer that rejects undefined', async () => {
+  const { canonicalJson } = await import('../../../bindings/node/canonical-json.mjs');
+  const { canonicalJson: runtimeCanonical } = await import(
+    '../../../bindings/node/purchase-runtime.mjs'
+  );
+  assert.equal(runtimeCanonical, canonicalJson);
+  assert.equal(canonicalMarketplaceMessage({ b: 1, a: 2 }), '{"a":2,"b":1}');
+  // The literal string `undefined` must never be signable as a missing value.
+  for (const canonicalize of [canonicalJson, runtimeCanonical]) {
+    assert.throws(() => canonicalize({ winner: undefined }), /JSON serializable/);
+    assert.throws(() => canonicalize([undefined]), /JSON serializable/);
+  }
+  assert.throws(
+    () => canonicalMarketplaceMessage({ kind: 'award', winner: undefined }),
+    /JSON serializable/,
+  );
+  const keys = crypto.generateKeyPairSync('ed25519');
+  assert.throws(
+    () => signMarketplaceMessage({ kind: 'award', winner: undefined }, keys.privateKey),
+    /JSON serializable/,
+  );
 });
