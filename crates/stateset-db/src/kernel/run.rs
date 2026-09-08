@@ -72,6 +72,13 @@ impl<'a, C: Serialize> CommandRun<'a, C> {
             policy_decision.allowed = false;
             policy_decision.reason_codes.push("policy.asset_binding_unsupported".to_string());
         }
+        if policy.commands.get(&command.command_type).is_some_and(|rule| {
+            rule.max_quantity.is_some()
+                && !supports_observed_quantity_binding(&command.command_type)
+        }) {
+            policy_decision.allowed = false;
+            policy_decision.reason_codes.push("policy.quantity_binding_unsupported".to_string());
+        }
         let guard = guard.evaluate(command, &policy_decision, started_at);
         Ok(Self {
             command,
@@ -206,6 +213,20 @@ fn supports_observed_counterparty_binding(command_type: &str) -> bool {
 /// while the kernel can still prevent the custody transition.
 fn supports_observed_asset_binding(command_type: &str) -> bool {
     matches!(command_type, "a2a.escrow.create" | "a2a.escrow.fund")
+}
+
+/// Whether the executor binds the declared commitment quantity to the number
+/// of units the mutation will actually move.
+///
+/// A quantity ceiling is only a ceiling if the executor proves the declared
+/// figure is the one the domain acts on; without that binding a model can
+/// declare one unit and move a thousand, so quantity policy must fail closed
+/// for every command not listed here.
+fn supports_observed_quantity_binding(command_type: &str) -> bool {
+    matches!(
+        command_type,
+        "inventory.reserve" | "inventory.reservation.confirm" | "checkout.commit" | "orders.ship"
+    )
 }
 
 #[cfg(test)]
@@ -410,5 +431,96 @@ mod tests {
                 .any(|code| code == "policy.counterparty_binding_unsupported")
         );
         assert_eq!(run.guard.as_ref().map(|guard| guard.code), Some("kernel.policy_denied"));
+    }
+
+    #[test]
+    fn quantity_rules_fail_closed_without_observed_payload_binding() {
+        let mut command = CommandEnvelope::preview(
+            "orders.transition",
+            "quantity-binding-guard",
+            principal(),
+            serde_json::json!({}),
+        );
+        command.store_id = Some("store".into());
+        command.commitment = Some(EconomicCommitment {
+            budget_id: None,
+            amount: None,
+            asset_amount: None,
+            counterparty_id: None,
+            quantity: Some("1".into()),
+            evidence: vec![],
+        });
+        let policy = KernelPolicy::new("p1").allow(
+            "orders.transition",
+            KernelCommandPolicy::requiring([] as [&str; 0])
+                .with_max_quantity(Decimal::new(50, 0)),
+        );
+
+        let run = CommandRun::prepare(
+            &command,
+            &command.payload,
+            &policy,
+            EnvelopeGuard::aggregate("orders.transition"),
+            "order",
+        )
+        .expect("prepare");
+
+        assert!(!run.policy.allowed);
+        assert!(
+            run.policy
+                .reason_codes
+                .iter()
+                .any(|code| code == "policy.quantity_binding_unsupported")
+        );
+        assert_eq!(run.guard.as_ref().map(|guard| guard.code), Some("kernel.policy_denied"));
+    }
+
+    #[test]
+    fn quantity_rules_reach_the_observed_binding_layer_for_bound_commands() {
+        for command_type in [
+            "inventory.reserve",
+            "inventory.reservation.confirm",
+            "checkout.commit",
+            "orders.ship",
+        ] {
+            let mut command = CommandEnvelope::preview(
+                command_type,
+                "quantity-binding-supported",
+                principal(),
+                serde_json::json!({}),
+            );
+            command.store_id = Some("store".into());
+            command.commitment = Some(EconomicCommitment {
+                budget_id: None,
+                amount: None,
+                asset_amount: None,
+                counterparty_id: None,
+                quantity: Some("1".into()),
+                evidence: vec![],
+            });
+            let policy = KernelPolicy::new("p1").allow(
+                command_type,
+                KernelCommandPolicy::requiring([] as [&str; 0])
+                    .with_max_quantity(Decimal::new(50, 0)),
+            );
+
+            let run = CommandRun::prepare(
+                &command,
+                &command.payload,
+                &policy,
+                EnvelopeGuard::aggregate(command_type),
+                "order",
+            )
+            .expect("prepare");
+
+            assert!(run.policy.allowed, "{command_type} should reach the binding layer");
+            assert!(
+                !run.policy
+                    .reason_codes
+                    .iter()
+                    .any(|code| code == "policy.quantity_binding_unsupported"),
+                "{command_type} must not fail closed on quantity binding"
+            );
+        }
     }
 }
