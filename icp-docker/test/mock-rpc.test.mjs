@@ -26,7 +26,9 @@ import { decodedToSettlerEvent } from '../../services/icp-chain-watcher/src/forw
 // not drop a cursor file next to the source tree.
 const STATE_FILE = join(tmpdir(), `icp-mock-rpc-cursor-${process.pid}.json`);
 process.env.STATE_FILE = STATE_FILE;
-const { ChainWatcher } = await import('../../services/icp-chain-watcher/src/server.mjs');
+const { ChainWatcher, startHealthServer } = await import(
+  '../../services/icp-chain-watcher/src/server.mjs'
+);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SETTLER = resolve(__dirname, '..', '..', 'services', 'settler-stateset', 'src', 'server.mjs');
@@ -283,4 +285,118 @@ test('chain → watcher → settler settles an escrow and yields a signed receip
     released.trigger.rail_event.block_number,
     parseInt(releaseLog.blockNumber, 16),
   );
+});
+
+// ---------------------------------------------------------------------------
+// Health endpoint reflects the last poll
+// ---------------------------------------------------------------------------
+//
+// The watcher's /healthz used to answer `{ ok: true }` unconditionally, so a
+// watcher whose RPC endpoint had gone away — forwarding nothing, the settler
+// silently missing every on-chain event — still reported healthy and
+// docker/Kubernetes never restarted or drained it. "The process is up" is not
+// the property anyone wants from this probe.
+
+async function healthOf(watcher) {
+  const server = startHealthServer(watcher, 0);
+  await new Promise((res) => server.once('listening', res));
+  try {
+    const r = await fetch(`http://127.0.0.1:${server.address().port}/healthz`);
+    return { status: r.status, body: await r.json() };
+  } finally {
+    server.close();
+  }
+}
+
+test('healthz is ok before the first poll has run', async () => {
+  const watcher = new ChainWatcher({
+    rpcUrl,
+    contractAddress: DEFAULTS.contractAddress,
+    settlerUrl,
+    startBlock: DEFAULTS.seedBlock - 50,
+  });
+  const { status, body } = await healthOf(watcher);
+  assert.equal(status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.last_poll, null, 'no poll has happened yet');
+});
+
+test('healthz stays ok after a poll that finds nothing new', async () => {
+  const watcher = new ChainWatcher({
+    rpcUrl,
+    contractAddress: DEFAULTS.contractAddress,
+    settlerUrl,
+    startBlock: DEFAULTS.seedBlock - 50,
+  });
+  // Cursor already past the finalized head → the tick is a legitimate no-op.
+  watcher.state = { last_processed_block: chain.head };
+
+  await watcher.tick();
+  const { status, body } = await healthOf(watcher);
+  assert.equal(status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.last_poll.ok, true);
+  assert.equal(body.last_poll.error, null);
+});
+
+test('healthz reports not-ok when the last RPC poll failed', async () => {
+  const dead = new ChainWatcher({
+    // Port 1 is never listening; the RPC call rejects.
+    rpcUrl: 'http://127.0.0.1:1',
+    contractAddress: DEFAULTS.contractAddress,
+    settlerUrl,
+    startBlock: DEFAULTS.seedBlock - 50,
+  });
+
+  await assert.rejects(() => dead.tick());
+
+  const { status, body } = await healthOf(dead);
+  assert.equal(status, 503, 'an unreachable chain must fail the probe, not pass it');
+  assert.equal(body.ok, false);
+  assert.equal(body.last_poll.ok, false);
+  assert.ok(body.last_poll.error, 'the failure reason is reported');
+  assert.ok(body.last_poll.at, 'the failure is timestamped');
+});
+
+test('healthz recovers to ok once a later poll succeeds', async () => {
+  const watcher = new ChainWatcher({
+    rpcUrl: 'http://127.0.0.1:1',
+    contractAddress: DEFAULTS.contractAddress,
+    settlerUrl,
+    startBlock: DEFAULTS.seedBlock - 50,
+  });
+  await assert.rejects(() => watcher.tick());
+  assert.equal((await healthOf(watcher)).body.ok, false);
+
+  // Point it at the live chain and poll again.
+  watcher.rpc.url = rpcUrl;
+  watcher.state = { last_processed_block: chain.head };
+  await watcher.tick();
+
+  const { status, body } = await healthOf(watcher);
+  assert.equal(status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.last_poll.ok, true);
+});
+
+test('healthz reports not-ok when a forward to the settler fails', async () => {
+  // A poll that reaches the chain but cannot hand the event on is also a
+  // failed poll: the cursor does not advance and the settler is behind.
+  chain.reset();
+  const watcher = new ChainWatcher({
+    rpcUrl,
+    contractAddress: DEFAULTS.contractAddress,
+    settlerUrl: 'http://127.0.0.1:1',
+    startBlock: DEFAULTS.seedBlock - 50,
+  });
+  watcher.state = { last_processed_block: null };
+
+  await watcher.tick();
+  assert.equal(watcher.metrics.errors, 1);
+
+  const { status, body } = await healthOf(watcher);
+  assert.equal(status, 503);
+  assert.equal(body.ok, false);
+  assert.equal(body.last_poll.ok, false);
+  assert.match(body.last_poll.error, /forward/i);
 });

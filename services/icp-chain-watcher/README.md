@@ -145,18 +145,39 @@ duplicate state from a reset.
 ## Health endpoint
 
 ```
-GET /healthz
+GET /healthz          → 200
 {
   "ok": true,
   "events_seen": 1247,
   "events_forwarded": 1247,
   "errors": 0,
   "last_block": 1018,
+  "last_poll": { "ok": true, "error": null, "at": "2026-09-08T13:53:52.326Z" },
   "last_processed_block": 1018
 }
 ```
 
-Suitable for Kubernetes liveness probes or any HTTP healthcheck.
+`ok` reflects **the outcome of the last poll**, not merely that the process is
+alive: `true` while the last poll succeeded (or before any poll has run, so a
+starting container is not failed prematurely), `false` — with HTTP **503** —
+once a poll fails, whether the RPC endpoint was unreachable or the Settler
+refused the forward:
+
+```
+GET /healthz          → 503
+{
+  "ok": false,
+  "errors": 33,
+  "last_poll": { "ok": false, "error": "fetch failed", "at": "..." },
+  ...
+}
+```
+
+That distinction is the point of the probe. A watcher whose RPC has gone away
+stays up, forwards nothing, and the Settler silently misses every on-chain
+event — a liveness-only probe reports that as healthy forever. Suitable for
+Kubernetes liveness/readiness probes or any HTTP healthcheck; it is what the
+`chain-watcher` service in `icp-docker/docker-compose.yml` uses.
 
 ## What's NOT implemented (production gaps)
 
