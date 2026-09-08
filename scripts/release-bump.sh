@@ -15,10 +15,13 @@
 #     workspace lock.
 #   * npm lockfile package/workspace metadata is safe to bump immediately,
 #     and CI expects it to match the manifests. Registry-resolved INTERNAL
-#     dependencies (@stateset/embedded, @stateset/cli, platform packages)
-#     can only regenerate AFTER those versions are published to npm — before
-#     that, npm errors with ETARGET. So the initial bump updates metadata only;
-#     publish, then run `release-bump.sh --sync-locks` for full resolution.
+#     dependencies can only regenerate AFTER those versions are published to
+#     npm — before that, npm errors with ETARGET. So the initial bump updates
+#     metadata only; publish, then run `release-bump.sh --sync-locks`.
+#     cli, admin and examples/node no longer have any: they depend on
+#     `file:../bindings/node`, which is why a bump no longer breaks `npm ci`
+#     on every branch. Only bindings/node still needs the post-publish sync,
+#     for its exact per-platform optionalDependencies pins.
 #   * The untracked-at-the-time bindings/node/npm/ platform dirs were missed
 #     by `git grep`; this script bumps them explicitly.
 #
@@ -35,8 +38,16 @@ sync_locks() {
     (cd "$d" && npm install --package-lock-only)
     echo "    $d"
   done
-  echo "==> Verifying bindings/node lock/manifest sync"
-  (cd bindings/node && npm ci --dry-run >/dev/null)
+  echo "==> Verifying every lock/manifest pair"
+  # A stale lockfile is invisible until some unrelated branch's CI fails on
+  # `npm ci`. Prove each one installs before calling the sync done.
+  for d in bindings/node bindings/wasm cli admin examples/node; do
+    (cd "$d" && npm ci --dry-run >/dev/null) || {
+      echo "::error::npm ci would fail in ${d} after the lock sync" >&2
+      exit 1
+    }
+    echo "    ${d}: npm ci is clean"
+  done
   echo "Lockfiles synced. Commit them (chore: sync npm lockfiles for <version>)."
 }
 
@@ -130,7 +141,15 @@ Mechanical bump complete. Release flow from here:
   1. Add the ${TO} entry to CHANGELOG.md
   2. Update the "What's New in v${TO}" section content in README.md
   3. bash ./scripts/ci/check_release_hygiene.sh
-  4. Commit, tag (v${TO}, cli-v${TO}, py-v${TO}), push tags, wait for publishes
-  5. bash scripts/release-bump.sh --sync-locks   # after npm publish lands
-  6. Commit the lockfile sync
+  4. Open a PR and land it on master — a release is cut from master only
+  5. npm run release:tag -- ${TO}
+       Creates v${TO}, cli-v${TO} and py-v${TO} and pushes all three in ONE
+       push, and only from a clean tree at origin/master whose required checks
+       are green. Run it with --dry-run first to see the preconditions.
+       (v1.31.0 and v1.32.0 shipped with only v${TO}-style tags, so npm and
+       PyPI stayed two releases behind; v1.33.0 was tagged off a branch with a
+       red check. This command is what makes both impossible.)
+  6. Watch the three publish workflows, then:
+       bash scripts/release-bump.sh --sync-locks   # after the npm publishes land
+  7. Commit the lockfile sync (bindings/node only, in practice)
 EOF
