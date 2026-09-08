@@ -24,6 +24,12 @@ entry exceeds that:
   ceilings, and commerce-invariants.
 - **Four reference IUTs** (JavaScript, Rust, Go, Python) pass every
   vector with **byte-identical outputs**, enforced as a blocking CI gate.
+  Both shipping profiles are gated per IUT — `icp-1.0-core` (9 vectors)
+  and `icp-1.0-commerce` (vector 10, 37 cases) — and every leg runs the
+  runner with `--fail-on-skip`, so an adapter cannot claim a profile in
+  `iut-adapters/registry.json` and no-op its way to a green build. The
+  cross-IUT determinism job compares vectors 01, 04–10 field-by-field
+  across all four implementations.
 - **Conformance suite released as `icp-conformance 1.0.0`** covering
   ICP-1.0 (`icp-conformance/README.md` §Versioning). The suite is the
   conformance definition: an implementation is ICP-1.0 conformant iff it
@@ -33,6 +39,17 @@ entry exceeds that:
   settler-of-last-resort, subsidized fees (`SETTLERS.md` §Open
   questions), floats in metadata, streaming canonicalization, CBOR tags
   (`schemas/canonicalization.md` §5).
+
+## Known gaps
+
+These are recorded so the Last Call record is complete. Neither blocks
+promotion to Final: both are conformance-surface gaps, not normative
+ambiguities in the frozen text.
+
+| Gap | Detail |
+|---|---|
+| No IUT-level gaps | All four IUTs (`reference-demo`, `stateset-rust`, `stateset-go`, `stateset-python`) handle every vector of both shipping profiles. Verified by running the suite with `--fail-on-skip`: `icp-1.0-core` 9 PASS / 0 SKIP and `icp-1.0-commerce` 1 PASS / 0 SKIP on each. |
+| No network-binding profile | `icp-spec/guides/settler-implementation.md` §Conformance points implementors at `--profile icp-1.0-settler`, but no such profile ships in `icp-conformance/profiles/` — only `icp-1.0-core` and `icp-1.0-commerce` do. Settler-side behaviour is covered as *decisions* (vector 04's full §8 transition matrix + event replay, vector 07's SettlementReceipt verification) through the stdio adapter protocol, not as HTTP/MCP binding semantics against a live endpoint. A network-binding profile (`icp-1.0-settler`, `icp-1.0-handler`) is ICP-1.1 material; until it ships, the guide's command line will not run. |
 
 ## Filing an objection
 
