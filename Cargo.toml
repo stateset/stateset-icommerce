@@ -147,6 +147,21 @@ inherits = "release"
 debug = "full"
 strip = "none"
 
+# Release profile for the Node addon (`bindings/node`).
+#
+# `[profile.release]` sets `panic = "abort"`, which is right for our binaries but
+# fatal for a library loaded into someone else's process: a panic anywhere under
+# a `#[napi]` call would take the host Node process down with it, with no chance
+# to turn it into a JavaScript exception. This profile keeps every release
+# optimisation and only trades the abort for an unwind, so the guards in
+# `bindings/node/src/errors.rs` can catch a panic and reject with
+# `code: 'INTERNAL_PANIC'` instead.
+#
+# Built by `npm run build` in `bindings/node` (`napi build --profile release-node`).
+[profile.release-node]
+inherits = "release"
+panic = "unwind"
+
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------

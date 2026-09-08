@@ -4667,6 +4667,19 @@ export interface NcrFilterInput {
   /** Keyset cursor: `[createdAt, id]` */
   afterCursor?: Array<string>
 }
+/**
+ * Panic on purpose, synchronously, so the binding's panic containment can be
+ * asserted from JavaScript.
+ *
+ * Compiled only under `debug_assertions`, so it never reaches a published
+ * binary. Under the `release-node` profile (`panic = "unwind"`) and in debug
+ * builds the unwind is caught by [`guard`] and arrives in JavaScript as an
+ * error with `code: 'INTERNAL_PANIC'`; under `panic = "abort"` the process
+ * would die instead, which is exactly what the profile exists to prevent.
+ */
+export declare function __testPanic(message?: string | undefined | null): void
+/** The async twin of [`test_panic`]: panics while the future is being polled. */
+export declare function __testPanicAsync(message?: string | undefined | null): Promise<void>
 /** JavaScript-friendly Commerce instance */
 export declare class Commerce {
   /**

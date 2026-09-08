@@ -15,6 +15,9 @@
  * named-export detection is static, and `import { Commerce } from
  * '@stateset/embedded'` only works while they stay that way. `test/error-codes.js`
  * fails if this list drifts from what the native binding exposes.
+ *
+ * `__testPanic` / `__testPanicAsync` are compiled only into debug builds; in a
+ * published build they are `undefined`.
  */
 
 const { wrapNativeExports } = require('./errors.js')
@@ -118,3 +121,5 @@ module.exports.Fraud = nativeBinding.Fraud
 module.exports.SearchConfigs = nativeBinding.SearchConfigs
 module.exports.Erc8004 = nativeBinding.Erc8004
 module.exports.Maintenance = nativeBinding.Maintenance
+module.exports.__testPanic = nativeBinding.__testPanic
+module.exports.__testPanicAsync = nativeBinding.__testPanicAsync

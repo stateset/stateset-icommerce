@@ -54,6 +54,9 @@ pub(crate) enum ErrCode {
     ExternalService,
     /// Anything else — a bug in the binding or the engine.
     Internal,
+    /// A Rust panic was contained at the boundary and turned into this error
+    /// instead of taking the host process down. See [`guard`].
+    InternalPanic,
 }
 
 impl ErrCode {
@@ -68,6 +71,7 @@ impl ErrCode {
             Self::Database => "DATABASE",
             Self::ExternalService => "EXTERNAL_SERVICE",
             Self::Internal => "INTERNAL",
+            Self::InternalPanic => "INTERNAL_PANIC",
         }
     }
 
@@ -173,6 +177,53 @@ where
     envelope(code, &cause.to_string(), details)
 }
 
+/// Turn a caught panic payload into an `INTERNAL_PANIC` error.
+fn panic_error(payload: &(dyn std::any::Any + Send)) -> Error {
+    let message = payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| payload.downcast_ref::<&'static str>().map(|text| (*text).to_owned()))
+        .unwrap_or_else(|| "unknown panic payload".to_owned());
+    envelope(ErrCode::InternalPanic, &format!("panic in native code: {message}"), None)
+}
+
+/// Run a synchronous entry point with panic containment.
+///
+/// The workspace release profile is `panic = "abort"`, which makes a panic
+/// anywhere under a `#[napi]` call kill the host Node process. `release-node`
+/// (see the root `Cargo.toml`) inherits `release` but keeps `panic = "unwind"`
+/// so this guard can convert the unwind into a JavaScript exception. Under
+/// `panic = "abort"` the guard is inert but harmless.
+pub(crate) fn guard<T, F>(operation: F) -> napi::Result<T>
+where
+    F: FnOnce() -> napi::Result<T>,
+{
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)) {
+        Ok(result) => result,
+        Err(payload) => Err(panic_error(&*payload)),
+    }
+}
+
+/// Run an async entry point with panic containment.
+///
+/// Polls the future inside `catch_unwind`; a panic on any poll resolves the
+/// call to an `INTERNAL_PANIC` error and drops the future.
+pub(crate) async fn guard_async<T, F>(future: F) -> napi::Result<T>
+where
+    F: std::future::Future<Output = napi::Result<T>>,
+{
+    let mut future = Box::pin(future);
+    std::future::poll_fn(move |context| {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            future.as_mut().poll(context)
+        })) {
+            Ok(poll) => poll,
+            Err(payload) => std::task::Poll::Ready(Err(panic_error(&*payload))),
+        }
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +271,7 @@ mod tests {
             ErrCode::Database,
             ErrCode::ExternalService,
             ErrCode::Internal,
+            ErrCode::InternalPanic,
         ] {
             assert_eq!(code.status(), Status::GenericFailure, "{}", code.as_str());
         }
@@ -274,6 +326,19 @@ mod tests {
         let error = coded(ErrCode::Internal, "quote \" brace } newline \n");
         let payload = reason(&error);
         assert_eq!(payload["message"], "quote \" brace } newline \n");
+    }
+
+    #[test]
+    fn guard_contains_a_panic() {
+        let error = guard::<(), _>(|| panic!("boom")).unwrap_err();
+        let payload = reason(&error);
+        assert_eq!(payload["code"], "INTERNAL_PANIC");
+        assert_eq!(payload["message"], "panic in native code: boom");
+    }
+
+    #[test]
+    fn guard_passes_success_through() {
+        assert_eq!(guard(|| Ok(7)).unwrap(), 7);
     }
 
     #[test]

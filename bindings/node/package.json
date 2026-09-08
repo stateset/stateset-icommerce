@@ -90,7 +90,7 @@
     "preversion": "npm run check:env",
     "prepublishOnly": "npm run check:package && echo 'Ready to publish @stateset/embedded'",
     "artifacts": "napi artifacts",
-    "build": "napi build --platform --release --js native-binding.js",
+    "build": "napi build --platform --profile release-node --js native-binding.js",
     "build:debug": "napi build --platform --js native-binding.js",
     "test": "node --test test/*.js",
     "test:coverage": "node --test --experimental-test-coverage test/*.js",

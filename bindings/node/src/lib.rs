@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 
 mod errors;
 
-use errors::{ErrCode, coded, from_cause, wrap};
+use errors::{ErrCode, coded, from_cause, guard, guard_async, wrap};
 
 fn to_f64_or_nan<T>(value: T) -> f64
 where
@@ -102,27 +102,33 @@ impl Commerce {
     /// Keep this result with the issued quote; never recalculate it at acceptance.
     #[napi]
     pub async fn checkout_snapshot(&self, cart_id: String) -> Result<serde_json::Value> {
-        let id: CartId =
-            cart_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid cart UUID"))?;
-        let commerce = self.inner.lock().await;
-        let cart = commerce
-            .carts()
-            .get(id)
-            .map_err(|error| from_cause(ErrCode::Internal, error))?
-            .ok_or_else(|| coded(ErrCode::NotFound, "Cart not found"))?;
-        let fingerprint =
-            cart.checkout_fingerprint().map_err(|error| from_cause(ErrCode::Internal, error))?;
-        Ok(serde_json::json!({ "cart": cart, "fingerprint": fingerprint }))
+        guard_async(async move {
+            let id: CartId =
+                cart_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid cart UUID"))?;
+            let commerce = self.inner.lock().await;
+            let cart = commerce
+                .carts()
+                .get(id)
+                .map_err(|error| from_cause(ErrCode::Internal, error))?
+                .ok_or_else(|| coded(ErrCode::NotFound, "Cart not found"))?;
+            let fingerprint = cart
+                .checkout_fingerprint()
+                .map_err(|error| from_cause(ErrCode::Internal, error))?;
+            Ok(serde_json::json!({ "cart": cart, "fingerprint": fingerprint }))
+        })
+        .await
     }
 
     /// Create a new Commerce instance with a database path
     /// Use ":memory:" for an in-memory database
     #[napi(constructor)]
     pub fn new(db_path: String) -> Result<Self> {
-        let commerce = RustCommerce::new(&db_path)
-            .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize commerce", e))?;
+        guard(|| {
+            let commerce = RustCommerce::new(&db_path)
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize commerce", e))?;
 
-        Ok(Self { inner: Arc::new(Mutex::new(commerce)) })
+            Ok(Self { inner: Arc::new(Mutex::new(commerce)) })
+        })
     }
 
     /// Execute a versioned commerce kernel command under host-supplied policy.
@@ -135,12 +141,15 @@ impl Commerce {
         command: serde_json::Value,
         policy: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        let policy: stateset_core::KernelPolicy = serde_json::from_value(policy)
-            .map_err(|error| wrap(ErrCode::Validation, "Invalid kernel policy", error))?;
-        let commerce = self.inner.lock().await;
-        commerce
-            .execute_kernel_command(command, policy)
-            .map_err(|error| wrap(ErrCode::Internal, "Kernel execution failed", error))
+        guard_async(async move {
+            let policy: stateset_core::KernelPolicy = serde_json::from_value(policy)
+                .map_err(|error| wrap(ErrCode::Validation, "Invalid kernel policy", error))?;
+            let commerce = self.inner.lock().await;
+            commerce
+                .execute_kernel_command(command, policy)
+                .map_err(|error| wrap(ErrCode::Internal, "Kernel execution failed", error))
+        })
+        .await
     }
 
     /// Provision immutable, durable monetary authority for governed commands.
@@ -25767,4 +25776,32 @@ fn ncr_filter_from_input(
         offset: f.offset,
         after_cursor: parse_after_cursor_input(f.after_cursor)?,
     })
+}
+
+// ============================================================================
+// Panic containment probes (debug builds only)
+// ============================================================================
+
+/// Panic on purpose, synchronously, so the binding's panic containment can be
+/// asserted from JavaScript.
+///
+/// Compiled only under `debug_assertions`, so it never reaches a published
+/// binary. Under the `release-node` profile (`panic = "unwind"`) and in debug
+/// builds the unwind is caught by [`guard`] and arrives in JavaScript as an
+/// error with `code: 'INTERNAL_PANIC'`; under `panic = "abort"` the process
+/// would die instead, which is exactly what the profile exists to prevent.
+#[cfg(debug_assertions)]
+#[napi(js_name = "__testPanic")]
+pub fn test_panic(message: Option<String>) -> Result<()> {
+    guard(|| panic!("{}", message.unwrap_or_else(|| "deliberate test panic".to_owned())))
+}
+
+/// The async twin of [`test_panic`]: panics while the future is being polled.
+#[cfg(debug_assertions)]
+#[napi(js_name = "__testPanicAsync")]
+pub async fn test_panic_async(message: Option<String>) -> Result<()> {
+    guard_async(async move {
+        panic!("{}", message.unwrap_or_else(|| "deliberate test panic".to_owned()))
+    })
+    .await
 }
