@@ -29,6 +29,7 @@ use stateset_core::{
     WarrantyClaim, WarrantyRepository, WarrantyStatus,
 };
 use stateset_db::{DatabaseConfig, SqliteDatabase};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
 
 /// A pool wide enough that the contending threads actually overlap instead of
@@ -478,10 +479,15 @@ fn sqlite_a_claim_blocked_on_the_write_lock_cannot_land_on_a_voided_warranty() {
     blocker.execute_batch("PRAGMA busy_timeout = 30000;").expect("busy timeout");
     blocker.execute_batch("BEGIN IMMEDIATE;").expect("take the write lock");
 
+    // Set immediately before the call, so once it flips the claimer is inside
+    // `create_claim` rather than merely spawned.
+    let entered = Arc::new(AtomicBool::new(false));
     let claimer = {
         let db = Arc::clone(&db);
+        let entered = Arc::clone(&entered);
         let warranty_id = w.id;
         std::thread::spawn(move || {
+            entered.store(true, Ordering::SeqCst);
             db.warranties().create_claim(CreateWarrantyClaim {
                 warranty_id,
                 issue_description: "filed while the warranty was still live".into(),
@@ -490,9 +496,30 @@ fn sqlite_a_claim_blocked_on_the_write_lock_cannot_land_on_a_voided_warranty() {
         })
     };
 
-    // Long enough for the claimer's pre-check read to have happened and for it
-    // to be parked on `BEGIN IMMEDIATE`.
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    // The reproducer is only meaningful if the claimer is genuinely parked on
+    // the write lock when the void lands. A bare sleep does not establish that:
+    // if the claimer had already committed (or never started) the void would
+    // simply come second and the test would pass vacuously. So prove the
+    // ordering instead of hoping for it. The database is in WAL mode, so the
+    // claimer's pre-check read cannot block — once it has entered
+    // `create_claim` and *stays* unfinished, the only thing holding it is the
+    // `BEGIN IMMEDIATE` the blocker owns.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !entered.load(Ordering::SeqCst) {
+        assert!(std::time::Instant::now() < deadline, "the claimer thread never started");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let settle_until = std::time::Instant::now() + std::time::Duration::from_millis(300);
+    while std::time::Instant::now() < settle_until {
+        assert!(
+            !claimer.is_finished(),
+            "the claimer finished before the void: it never contended for the write lock, \
+             so this reproducer would have passed vacuously"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!claimer.is_finished(), "the claimer must still be blocked when the void lands");
+
     blocker
         .execute(
             "UPDATE warranties SET status = 'voided' WHERE id = ?1",
@@ -503,10 +530,14 @@ fn sqlite_a_claim_blocked_on_the_write_lock_cannot_land_on_a_voided_warranty() {
     drop(blocker);
 
     let result = claimer.join().expect("claimer thread");
-    assert!(
-        result.is_err(),
+    let err = result.expect_err(
         "a claim must not be filed against a warranty voided while the claim waited \
-         for the write lock: {result:?}"
+         for the write lock",
+    );
+    assert!(
+        matches!(err, CommerceError::ValidationError(_) | CommerceError::Conflict(_)),
+        "the blocked claimer must be refused on the warranty's state, not fail for some \
+         unrelated reason: {err:?}"
     );
     let after = db.warranties().get(w.id).expect("get").expect("exists");
     assert_eq!(after.status, WarrantyStatus::Voided);

@@ -194,6 +194,35 @@ impl SqliteInboundShipmentRepository {
             Self::load_full(tx, &id_str)
         })
     }
+
+    /// Write the cancel for a shipment the caller has already guarded.
+    ///
+    /// The precondition is the exact status string the guard decided on, so
+    /// the write cannot land on a row that moved underneath the read, and a
+    /// status list here can never drift away from the guard's. A write that
+    /// matches nothing is a conflict, not a success: the previous version
+    /// discarded `rows_affected` entirely, so a zero-row cancel returned the
+    /// untouched shipment as though it had been cancelled.
+    fn apply_cancel_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id_str: &str,
+        observed_status: &str,
+        now: &str,
+    ) -> rusqlite::Result<()> {
+        let changed = tx.execute(
+            "UPDATE inbound_shipments SET status = 'cancelled', updated_at = ?
+             WHERE id = ? AND status = ?",
+            rusqlite::params![now, id_str, observed_status],
+        )?;
+        if changed == 0 {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                CommerceError::Conflict(format!(
+                    "inbound shipment {id_str} was no longer in status {observed_status} when the cancel was applied"
+                )),
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl stateset_core::InboundShipmentRepository for SqliteInboundShipmentRepository {
@@ -395,11 +424,7 @@ impl stateset_core::InboundShipmentRepository for SqliteInboundShipmentRepositor
                     )),
                 )));
             }
-            tx.execute(
-                "UPDATE inbound_shipments SET status = 'cancelled', updated_at = ?
-                 WHERE id = ? AND status NOT IN ('received', 'cancelled')",
-                rusqlite::params![&now, &id_str],
-            )?;
+            Self::apply_cancel_in_tx(tx, &id_str, &current, &now)?;
             Self::load_full(tx, &id_str)
         })
     }
@@ -507,6 +532,38 @@ mod tests {
         // Terminal-state guard: cancelling again is rejected.
         let err = repo.cancel(s.id).expect_err("already cancelled");
         assert!(matches!(err, CommerceError::ValidationError(_)));
+    }
+
+    /// The cancel's own write must report a conflict when it matches no row,
+    /// instead of reporting success on a shipment it never touched. The write
+    /// half is exercised directly because within one IMMEDIATE transaction the
+    /// guard and the write cannot legitimately disagree — the point of the
+    /// check is that a future divergence fails closed rather than silently.
+    #[test]
+    fn a_cancel_that_writes_no_row_is_a_conflict() {
+        let repo = test_repo();
+        let s = new_shipment(&repo);
+        let id_str = s.id.to_string();
+        let now = Utc::now().to_rfc3339();
+
+        let mut conn = repo.pool.get().expect("connection");
+        let tx = conn.transaction().expect("transaction");
+
+        // The precondition the caller decided on no longer describes the row.
+        let err =
+            SqliteInboundShipmentRepository::apply_cancel_in_tx(&tx, &id_str, "arrived", &now)
+                .expect_err("a zero-row cancel must not report success");
+        let mapped = map_db_error(err);
+        assert!(matches!(mapped, CommerceError::Conflict(_)), "got {mapped:?}");
+
+        // The real precondition still writes exactly one row.
+        SqliteInboundShipmentRepository::apply_cancel_in_tx(&tx, &id_str, "pending", &now)
+            .expect("the observed status must still cancel");
+        tx.commit().expect("commit");
+        assert_eq!(
+            repo.get(s.id).expect("get").expect("found").status,
+            InboundShipmentStatus::Cancelled
+        );
     }
 
     #[test]

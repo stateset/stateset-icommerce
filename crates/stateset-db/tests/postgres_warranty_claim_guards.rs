@@ -449,6 +449,10 @@ async fn postgres_a_claim_blocked_on_the_row_lock_cannot_land_on_a_voided_warran
 
     let raw = PgPoolOptions::new().max_connections(2).connect(&url).await.expect("raw pool");
     let mut blocker = raw.begin().await.expect("begin blocker");
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(blocker.as_mut())
+        .await
+        .expect("blocker backend pid");
     sqlx::query("SELECT id FROM warranties WHERE id = $1 FOR UPDATE")
         .bind(w.id.into_uuid())
         .fetch_one(blocker.as_mut())
@@ -469,9 +473,39 @@ async fn postgres_a_claim_blocked_on_the_row_lock_cannot_land_on_a_voided_warran
         })
     };
 
-    // Long enough for the claimer to have read the live warranty and parked on
-    // the row lock.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // The reproducer only means anything if the claimer is genuinely parked on
+    // this transaction's row lock when the void lands. A fixed sleep does not
+    // establish that: if the claimer had already committed, the void would
+    // simply come second and the test would pass vacuously. Wait for the
+    // server to tell us instead — `pg_blocking_pids` names exactly the
+    // backends whose lock wait this transaction is responsible for, so seeing
+    // our own pid in it proves the ordering rather than assuming it.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let waiters: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid))",
+        )
+        .bind(blocker_pid)
+        .fetch_one(&raw)
+        .await
+        .expect("poll pg_stat_activity for a waiter on our lock");
+        if waiters > 0 {
+            break;
+        }
+        assert!(
+            !claimer.is_finished(),
+            "the claimer finished without ever waiting on the warranty row lock: this \
+             reproducer would have passed vacuously"
+        );
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no backend ever blocked on the warranty row lock held by pid {blocker_pid}; \
+             the claimer never contended, so the reproducer is vacuous"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
     sqlx::query("UPDATE warranties SET status = 'voided' WHERE id = $1")
         .bind(w.id.into_uuid())
         .execute(blocker.as_mut())
@@ -480,10 +514,14 @@ async fn postgres_a_claim_blocked_on_the_row_lock_cannot_land_on_a_voided_warran
     blocker.commit().await.expect("release the row lock");
 
     let result = claimer.await.expect("claimer task");
-    assert!(
-        result.is_err(),
+    let err = result.expect_err(
         "a claim must not be filed against a warranty voided while the claim waited \
-         for the row lock: {result:?}"
+         for the row lock",
+    );
+    assert!(
+        matches!(err, CommerceError::ValidationError(_) | CommerceError::Conflict(_)),
+        "the blocked claimer must be refused on the warranty's state, not fail for some \
+         unrelated reason: {err:?}"
     );
     let after = db.warranties().get_async(w.id).await.expect("get").expect("exists");
     assert_eq!(after.status, WarrantyStatus::Voided);
