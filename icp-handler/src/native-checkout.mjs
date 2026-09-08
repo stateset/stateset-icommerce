@@ -178,7 +178,11 @@ export class NativeMerchantCheckout {
       //
       // Both used to sit in `reconciling` forever with the cart still claimed
       // by an acceptance that can never complete.
-      const settled = await this.readReceipt(command.idempotency_key).catch(() => null);
+      // `readReceipt` is a host callback: it may be synchronous, and it may
+      // throw synchronously. Never let a second failure mask the first.
+      const settled = await Promise.resolve()
+        .then(() => this.readReceipt(command.idempotency_key))
+        .catch(() => null);
       if (settled && typeof settled === 'object' && settled.status === 'rejected') {
         return this.rejectTerminally(id, operation, settled);
       }

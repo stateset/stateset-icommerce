@@ -126,16 +126,19 @@ try {
 // configuration ONLY, and only registered or previously pinned signer AIDs are
 // admitted. A durable, operator-keyed handler enforces by default.
 //
-// `demo` keeps the historical permissive path for the zero-config walkthrough
-// (`cli/examples/durable-merchant.mjs --apply --demo`, or ICP_TRUST_MODE=demo),
-// where the reference client self-signs its own delegation. It is logged
-// loudly at startup and once per principal, and it is NEVER a production mode.
+// `demo` keeps the historical permissive path for walkthroughs whose client
+// self-signs its own delegation. Selecting it requires the explicit, unambiguous
+// ICP_TRUST_MODE=demo and NOTHING else — in particular no CLI flag, since a flag
+// like the reference launcher's `--demo` means "simulated economic rails", which
+// is a completely different claim from "do not check who authorized this agent".
+// Demo trust is logged loudly at startup and once per principal, and it is NEVER
+// a production mode.
 // ---------------------------------------------------------------------------
 const TRUST_MODE = process.env.ICP_TRUST_MODE ?? '';
 if (TRUST_MODE && TRUST_MODE !== 'enforce' && TRUST_MODE !== 'demo') {
   throw new Error('ICP_TRUST_MODE must be "enforce" or "demo"');
 }
-const DEMO_TRUST = TRUST_MODE === 'demo' || (!TRUST_MODE && process.argv.includes('--demo'));
+const DEMO_TRUST = TRUST_MODE === 'demo';
 const ENFORCE_TRUST = TRUST_MODE === 'enforce' || (state.isDurable() && !DEMO_TRUST);
 
 /** Operator-owned identity → raw Ed25519 public key hex. Never caller input. */
@@ -164,7 +167,8 @@ const TRUSTED_PRINCIPAL_KEYS = keyRegistry('ICP_PRINCIPAL_KEYS_JSON');
 const TRUSTED_AGENT_KEYS = keyRegistry('ICP_AGENT_KEYS_JSON');
 if (ENFORCE_TRUST && TRUSTED_PRINCIPAL_KEYS.size === 0) {
   console.error(
-    'icp-handler: ICP_TRUST_MODE=enforce with an empty ICP_PRINCIPAL_KEYS_JSON — every delegated Intent will be rejected',
+    'icp-handler: enforcing trust with an empty ICP_PRINCIPAL_KEYS_JSON — every Intent will be rejected. ' +
+      'Set ICP_PRINCIPAL_KEYS_JSON (and ICP_AGENT_KEYS_JSON), or ICP_TRUST_MODE=demo for a walkthrough.',
   );
 }
 const permissiveWarned = new Set();

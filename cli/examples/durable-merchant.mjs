@@ -4,10 +4,18 @@ import Database from 'better-sqlite3';
 import { SqliteProtocolStore } from '../../icp-handler/src/sqlite-store.mjs';
 import { configureStorage } from '../../icp-handler/src/state.mjs';
 
+// `--demo` describes the ECONOMIC rails (mock balances, simulated settlement).
+// It says nothing about identity, and it deliberately does NOT relax trust: a
+// durable handler enforces principal delegation and signer admission unless the
+// operator explicitly sets ICP_TRUST_MODE=demo.
 if (!process.argv.includes('--apply') || !process.argv.includes('--demo')) {
   console.log('No changes made. Durable reference mode requires --apply --demo --db PATH.');
   console.log(
     'Set ICP_MERCHANT_KEY_FILE (Ed25519 PEM) and ICP_MERCHANT_AID to operator-owned values.',
+  );
+  console.log(
+    'Trust is enforced: set ICP_PRINCIPAL_KEYS_JSON (principal DID → Ed25519 public key hex) ' +
+      'and ICP_AGENT_KEYS_JSON (agent AID → key hex). ICP_TRUST_MODE=demo opts out, unsafely.',
   );
 } else {
   const index = process.argv.indexOf('--db');

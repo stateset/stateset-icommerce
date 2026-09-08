@@ -9,7 +9,7 @@
 
 import crypto from 'node:crypto';
 
-import { canonicalJson } from '../../../bindings/node/canonical-json.mjs';
+import { canonicalJson } from '@stateset/embedded/canonical-json';
 
 const AWARD_EVENT = 'marketplace.award.created';
 const MARKETPLACE_ENTITY = 'marketplace.negotiation';

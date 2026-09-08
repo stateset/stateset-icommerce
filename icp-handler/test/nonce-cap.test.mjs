@@ -53,3 +53,22 @@ test('the guard rejects invalid capacity policy', () => {
   assert.throws(() => new ReplayGuard({ maxSigners: -1 }), /maxSigners/);
   assert.throws(() => new ReplayGuard({ ttlMs: 0 }), /ttlMs/);
 });
+
+test('an absolute entry ceiling backstops the per-signer and signer bounds', () => {
+  const guard = new ReplayGuard({
+    maxEntriesPerSigner: 10,
+    maxSigners: 10,
+    maxTotalEntries: 3,
+    now: () => 1_000,
+  });
+
+  assert.equal(guard.checkAndRecord('aid:a', 'n1'), true);
+  assert.equal(guard.checkAndRecord('aid:b', 'n1'), true);
+  assert.equal(guard.checkAndRecord('aid:a', 'n2'), true);
+  // Neither per-signer (10) nor signer (10) capacity is reached; the absolute
+  // ceiling is, so the guard fails closed rather than growing.
+  assert.equal(guard.checkAndRecord('aid:a', 'n3'), false);
+  assert.equal(guard.checkAndRecord('aid:c', 'n1'), false);
+  assert.equal(guard.size(), 3);
+  assert.throws(() => new ReplayGuard({ maxTotalEntries: 0 }), /maxTotalEntries/);
+});

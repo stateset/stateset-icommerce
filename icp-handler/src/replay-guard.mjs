@@ -28,6 +28,10 @@
 const DEFAULT_TTL_MS = 86_400_000; // 24h — the §5.3 floor for long-running transitions
 const DEFAULT_MAX_ENTRIES_PER_SIGNER = 1_000;
 const DEFAULT_MAX_SIGNERS = 100_000;
+// Last-resort memory backstop. The per-signer cap times the signer bound is a
+// very large product, so a separate absolute ceiling keeps a single process
+// from growing without limit under abuse. Reaching it is already pathological.
+const DEFAULT_MAX_TOTAL_ENTRIES = 1_000_000;
 
 export class ReplayGuard {
   /**
@@ -36,6 +40,7 @@ export class ReplayGuard {
    * @param {number} [opts.maxEntriesPerSigner] Live nonces retained per signer AID.
    * @param {number} [opts.maxEntries]          Deprecated spelling of `maxEntriesPerSigner`.
    * @param {number} [opts.maxSigners]          Distinct signer AIDs holding live nonces.
+   * @param {number} [opts.maxTotalEntries]     Absolute ceiling on retained entries.
    * @param {() => number} [opts.now]           Clock injection for tests.
    */
   constructor(opts = {}) {
@@ -43,6 +48,7 @@ export class ReplayGuard {
     this.maxEntriesPerSigner =
       opts.maxEntriesPerSigner ?? opts.maxEntries ?? DEFAULT_MAX_ENTRIES_PER_SIGNER;
     this.maxSigners = opts.maxSigners ?? DEFAULT_MAX_SIGNERS;
+    this.maxTotalEntries = opts.maxTotalEntries ?? DEFAULT_MAX_TOTAL_ENTRIES;
     if (!Number.isFinite(this.ttlMs) || this.ttlMs <= 0) {
       throw new Error('ReplayGuard ttlMs must be a positive finite number');
     }
@@ -51,6 +57,9 @@ export class ReplayGuard {
     }
     if (!Number.isInteger(this.maxSigners) || this.maxSigners <= 0) {
       throw new Error('ReplayGuard maxSigners must be a positive integer');
+    }
+    if (!Number.isInteger(this.maxTotalEntries) || this.maxTotalEntries <= 0) {
+      throw new Error('ReplayGuard maxTotalEntries must be a positive integer');
     }
     this._now = opts.now ?? Date.now;
     // Map<string, { aid: string, ts: number }> — composite key → insertion record.
@@ -94,6 +103,11 @@ export class ReplayGuard {
     }
 
     this._evictExpired(now);
+    if (this._seen.size >= this.maxTotalEntries) {
+      // Absolute memory backstop; still fails closed rather than evicting a
+      // live nonce, which would re-open the replay window §5.3 keeps shut.
+      return false;
+    }
     const live = this._perSigner.get(aid) ?? 0;
     if (live >= this.maxEntriesPerSigner) {
       // This signer is full of LIVE nonces → fail closed for this signer only.

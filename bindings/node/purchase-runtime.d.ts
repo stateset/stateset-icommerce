@@ -243,6 +243,41 @@ export class PurchaseRuntime {
   cancel(id: string): Promise<PurchaseOperation>;
 }
 
+/**
+ * The economic commitment a governed kernel evaluates policy against. Without
+ * one, any rule carrying a `max_amount` / `max_quantity` answers
+ * `policy.commitment_amount_required` and the command is rejected.
+ */
+export interface EconomicCommitment {
+  /** A budget the KERNEL provisioned, only when the quote names one. */
+  budget_id: string | null;
+  /** Fiat money, for a quote denominated in an ISO-4217 currency. */
+  amount: { amount: string; currency: string } | null;
+  /** Non-fiat amount, for a quote denominated in an asset (e.g. CAIP-19). */
+  asset_amount: { amount: string; asset: string } | null;
+  counterparty_id: string | null;
+  quantity: string | null;
+  evidence: string[];
+}
+
+/**
+ * Derive the commitment from an operation's accepted quote. Returns `null`
+ * when the operation carries no quote (a host driving an adapter directly).
+ * Throws if the quoted amount is not an exact decimal string.
+ */
+export function quoteCommitment(operation: {
+  quote?: PurchaseQuote;
+  [key: string]: unknown;
+}): EconomicCommitment | null;
+
+/**
+ * Canonical JSON used by every signer and verifier of commerce data. Object
+ * keys are sorted; a value JSON cannot represent (`undefined`, a function, a
+ * symbol) throws rather than serializing to the literal text `undefined`.
+ * Re-exported from `@stateset/embedded/canonical-json`.
+ */
+export function canonicalJson(value: unknown): string;
+
 export function createKernelPurchaseAdapter(options: {
   commerce: { executeKernelCommand(command: unknown, policy: unknown): Promise<any> };
   policy: Record<string, unknown>;
@@ -252,4 +287,20 @@ export function createKernelPurchaseAdapter(options: {
   buildPayload: (operation: PurchaseOperation) => unknown;
   readReceipt: (idempotencyKey: string) => Promise<any>;
   evidence: (receipt: any) => Record<string, unknown>;
+  /**
+   * Host-owned mandate placed on every command envelope: a fixed value, or a
+   * function of the (cloned) operation. Defaults to `null`.
+   */
+  mandate?:
+    | Record<string, unknown>
+    | null
+    | ((operation: PurchaseOperation) => Record<string, unknown> | null | Promise<unknown>);
+  /**
+   * Commitment placed on every command envelope. Defaults to
+   * {@link quoteCommitment}, which derives it from the accepted quote.
+   */
+  commitment?:
+    | EconomicCommitment
+    | null
+    | ((operation: PurchaseOperation) => EconomicCommitment | null | Promise<unknown>);
 }): PurchaseAdapter;

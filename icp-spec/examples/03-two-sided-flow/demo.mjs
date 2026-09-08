@@ -120,6 +120,12 @@ separate process to demonstrate the architectural split.
 let handlerProc, settlerProc;
 let handlerPort, settlerPort;
 
+// The principal's key must exist before the merchant starts: the merchant is
+// provisioned with the PUBLIC half only, exactly as a real operator would be.
+const PRINCIPAL = 'did:web:acme.example';
+const principalKp = generateKeyPairSync('ed25519');
+const principalPubRaw = publicKeyToRaw(principalKp.publicKey);
+
 try {
   h(1, 'Spawn both servers');
   para(`Each server runs in its own process with its own Ed25519 signing key. The merchant is provisioned only with the Settler's public trust root, never its private key.`);
@@ -130,11 +136,16 @@ try {
   out(`\`settler-stateset\` → http://127.0.0.1:${settlerPort}\n\n`);
 
   const settlerInfo = await (await fetch(`http://127.0.0.1:${settlerPort}/.well-known/icp-settler`)).json();
+  // The principal (the organization that delegates to the buyer Agent) is
+  // OPERATOR configuration on the merchant side: the handler resolves its key
+  // from this registry, never from anything the buyer puts in a request body.
+  // The buyer's own delegation is signed with the matching private key below.
   const handler = await spawnServer('icp-handler', HANDLER, {
     PORT: '0',
     ICP_SETTLER_KEYS_JSON: JSON.stringify({
       [settlerInfo.settler_id]: settlerInfo.signing_keys[0].pub_hex,
     }),
+    ICP_PRINCIPAL_KEYS_JSON: JSON.stringify({ [PRINCIPAL]: principalPubRaw.toString('hex') }),
   });
   handlerProc = handler.child;
   handlerPort = handler.port;
@@ -159,16 +170,14 @@ try {
   para(`Buyer generates its own keypair, derives its AID per spec §4.2.`);
   const buyerEdKp = generateKeyPairSync('ed25519');
   const buyerXKp = generateKeyPairSync('x25519');
-  const principalKp = generateKeyPairSync('ed25519');
   const buyerEdPubRaw = publicKeyToRaw(buyerEdKp.publicKey);
   const buyerXPubRaw = publicKeyToRaw(buyerXKp.publicKey);
   const buyerAid = `aid:v1:z${base58btcEncode(createHash('sha256').update(
     Buffer.concat([buyerEdPubRaw, Buffer.from([0x00]), buyerXPubRaw])
   ).digest())}`;
-  const principalPubRaw = publicKeyToRaw(principalKp.publicKey);
   json({
     buyer_aid: buyerAid,
-    principal: 'did:web:acme.example',
+    principal: PRINCIPAL,
     role: 'procurement',
     ed25519_pubkey_hex: buyerEdPubRaw.toString('hex').slice(0, 32) + '…',
   });
@@ -179,7 +188,7 @@ try {
   const now = new Date();
   const exp = new Date(now.getTime() + 300 * 1000);
   const principalBindingBody = {
-    principal: 'did:web:acme.example',
+    principal: PRINCIPAL,
     agent: buyerAid,
     role: 'procurement',
     authority: { max_per_intent: { amount: '5000.00', currency: 'USDC' }, verbs: ['purchase.create'] },
@@ -220,7 +229,8 @@ try {
       signature: { alg: 'ed25519', kid: buyerAid, sig: buyerSig },
       _pubkey_hex: buyerEdPubRaw.toString('hex'),
       _x_pubkey_hex: buyerXPubRaw.toString('hex'),
-      _principal_pubkey_hex: principalPubRaw.toString('hex'),
+      // No `_principal_pubkey_hex`: a request body cannot nominate the key
+      // that authorizes the request. The handler uses its own registry.
     }),
   });
   const submitted = await submitRes.json();

@@ -277,7 +277,9 @@ test('SQLite bridge state survives worker reconstruction', async (t) => {
 });
 
 test('bridge and purchase runtime share one canonicalizer that rejects undefined', async () => {
-  const { canonicalJson } = await import('../../../bindings/node/canonical-json.mjs');
+  // Imported the way the bridge imports it: through the published subpath, so
+  // this test fails if the export map ever stops shipping the module.
+  const { canonicalJson } = await import('@stateset/embedded/canonical-json');
   const { canonicalJson: runtimeCanonical } = await import(
     '../../../bindings/node/purchase-runtime.mjs'
   );
