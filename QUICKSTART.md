@@ -1,16 +1,26 @@
-# 10-Minute Quickstart
+# Rust Quickstart
 
-Get from zero to a running commerce operation with orders, payments, inventory, policy checks, and event sourcing.
+Embed the commerce engine in a Rust program: orders, payments, inventory,
+policy checks, and event sourcing, against one SQLite file.
 
-## Rust
+This is the Rust-first path. The other two entry points are:
 
-### 1. Add the dependency
+- **A storefront** — `npm create stateset-app@latest my-store` scaffolds a
+  working Next.js store. See the [README](./README.md).
+- **The CLI** — `stateset-init --quickstart` gives you a seeded database and a
+  natural-language agent over it. See the
+  [CLI Quickstart](./docs/src/standalone-quickstart.md).
+
+For Node.js, Python and the other bindings, see
+[Getting Started](./docs/src/getting-started.md).
+
+## 1. Add the dependency
 
 ```bash
 cargo add stateset-sdk --features full
 ```
 
-### 2. Create a commerce engine and start selling
+## 2. Create a commerce engine and start selling
 
 ```rust
 use stateset_sdk::prelude::*;
@@ -93,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### 3. Run it
+## 3. Run it
 
 ```bash
 cargo run
@@ -113,56 +123,9 @@ Orders created: 1
 Payments completed: 1
 ```
 
-**That's it.** No database setup, no migrations to run, no config files. The engine creates the SQLite database, runs 9 migrations, and is ready for commerce.
+**That's it.** No database setup, no migrations to run, no config files. The engine creates the SQLite database, runs the bundled migrations, and is ready for commerce.
 
----
-
-## Node.js / CLI
-
-### 1. Install
-
-```bash
-npm install -g @stateset/cli
-```
-
-### 2. Initialize with demo data
-
-```bash
-stateset-init --demo
-```
-
-(`stateset-init --quickstart` does a zero-prompt standalone setup; `--db <path>` picks a custom database location, `--force` overwrites an existing one.)
-
-### 3. Start selling
-
-The `stateset` command is a natural-language agent over the embedded engine.
-Reads run freely; writes are previewed unless you pass `--apply`:
-
-```bash
-# List customers
-stateset "show me all customers"
-
-# Create an order
-stateset --apply "create an order for alice@example.com with 2 widgets at $29.99"
-
-# Check inventory
-stateset "what products are low on stock?"
-
-# Process a return
-stateset --apply "create a return for order ORD-123 reason: defective"
-
-# Analytics
-stateset "what is my revenue this month?"
-stateset "who are my top customers?"
-```
-
-Domain-specific CLIs are installed alongside it: `stateset-orders`,
-`stateset-inventory`, `stateset-checkout`, `stateset-payments`,
-`stateset-returns`, `stateset-analytics`, and more. For the MCP server
-(Claude Desktop / Cursor / Windsurf), see the
-[MCP Server section in the README](./README.md#mcp-server-claude-desktop--cursor--windsurf).
-
-### 4. Serve the REST API
+## 4. Serve the REST API
 
 The REST API is an embeddable layer (`stateset-http`), started from your Rust
 application:
@@ -191,41 +154,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Now you have a full REST API at `http://localhost:3000/api/v1/` with the
 OpenAPI spec at `/api/v1/openapi.json`. (If you skip `with_bearer_auth`, the
 server generates a token and prints it at startup — auth is on by default.)
-
----
-
-## Python
-
-```bash
-pip install stateset-embedded
-```
-
-```python
-from stateset_embedded import Commerce, CreateOrderItemInput
-
-commerce = Commerce(":memory:")
-
-# Create a customer (APIs are properties: commerce.customers, not commerce.customers())
-customer = commerce.customers.create(
-    email="alice@example.com",
-    first_name="Alice",
-    last_name="Smith",
-)
-
-# Create an order
-order = commerce.orders.create(
-    customer_id=customer.id,
-    items=[
-        CreateOrderItemInput(
-            sku="WIDGET-001",
-            name="Widget",
-            quantity=3,
-            unit_price=29.99,
-        )
-    ],
-)
-print(f"Order {order.order_number}: ${order.total_amount}")
-```
 
 ---
 
@@ -363,7 +291,7 @@ Your App / AI Agent / CLI
 │   A2A Commerce           │  Negotiation, messaging, credit
 │   VES Crypto             │  Ed25519, Merkle, AES-GCM
 ├─────────────────────────┤
-│   SQLite (embedded)      │  Zero config, 9 migrations
+│   SQLite (embedded)      │  Zero config, migrations run
 │   PostgreSQL (optional)  │  Async, high-concurrency
 └─────────────────────────┘
 ```
@@ -373,8 +301,8 @@ Your App / AI Agent / CLI
 ## What's Included
 
 - **Full REST API** with OpenAPI 3.1 docs
-- **Rust plus native bindings** for Node.js, Python, Go, Java, Kotlin, Swift, .NET, Ruby, PHP, and WASM
-- **9 database migrations** with rollback support
+- **In-tree native bindings** for Node.js, Python, Go, Java, Kotlin, Swift, .NET, Ruby, PHP, and WASM (published: crates.io, npm, PyPI)
+- **Bundled schema migrations** applied on first connection, with rollback support
 - **A2A commerce modules** for autonomous agent workflows
 - **Repo-wide Rust and JS verification** in the root `npm run check` pipeline
 - **~3x performance** vs naive implementation (fat LTO, native CPU, lock-free atomics)
@@ -387,4 +315,5 @@ Your App / AI Agent / CLI
 - [API Reference](https://docs.rs/stateset-sdk) — Full Rust API documentation
 - [OpenAPI Spec](http://localhost:3000/api/v1/openapi.json) — REST endpoint reference
 - [CHANGELOG](./CHANGELOG.md) — Release history
+- [CLI Quickstart](./docs/src/standalone-quickstart.md) — the same engine from the command line
 - [GitHub](https://github.com/stateset/stateset-icommerce) — Source code and issues

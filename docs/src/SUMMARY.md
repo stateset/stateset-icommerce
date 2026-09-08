@@ -4,7 +4,7 @@
 
 - [Overview](index.md)
 - [Getting Started](getting-started.md)
-- [Standalone Quickstart](standalone-quickstart.md)
+- [CLI Quickstart](standalone-quickstart.md)
 - [AI Agent Quickstart](ai-agents.md)
 - [Product Tiers](tiers.md)
 - [Trust Foundation](trust-foundation.md)

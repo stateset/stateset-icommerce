@@ -104,7 +104,7 @@ No data migration between tiers. See [Product Tiers](tiers.md).
 
 ### I'm connecting an existing store (Shopify, Stripe, WooCommerce)
 
-1. [Standalone Quickstart](standalone-quickstart.md) — 5-minute setup
+1. [CLI Quickstart](standalone-quickstart.md) — 5-minute setup
 2. [Adapter Overview](adapters/overview.md) — Which adapter to use
 3. [Stripe](adapters/stripe.md) / [Shopify](adapters/shopify.md) / [WooCommerce](adapters/woocommerce.md)
 
