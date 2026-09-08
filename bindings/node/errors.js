@@ -39,15 +39,42 @@ const inertPrototypes = new WeakSet([
   Error.prototype,
 ])
 
+/** napi's fixed text when an async task panics with a non-`&str` payload. */
+const ASYNC_PANIC_TEXT = 'Panic in async function'
+
 /**
  * Turn one thrown value into its decoded form. Idempotent, and a no-op for
  * anything that is not an enveloped native error.
+ *
+ * `fromAsync` says the value arrived as a promise rejection. That matters for
+ * panic detection: `napi::tokio_runtime::execute_tokio_future` watches every
+ * spawned task and rejects with `Status::GenericFailure` carrying the raw panic
+ * payload, so an async rejection that is a `GenericFailure` *without* an
+ * envelope is a contained panic — every deliberate error the binding raises
+ * carries an envelope. A synchronous `#[napi]` fn has no such watchdog (an
+ * unwind out of its `extern "C"` shim aborts), so the same shape arriving
+ * synchronously is a napi-internal failure, not a panic, and is left alone.
  */
-function decorate(error) {
+function decorate(error, fromAsync = false) {
   if (error === null || typeof error !== 'object' || error[DECORATED]) return error
   const raw = error.message
   // Fast bail: an envelope is always a JSON object.
-  if (typeof raw !== 'string' || raw.charCodeAt(0) !== 0x7b) return error
+  if (typeof raw !== 'string' || raw.charCodeAt(0) !== 0x7b) {
+    if (
+      typeof raw === 'string' &&
+      error.code === 'GenericFailure' &&
+      (fromAsync || raw === ASYNC_PANIC_TEXT)
+    ) {
+      return brand(error, {
+        code: 'INTERNAL_PANIC',
+        // Keep napi's payload verbatim — it is the panic message, or the fixed
+        // text when the payload was a `String` rather than a `&'static str`.
+        message: raw,
+        details: { httpStatus: 500, contained: 'napi-async-watchdog' },
+      })
+    }
+    return error
+  }
 
   let envelope
   try {
@@ -64,6 +91,12 @@ function decorate(error) {
     return error
   }
 
+  return brand(error, envelope)
+}
+
+/** Apply a decoded envelope to the error object, in place. */
+function brand(error, envelope) {
+  const raw = error.message
   error.napiStatus = error.code
   error.code = envelope.code
   error.message = envelope.message
@@ -71,7 +104,9 @@ function decorate(error) {
   // The stack was captured with the envelope as its first line; rewrite that
   // line so a logged stack reads like the sentence it always did.
   // (a function replacement, so a `$&` in the message is not a substitution)
-  if (typeof error.stack === 'string') error.stack = error.stack.replace(raw, () => envelope.message)
+  if (typeof error.stack === 'string' && envelope.message !== raw) {
+    error.stack = error.stack.replace(raw, () => envelope.message)
+  }
   Object.defineProperty(error, DECORATED, { value: true, enumerable: false })
   return error
 }
@@ -123,7 +158,7 @@ function adopt(value) {
 function settle(result) {
   if (result !== null && typeof result === 'object' && typeof result.then === 'function') {
     return result.then(adopt, (error) => {
-      throw decorate(error)
+      throw decorate(error, true)
     })
   }
   return adopt(result)
@@ -188,9 +223,9 @@ function wrapExport(value) {
         return found
       }
       // A proxy may not report a different value for a non-configurable,
-      // non-writable data property; napi defines static methods exactly that
-      // way, so those few are handed back undecorated. Their errors still
-      // carry the envelope — call `decorate(err)` if you need it unpacked.
+      // non-writable data property, and that is exactly how napi defines static
+      // methods. `shadowStatics` below handles those; here we must hand back
+      // the real function or the engine throws a TypeError.
       const descriptor = Object.getOwnPropertyDescriptor(target, property)
       if (descriptor && descriptor.configurable === false && descriptor.writable === false) {
         return found
@@ -205,11 +240,50 @@ function wrapExport(value) {
   })
 }
 
+/**
+ * napi defines static class methods non-configurable and non-writable, so a
+ * `Proxy` is forbidden from reporting wrapped versions of them (the engine
+ * throws a TypeError rather than allowing the substitution). Without this, a
+ * throwing static — `Tax.getUsStateInfo` and friends all return `Result` —
+ * would hand the caller the raw JSON envelope as its message.
+ *
+ * The fix is a stand-in function object we own. Unlike a `class`, a plain
+ * function's `prototype` is writable, so pointing it at the native prototype
+ * keeps `instanceof` working for instances the native module hands back, while
+ * the statics live as ordinary configurable own properties that *can* be
+ * wrapped.
+ */
+function shadowStatics(proxied, target) {
+  const staticKeys = Object.getOwnPropertyNames(target).filter((key) => {
+    if (key === 'length' || key === 'name' || key === 'prototype') return false
+    const descriptor = Object.getOwnPropertyDescriptor(target, key)
+    return Boolean(descriptor) && typeof descriptor.value === 'function'
+  })
+  if (staticKeys.length === 0) return proxied
+
+  const shim = function (...args) {
+    return Reflect.construct(proxied, args, new.target === undefined ? shim : new.target)
+  }
+  shim.prototype = target.prototype
+  Object.defineProperty(shim, 'name', { value: target.name, configurable: true })
+  for (const key of staticKeys) {
+    Object.defineProperty(shim, key, {
+      value: wrapCallable(target[key]),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    })
+  }
+  return shim
+}
+
 /** Wrap every export of the native binding. */
 function wrapNativeExports(native) {
   const wrapped = Object.create(null)
   for (const key of Object.keys(native)) {
-    wrapped[key] = wrapExport(native[key])
+    const value = native[key]
+    const proxied = wrapExport(value)
+    wrapped[key] = typeof value === 'function' ? shadowStatics(proxied, value) : proxied
   }
   return wrapped
 }

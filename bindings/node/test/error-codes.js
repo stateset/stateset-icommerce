@@ -77,24 +77,184 @@ test('binding errors carry stable machine codes', async (t) => {
     );
     assert.strictEqual(error.code, 'INSUFFICIENT_STOCK');
     assert.strictEqual(error.details.invariant, 'commerce.inventory.insufficient_available');
-    assert.match(error.message, /requested 9999, available 5$/);
-  });
-
-  // Slow on purpose: an unopenable path fails through the connection pool, which
-  // gives up after its 30s timeout. Not a hang.
-  await t.test('constructor failures are coded too', async () => {
-    const error = await rejects(() => new Commerce('/nonexistent-dir-xyz/commerce.db'));
-    assert.ok(
-      ['DATABASE', 'INTERNAL'].includes(error.code),
-      `constructor failure should be coded, got ${error.code}`,
-    );
-    assert.ok(!error.message.startsWith('{'), 'the JSON envelope must not leak into the message');
+    assert.strictEqual(error.details.httpStatus, 400);
+    // The numbers come out of `details`, not out of the sentence.
+    assert.strictEqual(error.details.sku, 'DUP-1');
+    assert.strictEqual(error.details.requested, '9999');
+    assert.strictEqual(error.details.available, '5');
   });
 
   await t.test('the raw envelope never reaches callers', async () => {
     const error = await rejects(() => commerce.checkoutSnapshot('nope'));
     assert.ok(!error.message.includes('"code"'), error.message);
     assert.ok(error.stack.startsWith('Error: Invalid cart UUID'), error.stack.split('\n')[0]);
+  });
+});
+
+test('PRECONDITION_FAILED for a rule the record state forbids', async () => {
+  const commerce = new Commerce(':memory:');
+  const customer = await commerce.customers.create({
+    email: 'precondition@example.com',
+    firstName: 'Pre',
+    lastName: 'Condition',
+  });
+  await commerce.inventory.createItem({ sku: 'PRE-1', name: 'Pre', initialQuantity: 10 });
+  const order = await commerce.orders.create({
+    customerId: customer.id,
+    items: [{ sku: 'PRE-1', name: 'Pre', quantity: 1, unitPrice: 5 }],
+  });
+  await commerce.orders.cancel(order.id, 'test');
+
+  const error = await rejects(() => commerce.orders.updateStatus(order.id, 'delivered'));
+  // Before the explicit arm this reported INTERNAL — "the binding is broken"
+  // for what is really "the order is already cancelled".
+  assert.strictEqual(error.code, 'PRECONDITION_FAILED');
+  assert.strictEqual(error.details.httpStatus, 400);
+  assert.match(error.message, /Invalid order status transition from cancelled to delivered$/);
+});
+
+test('every wrapper path decodes the envelope', async (t) => {
+  const commerce = new Commerce(':memory:');
+
+  await t.test('free function', async () => {
+    const error = await rejects(() => native.jcsCanonicalize('{not json'));
+    assert.strictEqual(error.code, 'VALIDATION');
+    assert.strictEqual(error.napiStatus, 'InvalidArg');
+    assert.match(error.message, /^Invalid JSON: /);
+  });
+
+  // Slow on purpose: an unopenable path fails through the connection pool, which
+  // gives up after its 30s timeout. Not a hang.
+  await t.test('constructor', async () => {
+    const error = await rejects(() => new Commerce('/nonexistent-dir-xyz/commerce.db'));
+    assert.ok(['DATABASE', 'INTERNAL'].includes(error.code), error.code);
+    assert.ok(!error.message.startsWith('{'), 'the JSON envelope must not leak');
+  });
+
+  await t.test('async method', async () => {
+    const error = await rejects(() => commerce.checkoutSnapshot(MISSING_UUID));
+    assert.strictEqual(error.code, 'NOT_FOUND');
+  });
+
+  await t.test('getter chain stays wrapped', async () => {
+    // `commerce.tax` is a getter; the instance it returns must still be a real
+    // Tax (the static shim rewires `prototype`, so this is the regression guard)
+    // and its methods must still decode.
+    assert.ok(commerce.tax instanceof native.Tax, 'getter result keeps its identity');
+    const error = await rejects(() => commerce.customers.get('not-a-uuid'));
+    assert.strictEqual(error.code, 'VALIDATION');
+  });
+
+  await t.test('static method is wrapped, not the raw native one', () => {
+    const raw = require('../native-binding.js');
+    assert.notStrictEqual(
+      native.Tax.getUsStateInfo,
+      raw.Tax.getUsStateInfo,
+      'statics must go through the decoding shim',
+    );
+    // ...and still work.
+    assert.strictEqual(native.Tax.isEuCountry('DE'), true);
+    assert.strictEqual(native.Tax.isEuCountry('US'), false);
+    assert.ok(native.Tax.getUsStateInfo('CA'), 'a known state still resolves');
+    assert.strictEqual(native.Tax.getUsStateInfo('ZZ'), null);
+  });
+});
+
+// The native module has no fallible synchronous instance method and no static
+// that can be made to throw with ordinary input, so the sync method / getter /
+// static decode paths are proved here against a stand-in module shaped exactly
+// like napi's output: non-configurable statics, prototype methods, getters.
+test('wrapNativeExports decodes every shape napi produces', async (t) => {
+  const { wrapNativeExports } = require('../errors.js');
+
+  const envelope = (code, message, details) =>
+    JSON.stringify(details ? { code, message, details } : { code, message });
+
+  function thrower(code, message, details) {
+    const error = new Error(envelope(code, message, details));
+    error.code = 'GenericFailure';
+    return error;
+  }
+
+  class Fake {
+    constructor(fail) {
+      if (fail) throw thrower('DATABASE', 'boom ctor');
+    }
+    syncMethod() {
+      throw thrower('CONFLICT', 'boom sync', { httpStatus: 409 });
+    }
+    async asyncMethod() {
+      throw thrower('NOT_FOUND', 'boom async');
+    }
+    get failingGetter() {
+      throw thrower('POLICY_REJECTED', 'boom getter');
+    }
+  }
+  Object.defineProperty(Fake, 'staticMethod', {
+    value: () => {
+      throw thrower('VALIDATION', 'boom static');
+    },
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+  const freeFn = () => {
+    throw thrower('EXTERNAL_SERVICE', 'boom free');
+  };
+
+  const wrapped = wrapNativeExports({ Fake: Fake, freeFn: freeFn });
+  const instance = new wrapped.Fake(false);
+
+  await t.test('constructor', () => {
+    const error = (() => {
+      try {
+        // eslint-disable-next-line no-new
+        new wrapped.Fake(true);
+      } catch (caught) {
+        return caught;
+      }
+      throw new assert.AssertionError({ message: 'expected a throw' });
+    })();
+    assert.strictEqual(error.code, 'DATABASE');
+    assert.strictEqual(error.message, 'boom ctor');
+  });
+
+  await t.test('sync method', async () => {
+    const error = await rejects(() => instance.syncMethod());
+    assert.strictEqual(error.code, 'CONFLICT');
+    assert.strictEqual(error.message, 'boom sync');
+    assert.strictEqual(error.details.httpStatus, 409);
+    assert.strictEqual(error.napiStatus, 'GenericFailure');
+  });
+
+  await t.test('async method', async () => {
+    const error = await rejects(() => instance.asyncMethod());
+    assert.strictEqual(error.code, 'NOT_FOUND');
+    assert.strictEqual(error.message, 'boom async');
+  });
+
+  await t.test('getter', async () => {
+    const error = await rejects(() => instance.failingGetter);
+    assert.strictEqual(error.code, 'POLICY_REJECTED');
+    assert.strictEqual(error.message, 'boom getter');
+  });
+
+  await t.test('non-configurable static', async () => {
+    const error = await rejects(() => wrapped.Fake.staticMethod());
+    assert.strictEqual(error.code, 'VALIDATION');
+    assert.strictEqual(error.message, 'boom static');
+  });
+
+  await t.test('free function', async () => {
+    const error = await rejects(() => wrapped.freeFn());
+    assert.strictEqual(error.code, 'EXTERNAL_SERVICE');
+    assert.strictEqual(error.message, 'boom free');
+  });
+
+  await t.test('identity survives the static shim', () => {
+    assert.ok(instance instanceof wrapped.Fake, 'instanceof still holds');
+    assert.ok(instance instanceof Fake, 'and against the raw class');
+    assert.strictEqual(wrapped.Fake.name, 'Fake');
   });
 });
 

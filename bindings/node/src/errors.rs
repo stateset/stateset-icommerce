@@ -27,7 +27,10 @@
 
 use napi::{Error, Status};
 use stateset_core::CommerceError;
-use stateset_core::errors::InventoryError;
+use stateset_core::errors::{
+    CustomerError, InventoryError, OrderError, PaymentError, ProductError, ReturnError,
+    ShippingError,
+};
 
 /// Stable error codes surfaced to JavaScript as `err.code`.
 ///
@@ -46,6 +49,12 @@ pub(crate) enum ErrCode {
     /// Not enough stock to satisfy the request. Split out from `Validation`
     /// because agents retry it differently (wait and re-quote, not re-prompt).
     InsufficientStock,
+    /// The request is well-formed but the record is not in a state that allows
+    /// it: an order too far along to cancel, an expired reservation, a product
+    /// that is not purchasable. Distinct from `Validation` — resending the same
+    /// request after the record moves on may well succeed, so an agent should
+    /// re-read state rather than re-prompt.
+    PreconditionFailed,
     /// Refused by policy: the operation is understood but not permitted.
     PolicyRejected,
     /// The storage layer failed.
@@ -67,6 +76,7 @@ impl ErrCode {
             Self::Conflict => "CONFLICT",
             Self::Validation => "VALIDATION",
             Self::InsufficientStock => "INSUFFICIENT_STOCK",
+            Self::PreconditionFailed => "PRECONDITION_FAILED",
             Self::PolicyRejected => "POLICY_REJECTED",
             Self::Database => "DATABASE",
             Self::ExternalService => "EXTERNAL_SERVICE",
@@ -85,6 +95,30 @@ impl ErrCode {
             _ => Status::GenericFailure,
         }
     }
+
+    /// The HTTP status a gateway should give this failure, reported as
+    /// `details.httpStatus`.
+    ///
+    /// These mirror `crates/stateset-http/src/error.rs`, which is the
+    /// platform's actual mapping, rather than
+    /// `CommerceError::suggested_status_code` — that helper has no arm for the
+    /// business-rule and stock failures and sends them all to 500, while the
+    /// HTTP layer answers 400. Keeping the binding and the HTTP surface in
+    /// agreement matters more than agreeing with the helper.
+    const fn http_status(self) -> u16 {
+        match self {
+            Self::NotFound => 404,
+            Self::Conflict => 409,
+            // `HttpError::BadRequest` — see the `InsufficientStock`,
+            // `ShipmentExceedsOrdered`, `OrderCannotBeCancelled`,
+            // `ReturnPeriodExpired`, `CustomerNotActive` and
+            // `ProductNotPurchasable` arms of `HttpError::from`.
+            Self::Validation | Self::InsufficientStock | Self::PreconditionFailed => 400,
+            Self::PolicyRejected => 403,
+            Self::ExternalService => 502,
+            Self::Database | Self::Internal | Self::InternalPanic => 500,
+        }
+    }
 }
 
 /// Classify a [`CommerceError`] into its stable code.
@@ -99,6 +133,47 @@ pub(crate) fn commerce_code(error: &CommerceError) -> ErrCode {
         | CommerceError::Inventory(InventoryError::InsufficientStock { .. }) => {
             ErrCode::InsufficientStock
         }
+
+        // Business-rule rejections: the record exists and the input parses, but
+        // its current state forbids the operation. `CommerceError` has no
+        // predicate for these, so they are listed explicitly — without this arm
+        // they all fall through to `INTERNAL`, which reads as "the binding is
+        // broken" when it means "the order already shipped".
+        CommerceError::OrderCannotBeCancelled(_)
+        | CommerceError::OrderCannotBeRefunded(_)
+        | CommerceError::InvalidOrderStatusTransition { .. }
+        | CommerceError::ReservationExpired(_)
+        | CommerceError::CustomerNotActive
+        | CommerceError::ProductNotPurchasable
+        | CommerceError::ReturnCannotBeApproved(_)
+        | CommerceError::ReturnPeriodExpired
+        | CommerceError::ItemNotEligibleForReturn
+        | CommerceError::ShipmentExceedsOrdered { .. }
+        | CommerceError::Order(
+            OrderError::CannotCancel { .. }
+            | OrderError::CannotRefund { .. }
+            | OrderError::InvalidTransition(_),
+        )
+        | CommerceError::Payment(
+            PaymentError::Declined { .. }
+            | PaymentError::RefundFailed { .. }
+            | PaymentError::InvalidTransition(_),
+        )
+        | CommerceError::Return(
+            ReturnError::CannotApprove { .. }
+            | ReturnError::PeriodExpired
+            | ReturnError::ItemNotEligible
+            | ReturnError::InvalidTransition(_),
+        )
+        | CommerceError::Inventory(InventoryError::ReservationExpired(_))
+        | CommerceError::Customer(CustomerError::NotActive)
+        | CommerceError::Product(ProductError::NotPurchasable) => ErrCode::PreconditionFailed,
+
+        // A carrier API that failed is an upstream outage, not a bad request.
+        CommerceError::Shipping(ShippingError::CarrierError { .. }) => ErrCode::ExternalService,
+        CommerceError::Shipping(ShippingError::InvalidTrackingNumber(_))
+        | CommerceError::Payment(PaymentError::CurrencyMismatch { .. }) => ErrCode::Validation,
+
         _ if error.is_not_found() => ErrCode::NotFound,
         _ if error.is_conflict() => ErrCode::Conflict,
         _ if error.is_validation() => ErrCode::Validation,
@@ -109,16 +184,41 @@ pub(crate) fn commerce_code(error: &CommerceError) -> ErrCode {
     }
 }
 
-/// The `details` object for a [`CommerceError`]: the HTTP status the engine
-/// suggests plus, for a published commerce invariant, its stable code.
-fn commerce_details(error: &CommerceError) -> serde_json::Value {
-    match error.invariant_code() {
-        Some(invariant) => serde_json::json!({
-            "httpStatus": error.suggested_status_code(),
-            "invariant": invariant,
-        }),
-        None => serde_json::json!({ "httpStatus": error.suggested_status_code() }),
+/// The `details` object for a [`CommerceError`].
+///
+/// Always carries `httpStatus`; adds `invariant` for a published commerce
+/// invariant, and the variant's own fields where it has them, so a caller can
+/// read `details.available` instead of parsing it back out of the sentence.
+fn commerce_details(code: ErrCode, error: &CommerceError) -> serde_json::Value {
+    let mut details = serde_json::Map::new();
+    details.insert("httpStatus".to_owned(), code.http_status().into());
+    if let Some(invariant) = error.invariant_code() {
+        details.insert("invariant".to_owned(), invariant.into());
     }
+    match error {
+        CommerceError::InsufficientStock { sku, requested, available }
+        | CommerceError::Inventory(InventoryError::InsufficientStock {
+            sku,
+            requested,
+            available,
+        }) => {
+            details.insert("sku".to_owned(), sku.clone().into());
+            details.insert("requested".to_owned(), requested.clone().into());
+            details.insert("available".to_owned(), available.clone().into());
+        }
+        CommerceError::VersionConflict { entity, id, expected_version } => {
+            details.insert("entity".to_owned(), entity.clone().into());
+            details.insert("id".to_owned(), id.clone().into());
+            details.insert("expectedVersion".to_owned(), (*expected_version).into());
+        }
+        CommerceError::ShipmentExceedsOrdered { order_item_id, requested, remaining } => {
+            details.insert("orderItemId".to_owned(), order_item_id.to_string().into());
+            details.insert("requested".to_owned(), (*requested).into());
+            details.insert("remaining".to_owned(), (*remaining).into());
+        }
+        _ => {}
+    }
+    serde_json::Value::Object(details)
 }
 
 /// Build the napi error carrying the JSON envelope.
@@ -147,7 +247,10 @@ fn classify_cause(
     cause: &dyn std::any::Any,
 ) -> (ErrCode, Option<serde_json::Value>) {
     match cause.downcast_ref::<CommerceError>() {
-        Some(commerce) => (commerce_code(commerce), Some(commerce_details(commerce))),
+        Some(commerce) => {
+            let code = commerce_code(commerce);
+            (code, Some(commerce_details(code, commerce)))
+        }
         None => (fallback, None),
     }
 }
@@ -250,6 +353,31 @@ mod tests {
             ErrCode::ExternalService
         );
         assert_eq!(commerce_code(&CommerceError::Internal("x".into())), ErrCode::Internal);
+        // Business-rule rejections used to fall through to INTERNAL.
+        assert_eq!(
+            commerce_code(&CommerceError::CustomerNotActive),
+            ErrCode::PreconditionFailed,
+            "a customer that exists but is inactive is a precondition failure, not a bug"
+        );
+        assert_eq!(
+            commerce_code(&CommerceError::OrderCannotBeCancelled("shipped".into())),
+            ErrCode::PreconditionFailed
+        );
+        assert_eq!(
+            commerce_code(&CommerceError::ProductNotPurchasable),
+            ErrCode::PreconditionFailed
+        );
+        assert_eq!(
+            commerce_code(&CommerceError::Return(ReturnError::PeriodExpired)),
+            ErrCode::PreconditionFailed
+        );
+        assert_eq!(
+            commerce_code(&CommerceError::Shipping(ShippingError::CarrierError {
+                carrier: "ups".into(),
+                reason: "503".into(),
+            })),
+            ErrCode::ExternalService
+        );
         assert_eq!(
             commerce_code(&CommerceError::InsufficientStock {
                 sku: "x".into(),
@@ -270,6 +398,7 @@ mod tests {
             ErrCode::PolicyRejected,
             ErrCode::Database,
             ErrCode::ExternalService,
+            ErrCode::PreconditionFailed,
             ErrCode::Internal,
             ErrCode::InternalPanic,
         ] {
@@ -297,6 +426,52 @@ mod tests {
     }
 
     #[test]
+    fn http_status_matches_the_platform_http_layer() {
+        // Mirrors `HttpError::from(CommerceError)` in crates/stateset-http.
+        assert_eq!(ErrCode::NotFound.http_status(), 404);
+        assert_eq!(ErrCode::Conflict.http_status(), 409);
+        assert_eq!(ErrCode::Validation.http_status(), 400);
+        assert_eq!(ErrCode::InsufficientStock.http_status(), 400);
+        assert_eq!(ErrCode::PreconditionFailed.http_status(), 400);
+        assert_eq!(ErrCode::PolicyRejected.http_status(), 403);
+        assert_eq!(ErrCode::ExternalService.http_status(), 502);
+        assert_eq!(ErrCode::Database.http_status(), 500);
+        assert_eq!(ErrCode::Internal.http_status(), 500);
+    }
+
+    #[test]
+    fn variant_fields_are_reported_in_details() {
+        let error = wrap(
+            ErrCode::Internal,
+            "Failed to reserve inventory",
+            CommerceError::InsufficientStock {
+                sku: "SKU-1".into(),
+                requested: "9".into(),
+                available: "1".into(),
+            },
+        );
+        let payload = reason(&error);
+        assert_eq!(payload["details"]["sku"], "SKU-1");
+        assert_eq!(payload["details"]["requested"], "9");
+        assert_eq!(payload["details"]["available"], "1");
+
+        let error = wrap(
+            ErrCode::Internal,
+            "Failed to update order",
+            CommerceError::VersionConflict {
+                entity: "order".into(),
+                id: "abc".into(),
+                expected_version: 3,
+            },
+        );
+        let payload = reason(&error);
+        assert_eq!(payload["code"], "CONFLICT");
+        assert_eq!(payload["details"]["entity"], "order");
+        assert_eq!(payload["details"]["id"], "abc");
+        assert_eq!(payload["details"]["expectedVersion"], 3);
+    }
+
+    #[test]
     fn invariants_are_reported_in_details() {
         let error = wrap(
             ErrCode::Internal,
@@ -310,6 +485,7 @@ mod tests {
         let payload = reason(&error);
         assert_eq!(payload["code"], "INSUFFICIENT_STOCK");
         assert_eq!(payload["details"]["invariant"], "commerce.inventory.insufficient_available");
+        assert_eq!(payload["details"]["httpStatus"], 400);
     }
 
     #[test]
@@ -345,8 +521,8 @@ mod tests {
     fn from_cause_keeps_the_engine_message() {
         let error = from_cause(ErrCode::Internal, CommerceError::CustomerNotActive);
         let payload = reason(&error);
-        assert_eq!(payload["code"], "INTERNAL");
+        assert_eq!(payload["code"], "PRECONDITION_FAILED");
         assert_eq!(payload["message"], "Customer is not active");
-        assert_eq!(payload["details"]["httpStatus"], 500);
+        assert_eq!(payload["details"]["httpStatus"], 400);
     }
 }

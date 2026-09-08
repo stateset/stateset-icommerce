@@ -8,6 +8,13 @@ description = "Node.js bindings for StateSet Embedded Commerce"
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+# Compiles the `__testPanic*` probes that `test/panic-containment.js` drives.
+# Off by default so the symbols never reach a published binary; the committed
+# `native-binding.js` and `index.d.ts` are generated without it.
+# `npm run build:debug` turns it on — debug artifacts are never published.
+test-panic = []
+
 [dependencies]
 # napi-rs for Node.js bindings
 napi = { version = "2", features = ["async", "napi9", "serde-json"] }

@@ -94,8 +94,13 @@ impl Commerce {
     /// Execution features implemented by this native binary. Hosts must check
     /// this before relying on optional safety fields that old binaries ignore.
     #[napi]
-    pub fn kernel_features(&self) -> Vec<String> {
-        vec!["checkout.stock_policy.v1".to_owned(), "checkout.cart_fingerprint.v1".to_owned()]
+    pub fn kernel_features(&self) -> Result<Vec<String>> {
+        guard(|| {
+            Ok(vec![
+                "checkout.stock_policy.v1".to_owned(),
+                "checkout.cart_fingerprint.v1".to_owned(),
+            ])
+        })
     }
 
     /// Read exact quote terms and their fingerprint from the same cart snapshot.
@@ -599,8 +604,8 @@ impl Commerce {
     /// Vector search enables semantic similarity search across products,
     /// customers, orders, and inventory items using OpenAI embeddings.
     #[napi]
-    pub fn vector(&self, api_key: String) -> VectorSearch {
-        VectorSearch { commerce: self.inner.clone(), api_key }
+    pub fn vector(&self, api_key: String) -> Result<VectorSearch> {
+        guard(|| Ok(VectorSearch { commerce: self.inner.clone(), api_key }))
     }
 }
 
@@ -9477,25 +9482,25 @@ impl Tax {
     /// Get US state tax information
     #[napi]
     pub fn get_us_state_info(state_code: String) -> Result<Option<UsStateTaxInfoOutput>> {
-        convert_optional_output(stateset_core::get_us_state_tax_info(&state_code))
+        guard(|| convert_optional_output(stateset_core::get_us_state_tax_info(&state_code)))
     }
 
     /// Get EU VAT information
     #[napi]
     pub fn get_eu_vat_info(country_code: String) -> Result<Option<EuVatInfoOutput>> {
-        convert_optional_output(stateset_core::get_eu_vat_info(&country_code))
+        guard(|| convert_optional_output(stateset_core::get_eu_vat_info(&country_code)))
     }
 
     /// Get Canadian tax information
     #[napi]
     pub fn get_canadian_tax_info(province_code: String) -> Result<Option<CanadianTaxInfoOutput>> {
-        convert_optional_output(stateset_core::get_canadian_tax_info(&province_code))
+        guard(|| convert_optional_output(stateset_core::get_canadian_tax_info(&province_code)))
     }
 
     /// Check if a country is in the EU
     #[napi]
-    pub fn is_eu_country(country_code: String) -> bool {
-        stateset_core::is_eu_member(&country_code)
+    pub fn is_eu_country(country_code: String) -> Result<bool> {
+        guard(|| Ok(stateset_core::is_eu_member(&country_code)))
     }
 }
 
@@ -13237,46 +13242,48 @@ fn parse_u64_opt(field: &str, value: Option<i64>) -> Result<Option<u64>> {
 /// Compute the sequencer-compatible x402 signing hash for a payment intent shape.
 #[napi]
 pub fn ves_x402_compute_signing_hash(input: X402SigningHashInput) -> Result<Buffer> {
-    use sha2::{Digest, Sha256};
+    guard(|| {
+        use sha2::{Digest, Sha256};
 
-    let amount = parse_amount(input.amount)?;
-    let chain_id = parse_u64_field("chain_id", input.chain_id)?;
-    let valid_until = parse_u64_field("valid_until", input.valid_until)?;
-    let nonce = parse_u64_field("nonce", input.nonce)?;
-    let asset = parse_x402_asset(&input.asset)?;
-    let network = parse_x402_network(&input.network)?;
+        let amount = parse_amount(input.amount)?;
+        let chain_id = parse_u64_field("chain_id", input.chain_id)?;
+        let valid_until = parse_u64_field("valid_until", input.valid_until)?;
+        let nonce = parse_u64_field("nonce", input.nonce)?;
+        let asset = parse_x402_asset(&input.asset)?;
+        let network = parse_x402_network(&input.network)?;
 
-    let mut hasher = Sha256::new();
-    hasher.update(stateset_core::X402_DOMAIN_SEPARATOR.as_bytes());
-    hasher.update(input.payer_address.as_bytes());
-    hasher.update(input.payee_address.as_bytes());
-    hasher.update(amount.to_be_bytes());
-    hasher.update(format!("{:?}", asset).to_lowercase().as_bytes());
-    hasher.update(network.to_string().as_bytes());
-    hasher.update(chain_id.to_be_bytes());
-    hasher.update(valid_until.to_be_bytes());
-    hasher.update(nonce.to_be_bytes());
+        let mut hasher = Sha256::new();
+        hasher.update(stateset_core::X402_DOMAIN_SEPARATOR.as_bytes());
+        hasher.update(input.payer_address.as_bytes());
+        hasher.update(input.payee_address.as_bytes());
+        hasher.update(amount.to_be_bytes());
+        hasher.update(format!("{:?}", asset).to_lowercase().as_bytes());
+        hasher.update(network.to_string().as_bytes());
+        hasher.update(chain_id.to_be_bytes());
+        hasher.update(valid_until.to_be_bytes());
+        hasher.update(nonce.to_be_bytes());
 
-    match input.resource_uri {
-        Some(uri) => {
-            hasher.update([1u8]);
-            hasher.update((uri.len() as u64).to_be_bytes());
-            hasher.update(uri.as_bytes());
+        match input.resource_uri {
+            Some(uri) => {
+                hasher.update([1u8]);
+                hasher.update((uri.len() as u64).to_be_bytes());
+                hasher.update(uri.as_bytes());
+            }
+            None => hasher.update([0u8]),
         }
-        None => hasher.update([0u8]),
-    }
 
-    match input.resource_method {
-        Some(method) => {
-            hasher.update([1u8]);
-            hasher.update((method.len() as u64).to_be_bytes());
-            hasher.update(method.as_bytes());
+        match input.resource_method {
+            Some(method) => {
+                hasher.update([1u8]);
+                hasher.update((method.len() as u64).to_be_bytes());
+                hasher.update(method.as_bytes());
+            }
+            None => hasher.update([0u8]),
         }
-        None => hasher.update([0u8]),
-    }
 
-    let result: [u8; 32] = hasher.finalize().into();
-    Ok(Buffer::from(result.as_slice()))
+        let result: [u8; 32] = hasher.finalize().into();
+        Ok(Buffer::from(result.as_slice()))
+    })
 }
 
 #[napi]
@@ -14274,10 +14281,12 @@ pub struct HybridEncryptionResultOutput {
 /// Canonicalize a JSON string per RFC 8785 JCS
 #[napi]
 pub fn jcs_canonicalize(json_str: String) -> Result<String> {
-    let value: serde_json::Value = serde_json::from_str(&json_str)
-        .map_err(|e| wrap(ErrCode::Validation, "Invalid JSON", e))?;
-    stateset_crypto::canonicalize::canonicalize_json(&value)
-        .map_err(|e| wrap(ErrCode::Internal, "JCS error", e))
+    guard(|| {
+        let value: serde_json::Value = serde_json::from_str(&json_str)
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid JSON", e))?;
+        stateset_crypto::canonicalize::canonicalize_json(&value)
+            .map_err(|e| wrap(ErrCode::Internal, "JCS error", e))
+    })
 }
 
 /// Compute domain-separated SHA-256 hash
@@ -14287,27 +14296,29 @@ pub fn jcs_canonicalize(json_str: String) -> Result<String> {
 /// data: hex-encoded data to hash (after the domain prefix)
 #[napi]
 pub fn domain_hash(domain: String, data: Buffer) -> Result<Buffer> {
-    use sha2::{Digest, Sha256};
+    guard(|| {
+        use sha2::{Digest, Sha256};
 
-    let prefix: &[u8] = match domain.as_str() {
-        "PAYLOAD_PLAIN" => stateset_crypto::domain::PAYLOAD_PLAIN,
-        "PAYLOAD_AAD" => stateset_crypto::domain::PAYLOAD_AAD,
-        "PAYLOAD_CIPHER" => stateset_crypto::domain::PAYLOAD_CIPHER,
-        "RECIPIENTS" => stateset_crypto::domain::RECIPIENTS,
-        "EVENTSIG" => stateset_crypto::domain::EVENTSIG,
-        "LEAF" => stateset_crypto::domain::LEAF,
-        "NODE" => stateset_crypto::domain::NODE,
-        "PAD_LEAF" => stateset_crypto::domain::PAD_LEAF,
-        "STREAM" => stateset_crypto::domain::STREAM,
-        "RECEIPT" => stateset_crypto::domain::RECEIPT,
-        _ => return Err(wrap(ErrCode::Validation, "Unknown domain", domain)),
-    };
+        let prefix: &[u8] = match domain.as_str() {
+            "PAYLOAD_PLAIN" => stateset_crypto::domain::PAYLOAD_PLAIN,
+            "PAYLOAD_AAD" => stateset_crypto::domain::PAYLOAD_AAD,
+            "PAYLOAD_CIPHER" => stateset_crypto::domain::PAYLOAD_CIPHER,
+            "RECIPIENTS" => stateset_crypto::domain::RECIPIENTS,
+            "EVENTSIG" => stateset_crypto::domain::EVENTSIG,
+            "LEAF" => stateset_crypto::domain::LEAF,
+            "NODE" => stateset_crypto::domain::NODE,
+            "PAD_LEAF" => stateset_crypto::domain::PAD_LEAF,
+            "STREAM" => stateset_crypto::domain::STREAM,
+            "RECEIPT" => stateset_crypto::domain::RECEIPT,
+            _ => return Err(wrap(ErrCode::Validation, "Unknown domain", domain)),
+        };
 
-    let mut hasher = Sha256::new();
-    hasher.update(prefix);
-    hasher.update(data.as_ref());
-    let result: [u8; 32] = hasher.finalize().into();
-    Ok(Buffer::from(result.as_slice()))
+        let mut hasher = Sha256::new();
+        hasher.update(prefix);
+        hasher.update(data.as_ref());
+        let result: [u8; 32] = hasher.finalize().into();
+        Ok(Buffer::from(result.as_slice()))
+    })
 }
 
 /// Sign a 32-byte hash with Ed25519
@@ -14315,20 +14326,22 @@ pub fn domain_hash(domain: String, data: Buffer) -> Result<Buffer> {
 /// Returns 64-byte signature
 #[napi]
 pub fn ed25519_sign(hash: Buffer, private_key: Buffer) -> Result<Buffer> {
-    if hash.len() != 32 {
-        return Err(coded(ErrCode::Validation, "Hash must be 32 bytes"));
-    }
-    if private_key.len() != 32 {
-        return Err(coded(ErrCode::Validation, "Private key must be 32 bytes"));
-    }
-    let mut hash_arr = [0u8; 32];
-    hash_arr.copy_from_slice(hash.as_ref());
-    let mut key_arr = [0u8; 32];
-    key_arr.copy_from_slice(private_key.as_ref());
+    guard(|| {
+        if hash.len() != 32 {
+            return Err(coded(ErrCode::Validation, "Hash must be 32 bytes"));
+        }
+        if private_key.len() != 32 {
+            return Err(coded(ErrCode::Validation, "Private key must be 32 bytes"));
+        }
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(hash.as_ref());
+        let mut key_arr = [0u8; 32];
+        key_arr.copy_from_slice(private_key.as_ref());
 
-    let sig = stateset_crypto::sign::sign_event_hash(&hash_arr, &key_arr)
-        .map_err(|e| wrap(ErrCode::Internal, "Sign error", e))?;
-    Ok(Buffer::from(sig.as_slice()))
+        let sig = stateset_crypto::sign::sign_event_hash(&hash_arr, &key_arr)
+            .map_err(|e| wrap(ErrCode::Internal, "Sign error", e))?;
+        Ok(Buffer::from(sig.as_slice()))
+    })
 }
 
 /// Verify an Ed25519 signature
@@ -14336,30 +14349,34 @@ pub fn ed25519_sign(hash: Buffer, private_key: Buffer) -> Result<Buffer> {
 /// Returns true if signature is valid
 #[napi]
 pub fn ed25519_verify(hash: Buffer, signature: Buffer, public_key: Buffer) -> Result<bool> {
-    if hash.len() != 32 || signature.len() != 64 || public_key.len() != 32 {
-        return Ok(false);
-    }
-    let mut hash_arr = [0u8; 32];
-    hash_arr.copy_from_slice(hash.as_ref());
-    let mut sig_arr = [0u8; 64];
-    sig_arr.copy_from_slice(signature.as_ref());
-    let mut key_arr = [0u8; 32];
-    key_arr.copy_from_slice(public_key.as_ref());
+    guard(|| {
+        if hash.len() != 32 || signature.len() != 64 || public_key.len() != 32 {
+            return Ok(false);
+        }
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(hash.as_ref());
+        let mut sig_arr = [0u8; 64];
+        sig_arr.copy_from_slice(signature.as_ref());
+        let mut key_arr = [0u8; 32];
+        key_arr.copy_from_slice(public_key.as_ref());
 
-    Ok(stateset_crypto::sign::verify_event_signature(&hash_arr, &sig_arr, &key_arr))
+        Ok(stateset_crypto::sign::verify_event_signature(&hash_arr, &sig_arr, &key_arr))
+    })
 }
 
 /// Generate a hybrid `Ed25519 + ML-DSA-65` signing keypair.
 #[napi]
 pub fn ves_hybrid_generate_signing_keypair() -> Result<HybridSigningKeypairOutput> {
-    let keypair = stateset_crypto::pqc::generate_hybrid_signing_keypair()
-        .map_err(|e| wrap(ErrCode::Internal, "Hybrid signing key generation failed", e))?;
+    guard(|| {
+        let keypair = stateset_crypto::pqc::generate_hybrid_signing_keypair()
+            .map_err(|e| wrap(ErrCode::Internal, "Hybrid signing key generation failed", e))?;
 
-    Ok(HybridSigningKeypairOutput {
-        ed25519_public_key: Buffer::from(keypair.public.ed25519_public_key.as_slice()),
-        ed25519_private_key: Buffer::from(keypair.private.ed25519_private_key.as_slice()),
-        ml_dsa_65_public_key: Buffer::from(keypair.public.ml_dsa_65_public_key.as_slice()),
-        ml_dsa_65_seed: Buffer::from(keypair.private.ml_dsa_65_seed.as_slice()),
+        Ok(HybridSigningKeypairOutput {
+            ed25519_public_key: Buffer::from(keypair.public.ed25519_public_key.as_slice()),
+            ed25519_private_key: Buffer::from(keypair.private.ed25519_private_key.as_slice()),
+            ml_dsa_65_public_key: Buffer::from(keypair.public.ml_dsa_65_public_key.as_slice()),
+            ml_dsa_65_seed: Buffer::from(keypair.private.ml_dsa_65_seed.as_slice()),
+        })
     })
 }
 
@@ -14370,35 +14387,37 @@ pub fn ves_hybrid_sign_event_hash(
     ed25519_private_key: Buffer,
     ml_dsa_65_seed: Buffer,
 ) -> Result<HybridSignatureBundleOutput> {
-    if hash.len() != 32 {
-        return Err(coded(ErrCode::Validation, "Hash must be 32 bytes"));
-    }
-    if ed25519_private_key.len() != 32 {
-        return Err(coded(ErrCode::Validation, "Ed25519 private key must be 32 bytes"));
-    }
-    if ml_dsa_65_seed.len() != 32 {
-        return Err(coded(ErrCode::Validation, "ML-DSA-65 seed must be 32 bytes"));
-    }
+    guard(|| {
+        if hash.len() != 32 {
+            return Err(coded(ErrCode::Validation, "Hash must be 32 bytes"));
+        }
+        if ed25519_private_key.len() != 32 {
+            return Err(coded(ErrCode::Validation, "Ed25519 private key must be 32 bytes"));
+        }
+        if ml_dsa_65_seed.len() != 32 {
+            return Err(coded(ErrCode::Validation, "ML-DSA-65 seed must be 32 bytes"));
+        }
 
-    let mut hash_arr = [0u8; 32];
-    hash_arr.copy_from_slice(hash.as_ref());
-    let mut ed25519_private_key_arr = [0u8; 32];
-    ed25519_private_key_arr.copy_from_slice(ed25519_private_key.as_ref());
-    let mut ml_dsa_65_seed_arr = [0u8; 32];
-    ml_dsa_65_seed_arr.copy_from_slice(ml_dsa_65_seed.as_ref());
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(hash.as_ref());
+        let mut ed25519_private_key_arr = [0u8; 32];
+        ed25519_private_key_arr.copy_from_slice(ed25519_private_key.as_ref());
+        let mut ml_dsa_65_seed_arr = [0u8; 32];
+        ml_dsa_65_seed_arr.copy_from_slice(ml_dsa_65_seed.as_ref());
 
-    let signature = stateset_crypto::pqc::hybrid_sign_event_hash(
-        &hash_arr,
-        &stateset_crypto::pqc::HybridSigningPrivateKey {
-            ed25519_private_key: ed25519_private_key_arr,
-            ml_dsa_65_seed: ml_dsa_65_seed_arr,
-        },
-    )
-    .map_err(|e| wrap(ErrCode::Internal, "Hybrid signing failed", e))?;
+        let signature = stateset_crypto::pqc::hybrid_sign_event_hash(
+            &hash_arr,
+            &stateset_crypto::pqc::HybridSigningPrivateKey {
+                ed25519_private_key: ed25519_private_key_arr,
+                ml_dsa_65_seed: ml_dsa_65_seed_arr,
+            },
+        )
+        .map_err(|e| wrap(ErrCode::Internal, "Hybrid signing failed", e))?;
 
-    Ok(HybridSignatureBundleOutput {
-        ed25519_signature: Buffer::from(signature.ed25519_signature.as_slice()),
-        ml_dsa_65_signature: Buffer::from(signature.ml_dsa_65_signature.as_slice()),
+        Ok(HybridSignatureBundleOutput {
+            ed25519_signature: Buffer::from(signature.ed25519_signature.as_slice()),
+            ml_dsa_65_signature: Buffer::from(signature.ml_dsa_65_signature.as_slice()),
+        })
     })
 }
 
@@ -14411,65 +14430,73 @@ pub fn ves_hybrid_verify_event_signature(
     ed25519_public_key: Buffer,
     ml_dsa_65_public_key: Buffer,
 ) -> Result<bool> {
-    if hash.len() != 32 || ed25519_signature.len() != 64 || ed25519_public_key.len() != 32 {
-        return Ok(false);
-    }
+    guard(|| {
+        if hash.len() != 32 || ed25519_signature.len() != 64 || ed25519_public_key.len() != 32 {
+            return Ok(false);
+        }
 
-    let mut hash_arr = [0u8; 32];
-    hash_arr.copy_from_slice(hash.as_ref());
-    let mut ed25519_signature_arr = [0u8; 64];
-    ed25519_signature_arr.copy_from_slice(ed25519_signature.as_ref());
-    let mut ed25519_public_key_arr = [0u8; 32];
-    ed25519_public_key_arr.copy_from_slice(ed25519_public_key.as_ref());
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(hash.as_ref());
+        let mut ed25519_signature_arr = [0u8; 64];
+        ed25519_signature_arr.copy_from_slice(ed25519_signature.as_ref());
+        let mut ed25519_public_key_arr = [0u8; 32];
+        ed25519_public_key_arr.copy_from_slice(ed25519_public_key.as_ref());
 
-    Ok(stateset_crypto::pqc::hybrid_verify_event_signature(
-        &hash_arr,
-        &stateset_crypto::pqc::HybridSignatureBundle {
-            ed25519_signature: ed25519_signature_arr,
-            ml_dsa_65_signature: ml_dsa_65_signature.as_ref().to_vec(),
-        },
-        &stateset_crypto::pqc::HybridSigningPublicKey {
-            ed25519_public_key: ed25519_public_key_arr,
-            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
-        },
-    ))
+        Ok(stateset_crypto::pqc::hybrid_verify_event_signature(
+            &hash_arr,
+            &stateset_crypto::pqc::HybridSignatureBundle {
+                ed25519_signature: ed25519_signature_arr,
+                ml_dsa_65_signature: ml_dsa_65_signature.as_ref().to_vec(),
+            },
+            &stateset_crypto::pqc::HybridSigningPublicKey {
+                ed25519_public_key: ed25519_public_key_arr,
+                ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+            },
+        ))
+    })
 }
 
 /// Return the fixed-seed ML-DSA-65 public key used by cross-language test vectors.
 #[napi]
-pub fn ves_test_vector_ml_dsa_public_key() -> Buffer {
-    Buffer::from(
-        stateset_crypto::pqc::test_vector_ml_dsa_public_key(
-            &stateset_crypto::pqc::TEST_VECTOR_SIGNING_SEED,
-        )
-        .as_slice(),
-    )
+pub fn ves_test_vector_ml_dsa_public_key() -> Result<Buffer> {
+    guard(|| {
+        Ok(Buffer::from(
+            stateset_crypto::pqc::test_vector_ml_dsa_public_key(
+                &stateset_crypto::pqc::TEST_VECTOR_SIGNING_SEED,
+            )
+            .as_slice(),
+        ))
+    })
 }
 
 /// Generate a hybrid `X25519 + ML-KEM-768` recipient keypair.
 #[napi]
 pub fn ves_hybrid_generate_recipient_keypair(kid: u32) -> Result<HybridRecipientKeypairOutput> {
-    let keypair = stateset_crypto::pqc::generate_hybrid_recipient_keypair(kid)
-        .map_err(|e| wrap(ErrCode::Internal, "Hybrid recipient key generation failed", e))?;
+    guard(|| {
+        let keypair = stateset_crypto::pqc::generate_hybrid_recipient_keypair(kid)
+            .map_err(|e| wrap(ErrCode::Internal, "Hybrid recipient key generation failed", e))?;
 
-    Ok(HybridRecipientKeypairOutput {
-        kid: keypair.public.kid,
-        x25519_public_key: Buffer::from(keypair.public.x25519_public_key.as_slice()),
-        x25519_private_key: Buffer::from(keypair.private.x25519_private_key.as_slice()),
-        ml_kem_768_public_key: Buffer::from(keypair.public.ml_kem_768_public_key.as_slice()),
-        ml_kem_768_seed: Buffer::from(keypair.private.ml_kem_768_seed.as_slice()),
+        Ok(HybridRecipientKeypairOutput {
+            kid: keypair.public.kid,
+            x25519_public_key: Buffer::from(keypair.public.x25519_public_key.as_slice()),
+            x25519_private_key: Buffer::from(keypair.private.x25519_private_key.as_slice()),
+            ml_kem_768_public_key: Buffer::from(keypair.public.ml_kem_768_public_key.as_slice()),
+            ml_kem_768_seed: Buffer::from(keypair.private.ml_kem_768_seed.as_slice()),
+        })
     })
 }
 
 /// Return the fixed-seed ML-KEM-768 public key used by cross-language test vectors.
 #[napi]
-pub fn ves_test_vector_ml_kem_public_key() -> Buffer {
-    Buffer::from(
-        stateset_crypto::pqc::test_vector_ml_kem_public_key(
-            &stateset_crypto::pqc::TEST_VECTOR_KEM_SEED,
-        )
-        .as_slice(),
-    )
+pub fn ves_test_vector_ml_kem_public_key() -> Result<Buffer> {
+    guard(|| {
+        Ok(Buffer::from(
+            stateset_crypto::pqc::test_vector_ml_kem_public_key(
+                &stateset_crypto::pqc::TEST_VECTOR_KEM_SEED,
+            )
+            .as_slice(),
+        ))
+    })
 }
 
 /// Encrypt a JSON payload using hybrid `X25519 + ML-KEM-768` recipient wrapping.
@@ -14479,56 +14506,59 @@ pub fn ves_hybrid_encrypt_payload(
     aad_params: HybridPayloadAadParamsInput,
     recipients: Vec<HybridRecipientPublicKeyInput>,
 ) -> Result<HybridEncryptionResultOutput> {
-    if aad_params.payload_plain_hash.len() != 32 {
-        return Err(coded(ErrCode::Validation, "payload_plain_hash must be 32 bytes"));
-    }
+    guard(|| {
+        if aad_params.payload_plain_hash.len() != 32 {
+            return Err(coded(ErrCode::Validation, "payload_plain_hash must be 32 bytes"));
+        }
 
-    let payload: serde_json::Value = serde_json::from_str(&payload_json)
-        .map_err(|e| wrap(ErrCode::Validation, "Invalid payload JSON", e))?;
+        let payload: serde_json::Value = serde_json::from_str(&payload_json)
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid payload JSON", e))?;
 
-    let mut payload_plain_hash = [0u8; 32];
-    payload_plain_hash.copy_from_slice(aad_params.payload_plain_hash.as_ref());
+        let mut payload_plain_hash = [0u8; 32];
+        payload_plain_hash.copy_from_slice(aad_params.payload_plain_hash.as_ref());
 
-    let recipient_keys = recipients
-        .into_iter()
-        .map(|recipient| {
-            let mut x25519_public_key = [0u8; 32];
-            if recipient.x25519_public_key.len() != 32 {
-                return Err(coded(ErrCode::Validation, "x25519_public_key must be 32 bytes"));
-            }
-            x25519_public_key.copy_from_slice(recipient.x25519_public_key.as_ref());
+        let recipient_keys = recipients
+            .into_iter()
+            .map(|recipient| {
+                let mut x25519_public_key = [0u8; 32];
+                if recipient.x25519_public_key.len() != 32 {
+                    return Err(coded(ErrCode::Validation, "x25519_public_key must be 32 bytes"));
+                }
+                x25519_public_key.copy_from_slice(recipient.x25519_public_key.as_ref());
 
-            Ok(stateset_crypto::pqc::HybridRecipientPublicKey {
-                kid: recipient.kid,
-                x25519_public_key,
-                ml_kem_768_public_key: recipient.ml_kem_768_public_key.as_ref().to_vec(),
+                Ok(stateset_crypto::pqc::HybridRecipientPublicKey {
+                    kid: recipient.kid,
+                    x25519_public_key,
+                    ml_kem_768_public_key: recipient.ml_kem_768_public_key.as_ref().to_vec(),
+                })
             })
+            .collect::<Result<Vec<_>>>()?;
+
+        let aad = stateset_crypto::hash::PayloadAadParams {
+            ves_version: aad_params.ves_version,
+            tenant_id: &aad_params.tenant_id,
+            store_id: &aad_params.store_id,
+            event_id: &aad_params.event_id,
+            source_agent_id: &aad_params.source_agent_id,
+            agent_key_id: aad_params.agent_key_id,
+            entity_type: &aad_params.entity_type,
+            entity_id: &aad_params.entity_id,
+            event_type: &aad_params.event_type,
+            created_at: &aad_params.created_at,
+            payload_plain_hash: &payload_plain_hash,
+        };
+
+        let encrypted =
+            stateset_crypto::pqc::encrypt_payload_hybrid(&payload, &aad, &recipient_keys)
+                .map_err(|e| wrap(ErrCode::Internal, "Hybrid payload encryption failed", e))?;
+
+        Ok(HybridEncryptionResultOutput {
+            payload_encrypted_json: serde_json::to_string(&encrypted.payload_encrypted)
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to serialize encrypted payload", e))?,
+            salt: Buffer::from(encrypted.salt.as_slice()),
+            payload_plain_hash: Buffer::from(encrypted.payload_plain_hash.as_slice()),
+            payload_cipher_hash: Buffer::from(encrypted.payload_cipher_hash.as_slice()),
         })
-        .collect::<Result<Vec<_>>>()?;
-
-    let aad = stateset_crypto::hash::PayloadAadParams {
-        ves_version: aad_params.ves_version,
-        tenant_id: &aad_params.tenant_id,
-        store_id: &aad_params.store_id,
-        event_id: &aad_params.event_id,
-        source_agent_id: &aad_params.source_agent_id,
-        agent_key_id: aad_params.agent_key_id,
-        entity_type: &aad_params.entity_type,
-        entity_id: &aad_params.entity_id,
-        event_type: &aad_params.event_type,
-        created_at: &aad_params.created_at,
-        payload_plain_hash: &payload_plain_hash,
-    };
-
-    let encrypted = stateset_crypto::pqc::encrypt_payload_hybrid(&payload, &aad, &recipient_keys)
-        .map_err(|e| wrap(ErrCode::Internal, "Hybrid payload encryption failed", e))?;
-
-    Ok(HybridEncryptionResultOutput {
-        payload_encrypted_json: serde_json::to_string(&encrypted.payload_encrypted)
-            .map_err(|e| wrap(ErrCode::Internal, "Failed to serialize encrypted payload", e))?,
-        salt: Buffer::from(encrypted.salt.as_slice()),
-        payload_plain_hash: Buffer::from(encrypted.payload_plain_hash.as_slice()),
-        payload_cipher_hash: Buffer::from(encrypted.payload_cipher_hash.as_slice()),
     })
 }
 
@@ -14541,42 +14571,47 @@ pub fn ves_hybrid_decrypt_payload(
     recipient_private_key: HybridRecipientPrivateKeyInput,
     expected_plain_hash: Buffer,
 ) -> Result<String> {
-    if payload_aad.len() != 32 {
-        return Err(coded(ErrCode::Validation, "payload_aad must be 32 bytes"));
-    }
-    if recipient_private_key.x25519_private_key.len() != 32 {
-        return Err(coded(ErrCode::Validation, "x25519_private_key must be 32 bytes"));
-    }
-    if recipient_private_key.ml_kem_768_seed.len() != 64 {
-        return Err(coded(ErrCode::Validation, "ml_kem_768_seed must be 64 bytes"));
-    }
-    if expected_plain_hash.len() != 32 {
-        return Err(coded(ErrCode::Validation, "expected_plain_hash must be 32 bytes"));
-    }
+    guard(|| {
+        if payload_aad.len() != 32 {
+            return Err(coded(ErrCode::Validation, "payload_aad must be 32 bytes"));
+        }
+        if recipient_private_key.x25519_private_key.len() != 32 {
+            return Err(coded(ErrCode::Validation, "x25519_private_key must be 32 bytes"));
+        }
+        if recipient_private_key.ml_kem_768_seed.len() != 64 {
+            return Err(coded(ErrCode::Validation, "ml_kem_768_seed must be 64 bytes"));
+        }
+        if expected_plain_hash.len() != 32 {
+            return Err(coded(ErrCode::Validation, "expected_plain_hash must be 32 bytes"));
+        }
 
-    let payload_encrypted: serde_json::Value = serde_json::from_str(&payload_encrypted_json)
-        .map_err(|e| wrap(ErrCode::Validation, "Invalid encrypted payload JSON", e))?;
+        let payload_encrypted: serde_json::Value = serde_json::from_str(&payload_encrypted_json)
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid encrypted payload JSON", e))?;
 
-    let mut payload_aad_arr = [0u8; 32];
-    payload_aad_arr.copy_from_slice(payload_aad.as_ref());
-    let mut x25519_private_key = [0u8; 32];
-    x25519_private_key.copy_from_slice(recipient_private_key.x25519_private_key.as_ref());
-    let mut ml_kem_768_seed = [0u8; 64];
-    ml_kem_768_seed.copy_from_slice(recipient_private_key.ml_kem_768_seed.as_ref());
-    let mut expected_plain_hash_arr = [0u8; 32];
-    expected_plain_hash_arr.copy_from_slice(expected_plain_hash.as_ref());
+        let mut payload_aad_arr = [0u8; 32];
+        payload_aad_arr.copy_from_slice(payload_aad.as_ref());
+        let mut x25519_private_key = [0u8; 32];
+        x25519_private_key.copy_from_slice(recipient_private_key.x25519_private_key.as_ref());
+        let mut ml_kem_768_seed = [0u8; 64];
+        ml_kem_768_seed.copy_from_slice(recipient_private_key.ml_kem_768_seed.as_ref());
+        let mut expected_plain_hash_arr = [0u8; 32];
+        expected_plain_hash_arr.copy_from_slice(expected_plain_hash.as_ref());
 
-    let decrypted = stateset_crypto::pqc::decrypt_payload_hybrid(
-        &payload_encrypted,
-        &payload_aad_arr,
-        recipient_kid,
-        &stateset_crypto::pqc::HybridRecipientPrivateKey { x25519_private_key, ml_kem_768_seed },
-        &expected_plain_hash_arr,
-    )
-    .map_err(|e| wrap(ErrCode::Internal, "Hybrid payload decryption failed", e))?;
+        let decrypted = stateset_crypto::pqc::decrypt_payload_hybrid(
+            &payload_encrypted,
+            &payload_aad_arr,
+            recipient_kid,
+            &stateset_crypto::pqc::HybridRecipientPrivateKey {
+                x25519_private_key,
+                ml_kem_768_seed,
+            },
+            &expected_plain_hash_arr,
+        )
+        .map_err(|e| wrap(ErrCode::Internal, "Hybrid payload decryption failed", e))?;
 
-    serde_json::to_string(&decrypted)
-        .map_err(|e| wrap(ErrCode::Internal, "Failed to serialize decrypted payload", e))
+        serde_json::to_string(&decrypted)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to serialize decrypted payload", e))
+    })
 }
 
 // =============================================================================
@@ -14618,37 +14653,41 @@ pub struct StrictEncryptionResultOutput {
 /// Generate an ML-DSA-65-only signing keypair for PQC-strict mode.
 #[napi]
 pub fn ves_strict_generate_signing_keypair() -> Result<StrictSigningKeypairOutput> {
-    let keypair = stateset_crypto::pqc::generate_strict_signing_keypair()
-        .map_err(|e| wrap(ErrCode::Internal, "Strict signing key generation failed", e))?;
+    guard(|| {
+        let keypair = stateset_crypto::pqc::generate_strict_signing_keypair()
+            .map_err(|e| wrap(ErrCode::Internal, "Strict signing key generation failed", e))?;
 
-    Ok(StrictSigningKeypairOutput {
-        ml_dsa_65_public_key: Buffer::from(keypair.public.ml_dsa_65_public_key.as_slice()),
-        ml_dsa_65_seed: Buffer::from(keypair.private.ml_dsa_65_seed.as_slice()),
+        Ok(StrictSigningKeypairOutput {
+            ml_dsa_65_public_key: Buffer::from(keypair.public.ml_dsa_65_public_key.as_slice()),
+            ml_dsa_65_seed: Buffer::from(keypair.private.ml_dsa_65_seed.as_slice()),
+        })
     })
 }
 
 /// Sign a 32-byte hash with ML-DSA-65 only (PQC-strict mode).
 #[napi]
 pub fn ves_strict_sign_event_hash(hash: Buffer, ml_dsa_65_seed: Buffer) -> Result<Buffer> {
-    if hash.len() != 32 {
-        return Err(coded(ErrCode::Validation, "Hash must be 32 bytes"));
-    }
-    if ml_dsa_65_seed.len() != 32 {
-        return Err(coded(ErrCode::Validation, "ML-DSA-65 seed must be 32 bytes"));
-    }
+    guard(|| {
+        if hash.len() != 32 {
+            return Err(coded(ErrCode::Validation, "Hash must be 32 bytes"));
+        }
+        if ml_dsa_65_seed.len() != 32 {
+            return Err(coded(ErrCode::Validation, "ML-DSA-65 seed must be 32 bytes"));
+        }
 
-    let mut hash_arr = [0u8; 32];
-    hash_arr.copy_from_slice(hash.as_ref());
-    let mut seed_arr = [0u8; 32];
-    seed_arr.copy_from_slice(ml_dsa_65_seed.as_ref());
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(hash.as_ref());
+        let mut seed_arr = [0u8; 32];
+        seed_arr.copy_from_slice(ml_dsa_65_seed.as_ref());
 
-    let signature = stateset_crypto::pqc::strict_sign_event_hash(
-        &hash_arr,
-        &stateset_crypto::pqc::StrictSigningPrivateKey { ml_dsa_65_seed: seed_arr },
-    )
-    .map_err(|e| wrap(ErrCode::Internal, "Strict signing failed", e))?;
+        let signature = stateset_crypto::pqc::strict_sign_event_hash(
+            &hash_arr,
+            &stateset_crypto::pqc::StrictSigningPrivateKey { ml_dsa_65_seed: seed_arr },
+        )
+        .map_err(|e| wrap(ErrCode::Internal, "Strict signing failed", e))?;
 
-    Ok(Buffer::from(signature))
+        Ok(Buffer::from(signature))
+    })
 }
 
 /// Verify a 32-byte hash with ML-DSA-65 only (PQC-strict mode).
@@ -14658,32 +14697,36 @@ pub fn ves_strict_verify_event_signature(
     ml_dsa_65_signature: Buffer,
     ml_dsa_65_public_key: Buffer,
 ) -> Result<bool> {
-    if hash.len() != 32 {
-        return Ok(false);
-    }
+    guard(|| {
+        if hash.len() != 32 {
+            return Ok(false);
+        }
 
-    let mut hash_arr = [0u8; 32];
-    hash_arr.copy_from_slice(hash.as_ref());
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(hash.as_ref());
 
-    Ok(stateset_crypto::pqc::strict_verify_event_signature(
-        &hash_arr,
-        ml_dsa_65_signature.as_ref(),
-        &stateset_crypto::pqc::StrictSigningPublicKey {
-            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
-        },
-    ))
+        Ok(stateset_crypto::pqc::strict_verify_event_signature(
+            &hash_arr,
+            ml_dsa_65_signature.as_ref(),
+            &stateset_crypto::pqc::StrictSigningPublicKey {
+                ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+            },
+        ))
+    })
 }
 
 /// Generate an ML-KEM-768-only recipient keypair for PQC-strict mode.
 #[napi]
 pub fn ves_strict_generate_recipient_keypair(kid: u32) -> Result<StrictRecipientKeypairOutput> {
-    let keypair = stateset_crypto::pqc::generate_strict_recipient_keypair(kid)
-        .map_err(|e| wrap(ErrCode::Internal, "Strict recipient key generation failed", e))?;
+    guard(|| {
+        let keypair = stateset_crypto::pqc::generate_strict_recipient_keypair(kid)
+            .map_err(|e| wrap(ErrCode::Internal, "Strict recipient key generation failed", e))?;
 
-    Ok(StrictRecipientKeypairOutput {
-        kid: keypair.public.kid,
-        ml_kem_768_public_key: Buffer::from(keypair.public.ml_kem_768_public_key.as_slice()),
-        ml_kem_768_seed: Buffer::from(keypair.private.ml_kem_768_seed.as_slice()),
+        Ok(StrictRecipientKeypairOutput {
+            kid: keypair.public.kid,
+            ml_kem_768_public_key: Buffer::from(keypair.public.ml_kem_768_public_key.as_slice()),
+            ml_kem_768_seed: Buffer::from(keypair.private.ml_kem_768_seed.as_slice()),
+        })
     })
 }
 
@@ -14694,47 +14737,50 @@ pub fn ves_strict_encrypt_payload(
     aad_params: HybridPayloadAadParamsInput,
     recipients: Vec<StrictRecipientPublicKeyInput>,
 ) -> Result<StrictEncryptionResultOutput> {
-    if aad_params.payload_plain_hash.len() != 32 {
-        return Err(coded(ErrCode::Validation, "payload_plain_hash must be 32 bytes"));
-    }
+    guard(|| {
+        if aad_params.payload_plain_hash.len() != 32 {
+            return Err(coded(ErrCode::Validation, "payload_plain_hash must be 32 bytes"));
+        }
 
-    let payload: serde_json::Value = serde_json::from_str(&payload_json)
-        .map_err(|e| wrap(ErrCode::Validation, "Invalid payload JSON", e))?;
+        let payload: serde_json::Value = serde_json::from_str(&payload_json)
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid payload JSON", e))?;
 
-    let mut payload_plain_hash = [0u8; 32];
-    payload_plain_hash.copy_from_slice(aad_params.payload_plain_hash.as_ref());
+        let mut payload_plain_hash = [0u8; 32];
+        payload_plain_hash.copy_from_slice(aad_params.payload_plain_hash.as_ref());
 
-    let recipient_keys: Vec<stateset_crypto::pqc::StrictRecipientPublicKey> = recipients
-        .into_iter()
-        .map(|r| stateset_crypto::pqc::StrictRecipientPublicKey {
-            kid: r.kid,
-            ml_kem_768_public_key: r.ml_kem_768_public_key.as_ref().to_vec(),
+        let recipient_keys: Vec<stateset_crypto::pqc::StrictRecipientPublicKey> = recipients
+            .into_iter()
+            .map(|r| stateset_crypto::pqc::StrictRecipientPublicKey {
+                kid: r.kid,
+                ml_kem_768_public_key: r.ml_kem_768_public_key.as_ref().to_vec(),
+            })
+            .collect();
+
+        let aad = stateset_crypto::hash::PayloadAadParams {
+            ves_version: aad_params.ves_version,
+            tenant_id: &aad_params.tenant_id,
+            store_id: &aad_params.store_id,
+            event_id: &aad_params.event_id,
+            source_agent_id: &aad_params.source_agent_id,
+            agent_key_id: aad_params.agent_key_id,
+            entity_type: &aad_params.entity_type,
+            entity_id: &aad_params.entity_id,
+            event_type: &aad_params.event_type,
+            created_at: &aad_params.created_at,
+            payload_plain_hash: &payload_plain_hash,
+        };
+
+        let encrypted =
+            stateset_crypto::pqc::encrypt_payload_strict(&payload, &aad, &recipient_keys)
+                .map_err(|e| wrap(ErrCode::Internal, "Strict payload encryption failed", e))?;
+
+        Ok(StrictEncryptionResultOutput {
+            payload_encrypted_json: serde_json::to_string(&encrypted.payload_encrypted)
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to serialize", e))?,
+            salt: Buffer::from(encrypted.salt.as_slice()),
+            payload_plain_hash: Buffer::from(encrypted.payload_plain_hash.as_slice()),
+            payload_cipher_hash: Buffer::from(encrypted.payload_cipher_hash.as_slice()),
         })
-        .collect();
-
-    let aad = stateset_crypto::hash::PayloadAadParams {
-        ves_version: aad_params.ves_version,
-        tenant_id: &aad_params.tenant_id,
-        store_id: &aad_params.store_id,
-        event_id: &aad_params.event_id,
-        source_agent_id: &aad_params.source_agent_id,
-        agent_key_id: aad_params.agent_key_id,
-        entity_type: &aad_params.entity_type,
-        entity_id: &aad_params.entity_id,
-        event_type: &aad_params.event_type,
-        created_at: &aad_params.created_at,
-        payload_plain_hash: &payload_plain_hash,
-    };
-
-    let encrypted = stateset_crypto::pqc::encrypt_payload_strict(&payload, &aad, &recipient_keys)
-        .map_err(|e| wrap(ErrCode::Internal, "Strict payload encryption failed", e))?;
-
-    Ok(StrictEncryptionResultOutput {
-        payload_encrypted_json: serde_json::to_string(&encrypted.payload_encrypted)
-            .map_err(|e| wrap(ErrCode::Internal, "Failed to serialize", e))?,
-        salt: Buffer::from(encrypted.salt.as_slice()),
-        payload_plain_hash: Buffer::from(encrypted.payload_plain_hash.as_slice()),
-        payload_cipher_hash: Buffer::from(encrypted.payload_cipher_hash.as_slice()),
     })
 }
 
@@ -14747,36 +14793,39 @@ pub fn ves_strict_decrypt_payload(
     recipient_private_key: StrictRecipientPrivateKeyInput,
     expected_plain_hash: Buffer,
 ) -> Result<String> {
-    if payload_aad.len() != 32 {
-        return Err(coded(ErrCode::Validation, "payload_aad must be 32 bytes"));
-    }
-    if recipient_private_key.ml_kem_768_seed.len() != 64 {
-        return Err(coded(ErrCode::Validation, "ml_kem_768_seed must be 64 bytes"));
-    }
-    if expected_plain_hash.len() != 32 {
-        return Err(coded(ErrCode::Validation, "expected_plain_hash must be 32 bytes"));
-    }
+    guard(|| {
+        if payload_aad.len() != 32 {
+            return Err(coded(ErrCode::Validation, "payload_aad must be 32 bytes"));
+        }
+        if recipient_private_key.ml_kem_768_seed.len() != 64 {
+            return Err(coded(ErrCode::Validation, "ml_kem_768_seed must be 64 bytes"));
+        }
+        if expected_plain_hash.len() != 32 {
+            return Err(coded(ErrCode::Validation, "expected_plain_hash must be 32 bytes"));
+        }
 
-    let payload_encrypted: serde_json::Value = serde_json::from_str(&payload_encrypted_json)
-        .map_err(|e| wrap(ErrCode::Validation, "Invalid encrypted payload JSON", e))?;
+        let payload_encrypted: serde_json::Value = serde_json::from_str(&payload_encrypted_json)
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid encrypted payload JSON", e))?;
 
-    let mut aad_arr = [0u8; 32];
-    aad_arr.copy_from_slice(payload_aad.as_ref());
-    let mut seed = [0u8; 64];
-    seed.copy_from_slice(recipient_private_key.ml_kem_768_seed.as_ref());
-    let mut hash_arr = [0u8; 32];
-    hash_arr.copy_from_slice(expected_plain_hash.as_ref());
+        let mut aad_arr = [0u8; 32];
+        aad_arr.copy_from_slice(payload_aad.as_ref());
+        let mut seed = [0u8; 64];
+        seed.copy_from_slice(recipient_private_key.ml_kem_768_seed.as_ref());
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(expected_plain_hash.as_ref());
 
-    let decrypted = stateset_crypto::pqc::decrypt_payload_strict(
-        &payload_encrypted,
-        &aad_arr,
-        recipient_kid,
-        &stateset_crypto::pqc::StrictRecipientPrivateKey { ml_kem_768_seed: seed },
-        &hash_arr,
-    )
-    .map_err(|e| wrap(ErrCode::Internal, "Strict payload decryption failed", e))?;
+        let decrypted = stateset_crypto::pqc::decrypt_payload_strict(
+            &payload_encrypted,
+            &aad_arr,
+            recipient_kid,
+            &stateset_crypto::pqc::StrictRecipientPrivateKey { ml_kem_768_seed: seed },
+            &hash_arr,
+        )
+        .map_err(|e| wrap(ErrCode::Internal, "Strict payload decryption failed", e))?;
 
-    serde_json::to_string(&decrypted).map_err(|e| wrap(ErrCode::Internal, "Failed to serialize", e))
+        serde_json::to_string(&decrypted)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to serialize", e))
+    })
 }
 
 /// Generate a hybrid signing proof-of-possession bundle.
@@ -14787,37 +14836,39 @@ pub fn ves_hybrid_generate_signing_pop(
     ed25519_public_key: Buffer,
     ml_dsa_65_public_key: Buffer,
 ) -> Result<HybridSignatureBundleOutput> {
-    if ed25519_private_key.len() != 32
-        || ml_dsa_65_seed.len() != 32
-        || ed25519_public_key.len() != 32
-    {
-        return Err(coded(ErrCode::Validation, "Key sizes invalid"));
-    }
+    guard(|| {
+        if ed25519_private_key.len() != 32
+            || ml_dsa_65_seed.len() != 32
+            || ed25519_public_key.len() != 32
+        {
+            return Err(coded(ErrCode::Validation, "Key sizes invalid"));
+        }
 
-    let mut ed_priv = [0u8; 32];
-    ed_priv.copy_from_slice(ed25519_private_key.as_ref());
-    let mut ml_seed = [0u8; 32];
-    ml_seed.copy_from_slice(ml_dsa_65_seed.as_ref());
-    let mut ed_pub = [0u8; 32];
-    ed_pub.copy_from_slice(ed25519_public_key.as_ref());
+        let mut ed_priv = [0u8; 32];
+        ed_priv.copy_from_slice(ed25519_private_key.as_ref());
+        let mut ml_seed = [0u8; 32];
+        ml_seed.copy_from_slice(ml_dsa_65_seed.as_ref());
+        let mut ed_pub = [0u8; 32];
+        ed_pub.copy_from_slice(ed25519_public_key.as_ref());
 
-    let keypair = stateset_crypto::pqc::HybridSigningKeypair {
-        public: stateset_crypto::pqc::HybridSigningPublicKey {
-            ed25519_public_key: ed_pub,
-            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
-        },
-        private: stateset_crypto::pqc::HybridSigningPrivateKey {
-            ed25519_private_key: ed_priv,
-            ml_dsa_65_seed: ml_seed,
-        },
-    };
+        let keypair = stateset_crypto::pqc::HybridSigningKeypair {
+            public: stateset_crypto::pqc::HybridSigningPublicKey {
+                ed25519_public_key: ed_pub,
+                ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+            },
+            private: stateset_crypto::pqc::HybridSigningPrivateKey {
+                ed25519_private_key: ed_priv,
+                ml_dsa_65_seed: ml_seed,
+            },
+        };
 
-    let pop = stateset_crypto::pqc::generate_hybrid_signing_pop(&keypair)
-        .map_err(|e| wrap(ErrCode::Internal, "PoP generation failed", e))?;
+        let pop = stateset_crypto::pqc::generate_hybrid_signing_pop(&keypair)
+            .map_err(|e| wrap(ErrCode::Internal, "PoP generation failed", e))?;
 
-    Ok(HybridSignatureBundleOutput {
-        ed25519_signature: Buffer::from(pop.ed25519_signature.as_slice()),
-        ml_dsa_65_signature: Buffer::from(pop.ml_dsa_65_signature.as_slice()),
+        Ok(HybridSignatureBundleOutput {
+            ed25519_signature: Buffer::from(pop.ed25519_signature.as_slice()),
+            ml_dsa_65_signature: Buffer::from(pop.ml_dsa_65_signature.as_slice()),
+        })
     })
 }
 
@@ -14829,25 +14880,27 @@ pub fn ves_hybrid_verify_signing_pop(
     ed25519_public_key: Buffer,
     ml_dsa_65_public_key: Buffer,
 ) -> Result<bool> {
-    if ed25519_signature.len() != 64 || ed25519_public_key.len() != 32 {
-        return Ok(false);
-    }
+    guard(|| {
+        if ed25519_signature.len() != 64 || ed25519_public_key.len() != 32 {
+            return Ok(false);
+        }
 
-    let mut ed_sig = [0u8; 64];
-    ed_sig.copy_from_slice(ed25519_signature.as_ref());
-    let mut ed_pub = [0u8; 32];
-    ed_pub.copy_from_slice(ed25519_public_key.as_ref());
+        let mut ed_sig = [0u8; 64];
+        ed_sig.copy_from_slice(ed25519_signature.as_ref());
+        let mut ed_pub = [0u8; 32];
+        ed_pub.copy_from_slice(ed25519_public_key.as_ref());
 
-    Ok(stateset_crypto::pqc::verify_hybrid_signing_pop(
-        &stateset_crypto::pqc::HybridSignatureBundle {
-            ed25519_signature: ed_sig,
-            ml_dsa_65_signature: ml_dsa_65_signature.as_ref().to_vec(),
-        },
-        &stateset_crypto::pqc::HybridSigningPublicKey {
-            ed25519_public_key: ed_pub,
-            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
-        },
-    ))
+        Ok(stateset_crypto::pqc::verify_hybrid_signing_pop(
+            &stateset_crypto::pqc::HybridSignatureBundle {
+                ed25519_signature: ed_sig,
+                ml_dsa_65_signature: ml_dsa_65_signature.as_ref().to_vec(),
+            },
+            &stateset_crypto::pqc::HybridSigningPublicKey {
+                ed25519_public_key: ed_pub,
+                ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+            },
+        ))
+    })
 }
 
 /// Generate a PQC-strict signing proof-of-possession.
@@ -14856,22 +14909,24 @@ pub fn ves_strict_generate_signing_pop(
     ml_dsa_65_seed: Buffer,
     ml_dsa_65_public_key: Buffer,
 ) -> Result<Buffer> {
-    if ml_dsa_65_seed.len() != 32 {
-        return Err(coded(ErrCode::Validation, "ML-DSA-65 seed must be 32 bytes"));
-    }
-    let mut seed = [0u8; 32];
-    seed.copy_from_slice(ml_dsa_65_seed.as_ref());
+    guard(|| {
+        if ml_dsa_65_seed.len() != 32 {
+            return Err(coded(ErrCode::Validation, "ML-DSA-65 seed must be 32 bytes"));
+        }
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(ml_dsa_65_seed.as_ref());
 
-    let keypair = stateset_crypto::pqc::StrictSigningKeypair {
-        public: stateset_crypto::pqc::StrictSigningPublicKey {
-            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
-        },
-        private: stateset_crypto::pqc::StrictSigningPrivateKey { ml_dsa_65_seed: seed },
-    };
+        let keypair = stateset_crypto::pqc::StrictSigningKeypair {
+            public: stateset_crypto::pqc::StrictSigningPublicKey {
+                ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+            },
+            private: stateset_crypto::pqc::StrictSigningPrivateKey { ml_dsa_65_seed: seed },
+        };
 
-    let pop = stateset_crypto::pqc::generate_strict_signing_pop(&keypair)
-        .map_err(|e| wrap(ErrCode::Internal, "Strict PoP generation failed", e))?;
-    Ok(Buffer::from(pop))
+        let pop = stateset_crypto::pqc::generate_strict_signing_pop(&keypair)
+            .map_err(|e| wrap(ErrCode::Internal, "Strict PoP generation failed", e))?;
+        Ok(Buffer::from(pop))
+    })
 }
 
 /// Verify a PQC-strict signing proof-of-possession.
@@ -14880,12 +14935,14 @@ pub fn ves_strict_verify_signing_pop(
     ml_dsa_65_signature: Buffer,
     ml_dsa_65_public_key: Buffer,
 ) -> Result<bool> {
-    Ok(stateset_crypto::pqc::verify_strict_signing_pop(
-        ml_dsa_65_signature.as_ref(),
-        &stateset_crypto::pqc::StrictSigningPublicKey {
-            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
-        },
-    ))
+    guard(|| {
+        Ok(stateset_crypto::pqc::verify_strict_signing_pop(
+            ml_dsa_65_signature.as_ref(),
+            &stateset_crypto::pqc::StrictSigningPublicKey {
+                ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+            },
+        ))
+    })
 }
 
 /// Encrypt a buffer with AES-256-GCM
@@ -14893,30 +14950,32 @@ pub fn ves_strict_verify_signing_pop(
 /// Returns nonce (12 bytes) || ciphertext || tag (16 bytes)
 #[napi]
 pub fn aes_gcm_encrypt(plaintext: Buffer, key: Buffer, aad: Buffer) -> Result<Buffer> {
-    use aes_gcm::aead::Aead;
-    use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+    guard(|| {
+        use aes_gcm::aead::Aead;
+        use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 
-    if key.len() != 32 {
-        return Err(coded(ErrCode::Validation, "Key must be 32 bytes"));
-    }
+        if key.len() != 32 {
+            return Err(coded(ErrCode::Validation, "Key must be 32 bytes"));
+        }
 
-    let aes_key = Key::<Aes256Gcm>::from_slice(key.as_ref());
-    let cipher = Aes256Gcm::new(aes_key);
+        let aes_key = Key::<Aes256Gcm>::from_slice(key.as_ref());
+        let cipher = Aes256Gcm::new(aes_key);
 
-    let mut nonce_bytes = [0u8; 12];
-    use rand::RngCore;
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
+        let mut nonce_bytes = [0u8; 12];
+        use rand::RngCore;
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
 
-    let payload = aes_gcm::aead::Payload { msg: plaintext.as_ref(), aad: aad.as_ref() };
-    let ciphertext_tag = cipher
-        .encrypt(nonce, payload)
-        .map_err(|e| wrap(ErrCode::Internal, "Encryption failed", e))?;
+        let payload = aes_gcm::aead::Payload { msg: plaintext.as_ref(), aad: aad.as_ref() };
+        let ciphertext_tag = cipher
+            .encrypt(nonce, payload)
+            .map_err(|e| wrap(ErrCode::Internal, "Encryption failed", e))?;
 
-    let mut result = Vec::with_capacity(12 + ciphertext_tag.len());
-    result.extend_from_slice(&nonce_bytes);
-    result.extend_from_slice(&ciphertext_tag);
-    Ok(Buffer::from(result))
+        let mut result = Vec::with_capacity(12 + ciphertext_tag.len());
+        result.extend_from_slice(&nonce_bytes);
+        result.extend_from_slice(&ciphertext_tag);
+        Ok(Buffer::from(result))
+    })
 }
 
 /// Decrypt a buffer with AES-256-GCM
@@ -14924,52 +14983,56 @@ pub fn aes_gcm_encrypt(plaintext: Buffer, key: Buffer, aad: Buffer) -> Result<Bu
 /// Input: nonce (12 bytes) || ciphertext || tag (16 bytes)
 #[napi]
 pub fn aes_gcm_decrypt(encrypted: Buffer, key: Buffer, aad: Buffer) -> Result<Buffer> {
-    use aes_gcm::aead::Aead;
-    use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+    guard(|| {
+        use aes_gcm::aead::Aead;
+        use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 
-    if key.len() != 32 {
-        return Err(coded(ErrCode::Validation, "Key must be 32 bytes"));
-    }
-    if encrypted.len() < 28 {
-        return Err(coded(
-            ErrCode::Validation,
-            "Encrypted data too short (need at least nonce + tag)",
-        ));
-    }
+        if key.len() != 32 {
+            return Err(coded(ErrCode::Validation, "Key must be 32 bytes"));
+        }
+        if encrypted.len() < 28 {
+            return Err(coded(
+                ErrCode::Validation,
+                "Encrypted data too short (need at least nonce + tag)",
+            ));
+        }
 
-    let nonce = Nonce::from_slice(&encrypted[..12]);
-    let ciphertext_tag = &encrypted[12..];
+        let nonce = Nonce::from_slice(&encrypted[..12]);
+        let ciphertext_tag = &encrypted[12..];
 
-    let aes_key = Key::<Aes256Gcm>::from_slice(key.as_ref());
-    let cipher = Aes256Gcm::new(aes_key);
+        let aes_key = Key::<Aes256Gcm>::from_slice(key.as_ref());
+        let cipher = Aes256Gcm::new(aes_key);
 
-    let payload = aes_gcm::aead::Payload { msg: ciphertext_tag, aad: aad.as_ref() };
-    let plaintext = cipher
-        .decrypt(nonce, payload)
-        .map_err(|e| wrap(ErrCode::Internal, "Decryption failed", e))?;
+        let payload = aes_gcm::aead::Payload { msg: ciphertext_tag, aad: aad.as_ref() };
+        let plaintext = cipher
+            .decrypt(nonce, payload)
+            .map_err(|e| wrap(ErrCode::Internal, "Decryption failed", e))?;
 
-    Ok(Buffer::from(plaintext))
+        Ok(Buffer::from(plaintext))
+    })
 }
 
 /// Compute Merkle root from an array of 32-byte leaf hashes
 #[napi]
 pub fn merkle_root(leaves: Vec<Buffer>) -> Result<Buffer> {
-    let leaf_arrays: std::result::Result<Vec<[u8; 32]>, _> = leaves
-        .iter()
-        .map(|b| {
-            if b.len() != 32 {
-                Err(coded(ErrCode::Validation, "Each leaf must be 32 bytes"))
-            } else {
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(b.as_ref());
-                Ok(arr)
-            }
-        })
-        .collect();
+    guard(|| {
+        let leaf_arrays: std::result::Result<Vec<[u8; 32]>, _> = leaves
+            .iter()
+            .map(|b| {
+                if b.len() != 32 {
+                    Err(coded(ErrCode::Validation, "Each leaf must be 32 bytes"))
+                } else {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(b.as_ref());
+                    Ok(arr)
+                }
+            })
+            .collect();
 
-    let leaf_arrays = leaf_arrays?;
-    let root = stateset_crypto::merkle::compute_merkle_root(&leaf_arrays);
-    Ok(Buffer::from(root.as_slice()))
+        let leaf_arrays = leaf_arrays?;
+        let root = stateset_crypto::merkle::compute_merkle_root(&leaf_arrays);
+        Ok(Buffer::from(root.as_slice()))
+    })
 }
 
 // ============================================================================
@@ -25779,29 +25842,49 @@ fn ncr_filter_from_input(
 }
 
 // ============================================================================
-// Panic containment probes (debug builds only)
+// Panic containment probes (feature `test-panic` only)
 // ============================================================================
+//
+// Off by default, so these symbols never reach a published binary and the
+// committed `native-binding.js` / `index.d.ts` do not declare them.
+// `npm run build:debug` turns the feature on for `test/panic-containment.js`.
 
-/// Panic on purpose, synchronously, so the binding's panic containment can be
-/// asserted from JavaScript.
+/// Panic on purpose, synchronously, inside a [`guard`].
 ///
-/// Compiled only under `debug_assertions`, so it never reaches a published
-/// binary. Under the `release-node` profile (`panic = "unwind"`) and in debug
-/// builds the unwind is caught by [`guard`] and arrives in JavaScript as an
-/// error with `code: 'INTERNAL_PANIC'`; under `panic = "abort"` the process
-/// would die instead, which is exactly what the profile exists to prevent.
-#[cfg(debug_assertions)]
+/// A sync `#[napi]` entry point has no safety net of its own: napi generates an
+/// `extern "C"` shim, and an unwind escaping that aborts the process whatever
+/// the panic strategy is. [`guard`] is what turns it into a JavaScript error
+/// with `code: 'INTERNAL_PANIC'`.
+#[cfg(feature = "test-panic")]
 #[napi(js_name = "__testPanic")]
 pub fn test_panic(message: Option<String>) -> Result<()> {
     guard(|| panic!("{}", message.unwrap_or_else(|| "deliberate test panic".to_owned())))
 }
 
-/// The async twin of [`test_panic`]: panics while the future is being polled.
-#[cfg(debug_assertions)]
+/// The async twin of [`test_panic`]: panics while the future is being polled,
+/// inside a [`guard_async`], which reports the panic payload verbatim.
+#[cfg(feature = "test-panic")]
 #[napi(js_name = "__testPanicAsync")]
 pub async fn test_panic_async(message: Option<String>) -> Result<()> {
     guard_async(async move {
         panic!("{}", message.unwrap_or_else(|| "deliberate test panic".to_owned()))
     })
     .await
+}
+
+/// Panic inside an async entry point that is **not** guarded, to prove the
+/// fallback path.
+///
+/// `napi::tokio_runtime::execute_tokio_future` watches the spawned task and
+/// rejects the promise with `Status::GenericFailure` if it panicked — so all 728
+/// async entry points already fail soft once `panic = "unwind"` is in effect.
+/// They just carry no code, which `decorate()` in `errors.js` supplies. Note
+/// napi only forwards a `&'static str` payload; a formatted `String` becomes
+/// the fixed text `"Panic in async function"`, which is why this probe panics
+/// with a literal.
+#[cfg(feature = "test-panic")]
+#[napi(js_name = "__testPanicAsyncUnguarded")]
+pub async fn test_panic_async_unguarded() -> Result<()> {
+    tokio::task::yield_now().await;
+    panic!("unguarded async panic")
 }
