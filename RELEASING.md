@@ -16,6 +16,9 @@ and what to do when a lane is genuinely broken.
 ## Before you tag
 
 1. Bump versions across the workspace and bindings (`scripts/release-bump.sh`).
+   Ignore the checklist that script prints when it finishes — it predates this
+   page and still names a README section that no longer exists and manual tag
+   pushes. The steps below supersede it; tags go through `npm run release:tag`.
 2. Update `CHANGELOG.md`.
 3. Refresh anything in `docs/src/` the release changes.
 4. Run the local preflight: `npm run check:release`.

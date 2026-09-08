@@ -36,9 +36,8 @@ npm run dev           # http://localhost:3000
 ```
 
 That is a Next.js storefront with a real commerce engine behind it — the
-generator and this exact sequence are what the
-[Storefront Golden Path](.github/workflows/storefront-golden-path.yml) CI job
-runs on every change.
+generator and the seed step are covered end to end by the
+[Storefront Golden Path](.github/workflows/storefront-golden-path.yml) CI job.
 
 ### Give an AI agent a commerce sandbox
 
@@ -93,10 +92,11 @@ transport boundary, or `--strict-protocol` to refuse pre-2026-07-28 clients.
 | **PyPI** | `pip install stateset-embedded==1.33.0` |
 | **CLI + MCP servers** | `npm install -g @stateset/cli@1.33.0` |
 
-Ruby, PHP, Java, Kotlin, Swift, .NET, Go, and WASM bindings are in-tree and
-tested in CI, but are not currently published to their registries. Build them
-from source; see [`docs/src/api/`](docs/src/api/) for each one's API and
-install snippet.
+The Ruby and WASM bindings have published packages that are not kept current:
+RubyGems `stateset_embedded` is at 0.1.9 and npm `@stateset/embedded-wasm` at
+0.7.22, both far behind 1.33.0. PHP, Java, Kotlin, Swift, .NET, and Go have no
+published package at all — build those from source, and see
+[`docs/src/api/`](docs/src/api/) for each binding's API and install snippet.
 
 ### Use it
 
