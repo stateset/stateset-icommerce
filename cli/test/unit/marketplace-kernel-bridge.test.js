@@ -6,6 +6,7 @@ import {
   KernelMarketplaceBridge,
   MemoryBridgeStore,
   SqliteBridgeStore,
+  canonicalMarketplaceMessage,
   createAwardCommandPlanner,
   signMarketplaceMessage,
   verifyMarketplaceMessage,
@@ -273,4 +274,182 @@ test('SQLite bridge state survives worker reconstruction', async (t) => {
   const result = await reconstructed.pollOnce();
   assert.equal(result.outcomes.length, 0);
   assert.equal(calls.length, 1);
+});
+
+test('bridge and purchase runtime share one canonicalizer that rejects undefined', async () => {
+  // Imported the way the bridge imports it: through the published subpath, so
+  // this test fails if the export map ever stops shipping the module.
+  const { canonicalJson } = await import('@stateset/embedded/canonical-json');
+  const { canonicalJson: runtimeCanonical } = await import(
+    '../../../bindings/node/purchase-runtime.mjs'
+  );
+  assert.equal(runtimeCanonical, canonicalJson);
+  assert.equal(canonicalMarketplaceMessage({ b: 1, a: 2 }), '{"a":2,"b":1}');
+  // The literal string `undefined` must never be signable as a missing value.
+  for (const canonicalize of [canonicalJson, runtimeCanonical]) {
+    assert.throws(() => canonicalize({ winner: undefined }), /JSON serializable/);
+    assert.throws(() => canonicalize([undefined]), /JSON serializable/);
+  }
+  assert.throws(
+    () => canonicalMarketplaceMessage({ kind: 'award', winner: undefined }),
+    /JSON serializable/,
+  );
+  const keys = crypto.generateKeyPairSync('ed25519');
+  assert.throws(
+    () => signMarketplaceMessage({ kind: 'award', winner: undefined }, keys.privateKey),
+    /JSON serializable/,
+  );
+});
+
+/** Re-sign an award after mutating it so the envelope binding still holds.
+ * Returns a fresh sequenced event; the fixture stays pristine. */
+function repoisoned(data, mutate, sequenceNumber = 1) {
+  const payload = structuredClone(data.sequenced.envelope.payload);
+  delete payload.signature;
+  mutate(payload);
+  return {
+    sequenceNumber,
+    envelope: {
+      ...structuredClone(data.sequenced.envelope),
+      payload: signMarketplaceMessage(payload, data.buyerKeys.privateKey, 'buyer-key-1'),
+    },
+  };
+}
+
+/** A second, valid award at sequence 2 so we can prove the cursor moves past
+ * a poisoned message instead of stalling the whole bridge on it. */
+function followingAward(data, sequenceNumber = 2) {
+  const eventId = '50000000-0000-4000-8000-000000000002';
+  const payload = structuredClone(data.sequenced.envelope.payload);
+  delete payload.signature;
+  payload.message_id = eventId;
+  const envelope = {
+    ...structuredClone(data.sequenced.envelope),
+    eventId,
+    payload: signMarketplaceMessage(payload, data.buyerKeys.privateKey, 'buyer-key-1'),
+  };
+  return { sequenceNumber, envelope };
+}
+
+function sequencerForAll(events) {
+  return {
+    async pull(from) {
+      return {
+        events: events.filter((event) => event.sequenceNumber >= from),
+        headSequence: events.length,
+      };
+    },
+  };
+}
+
+test('a poisoned award is dead-lettered after bounded retries and the queue drains', async () => {
+  const { options, calls, data } = runtimeOptions();
+  // A zero commitment fails the planner's exact-decimal check on every attempt:
+  // a permanently poisoned message that used to stall the cursor forever.
+  const poisoned = repoisoned(data, (payload) => {
+    payload.commitment.amount.amount = '0';
+  });
+  const healthy = followingAward(data);
+  const store = new MemoryBridgeStore();
+  const bridge = new KernelMarketplaceBridge({
+    ...options,
+    sequencer: sequencerForAll([poisoned, healthy]),
+    store,
+    maxAttempts: 3,
+  });
+
+  await assert.rejects(bridge.pollOnce(), /positive exact decimal/);
+  await assert.rejects(bridge.pollOnce(), /positive exact decimal/);
+  assert.equal(store.getCursor(options.id), 1, 'cursor holds while retries remain');
+  assert.equal(calls.length, 0);
+
+  const drained = await bridge.pollOnce();
+  assert.equal(drained.outcomes[0].status, 'dead_lettered');
+  assert.equal(drained.outcomes[1].status, 'completed');
+  assert.equal(drained.nextSequence, 3);
+  assert.equal(calls.length, 1, 'only the healthy award reached the kernel');
+
+  // The poisoned row is retained for operator inspection, not deleted.
+  const record = store.record(options.id, EVENT);
+  assert.equal(record.status, 'dead_lettered');
+  assert.equal(record.attempts, 3);
+  assert.match(record.error, /positive exact decimal/);
+
+  // A dead letter is terminal: re-delivery never re-executes it.
+  const settled = await bridge.pollOnce();
+  assert.equal(settled.outcomes.length, 0);
+  assert.equal(calls.length, 1);
+});
+
+test('an expired award is dead-lettered on the first attempt with a reason', async () => {
+  const { options, calls, data } = runtimeOptions();
+  const expired = repoisoned(data, (payload) => {
+    payload.expires_at = '2020-01-01T00:00:00.000Z';
+  });
+  const store = new MemoryBridgeStore();
+  const bridge = new KernelMarketplaceBridge({
+    ...options,
+    sequencer: sequencerForAll([expired, followingAward(data)]),
+    store,
+  });
+
+  const result = await bridge.pollOnce();
+  assert.equal(result.outcomes[0].status, 'dead_lettered');
+  assert.equal(result.outcomes[0].reason, 'award_expired');
+  assert.equal(result.outcomes[1].status, 'completed');
+  assert.equal(store.record(options.id, EVENT).attempts, 1, 'no pointless retries');
+  assert.equal(calls.length, 1);
+});
+
+test('dead letters survive worker reconstruction in the durable store', async (t) => {
+  let Database;
+  try {
+    ({ default: Database } = await import('better-sqlite3'));
+  } catch {
+    t.skip('better-sqlite3 is optional');
+    return;
+  }
+  const db = new Database(':memory:');
+  t.after(() => db.close());
+  // A store created before dead-lettering existed rejects the new status.
+  db.exec(`
+    CREATE TABLE _stateset_marketplace_bridge_inbox (
+      bridge_id TEXT NOT NULL, event_id TEXT NOT NULL, sequence_number INTEGER NOT NULL,
+      event_digest TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('processing', 'failed', 'completed', 'rejected')),
+      attempts INTEGER NOT NULL DEFAULT 0, result_json TEXT, last_error TEXT,
+      updated_at TEXT NOT NULL, PRIMARY KEY (bridge_id, event_id)
+    );
+    INSERT INTO _stateset_marketplace_bridge_inbox
+      VALUES ('legacy-bridge', 'legacy-event', 1, 'digest', 'completed', 1, NULL, NULL, 'then');
+  `);
+
+  const { options, calls, data } = runtimeOptions();
+  const expired = repoisoned(data, (payload) => {
+    payload.expires_at = '2020-01-01T00:00:00.000Z';
+  });
+  const store = new SqliteBridgeStore(db);
+  // The pre-existing row survives the schema upgrade.
+  assert.equal(store.record('legacy-bridge', 'legacy-event').status, 'completed');
+
+  const bridge = new KernelMarketplaceBridge({
+    ...options,
+    sequencer: sequencerForAll([expired, followingAward(data)]),
+    store,
+  });
+  const result = await bridge.pollOnce();
+  assert.equal(result.outcomes[0].status, 'dead_lettered');
+  assert.equal(result.nextSequence, 3);
+  assert.equal(calls.length, 1);
+
+  const reopened = new SqliteBridgeStore(db);
+  const record = reopened.record(options.id, EVENT);
+  assert.equal(record.status, 'dead_lettered');
+  assert.match(record.error, /unexpired deadline/);
+  const again = await new KernelMarketplaceBridge({
+    ...options,
+    sequencer: sequencerForAll([expired, followingAward(data)]),
+    store: reopened,
+  }).pollOnce();
+  assert.equal(again.outcomes.length, 0);
 });

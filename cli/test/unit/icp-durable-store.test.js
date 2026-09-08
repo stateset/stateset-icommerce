@@ -14,13 +14,23 @@ import { ICPClient } from '../../../packages/icp-client/src/index.mjs';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const launcher = resolve(root, 'cli/examples/durable-merchant.mjs');
 
-async function start(path, keyFile) {
+async function start(path, keyFile, env = {}) {
   const proc = spawn(process.execPath, [launcher, '--apply', '--demo', '--db', path], {
     env: {
       ...process.env,
       PORT: '0',
       ICP_MERCHANT_KEY_FILE: keyFile,
       ICP_MERCHANT_AID: 'aid:v1:zDurableDemoMerchant',
+      // The reference ICPClient still self-signs its PrincipalBinding with a
+      // placeholder signature (packages/icp-client `_principalBinding`, kid
+      // 'self', sig 'deadbeef'), so these lifecycle tests opt out of trust
+      // enforcement EXPLICITLY. `--demo` no longer does this implicitly: it
+      // describes simulated economic rails, not identity.
+      // FOLLOW-UP: teach ICPClient to sign a real binding with a principal key
+      // and register it via ICP_PRINCIPAL_KEYS_JSON, then delete this line and
+      // the ICP_TRUST_MODE=demo branch in icp-handler/src/server.mjs.
+      ICP_TRUST_MODE: 'demo',
+      ...env,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -285,6 +295,69 @@ test('two merchant processes serialize competing inventory commitments in one da
     }
   } finally {
     await Promise.all(workers.map((worker) => kill(worker.proc)));
+    rmSync(dir, { recursive: true });
+  }
+});
+
+test('a durable merchant enforces trust unless the operator opts out', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'icp-trust-'));
+  const path = join(dir, 'merchant.db');
+  const keyFile = join(dir, 'merchant.pem');
+  const { privateKey } = generateKeyPairSync('ed25519');
+  writeFileSync(keyFile, privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+  const principal = 'did:web:unregistered.example';
+  const purchase = (client) =>
+    client.purchase({
+      merchant: 'aid:v1:zDurableDemoMerchant',
+      settler: 'settler:stateset.usdc.base-sepolia',
+      items: [{ sku: 'SKU-100', quantity: 1, unit_price: { amount: '1', currency: 'USDC' } }],
+      max_total: { amount: '10', currency: 'USDC' },
+    });
+  const codeOf = async (fn) => {
+    try {
+      await fn();
+      return null;
+    } catch (error) {
+      return error.code ?? error.message;
+    }
+  };
+  let worker;
+  try {
+    // `--demo` is passed by the launcher (simulated economic rails) and no
+    // ICP_TRUST_MODE is set, so the handler must still enforce.
+    worker = await start(path, keyFile, { ICP_TRUST_MODE: undefined });
+    const caps = await (await fetch(`${worker.url}/icp/v1/.well-known/icp`)).json();
+    assert.equal(caps.trust_mode, 'enforce');
+
+    const client = await ICPClient.create({ handlerUrl: worker.url, principal });
+    const identity = client.identity;
+    // A self-minted signer AID is not admitted by an operator-keyed handler.
+    assert.equal(await codeOf(() => purchase(client)), 'auth.aid_unregistered');
+
+    // Register the agent: the intent now reaches the delegation check, and the
+    // principal it names has no operator-configured key.
+    await kill(worker.proc);
+    const agents = JSON.stringify({ [identity.aid]: identity.ed25519_pubkey.toString('hex') });
+    worker = await start(path, keyFile, {
+      ICP_TRUST_MODE: undefined,
+      ICP_AGENT_KEYS_JSON: agents,
+    });
+    const known = await ICPClient.create({ handlerUrl: worker.url, principal, identity });
+    assert.equal(await codeOf(() => purchase(known)), 'delegation.principal_unknown');
+
+    // Register the principal too: the reference client still self-signs its
+    // binding with a placeholder signature, so it fails closed on the
+    // signature rather than being waved through. See the FOLLOW-UP in start().
+    await kill(worker.proc);
+    worker = await start(path, keyFile, {
+      ICP_TRUST_MODE: undefined,
+      ICP_AGENT_KEYS_JSON: agents,
+      ICP_PRINCIPAL_KEYS_JSON: JSON.stringify({ [principal]: '11'.repeat(32) }),
+    });
+    const delegated = await ICPClient.create({ handlerUrl: worker.url, principal, identity });
+    assert.equal(await codeOf(() => purchase(delegated)), 'delegation.signature_invalid');
+  } finally {
+    if (worker) await kill(worker.proc);
     rmSync(dir, { recursive: true });
   }
 });

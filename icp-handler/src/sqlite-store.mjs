@@ -52,6 +52,9 @@ export class SqliteProtocolStore {
           ON CONFLICT(namespace,key) DO UPDATE SET value=excluded.value`,
         ).run(namespace, key, JSON.stringify(value));
       },
+      delete(key) {
+        db.prepare('DELETE FROM _icp_records WHERE namespace=? AND key=?').run(namespace, key);
+      },
       values() {
         return db
           .prepare('SELECT value FROM _icp_records WHERE namespace=? ORDER BY key')
@@ -83,12 +86,29 @@ export class SqliteProtocolStore {
     });
   }
 
-  replayGuard({ ttlMs = 86400000, maxEntries = 100000, now = Date.now } = {}) {
+  /**
+   * Durable §5.3 replay guard. Capacity is charged PER SIGNER AID: one signer
+   * flooding caller-chosen nonces can only lock itself out, never every other
+   * agent sharing the handler. `maxSigners` separately bounds how many
+   * distinct AIDs may hold live nonces, so freshly minted AIDs cannot grow the
+   * table without limit. `maxEntries` is the deprecated spelling of
+   * `maxEntriesPerSigner`.
+   */
+  replayGuard({
+    ttlMs = 86400000,
+    maxEntriesPerSigner,
+    maxEntries,
+    maxSigners = 100000,
+    now = Date.now,
+  } = {}) {
+    const perSigner = maxEntriesPerSigner ?? maxEntries ?? 1000;
     if (
       !Number.isSafeInteger(ttlMs) ||
       ttlMs < 86400000 ||
-      !Number.isSafeInteger(maxEntries) ||
-      maxEntries <= 0
+      !Number.isSafeInteger(perSigner) ||
+      perSigner <= 0 ||
+      !Number.isSafeInteger(maxSigners) ||
+      maxSigners <= 0
     )
       throw new Error('invalid durable nonce policy');
     const db = this.db;
@@ -99,13 +119,25 @@ export class SqliteProtocolStore {
           db.prepare('DELETE FROM _icp_nonces WHERE expires_at<=?').run(timestamp);
           if (db.prepare('SELECT 1 FROM _icp_nonces WHERE signer=? AND nonce=?').get(signer, nonce))
             return false;
-          if (db.prepare('SELECT COUNT(*) AS count FROM _icp_nonces').get().count >= maxEntries)
+          const live = db
+            .prepare('SELECT COUNT(*) AS count FROM _icp_nonces WHERE signer=?')
+            .get(signer).count;
+          if (live >= perSigner) return false;
+          if (
+            live === 0 &&
+            db.prepare('SELECT COUNT(DISTINCT signer) AS count FROM _icp_nonces').get().count >=
+              maxSigners
+          )
             return false;
           db.prepare('INSERT INTO _icp_nonces VALUES(?,?,?)').run(signer, nonce, timestamp + ttlMs);
           return true;
         }),
       size: () =>
         db.prepare('SELECT COUNT(*) AS count FROM _icp_nonces WHERE expires_at>?').get(now()).count,
+      sizeFor: (signer) =>
+        db
+          .prepare('SELECT COUNT(*) AS count FROM _icp_nonces WHERE signer=? AND expires_at>?')
+          .get(signer, now()).count,
     };
   }
 }

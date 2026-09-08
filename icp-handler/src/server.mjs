@@ -56,13 +56,19 @@ const PORT = Number(process.env.PORT ?? 8787);
 // ---------------------------------------------------------------------------
 // Nonce replay guard — ICP-1.0-DRAFT §5.3. Keyed on (signer AID, nonce).
 // Sized via env with §5.3-compliant defaults: a 24h TTL (the floor for
-// long-running state transitions) and a 100k-entry LRU bound. Production
-// deployments back this with a shared/durable store; the reference impl is
-// per-process in-memory, which is correct for a single-instance handler.
+// long-running state transitions), a per-signer cap, and a bound on how many
+// distinct signers may hold live nonces. The cap is charged to the signer:
+// a single global bound let one agent's nonce flood fail-closed the handler
+// for every other agent. Production deployments back this with a
+// shared/durable store; the reference impl is per-process in-memory, which is
+// correct for a single-instance handler.
 // ---------------------------------------------------------------------------
 const nonceOptions = {
   ttlMs: Number(process.env.ICP_NONCE_TTL_MS ?? 86_400_000),
-  maxEntries: Number(process.env.ICP_NONCE_MAX_ENTRIES ?? 100_000),
+  maxEntriesPerSigner: Number(
+    process.env.ICP_NONCE_MAX_PER_SIGNER ?? process.env.ICP_NONCE_MAX_ENTRIES ?? 1_000,
+  ),
+  maxSigners: Number(process.env.ICP_NONCE_MAX_SIGNERS ?? 100_000),
 };
 const replayGuard = state.isDurable()
   ? state.durableReplayGuard(nonceOptions)
@@ -110,6 +116,148 @@ try {
   );
 } catch (error) {
   throw new Error(`ICP_SETTLER_KEYS_JSON must be a JSON object: ${error.message}`);
+}
+
+// ---------------------------------------------------------------------------
+// Trust mode.
+//
+// `enforce` is the posture of any real deployment: every Intent MUST carry a
+// principal binding, the principal's key is resolved from operator
+// configuration ONLY, and only registered or previously pinned signer AIDs are
+// admitted. A durable, operator-keyed handler enforces by default.
+//
+// `demo` keeps the historical permissive path for walkthroughs whose client
+// self-signs its own delegation. Selecting it requires the explicit, unambiguous
+// ICP_TRUST_MODE=demo and NOTHING else — in particular no CLI flag, since a flag
+// like the reference launcher's `--demo` means "simulated economic rails", which
+// is a completely different claim from "do not check who authorized this agent".
+// Demo trust is logged loudly at startup and once per principal, and it is NEVER
+// a production mode.
+// ---------------------------------------------------------------------------
+const TRUST_MODE = process.env.ICP_TRUST_MODE ?? '';
+if (TRUST_MODE && TRUST_MODE !== 'enforce' && TRUST_MODE !== 'demo') {
+  throw new Error('ICP_TRUST_MODE must be "enforce" or "demo"');
+}
+const DEMO_TRUST = TRUST_MODE === 'demo';
+const ENFORCE_TRUST = TRUST_MODE === 'enforce' || (state.isDurable() && !DEMO_TRUST);
+
+/** Operator-owned identity → raw Ed25519 public key hex. Never caller input. */
+function keyRegistry(variable) {
+  let parsed;
+  try {
+    parsed = JSON.parse(process.env[variable] ?? '{}');
+  } catch (error) {
+    throw new Error(`${variable} must be a JSON object: ${error.message}`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${variable} must be a JSON object`);
+  }
+  const registry = new Map();
+  for (const [id, hex] of Object.entries(parsed)) {
+    if (typeof hex !== 'string' || !/^[0-9a-f]{64}$/i.test(hex)) {
+      throw new Error(`${variable}["${id}"] must be a 32-byte Ed25519 public key in hex`);
+    }
+    registry.set(id, hex.toLowerCase());
+  }
+  return registry;
+}
+// Principal (organization/DID) keys that may delegate to an agent.
+const TRUSTED_PRINCIPAL_KEYS = keyRegistry('ICP_PRINCIPAL_KEYS_JSON');
+// Agent AIDs this handler agrees to serve.
+const TRUSTED_AGENT_KEYS = keyRegistry('ICP_AGENT_KEYS_JSON');
+if (ENFORCE_TRUST && TRUSTED_PRINCIPAL_KEYS.size === 0) {
+  console.error(
+    'icp-handler: enforcing trust with an empty ICP_PRINCIPAL_KEYS_JSON — every Intent will be rejected. ' +
+      'Set ICP_PRINCIPAL_KEYS_JSON (and ICP_AGENT_KEYS_JSON), or ICP_TRUST_MODE=demo for a walkthrough.',
+  );
+}
+const permissiveWarned = new Set();
+function warnPermissiveDelegation(principal) {
+  if (permissiveWarned.size > 1_000 || permissiveWarned.has(principal)) return;
+  permissiveWarned.add(principal);
+  console.error(
+    `icp-handler: DEMO TRUST MODE — principal_binding for ${principal} accepted WITHOUT verification ` +
+      '(no operator-configured key). Set ICP_PRINCIPAL_KEYS_JSON and ICP_TRUST_MODE=enforce for any real deployment.',
+  );
+}
+
+/**
+ * Verify that the Intent's stated principal really delegated this agent and
+ * verb. Returns `null` when the Intent may proceed, or `{ status, body }`.
+ *
+ * The principal's public key comes from `ICP_PRINCIPAL_KEYS_JSON` only. The
+ * handler used to verify the binding against `_principal_pubkey_hex` from the
+ * request body, which authorizes an attacker with the attacker's own key.
+ */
+function checkDelegation(intent, body, now) {
+  if (body._principal_pubkey_hex !== undefined) {
+    return {
+      status: 400,
+      body: err(
+        'delegation.untrusted_key_material',
+        'principal keys are resolved from operator configuration; _principal_pubkey_hex is not accepted',
+      ),
+    };
+  }
+  const binding = intent.principal_binding;
+  if (binding === undefined || binding === null) {
+    if (!ENFORCE_TRUST) return null;
+    return {
+      status: 403,
+      body: err('delegation.required', 'principal_binding is required by this handler'),
+    };
+  }
+  const principal = binding.principal;
+  if (typeof principal !== 'string' || principal.trim() !== principal || !principal) {
+    if (!ENFORCE_TRUST) return null;
+    return {
+      status: 403,
+      body: err('delegation.required', 'principal_binding.principal must name the principal'),
+    };
+  }
+  const trustedKeyHex = TRUSTED_PRINCIPAL_KEYS.get(principal);
+  if (!trustedKeyHex) {
+    if (!ENFORCE_TRUST) {
+      warnPermissiveDelegation(principal);
+      return null;
+    }
+    return {
+      status: 403,
+      body: err(
+        'delegation.principal_unknown',
+        `no operator-configured key for principal ${principal}`,
+      ),
+    };
+  }
+  // A principal the operator DID configure is always verified, in every mode.
+  if (!binding.signature?.sig) {
+    return {
+      status: 401,
+      body: err('delegation.signature_missing', 'principal binding signature is required'),
+    };
+  }
+  if (binding.agent !== intent.buyer || !binding.authority?.verbs?.includes(intent.verb)) {
+    return {
+      status: 403,
+      body: err(
+        'delegation.scope_mismatch',
+        'principal binding does not authorize this agent and verb',
+      ),
+    };
+  }
+  if (!(Date.parse(binding.expiry) > now)) {
+    return { status: 403, body: err('delegation.expired', 'principal binding has expired') };
+  }
+  const { signature: _bindingSignature, ...unsignedBinding } = binding;
+  if (
+    !verifyEd25519(canonicalJson(unsignedBinding), binding.signature.sig, Buffer.from(trustedKeyHex, 'hex'))
+  ) {
+    return {
+      status: 401,
+      body: err('delegation.signature_invalid', 'principal binding signature failed'),
+    };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +318,12 @@ server.listen(PORT, state.isDurable() ? '127.0.0.1' : undefined, () => {
   console.error(`  merchant_aid: ${merchantAid}`);
   console.error(`  merchant_pubkey_hex: ${merchantPubRaw.toString('hex')}`);
   console.error(`  allowed_settlers: ${[...ALLOWED_SETTLERS].join(', ')}`);
+  console.error(`  trust_mode: ${ENFORCE_TRUST ? 'enforce' : 'demo'}`);
+  if (!ENFORCE_TRUST) {
+    console.error(
+      '  WARNING: DEMO TRUST MODE — principal delegations without an operator-configured key are accepted unverified, and any caller may mint a signer AID. Not a production posture.',
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -190,6 +344,7 @@ function handleWellKnown(req, res) {
     spec: 'icp-1.0',
     handler: 'stateset-icp-handler-stub',
     handler_version: '0.1.0',
+    trust_mode: ENFORCE_TRUST ? 'enforce' : 'demo',
     merchant_aid: merchantAid,
     merchant_pubkey: {
       alg: 'ed25519',
@@ -294,7 +449,12 @@ async function handleSubmitIntent(req, res) {
   }
   let edPubRaw;
   try {
-    edPubRaw = resolveAidPubkey(signerAid, body._pubkey_hex, body._x_pubkey_hex);
+    edPubRaw = resolveAidPubkey(signerAid, body._pubkey_hex, body._x_pubkey_hex, {
+      // Operator configuration first, then any key an earlier authenticated
+      // action pinned to this AID. Never the key in this request.
+      knownKeyHex: TRUSTED_AGENT_KEYS.get(signerAid) ?? state.getSignerKey(signerAid) ?? null,
+      requireKnown: ENFORCE_TRUST,
+    });
   } catch (e) {
     const code = e instanceof AidBindingError ? e.code : 'auth.aid_resolution_failed';
     return reply(res, 401, err(code, e.message));
@@ -304,44 +464,11 @@ async function handleSubmitIntent(req, res) {
     return reply(res, 401, err('signature.invalid', 'Ed25519 verification failed'));
   }
 
-  // Optional reference resolver for the demo: when the caller supplies the
-  // principal's already-resolved public key, verify that the principal signed
-  // this exact delegation. Production resolves the DID/organization key from
-  // trusted identity infrastructure rather than accepting it from the body.
-  if (body._principal_pubkey_hex) {
-    const binding = intent.principal_binding;
-    if (!binding?.signature?.sig) {
-      return reply(
-        res,
-        401,
-        err('delegation.signature_missing', 'principal binding signature is required'),
-      );
-    }
-    if (binding.agent !== intent.buyer || !binding.authority?.verbs?.includes(intent.verb)) {
-      return reply(
-        res,
-        403,
-        err(
-          'delegation.scope_mismatch',
-          'principal binding does not authorize this agent and verb',
-        ),
-      );
-    }
-    if (Date.parse(binding.expiry) <= now) {
-      return reply(res, 403, err('delegation.expired', 'principal binding has expired'));
-    }
-    const { signature: _bindingSignature, ...unsignedBinding } = binding;
-    const principalKey = Buffer.from(body._principal_pubkey_hex, 'hex');
-    if (
-      principalKey.length !== 32 ||
-      !verifyEd25519(canonicalJson(unsignedBinding), binding.signature.sig, principalKey)
-    ) {
-      return reply(
-        res,
-        401,
-        err('delegation.signature_invalid', 'principal binding signature failed'),
-      );
-    }
+  // Principal delegation (§4.4). Runs after the Intent is proven authentic, so
+  // an unauthenticated caller can never probe the delegation registry.
+  const delegationFailure = checkDelegation(intent, body, now);
+  if (delegationFailure) {
+    return reply(res, delegationFailure.status, delegationFailure.body);
   }
 
   // 4b. Nonce replay (§5.3) — only consume a nonce AFTER the signature is
@@ -349,6 +476,25 @@ async function handleSubmitIntent(req, res) {
   // message. Keyed on the bound signer AID so distinct agents may reuse the
   // same nonce bytes without colliding.
   return transactionReply(res, (reply) => {
+    // Admit (or re-confirm) the signer before spending its nonce budget, so a
+    // key swap on a known AID can never be laundered through a fresh nonce.
+    const admission = state.pinSigner(signerAid, edPubRaw.toString('hex'), {
+      maxSigners: nonceOptions.maxSigners,
+    });
+    if (admission === 'conflict') {
+      return reply(
+        res,
+        401,
+        err('auth.aid_key_mismatch', `AID ${signerAid} is bound to a different public key`),
+      );
+    }
+    if (admission === 'capacity') {
+      return reply(
+        res,
+        503,
+        err('auth.signer_capacity', 'handler is at its signer admission bound'),
+      );
+    }
     if (!replayGuard.checkAndRecord(signerAid, intent.nonce)) {
       return reply(
         res,
@@ -645,6 +791,20 @@ async function handleCosignSettlement(req, res) {
     if (!receipt || receipt.type !== 'icp.settlement.receipt') {
       return reply(res, 400, err('format.missing_field', 'receipt is required'));
     }
+    // The settlement ID is the key this receipt is stored and re-fetched
+    // under; an unusable one silently produces an unaddressable settlement.
+    if (
+      typeof receipt.settlement_id !== 'string' ||
+      receipt.settlement_id.trim() !== receipt.settlement_id ||
+      receipt.settlement_id.length === 0 ||
+      receipt.settlement_id.length > 128
+    ) {
+      return reply(
+        res,
+        400,
+        err('format.missing_field', 'receipt.settlement_id must be a non-empty string (<=128 chars)'),
+      );
+    }
     if (!ALLOWED_SETTLERS.has(receipt.settler)) {
       return reply(
         res,
@@ -688,6 +848,32 @@ async function handleCosignSettlement(req, res) {
         err('format.unknown_intent', `intent ${receipt.intent_id} is not known`),
       );
     }
+    // The escrow is the funded position being settled. A receipt that names
+    // someone else's escrow (or none at all) must never be merchant-signed.
+    const escrow = state.getEscrow(receipt.escrow_id);
+    if (!escrow || escrow.intent_id !== receipt.intent_id) {
+      return reply(
+        res,
+        409,
+        err(
+          'settlement.escrow_mismatch',
+          `escrow ${receipt.escrow_id} does not belong to intent ${receipt.intent_id}`,
+        ),
+      );
+    }
+    // One escrow settles once. A Settler holding a valid key could otherwise
+    // mint a second settlement_id over the same position and obtain a second
+    // merchant signature for it.
+    if (escrow.settlement_id && escrow.settlement_id !== receipt.settlement_id) {
+      return reply(
+        res,
+        409,
+        err(
+          'settlement.already_settled',
+          `escrow ${receipt.escrow_id} is already settled as ${escrow.settlement_id}`,
+        ),
+      );
+    }
     if (
       receipt.amount?.amount !== quoteRecord.quote.total?.amount ||
       receipt.amount?.currency !== quoteRecord.quote.total?.currency
@@ -711,6 +897,7 @@ async function handleCosignSettlement(req, res) {
       },
     };
     state.recordSettlement(coSigned);
+    state.updateEscrow(receipt.escrow_id, { settlement_id: receipt.settlement_id });
     return reply(res, 200, { receipt: coSigned });
   });
 }

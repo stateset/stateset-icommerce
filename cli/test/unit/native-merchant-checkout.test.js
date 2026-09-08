@@ -536,3 +536,111 @@ test('lost native response is recovered from the kernel receipt without executin
     f.close();
   }
 });
+
+test('a rejected kernel receipt releases the cart so it can be re-quoted', async () => {
+  const f = await fixture();
+  try {
+    // A cart fingerprint that no longer matches is a terminal kernel conflict:
+    // resubmitting the same command can only ever be rejected again.
+    f.quote.cartFingerprint = `sha256:${'a'.repeat(64)}`;
+    const runtime = new NativeMerchantCheckout({ ...f.options, requireCartFingerprint: true });
+    const rejected = await runtime.accept(request);
+    assert.equal(rejected.status, 'rejected', JSON.stringify(rejected));
+    assert.match(rejected.error, /checkout\.conflict/);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS count FROM orders').get().count, 0);
+
+    // The cart is no longer bound to the dead acceptance…
+    assert.equal(f.options.store.collection('native_checkout_carts').get(f.cart.id) ?? null, null);
+    // …so a corrected quote can claim it under a new acceptance.
+    f.quote.cartFingerprint = (await f.commerce.checkoutSnapshot(f.cart.id)).fingerprint;
+    const retried = await runtime.accept({ ...request, idempotencyKey: 'accept:native-2' });
+    assert.equal(retried.status, 'accepted', JSON.stringify(retried));
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS count FROM orders').get().count, 1);
+  } finally {
+    f.close();
+  }
+});
+
+test('an apply that throws after the kernel rejected resolves instead of reconciling forever', async () => {
+  const f = await fixture();
+  try {
+    const runtime = new NativeMerchantCheckout({
+      ...f.options,
+      commerce: {
+        kernelFeatures: () => f.commerce.kernelFeatures(),
+        async executeKernelCommand(...args) {
+          // The kernel records its verdict, then the response is lost.
+          await f.commerce.executeKernelCommand(...args);
+          throw new Error('response lost after kernel rejected');
+        },
+      },
+      // No capability for checkout.commit → the kernel denies the command.
+      policy: {
+        ...f.options.policy,
+        commands: { 'checkout.commit': { required_capabilities: ['checkout.other'] } },
+      },
+    });
+    const result = await runtime.accept(request);
+    assert.equal(result.status, 'rejected', JSON.stringify(result));
+    assert.match(result.error, /kernel\.policy_denied/);
+    assert.equal(f.options.store.collection('native_checkout_carts').get(f.cart.id) ?? null, null);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS count FROM orders').get().count, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test('a host-declared non-retryable apply failure fails closed and frees the cart', async () => {
+  const f = await fixture();
+  let calls = 0;
+  try {
+    const runtime = new NativeMerchantCheckout({
+      ...f.options,
+      commerce: {
+        kernelFeatures: () => f.commerce.kernelFeatures(),
+        executeKernelCommand() {
+          calls++;
+          // e.g. the quoted cart no longer exists: the binding throws and the
+          // ledger holds nothing, so only the host knows it is permanent.
+          const error = new Error('Kernel execution failed: Record not found');
+          error.retryable = false;
+          error.code = 'commerce.record_not_found';
+          throw error;
+        },
+      },
+    });
+    const failed = await runtime.accept(request);
+    assert.equal(failed.status, 'failed', JSON.stringify(failed));
+    assert.equal(failed.error, 'commerce.record_not_found');
+    assert.equal(f.options.store.collection('native_checkout_carts').get(f.cart.id) ?? null, null);
+
+    // The disposition is durable: resuming never re-dispatches the command.
+    const resumed = await runtime.resume(failed.id);
+    assert.equal(resumed.status, 'failed');
+    assert.equal(resumed.error, 'commerce.record_not_found');
+    assert.equal(calls, 1);
+    assert.equal(
+      (await new NativeMerchantCheckout({
+        ...f.options,
+        store: new SqliteProtocolStore(f.db),
+      }).resume(failed.id)).status,
+      'failed',
+    );
+
+    // A transient throw still reconciles rather than failing closed.
+    const flaky = new NativeMerchantCheckout({
+      ...f.options,
+      commerce: {
+        kernelFeatures: () => f.commerce.kernelFeatures(),
+        executeKernelCommand() {
+          throw new Error('socket hang up');
+        },
+      },
+    });
+    const pending = await flaky.accept({ ...request, idempotencyKey: 'accept:native-flaky' });
+    assert.equal(pending.status, 'reconciling');
+    assert.equal((await f.runtime.resume(pending.id)).status, 'accepted');
+  } finally {
+    f.close();
+  }
+});
