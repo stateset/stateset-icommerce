@@ -38,8 +38,12 @@ const profileName = args.profile ?? 'icp-1.0-core';
 const iutName = args.iut ?? 'reference-demo';
 const onlyVector = args.vector ?? null;
 const verbose = args.verbose === true;
+// Presence, not value. `--fail-on-skip 1` and `--fail-on-skip=1` both parse to
+// a *string* value, and testing `=== true` would silently drop the gate on a
+// command line that plainly asks for it. A safety flag must never be
+// disable-able by a typo.
 const failOnSkip =
-  args['fail-on-skip'] === true || process.env.ICP_CONFORMANCE_FAIL_ON_SKIP === '1';
+  'fail-on-skip' in args || process.env.ICP_CONFORMANCE_FAIL_ON_SKIP === '1';
 const registryPath = args.registry
   ? resolve(process.cwd(), String(args.registry))
   : join(ROOT, 'iut-adapters', 'registry.json');
@@ -219,16 +223,25 @@ function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--verbose' || arg === '-v') out.verbose = true;
-    else if (arg.startsWith('--')) {
-      const key = arg.slice(2);
-      const next = argv[i + 1];
-      if (next && !next.startsWith('--')) {
-        out[key] = next;
-        i++;
-      } else {
-        out[key] = true;
-      }
+    if (arg === '--verbose' || arg === '-v') {
+      out.verbose = true;
+      continue;
+    }
+    if (!arg.startsWith('--')) continue;
+    // `--key=value` is normalized to the same shape as `--key value`, so a key
+    // is always looked up by its bare name.
+    const eq = arg.indexOf('=');
+    if (eq !== -1) {
+      out[arg.slice(2, eq)] = arg.slice(eq + 1);
+      continue;
+    }
+    const key = arg.slice(2);
+    const next = argv[i + 1];
+    if (next && !next.startsWith('--')) {
+      out[key] = next;
+      i++;
+    } else {
+      out[key] = true;
     }
   }
   return out;

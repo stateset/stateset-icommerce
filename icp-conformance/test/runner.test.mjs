@@ -115,6 +115,40 @@ test('--fail-on-skip turns a SKIP into a non-zero exit', () => {
   }
 });
 
+test('--fail-on-skip cannot be silently disabled by a trailing value', () => {
+  // `--fail-on-skip 1` and `--fail-on-skip=1` both parse to a string value.
+  // Reading the flag by value rather than by presence would turn either of
+  // them into "no gate" on a command line that plainly asks for one.
+  const { registry, cleanup } = stubRegistry('skip');
+  try {
+    for (const form of [['--fail-on-skip', '1'], ['--fail-on-skip=1'], ['--fail-on-skip=false']]) {
+      const r = runRunner(['--registry', registry, ...form]);
+      assert.equal(
+        r.status,
+        1,
+        `expected exit 1 for ${JSON.stringify(form)}, got ${r.status}\n${r.stdout}${r.stderr}`,
+      );
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('--key=value is equivalent to --key value', () => {
+  const { registry, cleanup } = stubRegistry('pass');
+  try {
+    const r = spawnSync(
+      process.execPath,
+      [RUNNER, `--iut=stub`, `--registry=${registry}`, '--vector=01-aid-derivation'],
+      { cwd: ROOT, encoding: 'utf8' },
+    );
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /1 PASS, 0 FAIL, 0 SKIP/);
+  } finally {
+    cleanup();
+  }
+});
+
 test('ICP_CONFORMANCE_FAIL_ON_SKIP=1 is equivalent to --fail-on-skip', () => {
   const { registry, cleanup } = stubRegistry('skip');
   try {
