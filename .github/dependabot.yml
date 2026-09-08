@@ -1,61 +1,140 @@
+# Dependabot keeps this monorepo's many package manifests current.
+#
+# Two conventions apply everywhere:
+#
+#   groups  — minor and patch updates for an ecosystem land in ONE pull request
+#             instead of one PR per dependency. This repo has 12 update
+#             configurations; ungrouped, a quiet week still produced dozens of
+#             PRs, each needing its own full CI run.
+#
+#   ignore  — major updates are suppressed for dependencies whose majors cannot
+#             be taken by Dependabot alone. Each entry says why. Removing an
+#             ignore is a deliberate, human-driven upgrade.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      cargo:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # napi, napi-derive and @napi-rs/cli are one toolchain: the derive macro
+      # generates code against a specific napi major, and the CLI builds it.
+      # A major has to move in all three manifests at once, so it is done by
+      # hand (bindings/node/Cargo.toml + bindings/node/package.json together).
+      - dependency-name: "napi"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "napi-derive"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/cli"
     schedule:
       interval: "weekly"
+    groups:
+      cli-npm:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # commander v15 requires Node >= 22.12; cli/package.json engines pin
+      # ">=20.20.0" and CI runs 20.20.0 from .nvmrc. Taking the major would
+      # break every published CLI install on Node 20.
+      - dependency-name: "commander"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/bindings/node"
     schedule:
       interval: "weekly"
+    groups:
+      bindings-node-npm:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # Pairs with the napi/napi-derive ignore in the cargo config above.
+      - dependency-name: "@napi-rs/cli"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/bindings/wasm"
     schedule:
       interval: "weekly"
+    groups:
+      bindings-wasm-npm:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "pip"
     directory: "/bindings/python"
     schedule:
       interval: "weekly"
+    groups:
+      python:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "bundler"
     directory: "/bindings/ruby"
     schedule:
       interval: "weekly"
+    groups:
+      ruby:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "composer"
     directory: "/bindings/php"
     schedule:
       interval: "weekly"
+    groups:
+      php:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "gradle"
     directory: "/bindings/java/java"
     schedule:
       interval: "weekly"
+    groups:
+      java:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "gradle"
     directory: "/bindings/kotlin/kotlin"
     schedule:
       interval: "weekly"
+    groups:
+      kotlin:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "nuget"
     directory: "/bindings/dotnet/dotnet/StateSet"
     schedule:
       interval: "weekly"
+    groups:
+      dotnet:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "gomod"
     directory: "/bindings/go/stateset"
     schedule:
       interval: "weekly"
+    groups:
+      go:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

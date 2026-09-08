@@ -83,16 +83,17 @@ npm install -g @stateset/cli@latest
 stateset "show me all customers"   # triggers any pending migrations
 ```
 
-## Release Snapshots
+## Documentation for older releases
 
-For each tagged release, a documentation snapshot is created under `docs/versions/vX.Y.Z/`. Each snapshot is a standalone mdBook so it can be built and hosted under a stable path (for example, `/docs/v1.0.0/`).
+`docs/src/` always tracks `master`. There is no separate copy of the book per
+release: every release is an annotated git tag, so the documentation for any
+published version is the `docs/src/` tree at that tag.
 
-## Process
+```bash
+git show v1.33.0:docs/src/getting-started.md   # read one page at a release
+git worktree add ../docs-v1.33.0 v1.33.0       # or check the whole book out
+```
 
-1. Run `./docs/scripts/snapshot-version.sh vX.Y.Z`
-2. Review the snapshot and adjust any version-specific notes
-3. Publish both the latest book and the snapshot
-
-See `RELEASING.md` for the full release checklist.
+See `RELEASING.md` for the release procedure.
 
 For exact guarantee boundaries and current open trust gaps, see [Trust Foundation](trust-foundation.md).

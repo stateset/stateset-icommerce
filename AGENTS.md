@@ -22,8 +22,10 @@ end-to-end; every mutation is auditable.
 ```
 
 The `core` profile keeps the model-facing catalog focused; use `--profile all`
-for the complete 900+ tool surface, or `finance`, `operations`, and `agents`
-for curated workloads. Add individual modules with `--domains a,b`. **Writes are
+for the complete surface (923 tools across 87 domains at the time of writing —
+see [`cli/docs/TOOLS.md`](cli/docs/TOOLS.md), which is generated and
+authoritative), or `finance`, `operations`, and `agents` for curated
+workloads. Add individual modules with `--domains a,b`. **Writes are
 preview-only by default** — tools describe what they would do; add `--apply`
 to the args to enable mutations. The generated tool catalog is
 [`cli/docs/TOOLS.md`](cli/docs/TOOLS.md).
@@ -109,4 +111,4 @@ Scaffold a full storefront: `npm create stateset-app`.
 - Docs: https://docs.stateset.com (also `/llms.txt`)
 - Tool catalog (generated, authoritative): `cli/docs/TOOLS.md`
 - API references: `docs/src/api/` (rust, node, python, and 8 more)
-- Trust & verifiability model: `TRUST_FOUNDATION.md`
+- Trust & verifiability model: `docs/src/trust-foundation.md`

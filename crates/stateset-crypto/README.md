@@ -78,7 +78,7 @@ The `pqc` feature provides *hybrid* constructions — classical and post-quantum
 primitives composed so that breaking either alone is insufficient. It does not make
 the whole system post-quantum: settlement finality, transport, and the x402 payment
 path retain classical assumptions. See
-[`TRUST_FOUNDATION.md`](https://github.com/stateset/stateset-icommerce/blob/master/TRUST_FOUNDATION.md)
+[`docs/src/trust-foundation.md`](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/trust-foundation.md)
 for what is and is not claimed.
 
 ## Part of StateSet iCommerce

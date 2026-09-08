@@ -16,5 +16,5 @@ frozen at the era each document was written.
 | File | Era | Superseded by |
 |---|---|---|
 | `STATUS_v1.0.4.md` | v1.0.4 (Jul 2026) | `CHANGELOG.md`, `README.md` |
-| `PRD_2026.md` | v1.6 (Jul 2026) | `KERNEL_ROADMAP.md` |
+| `PRD_2026.md` | v1.6 (Jul 2026) | `../src/kernel-roadmap.md` |
 | `ICOMMERCE.md` | pre-1.0 narrative (Jan 2026) | `docs/whitepaper.md`, `README.md` |

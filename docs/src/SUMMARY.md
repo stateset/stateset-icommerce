@@ -4,7 +4,7 @@
 
 - [Overview](index.md)
 - [Getting Started](getting-started.md)
-- [Standalone Quickstart](standalone-quickstart.md)
+- [CLI Quickstart](standalone-quickstart.md)
 - [AI Agent Quickstart](ai-agents.md)
 - [Product Tiers](tiers.md)
 - [Trust Foundation](trust-foundation.md)
@@ -18,6 +18,7 @@
 - [Durable Agent Purchases](durable-purchases.md)
 - [Durable Reference Merchant](durable-merchant.md)
 - [Economic Kernel Release Gates](kernel-release-gates.md)
+- [Kernel Roadmap](kernel-roadmap.md)
 - [Dependency Direction](guides/dependency-direction.md)
 - [The Agentic Reasoning Loop](concepts/reasoning-loop.md)
 - [Case Studies](concepts/case-studies.md)
@@ -50,6 +51,7 @@
 
 # Agent-to-Agent Commerce
 
+- [Intelligent Commerce Protocol (ICP)](icp.md)
 - [A2A Protocol Overview](a2a/overview.md)
 - [Quotes & Negotiation](a2a/quotes.md)
 - [Escrow & Conditional Payments](a2a/escrow.md)

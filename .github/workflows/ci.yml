@@ -482,7 +482,6 @@ jobs:
         run: |
           npm run check:doc-tool-refs
           npm run check:docs:book
-          npm run check:docs:snapshot
 
   release-hygiene:
     name: Release Hygiene
