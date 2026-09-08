@@ -14,7 +14,21 @@ import { canonicalJson } from '../../../bindings/node/canonical-json.mjs';
 const AWARD_EVENT = 'marketplace.award.created';
 const MARKETPLACE_ENTITY = 'marketplace.negotiation';
 const MARKETPLACE_PROTOCOL = 'stateset.marketplace.v1';
-const TERMINAL = new Set(['completed', 'rejected']);
+// A dead letter is terminal: the cursor advances past it and the row is kept
+// for operator inspection. Without it one permanently-malformed award stalls
+// every later message on the same bridge forever.
+const TERMINAL = new Set(['completed', 'rejected', 'dead_lettered']);
+const DEFAULT_MAX_ATTEMPTS = 5;
+
+/** A message that will never succeed however often it is retried. */
+export class PoisonAwardError extends Error {
+  constructor(message, reason) {
+    super(message);
+    this.name = 'PoisonAwardError';
+    this.reason = reason;
+    this.retryable = false;
+  }
+}
 
 function requiredString(value, field) {
   if (typeof value !== 'string' || value.trim() !== value || value.length === 0) {
@@ -303,6 +317,21 @@ export class MemoryBridgeStore {
     this.events.set(key, { ...this.events.get(key), status: 'failed', error: error.message });
   }
 
+  deadLetter(bridgeId, eventId, error, reason) {
+    const key = `${bridgeId}:${eventId}`;
+    this.events.set(key, {
+      ...this.events.get(key),
+      status: 'dead_lettered',
+      error: error.message,
+      reason: reason ?? null,
+    });
+  }
+
+  /** Read one inbox row. Operators inspect dead letters through this. */
+  record(bridgeId, eventId) {
+    return this.events.get(`${bridgeId}:${eventId}`) ?? null;
+  }
+
   advance(bridgeId, nextSequence) {
     this.cursors.set(bridgeId, nextSequence);
   }
@@ -326,16 +355,55 @@ export class SqliteBridgeStore {
         event_id TEXT NOT NULL,
         sequence_number INTEGER NOT NULL,
         event_digest TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('processing', 'failed', 'completed', 'rejected')),
+        status TEXT NOT NULL
+          CHECK (status IN ('processing', 'failed', 'completed', 'rejected', 'dead_lettered')),
         attempts INTEGER NOT NULL DEFAULT 0,
         result_json TEXT,
         last_error TEXT,
+        dead_letter_reason TEXT,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (bridge_id, event_id)
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_marketplace_bridge_sequence
         ON _stateset_marketplace_bridge_inbox (bridge_id, sequence_number);
     `);
+    // A table created before dead-lettering carries a CHECK constraint that
+    // rejects the new status, and SQLite cannot alter a constraint in place.
+    // Rebuild it once, preserving every existing row.
+    const schema = db
+      .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?")
+      .get('_stateset_marketplace_bridge_inbox')?.sql;
+    if (schema && !schema.includes('dead_lettered')) {
+      db.transaction(() => {
+        db.exec(`
+          CREATE TABLE _stateset_marketplace_bridge_inbox_v2 (
+            bridge_id TEXT NOT NULL,
+            event_id TEXT NOT NULL,
+            sequence_number INTEGER NOT NULL,
+            event_digest TEXT NOT NULL,
+            status TEXT NOT NULL
+              CHECK (status IN ('processing', 'failed', 'completed', 'rejected', 'dead_lettered')),
+            attempts INTEGER NOT NULL DEFAULT 0,
+            result_json TEXT,
+            last_error TEXT,
+            dead_letter_reason TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (bridge_id, event_id)
+          );
+          INSERT INTO _stateset_marketplace_bridge_inbox_v2
+            (bridge_id, event_id, sequence_number, event_digest, status, attempts,
+             result_json, last_error, dead_letter_reason, updated_at)
+            SELECT bridge_id, event_id, sequence_number, event_digest, status, attempts,
+                   result_json, last_error, NULL, updated_at
+              FROM _stateset_marketplace_bridge_inbox;
+          DROP TABLE _stateset_marketplace_bridge_inbox;
+          ALTER TABLE _stateset_marketplace_bridge_inbox_v2
+            RENAME TO _stateset_marketplace_bridge_inbox;
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_marketplace_bridge_sequence
+            ON _stateset_marketplace_bridge_inbox (bridge_id, sequence_number);
+        `);
+      }).immediate();
+    }
     this.claimTransaction = db.transaction((bridgeId, eventId, sequenceNumber, digest) => {
       const existing = db
         .prepare(
@@ -412,6 +480,32 @@ export class SqliteBridgeStore {
       .run(error.message, new Date().toISOString(), bridgeId, eventId);
   }
 
+  deadLetter(bridgeId, eventId, error, reason) {
+    this.db
+      .prepare(
+        `UPDATE _stateset_marketplace_bridge_inbox
+            SET status = 'dead_lettered', last_error = ?, dead_letter_reason = ?, updated_at = ?
+          WHERE bridge_id = ? AND event_id = ?`,
+      )
+      .run(error.message, reason ?? null, new Date().toISOString(), bridgeId, eventId);
+  }
+
+  /** Read one inbox row. Operators inspect dead letters through this. */
+  record(bridgeId, eventId) {
+    const row = this.db
+      .prepare(
+        `SELECT event_id AS eventId, sequence_number AS sequenceNumber, event_digest AS digest,
+                status, attempts, result_json AS resultJson, last_error AS error,
+                dead_letter_reason AS reason, updated_at AS updatedAt
+           FROM _stateset_marketplace_bridge_inbox
+          WHERE bridge_id = ? AND event_id = ?`,
+      )
+      .get(bridgeId, eventId);
+    if (!row) return null;
+    const { resultJson, ...record } = row;
+    return { ...record, result: resultJson ? JSON.parse(resultJson) : null };
+  }
+
   advance(bridgeId, nextSequence) {
     this.db
       .prepare(
@@ -444,6 +538,7 @@ export class KernelMarketplaceBridge {
     planner,
     publishReceipt,
     batchSize = 100,
+    maxAttempts = DEFAULT_MAX_ATTEMPTS,
   }) {
     this.id = requiredString(id, 'bridge.id');
     this.sequencer = sequencer;
@@ -455,6 +550,10 @@ export class KernelMarketplaceBridge {
     this.planner = planner;
     this.publishReceipt = publishReceipt;
     this.batchSize = batchSize;
+    if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
+      throw new Error('maxAttempts must be a positive integer');
+    }
+    this.maxAttempts = maxAttempts;
     if (typeof sequencer?.pull !== 'function') throw new Error('sequencer.pull is required');
     if (typeof commerce?.executeKernelCommand !== 'function') {
       throw new Error('commerce.executeKernelCommand is required');
@@ -494,7 +593,11 @@ export class KernelMarketplaceBridge {
     }
     const expiry = Date.parse(event.payload?.expires_at ?? '');
     if (!Number.isFinite(expiry) || expiry <= Date.now()) {
-      throw new Error('marketplace award is missing an unexpired deadline');
+      // A deadline never comes back: retrying burns the cursor for nothing.
+      throw new PoisonAwardError(
+        'marketplace award is missing an unexpired deadline',
+        'award_expired',
+      );
     }
     if (!verifyMarketplaceMessage(event.payload, publicKey)) {
       throw new Error('invalid marketplace message signature');
@@ -555,6 +658,24 @@ export class KernelMarketplaceBridge {
       this.store.complete(this.id, event.eventId, status, result);
       return { sequence, status, eventId: event.eventId, ...result };
     } catch (error) {
+      // A message that can never succeed — a permanently malformed award, or
+      // one whose deadline has passed — must not hold the cursor hostage. Give
+      // up after a bounded number of attempts (or immediately, when the failure
+      // is known to be permanent), record the row for operator inspection, and
+      // let the bridge move on.
+      const permanent = error?.retryable === false;
+      if (permanent || claim.record.attempts >= this.maxAttempts) {
+        const reason = permanent ? (error.reason ?? 'permanent_failure') : 'attempts_exhausted';
+        this.store.deadLetter(this.id, event.eventId, error, reason);
+        return {
+          sequence,
+          status: 'dead_lettered',
+          eventId: event.eventId,
+          reason,
+          attempts: claim.record.attempts,
+          error: error.message,
+        };
+      }
       this.store.fail(this.id, event.eventId, error);
       throw error;
     }
