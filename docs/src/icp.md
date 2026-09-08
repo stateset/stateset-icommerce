@@ -27,19 +27,19 @@ settlement. No other public protocol covers this layer.
 
 | Layer | Artifact | Tests |
 |---|---|---|
-| **Spec** | [`icp-spec/ICP-1.0-DRAFT.md`](./icp-spec/ICP-1.0-DRAFT.md) — normative protocol; canonicalization rules; 60+ error codes | — |
+| **Spec** | [`icp-spec/ICP-1.0-DRAFT.md`](../../icp-spec/ICP-1.0-DRAFT.md) — normative protocol; canonicalization rules; 60+ error codes | — |
 | **Wire** | **All 7 core intent verbs shipping** (`purchase.create`, `subscription.create`, `subscription.cancel`, `purchase.return`, `inventory.query`, `quote.request`, `payout.request` — see ICPIP-0003/0004), plus the `channel.register` extension verb (ICPIP-0005) | — |
-| **Conformance** | [`icp-conformance/`](./icp-conformance/) — vector-driven, language-agnostic; incl. the full §8 escrow state machine (30-cell transition matrix + event replay), §6 intent validation across all 7 verbs, the §11.4/§6.2/§6.6 exact-decimal economic ceilings (`max_total`, `max_refund`, `max_per_payout`), §9 co-signed settlement-receipt verification, and §5.3 replay-window timing | 9 vector families × **4 IUTs (JS · Rust · Go · Python)** = **36 byte-identical PASS** |
-| **Reference contract** | [`icp-spec/contracts/usdc-base/ICPEscrow.sol`](./icp-spec/contracts/usdc-base/) — production-quality Solidity | **15/15 Foundry PASS** |
-| **HTTP handler** | [`icp-handler/`](./icp-handler/) — zero-dep merchant reference + [`openapi.yaml`](./icp-handler/openapi.yaml) for codegen; ICPIP-0005 register + signed emit + state-transition publish + recovery API | **39/39 Node-test PASS** |
-| **MCP server** | [`icp-mcp/`](./icp-mcp/) — drops into Claude Desktop | **6/6 Node-test PASS** |
-| **Settler daemon** | [`services/settler-stateset/`](./services/settler-stateset/) — Settler-side reference | **9/9 Node-test PASS** |
-| **Demo** | [`icp-spec/examples/02-end-to-end-flow/`](./icp-spec/examples/02-end-to-end-flow/) — 9-step transcript | — |
-| **Governance** | [`icp-spec/governance/`](./icp-spec/governance/) — Foundation charter, LOI, ICPIPs, risk register | — |
-| **Distribution** | [`icp-spec/outreach/`](./icp-spec/outreach/) — 8 partner-specific drafts | — |
-| **Deployment** | [`icp-docker/`](./icp-docker/) — one-command Docker Compose stack | **17/17 integration PASS** against the live stack |
-| **SDKs** | [`packages/icp-client/`](./packages/icp-client/) (npm), [`packages/icp-python-client/`](./packages/icp-python-client/) (PyPI), [`crates/stateset-icp-client/`](./crates/stateset-icp-client/) (cargo) — 3 first-party clients, byte-identical wire bytes; **all 3 ship `registerWebhook` + `verifyWebhook` + `fetchChannelEvents` + `verifySettlementReceipt`**; JS has full `.d.ts` types | **JS 33/33 · Python 33/33 · Rust 29/29** |
-| **Quickstart** | [`icp-spec/guides/icpip-0005-quickstart.md`](./icp-spec/guides/icpip-0005-quickstart.md) — side-by-side JS / Python / Rust integration in 5 minutes | — |
+| **Conformance** | [`icp-conformance/`](../../icp-conformance/) — vector-driven, language-agnostic; incl. the full §8 escrow state machine (30-cell transition matrix + event replay), §6 intent validation across all 7 verbs, the §11.4/§6.2/§6.6 exact-decimal economic ceilings (`max_total`, `max_refund`, `max_per_payout`), §9 co-signed settlement-receipt verification, and §5.3 replay-window timing | 9 vector families × **4 IUTs (JS · Rust · Go · Python)** = **36 byte-identical PASS** |
+| **Reference contract** | [`icp-spec/contracts/usdc-base/ICPEscrow.sol`](../../icp-spec/contracts/usdc-base/) — production-quality Solidity | **15/15 Foundry PASS** |
+| **HTTP handler** | [`icp-handler/`](../../icp-handler/) — zero-dep merchant reference + [`openapi.yaml`](../../icp-handler/openapi.yaml) for codegen; ICPIP-0005 register + signed emit + state-transition publish + recovery API | **39/39 Node-test PASS** |
+| **MCP server** | [`icp-mcp/`](../../icp-mcp/) — drops into Claude Desktop | **6/6 Node-test PASS** |
+| **Settler daemon** | [`services/settler-stateset/`](../../services/settler-stateset/) — Settler-side reference | **9/9 Node-test PASS** |
+| **Demo** | [`icp-spec/examples/02-end-to-end-flow/`](../../icp-spec/examples/02-end-to-end-flow/) — 9-step transcript | — |
+| **Governance** | [`icp-spec/governance/`](../../icp-spec/governance/) — Foundation charter, LOI, ICPIPs, risk register | — |
+| **Distribution** | [`icp-spec/outreach/`](../../icp-spec/outreach/) — 8 partner-specific drafts | — |
+| **Deployment** | [`icp-docker/`](../../icp-docker/) — one-command Docker Compose stack | **17/17 integration PASS** against the live stack |
+| **SDKs** | [`packages/icp-client/`](../../packages/icp-client/) (npm), [`packages/icp-python-client/`](../../packages/icp-python-client/) (PyPI), [`crates/stateset-icp-client/`](../../crates/stateset-icp-client/) (cargo) — 3 first-party clients, byte-identical wire bytes; **all 3 ship `registerWebhook` + `verifyWebhook` + `fetchChannelEvents` + `verifySettlementReceipt`**; JS has full `.d.ts` types | **JS 33/33 · Python 33/33 · Rust 29/29** |
+| **Quickstart** | [`icp-spec/guides/icpip-0005-quickstart.md`](../../icp-spec/guides/icpip-0005-quickstart.md) — side-by-side JS / Python / Rust integration in 5 minutes | — |
 
 Cumulative protocol-layer tests in the ICP conformance workflow (runs
 whenever ICP code changes): **60+ PASS, 0 FAIL** across HTTP, MCP, Settler,
@@ -145,7 +145,7 @@ channels.
   Lightning, Fedwire — all valid.
 - **Not StateSet's product.** Spec is CC-BY-4.0 + Apache-2.0 with RF
   patent grant. ICP Foundation transfers stewardship at incorporation
-  (see [Foundation Charter](./icp-spec/governance/FOUNDATION-CHARTER.md)).
+  (see [Foundation Charter](../../icp-spec/governance/FOUNDATION-CHARTER.md)).
 
 ## Why now
 
@@ -205,11 +205,11 @@ here:
 
 | Read | Time | Outcome |
 |---|---|---|
-| **[PACKET.md](./icp-spec/PACKET.md)** | 8 min | Decision-grade summary; the document for your CEO |
-| [ICP-1.0-DRAFT.md](./icp-spec/ICP-1.0-DRAFT.md) | 30 min | Full normative spec |
-| [PROTOCOL-RFC.md](./icp-spec/PROTOCOL-RFC.md) | 10 min | How ICP composes with your protocol |
-| [FOUNDATION-CHARTER.md](./icp-spec/governance/FOUNDATION-CHARTER.md) | 20 min | What founding membership commits and protects |
-| [RISKS.md](./icp-spec/governance/RISKS.md) | 5 min | Honest risk register |
+| **[PACKET.md](../../icp-spec/PACKET.md)** | 8 min | Decision-grade summary; the document for your CEO |
+| [ICP-1.0-DRAFT.md](../../icp-spec/ICP-1.0-DRAFT.md) | 30 min | Full normative spec |
+| [PROTOCOL-RFC.md](../../icp-spec/PROTOCOL-RFC.md) | 10 min | How ICP composes with your protocol |
+| [FOUNDATION-CHARTER.md](../../icp-spec/governance/FOUNDATION-CHARTER.md) | 20 min | What founding membership commits and protects |
+| [RISKS.md](../../icp-spec/governance/RISKS.md) | 5 min | Honest risk register |
 
 We're explicitly seeking review, criticism, and partnership before
 ICP-1.0 ratification. Structural feedback now is much cheaper than
@@ -229,7 +229,7 @@ after.
 | $10B annualized | 2+ Tier-1 commerce stacks embed ICP | 2029+ |
 
 Detailed reasoning + per-phase preconditions in
-[PACKET.md](./icp-spec/PACKET.md) §"Path to billions."
+[PACKET.md](../../icp-spec/PACKET.md) §"Path to billions."
 
 ## Repository surfaces
 
@@ -272,4 +272,4 @@ long as conformance passes, they interoperate.
 - **Reference contracts** (Solidity): Apache-2.0
 - **Patent policy**: contributors grant a royalty-free, irrevocable
   patent license for any patents reading on necessary ICP
-  implementation. See [FOUNDATION-CHARTER.md §5.2](./icp-spec/governance/FOUNDATION-CHARTER.md).
+  implementation. See [FOUNDATION-CHARTER.md §5.2](../../icp-spec/governance/FOUNDATION-CHARTER.md).

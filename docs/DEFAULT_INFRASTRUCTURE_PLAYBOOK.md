@@ -313,4 +313,4 @@ The winning question is:
 - [Competitive Landscape](./COMPETITIVE_LANDSCAPE.md)
 - [Outcomes Model](./OUTCOMES_MODEL.md)
 - [Agentic Commerce Baseline](./AGENTIC_COMMERCE_BASELINE.md)
-- [Trust Foundation](../TRUST_FOUNDATION.md)
+- [Trust Foundation](src/trust-foundation.md)

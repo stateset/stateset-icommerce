@@ -7,7 +7,6 @@ cd "$ROOT_DIR"
 CURRENT_DOC_PATHS=(
   README.md
   QUICKSTART.md
-  comparison_doc.md
   cli/README.md
   docs/README.md
   docs/src

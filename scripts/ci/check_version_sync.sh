@@ -193,7 +193,7 @@ required_version_snippets=(
   "docs/src/guides/async-vs-sync.md|stateset-embedded = { version = \"${workspace_version}\", features = [\"sqlite\", \"postgres\"] }"
   "docs/src/api/swift.md|from: \"${workspace_version}\""
   "docs/src/advanced/deployment.md|image: stateset/icommerce:${workspace_version}"
-  "TRUST_FOUNDATION.md|The current workspace release line is \`${workspace_version}\`."
+  "docs/src/trust-foundation.md|The current workspace release line is \`${workspace_version}\`."
   "bindings/java/README.md|<version>${workspace_version}</version>"
   "examples/README.md|javac -d . -cp path/to/${java_jar_basename}-${workspace_version}.jar BasicUsage.java"
   "examples/README.md|java -cp .:path/to/${java_jar_basename}-${workspace_version}.jar com.stateset.examples.BasicUsage"

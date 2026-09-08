@@ -3,7 +3,7 @@
 **Mission: make StateSet iCommerce the kernel for how agents on the internet
 buy, sell, and participate in global commerce together.**
 
-*Successor to [PRD_2026.md](./docs/archive/PRD_2026.md). Written 2026-07-14, against
+*Successor to [PRD_2026.md](../archive/PRD_2026.md). Written 2026-07-14, against
 v1.7.0. This is a campaign plan, not a feature list: a kernel wins by
 adoption, and adoption is earned in a specific order.*
 
@@ -13,7 +13,7 @@ adoption, and adoption is earned in a specific order.*
 
 ### Implementation update — September 2026 (source release 1.33.0)
 
-The source tree now includes a [durable Node purchase coordinator](docs/src/durable-purchases.md):
+The source tree now includes a [durable Node purchase coordinator](durable-purchases.md):
 shared exact asset budgets, persisted per-step dispatch, authoritative outcome
 lookup, fenced workers, cancellation and compensation. It also supports
 identity-scoped discovery and bounded recovery scans that leave operator-attention
@@ -26,7 +26,7 @@ buyer's key, rejects replacement intent IDs, aggregates duplicate SKU demand
 before reservation, and computes reference quotes, refund caps and payouts without
 floating-point money. Proposal prices retain precision; payout debits follow
 successful signing; inventory snapshots reflect reservations. See the
-[release gates](docs/src/kernel-release-gates.md) for remaining acceptance criteria.
+[release gates](kernel-release-gates.md) for remaining acceptance criteria.
 Rust, JavaScript and Python clients sign the acceptance envelope. Core economic
 receipts can additionally verify required signer roles against an operator-owned
 key registry, including validity windows and revocation.
@@ -37,7 +37,7 @@ execution paths; durable merchant protocol state; PostgreSQL and language parity
 key lifecycle operations; and measured end-to-end agent task evaluations.
 The campaign below is historical context, not a claim that these gates are done.
 
-The opt-in [durable reference merchant](docs/src/durable-merchant.md) now persists
+The opt-in [durable reference merchant](durable-merchant.md) now persists
 protocol records and replay protection, pins operator identity, and commits
 acceptance and simulated settlement transitions transactionally. Tests kill a
 worker inside acceptance, inject event-write failures and race two merchant

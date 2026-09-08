@@ -27,7 +27,7 @@ dependencies = ["cryptography>=41.0"]
 [project.urls]
 Homepage = "https://github.com/stateset/stateset-icommerce/tree/master/packages/icp-python-client"
 Repository = "https://github.com/stateset/stateset-icommerce.git"
-Documentation = "https://github.com/stateset/stateset-icommerce/blob/master/ICP.md"
+Documentation = "https://github.com/stateset/stateset-icommerce/blob/master/docs/src/icp.md"
 Changelog = "https://github.com/stateset/stateset-icommerce/blob/master/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]

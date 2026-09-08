@@ -109,4 +109,4 @@ Scaffold a full storefront: `npm create stateset-app`.
 - Docs: https://docs.stateset.com (also `/llms.txt`)
 - Tool catalog (generated, authoritative): `cli/docs/TOOLS.md`
 - API references: `docs/src/api/` (rust, node, python, and 8 more)
-- Trust & verifiability model: `TRUST_FOUNDATION.md`
+- Trust & verifiability model: `docs/src/trust-foundation.md`

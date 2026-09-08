@@ -109,6 +109,7 @@ CODEBASE_REVIEW.md
 
 # Admin dashboard local artifacts
 .claude/*.local*
+.claude/LOOP_PROGRESS.md
 target-local/
 target-codex/
 .codex
