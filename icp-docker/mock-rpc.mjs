@@ -159,13 +159,15 @@ export class MockChain {
         return {
           ...base,
           topics: [topic0, this.escrowId, addressTopic(DEFAULTS.buyer)],
-          data: '0x' + uintWord(amount) + encodeStringTail(fields.reason ?? 'refunded on chain'),
+          // head: amount (word 0), reason offset (word 1) → 2 head words.
+          data: '0x' + uintWord(amount) + encodeStringTail(fields.reason ?? 'refunded on chain', 2),
         };
       case 'EscrowDisputed':
         return {
           ...base,
           topics: [topic0, this.escrowId, addressTopic(DEFAULTS.buyer)],
-          data: '0x' + encodeStringTail(fields.reason ?? 'item not as described'),
+          // head: reason offset only (word 0) → 1 head word.
+          data: '0x' + encodeStringTail(fields.reason ?? 'item not as described', 1),
         };
       case 'EscrowResolved':
         return {
@@ -179,11 +181,29 @@ export class MockChain {
   }
 }
 
-/** Encode a dynamic `string` argument: head offset, then length + padded bytes. */
-function encodeStringTail(s) {
+/**
+ * Encode a dynamic `string` argument as Solidity does: an OFFSET in the
+ * argument's head slot, then the length and the UTF-8 bytes in the tail,
+ * padded to the next 32-byte boundary.
+ *
+ * The offset is measured in bytes from the start of `data`, so it depends on
+ * how many head words precede the tail — `headWords × 32`. `EscrowDisputed`
+ * has the string as its only argument (1 head word, offset 32); on
+ * `EscrowRefunded` it follows a uint128 amount (2 head words, offset 64).
+ * Hard-coding 32 makes the decoder read the offset word itself as a length
+ * and hand back 31 NUL bytes instead of the reason, so callers MUST pass the
+ * real head-word count.
+ *
+ * @param {string} s          the string argument
+ * @param {number} headWords  total head words in this event's data section
+ */
+function encodeStringTail(s, headWords) {
+  if (!Number.isInteger(headWords) || headWords < 1) {
+    throw new Error(`encodeStringTail: headWords must be a positive integer, got ${headWords}`);
+  }
   const bytes = Buffer.from(s, 'utf8');
   const padded = bytes.toString('hex').padEnd(Math.ceil(bytes.length / 32) * 64, '0');
-  return uintWord(32) + uintWord(bytes.length) + padded;
+  return uintWord(headWords * 32) + uintWord(bytes.length) + padded;
 }
 
 function parseBlockTag(tag, fallback, head) {

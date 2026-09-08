@@ -17,7 +17,8 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { MockChain, createMockRpcServer, DEFAULTS } from '../mock-rpc.mjs';
-import { EVENT_TOPICS } from '../../services/icp-chain-watcher/src/abi-decoder.mjs';
+import { decodeLog, EVENT_TOPICS } from '../../services/icp-chain-watcher/src/abi-decoder.mjs';
+import { decodedToSettlerEvent } from '../../services/icp-chain-watcher/src/forwarder.mjs';
 
 // The watcher reads STATE_FILE once, at module load, and defaults it to the
 // process CWD. Point it at a temp path *before* that module is evaluated
@@ -159,6 +160,64 @@ test('POST /admin/emit appends a log past the previous head and re-finalizes', a
   assert.equal(logs[0].topics[0], EVENT_TOPICS.EscrowDisputed);
 
   chain.reset();
+});
+
+// ---------------------------------------------------------------------------
+// Encoder ↔ decoder round-trip
+// ---------------------------------------------------------------------------
+//
+// The mock chain is only a useful test double if the real decoder reads back
+// exactly what it wrote. Dynamic `string` arguments are where that breaks:
+// Solidity puts an OFFSET in the argument's head slot and the bytes in the
+// tail, so the offset depends on how many head words precede it —
+// EscrowDisputed's reason is head word 0 (offset 32) while EscrowRefunded's
+// follows a uint128 amount (offset 64). Encoding both as 32 makes the decoder
+// read the offset word as a length and return 31 NULs.
+
+test('EscrowDisputed round-trips its reason through the real decoder', () => {
+  const chain = new MockChain({});
+  const reason = 'item arrived cracked';
+  chain.emit('EscrowDisputed', { reason });
+
+  const decoded = decodeLog(chain.logs[chain.logs.length - 1]);
+  assert.equal(decoded.eventName, 'EscrowDisputed');
+  assert.equal(decoded.escrow_id, DEFAULTS.escrowId);
+  assert.equal(decoded.reason, reason);
+});
+
+test('EscrowRefunded round-trips its reason past the leading uint128', () => {
+  const chain = new MockChain({});
+  const reason = 'buyer changed mind';
+  chain.emit('EscrowRefunded', { amount: '250000000', reason });
+
+  const decoded = decodeLog(chain.logs[chain.logs.length - 1]);
+  assert.equal(decoded.eventName, 'EscrowRefunded');
+  assert.equal(decoded.amount, '250000000');
+  assert.equal(decoded.reason, reason);
+  assert.ok(!decoded.reason.includes('\u0000'), 'decoded reason must not be NUL padding');
+});
+
+test('a reason longer than one word round-trips', () => {
+  const chain = new MockChain({});
+  // 70 bytes — spans three tail words, so the length prefix and the padding
+  // to the next 32-byte boundary both have to be right.
+  const reason = 'the parcel was delivered to the wrong address twice in a single week';
+  chain.emit('EscrowRefunded', { reason });
+
+  assert.equal(decodeLog(chain.logs[chain.logs.length - 1]).reason, reason);
+});
+
+test('every seeded and emitted log decodes to a forwardable event', () => {
+  const chain = new MockChain({});
+  for (const event of ['EscrowDisputed', 'EscrowReleased', 'EscrowRefunded', 'EscrowResolved']) {
+    chain.emit(event, {});
+  }
+  for (const log of chain.logs) {
+    const decoded = decodeLog(log);
+    assert.ok(decoded, `log with topic0 ${log.topics[0]} must decode`);
+    assert.equal(decoded.escrow_id, DEFAULTS.escrowId);
+    assert.ok(decodedToSettlerEvent(decoded), `${decoded.eventName} must map to a settler event`);
+  }
 });
 
 // ---------------------------------------------------------------------------
