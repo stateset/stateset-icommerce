@@ -56,13 +56,19 @@ const PORT = Number(process.env.PORT ?? 8787);
 // ---------------------------------------------------------------------------
 // Nonce replay guard — ICP-1.0-DRAFT §5.3. Keyed on (signer AID, nonce).
 // Sized via env with §5.3-compliant defaults: a 24h TTL (the floor for
-// long-running state transitions) and a 100k-entry LRU bound. Production
-// deployments back this with a shared/durable store; the reference impl is
-// per-process in-memory, which is correct for a single-instance handler.
+// long-running state transitions), a per-signer cap, and a bound on how many
+// distinct signers may hold live nonces. The cap is charged to the signer:
+// a single global bound let one agent's nonce flood fail-closed the handler
+// for every other agent. Production deployments back this with a
+// shared/durable store; the reference impl is per-process in-memory, which is
+// correct for a single-instance handler.
 // ---------------------------------------------------------------------------
 const nonceOptions = {
   ttlMs: Number(process.env.ICP_NONCE_TTL_MS ?? 86_400_000),
-  maxEntries: Number(process.env.ICP_NONCE_MAX_ENTRIES ?? 100_000),
+  maxEntriesPerSigner: Number(
+    process.env.ICP_NONCE_MAX_PER_SIGNER ?? process.env.ICP_NONCE_MAX_ENTRIES ?? 1_000,
+  ),
+  maxSigners: Number(process.env.ICP_NONCE_MAX_SIGNERS ?? 100_000),
 };
 const replayGuard = state.isDurable()
   ? state.durableReplayGuard(nonceOptions)
