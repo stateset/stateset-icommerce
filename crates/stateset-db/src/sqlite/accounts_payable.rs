@@ -552,16 +552,31 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         Ok(page)
     }
 
+    /// Delete a bill, but only while it is still a draft.
+    ///
+    /// Status-guarded DELETE, like `approve_bill` / `cancel_bill`: reading the
+    /// status through a second pooled connection and then deleting
+    /// unconditionally decided on a value nobody held, so an approval that
+    /// committed in between was erased along with the bill it had just
+    /// approved. The existence probe runs only when the guard matched nothing,
+    /// and only to tell "gone" from "not a draft any more".
     fn delete_bill(&self, id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
-        let bill = self.get_bill(id)?.ok_or(CommerceError::NotFound)?;
+        let rows = {
+            let conn = self.conn()?;
+            conn.execute(
+                "DELETE FROM ap_bills WHERE id = ?1 AND status = ?2",
+                params![id.to_string(), BillStatus::Draft.to_string()],
+            )
+            .map_err(map_db_error)?
+        };
 
-        if bill.status != BillStatus::Draft {
-            return Err(CommerceError::ValidationError("Can only delete draft bills".into()));
+        if rows == 0 {
+            return Err(if self.get_bill(id)?.is_some() {
+                CommerceError::Conflict("Can only delete draft bills".into())
+            } else {
+                CommerceError::NotFound
+            });
         }
-
-        conn.execute("DELETE FROM ap_bills WHERE id = ?1", params![id.to_string()])
-            .map_err(map_db_error)?;
         Ok(())
     }
 
@@ -2008,5 +2023,33 @@ mod tests {
     fn get_bill_unknown_returns_none() {
         let repo = fresh_repo();
         assert!(repo.get_bill(Uuid::new_v4()).expect("ok").is_none());
+    }
+
+    /// `delete_bill` read the status through a second pooled connection and
+    /// then deleted unconditionally, so the draft check was a decision on a
+    /// value nobody held: an `approve_bill` that committed in between was
+    /// erased along with the bill it had just approved. The guard now lives in
+    /// the DELETE itself (`AND status = 'draft'`), which reports `Conflict` the
+    /// way `approve_bill` / `cancel_bill` already do.
+    #[test]
+    fn delete_bill_refuses_a_bill_that_is_no_longer_a_draft() {
+        let repo = fresh_repo();
+        let bill = make_bill(&repo, Uuid::new_v4(), dec!(1), dec!(10));
+        repo.approve_bill(bill.id).expect("approve bill");
+
+        let error = repo.delete_bill(bill.id).expect_err("an approved bill must not be deletable");
+        assert!(matches!(error, CommerceError::Conflict(_)), "expected Conflict, got {error:?}");
+        assert!(repo.get_bill(bill.id).expect("get bill").is_some(), "the bill must survive");
+    }
+
+    #[test]
+    fn delete_bill_still_deletes_a_draft_and_still_reports_missing() {
+        let repo = fresh_repo();
+        let bill = make_bill(&repo, Uuid::new_v4(), dec!(1), dec!(10));
+        repo.delete_bill(bill.id).expect("delete draft bill");
+        assert!(repo.get_bill(bill.id).expect("get bill").is_none());
+
+        let error = repo.delete_bill(Uuid::new_v4()).expect_err("a missing bill must not delete");
+        assert!(matches!(error, CommerceError::NotFound), "expected NotFound, got {error:?}");
     }
 }

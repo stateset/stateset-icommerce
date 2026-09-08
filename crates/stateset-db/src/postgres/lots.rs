@@ -1180,14 +1180,27 @@ impl PgLotRepository {
         row.map(Self::row_to_lot).transpose()
     }
 
+    /// Patch a lot.
+    ///
+    /// The state-machine check and the write share one transaction with the lot
+    /// row held `FOR UPDATE` (`load_lot_on`), like `adjust` / `quarantine` /
+    /// `transfer`. Reading the lot on the pool and then writing decided on a
+    /// status nobody held: a `quarantine_async` that committed in between moved
+    /// the lot's serials and inventory into quarantine and this update then
+    /// wrote `recalled` (or `active`) straight over the quarantine status — the
+    /// stock stayed parked while the lot claimed otherwise.
     pub async fn update_async(&self, id: Uuid, input: UpdateLot) -> Result<Lot> {
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Lock the row for the whole method, even when no status is being
+        // edited: the COALESCE write is a read-modify-write of the same row.
+        let lot = Self::load_lot_on(&mut tx, id).await?.ok_or(CommerceError::NotFound)?;
 
         if let Some(status) = input.status {
             // Status edits go through the state machine, and the transitions
             // that move stock (into / out of quarantine) must use the named
             // operations so serials and inventory follow the lot.
-            let lot = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
             if status != lot.status {
                 ensure_transition(&lot, status, "update")?;
                 if status == LotStatus::Quarantine || lot.status == LotStatus::Quarantine {
@@ -1220,9 +1233,11 @@ impl PgLotRepository {
         .bind(input.notes)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }

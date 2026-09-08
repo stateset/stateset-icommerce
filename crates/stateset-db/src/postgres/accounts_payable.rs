@@ -474,18 +474,29 @@ impl PgAccountsPayableRepository {
         rows.into_iter().map(Self::row_to_bill).collect::<Result<Vec<_>>>()
     }
 
+    /// Delete a bill, but only while it is still a draft.
+    ///
+    /// Status-guarded DELETE, like `approve_bill_async` / `cancel_bill_async`:
+    /// reading the status on the pool and then deleting unconditionally decided
+    /// on a value nobody held, so an approval that committed in between was
+    /// erased along with the bill it had just approved. The existence probe runs
+    /// only when the guard matched nothing, and only to tell "gone" from "not a
+    /// draft any more".
     pub async fn delete_bill_async(&self, id: Uuid) -> Result<()> {
-        let bill = self.get_bill_async(id).await?.ok_or(CommerceError::NotFound)?;
-
-        if bill.status != BillStatus::Draft {
-            return Err(CommerceError::ValidationError("Can only delete draft bills".into()));
-        }
-
-        sqlx::query("DELETE FROM ap_bills WHERE id = $1")
+        let deleted = sqlx::query("DELETE FROM ap_bills WHERE id = $1 AND status = $2")
             .bind(id)
+            .bind(BillStatus::Draft.to_string())
             .execute(&self.pool)
             .await
             .map_err(map_db_error)?;
+
+        if deleted.rows_affected() == 0 {
+            return Err(if self.get_bill_async(id).await?.is_some() {
+                CommerceError::Conflict("Can only delete draft bills".into())
+            } else {
+                CommerceError::NotFound
+            });
+        }
 
         Ok(())
     }

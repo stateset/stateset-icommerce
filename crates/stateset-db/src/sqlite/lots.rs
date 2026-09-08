@@ -1218,8 +1218,17 @@ impl LotRepository for SqliteLotRepository {
         }
     }
 
+    /// Patch a lot.
+    ///
+    /// The state-machine check and the write share one IMMEDIATE transaction —
+    /// the lot is loaded through that transaction, not through a second pooled
+    /// connection. Read outside the write, the check decided on a status nobody
+    /// held: a `quarantine` that committed in between moved the lot's serials
+    /// and inventory into quarantine and this update then wrote `recalled` (or
+    /// `active`) straight over the quarantine status.
     fn update(&self, id: Uuid, input: UpdateLot) -> Result<Lot> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = crate::sqlite::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
         let mut updates = vec!["updated_at = ?"];
@@ -1229,7 +1238,7 @@ impl LotRepository for SqliteLotRepository {
             // Status edits go through the state machine, and the transitions
             // that move stock (into / out of quarantine) must use the named
             // operations so serials and inventory follow the lot.
-            let lot = Self::load_lot_on(&conn, id)?.ok_or(CommerceError::NotFound)?;
+            let lot = Self::load_lot_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
             if *status != lot.status {
                 ensure_transition(&lot, *status, "update")?;
                 if *status == LotStatus::Quarantine || lot.status == LotStatus::Quarantine {
@@ -1270,9 +1279,11 @@ impl LotRepository for SqliteLotRepository {
         let sql = format!("UPDATE lots SET {} WHERE id = ?", updates.join(", "));
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
-        conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        let updated = Self::load_lot_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(updated)
     }
 
     fn list(&self, filter: LotFilter) -> Result<Vec<Lot>> {
@@ -4215,5 +4226,99 @@ mod tests {
         assert_eq!(merged.quantity_remaining, dec!(7));
         let parents = repo.get_lot_parents(merged.id).expect("parents");
         assert_eq!(parents.len(), 2);
+    }
+
+    /// `update` read the lot through a second pooled connection and then wrote
+    /// the new status unconditionally, so the state-machine check decided on a
+    /// status nobody held: a `quarantine` that committed in between moved the
+    /// lot's serials and inventory into quarantine and this update then wrote
+    /// straight over the quarantine status. The load and the write now share
+    /// one IMMEDIATE transaction.
+    #[test]
+    fn update_cannot_move_a_quarantined_lot() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-QUAR-UPD", dec!(100));
+        repo.quarantine(lot.id, "inspection").expect("quarantine lot");
+
+        let error = repo
+            .update(lot.id, UpdateLot { status: Some(LotStatus::Active), ..Default::default() })
+            .expect_err("update must not release a quarantined lot");
+        assert!(
+            matches!(error, CommerceError::ValidationError(_) | CommerceError::Conflict(_)),
+            "expected a refusal, got {error:?}"
+        );
+        let stored = repo.get(lot.id).expect("get lot").expect("lot row");
+        assert_eq!(stored.status, LotStatus::Quarantine);
+    }
+
+    #[test]
+    fn update_still_patches_fields_and_legal_transitions() {
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-UPD-OK", dec!(100));
+
+        let noted = repo
+            .update(lot.id, UpdateLot { notes: Some("checked".into()), ..Default::default() })
+            .expect("patch notes");
+        assert_eq!(noted.notes.as_deref(), Some("checked"));
+        assert_eq!(noted.status, LotStatus::Active);
+
+        let recalled = repo
+            .update(lot.id, UpdateLot { status: Some(LotStatus::Recalled), ..Default::default() })
+            .expect("recall via update");
+        assert_eq!(recalled.status, LotStatus::Recalled);
+    }
+
+    /// The same claim at runtime: a quarantine and a status edit released
+    /// together. Exactly one may win — both winning means stock is parked in
+    /// quarantine under a status that says it is not.
+    #[test]
+    fn quarantine_racing_update_admits_exactly_one() {
+        use std::sync::{Arc, Barrier};
+
+        let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory"));
+        for round in 0..40 {
+            let lot = db
+                .lots()
+                .create(CreateLot {
+                    sku: format!("SKU-LOT-RACE-{round}"),
+                    quantity: dec!(100),
+                    initial_location_id: Some(1),
+                    ..Default::default()
+                })
+                .expect("create lot");
+
+            let barrier = Arc::new(Barrier::new(2));
+            let quarantining = {
+                let (db, barrier, id) = (Arc::clone(&db), Arc::clone(&barrier), lot.id);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    db.lots().quarantine(id, "inspection")
+                })
+            };
+            let updating = {
+                let (db, barrier, id) = (Arc::clone(&db), Arc::clone(&barrier), lot.id);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    db.lots().update(
+                        id,
+                        UpdateLot { status: Some(LotStatus::Recalled), ..Default::default() },
+                    )
+                })
+            };
+            let quarantined = quarantining.join().expect("quarantine thread").is_ok();
+            let updated = updating.join().expect("update thread").is_ok();
+
+            assert!(
+                quarantined ^ updated,
+                "round {round}: exactly one of quarantine and update may win \
+                 (quarantine={quarantined}, update={updated})"
+            );
+            let stored = db.lots().get(lot.id).expect("get lot").expect("lot row");
+            let expected = if quarantined { LotStatus::Quarantine } else { LotStatus::Recalled };
+            assert_eq!(
+                stored.status, expected,
+                "round {round}: the winner's status must be on disk"
+            );
+        }
     }
 }
