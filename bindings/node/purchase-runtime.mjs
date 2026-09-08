@@ -656,6 +656,54 @@ export class PurchaseRuntime {
  * readReceipt must read durable receipts from the SAME store as commerce.
  * buildPayload and evidence are trusted host functions, never model arguments.
  */
+/**
+ * Derive the economic commitment a governed kernel evaluates policy against,
+ * from the quote the operation already accepted.
+ *
+ * Without a commitment the kernel has nothing to compare a `max_amount`,
+ * `max_quantity`, `max_asset_amount` or counterparty rule to, and answers
+ * `policy.commitment_amount_required` — a money-governed kernel would reject
+ * every purchase step regardless of the quoted price. The commitment is
+ * derived from trusted operation state, never from a model argument.
+ *
+ * A fiat quote (`currency`, ISO-4217) commits money against the operation's
+ * budget; a token quote (`asset`) commits the asset, and the kernel refuses a
+ * fiat budget alongside one. Returns `null` when the operation carries no
+ * quote, so a host driving the adapter directly is unchanged.
+ */
+export function quoteCommitment(operation) {
+  const quote = operation?.quote;
+  if (!quote || quote.amount === undefined || quote.amount === null) return null;
+  units(quote.amount); // reject anything that is not an exact decimal string
+  // Only a budget the QUOTE names. `request.budgetId` is this runtime's own
+  // token budget ledger, a different namespace from the kernel's provisioned
+  // economic budgets — naming one the kernel does not know rejects the command
+  // with `kernel.budget_not_found`.
+  const budgetId = quote.budgetId ?? null;
+  const counterparty = quote.counterpartyId ?? quote.sellerId ?? null;
+  const commitment = {
+    budget_id: null,
+    amount: null,
+    asset_amount: null,
+    counterparty_id: typeof counterparty === 'string' && counterparty.trim() ? counterparty : null,
+    quantity:
+      quote.quantity === undefined || quote.quantity === null
+        ? null
+        : decimal(units(String(quote.quantity))),
+    evidence: typeof quote.id === 'string' && quote.id.trim() ? [quote.id] : [],
+  };
+  if (typeof quote.currency === 'string' && /^[A-Z]{3}$/.test(quote.currency)) {
+    commitment.amount = { amount: quote.amount, currency: quote.currency };
+    if (typeof budgetId === 'string' && budgetId.trim()) commitment.budget_id = budgetId;
+    return commitment;
+  }
+  if (typeof quote.asset === 'string' && quote.asset.trim()) {
+    commitment.asset_amount = { amount: quote.amount, asset: quote.asset };
+    return commitment;
+  }
+  return null;
+}
+
 export function createKernelPurchaseAdapter({
   commerce,
   policy,
@@ -665,6 +713,8 @@ export function createKernelPurchaseAdapter({
   buildPayload,
   readReceipt,
   evidence,
+  mandate = null,
+  commitment = quoteCommitment,
 }) {
   const trustedPolicy = structuredClone(policy);
   const trustedPrincipal = structuredClone(principal);
@@ -673,6 +723,10 @@ export function createKernelPurchaseAdapter({
   for (const fn of [buildPayload, readReceipt, evidence]) {
     if (typeof fn !== 'function') throw new Error('kernel adapter functions are required');
   }
+  // Mandate and commitment are host configuration, exactly like policy and
+  // principal: either a fixed value or a function of the trusted operation.
+  const resolve = (source, operation) =>
+    typeof source === 'function' ? source(structuredClone(operation)) : (source ?? null);
   function project(receipt, context) {
     if (!receipt) return { status: 'not_found' };
     if (receipt.command_type !== commandType) throw new Error('kernel receipt command mismatch');
@@ -704,6 +758,8 @@ export function createKernelPurchaseAdapter({
             policy_version: trustedPolicy.version,
             mode: 'apply',
             issued_at: context.operation.createdAt,
+            mandate: await resolve(mandate, context.operation),
+            commitment: await resolve(commitment, context.operation),
             payload: buildPayload(context.operation),
           },
           trustedPolicy,
