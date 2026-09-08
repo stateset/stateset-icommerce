@@ -5,7 +5,10 @@
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {
-    "./canonical-json": "./canonical-json.mjs",
+    "./canonical-json": {
+      "types": "./canonical-json.d.ts",
+      "default": "./canonical-json.mjs"
+    },
     "./purchase-runtime": {
       "types": "./purchase-runtime.d.ts",
       "default": "./purchase-runtime.mjs"

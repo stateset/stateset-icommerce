@@ -4,7 +4,7 @@
 # Cargo.lock is committed for reproducible builds
 
 # Node.js
-node_modules/
+node_modules
 *.node
 npm-debug.log*
 yarn-debug.log*
