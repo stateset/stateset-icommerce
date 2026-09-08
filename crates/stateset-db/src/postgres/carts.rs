@@ -1386,8 +1386,25 @@ impl PgCartRepository {
         self.recalculate_async(id).await
     }
 
+    /// Move a cart to `ready_for_payment`.
+    ///
+    /// The readiness check and the status flip run in one transaction with the
+    /// cart row held (`FOR NO KEY UPDATE`, like checkout), and the write is
+    /// guarded on the same set of statuses the check permits. Read on the pool
+    /// and written unconditionally, the check decided on a status nobody held:
+    /// a `cancel` / `abandon` / `expire` committing in between was overwritten
+    /// and a cart the shopper had killed came back as `ready_for_payment`.
     pub async fn mark_ready_for_payment_async(&self, id: Uuid) -> Result<Cart> {
-        let cart = self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let row = Self::lock_cart_in_tx(&mut tx, id).await?;
+        let item_rows: Vec<CartItemRow> =
+            sqlx::query_as("SELECT * FROM cart_items WHERE cart_id = $1 ORDER BY created_at")
+                .bind(id)
+                .fetch_all(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let cart = row.into_cart(item_rows.into_iter().map(Into::into).collect())?;
 
         if !cart.is_ready_for_checkout() {
             return Err(CommerceError::ValidationError(
@@ -1395,12 +1412,22 @@ impl PgCartRepository {
             ));
         }
 
-        sqlx::query("UPDATE carts SET status = 'ready_for_payment', updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let updated = sqlx::query(
+            "UPDATE carts SET status = 'ready_for_payment', updated_at = $1
+             WHERE id = $2 AND status IN ('active', 'ready_for_payment', 'payment_pending')",
+        )
+        .bind(Utc::now())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Cart is no longer in a state that can be marked ready for payment".to_string(),
+            ));
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }

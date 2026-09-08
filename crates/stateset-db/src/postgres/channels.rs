@@ -125,12 +125,38 @@ impl PgChannelRepository {
         self.fetch_async(id.into()).await
     }
 
+    /// Load a channel for update, holding its row for the rest of `tx`.
+    ///
+    /// Every merge-semantics write reads the whole row and writes the whole row
+    /// back, so the read and the write have to be one step: otherwise a
+    /// concurrent `set_lock` / `delete` / `update` that lands between them is
+    /// silently overwritten by this call's stale copy.
+    async fn lock_channel_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+    ) -> Result<Channel> {
+        let row =
+            sqlx::query_as::<_, ChannelRow>("SELECT * FROM channels WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        Self::row_to_channel(row)
+    }
+
     /// Update a channel with PATCH/merge semantics (async).
     ///
     /// Rejects mutations on API-locked channels with `Conflict`, mirroring
-    /// the SQLite implementation.
+    /// the SQLite implementation. The lock check, the merge and the write share
+    /// one transaction with the row held `FOR UPDATE`, and the write is guarded
+    /// on `api_locked = false` as well: read on the pool and written
+    /// unconditionally, a `set_lock` committing in between was ignored (the
+    /// locked channel was mutated anyway) and a concurrent `delete` was undone,
+    /// because the merge wrote back every column from a stale snapshot.
     pub async fn update_async(&self, id: ChannelId, input: UpdateChannel) -> Result<Channel> {
-        let existing = self.fetch_async(id.into()).await?.ok_or(CommerceError::NotFound)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let existing = Self::lock_channel_in_tx(&mut tx, id.into()).await?;
         if existing.api_locked {
             return Err(CommerceError::Conflict("channel is API-locked".into()));
         }
@@ -147,8 +173,8 @@ impl PgChannelRepository {
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let metadata = input.metadata.unwrap_or(existing.metadata);
 
-        sqlx::query(
-            "UPDATE channels SET name = $1, integration = $2, status = $3, default_warehouse_id = $4, tags = $5, metadata = $6, updated_at = $7 WHERE id = $8",
+        let updated = sqlx::query(
+            "UPDATE channels SET name = $1, integration = $2, status = $3, default_warehouse_id = $4, tags = $5, metadata = $6, updated_at = $7 WHERE id = $8 AND api_locked = false",
         )
         .bind(&name)
         .bind(&integration)
@@ -158,9 +184,14 @@ impl PgChannelRepository {
         .bind(&metadata)
         .bind(now)
         .bind(Uuid::from(id))
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict("channel is API-locked".into()));
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.fetch_async(id.into()).await?.ok_or(CommerceError::NotFound)
     }
@@ -212,22 +243,27 @@ impl PgChannelRepository {
     }
 
     /// Soft-delete a channel (async). Errors if the channel is API-locked.
+    ///
+    /// Lock-guarded UPDATE: reading `api_locked` on the pool and then writing
+    /// decided on a value nobody held, so a `set_lock` committing in between
+    /// was ignored and the locked channel was deleted anyway. The existence
+    /// probe runs only when the guard matched nothing, and only to tell
+    /// "gone" from "locked".
     pub async fn delete_async(&self, id: ChannelId) -> Result<()> {
-        let locked: Option<bool> =
-            sqlx::query_scalar("SELECT api_locked FROM channels WHERE id = $1")
-                .bind(Uuid::from(id))
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(map_db_error)?;
-        let locked = locked.ok_or(CommerceError::NotFound)?;
-        if locked {
-            return Err(CommerceError::Conflict("channel is API-locked".into()));
+        let updated = sqlx::query(
+            "UPDATE channels SET status = 'deleted' WHERE id = $1 AND api_locked = false",
+        )
+        .bind(Uuid::from(id))
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(if self.fetch_async(id.into()).await?.is_some() {
+                CommerceError::Conflict("channel is API-locked".into())
+            } else {
+                CommerceError::NotFound
+            });
         }
-        sqlx::query("UPDATE channels SET status = 'deleted' WHERE id = $1")
-            .bind(Uuid::from(id))
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
         Ok(())
     }
 

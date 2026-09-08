@@ -141,18 +141,85 @@ impl PgInboundShipmentRepository {
         self.load_full(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Lock the inbound-shipment head row for the rest of the transaction and
+    /// return its current status.
+    ///
+    /// Every write path that touches both the head and its lines takes this
+    /// lock FIRST, so all of them acquire row locks in the same order (head,
+    /// then lines) and cannot deadlock against each other. Returning the status
+    /// under the lock is what lets callers decide on a value nobody can change
+    /// underneath them.
+    async fn lock_shipment(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        id: InboundShipmentId,
+    ) -> Result<InboundShipmentStatus> {
+        let locked: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM inbound_shipments WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let (status,) = locked.ok_or(CommerceError::NotFound)?;
+        status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid inbound_shipment.status '{status}': {e}"))
+        })
+    }
+
+    /// Load a shipment and its lines through the given transaction, so the read
+    /// sees this transaction's own uncommitted writes.
+    async fn load_full_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        id: InboundShipmentId,
+    ) -> Result<InboundShipment> {
+        let row = sqlx::query_as::<_, ShipmentRow>("SELECT * FROM inbound_shipments WHERE id = $1")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        let mut head = Self::row_to_head(row)?;
+        let items = sqlx::query_as::<_, ItemRow>(
+            "SELECT * FROM inbound_shipment_items WHERE inbound_shipment_id = $1 ORDER BY sku",
+        )
+        .bind(id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        head.items = items.into_iter().map(Self::row_to_item).collect();
+        Ok(head)
+    }
+
+    /// Advance a shipment's status, refusing to move a cancelled one.
+    ///
+    /// The precondition is in the write, so it cannot be separated from the act.
+    /// Without it `receive_line_async`'s cancelled-shipment refusal was trivially
+    /// bypassable: `cancel` then `mark_arrived` put the ASN back into a live
+    /// status and the next receipt booked stock against a shipment nobody
+    /// expected to take delivery of.
     async fn set_status(
         &self,
         id: InboundShipmentId,
         status: InboundShipmentStatus,
     ) -> Result<InboundShipment> {
-        sqlx::query("UPDATE inbound_shipments SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(status.to_string())
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let updated = sqlx::query(
+            "UPDATE inbound_shipments SET status = $1, updated_at = $2
+             WHERE id = $3 AND status <> 'cancelled'",
+        )
+        .bind(status.to_string())
+        .bind(Utc::now())
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(if self.load_full(id).await?.is_some() {
+                CommerceError::Conflict(
+                    "Cannot change the status of a cancelled inbound shipment".into(),
+                )
+            } else {
+                CommerceError::NotFound
+            });
+        }
         self.require_full(id).await
     }
 
@@ -261,6 +328,22 @@ impl PgInboundShipmentRepository {
     }
 
     /// Receive a quantity against a single line, advancing the shipment status.
+    ///
+    /// The read of the line, the over-receipt check, the write and the derived
+    /// head status all happen inside ONE transaction, with the shipment head and
+    /// the line locked `FOR UPDATE`, and the write is an INCREMENT rather than
+    /// an absolute quantity. Run as separate autocommit statements, two
+    /// receivers scanning the same ASN line both read the same
+    /// `quantity_received`, both passed the cap check and both wrote the same
+    /// absolute total: the dock took in twice the units and recorded one lot of
+    /// them, and concurrent partial receipts overwrote each other instead of
+    /// accumulating. Neither self-corrected, because the write was absolute.
+    ///
+    /// Locking the HEAD (not only the line) also serializes receipts against
+    /// different lines of the same shipment, so the status derived from all
+    /// lines cannot be computed from a stale snapshot that leaves a fully
+    /// received shipment stuck in `partially_received` — and it is what lets the
+    /// cancelled-status check below mean something.
     pub async fn receive_line_async(
         &self,
         id: InboundShipmentId,
@@ -272,12 +355,20 @@ impl PgInboundShipmentRepository {
         }
         let now = Utc::now();
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let status = Self::lock_shipment(&mut tx, id).await?;
+        if status == InboundShipmentStatus::Cancelled {
+            return Err(CommerceError::ValidationError(
+                "Cannot receive against a cancelled inbound shipment".into(),
+            ));
+        }
+
         let row: Option<(Decimal, Decimal)> = sqlx::query_as(
-            "SELECT quantity_expected, quantity_received FROM inbound_shipment_items WHERE id = $1 AND inbound_shipment_id = $2",
+            "SELECT quantity_expected, quantity_received FROM inbound_shipment_items WHERE id = $1 AND inbound_shipment_id = $2 FOR UPDATE",
         )
         .bind(item_id)
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?;
         let Some((expected, current)) = row else {
@@ -286,17 +377,21 @@ impl PgInboundShipmentRepository {
         let new_received = current + quantity;
         if new_received > expected {
             return Err(CommerceError::ValidationError(format!(
-                "receiving {quantity} would exceed the {expected} expected on this line"
+                "receiving {quantity} would exceed the {expected} expected on this line ({current} already received)"
             )));
         }
-        sqlx::query("UPDATE inbound_shipment_items SET quantity_received = $1 WHERE id = $2")
-            .bind(new_received)
-            .bind(item_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE inbound_shipment_items SET quantity_received = quantity_received + $1 WHERE id = $2",
+        )
+        .bind(quantity)
+        .bind(item_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
-        let shipment = self.require_full(id).await?;
+        // Recompute the head status from line receipts, still under the same
+        // locks and reading this transaction's own write.
+        let shipment = Self::load_full_tx(&mut tx, id).await?;
         let derived = shipment.derive_receipt_status();
         let received_at = if derived == InboundShipmentStatus::Received { Some(now) } else { None };
         sqlx::query(
@@ -306,26 +401,41 @@ impl PgInboundShipmentRepository {
         .bind(received_at)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.require_full(id).await
     }
 
     /// Cancel an inbound shipment.
+    ///
+    /// The terminal-state guard reads the status and the cancel writes it, so
+    /// both happen in one transaction with the head row locked `FOR UPDATE`.
+    /// Split across two autocommit statements the guard decided on a status
+    /// nobody held: concurrent cancels each saw a live shipment and each wrote,
+    /// and a cancel could land on a shipment that became `received` after the
+    /// check — leaving a cancelled ASN holding received stock.
     pub async fn cancel_async(&self, id: InboundShipmentId) -> Result<InboundShipment> {
-        let current = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
-        if matches!(
-            current.status,
-            InboundShipmentStatus::Received | InboundShipmentStatus::Cancelled
-        ) {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let status = Self::lock_shipment(&mut tx, id).await?;
+        if status.is_terminal() {
             return Err(CommerceError::ValidationError(format!(
-                "Cannot cancel an inbound shipment in status {}",
-                current.status
+                "Cannot cancel an inbound shipment in status {status}"
             )));
         }
-        self.set_status(id, InboundShipmentStatus::Cancelled).await
+        sqlx::query(
+            "UPDATE inbound_shipments SET status = 'cancelled', updated_at = $1 WHERE id = $2",
+        )
+        .bind(Utc::now())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
+        self.require_full(id).await
     }
 }
 
