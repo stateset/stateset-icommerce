@@ -6,6 +6,8 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.34.0] - 2026-09-08
+
 ### Added
 
 - Kernel quantity policy is now bound to what the executor observes: `max_quantity`
@@ -77,6 +79,18 @@ This project follows Keep a Changelog and Semantic Versioning.
 - `/inbound-shipments/{id}/in-transit` and `/arrived` return 409 on a cancelled shipment.
 - Node binding: `err.code` replaces `GenericFailure` for every failure class and
   validation failures use napi status `InvalidArg`. Messages are byte-identical.
+  `err.details.httpStatus` now mirrors the HTTP layer (`VALIDATION` 422, `EXTERNAL_SERVICE`
+  500); a malformed `amount` on payment create/refund is `VALIDATION`, not `INTERNAL`.
+- ICP handler refuses to start with implicit demo trust under `NODE_ENV=production`;
+  set `ICP_TRUST_MODE=demo` explicitly for walkthroughs (the compose stack does).
+- SQLite invoice and purchase-order deletes of non-draft documents return `Conflict`,
+  matching Postgres; `/inbound-shipments/{id}/in-transit` and `/arrived` document 404/409.
+- Kernel: `inventory.item.create` is quantity-bindable; `inventory.reservation.confirm`
+  binds the clamped movement, so declaring the reservation quantity on an over-request
+  succeeds and declaring the over-request fails.
+- Marketplace bridge dead-letters `VALIDATION` / `PRECONDITION_FAILED` / `NOT_FOUND`
+  binding errors on the first attempt; `PoisonAwardError` is exported.
+- Linux `@stateset/embedded` binaries are built with the `release-node` profile.
 - ICP handler: trust enforcement is selected by `ICP_TRUST_MODE` only; `--demo`
   no longer disables it. A durable handler without `ICP_TRUST_MODE` enforces.
 - A budget provisioned before this release with sub-microsecond timestamps will

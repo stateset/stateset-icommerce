@@ -9,7 +9,7 @@
 #   * v1.31.0 and v1.32.0 were pushed with only the `v*` tag, so npm and PyPI
 #     stayed on 1.30.0 while crates.io moved on. The three tags are now created
 #     and pushed together or not at all.
-#   * v1.33.0 was tagged from a non-master branch whose required checks were
+#   * v1.34.0 was tagged from a non-master branch whose required checks were
 #     red. HEAD must now equal origin/master and every branch-protection
 #     required context must be green on that exact commit.
 #   * Release hygiene (version sync across ~20 surfaces) is re-run here so a

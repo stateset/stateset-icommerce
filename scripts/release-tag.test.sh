@@ -204,7 +204,7 @@ echo "==> rejects HEAD that is not origin/master"
 reset_state
 FAKE_REMOTE_SHA="$OTHER_SHA"
 run_release_tag "1.34.0" --dry-run
-assert_status 1 "tagging off the protected branch must abort (the v1.33.0 failure)"
+assert_status 1 "tagging off the protected branch must abort (the v1.34.0 failure)"
 assert_output_contains "is not origin/master" "the branch error must name the remote branch"
 
 echo "==> rejects a failing release-hygiene gate"
@@ -217,7 +217,7 @@ echo "==> rejects a red required check"
 reset_state
 printf 'Formatting\tcompleted\tfailure\t2026-09-08T11:00:00Z\n' >>"$FAKE_CHECK_RUNS_FILE"
 run_release_tag "1.34.0" --dry-run
-assert_status 1 "a red required check must abort the release (the v1.33.0 failure)"
+assert_status 1 "a red required check must abort the release (the v1.34.0 failure)"
 assert_output_contains "required check not green: Formatting" "the red check must be named"
 
 echo "==> rejects a required check that never reported"

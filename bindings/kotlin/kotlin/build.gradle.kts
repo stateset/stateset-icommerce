@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "com.stateset"
-version = "1.33.0"
+version = "1.34.0"
 
 repositories {
     mavenCentral()

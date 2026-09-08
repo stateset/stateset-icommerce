@@ -158,7 +158,7 @@ echo "==> rejects a commit that is not on master"
 reset_state
 FAKE_IS_ANCESTOR=0
 run_guard
-assert_status 1 "publishing from a commit that never landed must fail (the v1.33.0 failure)"
+assert_status 1 "publishing from a commit that never landed must fail (the v1.34.0 failure)"
 assert_output_contains "is not an ancestor of origin/master" "the ancestry failure must be explicit"
 
 echo "==> rejects a release whose sibling tags are missing"
@@ -181,7 +181,7 @@ echo "==> rejects a red required check"
 reset_state
 printf 'CI Success\tcompleted\tfailure\t2026-09-08T10:00:00Z\n' >"$FAKE_CHECK_RUNS_FILE"
 run_guard
-assert_status 1 "a red required check must block the publish (the v1.33.0 failure)"
+assert_status 1 "a red required check must block the publish (the v1.34.0 failure)"
 assert_output_contains "required checks are not green" "the check failure must be summarised"
 
 echo "==> reports every problem at once"

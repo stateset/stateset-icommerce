@@ -7,10 +7,10 @@
 # Every publish workflow (crates.io, npm, PyPI, sigstore signing) runs this
 # first. It fails unless all four hold:
 #
-#   1. the tagged commit is an ancestor of origin/master (v1.33.0 was published
+#   1. the tagged commit is an ancestor of origin/master (v1.34.0 was published
 #      from a branch commit that never landed);
 #   2. every branch-protection required check is green on that commit
-#      (v1.33.0's required check was red);
+#      (v1.34.0's required check was red);
 #   3. the three sibling tags v/cli-v/py-v all exist (v1.31.0 and v1.32.0
 #      shipped with only `v*`, leaving npm and PyPI a release behind);
 #   4. all three point at that same commit.
