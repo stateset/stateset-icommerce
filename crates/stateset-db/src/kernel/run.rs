@@ -452,8 +452,7 @@ mod tests {
         });
         let policy = KernelPolicy::new("p1").allow(
             "orders.transition",
-            KernelCommandPolicy::requiring([] as [&str; 0])
-                .with_max_quantity(Decimal::new(50, 0)),
+            KernelCommandPolicy::requiring([] as [&str; 0]).with_max_quantity(Decimal::new(50, 0)),
         );
 
         let run = CommandRun::prepare(
@@ -477,12 +476,9 @@ mod tests {
 
     #[test]
     fn quantity_rules_reach_the_observed_binding_layer_for_bound_commands() {
-        for command_type in [
-            "inventory.reserve",
-            "inventory.reservation.confirm",
-            "checkout.commit",
-            "orders.ship",
-        ] {
+        for command_type in
+            ["inventory.reserve", "inventory.reservation.confirm", "checkout.commit", "orders.ship"]
+        {
             let mut command = CommandEnvelope::preview(
                 command_type,
                 "quantity-binding-supported",
