@@ -16,9 +16,9 @@ and what to do when a lane is genuinely broken.
 ## Before you tag
 
 1. Bump versions across the workspace and bindings (`scripts/release-bump.sh`).
-   Ignore the checklist that script prints when it finishes — it predates this
-   page and still names a README section that no longer exists and manual tag
-   pushes. The steps below supersede it; tags go through `npm run release:tag`.
+   The checklist it prints when it finishes is the same flow as this page: add
+   the CHANGELOG entry, run the hygiene gate, land it on `master`, then
+   `npm run release:tag`, then sync the lockfiles after the publishes land.
 2. Update `CHANGELOG.md`.
 3. Refresh anything in `docs/src/` the release changes.
 4. Run the local preflight: `npm run check:release`.
@@ -54,6 +54,26 @@ When it accepts, it pushes all three tags atomically:
 Do not push these tags by hand. A tag pushed outside the script is the one case
 the guards below exist to catch.
 
+### After the publishes land
+
+`bindings/node/package.json` pins each `@stateset/embedded-<platform>`
+optionalDependency at the exact version, so its lockfile cannot be regenerated
+until those packages exist on npm. Between the publish and the lockfile sync,
+`npm ci` in `bindings/node` fails on **every** branch — which takes CLI Tests,
+Node Bindings and Storefront Golden Path red repo-wide. Nothing automates this
+any more (the `sync-npm-lockfiles` bot job was removed), so it is a manual step
+and it is urgent:
+
+```bash
+bash scripts/release-bump.sh --sync-locks     # regenerates + verifies npm ci
+git add bindings/node/package-lock.json
+git commit -m "chore: sync npm lockfiles for X.Y.Z"
+```
+
+Open that as a pull request and **merge it before any other PR**: until it
+lands, every other branch is red for a reason that has nothing to do with its
+own changes.
+
 ### The publish guard
 
 Every publish workflow runs a **publish-guard** job first, and the publishing
@@ -73,15 +93,25 @@ out.
 
 ### The daily consistency check
 
-`.github/workflows/release-consistency.yml` runs daily. It compares the
-workspace version against what crates.io, npm, and PyPI actually serve, and
-fails when they disagree. This is the backstop that catches a publish that
-silently did not happen — the failure mode that left npm and PyPI on 1.30.0
-through two releases.
+`.github/workflows/release-consistency.yml` runs daily. It compares the **latest
+reachable `v*` tag** — not the workspace version in `Cargo.toml` — against what
+crates.io, npm, and PyPI actually serve, and fails when they disagree. That is
+deliberate: a bumped-but-untagged workspace is a release in progress, while a
+tag with a registry behind it is a release that did not finish. It is the
+backstop that catches a publish that silently did not happen — the failure mode
+that left npm and PyPI on 1.30.0 through two releases.
 
 If it fires, re-run the failing lane's publish workflow via
 `workflow_dispatch` with the version input; do not cut a new version to paper
-over a missing publish.
+over a missing publish. Dispatch it **from the tag ref**, not from `master` —
+the publish jobs check out `github.ref` and would otherwise build the wrong
+commit:
+
+```bash
+gh workflow run publish-cli.yml   --ref cli-vX.Y.Z -f version=X.Y.Z
+gh workflow run publish-python.yml --ref py-vX.Y.Z  -f version=X.Y.Z
+gh workflow run publish-rust-crates.yml --ref vX.Y.Z -f version=X.Y.Z
+```
 
 ---
 
@@ -214,10 +244,10 @@ run's logs first — a registry rejection and a workflow that never started look
 the same from the outside.
 
 **`npm ci` fails on every branch right after a release.** `package.json` names
-the new version while the lockfiles still pin the old platform packages. Merge
-the `automation/sync-locks-vX.Y.Z` pull request first, then merge `master` into
-your branch. Its workflow runs sit in `action_required` because it is a bot
-branch and need approving by run id.
+the new version while the lockfiles still pin the old platform packages. This is
+the manual step under "After the publishes land": run
+`bash scripts/release-bump.sh --sync-locks`, land that lockfile commit on
+`master` first, then merge `master` into your branch.
 
 **RubyGems push fails.** `gem signin`, then verify the gem builds and installs
 locally: `gem build stateset_embedded.gemspec && gem install stateset_embedded-*.gem --local`.
