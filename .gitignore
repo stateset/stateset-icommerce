@@ -125,3 +125,7 @@ lcov.info
 
 # Local performance-research harness state (points at out-of-tree tooling)
 .autoresearch/
+
+# local tooling
+.worktrees/
+.superpowers/
