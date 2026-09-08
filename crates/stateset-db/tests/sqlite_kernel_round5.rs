@@ -7,11 +7,12 @@
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_core::{
-    ApprovalEvidence, CommandEnvelope, CommerceError, CreateCustomer, CreateInventoryItem,
-    CreateOrder, CreateOrderItem, CreatePayment, CustomerRepository, ExecutionMode,
-    ExecutionStatus, InventoryRepository, KernelCommandPolicy, KernelPolicy, KernelPrincipal,
-    OrderId, OrderRepository, OrderStatus, Payment, PaymentMethodType, PaymentRepository,
-    PaymentTransactionStatus, PrincipalKind, ProductId, RetryDisposition, TransitionOrder,
+    ApprovalEvidence, CartId, CommandEnvelope, CommerceError, CommitCheckout, CreateCustomer,
+    CreateInventoryItem, CreateOrder, CreateOrderItem, CreatePayment, CustomerRepository,
+    ExecutionMode, ExecutionStatus, InventoryRepository, KernelCommandPolicy, KernelPolicy,
+    KernelPrincipal, OrderId, OrderRepository, OrderStatus, Payment, PaymentMethodType,
+    PaymentRepository, PaymentTransactionStatus, PrincipalKind, ProductId, RetryDisposition,
+    TransitionOrder,
 };
 use stateset_db::SqliteDatabase;
 use uuid::Uuid;
@@ -450,4 +451,43 @@ fn payment_preview_runs_every_check_apply_runs() {
         db.kernel_executor(policy()).execute_create_payment(&ok).expect("preview within capacity");
     assert_eq!(receipt.status, ExecutionStatus::Previewed);
     assert_eq!(count(&db, "SELECT COUNT(*) FROM payments"), before);
+}
+
+/// `checkout.commit` against a cart that does not exist must be a *sealed*
+/// domain rejection carrying `commerce.checkout.cart_not_found` — the code
+/// `checkout_error_code` already names for `CommerceError::NotFound`, and the
+/// one the Postgres executor produces — not a bare error out of the executor.
+///
+/// The SQLite money re-derivation returned rusqlite's `QueryReturnedNoRows`
+/// unwrapped, and the executor's `sqlite_commerce_error` downcast only sees a
+/// `CommerceError` boxed inside `ToSqlConversionFailure`. The missing cart
+/// therefore escaped as `Err(CommerceError::NotFound)` on SQLite while
+/// Postgres sealed a receipt, which is a cross-backend divergence:
+/// `postgres_kernel_round5::postgres_and_sqlite_agree_on_domain_rejections_for_every_op_kind`
+/// is its cross-backend twin.
+#[test]
+fn checkout_commit_on_a_missing_cart_is_a_sealed_rejection() {
+    let db = db();
+    let checkout_policy = KernelPolicy::new("commerce-policy-1")
+        .allow("checkout.commit", KernelCommandPolicy::requiring(["checkout.commit"]));
+
+    for mode in [ExecutionMode::Apply, ExecutionMode::Preview] {
+        let mut checkout = command(
+            "checkout.commit",
+            &format!("missing-cart-{}", Uuid::new_v4()),
+            CommitCheckout::new(CartId::new()),
+        );
+        checkout.mode = mode;
+        let receipt = db
+            .kernel_executor(checkout_policy.clone())
+            .execute_commit_checkout(&checkout)
+            .expect("a missing cart is a domain rejection, not a propagated error");
+        assert_eq!(receipt.status, ExecutionStatus::Rejected, "{mode:?}: {receipt:?}");
+        assert_eq!(
+            receipt.error_code.as_deref(),
+            Some("commerce.checkout.cart_not_found"),
+            "{mode:?}: {receipt:?}"
+        );
+        assert_eq!(receipt.retry, RetryDisposition::Never, "{mode:?}");
+    }
 }
