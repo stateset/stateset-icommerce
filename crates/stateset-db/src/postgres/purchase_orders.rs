@@ -732,7 +732,7 @@ impl PgPurchaseOrderRepository {
     /// Delete a purchase order, but only while it is still a draft.
     ///
     /// The draft check and the two deletes now run in one transaction with the
-    /// PO row held by [`Self::locked_status`]. Before, the status was read on
+    /// PO row held by `locked_status`. Before, the status was read on
     /// the pool and the deletes ran as two more autocommit statements: a
     /// `submit_for_approval` / `approve` that committed in between was erased
     /// along with the PO it had just put in flight, and the items delete could

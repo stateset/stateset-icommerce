@@ -159,7 +159,7 @@ impl SqliteInboundShipmentRepository {
     /// Advance a shipment's status, refusing to move a cancelled one.
     ///
     /// The precondition is in the write, so it cannot be separated from the act.
-    /// Without it [`Self::receive_line`]'s cancelled-shipment refusal was
+    /// Without it `receive_line`'s cancelled-shipment refusal was
     /// trivially bypassable: `cancel` then `mark_arrived` put the ASN back into
     /// a live status and the next receipt booked stock against a shipment nobody
     /// expected to take delivery of.
