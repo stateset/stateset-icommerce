@@ -8,9 +8,16 @@
 #   docker compose up -d
 #   curl http://127.0.0.1:8787/icp/v1/.well-known/icp | jq
 #   curl http://127.0.0.1:8788/.well-known/icp-settler | jq
+#   curl http://127.0.0.1:8789/healthz | jq   # chain-watcher
+#   curl http://127.0.0.1:8790/healthz | jq   # mock EVM RPC
 #
 # Tear down:
 #   docker compose down
+#
+# The chain-watcher runs the settler's chain mode against a mock EVM RPC that
+# serves genuinely ABI-encoded ICPEscrow logs: the watcher decodes them with
+# its real decoder and forwards them to the real settler. That is the one
+# path the stack could not exercise before — see icp-docker/README.md.
 #
 # The icp-mcp service is also built but only runs on demand (stdio transport
 # doesn't fit the long-running-server pattern). To use it:
@@ -65,6 +72,76 @@ services:
     networks: [icp]
     labels:
       com.stateset.icp.role: "settler"
+
+  # Mock EVM JSON-RPC. Stands in for Base Sepolia + a deployed ICPEscrow.sol
+  # so the chain-watcher's decode-and-forward path runs in the stack without
+  # a funded testnet account. It is a test double for the *chain* only; the
+  # watcher and the settler are the real services.
+  mock-rpc:
+    build:
+      context: ..
+      dockerfile: icp-docker/Dockerfile
+    image: stateset/icp-mock-rpc:dev
+    container_name: icp-mock-rpc
+    command: ["node", "icp-docker/mock-rpc.mjs"]
+    environment:
+      PORT: "8790"
+      NODE_ENV: "production"
+      MOCK_RPC_CONTRACT: "0x1cb0000000000000000000000000000000e5c0a0"
+      MOCK_RPC_FINALITY_BLOCKS: "18"
+      # Seeds one finalized EscrowFunded log; further events are injected with
+      # POST /admin/emit (see icp-docker/integration-test.mjs).
+      MOCK_RPC_SEED: "funded"
+    ports:
+      - "8790:8790"
+    healthcheck:
+      test: ["CMD", "node", "/app/healthcheck.mjs"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    networks: [icp]
+    labels:
+      com.stateset.icp.role: "chain-rpc-mock"
+
+  # Chain watcher. Exactly one replica per chain — two would double-forward.
+  chain-watcher:
+    build:
+      context: ..
+      dockerfile: services/icp-chain-watcher/Dockerfile
+    image: stateset/icp-chain-watcher:dev
+    container_name: icp-chain-watcher
+    environment:
+      PORT: "8789"
+      NODE_ENV: "production"
+      RPC_URL: "http://mock-rpc:8790"
+      CONTRACT_ADDRESS: "0x1cb0000000000000000000000000000000e5c0a0"
+      SETTLER_URL: "http://settler:8788"
+      START_BLOCK: "900"
+      # Fast poll so the integration test does not wait a Base block per event.
+      POLL_INTERVAL_MS: "1000"
+      FINALITY_BLOCKS: "18"
+      # /tmp so the cursor is writable as the non-root `node` user and is
+      # discarded with the container — this stack is ephemeral by design.
+      STATE_FILE: "/tmp/icp-chain-watcher-state.json"
+    ports:
+      - "8789:8789"
+    depends_on:
+      settler:
+        condition: service_healthy
+      mock-rpc:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "/app/healthcheck.mjs"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    networks: [icp]
+    labels:
+      com.stateset.icp.role: "chain-watcher"
 
   # MCP server. Only runs on demand because MCP uses stdio, not network.
   # Use: `docker compose run --rm mcp` to spawn an interactive MCP session.

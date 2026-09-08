@@ -490,6 +490,8 @@ jobs:
       - name: Run chain-watcher test suite
         working-directory: services/icp-chain-watcher
         run: node --test test/watcher.test.mjs
+      - name: Run mock-RPC service tests (chain → watcher → settler)
+        run: node --test icp-docker/test/mock-rpc.test.mjs
 
   two-sided-demo:
     name: Two-sided integration demo (handler + Settler)
@@ -526,18 +528,31 @@ jobs:
         run: docker compose -f icp-docker/docker-compose.yml up -d --build
       - name: Wait for health
         run: |
-          for i in $(seq 1 30); do
+          # handler, settler, mock-rpc, chain-watcher — the mcp service is
+          # on-demand (stdio) and has no healthcheck.
+          for i in $(seq 1 90); do
             healthy=$(docker compose -f icp-docker/docker-compose.yml ps --format json | \
               jq -r 'select(.Health != null) | .Health' | grep -c healthy || true)
-            if [ "$healthy" -ge 2 ]; then echo "Both services healthy after ${i}s"; exit 0; fi
+            if [ "$healthy" -ge 4 ]; then echo "All 4 services healthy after ${i}s"; exit 0; fi
             sleep 1
           done
           echo "Services did not become healthy in time"
           docker compose -f icp-docker/docker-compose.yml ps
           docker compose -f icp-docker/docker-compose.yml logs
           exit 1
-      - name: Integration test
+      - name: Integration test (includes chain → watcher → settler settlement)
         run: node icp-docker/integration-test.mjs
+      - name: Chain-watcher forwarding evidence
+        if: always()
+        run: |
+          echo "--- chain-watcher /healthz ---"
+          curl -sS http://127.0.0.1:8789/healthz || true
+          echo ""
+          echo "--- mock-rpc /healthz ---"
+          curl -sS http://127.0.0.1:8790/healthz || true
+          echo ""
+          echo "--- chain-watcher logs ---"
+          docker compose -f icp-docker/docker-compose.yml logs chain-watcher || true
       - name: Tear down
         if: always()
         run: docker compose -f icp-docker/docker-compose.yml down -v
