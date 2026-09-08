@@ -138,6 +138,12 @@ export class NativeMerchantCheckout {
     if (!this.allowApply) throw new Error('apply is disabled');
     const operation = this.operations.get(id);
     if (!operation || operation.scope !== this.scope) throw new Error('acceptance not found');
+    // A terminal failure was already recorded and the cart released. Never
+    // re-dispatch: the answer cannot change, and the cart may now be bound to
+    // a different acceptance.
+    if (operation.disposition === 'failed') {
+      return { id, status: 'failed', error: operation.error ?? 'kernel.non_retryable' };
+    }
     const { command } = operation;
     // Always consult the native ledger, including after a lost response or a
     // failed projection write. Null MUST mean authoritative absence.
@@ -162,6 +168,28 @@ export class NativeMerchantCheckout {
       if (!receipt || typeof receipt !== 'object')
         throw new Error('invalid native receipt lookup result');
     } catch (error) {
+      // A throw is normally AMBIGUOUS — the command may have committed before
+      // the response was lost — so the acceptance reconciles rather than
+      // guessing. Two cases are not ambiguous:
+      //
+      //  1. the kernel recorded a terminal verdict before the throw reached
+      //     us (consult the ledger once more), or
+      //  2. the host declares the failure non-retryable.
+      //
+      // Both used to sit in `reconciling` forever with the cart still claimed
+      // by an acceptance that can never complete.
+      const settled = await this.readReceipt(command.idempotency_key).catch(() => null);
+      if (settled && typeof settled === 'object' && settled.status === 'rejected') {
+        return this.rejectTerminally(id, operation, settled);
+      }
+      if (error?.retryable === false) {
+        const code = String(error.code ?? error.message ?? 'kernel.non_retryable');
+        this.store.atomic(() => {
+          this.releaseCart(id, command.payload.cart_id);
+          this.operations.set(id, { ...operation, disposition: 'failed', error: code });
+        });
+        return { id, status: 'failed', error: code };
+      }
       return { id, status: 'reconciling', error: String(error.message || error) };
     }
     if (
@@ -181,7 +209,28 @@ export class NativeMerchantCheckout {
       }
       return { id, status: 'accepted', orderId: receipt.result.order_id, receipt };
     }
-    return { id, status: receipt.status === 'rejected' ? 'rejected' : 'reconciling', receipt };
+    if (receipt.status === 'rejected') return this.rejectTerminally(id, operation, receipt);
+    return { id, status: 'reconciling', receipt };
+  }
+
+  /** A rejected receipt is the kernel's final answer for this exact command:
+   * a policy denial or a cart-fingerprint conflict answers the same way on
+   * every resubmission. Free the cart so a corrected quote can claim it, and
+   * surface the kernel's error code instead of a bare status. */
+  rejectTerminally(id, operation, receipt) {
+    const code = String(receipt.error_code ?? 'kernel.rejected');
+    this.store.atomic(() => {
+      this.releaseCart(id, operation.command.payload.cart_id);
+    });
+    return { id, status: 'rejected', error: code, receipt };
+  }
+
+  /** Drop this acceptance's claim on a cart. Stores that cannot delete a key
+   * record a tombstone instead; `accept` treats any falsy claim as free. */
+  releaseCart(id, cartId) {
+    if (this.claims.get(cartId) !== id) return;
+    if (typeof this.claims.delete === 'function') this.claims.delete(cartId);
+    else this.claims.set(cartId, null);
   }
 
   async requireStockPolicySupport(policy) {

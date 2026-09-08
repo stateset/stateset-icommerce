@@ -52,6 +52,9 @@ export class SqliteProtocolStore {
           ON CONFLICT(namespace,key) DO UPDATE SET value=excluded.value`,
         ).run(namespace, key, JSON.stringify(value));
       },
+      delete(key) {
+        db.prepare('DELETE FROM _icp_records WHERE namespace=? AND key=?').run(namespace, key);
+      },
       values() {
         return db
           .prepare('SELECT value FROM _icp_records WHERE namespace=? ORDER BY key')
