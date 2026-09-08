@@ -172,7 +172,12 @@ jobs:
             if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
               extra_args+=(--zig)
             fi
-            npx napi build --platform --release --target "${{ matrix.target }}" "${extra_args[@]}"
+            # Mirror `npm run build` in bindings/node/package.json exactly:
+            # --profile release-node (NOT --release: [profile.release] sets
+            # panic=abort, which would ship abort-on-panic Linux binaries) and
+            # --js native-binding.js (the default `index.js` would clobber the
+            # hand-written loader shim).
+            npx napi build --platform --profile release-node --js native-binding.js --target "${{ matrix.target }}" "${extra_args[@]}"
           else
             npm run build -- --target ${{ matrix.target }}
           fi

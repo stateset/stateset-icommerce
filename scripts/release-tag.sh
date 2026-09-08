@@ -161,7 +161,7 @@ if ((dry_run != 0)); then
   echo ''
   echo "DRY RUN: no refs were created or pushed."
   echo "  would create: ${tags_to_create[*]:-<none>}"
-  echo "  would push:   git push ${REMOTE} refs/tags/${tags[0]} refs/tags/${tags[1]} refs/tags/${tags[2]}"
+  echo "  would push:   git push --atomic ${REMOTE} refs/tags/${tags[0]} refs/tags/${tags[1]} refs/tags/${tags[2]}"
   exit 0
 fi
 
@@ -185,8 +185,11 @@ for tag in ${tags_to_create[@]+"${tags_to_create[@]}"}; do
   echo "    ${tag}"
 done
 
-echo "==> Pushing all three tags in one push"
-git push "$REMOTE" "refs/tags/${tags[0]}" "refs/tags/${tags[1]}" "refs/tags/${tags[2]}"
+echo "==> Pushing all three tags in one atomic push"
+# --atomic makes the header's "together or not at all" literally true: without
+# it the remote applies each ref independently, so a rejection of one tag (the
+# v1.31/v1.32 failure mode) still leaves the others published.
+git push --atomic "$REMOTE" "refs/tags/${tags[0]}" "refs/tags/${tags[1]}" "refs/tags/${tags[2]}"
 
 trap - EXIT
 

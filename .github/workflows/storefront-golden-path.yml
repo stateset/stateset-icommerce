@@ -6,6 +6,11 @@ on:
       - ".github/workflows/storefront-golden-path.yml"
       - "packages/create-stateset-app/**"
       - "bindings/node/**"
+      # The gate compiles the native binding from this commit, so any workspace
+      # crate or dependency change can break it.
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "scripts/ci/run_storefront_golden_path.sh"
       - "docs/RELEASE_EVIDENCE.md"
   push:
@@ -14,6 +19,11 @@ on:
       - ".github/workflows/storefront-golden-path.yml"
       - "packages/create-stateset-app/**"
       - "bindings/node/**"
+      # The gate compiles the native binding from this commit, so any workspace
+      # crate or dependency change can break it.
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "scripts/ci/run_storefront_golden_path.sh"
       - "docs/RELEASE_EVIDENCE.md"
   workflow_dispatch:
