@@ -43,6 +43,27 @@ import type {
   SystemEvent,
 } from '@/lib/types/dashboard-data';
 import { requireAdminSession } from '@/lib/shared/auth-session';
+import {
+  adjustInventoryArgsSchema,
+  cancelOrderArgsSchema,
+  cancelSubscriptionArgsSchema,
+  createCustomerArgsSchema,
+  createOrderArgsSchema,
+  createProductArgsSchema,
+  createReturnArgsSchema,
+  createSubscriptionArgsSchema,
+  inventoryMovementArgsSchema,
+  processRefundArgsSchema,
+  productIdArgsSchema,
+  receiveReturnArgsSchema,
+  rejectReturnArgsSchema,
+  returnIdArgsSchema,
+  subscriptionIdArgsSchema,
+  updateCustomerArgsSchema,
+  updateOrderStatusArgsSchema,
+  updateProductArgsSchema,
+  validateArgs,
+} from '@/lib/shared/schemas';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -226,17 +247,20 @@ export async function createOrder(params: {
   billingAddress?: Address;
 }): Promise<Order> {
   await requireAdminSession();
-  return ordersApi.create(params);
+  const args = validateArgs(params, createOrderArgsSchema);
+  return ordersApi.create(args);
 }
 
 export async function updateOrderStatus(orderId: string, status: Order['status']): Promise<Order> {
   await requireAdminSession();
-  return ordersApi.updateStatus(orderId, status);
+  const args = validateArgs({ orderId, status }, updateOrderStatusArgsSchema);
+  return ordersApi.updateStatus(args.orderId, args.status);
 }
 
 export async function cancelOrder(orderId: string, reason?: string): Promise<Order> {
   await requireAdminSession();
-  return ordersApi.cancel(orderId, reason);
+  const args = validateArgs({ orderId, reason }, cancelOrderArgsSchema);
+  return ordersApi.cancel(args.orderId, args.reason);
 }
 
 export async function getOrderAnalytics(params?: {
@@ -302,17 +326,20 @@ export async function getInventoryItem(sku: string): Promise<InventoryItem | nul
 
 export async function adjustInventory(sku: string, quantity: number, reason?: string) {
   await requireAdminSession();
-  return inventoryApi.adjust(sku, quantity, reason);
+  const args = validateArgs({ sku, quantity, reason }, adjustInventoryArgsSchema);
+  return inventoryApi.adjust(args.sku, args.quantity, args.reason);
 }
 
 export async function reserveInventory(sku: string, quantity: number, orderId: string) {
   await requireAdminSession();
-  return inventoryApi.reserve(sku, quantity, orderId);
+  const args = validateArgs({ sku, quantity, orderId }, inventoryMovementArgsSchema);
+  return inventoryApi.reserve(args.sku, args.quantity, args.orderId);
 }
 
 export async function releaseInventory(sku: string, quantity: number, orderId: string) {
   await requireAdminSession();
-  return inventoryApi.release(sku, quantity, orderId);
+  const args = validateArgs({ sku, quantity, orderId }, inventoryMovementArgsSchema);
+  return inventoryApi.release(args.sku, args.quantity, args.orderId);
 }
 
 export async function getLowStockItems(threshold?: number): Promise<InventoryItem[]> {
@@ -393,17 +420,20 @@ export async function createReturn(params: {
   reasonCategory: Return['reasonCategory'];
 }): Promise<Return> {
   await requireAdminSession();
-  return returnsApi.create(params);
+  const args = validateArgs(params, createReturnArgsSchema);
+  return returnsApi.create(args);
 }
 
 export async function approveReturn(returnId: string): Promise<Return> {
   await requireAdminSession();
-  return returnsApi.approve(returnId);
+  const args = validateArgs({ returnId }, returnIdArgsSchema);
+  return returnsApi.approve(args.returnId);
 }
 
 export async function rejectReturn(returnId: string, reason: string): Promise<Return> {
   await requireAdminSession();
-  return returnsApi.reject(returnId, reason);
+  const args = validateArgs({ returnId, reason }, rejectReturnArgsSchema);
+  return returnsApi.reject(args.returnId, args.reason);
 }
 
 export async function receiveReturn(
@@ -411,7 +441,8 @@ export async function receiveReturn(
   items: { productId: string; condition: string }[],
 ): Promise<Return> {
   await requireAdminSession();
-  return returnsApi.receive(returnId, items);
+  const args = validateArgs({ returnId, items }, receiveReturnArgsSchema);
+  return returnsApi.receive(args.returnId, args.items);
 }
 
 export async function processRefund(
@@ -419,7 +450,8 @@ export async function processRefund(
   method: Return['refundMethod'],
 ): Promise<Return> {
   await requireAdminSession();
-  return returnsApi.processRefund(returnId, method);
+  const args = validateArgs({ returnId, method }, processRefundArgsSchema);
+  return returnsApi.processRefund(args.returnId, args.method);
 }
 
 export async function getReturnAnalytics(params?: {
@@ -481,6 +513,7 @@ export async function getCustomerByEmail(email: string): Promise<Customer | null
 
 export async function createCustomer(params: Partial<Customer>): Promise<Customer> {
   await requireAdminSession();
+  validateArgs({ params }, createCustomerArgsSchema);
   return customersApi.create(params);
 }
 
@@ -489,7 +522,8 @@ export async function updateCustomer(
   params: Partial<Customer>,
 ): Promise<Customer> {
   await requireAdminSession();
-  return customersApi.update(customerId, params);
+  const args = validateArgs({ customerId, params }, updateCustomerArgsSchema);
+  return customersApi.update(args.customerId, params);
 }
 
 export async function getCustomerOrders(customerId: string): Promise<Order[]> {
@@ -628,17 +662,20 @@ export async function getSubscription(subscriptionId: string): Promise<Subscript
 
 export async function createSubscription(params: Partial<Subscription>): Promise<Subscription> {
   await requireAdminSession();
+  validateArgs({ params }, createSubscriptionArgsSchema);
   return subscriptionsApi.create(params);
 }
 
 export async function pauseSubscription(subscriptionId: string): Promise<Subscription> {
   await requireAdminSession();
-  return subscriptionsApi.pause(subscriptionId);
+  const args = validateArgs({ subscriptionId }, subscriptionIdArgsSchema);
+  return subscriptionsApi.pause(args.subscriptionId);
 }
 
 export async function resumeSubscription(subscriptionId: string): Promise<Subscription> {
   await requireAdminSession();
-  return subscriptionsApi.resume(subscriptionId);
+  const args = validateArgs({ subscriptionId }, subscriptionIdArgsSchema);
+  return subscriptionsApi.resume(args.subscriptionId);
 }
 
 export async function cancelSubscription(
@@ -646,7 +683,8 @@ export async function cancelSubscription(
   reason?: string,
 ): Promise<Subscription> {
   await requireAdminSession();
-  return subscriptionsApi.cancel(subscriptionId, reason);
+  const args = validateArgs({ subscriptionId, reason }, cancelSubscriptionArgsSchema);
+  return subscriptionsApi.cancel(args.subscriptionId, args.reason);
 }
 
 export async function getSubscriptionAnalytics(): Promise<SubscriptionAnalytics> {
@@ -670,17 +708,20 @@ export async function getProduct(productId: string) {
 
 export async function createProduct(params: Partial<Product>) {
   await requireAdminSession();
+  validateArgs({ params }, createProductArgsSchema);
   return productsApi.create(params);
 }
 
 export async function updateProduct(productId: string, params: Partial<Product>) {
   await requireAdminSession();
-  return productsApi.update(productId, params);
+  const args = validateArgs({ productId, params }, updateProductArgsSchema);
+  return productsApi.update(args.productId, params);
 }
 
 export async function deleteProduct(productId: string) {
   await requireAdminSession();
-  return productsApi.delete(productId);
+  const args = validateArgs({ productId }, productIdArgsSchema);
+  return productsApi.delete(args.productId);
 }
 
 export async function getProductAnalytics() {
