@@ -61,7 +61,6 @@ examples/kotlin/.gradle/
 
 # Docs build outputs
 docs/book/
-docs/versions/*/book/
 docs/api/
 
 # Java

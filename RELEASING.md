@@ -9,17 +9,14 @@ This guide covers publishing Rust crates and language bindings. It also captures
 3. Refresh mdBook docs in `docs/src/`.
 4. Run the local release preflight: `npm run check:release`.
    This rebuilds the latest `docs/book/` output and verifies it does not drift from the live engine docs.
-   It also verifies that the versioned docs snapshot flow builds a standalone
-   mdBook with snapshot-specific versioning text.
    It also validates that GitHub workflow `needs:` edges only reference real jobs.
 5. Push the release commit and require a green `CI Success` job from `.github/workflows/ci.yml` on that exact commit.
    `master` is branch-protected (since 2026-08-24): every non-Admin job in `ci.yml` is a required
    status check, admins included, and force-pushes/deletions are refused. The two `Admin *` lanes
    and the `CI Success` aggregate are deliberately NOT required until `@stateset/design` resolves in CI;
    re-add them with `gh api -X PUT repos/stateset/stateset-icommerce/branches/master/protection` when it does.
-6. Create a versioned docs snapshot: `./docs/scripts/snapshot-version.sh vX.Y.Z`.
-7. (Optional) Generate API docs into `docs/api/` with `./docs/scripts/generate-api.sh`.
-8. Create annotated tags and push them.
+6. (Optional) Generate API docs into `docs/api/` with `./docs/scripts/generate-api.sh`.
+7. Create annotated tags and push them.
 
 ## Authoritative Gates
 
@@ -233,7 +230,6 @@ Keep versions in sync across:
 - Rust release automation: `scripts/publish-rust-crates.sh` and `.github/workflows/publish-rust-crates.yml`
 - Ruby: `stateset_embedded.gemspec`, `lib/stateset_embedded.rb`
 - PHP: `composer.json`, `scripts/install-extension.php`
- - Docs: `docs/versions/vX.Y.Z/` snapshot
 
 ## Troubleshooting
 
