@@ -11,7 +11,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ADMIN_SESSION_COOKIE } from '@/lib/shared/auth-session';
-import { ACTIVE_ORG_COOKIE } from '@/lib/shared/active-org';
+import { ACTIVE_ORG_COOKIE, isValidOrgId } from '@/lib/shared/active-org';
+import { ORG_ID_MAX_LENGTH, orgIdSchema } from '@/lib/shared/schemas';
 
 // Mock next/headers cookies() — must be before imports. `setActiveOrg`
 // uses the object form `set({ name, value, ... })`, so the mock accepts
@@ -50,6 +51,11 @@ afterEach(() => {
 });
 
 const UNAUTHORIZED = { statusCode: 401, code: 'UNAUTHORIZED' };
+const VALIDATION_ERROR = {
+  name: 'ValidationError',
+  statusCode: 422,
+  code: 'VALIDATION_ERROR',
+};
 
 describe('active-org actions auth guard', () => {
   describe('without a session', () => {
@@ -119,5 +125,71 @@ describe('active-org actions auth guard', () => {
       await expect(clearActiveOrg()).rejects.toMatchObject(UNAUTHORIZED);
       expect(cookieStore.has(ACTIVE_ORG_COOKIE)).toBe(false);
     });
+  });
+});
+
+// ===========================================================================
+// Input validation
+// ===========================================================================
+
+describe('setActiveOrg input validation', () => {
+  beforeEach(() => {
+    cookieStore.clear();
+    cookieStore.set(ADMIN_SESSION_COOKIE, { value: 'test-session-token' });
+  });
+
+  it('raises a typed ValidationError, not a bare Error', async () => {
+    await expect(setActiveOrg('not valid!')).rejects.toMatchObject(VALIDATION_ERROR);
+    expect(cookieStore.has(ACTIVE_ORG_COOKIE)).toBe(false);
+  });
+
+  it('names the offending field and keeps the operator-facing message', async () => {
+    await expect(setActiveOrg('a/b')).rejects.toMatchObject({
+      details: [{ field: 'orgId' }],
+    });
+    await expect(setActiveOrg('a/b')).rejects.toThrow(/Invalid orgId/);
+  });
+
+  it('rejects an over-long id', async () => {
+    await expect(setActiveOrg('a'.repeat(ORG_ID_MAX_LENGTH + 1))).rejects.toMatchObject(
+      VALIDATION_ERROR
+    );
+    expect(cookieStore.has(ACTIVE_ORG_COOKIE)).toBe(false);
+  });
+
+  it('still accepts every id the switcher can offer', async () => {
+    await setActiveOrg('a'.repeat(ORG_ID_MAX_LENGTH));
+    expect(cookieStore.get(ACTIVE_ORG_COOKIE)?.value).toBe('a'.repeat(ORG_ID_MAX_LENGTH));
+  });
+
+  // `orgIdSchema` restates the rule that `isValidOrgId` enforces for the
+  // cookie reader. Two copies of one rule drift, so pin them together.
+  it('agrees with isValidOrgId on every shape either side has ever cared about', () => {
+    const cases: unknown[] = [
+      'acme',
+      'ACME-001',
+      'org_42.test',
+      'a',
+      'a'.repeat(ORG_ID_MAX_LENGTH),
+      'a'.repeat(ORG_ID_MAX_LENGTH + 1),
+      '',
+      '   ',
+      'has space',
+      'has/slash',
+      'has;semi',
+      'has<>tag',
+      'has=equals',
+      'has\nnewline',
+      'a"; evil; b="c',
+      null,
+      undefined,
+      42,
+      {},
+    ];
+    for (const value of cases) {
+      expect(orgIdSchema.safeParse(value).success, `orgIdSchema on ${JSON.stringify(value)}`).toBe(
+        isValidOrgId(value)
+      );
+    }
   });
 });

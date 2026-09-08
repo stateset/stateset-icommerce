@@ -119,6 +119,11 @@ afterEach(() => {
 });
 
 const UNAUTHORIZED = { statusCode: 401, code: 'UNAUTHORIZED' };
+const VALIDATION_ERROR = {
+  name: 'ValidationError',
+  statusCode: 422,
+  code: 'VALIDATION_ERROR',
+};
 
 describe('finance actions auth guard', () => {
   describe('without a session', () => {
@@ -285,6 +290,39 @@ describe('finance actions auth guard', () => {
       await expect(closeMonthDryRun('   ')).rejects.toThrow(/required/);
       await expect(runCloseMonth('')).rejects.toThrow(/required/);
       expect(generalLedgerApi.closeMonth).not.toHaveBeenCalled();
+    });
+
+    // The close-month actions are the only mutating actions in this module,
+    // and month-end close is not reversible from the admin UI. They must
+    // raise the same typed 422 the rest of the action surface does, not a
+    // bare Error that the caller can only string-match on.
+    it('closeMonthDryRun raises a typed ValidationError on a blank period id', async () => {
+      await expect(closeMonthDryRun('   ')).rejects.toMatchObject(VALIDATION_ERROR);
+      expect(generalLedgerApi.closeMonth).not.toHaveBeenCalled();
+    });
+
+    it('runCloseMonth raises a typed ValidationError on a blank period id', async () => {
+      await expect(runCloseMonth('')).rejects.toMatchObject(VALIDATION_ERROR);
+      expect(generalLedgerApi.closeMonth).not.toHaveBeenCalled();
+    });
+
+    it('runCloseMonth rejects a blank closer identity', async () => {
+      // closedBy is optional, but "present and empty" is not a valid audit
+      // trail on an irreversible posting.
+      await expect(runCloseMonth('per_1', '   ')).rejects.toMatchObject(VALIDATION_ERROR);
+      expect(generalLedgerApi.closeMonth).not.toHaveBeenCalled();
+    });
+
+    it('close-month rejects a period id with path separators', async () => {
+      await expect(closeMonthDryRun('../../per_1')).rejects.toMatchObject(VALIDATION_ERROR);
+      await expect(runCloseMonth('per 1')).rejects.toMatchObject(VALIDATION_ERROR);
+      expect(generalLedgerApi.closeMonth).not.toHaveBeenCalled();
+    });
+
+    it('names the offending field in the error details', async () => {
+      await expect(runCloseMonth('per_1', '')).rejects.toMatchObject({
+        details: [{ field: 'closedBy' }],
+      });
     });
   });
 

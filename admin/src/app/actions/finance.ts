@@ -32,6 +32,11 @@ import {
   type RevenueContract,
 } from '@/lib/embedded';
 import { requireAdminSession } from '@/lib/shared/auth-session';
+import {
+  closeMonthArgsSchema,
+  runCloseMonthArgsSchema,
+  validateArgs,
+} from '@/lib/shared/schemas';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -98,8 +103,8 @@ export async function getGlPeriods(): Promise<GlPeriod[]> {
  */
 export async function closeMonthDryRun(periodId: string): Promise<CloseMonthReport> {
   await requireAdminSession();
-  assertNonEmpty(periodId, 'periodId');
-  return generalLedgerApi.closeMonth(periodId, { dryRun: true });
+  const args = validateArgs({ periodId }, closeMonthArgsSchema);
+  return generalLedgerApi.closeMonth(args.periodId, { dryRun: true });
 }
 
 /**
@@ -112,8 +117,11 @@ export async function runCloseMonth(
   closedBy?: string,
 ): Promise<CloseMonthReport> {
   await requireAdminSession();
-  assertNonEmpty(periodId, 'periodId');
-  return generalLedgerApi.closeMonth(periodId, { dryRun: false, closedBy });
+  const args = validateArgs({ periodId, closedBy }, runCloseMonthArgsSchema);
+  return generalLedgerApi.closeMonth(args.periodId, {
+    dryRun: false,
+    closedBy: args.closedBy,
+  });
 }
 
 // ============================================================================

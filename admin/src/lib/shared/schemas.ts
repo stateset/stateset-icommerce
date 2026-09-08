@@ -511,6 +511,58 @@ export const updateProductArgsSchema = z.object({
 export const productIdArgsSchema = z.object({ productId: safeIdSchema });
 
 // ============================================================================
+// Finance + org server-action argument schemas
+// ============================================================================
+
+/**
+ * GL period identifier. `.trim()` runs before `.min(1)` so a whitespace-only
+ * id reports "required" rather than "invalid characters" — that is the honest
+ * diagnosis, and it is the message the close-month UI surfaces.
+ */
+export const periodIdSchema = z
+  .string({ required_error: 'Period ID is required', invalid_type_error: 'Period ID is required' })
+  .trim()
+  .min(1, 'Period ID is required')
+  .max(200, 'Period ID is too long')
+  .regex(/^[a-zA-Z0-9_.-]+$/, 'Period ID contains invalid characters');
+
+/**
+ * Who ran the close. Recorded on the posted closing entries, so it is an
+ * audit-trail field: it must not be blank-but-present, and it is bounded.
+ */
+export const closedBySchema = z
+  .string()
+  .trim()
+  .min(1, 'Closed-by is required when provided')
+  .max(200, 'Closed-by is too long');
+
+export const closeMonthArgsSchema = z.object({ periodId: periodIdSchema });
+
+export const runCloseMonthArgsSchema = z.object({
+  periodId: periodIdSchema,
+  closedBy: closedBySchema.optional(),
+});
+
+/**
+ * Active-organization id. Mirrors `isValidOrgId` in `./active-org` — 1–128
+ * URL-safe characters — and the two are cross-checked in
+ * `tests/unit/app/actions/active-org.test.ts` so they cannot drift. The
+ * message keeps the `Invalid orgId` prefix the switcher already surfaces.
+ */
+export const ORG_ID_MAX_LENGTH = 128;
+
+export const orgIdSchema = z
+  .string({
+    required_error: 'Invalid orgId: must be 1-128 URL-safe chars',
+    invalid_type_error: 'Invalid orgId: must be 1-128 URL-safe chars',
+  })
+  .min(1, 'Invalid orgId: must be 1-128 URL-safe chars')
+  .max(ORG_ID_MAX_LENGTH, 'Invalid orgId: must be 1-128 URL-safe chars')
+  .regex(/^[A-Za-z0-9_.-]+$/, 'Invalid orgId: must be 1-128 URL-safe chars');
+
+export const setActiveOrgArgsSchema = z.object({ orgId: orgIdSchema });
+
+// ============================================================================
 // Server-action validation helper
 // ============================================================================
 
