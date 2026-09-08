@@ -214,6 +214,17 @@ pub fn plan_ship_order<D: Clone>(
     })
 }
 
+/// Exact units a planned shipment will move, summed over its line deltas.
+///
+/// Only positive deltas count: a plan that leaves a line untouched moves
+/// nothing, and no shipment ever un-ships units. This is the figure a
+/// declared `commitment.quantity` is bound against, so both backends must
+/// derive it the same way.
+#[must_use]
+pub fn shipped_units(deltas: impl IntoIterator<Item = i32>) -> Decimal {
+    Decimal::from(deltas.into_iter().filter(|delta| *delta > 0).map(i64::from).sum::<i64>())
+}
+
 /// Rejection sealed when a reservation expires while it is being confirmed.
 #[must_use]
 pub fn reservation_expired_during_shipment() -> GuardRejection {

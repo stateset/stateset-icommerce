@@ -37,7 +37,7 @@ use crate::kernel::plans::inventory::{
 };
 use crate::kernel::plans::orders::{
     OrderTransitionSnapshot, ShipOrderSnapshot, plan_order_transition, plan_ship_order,
-    reservation_expired_during_shipment, ship_order_guard, transition_order_guard,
+    reservation_expired_during_shipment, ship_order_guard, shipped_units, transition_order_guard,
 };
 use crate::kernel::plans::payments::{
     RefundSnapshot, create_payment_guard, economic_counterparty_guard, economic_money_guard,
@@ -49,7 +49,8 @@ use crate::kernel::receipt::{
     receipt_record, rejected_receipt, succeeded_receipt,
 };
 use crate::kernel::{
-    BudgetSnapshot, CommandRun, EnvelopeGuard, Replay, plan_budget, resolve_replay,
+    BudgetSnapshot, CommandRun, EnvelopeGuard, Replay, budget_at_storage_precision, plan_budget,
+    resolve_replay,
 };
 use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::Utc;
@@ -209,6 +210,23 @@ fn budget_status_tx(
         .transpose()
 }
 
+/// Exact units a cart would move through checkout, summed over its lines.
+///
+/// This is the observed figure a declared `commitment.quantity` binds
+/// against; `checkout.commit` carries no quantity of its own, so without it a
+/// quantity ceiling on checkout would be advisory.
+fn cart_units_tx(
+    tx: &rusqlite::Transaction<'_>,
+    cart_id: stateset_core::CartId,
+) -> rusqlite::Result<rust_decimal::Decimal> {
+    let units: i64 = tx.query_row(
+        "SELECT COALESCE(SUM(quantity), 0) FROM cart_items WHERE cart_id = ?",
+        [cart_id.to_string()],
+        |row| row.get(0),
+    )?;
+    Ok(rust_decimal::Decimal::from(units))
+}
+
 fn enforce_budget_tx<C>(
     tx: &rusqlite::Transaction<'_>,
     command: &CommandEnvelope<C>,
@@ -274,6 +292,10 @@ impl SqliteKernelExecutor {
         &self,
         budget: &EconomicBudget,
     ) -> Result<EconomicBudgetStatus> {
+        // Postgres stores these timestamps at microsecond precision; SQLite
+        // normalises to the same precision so one definition means one stored
+        // budget on either backend.
+        let budget = &budget_at_storage_precision(budget);
         let limit =
             budget.validate().map_err(|error| CommerceError::ValidationError(error.to_string()))?;
         let now = Utc::now();
@@ -1236,6 +1258,21 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
+            // A confirmation moves the held units into allocated stock, so the
+            // declared quantity must bind to what is confirmed — the payload
+            // amount, or the whole reservation when confirming in full.
+            if let InventoryLifecycleAction::Confirm(quantity) = action
+                && let Some(rejection) = economic_quantity_guard(
+                    command.commitment.as_ref(),
+                    quantity.unwrap_or(reservation.quantity),
+                )
+            {
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.aggregate_id = Some(reservation_id.to_string());
+                receipt.version_before = Some(version_before);
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
 
             let expires_during_apply =
                 reservation.expires_at.is_some_and(|expiry| expiry < started_at)
@@ -1618,6 +1655,18 @@ impl SqliteKernelExecutor {
                 )));
             };
             let version_before = effects.version_before;
+            // The units this shipment will actually move, whether the command
+            // named lines or asked to ship the remainder of the order.
+            if let Some(rejection) = economic_quantity_guard(
+                command.commitment.as_ref(),
+                shipped_units(effects.deltas.iter().map(|delta| delta.delta)),
+            ) {
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.aggregate_id = Some(order_id.clone());
+                receipt.version_before = Some(version_before);
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
             if run.is_preview() {
                 let mut receipt = run.previewed();
                 receipt.aggregate_id = Some(order_id.clone());
@@ -3436,6 +3485,15 @@ impl SqliteKernelExecutor {
                         return Err(error);
                     }
                 };
+                if let Some(rejection) = economic_quantity_guard(
+                    command.commitment.as_ref(),
+                    cart_units_tx(tx, command.payload.cart_id)?,
+                ) {
+                    let mut receipt = run.rejected_by(&rejection);
+                    receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+                    append_receipt(tx, &request_hash, &mut receipt)?;
+                    return Ok(receipt);
+                }
                 if let Some(rejection) =
                     economic_money_guard(command.commitment.as_ref(), amount, currency)
                 {
@@ -3476,6 +3534,17 @@ impl SqliteKernelExecutor {
                     return Ok(receipt);
                 }
                 return Err(error);
+            }
+            // Bind the declared units to the cart the order will be cut from,
+            // before anything is applied. Preview refuses wherever apply does.
+            if let Some(rejection) = economic_quantity_guard(
+                command.commitment.as_ref(),
+                cart_units_tx(tx, command.payload.cart_id)?,
+            ) {
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
             }
 
             // A savepoint lets expected business rejections become durable

@@ -33,7 +33,7 @@ use crate::kernel::plans::inventory::{
 };
 use crate::kernel::plans::orders::{
     OrderTransitionSnapshot, ShipOrderSnapshot, plan_order_transition, plan_ship_order,
-    reservation_expired_during_shipment, ship_order_guard, transition_order_guard,
+    reservation_expired_during_shipment, ship_order_guard, shipped_units, transition_order_guard,
 };
 use crate::kernel::plans::payments::{
     RefundSnapshot, create_payment_guard, economic_counterparty_guard, economic_money_guard,
@@ -45,7 +45,8 @@ use crate::kernel::receipt::{
     receipt_record, rejected_receipt, succeeded_receipt,
 };
 use crate::kernel::{
-    BudgetSnapshot, CommandRun, EnvelopeGuard, Replay, plan_budget, resolve_replay,
+    BudgetSnapshot, CommandRun, EnvelopeGuard, Replay, budget_at_storage_precision, plan_budget,
+    resolve_replay,
 };
 use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::Utc;
@@ -181,6 +182,10 @@ impl PgKernelExecutor {
         &self,
         budget: &EconomicBudget,
     ) -> Result<EconomicBudgetStatus> {
+        // Store and compare the definition at the precision TIMESTAMPTZ keeps,
+        // so re-provisioning the identical struct is idempotent instead of
+        // conflicting with its own truncated round trip.
+        let budget = &budget_at_storage_precision(budget);
         let limit =
             budget.validate().map_err(|error| CommerceError::ValidationError(error.to_string()))?;
         let now = Utc::now();
@@ -1279,6 +1284,22 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
             return Ok(receipt);
         }
+        // A confirmation moves the held units into allocated stock, so the
+        // declared quantity must bind to what is confirmed — the payload
+        // amount, or the whole reservation when confirming in full.
+        if let InventoryLifecycleAction::Confirm(quantity) = action
+            && let Some(rejection) = economic_quantity_guard(
+                command.commitment.as_ref(),
+                quantity.unwrap_or(reservation.quantity),
+            )
+        {
+            let mut receipt = run.rejected_by(&rejection);
+            receipt.aggregate_id = Some(reservation_id.to_string());
+            receipt.version_before = Some(version_before);
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+            return Ok(receipt);
+        }
 
         let expires_during_apply = reservation.expires_at.is_some_and(|expiry| expiry < started_at)
             && !matches!(
@@ -1673,6 +1694,19 @@ impl PgKernelExecutor {
             return Err(CommerceError::Internal("shipment planned without a loaded order".into()));
         };
         let version_before = effects.version_before;
+        // The units this shipment will actually move, whether the command
+        // named lines or asked to ship the remainder of the order.
+        if let Some(rejection) = economic_quantity_guard(
+            command.commitment.as_ref(),
+            shipped_units(effects.deltas.iter().map(|delta| delta.delta)),
+        ) {
+            let mut receipt = run.rejected_by(&rejection);
+            receipt.aggregate_id = Some(order_id.clone());
+            receipt.version_before = Some(version_before);
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
         if run.is_preview() {
             let mut receipt = run.previewed();
             receipt.aggregate_id = Some(order_id.clone());
@@ -3585,6 +3619,16 @@ impl PgKernelExecutor {
                     return Ok(receipt);
                 }
             };
+            if let Some(rejection) = economic_quantity_guard(
+                command.commitment.as_ref(),
+                cart_units_pg(tx.as_mut(), command.payload.cart_id.into_uuid()).await?,
+            ) {
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+                append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+                tx.commit().await.map_err(pg_err)?;
+                return Ok(receipt);
+            }
             if let Some(rejection) =
                 economic_money_guard(command.commitment.as_ref(), amount, currency)
             {
@@ -3631,6 +3675,18 @@ impl PgKernelExecutor {
                 RetryDisposition::Never,
                 "checkout",
             );
+            receipt.aggregate_id = Some(command.payload.cart_id.to_string());
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        // Bind the declared units to the cart the order will be cut from,
+        // before anything is applied. Preview refuses wherever apply does.
+        if let Some(rejection) = economic_quantity_guard(
+            command.commitment.as_ref(),
+            cart_units_pg(tx.as_mut(), command.payload.cart_id.into_uuid()).await?,
+        ) {
+            let mut receipt = run.rejected_by(&rejection);
             receipt.aggregate_id = Some(command.payload.cart_id.to_string());
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
@@ -4127,6 +4183,40 @@ fn budget_status_from_pg_row(row: EconomicBudgetRow) -> Result<EconomicBudgetSta
     })
 }
 
+/// Exact units a cart would move through checkout, summed over its lines.
+///
+/// This is the observed figure a declared `commitment.quantity` binds
+/// against; `checkout.commit` carries no quantity of its own, so without it a
+/// quantity ceiling on checkout would be advisory.
+async fn cart_units_pg(
+    tx: &mut sqlx::PgConnection,
+    cart_id: Uuid,
+) -> Result<rust_decimal::Decimal> {
+    let units: i64 =
+        sqlx::query_scalar("SELECT COALESCE(SUM(quantity), 0) FROM cart_items WHERE cart_id = $1")
+            .bind(cart_id)
+            .fetch_one(tx)
+            .await
+            .map_err(pg_err)?;
+    Ok(rust_decimal::Decimal::from(units))
+}
+
+/// Read one durable budget. An apply must serialize against every other
+/// debit of the same budget, so it takes the row lock; a preview commits
+/// nothing and must not queue behind an in-flight debit, so it reads without
+/// one.
+const fn budget_lookup_sql(apply: bool) -> &'static str {
+    if apply {
+        "SELECT budget_id, principal_id, tenant_id, store_id, limit_amount,
+                committed_amount, currency, valid_from, expires_at
+         FROM kernel_economic_budgets WHERE budget_id = $1 FOR UPDATE"
+    } else {
+        "SELECT budget_id, principal_id, tenant_id, store_id, limit_amount,
+                committed_amount, currency, valid_from, expires_at
+         FROM kernel_economic_budgets WHERE budget_id = $1"
+    }
+}
+
 async fn enforce_budget_pg<C>(
     tx: &mut sqlx::PgConnection,
     command: &CommandEnvelope<C>,
@@ -4138,15 +4228,11 @@ async fn enforce_budget_pg<C>(
         command.commitment.as_ref().and_then(|commitment| commitment.budget_id.as_deref());
     let row = match budget_id {
         None => None,
-        Some(budget_id) => sqlx::query_as::<_, EconomicBudgetRow>(
-            "SELECT budget_id, principal_id, tenant_id, store_id, limit_amount,
-                    committed_amount, currency, valid_from, expires_at
-             FROM kernel_economic_budgets WHERE budget_id = $1 FOR UPDATE",
-        )
-        .bind(budget_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(pg_err)?,
+        Some(budget_id) => sqlx::query_as::<_, EconomicBudgetRow>(budget_lookup_sql(apply))
+            .bind(budget_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(pg_err)?,
     };
     let snapshot = row.map(budget_snapshot_from_pg_row);
     let debit = match plan_budget(command, amount, currency, snapshot.as_ref(), Utc::now()) {
@@ -4470,4 +4556,21 @@ async fn append_receipt<T: Serialize>(
     let record = receipt_record(request_hash, receipt)?;
     receipt.audit_hash = Some(append_kernel_receipt_tx(tx, &record).await?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::budget_lookup_sql;
+
+    #[test]
+    fn only_an_apply_locks_the_budget_row() {
+        assert!(
+            budget_lookup_sql(true).trim_end().ends_with("FOR UPDATE"),
+            "an applied debit must serialize against every other debit"
+        );
+        assert!(
+            !budget_lookup_sql(false).contains("FOR UPDATE"),
+            "a preview commits nothing and must not queue behind an in-flight debit"
+        );
+    }
 }

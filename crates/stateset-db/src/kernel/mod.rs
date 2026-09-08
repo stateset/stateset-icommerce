@@ -59,7 +59,7 @@ pub mod replay;
 pub mod run;
 
 pub use audit::KernelAuditChain;
-pub use budget::{BudgetDebit, BudgetSnapshot, plan_budget};
+pub use budget::{BudgetDebit, BudgetSnapshot, budget_at_storage_precision, plan_budget};
 pub use envelope::{EnvelopeGuard, GuardRejection, VersionExpectation};
 pub use plans::PlanOutcome;
 pub use replay::{Replay, SealedAuditEntry, resolve_replay, verify_sealed_receipt};
