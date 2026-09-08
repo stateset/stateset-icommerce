@@ -2053,11 +2053,27 @@ impl SqliteCartRepository {
         stock_policy: stateset_core::StockPolicy,
         expected_cart_fingerprint: Option<&str>,
     ) -> std::result::Result<(Decimal, CurrencyCode), rusqlite::Error> {
-        let mut cart = tx.query_row(
+        // Speak the same missing-cart error the Postgres twin returns
+        // (`CommerceError::NotFound`) and that `complete_checkout_with_policy_in_tx`
+        // below already returns. A bare `QueryReturnedNoRows` is invisible to
+        // the kernel executor's `sqlite_commerce_error` downcast, which only
+        // unwraps a `CommerceError` boxed in `ToSqlConversionFailure`, so a
+        // `checkout.commit` for a cart that does not exist escaped as
+        // `Err(CommerceError::NotFound)` instead of being sealed as the
+        // `commerce.checkout.cart_not_found` rejection Postgres seals.
+        let mut cart = match tx.query_row(
             "SELECT * FROM carts WHERE id = ?",
             [cart_id.to_string()],
             Self::row_to_cart,
-        )?;
+        ) {
+            Ok(cart) => cart,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::NotFound,
+                )));
+            }
+            Err(error) => return Err(error),
+        };
         cart.items = Self::load_cart_items_with_conn(tx, cart_id)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
         cart.verify_checkout_fingerprint(expected_cart_fingerprint)
