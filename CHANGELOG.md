@@ -6,6 +6,90 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Kernel quantity policy is now bound to what the executor observes: `max_quantity`
+  fails closed on commands that cannot bind it, and `inventory.reserve`,
+  `inventory.reservation.confirm`, `checkout.commit` (sum of cart lines) and
+  `orders.ship` reject a declared quantity that differs from the observed one.
+- Postgres integration coverage for the v1.30–v1.33 kernel: concurrent budget
+  debits, budget provisioning idempotency, checkout conflict on a completed cart,
+  savepoint rollback on budget refusal, fingerprint mismatch, strict stock policy,
+  budget window and tenant scope, and refund budget consumption.
+- Node binding errors carry a stable machine code (`err.code`, e.g. `NOT_FOUND`,
+  `CONFLICT`, `VALIDATION`, `PRECONDITION_FAILED`, `INSUFFICIENT_STOCK`,
+  `INTERNAL_PANIC`), `err.details` with the variant's structured fields, and the
+  human message unchanged. A `release-node` cargo profile builds the binding with
+  `panic = "unwind"` so a kernel panic becomes a JS error instead of aborting the host.
+- ICP handler: principal delegation is verified whenever a principal is configured
+  and is mandatory in durable mode; nonce replay capacity is per signer; co-signed
+  settlement rejects a malformed settlement id, an escrow that does not belong to
+  the intent, and a second settlement of the same intent.
+- Marketplace bridge dead-letters a poison award after a bounded number of attempts
+  and advances the cursor; expired awards are dead-lettered with a reason.
+- Purchase runtime: the kernel adapter derives an economic commitment from the
+  accepted quote, so kernel money policies apply to durable purchases.
+- One shared JSON canonicalizer (`@stateset/embedded/canonical-json`) used by the
+  purchase runtime and the marketplace bridge; an `undefined` value throws in both.
+- Release tooling: `npm run release:tag <version>` refuses unless HEAD is green
+  `origin/master` and pushes `v`, `cli-v` and `py-v` together; every publish
+  workflow now refuses a tag that is off master, red, or missing its siblings; a
+  daily `release-consistency` workflow reports registry drift.
+- ICP conformance CI runs the `icp-1.0-commerce` profile for all four IUTs and
+  fails on any skipped vector; the chain watcher runs in the compose stack with a
+  mock RPC and is exercised end to end.
+- Admin server actions validate their arguments with Zod and return the same
+  422-shaped validation error as the API routes.
+
+### Fixed
+
+- Postgres inbound-shipment receipts read and wrote on the pool with an absolute
+  quantity, so concurrent receipts were all accepted and stock went untracked;
+  receipts now lock the shipment and the line and increment, on both backends.
+  Both backends refuse receipts and status advances on a cancelled shipment.
+- 27 guarded mutations that decided on a pooled read and wrote unconditionally now
+  carry the precondition on the write (warranty claims and transfers, AP bill /
+  invoice / purchase-order deletes, cart mark-ready, lot update, channel update and
+  delete); agent-card updates are a single partial update instead of read-merge-write.
+- The Postgres billing-claim test asserted "billed exactly once" against fixtures
+  that legally re-claim after catch-up billing; the workers now rendezvous between
+  claiming and billing, and claim disjointness is asserted across workers.
+- Postgres budget re-provisioning conflicted on nanosecond timestamps after the
+  TIMESTAMPTZ round trip; both backends now store and compare at microsecond precision.
+- Budget preview no longer takes a row lock.
+- `docs/versions/` (a 4.8 MB, unpublished snapshot tree) is no longer tracked;
+  a release tag freezes `docs/src`.
+- `cli/package.json` depends on the in-repo binding by file link and the registry
+  range is written only at publish, so a version bump no longer breaks `npm ci`
+  on every branch until a lockfile-sync PR merges.
+- The Storefront Golden Path installs the packed local binding instead of the
+  registry, so it is no longer red between tagging and publishing.
+- CI runs once per pull request instead of twice (push trigger is master-only);
+  duplicate coverage jobs removed.
+- README reduced to a single onboarding path with every command verified;
+  install lines for channels that do not ship at this version removed.
+
+### Changed (behaviour, needs a release note)
+
+- Illegal state transitions on warranty claims and transfers, non-draft deletes of
+  AP bills, invoices and purchase orders, and marking a non-active cart ready for
+  payment now return `Conflict` (HTTP 409) instead of `ValidationError` (400).
+- `/inbound-shipments/{id}/in-transit` and `/arrived` return 409 on a cancelled shipment.
+- Node binding: `err.code` replaces `GenericFailure` for every failure class and
+  validation failures use napi status `InvalidArg`. Messages are byte-identical.
+- ICP handler: trust enforcement is selected by `ICP_TRUST_MODE` only; `--demo`
+  no longer disables it. A durable handler without `ICP_TRUST_MODE` enforces.
+- A budget provisioned before this release with sub-microsecond timestamps will
+  conflict once on re-provisioning; balances are unaffected.
+- Refunds continue to consume budget (unchanged, now pinned by a test); releasing
+  committed spend on refund or cancel is an open design decision.
+
+### Moved
+
+- `TRUST_FOUNDATION.md`, `KERNEL_ROADMAP.md`, `ICP.md` and `AGENTIC_COMMERCE.md`
+  moved under `docs/`; `QUICKSTART.md` and `docs/standalone-quickstart.md` folded
+  into one Rust-first and one CLI-first path.
+
 ## [1.33.0] - 2026-09-05
 
 ### Added
@@ -3151,7 +3235,7 @@ verify_settlement_receipt` Just Works. **7 unit tests** mirror
   ordering, monotonic sequence, cryptographic attestation, ±300s
   replay defense, 8-attempt retries, 1000-event recovery buffer,
   stable `delivery_attempt: 1` dedupe key). Linked from
-  [`ICP.md`](./ICP.md) as a top-level entry point so partners
+  [`ICP.md`](./docs/src/icp.md) as a top-level entry point so partners
   skimming the repo land on it in seconds.
 - **TypeScript declaration file for `@stateset/icp-client`**
   (`packages/icp-client/src/index.d.ts`). The most-used SDK now ships
