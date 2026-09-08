@@ -787,6 +787,20 @@ async function handleCosignSettlement(req, res) {
     if (!receipt || receipt.type !== 'icp.settlement.receipt') {
       return reply(res, 400, err('format.missing_field', 'receipt is required'));
     }
+    // The settlement ID is the key this receipt is stored and re-fetched
+    // under; an unusable one silently produces an unaddressable settlement.
+    if (
+      typeof receipt.settlement_id !== 'string' ||
+      receipt.settlement_id.trim() !== receipt.settlement_id ||
+      receipt.settlement_id.length === 0 ||
+      receipt.settlement_id.length > 128
+    ) {
+      return reply(
+        res,
+        400,
+        err('format.missing_field', 'receipt.settlement_id must be a non-empty string (<=128 chars)'),
+      );
+    }
     if (!ALLOWED_SETTLERS.has(receipt.settler)) {
       return reply(
         res,
@@ -830,6 +844,32 @@ async function handleCosignSettlement(req, res) {
         err('format.unknown_intent', `intent ${receipt.intent_id} is not known`),
       );
     }
+    // The escrow is the funded position being settled. A receipt that names
+    // someone else's escrow (or none at all) must never be merchant-signed.
+    const escrow = state.getEscrow(receipt.escrow_id);
+    if (!escrow || escrow.intent_id !== receipt.intent_id) {
+      return reply(
+        res,
+        409,
+        err(
+          'settlement.escrow_mismatch',
+          `escrow ${receipt.escrow_id} does not belong to intent ${receipt.intent_id}`,
+        ),
+      );
+    }
+    // One escrow settles once. A Settler holding a valid key could otherwise
+    // mint a second settlement_id over the same position and obtain a second
+    // merchant signature for it.
+    if (escrow.settlement_id && escrow.settlement_id !== receipt.settlement_id) {
+      return reply(
+        res,
+        409,
+        err(
+          'settlement.already_settled',
+          `escrow ${receipt.escrow_id} is already settled as ${escrow.settlement_id}`,
+        ),
+      );
+    }
     if (
       receipt.amount?.amount !== quoteRecord.quote.total?.amount ||
       receipt.amount?.currency !== quoteRecord.quote.total?.currency
@@ -853,6 +893,7 @@ async function handleCosignSettlement(req, res) {
       },
     };
     state.recordSettlement(coSigned);
+    state.updateEscrow(receipt.escrow_id, { settlement_id: receipt.settlement_id });
     return reply(res, 200, { receipt: coSigned });
   });
 }
