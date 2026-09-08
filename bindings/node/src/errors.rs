@@ -340,6 +340,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stateset_core::CurrencyCode;
     use uuid::Uuid;
 
     fn reason(error: &Error) -> serde_json::Value {
@@ -534,6 +535,28 @@ mod tests {
     #[test]
     fn guard_passes_success_through() {
         assert_eq!(guard(|| Ok(7)).unwrap(), 7);
+    }
+
+    /// The two `Money::from_decimal_str` call sites in `lib.rs` classify a
+    /// malformed `amount` with `ErrCode::Validation`. `MoneyWireError` comes
+    /// from stateset-primitives, not from `CommerceError`, so `classify_cause`
+    /// cannot recognise it and the fallback code is exactly what the caller
+    /// sees — `Internal` reported bad input as INTERNAL/500.
+    #[test]
+    fn a_primitives_error_is_reported_with_the_fallback_code_it_is_given() {
+        let cause = stateset_core::Money::from_decimal_str("not-a-number", CurrencyCode::USD)
+            .expect_err("a malformed amount must not parse");
+        let error = from_cause(ErrCode::Validation, cause);
+        let payload = reason(&error);
+        assert_eq!(payload["code"], "VALIDATION");
+        assert_eq!(error.status, Status::InvalidArg, "bad input throws InvalidArg");
+        // No `details`: `classify_cause` found no `CommerceError` to describe.
+        assert!(payload["details"].is_null());
+
+        // The shape the two call sites used to have, pinned so the difference
+        // is visible: the same cause under the old fallback is a 500.
+        let old = from_cause(ErrCode::Internal, "not-a-number".parse::<i32>().unwrap_err());
+        assert_eq!(reason(&old)["code"], "INTERNAL");
     }
 
     #[test]

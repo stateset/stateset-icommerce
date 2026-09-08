@@ -30,6 +30,25 @@ export class PoisonAwardError extends Error {
   }
 }
 
+/**
+ * Binding error codes whose verdict cannot change on a retry.
+ *
+ * The engine has already looked at the input or the record's state and said
+ * no: a malformed payload stays malformed, a missing aggregate stays missing,
+ * and a precondition the record's state forbids is not a transient outage.
+ * Retrying those `maxAttempts` times only delays the dead letter — and, on a
+ * bridge, holds the sequencer cursor behind a message that can never land.
+ * Everything else (a database blip, a lock timeout, an external service) stays
+ * retryable.
+ */
+const PERMANENT_BINDING_CODES = new Set(['VALIDATION', 'PRECONDITION_FAILED', 'NOT_FOUND']);
+
+/** Whether a caught failure can never succeed on a later attempt. */
+function isPermanentFailure(error) {
+  if (error?.retryable === false) return true;
+  return typeof error?.code === 'string' && PERMANENT_BINDING_CODES.has(error.code);
+}
+
 function requiredString(value, field) {
   if (typeof value !== 'string' || value.trim() !== value || value.length === 0) {
     throw new Error(`${field} must be a non-empty, trimmed string`);
@@ -663,9 +682,11 @@ export class KernelMarketplaceBridge {
       // up after a bounded number of attempts (or immediately, when the failure
       // is known to be permanent), record the row for operator inspection, and
       // let the bridge move on.
-      const permanent = error?.retryable === false;
+      const permanent = isPermanentFailure(error);
       if (permanent || claim.record.attempts >= this.maxAttempts) {
-        const reason = permanent ? (error.reason ?? 'permanent_failure') : 'attempts_exhausted';
+        const reason = permanent
+          ? (error.reason ?? (typeof error?.code === 'string' ? error.code : 'permanent_failure'))
+          : 'attempts_exhausted';
         this.store.deadLetter(this.id, event.eventId, error, reason);
         return {
           sequence,

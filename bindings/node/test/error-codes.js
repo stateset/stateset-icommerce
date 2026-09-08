@@ -160,6 +160,77 @@ test('every wrapper path decodes the envelope', async (t) => {
   });
 });
 
+// A commerce binding has no business mutating the host's realm. `adopt` used to
+// patch the prototype of WHATEVER a native call handed back, and several
+// exports return Buffers (`merkleRoot`, `ed25519Sign`, `aesGcmEncrypt`,
+// `vesX402ComputeSigningHash`, …): one call replaced all 93 own methods of
+// `Buffer.prototype`, process-wide, for every library sharing the process.
+test('a Buffer-returning export leaves the realm alone', async (t) => {
+  const { wrapNativeExports } = require('../errors.js');
+
+  const before = {
+    toString: Buffer.prototype.toString,
+    slice: Buffer.prototype.slice,
+    equals: Buffer.prototype.equals,
+    names: Object.getOwnPropertyNames(Buffer.prototype).sort(),
+    uint8ArrayNames: Object.getOwnPropertyNames(Uint8Array.prototype).sort(),
+    objectToString: Object.prototype.toString,
+    arrayMap: Array.prototype.map,
+    promiseThen: Promise.prototype.then,
+    dateToISOString: Date.prototype.toISOString,
+  };
+
+  const assertRealmUntouched = (what) => {
+    assert.strictEqual(Buffer.prototype.toString, before.toString, `${what}: Buffer#toString`);
+    assert.strictEqual(Buffer.prototype.slice, before.slice, `${what}: Buffer#slice`);
+    assert.strictEqual(Buffer.prototype.equals, before.equals, `${what}: Buffer#equals`);
+    assert.deepStrictEqual(
+      Object.getOwnPropertyNames(Buffer.prototype).sort(),
+      before.names,
+      `${what}: Buffer.prototype own property names`,
+    );
+    assert.deepStrictEqual(
+      Object.getOwnPropertyNames(Uint8Array.prototype).sort(),
+      before.uint8ArrayNames,
+      `${what}: Uint8Array.prototype own property names`,
+    );
+    assert.strictEqual(Object.prototype.toString, before.objectToString, `${what}: Object`);
+    assert.strictEqual(Array.prototype.map, before.arrayMap, `${what}: Array`);
+    assert.strictEqual(Promise.prototype.then, before.promiseThen, `${what}: Promise`);
+    assert.strictEqual(Date.prototype.toISOString, before.dateToISOString, `${what}: Date`);
+  };
+
+  await t.test('through a stand-in module returning builtins', () => {
+    const fake = wrapNativeExports({
+      makeBuffer: () => Buffer.from('deadbeef', 'hex'),
+      makeTypedArray: () => new Uint8Array([1, 2, 3]),
+      makeArrayBuffer: () => new ArrayBuffer(8),
+      makeDataView: () => new DataView(new ArrayBuffer(8)),
+      makeDate: () => new Date(0),
+      makeMap: () => new Map([['a', 1]]),
+      makeRegExp: () => /x/u,
+      makeError: () => new TypeError('not thrown, returned'),
+      makePromise: async () => Buffer.alloc(4),
+    });
+    for (const key of Object.keys(fake)) {
+      const value = fake[key]();
+      assert.ok(value, `${key} returned something`);
+    }
+    return fake.makePromise().then(() => assertRealmUntouched('stand-in module'));
+  });
+
+  await t.test('through the real binding', () => {
+    // `merkleRoot` is a free function on the native module and hands back a
+    // Buffer, which is the exact shape that used to poison the prototype.
+    const root = native.merkleRoot([Buffer.alloc(32), Buffer.alloc(32)]);
+    assert.ok(Buffer.isBuffer(root) || root instanceof Uint8Array, 'merkleRoot returns bytes');
+    assertRealmUntouched('real binding');
+
+    // And the Buffer still behaves like a Buffer, not like a wrapped shell.
+    assert.strictEqual(Buffer.from('ab', 'hex').toString('hex'), 'ab');
+  });
+});
+
 // The native module has no fallible synchronous instance method and no static
 // that can be made to throw with ordinary input, so the sync method / getter /
 // static decode paths are proved here against a stand-in module shaped exactly
