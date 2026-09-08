@@ -173,7 +173,10 @@ async function post(body) {
   return { status: response.status, json: await response.json() };
 }
 
-function submit(intent, { key = buyerKp.privateKey, ed = buyerEdPubRaw, x = buyerXPubRaw, extra = {} } = {}) {
+function submit(
+  intent,
+  { key = buyerKp.privateKey, ed = buyerEdPubRaw, x = buyerXPubRaw, extra = {} } = {},
+) {
   return post({
     intent,
     signature: {
@@ -230,7 +233,10 @@ test('a principal with no operator-configured key cannot delegate', async () => 
 
 test('a binding that does not authorize this agent or verb is rejected', async () => {
   const wrongAgent = delegation({ agent: strangerAid });
-  assert.equal((await submit(intentFor(buyerAid, wrongAgent))).json.code, 'delegation.scope_mismatch');
+  assert.equal(
+    (await submit(intentFor(buyerAid, wrongAgent))).json.code,
+    'delegation.scope_mismatch',
+  );
   const wrongVerb = delegation({ authority: { verbs: ['inventory.query'] } });
   const { status, json } = await submit(intentFor(buyerAid, wrongVerb));
   assert.equal(status, 403);
