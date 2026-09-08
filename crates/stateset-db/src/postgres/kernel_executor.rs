@@ -45,7 +45,8 @@ use crate::kernel::receipt::{
     receipt_record, rejected_receipt, succeeded_receipt,
 };
 use crate::kernel::{
-    BudgetSnapshot, CommandRun, EnvelopeGuard, Replay, plan_budget, resolve_replay,
+    BudgetSnapshot, CommandRun, EnvelopeGuard, Replay, budget_at_storage_precision, plan_budget,
+    resolve_replay,
 };
 use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::Utc;
@@ -181,6 +182,10 @@ impl PgKernelExecutor {
         &self,
         budget: &EconomicBudget,
     ) -> Result<EconomicBudgetStatus> {
+        // Store and compare the definition at the precision TIMESTAMPTZ keeps,
+        // so re-provisioning the identical struct is idempotent instead of
+        // conflicting with its own truncated round trip.
+        let budget = &budget_at_storage_precision(budget);
         let limit =
             budget.validate().map_err(|error| CommerceError::ValidationError(error.to_string()))?;
         let now = Utc::now();
@@ -4196,6 +4201,22 @@ async fn cart_units_pg(
     Ok(rust_decimal::Decimal::from(units))
 }
 
+/// Read one durable budget. An apply must serialize against every other
+/// debit of the same budget, so it takes the row lock; a preview commits
+/// nothing and must not queue behind an in-flight debit, so it reads without
+/// one.
+const fn budget_lookup_sql(apply: bool) -> &'static str {
+    if apply {
+        "SELECT budget_id, principal_id, tenant_id, store_id, limit_amount,
+                committed_amount, currency, valid_from, expires_at
+         FROM kernel_economic_budgets WHERE budget_id = $1 FOR UPDATE"
+    } else {
+        "SELECT budget_id, principal_id, tenant_id, store_id, limit_amount,
+                committed_amount, currency, valid_from, expires_at
+         FROM kernel_economic_budgets WHERE budget_id = $1"
+    }
+}
+
 async fn enforce_budget_pg<C>(
     tx: &mut sqlx::PgConnection,
     command: &CommandEnvelope<C>,
@@ -4207,15 +4228,11 @@ async fn enforce_budget_pg<C>(
         command.commitment.as_ref().and_then(|commitment| commitment.budget_id.as_deref());
     let row = match budget_id {
         None => None,
-        Some(budget_id) => sqlx::query_as::<_, EconomicBudgetRow>(
-            "SELECT budget_id, principal_id, tenant_id, store_id, limit_amount,
-                    committed_amount, currency, valid_from, expires_at
-             FROM kernel_economic_budgets WHERE budget_id = $1 FOR UPDATE",
-        )
-        .bind(budget_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(pg_err)?,
+        Some(budget_id) => sqlx::query_as::<_, EconomicBudgetRow>(budget_lookup_sql(apply))
+            .bind(budget_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(pg_err)?,
     };
     let snapshot = row.map(budget_snapshot_from_pg_row);
     let debit = match plan_budget(command, amount, currency, snapshot.as_ref(), Utc::now()) {
@@ -4539,4 +4556,21 @@ async fn append_receipt<T: Serialize>(
     let record = receipt_record(request_hash, receipt)?;
     receipt.audit_hash = Some(append_kernel_receipt_tx(tx, &record).await?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::budget_lookup_sql;
+
+    #[test]
+    fn only_an_apply_locks_the_budget_row() {
+        assert!(
+            budget_lookup_sql(true).trim_end().ends_with("FOR UPDATE"),
+            "an applied debit must serialize against every other debit"
+        );
+        assert!(
+            !budget_lookup_sql(false).contains("FOR UPDATE"),
+            "a preview commits nothing and must not queue behind an in-flight debit"
+        );
+    }
 }

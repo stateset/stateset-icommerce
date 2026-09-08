@@ -1,9 +1,31 @@
 //! Pure planning for durable economic-budget commitments.
 
 use crate::kernel::GuardRejection;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SubsecRound, Utc};
 use rust_decimal::Decimal;
-use stateset_core::{CommandEnvelope, CurrencyCode};
+use stateset_core::{CommandEnvelope, CurrencyCode, EconomicBudget};
+
+/// Sub-second precision both backends can store and read back unchanged.
+///
+/// PostgreSQL `TIMESTAMPTZ` keeps microseconds, so a definition carrying the
+/// nanoseconds `Utc::now()` hands out never round-trips intact.
+const STORAGE_SUBSEC_DIGITS: u16 = 6;
+
+/// A budget definition at the precision the durable stores actually keep.
+///
+/// Provisioning is idempotent on an identical definition, which means the
+/// definition has to survive its own round trip. Normalising the caller's
+/// struct before it is stored *and* before it is compared is what makes a
+/// retry of `provision_economic_budget(valid_from: Utc::now())` an `Ok`
+/// rather than a self-conflict, and keeps both backends storing the same
+/// instant for the same input.
+#[must_use]
+pub fn budget_at_storage_precision(budget: &EconomicBudget) -> EconomicBudget {
+    let mut normalized = budget.clone();
+    normalized.valid_from = budget.valid_from.trunc_subsecs(STORAGE_SUBSEC_DIGITS);
+    normalized.expires_at = budget.expires_at.trunc_subsecs(STORAGE_SUBSEC_DIGITS);
+    normalized
+}
 
 /// Locked budget state supplied by a database backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +139,25 @@ pub fn plan_budget<C>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn storage_precision_truncates_below_the_microsecond() {
+        let budget = stateset_core::EconomicBudget::new(
+            "budget:precision",
+            "agent:precision",
+            stateset_core::Money::new(Decimal::ONE, CurrencyCode::USD),
+            DateTime::from_timestamp_nanos(1_700_000_000_123_456_789),
+            DateTime::from_timestamp_nanos(1_800_000_000_987_654_321),
+        );
+        let normalized = budget_at_storage_precision(&budget);
+        assert_eq!(normalized.valid_from.timestamp_subsec_nanos(), 123_456_000);
+        assert_eq!(normalized.expires_at.timestamp_subsec_nanos(), 987_654_000);
+        assert_eq!(
+            budget_at_storage_precision(&normalized),
+            normalized,
+            "normalisation is idempotent, so a stored definition compares equal to itself"
+        );
+    }
+
     use super::*;
     use stateset_core::{EconomicCommitment, KernelPrincipal, Money, PrincipalKind};
 

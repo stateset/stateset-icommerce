@@ -7,15 +7,16 @@
 //! carries a quantity. Every scenario has a Postgres mirror in
 //! `postgres_kernel_round8.rs`.
 
+use chrono::{Duration, SubsecRound, Timelike, Utc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_core::{
     AddCartItem, CartAddress, CartRepository, CommandEnvelope, CommitCheckout,
     ConfirmInventoryReservation, CreateCart, CreateCustomer, CreateInventoryItem, CreateOrder,
-    CreateOrderItem, CurrencyCode, CustomerRepository, EconomicCommitment, ExecutionMode,
-    ExecutionStatus, InventoryRepository, KernelCommandPolicy, KernelPolicy, KernelPrincipal,
-    Money, OrderRepository, OrderStatus, PrincipalKind, ProductId, ReserveInventory,
-    SetCartPayment, ShipOrderCommand, UpdateOrder,
+    CreateOrderItem, CurrencyCode, CustomerRepository, EconomicBudget, EconomicCommitment,
+    ExecutionMode, ExecutionStatus, InventoryRepository, KernelCommandPolicy, KernelPolicy,
+    KernelPrincipal, Money, OrderRepository, OrderStatus, PrincipalKind, ProductId,
+    ReserveInventory, SetCartPayment, ShipOrderCommand, UpdateOrder,
 };
 use stateset_db::SqliteDatabase;
 use uuid::Uuid;
@@ -350,4 +351,38 @@ fn shipment_accepts_a_declaration_that_matches_the_units_it_moves() {
         db.kernel_executor(quantity_policy()).execute_ship_order(&ship).expect("ship order");
     assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
     assert_eq!(receipt.result.expect("order").items[0].shipped_quantity, 30);
+}
+
+/// The SQLite half of the round-8 provisioning fix: both backends store a
+/// budget definition at microsecond precision, so re-provisioning the
+/// identical struct is idempotent on either one. Mirrors
+/// `postgres_budget_provisioning_is_idempotent_at_nanosecond_precision`.
+#[test]
+fn budget_provisioning_is_idempotent_at_nanosecond_precision() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+    let executor = db.kernel_executor(quantity_policy());
+    let now = Utc::now();
+    let mut definition = EconomicBudget::new(
+        "budget:r8-nanos",
+        "agent:round8",
+        Money::new(dec!(20.00), CurrencyCode::USD),
+        (now - Duration::minutes(1)).with_nanosecond(123_456_789).expect("nanos"),
+        (now + Duration::days(1)).with_nanosecond(987_654_321).expect("nanos"),
+    )
+    .for_scope("tenant-1", "store-1");
+    assert_ne!(definition.valid_from, definition.valid_from.trunc_subsecs(6));
+
+    let first = executor.provision_economic_budget(&definition).expect("provision");
+    let second = executor
+        .provision_economic_budget(&definition)
+        .expect("re-provisioning the identical definition is idempotent");
+    assert_eq!(first.budget, second.budget);
+    assert_eq!(first.budget.valid_from, definition.valid_from.trunc_subsecs(6));
+    assert_eq!(first.budget.expires_at, definition.expires_at.trunc_subsecs(6));
+
+    definition.limit = Money::new(dec!(21.00), CurrencyCode::USD).to_wire();
+    assert!(
+        executor.provision_economic_budget(&definition).is_err(),
+        "budget definitions stay immutable"
+    );
 }

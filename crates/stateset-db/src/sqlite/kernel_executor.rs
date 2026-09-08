@@ -49,7 +49,8 @@ use crate::kernel::receipt::{
     receipt_record, rejected_receipt, succeeded_receipt,
 };
 use crate::kernel::{
-    BudgetSnapshot, CommandRun, EnvelopeGuard, Replay, plan_budget, resolve_replay,
+    BudgetSnapshot, CommandRun, EnvelopeGuard, Replay, budget_at_storage_precision, plan_budget,
+    resolve_replay,
 };
 use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::Utc;
@@ -291,6 +292,10 @@ impl SqliteKernelExecutor {
         &self,
         budget: &EconomicBudget,
     ) -> Result<EconomicBudgetStatus> {
+        // Postgres stores these timestamps at microsecond precision; SQLite
+        // normalises to the same precision so one definition means one stored
+        // budget on either backend.
+        let budget = &budget_at_storage_precision(budget);
         let limit =
             budget.validate().map_err(|error| CommerceError::ValidationError(error.to_string()))?;
         let now = Utc::now();
