@@ -5,8 +5,9 @@ An AI-powered command-line interface for commerce operations using the Claude Ag
 ## Overview
 
 This CLI provides natural language access to commerce operations across
-**73 tool domains (802 MCP tools)** — see [docs/TOOLS.md](../docs/TOOLS.md) for the
-full generated catalog. Major areas:
+**87 tool domains (923 MCP tools)** — the count moves with the registry, so
+[docs/TOOLS.md](../docs/TOOLS.md) is the authority; it is generated from
+`src/tools/domain-registry.js` by `npm run docs:tools`. Major areas:
 - **Core commerce** - Customers, orders, products, inventory, returns, shipments
 - **Carts/Checkout** - Protocol-neutral shopping cart and checkout flow
 - **Payments** - Payments, refunds, stablecoin, x402, treasury
@@ -56,11 +57,16 @@ stateset-create --apply "create a nextjs storefront for my coffee shop"
 stateset-create --apply --dir ~/projects "build an online bookstore"
 ```
 
-Available templates:
+Available `stateset-create` templates (defined in `src/scaffold-templates.js`):
 - `nextjs` - Full-stack Next.js 14 with App Router, SSR, Tailwind (recommended)
 - `nextjs-minimal` - Minimal Next.js setup
 - `vite-react` - Client-side SPA with WASM
 - `astro` - Static-first with Islands
+
+These are the AI-scaffolder's templates. The separate published generator
+`npm create stateset-app@latest` ships exactly one template — the Next.js
+`storefront` in `packages/create-stateset-app/templates/storefront/` — and is
+the path the `Storefront Golden Path` CI workflow exercises end to end.
 
 ## Safety Architecture
 
@@ -86,9 +92,10 @@ stateset --apply "create a cart for alice@example.com"
 
 ## MCP Servers (Tools)
 
-The engine exposes **802 tools across 73 domains**. The sections below highlight the
-major domains with representative tools only — the complete, generated catalog lives in
-[docs/TOOLS.md](../docs/TOOLS.md) (regenerate with `npm run docs:tools`; do not edit by hand).
+The engine exposes **923 tools across 87 domains** as of this writing. The sections
+below highlight the major domains with representative tools only — the complete,
+generated catalog lives in [docs/TOOLS.md](../docs/TOOLS.md), which is the
+authoritative count (regenerate with `npm run docs:tools`; do not edit by hand).
 
 ### commerce-customers
 - `list_customers` - List all customers
@@ -813,8 +820,8 @@ stateset-icommerce/cli/
 │   ├── stateset-subscriptions.js # Subscriptions agent
 │   └── stateset-pay.js       # Native stablecoin payments
 ├── src/
-│   ├── claude-harness.js     # Multi-agent SDK integration
-│   ├── mcp-server.js         # Commerce MCP server (802 tools across 73 domains as of Jul 2026 — see docs/TOOLS.md, generated from src/tools/domain-registry.js via `npm run docs:tools`)
+│   ├── claude-harness.js     # Multi-agent SDK orchestration (~1,170 lines; helpers in src/harness/)
+│   ├── mcp-server.js         # Commerce MCP server wiring (~636 lines; per-server modules in src/mcp/). Tool counts live in docs/TOOLS.md, generated from src/tools/domain-registry.js via `npm run docs:tools`
 │   ├── chains/               # Blockchain integration
 │   │   ├── index.js          # Module exports
 │   │   ├── config.js         # Chain & token configurations
