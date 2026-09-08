@@ -243,70 +243,84 @@ impl PgAgentCardRepository {
         row.map(Self::row_to_agent_card).transpose()
     }
 
+    /// Update an agent card.
+    ///
+    /// One partial UPDATE: a column the caller did not name is neither read nor
+    /// rewritten. The old read-merge-write loaded the whole card, folded the
+    /// caller's `Option`s over that snapshot in Rust and wrote every column
+    /// back, so two agents editing different fields at once each rewrote the
+    /// other's column with the value they had read and the later commit
+    /// silently reverted its neighbour's edit.
     pub async fn update_async(&self, id: Uuid, input: UpdateAgentCard) -> Result<AgentCard> {
-        let existing = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
-
-        let name = input.name.unwrap_or(existing.name);
-        let description = input.description.or(existing.description);
-        let supported_networks = input.supported_networks.unwrap_or(existing.supported_networks);
-        let supported_assets = input.supported_assets.unwrap_or(existing.supported_assets);
-        let a2a_skills = input.a2a_skills.unwrap_or(existing.a2a_skills);
-        let trust_level = input.trust_level.unwrap_or(existing.trust_level);
-        let endpoint_url = input.endpoint_url.or(existing.endpoint_url);
-        let endpoint_protocol = input.endpoint_protocol.or(existing.endpoint_protocol);
-        let merchant_id = input.merchant_id.or(existing.merchant_id);
-        let merchant_name = input.merchant_name.or(existing.merchant_name);
-        let business_category = input.business_category.or(existing.business_category);
-        let max_transaction_amount =
-            input.max_transaction_amount.or(existing.max_transaction_amount);
-        let daily_volume_limit = input.daily_volume_limit.or(existing.daily_volume_limit);
-        let requires_kyc = input.requires_kyc.unwrap_or(existing.requires_kyc);
-        let active = input.active.unwrap_or(existing.active);
-        let metadata = input.metadata.or(existing.metadata);
-
-        let networks_json = serde_json::to_value(&supported_networks)
+        let networks_json = input
+            .supported_networks
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
             .map_err(|e| CommerceError::Internal(e.to_string()))?;
-        let assets_json = serde_json::to_value(&supported_assets)
+        let assets_json = input
+            .supported_assets
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
             .map_err(|e| CommerceError::Internal(e.to_string()))?;
-        let skills_json = if a2a_skills.is_empty() {
-            None
-        } else {
-            Some(
-                serde_json::to_value(&a2a_skills)
-                    .map_err(|e| CommerceError::Internal(e.to_string()))?,
-            )
+        // `Some(vec![])` still means "clear the column", so the skills write is
+        // driven by an explicit "was it named" flag rather than COALESCE.
+        let skills_named = input.a2a_skills.is_some();
+        let skills_json = match input.a2a_skills.as_ref() {
+            Some(skills) if !skills.is_empty() => Some(
+                serde_json::to_value(skills).map_err(|e| CommerceError::Internal(e.to_string()))?,
+            ),
+            _ => None,
         };
 
-        sqlx::query(
+        let updated = sqlx::query(
             r#"UPDATE agent_cards SET
-                name = $1, description = $2, supported_networks = $3, supported_assets = $4,
-                a2a_skills = $5, trust_level = $6, endpoint_url = $7, endpoint_protocol = $8,
-                merchant_id = $9, merchant_name = $10, business_category = $11,
-                max_transaction_amount = $12, daily_volume_limit = $13, requires_kyc = $14,
-                active = $15, metadata = $16, updated_at = $17
-             WHERE id = $18"#,
+                name = COALESCE($1, name),
+                description = COALESCE($2, description),
+                supported_networks = COALESCE($3, supported_networks),
+                supported_assets = COALESCE($4, supported_assets),
+                a2a_skills = CASE WHEN $5 THEN $6 ELSE a2a_skills END,
+                trust_level = COALESCE($7, trust_level),
+                endpoint_url = COALESCE($8, endpoint_url),
+                endpoint_protocol = COALESCE($9, endpoint_protocol),
+                merchant_id = COALESCE($10, merchant_id),
+                merchant_name = COALESCE($11, merchant_name),
+                business_category = COALESCE($12, business_category),
+                max_transaction_amount = COALESCE($13, max_transaction_amount),
+                daily_volume_limit = COALESCE($14, daily_volume_limit),
+                requires_kyc = COALESCE($15, requires_kyc),
+                active = COALESCE($16, active),
+                metadata = COALESCE($17, metadata),
+                updated_at = $18
+             WHERE id = $19"#,
         )
-        .bind(&name)
-        .bind(&description)
+        .bind(&input.name)
+        .bind(&input.description)
         .bind(networks_json)
         .bind(assets_json)
+        .bind(skills_named)
         .bind(skills_json)
-        .bind(trust_level.to_string())
-        .bind(&endpoint_url)
-        .bind(&endpoint_protocol)
-        .bind(&merchant_id)
-        .bind(&merchant_name)
-        .bind(&business_category)
-        .bind(Self::to_i64_opt(max_transaction_amount, "max_transaction_amount")?)
-        .bind(Self::to_i64_opt(daily_volume_limit, "daily_volume_limit")?)
-        .bind(requires_kyc)
-        .bind(active)
-        .bind(&metadata)
+        .bind(input.trust_level.map(|level| level.to_string()))
+        .bind(&input.endpoint_url)
+        .bind(&input.endpoint_protocol)
+        .bind(&input.merchant_id)
+        .bind(&input.merchant_name)
+        .bind(&input.business_category)
+        .bind(Self::to_i64_opt(input.max_transaction_amount, "max_transaction_amount")?)
+        .bind(Self::to_i64_opt(input.daily_volume_limit, "daily_volume_limit")?)
+        .bind(input.requires_kyc)
+        .bind(input.active)
+        .bind(&input.metadata)
         .bind(Utc::now())
         .bind(id)
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
+
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::NotFound);
+        }
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }

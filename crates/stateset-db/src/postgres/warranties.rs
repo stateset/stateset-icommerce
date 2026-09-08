@@ -80,6 +80,70 @@ impl PgWarrantyRepository {
         Self { pool }
     }
 
+    /// Column list for `warranty_claims`, shared by the pooled readers and the
+    /// in-transaction `FOR UPDATE` reads.
+    const CLAIM_COLUMNS: &'static str =
+        "id, claim_number, warranty_id, customer_id, status, resolution, issue_description,
+         issue_category, issue_date, contact_phone, contact_email, shipping_address, repair_cost,
+         replacement_product_id, refund_amount, denial_reason, internal_notes, customer_notes,
+         submitted_at, approved_at, resolved_at, created_at, updated_at";
+
+    /// Read a warranty inside `tx`, locking the row the caller is about to
+    /// write.
+    async fn lock_warranty(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: WarrantyId,
+    ) -> Result<Option<Warranty>> {
+        let row = sqlx::query_as::<_, WarrantyRow>(
+            "SELECT id, warranty_number, customer_id, order_id, order_item_id, product_id, sku,
+                    serial_number, status, warranty_type, provider, coverage_description,
+                    purchase_date, start_date, end_date, duration_months, max_coverage_amount,
+                    deductible, max_claims, claims_used, terms, notes, created_at, updated_at
+             FROM warranties WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id.into_uuid())
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        row.map(Self::row_to_warranty).transpose()
+    }
+
+    /// Read a claim inside `tx`, locking the row the caller is about to write.
+    async fn lock_claim(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+    ) -> Result<Option<WarrantyClaim>> {
+        let sql =
+            format!("SELECT {} FROM warranty_claims WHERE id = $1 FOR UPDATE", Self::CLAIM_COLUMNS);
+        let row = sqlx::query_as::<_, ClaimRow>(&sql)
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        row.map(Self::row_to_claim).transpose()
+    }
+
+    /// Explain a guarded claim UPDATE that matched no row: the claim is either
+    /// gone, or it left the status set the operation allows while the caller
+    /// was deciding. Re-running the guard on the row as it stands now gives the
+    /// same message the pre-check used to give, as a `Conflict`.
+    async fn claim_write_lost(
+        &self,
+        id: Uuid,
+        guard: fn(&WarrantyClaim) -> Result<()>,
+    ) -> CommerceError {
+        match self.get_claim_async(id).await {
+            Ok(Some(claim)) => match guard(&claim) {
+                Err(err) => err,
+                Ok(()) => {
+                    CommerceError::Conflict(format!("Warranty claim {id} changed concurrently"))
+                }
+            },
+            Ok(None) => CommerceError::NotFound,
+            Err(err) => err,
+        }
+    }
+
     fn ensure_can_void(warranty: &Warranty) -> Result<()> {
         match warranty.status {
             WarrantyStatus::Active | WarrantyStatus::Transferred => Ok(()),
@@ -120,15 +184,15 @@ impl PgWarrantyRepository {
                 }
                 Ok(())
             }
-            WarrantyStatus::Expired => Err(CommerceError::ValidationError(
-                "Cannot transfer an expired warranty".to_string(),
-            )),
-            WarrantyStatus::Voided => {
-                Err(CommerceError::ValidationError("Cannot transfer a voided warranty".to_string()))
+            WarrantyStatus::Expired => {
+                Err(CommerceError::Conflict("Cannot transfer an expired warranty".to_string()))
             }
-            _ => Err(CommerceError::ValidationError(
-                "Warranty status does not allow transfer".to_string(),
-            )),
+            WarrantyStatus::Voided => {
+                Err(CommerceError::Conflict("Cannot transfer a voided warranty".to_string()))
+            }
+            _ => {
+                Err(CommerceError::Conflict("Warranty status does not allow transfer".to_string()))
+            }
         }
     }
 
@@ -138,23 +202,21 @@ impl PgWarrantyRepository {
                 Ok(())
             }
             ClaimStatus::Approved => {
-                Err(CommerceError::ValidationError("Claim is already approved".to_string()))
+                Err(CommerceError::Conflict("Claim is already approved".to_string()))
             }
             ClaimStatus::Denied => {
-                Err(CommerceError::ValidationError("Cannot approve a denied claim".to_string()))
+                Err(CommerceError::Conflict("Cannot approve a denied claim".to_string()))
             }
             ClaimStatus::Completed => {
-                Err(CommerceError::ValidationError("Cannot approve a completed claim".to_string()))
+                Err(CommerceError::Conflict("Cannot approve a completed claim".to_string()))
             }
             ClaimStatus::Cancelled => {
-                Err(CommerceError::ValidationError("Cannot approve a cancelled claim".to_string()))
+                Err(CommerceError::Conflict("Cannot approve a cancelled claim".to_string()))
             }
-            ClaimStatus::InProgress => Err(CommerceError::ValidationError(
+            ClaimStatus::InProgress => Err(CommerceError::Conflict(
                 "Cannot approve a claim already in progress".to_string(),
             )),
-            _ => Err(CommerceError::ValidationError(
-                "Claim status does not allow approval".to_string(),
-            )),
+            _ => Err(CommerceError::Conflict("Claim status does not allow approval".to_string())),
         }
     }
 
@@ -164,56 +226,57 @@ impl PgWarrantyRepository {
                 Ok(())
             }
             ClaimStatus::Approved => {
-                Err(CommerceError::ValidationError("Cannot deny an approved claim".to_string()))
+                Err(CommerceError::Conflict("Cannot deny an approved claim".to_string()))
             }
             ClaimStatus::Denied => {
-                Err(CommerceError::ValidationError("Claim is already denied".to_string()))
+                Err(CommerceError::Conflict("Claim is already denied".to_string()))
             }
             ClaimStatus::Completed => {
-                Err(CommerceError::ValidationError("Cannot deny a completed claim".to_string()))
+                Err(CommerceError::Conflict("Cannot deny a completed claim".to_string()))
             }
             ClaimStatus::Cancelled => {
-                Err(CommerceError::ValidationError("Cannot deny a cancelled claim".to_string()))
+                Err(CommerceError::Conflict("Cannot deny a cancelled claim".to_string()))
             }
             ClaimStatus::InProgress => {
-                Err(CommerceError::ValidationError("Cannot deny a claim in progress".to_string()))
+                Err(CommerceError::Conflict("Cannot deny a claim in progress".to_string()))
             }
-            _ => Err(CommerceError::ValidationError(
-                "Claim status does not allow denial".to_string(),
-            )),
+            _ => Err(CommerceError::Conflict("Claim status does not allow denial".to_string())),
         }
     }
 
-    fn ensure_claim_can_complete(claim: &WarrantyClaim, resolution: ClaimResolution) -> Result<()> {
+    fn ensure_claim_can_complete(claim: &WarrantyClaim) -> Result<()> {
         match claim.status {
             ClaimStatus::Approved | ClaimStatus::InProgress => {}
             ClaimStatus::Submitted | ClaimStatus::UnderReview | ClaimStatus::InfoRequested => {
-                return Err(CommerceError::ValidationError(
+                return Err(CommerceError::Conflict(
                     "Claim must be approved before completion".to_string(),
                 ));
             }
             ClaimStatus::Denied => {
-                return Err(CommerceError::ValidationError(
-                    "Cannot complete a denied claim".to_string(),
-                ));
+                return Err(CommerceError::Conflict("Cannot complete a denied claim".to_string()));
             }
             ClaimStatus::Completed => {
-                return Err(CommerceError::ValidationError(
-                    "Claim is already completed".to_string(),
-                ));
+                return Err(CommerceError::Conflict("Claim is already completed".to_string()));
             }
             ClaimStatus::Cancelled => {
-                return Err(CommerceError::ValidationError(
+                return Err(CommerceError::Conflict(
                     "Cannot complete a cancelled claim".to_string(),
                 ));
             }
             _ => {
-                return Err(CommerceError::ValidationError(
+                return Err(CommerceError::Conflict(
                     "Claim status does not allow completion".to_string(),
                 ));
             }
         }
 
+        Ok(())
+    }
+
+    /// The resolution a completion carries is caller input, not repository
+    /// state: it is rejected before the guarded UPDATE runs, and stays a
+    /// validation error rather than a conflict.
+    fn ensure_resolution_can_complete(resolution: ClaimResolution) -> Result<()> {
         match resolution {
             ClaimResolution::None => Err(CommerceError::ValidationError(
                 "Claim resolution is required for completion".to_string(),
@@ -233,17 +296,17 @@ impl PgWarrantyRepository {
             | ClaimStatus::Approved
             | ClaimStatus::InProgress => Ok(()),
             ClaimStatus::Denied => {
-                Err(CommerceError::ValidationError("Cannot cancel a denied claim".to_string()))
+                Err(CommerceError::Conflict("Cannot cancel a denied claim".to_string()))
             }
             ClaimStatus::Completed => {
-                Err(CommerceError::ValidationError("Cannot cancel a completed claim".to_string()))
+                Err(CommerceError::Conflict("Cannot cancel a completed claim".to_string()))
             }
             ClaimStatus::Cancelled => {
-                Err(CommerceError::ValidationError("Claim is already cancelled".to_string()))
+                Err(CommerceError::Conflict("Claim is already cancelled".to_string()))
             }
-            _ => Err(CommerceError::ValidationError(
-                "Claim status does not allow cancellation".to_string(),
-            )),
+            _ => {
+                Err(CommerceError::Conflict("Claim status does not allow cancellation".to_string()))
+            }
         }
     }
 
@@ -672,55 +735,77 @@ impl PgWarrantyRepository {
         .await
     }
 
-    /// Transfer warranty to new customer (async)
+    /// Transfer warranty to new customer (async).
+    ///
+    /// Everything `ensure_can_transfer` decides lives in the UPDATE's own
+    /// `WHERE`, so the check and the write are one statement. Read on the pool
+    /// and written unconditionally, the transfer could land on a warranty that
+    /// had been voided or expired in the meantime, resurrecting it as
+    /// `transferred`.
     pub async fn transfer_async(
         &self,
         id: WarrantyId,
         new_customer_id: CustomerId,
     ) -> Result<Warranty> {
-        let warranty = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
-        Self::ensure_can_transfer(&warranty, new_customer_id)?;
         let now = Utc::now();
 
-        sqlx::query(
-            "UPDATE warranties SET customer_id = $1, status = $2, updated_at = $3 WHERE id = $4",
+        let updated = sqlx::query(
+            "UPDATE warranties SET customer_id = $1, status = $2, updated_at = $3
+             WHERE id = $4 AND customer_id <> $1 AND status IN ($5, $6)",
         )
         .bind(new_customer_id.into_uuid())
         .bind(WarrantyStatus::Transferred.to_string())
         .bind(now)
         .bind(id.into_uuid())
+        .bind(WarrantyStatus::Active.to_string())
+        .bind(WarrantyStatus::Transferred.to_string())
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
 
+        if updated.rows_affected() == 0 {
+            let warranty = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
+            Self::ensure_can_transfer(&warranty, new_customer_id)?;
+            return Err(CommerceError::Conflict(format!("Warranty {id} changed concurrently")));
+        }
+
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
-    /// Create warranty claim (async)
+    /// Create warranty claim (async).
+    ///
+    /// The validity decision is taken on the row this transaction locks. Read
+    /// on the pool first, the warranty could be voided or expired between the
+    /// `is_valid()` check and the increment, and the claim was filed (and a
+    /// claim slot burned) against a warranty that was already dead.
     pub async fn create_claim_async(&self, input: CreateWarrantyClaim) -> Result<WarrantyClaim> {
-        let warranty = self.get_async(input.warranty_id).await?.ok_or(CommerceError::NotFound)?;
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        let claim_number = generate_claim_number();
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let warranty = Self::lock_warranty(&mut tx, input.warranty_id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
         if !warranty.is_valid() {
             return Err(CommerceError::ValidationError(
                 "Warranty is not valid for claims".to_string(),
             ));
         }
 
-        let id = Uuid::new_v4();
-        let now = Utc::now();
-        let claim_number = generate_claim_number();
-
-        // One transaction, limit-guarded increment first — the is_valid()
-        // pre-check above reads a snapshot, so concurrent claims would race
-        // past max_claims otherwise.
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-
+        // Status, expiry and max_claims are all re-asserted by the increment
+        // itself, so nothing can slip between the locked read above and the
+        // write below even if the lock is ever dropped.
         let rows = sqlx::query(
             "UPDATE warranties SET claims_used = claims_used + 1, updated_at = $1
-             WHERE id = $2 AND (max_claims IS NULL OR claims_used < max_claims)",
+             WHERE id = $2 AND status = $3
+               AND (end_date IS NULL OR end_date > $1)
+               AND (max_claims IS NULL OR claims_used < max_claims)",
         )
         .bind(now)
         .bind(input.warranty_id.into_uuid())
+        .bind(WarrantyStatus::Active.to_string())
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?
@@ -797,14 +882,22 @@ impl PgWarrantyRepository {
         row.map(Self::row_to_claim).transpose()
     }
 
-    /// Update warranty claim (async)
+    /// Update warranty claim (async).
+    ///
+    /// This is a read-merge-write over nullable columns — every field is
+    /// rewritten from the snapshot the call read — so the read has to hold the
+    /// row it is about to write. Split across two pooled statements, two
+    /// operators filling in different fields each wrote the other's column back
+    /// as the `None` they had read, and whichever committed last silently
+    /// reverted its neighbour's edit.
     pub async fn update_claim_async(
         &self,
         id: Uuid,
         input: UpdateWarrantyClaim,
     ) -> Result<WarrantyClaim> {
-        let claim = self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let claim = Self::lock_claim(&mut tx, id).await?.ok_or(CommerceError::NotFound)?;
 
         // Payout guards: amounts must be non-negative, and the combined
         // refund + repair payout must fit the warranty's coverage limit.
@@ -818,8 +911,9 @@ impl PgWarrantyRepository {
                     "Claim payout amounts must be non-negative".to_string(),
                 ));
             }
-            let warranty =
-                self.get_async(claim.warranty_id).await?.ok_or(CommerceError::NotFound)?;
+            let warranty = Self::lock_warranty(&mut tx, claim.warranty_id)
+                .await?
+                .ok_or(CommerceError::NotFound)?;
             if let Some(max) = warranty.max_coverage_amount {
                 let total = new_refund.unwrap_or_default() + new_repair.unwrap_or_default();
                 if total > max {
@@ -855,7 +949,7 @@ impl PgWarrantyRepository {
                     }
                 }
                 resolution = ClaimResolution::Denied;
-                if denial_reason.as_deref().map(|value| value.trim().is_empty()).unwrap_or(true) {
+                if denial_reason.as_deref().is_none_or(|value| value.trim().is_empty()) {
                     return Err(CommerceError::ValidationError(
                         "Denial reason is required".to_string(),
                     ));
@@ -905,9 +999,11 @@ impl PgWarrantyRepository {
         .bind(resolved_at)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -979,86 +1075,125 @@ impl PgWarrantyRepository {
         .await
     }
 
-    /// Approve claim (async)
+    /// Approve claim (async).
+    ///
+    /// The status set `ensure_claim_can_approve` allows is the UPDATE's own
+    /// `WHERE`, so the check and the act are one statement. Read on the pool
+    /// and written unconditionally, an approve that decided on a `submitted`
+    /// snapshot could overwrite a deny or a cancel that had already committed,
+    /// with both callers told they had won.
     pub async fn approve_claim_async(&self, id: Uuid) -> Result<WarrantyClaim> {
-        let claim = self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)?;
-        Self::ensure_claim_can_approve(&claim)?;
         let now = Utc::now();
 
-        sqlx::query("UPDATE warranty_claims SET status = $1, approved_at = $2, updated_at = $3 WHERE id = $4")
-            .bind(ClaimStatus::Approved.to_string())
-            .bind(now)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let updated = sqlx::query(
+            "UPDATE warranty_claims SET status = $1, approved_at = $2, updated_at = $2
+             WHERE id = $3 AND status IN ($4, $5, $6)",
+        )
+        .bind(ClaimStatus::Approved.to_string())
+        .bind(now)
+        .bind(id)
+        .bind(ClaimStatus::Submitted.to_string())
+        .bind(ClaimStatus::UnderReview.to_string())
+        .bind(ClaimStatus::InfoRequested.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        if updated.rows_affected() == 0 {
+            return Err(self.claim_write_lost(id, Self::ensure_claim_can_approve).await);
+        }
 
         self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
-    /// Deny claim (async)
+    /// Deny claim (async). Same guarded write as `approve_claim_async`; the
+    /// reason is caller input and is rejected before the statement runs.
     pub async fn deny_claim_async(&self, id: Uuid, reason: &str) -> Result<WarrantyClaim> {
-        let claim = self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)?;
-        Self::ensure_claim_can_deny(&claim)?;
         if reason.trim().is_empty() {
             return Err(CommerceError::ValidationError("Denial reason is required".to_string()));
         }
         let now = Utc::now();
 
-        sqlx::query(
-            "UPDATE warranty_claims SET status = $1, resolution = $2, denial_reason = $3, resolved_at = $4, updated_at = $5 WHERE id = $6"
+        let updated = sqlx::query(
+            "UPDATE warranty_claims SET status = $1, resolution = $2, denial_reason = $3,
+                 resolved_at = $4, updated_at = $4
+             WHERE id = $5 AND status IN ($6, $7, $8)",
         )
         .bind(ClaimStatus::Denied.to_string())
         .bind(ClaimResolution::Denied.to_string())
         .bind(reason)
         .bind(now)
-        .bind(now)
         .bind(id)
+        .bind(ClaimStatus::Submitted.to_string())
+        .bind(ClaimStatus::UnderReview.to_string())
+        .bind(ClaimStatus::InfoRequested.to_string())
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
 
+        if updated.rows_affected() == 0 {
+            return Err(self.claim_write_lost(id, Self::ensure_claim_can_deny).await);
+        }
+
         self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
-    /// Complete claim (async)
+    /// Complete claim (async). The resolution is caller input and is validated
+    /// up front; the status the claim must be in is the UPDATE's `WHERE`.
     pub async fn complete_claim_async(
         &self,
         id: Uuid,
         resolution: ClaimResolution,
     ) -> Result<WarrantyClaim> {
-        let claim = self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)?;
-        Self::ensure_claim_can_complete(&claim, resolution)?;
+        Self::ensure_resolution_can_complete(resolution)?;
         let now = Utc::now();
 
-        sqlx::query("UPDATE warranty_claims SET status = $1, resolution = $2, resolved_at = $3, updated_at = $4 WHERE id = $5")
-            .bind(ClaimStatus::Completed.to_string())
-            .bind(resolution.to_string())
-            .bind(now)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let updated = sqlx::query(
+            "UPDATE warranty_claims SET status = $1, resolution = $2, resolved_at = $3,
+                 updated_at = $3
+             WHERE id = $4 AND status IN ($5, $6)",
+        )
+        .bind(ClaimStatus::Completed.to_string())
+        .bind(resolution.to_string())
+        .bind(now)
+        .bind(id)
+        .bind(ClaimStatus::Approved.to_string())
+        .bind(ClaimStatus::InProgress.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        if updated.rows_affected() == 0 {
+            return Err(self.claim_write_lost(id, Self::ensure_claim_can_complete).await);
+        }
 
         self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
-    /// Cancel claim (async)
+    /// Cancel claim (async). Cancelling is legal from every live status, so the
+    /// guard is the set of statuses that are not already terminal.
     pub async fn cancel_claim_async(&self, id: Uuid) -> Result<WarrantyClaim> {
-        let claim = self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)?;
-        Self::ensure_claim_can_cancel(&claim)?;
         let now = Utc::now();
 
-        sqlx::query("UPDATE warranty_claims SET status = $1, resolved_at = $2, updated_at = $3 WHERE id = $4")
-            .bind(ClaimStatus::Cancelled.to_string())
-            .bind(now)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let updated = sqlx::query(
+            "UPDATE warranty_claims SET status = $1, resolved_at = $2, updated_at = $2
+             WHERE id = $3 AND status IN ($4, $5, $6, $7, $8)",
+        )
+        .bind(ClaimStatus::Cancelled.to_string())
+        .bind(now)
+        .bind(id)
+        .bind(ClaimStatus::Submitted.to_string())
+        .bind(ClaimStatus::UnderReview.to_string())
+        .bind(ClaimStatus::InfoRequested.to_string())
+        .bind(ClaimStatus::Approved.to_string())
+        .bind(ClaimStatus::InProgress.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        if updated.rows_affected() == 0 {
+            return Err(self.claim_write_lost(id, Self::ensure_claim_can_cancel).await);
+        }
 
         self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)
     }
