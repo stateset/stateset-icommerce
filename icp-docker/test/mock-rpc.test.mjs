@@ -18,7 +18,14 @@ import { fileURLToPath } from 'node:url';
 
 import { MockChain, createMockRpcServer, DEFAULTS } from '../mock-rpc.mjs';
 import { EVENT_TOPICS } from '../../services/icp-chain-watcher/src/abi-decoder.mjs';
-import { ChainWatcher } from '../../services/icp-chain-watcher/src/server.mjs';
+
+// The watcher reads STATE_FILE once, at module load, and defaults it to the
+// process CWD. Point it at a temp path *before* that module is evaluated
+// (hence the dynamic import) so running this suite from the repo root does
+// not drop a cursor file next to the source tree.
+const STATE_FILE = join(tmpdir(), `icp-mock-rpc-cursor-${process.pid}.json`);
+process.env.STATE_FILE = STATE_FILE;
+const { ChainWatcher } = await import('../../services/icp-chain-watcher/src/server.mjs');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SETTLER = resolve(__dirname, '..', '..', 'services', 'settler-stateset', 'src', 'server.mjs');
@@ -72,6 +79,7 @@ after(() => {
   if (settlerProc) settlerProc.kill();
   if (rpcServer) rpcServer.close();
   if (stateDir) rmSync(stateDir, { recursive: true, force: true });
+  rmSync(STATE_FILE, { force: true });
 });
 
 // ---------------------------------------------------------------------------
@@ -159,7 +167,6 @@ test('POST /admin/emit appends a log past the previous head and re-finalizes', a
 
 test('chain → watcher → settler settles an escrow and yields a signed receipt', async () => {
   chain.reset();
-  process.env.STATE_FILE = join(stateDir, 'state.json');
 
   const watcher = new ChainWatcher({
     rpcUrl,
