@@ -401,3 +401,76 @@ async fn postgres_concurrent_cancels_accept_exactly_one() {
         .expect("shipment row");
     assert_eq!(stored.status, InboundShipmentStatus::Cancelled);
 }
+
+/// `mark_in_transit_async` / `mark_arrived_async` wrote the status with no
+/// precondition at all, so `cancel -> mark_arrived -> receive_line` walked
+/// straight around the cancelled-shipment refusal above and put stock on a
+/// cancelled ASN. Both writes are now guarded on `status <> 'cancelled'`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn postgres_status_advances_are_refused_on_a_cancelled_shipment() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let asn = shipment(&db, &[dec!(5)]).await;
+    let item_id = asn.items[0].id;
+    db.inbound_shipments().cancel_async(asn.id).await.expect("cancel shipment");
+
+    let arrived = db
+        .inbound_shipments()
+        .mark_arrived_async(asn.id)
+        .await
+        .expect_err("cannot arrive a cancelled shipment");
+    assert!(matches!(arrived, CommerceError::Conflict(_)), "expected Conflict, got {arrived:?}");
+
+    let transit = db
+        .inbound_shipments()
+        .mark_in_transit_async(asn.id)
+        .await
+        .expect_err("cannot ship a cancelled shipment");
+    assert!(matches!(transit, CommerceError::Conflict(_)), "expected Conflict, got {transit:?}");
+
+    // …and the receipt is still refused, i.e. the bypass is closed.
+    db.inbound_shipments()
+        .receive_line_async(asn.id, item_id, dec!(1))
+        .await
+        .expect_err("a cancelled shipment must refuse receipts");
+
+    let stored = db
+        .inbound_shipments()
+        .get_async(asn.id)
+        .await
+        .expect("get shipment")
+        .expect("shipment row");
+    assert_eq!(stored.status, InboundShipmentStatus::Cancelled);
+    assert_eq!(stored.total_received(), Decimal::ZERO);
+}
+
+/// A guard that never lets the happy path through is an outage: the normal
+/// `pending` -> `in_transit` -> `arrived` -> `received` walk must still work.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn postgres_status_advances_still_work_on_a_live_shipment() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let asn = shipment(&db, &[dec!(5)]).await;
+
+    assert_eq!(
+        db.inbound_shipments().mark_in_transit_async(asn.id).await.expect("in transit").status,
+        InboundShipmentStatus::InTransit
+    );
+    assert_eq!(
+        db.inbound_shipments().mark_arrived_async(asn.id).await.expect("arrived").status,
+        InboundShipmentStatus::Arrived
+    );
+    let received = db
+        .inbound_shipments()
+        .receive_line_async(asn.id, asn.items[0].id, dec!(5))
+        .await
+        .expect("receive the line");
+    assert_eq!(received.status, InboundShipmentStatus::Received);
+    assert_eq!(received.total_received(), dec!(5));
+}

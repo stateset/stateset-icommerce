@@ -174,8 +174,17 @@ const POSTGRES_UNGUARDED_BACKLOG: &[(&str, &str)] = &[
 /// Postgres guarded mutations that *are* transactional but read the row they
 /// write without `FOR UPDATE`. Same policy as [`SQLITE_UNGUARDED_BACKLOG`].
 const POSTGRES_UNLOCKED_BACKLOG: &[(&str, &str)] = &[
-    // (empty — every entry has been repaired. New violations fail; see
-    // SAFE_EXCEPTIONS for the handful whose guard lives in the write itself.)
+    // `delete_bin_async` locks the BIN it deletes (`load_bin_pg` is
+    // `SELECT … FOR UPDATE`), which is why the for-update gate no longer flags
+    // it — but the guard it actually rejects on is a `SELECT COUNT(*) FROM
+    // inventory_bin_levels … WHERE quantity_on_hand <> 0 OR quantity_allocated
+    // <> 0`, and *those* child rows are not locked. Stock can be moved into the
+    // bin between the count and the two DELETEs, so the bin is emptied of levels
+    // that were non-zero when they were removed. The lint's row-lock heuristic
+    // works on the parent row and cannot see this; the entry is kept so the
+    // child-table check-then-act stays visible until it is repaired (lock the
+    // levels too, or make the delete a guarded `DELETE … WHERE NOT EXISTS (…)`).
+    ("bins.rs", "delete_bin_async"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -299,7 +308,8 @@ fn backend_sources(backend: Backend) -> Vec<(String, String)> {
         let path = src_dir().join(name);
         let source = fs::read_to_string(&path).unwrap_or_else(|e| {
             panic!(
-                "backend_transaction_parity: extra {dir} source {} cannot be read ({e}) —                  remove it from EXTRA_SOURCES or fix the path",
+                "backend_transaction_parity: extra {dir} source {} cannot be read ({e}) — \
+                 remove it from EXTRA_SOURCES or fix the path",
                 path.display()
             )
         });

@@ -189,18 +189,37 @@ impl PgInboundShipmentRepository {
         Ok(head)
     }
 
+    /// Advance a shipment's status, refusing to move a cancelled one.
+    ///
+    /// The precondition is in the write, so it cannot be separated from the act.
+    /// Without it `receive_line_async`'s cancelled-shipment refusal was trivially
+    /// bypassable: `cancel` then `mark_arrived` put the ASN back into a live
+    /// status and the next receipt booked stock against a shipment nobody
+    /// expected to take delivery of.
     async fn set_status(
         &self,
         id: InboundShipmentId,
         status: InboundShipmentStatus,
     ) -> Result<InboundShipment> {
-        sqlx::query("UPDATE inbound_shipments SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(status.to_string())
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let updated = sqlx::query(
+            "UPDATE inbound_shipments SET status = $1, updated_at = $2
+             WHERE id = $3 AND status <> 'cancelled'",
+        )
+        .bind(status.to_string())
+        .bind(Utc::now())
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(if self.load_full(id).await?.is_some() {
+                CommerceError::Conflict(
+                    "Cannot change the status of a cancelled inbound shipment".into(),
+                )
+            } else {
+                CommerceError::NotFound
+            });
+        }
         self.require_full(id).await
     }
 

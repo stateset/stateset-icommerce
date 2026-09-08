@@ -156,7 +156,14 @@ impl SqliteInboundShipmentRepository {
         Ok(head)
     }
 
-    fn set_status(
+    /// Advance a shipment's status, refusing to move a cancelled one.
+    ///
+    /// The precondition is in the write, so it cannot be separated from the act.
+    /// Without it [`Self::receive_line`]'s cancelled-shipment refusal was
+    /// trivially bypassable: `cancel` then `mark_arrived` put the ASN back into
+    /// a live status and the next receipt booked stock against a shipment nobody
+    /// expected to take delivery of.
+    fn advance_status(
         &self,
         id: InboundShipmentId,
         status: InboundShipmentStatus,
@@ -164,10 +171,26 @@ impl SqliteInboundShipmentRepository {
         let id_str = id.to_string();
         let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
-            tx.execute(
-                "UPDATE inbound_shipments SET status = ?, updated_at = ? WHERE id = ?",
+            let rows = tx.execute(
+                "UPDATE inbound_shipments SET status = ?, updated_at = ?
+                 WHERE id = ? AND status <> 'cancelled'",
                 rusqlite::params![status.to_string(), &now, &id_str],
             )?;
+            if rows == 0 {
+                let exists: bool = tx
+                    .query_row("SELECT 1 FROM inbound_shipments WHERE id = ?", [&id_str], |_| {
+                        Ok(true)
+                    })
+                    .optional()?
+                    .unwrap_or(false);
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(if exists {
+                    CommerceError::Conflict(
+                        "Cannot change the status of a cancelled inbound shipment".into(),
+                    )
+                } else {
+                    CommerceError::NotFound
+                })));
+            }
             Self::load_full(tx, &id_str)
         })
     }
@@ -265,11 +288,11 @@ impl stateset_core::InboundShipmentRepository for SqliteInboundShipmentRepositor
     }
 
     fn mark_in_transit(&self, id: InboundShipmentId) -> Result<InboundShipment> {
-        self.set_status(id, InboundShipmentStatus::InTransit)
+        self.advance_status(id, InboundShipmentStatus::InTransit)
     }
 
     fn mark_arrived(&self, id: InboundShipmentId) -> Result<InboundShipment> {
-        self.set_status(id, InboundShipmentStatus::Arrived)
+        self.advance_status(id, InboundShipmentStatus::Arrived)
     }
 
     fn receive_line(
@@ -285,6 +308,27 @@ impl stateset_core::InboundShipmentRepository for SqliteInboundShipmentRepositor
         let item_str = item_id.to_string();
         let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
+            // Read the HEAD through this write transaction before touching the
+            // line: a cancelled ASN must not take in stock, and the derived
+            // status write below would otherwise reopen it as
+            // `partially_received` / `received`. Mirrors the `FOR UPDATE` head
+            // lock in `postgres/inbound_shipments.rs`.
+            let head_status: Option<String> = tx
+                .query_row("SELECT status FROM inbound_shipments WHERE id = ?", [&id_str], |r| {
+                    r.get(0)
+                })
+                .optional()?;
+            let Some(head_status) = head_status else {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            };
+            if head_status == InboundShipmentStatus::Cancelled.to_string() {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(
+                        "Cannot receive against a cancelled inbound shipment".into(),
+                    ),
+                )));
+            }
+
             let row: Option<(String, String)> = tx
                 .query_row(
                     "SELECT quantity_expected, quantity_received FROM inbound_shipment_items WHERE id = ? AND inbound_shipment_id = ?",
@@ -322,18 +366,42 @@ impl stateset_core::InboundShipmentRepository for SqliteInboundShipmentRepositor
         })
     }
 
+    /// Cancel an inbound shipment.
+    ///
+    /// The terminal-state guard reads the status and the cancel writes it, so
+    /// both happen in one IMMEDIATE transaction and the write carries the
+    /// precondition itself. Split across a pooled `get()` and a separate
+    /// `set_status()` the guard decided on a status nobody held: a cancel could
+    /// land on a shipment that reached `received` after the check, leaving a
+    /// cancelled ASN holding received stock.
     fn cancel(&self, id: InboundShipmentId) -> Result<InboundShipment> {
-        let current = self.get(id)?.ok_or(CommerceError::NotFound)?;
-        if matches!(
-            current.status,
-            InboundShipmentStatus::Received | InboundShipmentStatus::Cancelled
-        ) {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot cancel an inbound shipment in status {}",
-                current.status
-            )));
-        }
-        self.set_status(id, InboundShipmentStatus::Cancelled)
+        let id_str = id.to_string();
+        let now = Utc::now().to_rfc3339();
+        with_immediate_transaction(&self.pool, |tx| {
+            let current: Option<String> = tx
+                .query_row("SELECT status FROM inbound_shipments WHERE id = ?", [&id_str], |r| {
+                    r.get(0)
+                })
+                .optional()?;
+            let Some(current) = current else {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            };
+            let parsed: InboundShipmentStatus =
+                parse_enum_row(&current, "inbound_shipment", "status")?;
+            if parsed.is_terminal() {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(format!(
+                        "Cannot cancel an inbound shipment in status {parsed}"
+                    )),
+                )));
+            }
+            tx.execute(
+                "UPDATE inbound_shipments SET status = 'cancelled', updated_at = ?
+                 WHERE id = ? AND status NOT IN ('received', 'cancelled')",
+                rusqlite::params![&now, &id_str],
+            )?;
+            Self::load_full(tx, &id_str)
+        })
     }
 }
 
@@ -454,5 +522,139 @@ mod tests {
             })
             .expect("list");
         assert_eq!(cancelled.len(), 1);
+    }
+
+    /// `receive_line` never looked at the shipment's own status, so units could
+    /// be booked against a cancelled ASN — and the derived-status write then
+    /// quietly reopened it as `partially_received` / `received`. The head is now
+    /// read through the write transaction and `Cancelled` is refused, matching
+    /// `postgres/inbound_shipments.rs`.
+    #[test]
+    fn receive_line_refuses_a_cancelled_shipment() {
+        let repo = test_repo();
+        let s = new_shipment(&repo);
+        repo.cancel(s.id).expect("cancel shipment");
+
+        let err = repo
+            .receive_line(s.id, s.items[0].id, dec!(1))
+            .expect_err("a cancelled shipment must refuse receipts");
+        assert!(
+            matches!(err, CommerceError::ValidationError(_)),
+            "expected a validation error, got {err:?}"
+        );
+
+        let stored = repo.get(s.id).expect("get").expect("found");
+        assert_eq!(stored.status, InboundShipmentStatus::Cancelled);
+        assert_eq!(stored.total_received(), Decimal::ZERO);
+    }
+
+    /// `mark_arrived` / `mark_in_transit` wrote the status with no precondition,
+    /// so `cancel -> mark_arrived -> receive_line` walked straight around the
+    /// refusal above and put stock on a cancelled ASN.
+    #[test]
+    fn status_advances_are_refused_on_a_cancelled_shipment() {
+        let repo = test_repo();
+        let s = new_shipment(&repo);
+        repo.cancel(s.id).expect("cancel shipment");
+
+        let arrived = repo.mark_arrived(s.id).expect_err("cannot arrive a cancelled shipment");
+        assert!(
+            matches!(arrived, CommerceError::Conflict(_)),
+            "expected Conflict, got {arrived:?}"
+        );
+        let transit = repo.mark_in_transit(s.id).expect_err("cannot ship a cancelled shipment");
+        assert!(
+            matches!(transit, CommerceError::Conflict(_)),
+            "expected Conflict, got {transit:?}"
+        );
+
+        let stored = repo.get(s.id).expect("get").expect("found");
+        assert_eq!(stored.status, InboundShipmentStatus::Cancelled);
+    }
+
+    #[test]
+    fn status_advances_still_work_on_a_live_shipment() {
+        let repo = test_repo();
+        let s = new_shipment(&repo);
+        assert_eq!(
+            repo.mark_in_transit(s.id).expect("mark in transit").status,
+            InboundShipmentStatus::InTransit
+        );
+        assert_eq!(
+            repo.mark_arrived(s.id).expect("mark arrived").status,
+            InboundShipmentStatus::Arrived
+        );
+        let received = repo.receive_line(s.id, s.items[0].id, dec!(10)).expect("receive the line");
+        assert_eq!(received.status, InboundShipmentStatus::Received);
+        assert_eq!(received.total_received(), dec!(10));
+    }
+
+    /// A cancel racing a full receipt: exactly one may win, in either order.
+    /// `cancel` read the status through a second pooled connection and then
+    /// wrote it, and `receive_line` never read it at all, so both could report
+    /// success and leave a cancelled shipment holding received stock.
+    #[test]
+    fn cancel_racing_a_full_receipt_admits_exactly_one() {
+        use std::sync::{Arc, Barrier};
+
+        let db = Arc::new(SqliteDatabase::new(&DatabaseConfig::in_memory()).expect("in-memory db"));
+        for round in 0..40 {
+            let repo = SqliteInboundShipmentRepository::new(db.pool().clone());
+            let s = repo
+                .create(CreateInboundShipment {
+                    supplier_id: Uuid::new_v4(),
+                    purchase_order_id: None,
+                    warehouse_id: None,
+                    carrier: None,
+                    tracking_number: None,
+                    expected_at: None,
+                    items: vec![CreateInboundShipmentItem {
+                        product_id: ProductId::new(),
+                        sku: format!("SKU-RACE-{round}"),
+                        quantity_expected: dec!(5),
+                    }],
+                    notes: None,
+                })
+                .expect("create shipment");
+            let item_id = s.items[0].id;
+
+            let barrier = Arc::new(Barrier::new(2));
+            let receiving = {
+                let (db, barrier, id) = (Arc::clone(&db), Arc::clone(&barrier), s.id);
+                std::thread::spawn(move || {
+                    let repo = SqliteInboundShipmentRepository::new(db.pool().clone());
+                    barrier.wait();
+                    repo.receive_line(id, item_id, dec!(5))
+                })
+            };
+            let cancelling = {
+                let (db, barrier, id) = (Arc::clone(&db), Arc::clone(&barrier), s.id);
+                std::thread::spawn(move || {
+                    let repo = SqliteInboundShipmentRepository::new(db.pool().clone());
+                    barrier.wait();
+                    repo.cancel(id)
+                })
+            };
+            let received_ok = receiving.join().expect("receive thread").is_ok();
+            let cancelled_ok = cancelling.join().expect("cancel thread").is_ok();
+            assert!(
+                received_ok ^ cancelled_ok,
+                "round {round}: exactly one of the receipt and the cancel may win \
+                 (receipt={received_ok}, cancel={cancelled_ok})"
+            );
+
+            let stored = repo.get(s.id).expect("get").expect("found");
+            if cancelled_ok {
+                assert_eq!(stored.status, InboundShipmentStatus::Cancelled);
+                assert_eq!(
+                    stored.total_received(),
+                    Decimal::ZERO,
+                    "round {round}: a cancelled inbound shipment must not hold received stock"
+                );
+            } else {
+                assert_eq!(stored.status, InboundShipmentStatus::Received);
+                assert_eq!(stored.total_received(), dec!(5));
+            }
+        }
     }
 }

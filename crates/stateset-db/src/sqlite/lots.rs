@@ -1228,7 +1228,7 @@ impl LotRepository for SqliteLotRepository {
     /// `active`) straight over the quarantine status.
     fn update(&self, id: Uuid, input: UpdateLot) -> Result<Lot> {
         let mut conn = self.conn()?;
-        let tx = crate::sqlite::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
         let mut updates = vec!["updated_at = ?"];
