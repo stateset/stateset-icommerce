@@ -90,8 +90,8 @@
     "preversion": "npm run check:env",
     "prepublishOnly": "npm run check:package && echo 'Ready to publish @stateset/embedded'",
     "artifacts": "napi artifacts",
-    "build": "napi build --platform --release",
-    "build:debug": "napi build --platform",
+    "build": "napi build --platform --release --js native-binding.js",
+    "build:debug": "napi build --platform --js native-binding.js",
     "test": "node --test test/*.js",
     "test:coverage": "node --test --experimental-test-coverage test/*.js",
     "universal": "napi universal",
@@ -111,6 +111,8 @@
   "files": [
     "index.js",
     "index.d.ts",
+    "native-binding.js",
+    "errors.js",
     "*.mjs",
     "*.d.ts"
   ],
