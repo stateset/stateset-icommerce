@@ -9,6 +9,11 @@ on:
       version:
         description: 'Version to release (e.g., 1.33.0)'
         required: true
+      skip_guards:
+        description: 'Skip the release guards (EMERGENCY ONLY - publishes an unverified commit)'
+        required: false
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,10 +22,37 @@ permissions:
   contents: read
 
 jobs:
+  release_guard:
+    name: Release Guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # The guard reads the tagged commit's check runs and statuses; an
+      # explicit permissions block sets every unlisted scope to none.
+      checks: read
+      statuses: read
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # merge-base needs real history; a shallow clone cannot prove the
+          # tagged commit is on master.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the release is publishable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version || '' }}
+          RELEASE_GUARD_SKIP: ${{ inputs.skip_guards && 'true' || 'false' }}
+        run: bash ./scripts/ci/check_release_guard.sh
+
   release_hygiene:
     name: Release Hygiene
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: release_guard
 
     steps:
       - uses: actions/checkout@v7
@@ -324,6 +356,14 @@ jobs:
         working-directory: cli
         run: npm ci
 
+      # In the repository cli/package.json links ../bindings/node, which is the
+      # only form that keeps `npm ci` working on every branch across a version
+      # bump. Consumers have no such directory, so the published manifest must
+      # carry the registry range. Rewritten here, after the lockfile-validated
+      # install and before anything is packed; never committed.
+      - name: Point @stateset/embedded at the published range
+        run: node ./scripts/ci/set_embedded_registry_range.mjs --manifest cli/package.json
+
       - name: Create npm package
         working-directory: cli
         run: |
@@ -448,88 +488,3 @@ jobs:
           else
             npm publish --access public --provenance
           fi
-
-  # Registry-resolved internal dependencies cannot be updated in lockfiles
-  # until the matching npm packages exist. Reconcile them after publication
-  # and send the deterministic result through the normal protected-branch CI.
-  sync-npm-lockfiles:
-    needs: [publish-cli, publish-create-stateset-app]
-    runs-on: ubuntu-latest
-    name: Open npm lockfile sync PR
-    permissions:
-      actions: write
-      contents: write
-      pull-requests: write
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: master
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version-file: '.nvmrc'
-
-      - name: Regenerate registry-backed lockfiles
-        run: bash scripts/release-bump.sh --sync-locks
-
-      - name: Enforce lockfile-only scope
-        shell: bash
-        run: |
-          set -euo pipefail
-          allowed='^(bindings/node|bindings/wasm|cli|admin|examples/node)/package-lock\.json$'
-          unexpected=$(git diff --name-only | grep -Ev "$allowed" || true)
-          if [ -n "$unexpected" ]; then
-            echo "::error::Lock synchronization changed files outside the allowlist:"
-            printf '%s\n' "$unexpected"
-            exit 1
-          fi
-
-      - name: Commit and open protected-branch PR
-        id: sync
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          version=$(node -p "require('./cli/package.json').version")
-          branch="automation/sync-locks-v${version}"
-
-          if git diff --quiet; then
-            echo "No lockfile changes are required for v${version}."
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git switch -C "$branch"
-          git add \
-            bindings/node/package-lock.json \
-            bindings/wasm/package-lock.json \
-            cli/package-lock.json \
-            admin/package-lock.json \
-            examples/node/package-lock.json
-          git commit -m "chore: sync npm lockfiles for v${version}"
-
-          git fetch origin "refs/heads/${branch}:refs/remotes/origin/${branch}" || true
-          git push --force-with-lease origin "HEAD:refs/heads/${branch}"
-
-          pr=$(gh pr list --head "$branch" --base master --state open --json number --jq '.[0].number // empty')
-          if [ -z "$pr" ]; then
-            gh pr create \
-              --base master \
-              --head "$branch" \
-              --title "chore: sync npm lockfiles for v${version}" \
-              --body "Automated post-publish lockfile reconciliation for v${version}. Registry-backed StateSet dependencies are updated only after their packages are publicly available."
-          fi
-          echo 'changed=true' >> "$GITHUB_OUTPUT"
-
-      - name: Dispatch CI for the automation branch
-        if: steps.sync.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version=$(node -p "require('./cli/package.json').version")
-          gh workflow run ci.yml --ref "automation/sync-locks-v${version}"

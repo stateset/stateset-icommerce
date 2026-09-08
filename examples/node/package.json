@@ -30,6 +30,6 @@
   "author": "StateSet <support@stateset.com>",
   "license": "MIT OR Apache-2.0",
   "dependencies": {
-    "@stateset/embedded": "^1.33.0"
+    "@stateset/embedded": "file:../../bindings/node"
   }
 }

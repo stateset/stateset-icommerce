@@ -5,7 +5,7 @@ on:
     paths:
       - ".github/workflows/storefront-golden-path.yml"
       - "packages/create-stateset-app/**"
-      - "bindings/node/package.json"
+      - "bindings/node/**"
       - "scripts/ci/run_storefront_golden_path.sh"
       - "docs/RELEASE_EVIDENCE.md"
   push:
@@ -13,7 +13,7 @@ on:
     paths:
       - ".github/workflows/storefront-golden-path.yml"
       - "packages/create-stateset-app/**"
-      - "bindings/node/package.json"
+      - "bindings/node/**"
       - "scripts/ci/run_storefront_golden_path.sh"
       - "docs/RELEASE_EVIDENCE.md"
   workflow_dispatch:
@@ -29,6 +29,52 @@ jobs:
   storefront:
     name: Pack, Install, Seed & Build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ".nvmrc"
+
+      # The storefront is installed against a binding built from THIS commit,
+      # so the gate needs a Rust toolchain (same setup as ci.yml's `cli` job).
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Test generator
+        run: npm --prefix packages/create-stateset-app test
+
+      - name: Run public storefront golden path
+        env:
+          GOLDEN_PATH_EMBEDDED_SOURCE: local-tarball
+        run: ./scripts/ci/run_storefront_golden_path.sh
+
+      - name: Upload immutable golden-path evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: storefront-golden-path-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/storefront-golden-path
+          if-no-files-found: error
+          retention-days: 90
+
+  # Post-publish verification: the same scaffold, but installing whatever the
+  # registry actually serves. Dispatch-only, because on a PR it proves nothing
+  # about the commit under test -- it was the reason a green golden path could
+  # coexist with a broken build.
+  registry-install:
+    name: Registry Install (post-publish)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -41,17 +87,17 @@ jobs:
         with:
           node-version-file: ".nvmrc"
 
-      - name: Test generator
-        run: npm --prefix packages/create-stateset-app test
-
-      - name: Run public storefront golden path
+      - name: Run the published storefront golden path
+        env:
+          GOLDEN_PATH_EMBEDDED_SOURCE: registry
+          GOLDEN_PATH_EVIDENCE_DIR: ${{ github.workspace }}/artifacts/storefront-golden-path-registry
         run: ./scripts/ci/run_storefront_golden_path.sh
 
-      - name: Upload immutable golden-path evidence
+      - name: Upload registry-install evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: storefront-golden-path-${{ github.sha }}-${{ github.run_attempt }}
-          path: artifacts/storefront-golden-path
+          name: storefront-registry-install-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/storefront-golden-path-registry
           if-no-files-found: error
           retention-days: 90

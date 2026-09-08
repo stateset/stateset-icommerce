@@ -14,6 +14,11 @@ on:
         required: true
         type: boolean
         default: false
+      skip_guards:
+        description: 'Skip the release guards (EMERGENCY ONLY - publishes an unverified commit)'
+        required: false
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,10 +27,37 @@ permissions:
   contents: read
 
 jobs:
+  release_guard:
+    name: Release Guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # The guard reads the tagged commit's check runs and statuses; an
+      # explicit permissions block sets every unlisted scope to none.
+      checks: read
+      statuses: read
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # merge-base needs real history; a shallow clone cannot prove the
+          # tagged commit is on master.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the release is publishable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version || '' }}
+          RELEASE_GUARD_SKIP: ${{ inputs.skip_guards && 'true' || 'false' }}
+        run: bash ./scripts/ci/check_release_guard.sh
+
   release_hygiene:
     name: Release Hygiene
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: release_guard
 
     steps:
       - uses: actions/checkout@v7

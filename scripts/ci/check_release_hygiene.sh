@@ -157,15 +157,31 @@ node ./scripts/ci/check_workflow_job_refs.mjs >/dev/null
 
 required_release_surface_snippets=(
   "bindings/python/pyproject.toml|\"Development Status :: 5 - Production/Stable\""
-  ".github/workflows/ci.yml|      - '**'"
+  # CI runs on master pushes and pull requests only. Re-adding '**' puts every
+  # PR through the 38-job matrix twice.
+  ".github/workflows/ci.yml|      - master"
   ".github/workflows/publish-cli.yml|description: 'Version to release (e.g., ${workspace_version})'"
   ".github/workflows/publish-cli.yml|CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-unknown-linux-gnu-gcc"
   ".github/workflows/publish-cli.yml|- name: Wait for platform package availability"
-  ".github/workflows/publish-cli.yml|  sync-npm-lockfiles:"
-  ".github/workflows/publish-cli.yml|      - name: Enforce lockfile-only scope"
-  ".github/workflows/publish-cli.yml|          gh workflow run ci.yml --ref \"automation/sync-locks-v\${version}\""
+  # The published CLI manifest must resolve @stateset/embedded from the
+  # registry even though the repository manifest links ../bindings/node.
+  ".github/workflows/publish-cli.yml|      - name: Point @stateset/embedded at the published range"
+  "cli/package.json|\"@stateset/embedded\": \"file:../bindings/node\""
   ".github/workflows/publish-python.yml|description: \"Version to release (e.g., ${workspace_version})\""
   ".github/workflows/publish-rust-crates.yml|description: 'Version to release (e.g., ${workspace_version})'"
+  # Every publish workflow gates on the release guard: on master, green, and
+  # tagged v/cli-v/py-v at the same commit.
+  ".github/workflows/publish-cli.yml|  release_guard:"
+  ".github/workflows/publish-python.yml|  release_guard:"
+  ".github/workflows/publish-rust-crates.yml|  release_guard:"
+  ".github/workflows/release-sign.yml|  release_guard:"
+  ".github/workflows/publish-cli.yml|        run: bash ./scripts/ci/check_release_guard.sh"
+  ".github/workflows/publish-python.yml|        run: bash ./scripts/ci/check_release_guard.sh"
+  ".github/workflows/publish-rust-crates.yml|        run: bash ./scripts/ci/check_release_guard.sh"
+  ".github/workflows/release-sign.yml|        run: bash ./scripts/ci/check_release_guard.sh"
+  # The daily drift watch is what noticed nothing after 1.31 and 1.32.
+  ".github/workflows/release-consistency.yml|    - cron:"
+  ".github/workflows/release-consistency.yml|bash ./scripts/ci/check_registry_consistency.sh"
   "scripts/ci/check_release_hygiene.sh|                   ${workspace_version}, v${workspace_version}, cli-v${workspace_version}, py-v${workspace_version}, java-v${workspace_version},"
   "scripts/ci/check_release_hygiene.sh|                   php-v${workspace_version}, ruby-v${workspace_version}"
 )
