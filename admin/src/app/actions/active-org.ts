@@ -6,12 +6,9 @@
 
 import { cookies } from 'next/headers';
 
-import {
-  ACTIVE_ORG_COOKIE,
-  ACTIVE_ORG_COOKIE_OPTIONS,
-  isValidOrgId,
-} from '@/lib/shared/active-org';
+import { ACTIVE_ORG_COOKIE, ACTIVE_ORG_COOKIE_OPTIONS } from '@/lib/shared/active-org';
 import { requireAdminSession } from '@/lib/shared/auth-session';
+import { setActiveOrgArgsSchema, validateArgs } from '@/lib/shared/schemas';
 
 /**
  * Set the active org cookie. Called by `<OrgSwitcher />` when the
@@ -22,17 +19,18 @@ import { requireAdminSession } from '@/lib/shared/auth-session';
  * pre-auth flow depends on this action.
  *
  * Throws on invalid input — the switcher UI is responsible for offering
- * only valid options, so an invalid arg here means a programming bug.
+ * only valid options, so an invalid arg here means a programming bug. The
+ * throw is the same typed `ValidationError` (422, per-field details) the rest
+ * of the server-action surface raises, so a caller can branch on it instead
+ * of string-matching a bare Error.
  */
 export async function setActiveOrg(orgId: string): Promise<void> {
   await requireAdminSession();
-  if (!isValidOrgId(orgId)) {
-    throw new Error(`Invalid orgId: must be 1-128 URL-safe chars, got ${JSON.stringify(orgId)}`);
-  }
+  const args = validateArgs({ orgId }, setActiveOrgArgsSchema);
   const store = await cookies();
   store.set({
     ...ACTIVE_ORG_COOKIE_OPTIONS,
-    value: orgId,
+    value: args.orgId,
   });
 }
 

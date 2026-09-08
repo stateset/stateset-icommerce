@@ -69,13 +69,35 @@ Expected output:
 
 Exit code 0 on full pass; non-zero with details on any failure.
 
+### Flags
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--profile <name>` | `icp-1.0-core` | Which profile in `profiles/` to run |
+| `--iut <name>` | `reference-demo` | Which registry entry to exercise |
+| `--vector <name>` | _(whole profile)_ | Run a single vector |
+| `--registry <path>` | `iut-adapters/registry.json` | Point at an out-of-tree registry (adapters that live outside this repo) |
+| `--fail-on-skip` | off | Treat a SKIP as a failure |
+| `--verbose` | off | Print every matched field |
+
+`--fail-on-skip` (equivalently `ICP_CONFORMANCE_FAIL_ON_SKIP=1`) exists
+because a SKIP means *the adapter has no handler for that vector*. Without
+the flag an IUT can list a profile in its `supports` array, implement none
+of it, and still exit 0 — claiming a profile and passing it would be
+different statements. CI runs every IUT with `--fail-on-skip` for both
+profiles, so they are the same statement here.
+
 ## Profiles
+
+The profiles that ship in `profiles/`:
 
 | Profile | Vectors | Audience |
 |---|---|---|
-| `icp-1.0-core` | identity, signing, canonicalization, intent verbs | every ICP implementation |
-| `icp-1.0-settler` | escrow lifecycle, SettlementReceipt, POR | Settler operators only |
-| `icp-1.0-handler` | HTTP/MCP/gRPC binding semantics | handler implementations |
+| `icp-1.0-core` | 01–09: identity, canonicalization, signatures, escrow lifecycle, intent verbs, quote binding, settlement receipts, timing, ceilings | every ICP implementation |
+| `icp-1.0-commerce` | 10: commerce invariants — no over-refund/over-capture, returns bounded by shipped units, reservations that cannot oversell, balanced journal entries, currency scale (37 cases) | implementations that execute commerce, layered on top of `icp-1.0-core` |
+
+All four adapters below pass both profiles with zero skips, gated per IUT
+in CI.
 
 ## IUT adapter protocol
 
@@ -99,10 +121,10 @@ See `iut-adapters/iut.protocol.md` for the full contract.
 
 | Adapter | Implementation under test | Status |
 |---|---|---|
-| `reference-demo`   | `icp-spec/examples/01-aid-and-sign/demo.mjs` — JS, `node:crypto` | **icp-1.0-core: 2/2 PASS** |
-| `stateset-rust`    | `crates/stateset-icp-iut` — Rust, `ed25519-dalek` + `x25519-dalek` + `serde_jcs` | **icp-1.0-core: 2/2 PASS** |
-| `stateset-go`      | `crates/stateset-icp-iut-go` — Go, pure stdlib (`crypto/ed25519` + `crypto/ecdh`) | **icp-1.0-core: 2/2 PASS** |
-| `stateset-python`  | `crates/stateset-icp-iut-py` — Python, `cryptography` library + stdlib | **icp-1.0-core: 2/2 PASS** |
+| `reference-demo`   | `icp-spec/examples/01-aid-and-sign/demo.mjs` — JS, `node:crypto` | **core 9/9, commerce 1/1, 0 SKIP** |
+| `stateset-rust`    | `crates/stateset-icp-iut` — Rust, `ed25519-dalek` + `x25519-dalek` + `serde_jcs` | **core 9/9, commerce 1/1, 0 SKIP** |
+| `stateset-go`      | `crates/stateset-icp-iut-go` — Go, pure stdlib (`crypto/ed25519` + `crypto/ecdh`) | **core 9/9, commerce 1/1, 0 SKIP** |
+| `stateset-python`  | `crates/stateset-icp-iut-py` — Python, `cryptography` library + stdlib | **core 9/9, commerce 1/1, 0 SKIP** |
 
 The **four** adapters are completely independent (different languages,
 different cryptography libraries, different canonicalization
@@ -126,9 +148,18 @@ suite, and submit a PR. Two existing IUTs review your submission.
 1. Write an adapter in any language. It needs to read inputs JSON from
    stdin and write outputs JSON to stdout per `iut.protocol.md`.
 2. Add a row to `iut-adapters/registry.json`.
-3. Run `node runner/run.mjs --iut <your-adapter>`.
-4. If you pass all vectors in a profile, you may publish your conformance
-   result. Submit it to the public dashboard via PR to `dashboard/`.
+3. Run `node runner/run.mjs --iut <your-adapter> --fail-on-skip`. (If your
+   adapter lives outside this repo, keep your own registry file and pass
+   `--registry <path>` instead of editing this one.)
+4. If you pass all vectors in a profile **with zero skips**, you may publish
+   your conformance result. Submit it to the public dashboard via PR to
+   `dashboard/`.
+
+## Runner tests
+
+The runner is itself gated: `node --test test/runner.test.mjs` covers the
+skip/exit-code contract and asserts the reference IUT completes both
+profiles with no skips.
 
 ## Versioning
 

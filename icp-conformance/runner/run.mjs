@@ -5,15 +5,23 @@
 // compares stdout JSON to expected.json. Prints a pass/skip/fail report.
 //
 // Usage:
-//   node runner/run.mjs [--profile <name>] [--iut <name>] [--vector <name>] [--verbose]
+//   node runner/run.mjs [--profile <name>] [--iut <name>] [--vector <name>]
+//                       [--registry <path>] [--fail-on-skip] [--verbose]
 //
 // Defaults:
 //   --profile icp-1.0-core
 //   --iut reference-demo
+//   --registry iut-adapters/registry.json
+//
+// --fail-on-skip (or ICP_CONFORMANCE_FAIL_ON_SKIP=1) makes a SKIP fatal.
+// A SKIP means the adapter has no handler for that vector, so a profile run
+// full of SKIPs otherwise exits 0 and an IUT can claim a profile in
+// registry.json while implementing none of it. CI runs every IUT with this
+// flag: claiming a profile and passing it are then the same statement.
 //
 // Exit codes:
 //   0 — all selected tests pass
-//   1 — at least one test failed
+//   1 — at least one test failed (or was skipped, under --fail-on-skip)
 //   2 — runner error (vector not found, adapter not found, etc.)
 
 import { readFileSync } from 'node:fs';
@@ -30,9 +38,18 @@ const profileName = args.profile ?? 'icp-1.0-core';
 const iutName = args.iut ?? 'reference-demo';
 const onlyVector = args.vector ?? null;
 const verbose = args.verbose === true;
+// Presence, not value. `--fail-on-skip 1` and `--fail-on-skip=1` both parse to
+// a *string* value, and testing `=== true` would silently drop the gate on a
+// command line that plainly asks for it. A safety flag must never be
+// disable-able by a typo.
+const failOnSkip =
+  'fail-on-skip' in args || process.env.ICP_CONFORMANCE_FAIL_ON_SKIP === '1';
+const registryPath = args.registry
+  ? resolve(process.cwd(), String(args.registry))
+  : join(ROOT, 'iut-adapters', 'registry.json');
 
 const profile = loadJson(join(ROOT, 'profiles', `${profileName}.json`));
-const registry = loadJson(join(ROOT, 'iut-adapters', 'registry.json'));
+const registry = loadJson(registryPath);
 
 const iut = registry[iutName];
 if (!iut) {
@@ -62,6 +79,17 @@ for (const vectorName of vectors) {
 
 console.log('');
 console.log(`Result: ${passCount} PASS, ${failCount} FAIL, ${skipCount} SKIP (of ${vectors.length} total)`);
+
+if (skipCount > 0 && failOnSkip) {
+  console.log('');
+  console.log(
+    `FAIL: ${skipCount} vector${skipCount === 1 ? '' : 's'} skipped and --fail-on-skip is set. ` +
+      `IUT '${iutName}' claims profile '${profileName}' in the registry, so it must handle ` +
+      'every vector in it — a skip is an unimplemented conformance claim, not a pass.',
+  );
+  process.exit(1);
+}
+
 process.exit(failCount > 0 ? 1 : 0);
 
 // ===========================================================================
@@ -195,16 +223,25 @@ function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--verbose' || arg === '-v') out.verbose = true;
-    else if (arg.startsWith('--')) {
-      const key = arg.slice(2);
-      const next = argv[i + 1];
-      if (next && !next.startsWith('--')) {
-        out[key] = next;
-        i++;
-      } else {
-        out[key] = true;
-      }
+    if (arg === '--verbose' || arg === '-v') {
+      out.verbose = true;
+      continue;
+    }
+    if (!arg.startsWith('--')) continue;
+    // `--key=value` is normalized to the same shape as `--key value`, so a key
+    // is always looked up by its bare name.
+    const eq = arg.indexOf('=');
+    if (eq !== -1) {
+      out[arg.slice(2, eq)] = arg.slice(eq + 1);
+      continue;
+    }
+    const key = arg.slice(2);
+    const next = argv[i + 1];
+    if (next && !next.startsWith('--')) {
+      out[key] = next;
+      i++;
+    } else {
+      out[key] = true;
     }
   }
   return out;

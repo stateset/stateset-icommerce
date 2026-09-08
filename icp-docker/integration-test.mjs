@@ -3,7 +3,7 @@
 // Assumes:
 //   docker compose -f icp-docker/docker-compose.yml up -d
 //
-// has been run and both services are healthy.
+// has been run and all four long-running services are healthy.
 //
 // Run:
 //   node icp-docker/integration-test.mjs
@@ -25,9 +25,33 @@ import {
 
 const HANDLER = process.env.ICP_HANDLER_URL ?? 'http://127.0.0.1:8787';
 const SETTLER = process.env.ICP_SETTLER_URL ?? 'http://127.0.0.1:8788';
+const WATCHER = process.env.ICP_WATCHER_URL ?? 'http://127.0.0.1:8789';
+const MOCK_RPC = process.env.ICP_MOCK_RPC_URL ?? 'http://127.0.0.1:8790';
+
+// Matches MOCK_RPC_ESCROW_ID's default in icp-docker/mock-rpc.mjs — the
+// escrow the seeded on-chain EscrowFunded log refers to.
+const CHAIN_ESCROW_ID =
+  process.env.ICP_MOCK_ESCROW_ID ??
+  '0xabc1234567890abcdef1234567890abcdef1234567890abcdef1234567890abc';
 
 let pass = 0;
 let fail = 0;
+
+/** Poll `fn` until it returns truthy or the deadline passes. */
+async function waitFor(label, fn, timeoutMs = 30000, intervalMs = 500) {
+  const deadline = Date.now() + timeoutMs;
+  let last;
+  while (Date.now() < deadline) {
+    try {
+      last = await fn();
+      if (last) return last;
+    } catch (err) {
+      last = err.message;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error(`timed out waiting for ${label} (last: ${JSON.stringify(last)})`);
+}
 
 function check(name, cond, detail = '') {
   if (cond) {
@@ -41,8 +65,10 @@ function check(name, cond, detail = '') {
 
 async function main() {
   console.log('ICP-1.0 integration test against docker-compose stack');
-  console.log(`  HANDLER: ${HANDLER}`);
-  console.log(`  SETTLER: ${SETTLER}`);
+  console.log(`  HANDLER:  ${HANDLER}`);
+  console.log(`  SETTLER:  ${SETTLER}`);
+  console.log(`  WATCHER:  ${WATCHER}`);
+  console.log(`  MOCK RPC: ${MOCK_RPC}`);
   console.log('');
 
   // ---- Health checks ----------------------------------------------------
@@ -51,6 +77,10 @@ async function main() {
   check('handler /healthz ok', h1.ok === true);
   const h2 = await fetch(`${SETTLER}/healthz`).then((r) => r.json());
   check('settler /healthz ok', h2.ok === true);
+  const h3 = await fetch(`${WATCHER}/healthz`).then((r) => r.json());
+  check('chain-watcher /healthz ok', h3.ok === true);
+  const h4 = await fetch(`${MOCK_RPC}/healthz`).then((r) => r.json());
+  check('mock-rpc /healthz ok', h4.ok === true);
 
   // ---- Discovery --------------------------------------------------------
   console.log('Discovery:');
@@ -151,6 +181,75 @@ async function main() {
   const tamperedPayload = canonicalJson({ ...fundPayload, seq: 999 });
   const tamperedOk = verifyEd25519(tamperedPayload, settler_signature.sig, settlerPubRaw);
   check('tampered Settler payload rejected', !tamperedOk);
+
+  // ---- Chain mode: mock chain → watcher → settler -----------------------
+  // The one path the stack could not exercise before. The watcher polls the
+  // mock RPC, decodes real ABI-encoded ICPEscrow logs with its real decoder,
+  // and drives the real settler. Nothing here is stubbed but the chain.
+  console.log('Chain-watcher flow:');
+
+  // 1. The seeded EscrowFunded log is forwarded on the watcher's first poll.
+  const funded = await waitFor('watcher to forward the funded event', async () => {
+    const m = await fetch(`${WATCHER}/healthz`).then((r) => r.json());
+    return m.events_forwarded >= 1 ? m : null;
+  });
+  check('watcher forwarded the on-chain funded event', funded.events_forwarded >= 1);
+  check('watcher reports no forwarding errors', funded.errors === 0, JSON.stringify(funded));
+
+  const chainEscrow = await fetch(`${SETTLER}/icp/v1/escrows/${CHAIN_ESCROW_ID}`).then((r) =>
+    r.json(),
+  );
+  check('settler holds the escrow the chain funded', chainEscrow.state === 'funded', JSON.stringify(chainEscrow));
+  check('amount decoded from uint128 base units', chainEscrow.amount?.amount === '100.000000');
+  check('currency resolved to USDC', chainEscrow.amount?.currency === 'USDC');
+
+  // 2. Fulfillment is off-chain evidence — ICPEscrow.sol emits no event for
+  //    it, so the merchant backend drives this transition, not the watcher.
+  const fulfillRes = await fetch(`${SETTLER}/admin/escrow/event`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ escrow_id: CHAIN_ESCROW_ID, kind: 'fulfill' }),
+  });
+  check('merchant marks the escrow fulfilled', fulfillRes.status === 200);
+
+  // 3. The on-chain release is observed and forwarded, settling the escrow.
+  const emitted = await fetch(`${MOCK_RPC}/admin/emit`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ event: 'EscrowReleased', amount: '100000000' }),
+  }).then((r) => r.json());
+  check('mock chain emitted a finalized EscrowReleased log', emitted.ok === true, JSON.stringify(emitted));
+
+  const settledMetrics = await waitFor('watcher to forward the release event', async () => {
+    const m = await fetch(`${WATCHER}/healthz`).then((r) => r.json());
+    return m.events_forwarded >= 2 ? m : null;
+  });
+  check('watcher forwarded the on-chain release event', settledMetrics.events_forwarded >= 2);
+  check('watcher still error-free', settledMetrics.errors === 0, JSON.stringify(settledMetrics));
+
+  const settledEscrow = await fetch(`${SETTLER}/icp/v1/escrows/${CHAIN_ESCROW_ID}`).then((r) =>
+    r.json(),
+  );
+  check('settler settled the escrow', settledEscrow.state === 'released', JSON.stringify(settledEscrow));
+
+  const releaseEvent = (settledEscrow.events ?? []).find((e) => e.to_state === 'released');
+  check('settler recorded a released transition', Boolean(releaseEvent));
+  check(
+    'released transition is attributed to the observed chain block',
+    releaseEvent?.trigger?.kind === 'rail-released' &&
+      releaseEvent?.trigger?.rail_event?.block_number === emitted.block,
+    JSON.stringify(releaseEvent?.trigger),
+  );
+
+  // Independent verification: the settled event must verify under the
+  // settler's advertised key, exactly like the mock-mode event above.
+  if (releaseEvent) {
+    const { settler_signature: releaseSig, ...releasePayload } = releaseEvent;
+    check(
+      'chain-driven settlement signature verifies independently',
+      verifyEd25519(canonicalJson(releasePayload), releaseSig.sig, settlerPubRaw),
+    );
+  }
 
   // ---- Negative cases ---------------------------------------------------
   console.log('Negative cases:');
