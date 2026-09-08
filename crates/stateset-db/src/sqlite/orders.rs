@@ -7,7 +7,7 @@ use super::{
         create_backorder_in_tx,
     },
     build_in_clause,
-    inventory::{ReservationConfirmOutcome, SqliteInventoryRepository},
+    inventory::SqliteInventoryRepository,
     map_db_error, params_refs, parse_datetime_row, parse_decimal_row, parse_enum, parse_enum_row,
     parse_json_opt_row, parse_uuid_row,
     payments::{
@@ -954,7 +954,7 @@ impl SqliteOrderRepository {
         Ok(())
     }
 
-    /// Open reservations to confirm for one shipped line: the line's own keyed
+    /// Open reservations to consume for one shipped line: the line's own keyed
     /// holds first, then (legacy, pre-080 rows only) un-keyed holds for the
     /// same SKU on the order.
     fn open_reservations_for_shipped_line_in_tx(
@@ -1149,12 +1149,12 @@ impl SqliteOrderRepository {
         Ok((resolved, deltas))
     }
 
-    /// Confirm the shipped portion of the order's inventory reservations.
+    /// Consume the shipped portion of the order's inventory reservations.
     ///
     /// Returns the first expired reservation, if any; the caller then surfaces
     /// [`CommerceError::ReservationExpired`] after committing the expiry
     /// bookkeeping (matching the legacy full-ship behaviour).
-    pub(crate) fn confirm_shipped_reservations_in_tx(
+    pub(crate) fn consume_shipped_reservations_in_tx(
         tx: &rusqlite::Transaction<'_>,
         id: OrderId,
         ship: &ShipMode<'_>,
@@ -1177,40 +1177,37 @@ impl SqliteOrderRepository {
             }
         }
 
-        match ship {
-            ShipMode::None => {}
-            ShipMode::All => {
-                for reservation_id in reservation_ids {
-                    match SqliteInventoryRepository::confirm_reservation_in_tx_with_now(
+        if !matches!(ship, ShipMode::None) {
+            for delta in deltas.iter().filter(|d| d.delta > 0) {
+                let mut remaining = Decimal::from(delta.delta);
+                let open =
+                    Self::open_reservations_for_shipped_line_in_tx(tx, &reference_id, delta)?;
+                for (reservation_id, reserved_qty) in open {
+                    if remaining <= Decimal::ZERO {
+                        break;
+                    }
+                    let take = remaining.min(reserved_qty);
+                    SqliteInventoryRepository::fulfil_reservation_in_tx(
                         tx,
                         reservation_id,
+                        take,
+                        "Order shipment",
                         now,
-                    )? {
-                        ReservationConfirmOutcome::Confirmed => {}
-                        ReservationConfirmOutcome::Expired => return Ok(Some(reservation_id)),
-                    }
-                }
-            }
-            ShipMode::Lines(_) => {
-                for delta in deltas.iter().filter(|d| d.delta > 0) {
-                    let mut remaining = Decimal::from(delta.delta);
-                    let open =
-                        Self::open_reservations_for_shipped_line_in_tx(tx, &reference_id, delta)?;
-                    for (reservation_id, reserved_qty) in open {
-                        if remaining <= Decimal::ZERO {
-                            break;
-                        }
-                        let take = remaining.min(reserved_qty);
-                        match SqliteInventoryRepository::confirm_reservation_quantity_in_tx_with_now(
-                            tx,
-                            reservation_id,
-                            take,
-                            now,
-                        )? {
-                            ReservationConfirmOutcome::Confirmed => remaining -= take,
-                            ReservationConfirmOutcome::Expired => return Ok(Some(reservation_id)),
-                        }
-                    }
+                    )
+                    .map_err(to_sql_err)?;
+                    append_kernel_event_tx(
+                        tx,
+                        &KernelOutboxEvent::domain(
+                            "inventory.reservation_consumed.v1",
+                            "inventory_reservation",
+                            reservation_id.to_string(),
+                            serde_json::json!({ "reservation_id": reservation_id.to_string(),
+                            "order_id": reference_id, "sku": delta.sku,
+                            "quantity": take.to_string(), "remaining_quantity": (reserved_qty - take).to_string() }),
+                            None,
+                        ),
+                    )?;
+                    remaining -= take;
                 }
             }
         }
@@ -1293,6 +1290,7 @@ impl SqliteOrderRepository {
 
             let mut reservation_expired: Option<Uuid> = None;
             let mut effective_status = input.status;
+            let mut effective_fulfillment_status = input.fulfillment_status;
             let mut line_deltas: Vec<LineDelta> = Vec::new();
 
             if let Some(status) = input.status {
@@ -1300,6 +1298,11 @@ impl SqliteOrderRepository {
                 if is_ship {
                     let (resolved, deltas) = Self::plan_shipment_in_tx(tx, id, ship)?;
                     effective_status = Some(resolved);
+                    effective_fulfillment_status = Some(if resolved == OrderStatus::Shipped {
+                        FulfillmentStatus::Shipped
+                    } else {
+                        FulfillmentStatus::PartiallyFulfilled
+                    });
                     line_deltas = deltas;
                 }
                 let target = effective_status.unwrap_or(status);
@@ -1339,7 +1342,7 @@ impl SqliteOrderRepository {
 
                 if is_ship {
                     reservation_expired =
-                        Self::confirm_shipped_reservations_in_tx(tx, id, ship, &line_deltas, now)?;
+                        Self::consume_shipped_reservations_in_tx(tx, id, ship, &line_deltas, now)?;
                 }
             }
 
@@ -1419,7 +1422,7 @@ impl SqliteOrderRepository {
                 updates.push("payment_status = ?");
                 params.push(Box::new(payment_status.to_string()));
             }
-            if let Some(fulfillment_status) = &input.fulfillment_status {
+            if let Some(fulfillment_status) = &effective_fulfillment_status {
                 updates.push("fulfillment_status = ?");
                 params.push(Box::new(fulfillment_status.to_string()));
             }

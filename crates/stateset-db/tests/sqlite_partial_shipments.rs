@@ -135,12 +135,12 @@ fn partial_ship_sets_partially_shipped_and_per_line_quantities() {
     assert_eq!(line(&shipped, "PS-SKU-A").remaining_to_ship(), 2);
     assert_eq!(line(&shipped, "PS-SKU-B").shipped_quantity, 0);
 
-    // Reservation for SKU-A was split: 3 confirmed + 2 still pending; SKU-B untouched.
+    // Three units leave stock; two remain reserved on A, and B is untouched.
     let a_res = reservations(&db, order.id, "PS-SKU-A");
-    assert_eq!(a_res, vec![("confirmed".to_string(), dec!(3)), ("pending".to_string(), dec!(2))]);
+    assert_eq!(a_res, vec![("pending".to_string(), dec!(2))]);
     assert_eq!(reservations(&db, order.id, "PS-SKU-B"), vec![("pending".to_string(), dec!(2))]);
-    // Allocation is unchanged by confirmation (it was already allocated on reserve).
-    assert_eq!(allocated(&db, "PS-SKU-A"), dec!(5));
+    assert_eq!(allocated(&db, "PS-SKU-A"), dec!(2));
+    assert_eq!(shipped.fulfillment_status, stateset_core::FulfillmentStatus::PartiallyFulfilled);
 }
 
 #[test]
@@ -177,8 +177,8 @@ fn second_ship_completes_order() {
     assert_eq!(shipped.status, OrderStatus::Shipped);
     assert_eq!(line(&shipped, "PS-SKU-A").shipped_quantity, 5);
     assert_eq!(line(&shipped, "PS-SKU-B").shipped_quantity, 2);
-    assert!(reservations(&db, order.id, "PS-SKU-A").iter().all(|(s, _)| s == "confirmed"));
-    assert!(reservations(&db, order.id, "PS-SKU-B").iter().all(|(s, _)| s == "confirmed"));
+    assert!(reservations(&db, order.id, "PS-SKU-A").iter().all(|(s, _)| s == "fulfilled"));
+    assert!(reservations(&db, order.id, "PS-SKU-B").iter().all(|(s, _)| s == "fulfilled"));
 }
 
 #[test]
@@ -286,7 +286,7 @@ fn legacy_ship_without_lines_ships_everything() {
     let shipped = db.orders().ship(order.id, ShipOrder::default()).expect("ship all");
     assert_eq!(shipped.status, OrderStatus::Shipped);
     assert!(shipped.items.iter().all(|i| i.shipped_quantity == i.quantity));
-    assert!(reservations(&db, order.id, "PS-SKU-A").iter().all(|(s, _)| s == "confirmed"));
+    assert!(reservations(&db, order.id, "PS-SKU-A").iter().all(|(s, _)| s == "fulfilled"));
 }
 
 #[test]
@@ -478,4 +478,34 @@ fn migration_backfills_shipped_quantity_for_shipped_orders() {
         .collect::<Result<_, _>>()
         .expect("collect");
     assert_eq!(shipped, vec![("i1".to_string(), 4), ("i2".to_string(), 2), ("i3".to_string(), 0)]);
+}
+
+#[test]
+fn full_shipping_consumes_stock_once_and_records_inventory_movements() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let order = processing_order(&db, "stock-once@example.com");
+    let shipped = db.orders().ship(order.id, ShipOrder::default()).unwrap();
+    assert_eq!(shipped.fulfillment_status, stateset_core::FulfillmentStatus::Shipped);
+    assert_eq!(allocated(&db, "PS-SKU-A"), dec!(0));
+    assert_eq!(allocated(&db, "PS-SKU-B"), dec!(0));
+    let conn = db.conn().unwrap();
+    let on_hand: String = conn.query_row("SELECT quantity_on_hand FROM inventory_balances b JOIN inventory_items i ON i.id = b.item_id WHERE i.sku = 'PS-SKU-A'", [], |row| row.get(0)).unwrap();
+    assert_eq!(on_hand.parse::<Decimal>().unwrap(), dec!(5));
+    drop(conn);
+    db.orders().ship(order.id, ShipOrder::default()).unwrap();
+    let movements: i64 = db.conn().unwrap().query_row("SELECT COUNT(*) FROM inventory_transactions WHERE transaction_type = 'shipment' AND reference_id = ?", [order.id.to_string()], |row| row.get(0)).unwrap();
+    assert_eq!(movements, 2);
+    assert_eq!(allocated(&db, "PS-SKU-A"), dec!(0));
+}
+
+#[test]
+fn shipment_order_write_failure_rolls_back_stock_consumption() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let order = processing_order(&db, "stock-rollback@example.com");
+    db.conn().unwrap().execute_batch("CREATE TRIGGER block_shipment BEFORE UPDATE OF status ON orders WHEN NEW.status = 'shipped' BEGIN SELECT RAISE(ABORT, 'shipment blocked'); END;").unwrap();
+    assert!(db.orders().ship(order.id, ShipOrder::default()).is_err());
+    assert_eq!(allocated(&db, "PS-SKU-A"), dec!(5));
+    assert_eq!(reservations(&db, order.id, "PS-SKU-A"), vec![("pending".into(), dec!(5))]);
+    let movements: i64 = db.conn().unwrap().query_row("SELECT COUNT(*) FROM inventory_transactions WHERE transaction_type = 'shipment' AND reference_id = ?", [order.id.to_string()], |row| row.get(0)).unwrap();
+    assert_eq!(movements, 0);
 }

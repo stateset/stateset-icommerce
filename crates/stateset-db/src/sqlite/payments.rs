@@ -86,6 +86,85 @@ pub(crate) fn payment_transition_allowed(
     from.can_transition_to(to)
 }
 
+/// Keep the order's payment projection consistent with settled payment records.
+/// Decimal aggregation happens in Rust: SQLite SUM would coerce decimal TEXT to floats.
+/// This runs inside the payment/refund transaction, so a failure rolls both writes back.
+fn sync_order_payment_status_tx(
+    tx: &rusqlite::Transaction<'_>,
+    payment_id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<()> {
+    let order_id: Option<String> =
+        tx.query_row("SELECT order_id FROM payments WHERE id = ?", [payment_id], |row| row.get(0))?;
+    let Some(order_id) = order_id else { return Ok(()) };
+    let (raw_total, currency): (String, String) = tx.query_row(
+        "SELECT total_amount, currency FROM orders WHERE id = ?",
+        [&order_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let total = parse_decimal_row(&raw_total, "order", "total_amount")?;
+    let mut captured = rust_decimal::Decimal::ZERO;
+    let mut refunded = rust_decimal::Decimal::ZERO;
+    {
+        let mut stmt = tx.prepare(
+            "SELECT amount, amount_refunded, currency FROM payments WHERE order_id = ?
+             AND status IN ('completed', 'partially_refunded', 'refunded', 'disputed')",
+        )?;
+        let mut rows = stmt.query([&order_id])?;
+        while let Some(row) = rows.next()? {
+            let payment_currency: String = row.get(2)?;
+            if payment_currency != currency {
+                return Err(domain_err(CommerceError::ValidationError(
+                    "Cannot aggregate settled payments in a different order currency".into(),
+                )));
+            }
+            let amount = parse_decimal_row(&row.get::<_, String>(0)?, "payment", "amount")?;
+            let returned =
+                parse_decimal_row(&row.get::<_, String>(1)?, "payment", "amount_refunded")?;
+            captured = captured.checked_add(amount).ok_or_else(|| {
+                domain_err(CommerceError::ValidationError("Captured amount overflow".into()))
+            })?;
+            refunded = refunded.checked_add(returned).ok_or_else(|| {
+                domain_err(CommerceError::ValidationError("Refunded amount overflow".into()))
+            })?;
+        }
+    }
+    // Pending/failed payments do not erase order statuses set by other payment rails.
+    if captured.is_zero() {
+        return Ok(());
+    }
+    let net = captured - refunded;
+    let status = if net >= total {
+        "paid"
+    } else if net.is_zero() {
+        "refunded"
+    } else if refunded > rust_decimal::Decimal::ZERO {
+        "partially_refunded"
+    } else {
+        "partially_paid"
+    };
+    let changed = tx.execute(
+        "UPDATE orders SET payment_status = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND payment_status != ?",
+        params![status, now.to_rfc3339(), order_id, status],
+    )?;
+    if changed > 0 {
+        append_kernel_event_tx(
+            tx,
+            &KernelOutboxEvent::domain(
+                "orders.payment_status_changed.v1",
+                "order",
+                order_id.clone(),
+                serde_json::json!({ "order_id": order_id, "payment_status": status,
+                "captured": captured.to_string(), "refunded": refunded.to_string(),
+                "net_paid": net.to_string(), "currency": currency }),
+                None,
+            ),
+        )?;
+    }
+    Ok(())
+}
+
 /// SQL fragment listing every status a payment may currently be in for a write
 /// that sets its status to `target`, for a `status IN (...)` predicate. Keeping
 /// the check inside the UPDATE means a concurrent writer cannot slip between the
@@ -827,6 +906,7 @@ impl PaymentRepository for SqlitePaymentRepository {
             if rows == 0 {
                 return Err(domain_err(transition_conflict(current, target)));
             }
+            sync_order_payment_status_tx(tx, &id.to_string(), now)?;
             Ok(())
         })?;
 
@@ -954,6 +1034,7 @@ impl PaymentRepository for SqlitePaymentRepository {
             if rows == 0 {
                 return Err(domain_err(transition_conflict(current, target)));
             }
+            sync_order_payment_status_tx(tx, &id.to_string(), now)?;
             Ok(())
         })?;
 
@@ -1251,6 +1332,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                 return Err(domain_err(transition_conflict(payment_status, new_status)));
             }
 
+            sync_order_payment_status_tx(tx, &refund.payment_id.to_string(), now)?;
             Ok(())
         })?;
 

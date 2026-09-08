@@ -1518,6 +1518,7 @@ fn kernel_partial_shipment_promotes_replays_and_links_all_facts() {
     assert_eq!(applied.status, ExecutionStatus::Succeeded);
     let shipped = applied.result.as_ref().expect("order");
     assert_eq!(shipped.status, OrderStatus::PartiallyShipped);
+    assert_eq!(shipped.fulfillment_status, stateset_core::FulfillmentStatus::PartiallyFulfilled);
     assert_eq!(shipped.items[0].shipped_quantity, 1);
     assert_eq!(shipped.tracking_number.as_deref(), Some("TRACK-KERNEL-1"));
     assert_eq!(applied.event_ids.len(), 2);
@@ -1535,6 +1536,11 @@ fn kernel_partial_shipment_promotes_replays_and_links_all_facts() {
         .filter(|event| event.command_id == Some(apply.command_id))
         .count();
     assert_eq!(linked, 2);
+    let on_hand: String = db.conn().unwrap().query_row(
+        "SELECT quantity_on_hand FROM inventory_balances b JOIN inventory_items i ON i.id = b.item_id WHERE i.sku = 'KERNEL-ORDER-SHIP'",
+        [], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(on_hand, "9", "replaying the command must not consume stock twice");
 }
 
 #[test]

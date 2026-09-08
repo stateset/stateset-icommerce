@@ -1371,7 +1371,7 @@ impl SqliteKernelExecutor {
                     tx, "order", &order_id,
                 )?;
             tx.execute_batch("SAVEPOINT kernel_ship")?;
-            if SqliteOrderRepository::confirm_shipped_reservations_in_tx(
+            if SqliteOrderRepository::consume_shipped_reservations_in_tx(
                 tx,
                 command.payload.order_id,
                 &mode,
@@ -1394,11 +1394,17 @@ impl SqliteKernelExecutor {
                     params![delta.delta, delta.item_id],
                 )?;
             }
+            let fulfillment_status = if effects.resolved_status == OrderStatus::Shipped {
+                stateset_core::FulfillmentStatus::Shipped
+            } else {
+                stateset_core::FulfillmentStatus::PartiallyFulfilled
+            };
             let rows = tx.execute(
-                "UPDATE orders SET status = ?, tracking_number = COALESCE(?, tracking_number),
+                "UPDATE orders SET status = ?, fulfillment_status = ?, tracking_number = COALESCE(?, tracking_number),
                         updated_at = ?, version = version + 1 WHERE id = ? AND version = ?",
                 params![
                     effects.resolved_status.to_string(),
+                    fulfillment_status.to_string(),
                     command.payload.tracking_number,
                     started_at.to_rfc3339(),
                     order_id,
@@ -1416,7 +1422,7 @@ impl SqliteKernelExecutor {
             for reservation_id in reservation_ids {
                 let mut stmt = tx.prepare(
                     "SELECT id FROM kernel_outbox WHERE created_at >= ?
-                       AND event_type = 'inventory.reservation_confirmed.v1'
+                       AND event_type = 'inventory.reservation_consumed.v1'
                        AND (aggregate_id = ? OR json_extract(payload, '$.source_reservation_id') = ?)
                      ORDER BY rowid",
                 )?;
@@ -1445,7 +1451,7 @@ impl SqliteKernelExecutor {
                 serde_json::json!({
                     "order_id": order_id, "status_before": effects.status_before.to_string(),
                     "status_after": effects.resolved_status.to_string(), "payment_status_before": order.payment_status.to_string(),
-                    "payment_status_after": order.payment_status.to_string(), "fulfillment_status_after": order.fulfillment_status.to_string(),
+                    "payment_status_after": order.payment_status.to_string(), "fulfillment_status_after": fulfillment_status.to_string(),
                     "version_before": version_before, "version_after": version_before + 1, "total_amount": order.total_amount.to_string(),
                 }),
             );
