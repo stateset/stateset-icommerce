@@ -82,7 +82,7 @@
   },
   "scripts": {
     "check:env": "node ../../scripts/check-node.mjs 20.20.0 10.0.0",
-    "check:package": "npm run check:env && node --input-type=module -e \"await import('@stateset/embedded'); await import('@stateset/embedded/agent-toolkit'); await import('@stateset/embedded/openai'); await import('@stateset/embedded/generic'); await import('@stateset/embedded/langchain'); await import('@stateset/embedded/vercel-ai');\" && node ../../scripts/ci/check_node_binding_package.mjs",
+    "check:package": "npm run check:env && node --input-type=module -e \"await import('@stateset/embedded'); await import('@stateset/embedded/agent-toolkit'); await import('@stateset/embedded/openai'); await import('@stateset/embedded/generic'); await import('@stateset/embedded/langchain'); await import('@stateset/embedded/vercel-ai'); await import('@stateset/embedded/purchase-runtime'); await import('@stateset/embedded/canonical-json');\" && node ../../scripts/ci/check_node_binding_package.mjs",
     "check": "npm run build:debug && npm run test && npm run check:package",
     "check:coverage": "npm run build:debug && npm run test:coverage",
     "preartifacts": "npm run check:env",

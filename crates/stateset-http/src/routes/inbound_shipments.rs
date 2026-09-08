@@ -215,7 +215,7 @@ pub(crate) async fn get_one(
 
 #[utoipa::path(post, operation_id = "inbound_shipments_mark_in_transit", path = "/api/v1/inbound-shipments/{id}/in-transit", tag = "inbound_shipments",
     params(("id" = String, Path, description = "Inbound shipment ID")),
-    responses((status = 200, body = InboundShipmentResponse)))]
+    responses((status = 200, body = InboundShipmentResponse), (status = 404, body = ErrorBody), (status = 409, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
 pub(crate) async fn mark_in_transit(
     State(state): State<AppState>,
@@ -229,7 +229,7 @@ pub(crate) async fn mark_in_transit(
 
 #[utoipa::path(post, operation_id = "inbound_shipments_mark_arrived", path = "/api/v1/inbound-shipments/{id}/arrived", tag = "inbound_shipments",
     params(("id" = String, Path, description = "Inbound shipment ID")),
-    responses((status = 200, body = InboundShipmentResponse)))]
+    responses((status = 200, body = InboundShipmentResponse), (status = 404, body = ErrorBody), (status = 409, body = ErrorBody)))]
 #[tracing::instrument(skip(state, headers))]
 pub(crate) async fn mark_arrived(
     State(state): State<AppState>,

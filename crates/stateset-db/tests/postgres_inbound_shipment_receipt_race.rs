@@ -447,6 +447,86 @@ async fn postgres_status_advances_are_refused_on_a_cancelled_shipment() {
     assert_eq!(stored.total_received(), Decimal::ZERO);
 }
 
+/// A successful status advance must return the row it actually wrote.
+///
+/// `set_status` ran its guarded UPDATE on the pool and then re-read the
+/// shipment through `require_full` on a *different* pooled connection, with no
+/// transaction spanning the two. A cancel committing in that window made
+/// `mark_arrived_async` return `Ok` carrying a **cancelled** shipment: the
+/// response contradicted the write it was reporting, and any caller that
+/// trusted the returned row (the HTTP layer serialises it straight back) saw a
+/// status nobody had asked for. The write and its read now share one
+/// transaction, so the returned row is the written row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn postgres_a_successful_status_advance_returns_the_status_it_wrote() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = Arc::new(PostgresDatabase::connect(&url).await.expect("connect + migrate"));
+
+    for trial in 0..24 {
+        let asn = shipment(&db, &[dec!(5)]).await;
+        let barrier = Arc::new(Barrier::new(2));
+
+        let advancing = {
+            let (db, barrier, id) = (Arc::clone(&db), Arc::clone(&barrier), asn.id);
+            tokio::spawn(async move {
+                barrier.wait().await;
+                db.inbound_shipments().mark_arrived_async(id).await
+            })
+        };
+        let cancelling = {
+            let (db, barrier, id) = (Arc::clone(&db), Arc::clone(&barrier), asn.id);
+            tokio::spawn(async move {
+                barrier.wait().await;
+                db.inbound_shipments().cancel_async(id).await
+            })
+        };
+
+        let advanced = advancing.await.expect("advance task");
+        let cancelled = cancelling.await.expect("cancel task");
+
+        if let Ok(returned) = &advanced {
+            assert_eq!(
+                returned.status,
+                InboundShipmentStatus::Arrived,
+                "trial {trial}: a successful advance must return the status it wrote, \
+                 not whatever a racing cancel left behind"
+            );
+        } else {
+            assert!(
+                matches!(advanced, Err(CommerceError::Conflict(_))),
+                "trial {trial}: a refused advance must be a conflict: {advanced:?}"
+            );
+        }
+        if let Ok(returned) = &cancelled {
+            assert_eq!(
+                returned.status,
+                InboundShipmentStatus::Cancelled,
+                "trial {trial}: a successful cancel must return the status it wrote"
+            );
+        }
+
+        // Whatever order they landed in, the stored row is one of the two and
+        // never a mixture.
+        let stored = db
+            .inbound_shipments()
+            .get_async(asn.id)
+            .await
+            .expect("get shipment")
+            .expect("shipment row");
+        assert!(
+            matches!(
+                stored.status,
+                InboundShipmentStatus::Arrived | InboundShipmentStatus::Cancelled
+            ),
+            "trial {trial}: unexpected stored status {:?}",
+            stored.status
+        );
+    }
+}
+
 /// A guard that never lets the happy path through is an outage: the normal
 /// `pending` -> `in_transit` -> `arrived` -> `received` walk must still work.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

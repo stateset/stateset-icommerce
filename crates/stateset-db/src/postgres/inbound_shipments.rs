@@ -196,11 +196,18 @@ impl PgInboundShipmentRepository {
     /// bypassable: `cancel` then `mark_arrived` put the ASN back into a live
     /// status and the next receipt booked stock against a shipment nobody
     /// expected to take delivery of.
+    ///
+    /// The write and the read that reports it share one transaction. Split
+    /// apart — the guarded UPDATE on the pool, then `require_full` on another
+    /// pooled connection — a cancel committing in between made a successful
+    /// advance return a *cancelled* shipment to its caller, so the response
+    /// contradicted the row the caller had just written.
     async fn set_status(
         &self,
         id: InboundShipmentId,
         status: InboundShipmentStatus,
     ) -> Result<InboundShipment> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let updated = sqlx::query(
             "UPDATE inbound_shipments SET status = $1, updated_at = $2
              WHERE id = $3 AND status <> 'cancelled'",
@@ -208,11 +215,18 @@ impl PgInboundShipmentRepository {
         .bind(status.to_string())
         .bind(Utc::now())
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
         if updated.rows_affected() == 0 {
-            return Err(if self.load_full(id).await?.is_some() {
+            let exists: Option<(uuid::Uuid,)> =
+                sqlx::query_as("SELECT id FROM inbound_shipments WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            tx.rollback().await.map_err(map_db_error)?;
+            return Err(if exists.is_some() {
                 CommerceError::Conflict(
                     "Cannot change the status of a cancelled inbound shipment".into(),
                 )
@@ -220,7 +234,9 @@ impl PgInboundShipmentRepository {
                 CommerceError::NotFound
             });
         }
-        self.require_full(id).await
+        let shipment = Self::load_full_tx(&mut tx, id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(shipment)
     }
 
     /// Create a new inbound shipment.

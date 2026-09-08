@@ -225,7 +225,11 @@ fn supports_observed_asset_binding(command_type: &str) -> bool {
 fn supports_observed_quantity_binding(command_type: &str) -> bool {
     matches!(
         command_type,
-        "inventory.reserve" | "inventory.reservation.confirm" | "checkout.commit" | "orders.ship"
+        "inventory.item.create"
+            | "inventory.reserve"
+            | "inventory.reservation.confirm"
+            | "checkout.commit"
+            | "orders.ship"
     )
 }
 

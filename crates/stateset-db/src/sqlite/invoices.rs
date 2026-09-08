@@ -720,9 +720,9 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             .map_err(map_db_error)?;
 
         if parse_enum::<InvoiceStatus>(&status, "invoice", "status")? != InvoiceStatus::Draft {
-            return Err(CommerceError::ValidationError(
-                "Can only delete draft invoices".to_string(),
-            ));
+            // A non-draft invoice is a state conflict, not a malformed
+            // request — and the Postgres twin has always said Conflict.
+            return Err(CommerceError::Conflict("Can only delete draft invoices".to_string()));
         }
 
         tx.execute("DELETE FROM invoice_items WHERE invoice_id = ?", [id.to_string()])
@@ -1381,7 +1381,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                 if parse_enum::<InvoiceStatus>(&status, "invoice", "status")?
                     != InvoiceStatus::Draft
                 {
-                    return Err(CommerceError::ValidationError(format!(
+                    return Err(CommerceError::Conflict(format!(
                         "Can only delete draft invoices. Invoice {id_str} has status {status}"
                     )));
                 }
@@ -1440,7 +1440,7 @@ mod tests {
     use crate::{DatabaseConfig, SqliteDatabase};
     use rust_decimal_macros::dec;
     use stateset_core::{
-        CreateInvoice, CreateInvoiceItem, CustomerId, InvoiceFilter, InvoiceRepository,
+        CreateInvoice, CreateInvoiceItem, CustomerId, InvoiceFilter, InvoiceId, InvoiceRepository,
         InvoiceStatus, RecordInvoicePayment,
     };
 
@@ -1620,6 +1620,33 @@ mod tests {
         let inv = make_invoice(&repo, CustomerId::new());
         let voided = repo.void(inv.id).expect("void");
         assert_eq!(voided.status, InvoiceStatus::Voided);
+    }
+
+    /// A non-draft delete is a state conflict, not a malformed request. The
+    /// Postgres twin has always answered `Conflict`; SQLite answered
+    /// `ValidationError`, so the same call produced a 422 on one backend and a
+    /// 409 on the other.
+    #[test]
+    fn delete_of_a_non_draft_invoice_is_a_conflict() {
+        let repo = fresh_repo();
+
+        let sent = make_invoice(&repo, CustomerId::new());
+        repo.send(sent.id).expect("send");
+        let err = repo.delete(sent.id).expect_err("a sent invoice cannot be deleted");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+
+        let batched = make_invoice(&repo, CustomerId::new());
+        repo.send(batched.id).expect("send");
+        let err = repo
+            .delete_batch_atomic(vec![batched.id])
+            .expect_err("a sent invoice cannot be batch-deleted");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+
+        // A draft still deletes, and a missing id is still NotFound.
+        let draft = make_invoice(&repo, CustomerId::new());
+        repo.delete(draft.id).expect("a draft deletes");
+        let err = repo.delete(InvoiceId::new()).expect_err("deleting nothing");
+        assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
     }
 
     #[test]

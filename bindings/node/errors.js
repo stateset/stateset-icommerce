@@ -29,15 +29,84 @@ const DECORATED = Symbol('statesetErrorDecorated')
 /** Prototypes whose methods have already been wrapped. */
 const patchedPrototypes = new WeakSet()
 
-/** Objects that must never be treated as native API surfaces. */
-const inertPrototypes = new WeakSet([
-  Object.prototype,
-  Array.prototype,
-  Function.prototype,
-  Promise.prototype,
-  Date.prototype,
-  Error.prototype,
-])
+/**
+ * Prototypes that must never be treated as native API surfaces.
+ *
+ * `adopt` sees whatever a native call hands back, and several exports return
+ * Buffers (`merkleRoot`, `ed25519Sign`, `aesGcmEncrypt`,
+ * `vesX402ComputeSigningHash`, …). Patching the prototype of one of those
+ * replaced all 93 own methods of `Buffer.prototype` process-wide, for every
+ * library in the host, after a single call into this binding. A commerce
+ * binding has no business reaching into the realm's builtins, so it patches
+ * only prototypes that came out of the native module.
+ *
+ * `isBuiltinPrototype` also catches builtins by identity, so this list is
+ * belt-and-braces plus the two cases identity cannot reach: `%TypedArray%`,
+ * which has no global name, and anything a host has shadowed on `globalThis`.
+ */
+const inertPrototypes = new WeakSet(
+  [
+    Object.prototype,
+    Array.prototype,
+    Function.prototype,
+    Promise.prototype,
+    Date.prototype,
+    RegExp.prototype,
+    Error.prototype,
+    Map.prototype,
+    Set.prototype,
+    WeakMap.prototype,
+    WeakSet.prototype,
+    ArrayBuffer.prototype,
+    DataView.prototype,
+    // `%TypedArray%.prototype` — the shared base every typed array (and every
+    // Buffer) inherits from. It has no global binding, so only this entry
+    // keeps it out.
+    Object.getPrototypeOf(Uint8Array.prototype),
+    Uint8Array.prototype,
+    Int8Array.prototype,
+    Uint8ClampedArray.prototype,
+    Int16Array.prototype,
+    Uint16Array.prototype,
+    Int32Array.prototype,
+    Uint32Array.prototype,
+    Float32Array.prototype,
+    Float64Array.prototype,
+    BigInt64Array.prototype,
+    BigUint64Array.prototype,
+    typeof Buffer === 'function' ? Buffer.prototype : null,
+    typeof SharedArrayBuffer === 'function' ? SharedArrayBuffer.prototype : null,
+  ].filter((prototype) => prototype !== null && typeof prototype === 'object'),
+)
+
+/**
+ * Whether `prototype` belongs to a JavaScript builtin rather than to the
+ * native module.
+ *
+ * A builtin's `prototype.constructor` is the global of the same name, which is
+ * exactly what a napi class's constructor is not: nothing this module exports
+ * is reachable as `globalThis[name]`. Anything that refuses to answer the
+ * question is treated as a builtin too — being conservative here costs at most
+ * some undecorated error messages, while being wrong the other way mutates the
+ * host's realm.
+ */
+function isBuiltinPrototype(prototype) {
+  if (inertPrototypes.has(prototype)) return true
+  let constructor
+  try {
+    constructor = prototype.constructor
+  } catch {
+    return true
+  }
+  if (typeof constructor !== 'function') return false
+  const name = constructor.name
+  if (typeof name !== 'string' || name === '') return false
+  try {
+    return globalThis[name] === constructor
+  } catch {
+    return true
+  }
+}
 
 /** napi's fixed text when an async task panics with a non-`&str` payload. */
 const ASYNC_PANIC_TEXT = 'Panic in async function'
@@ -120,7 +189,7 @@ function patchPrototype(prototype) {
     prototype === null ||
     typeof prototype !== 'object' ||
     patchedPrototypes.has(prototype) ||
-    inertPrototypes.has(prototype)
+    isBuiltinPrototype(prototype)
   ) {
     return
   }

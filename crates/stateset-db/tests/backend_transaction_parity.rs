@@ -148,27 +148,24 @@ const SAFE_EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
 /// Pre-existing at the time this lint was written; tracked for repair, not
 /// blessed. Delete an entry when you fix the method.
 const SQLITE_UNGUARDED_BACKLOG: &[(&str, &str)] = &[
-    ("agent_cards.rs", "update"),
-    ("warranties.rs", "transfer"),
-    ("warranties.rs", "create_claim"),
-    ("warranties.rs", "update_claim"),
-    ("warranties.rs", "approve_claim"),
-    ("warranties.rs", "deny_claim"),
-    ("warranties.rs", "complete_claim"),
-    ("warranties.rs", "cancel_claim"),
+    // `void` and `expire` are a pooled `get()` -> `ensure_can_*` ->
+    // `self.update(...)`. The lint cannot see them: the write is delegated to
+    // another method, so no guarded statement appears in the body it scans.
+    // They are the same check-then-act the claim mutators had — two operators
+    // voiding and expiring at once each decide on their own snapshot and the
+    // later write wins — and the repair is the same: put the allowed status set
+    // into the UPDATE's own `WHERE` and report `Conflict` on zero rows.
+    ("warranties.rs", "void"),
+    ("warranties.rs", "expire"),
 ];
 
 /// Postgres guarded mutations that read on the pool instead of in a
 /// transaction. Same policy as [`SQLITE_UNGUARDED_BACKLOG`].
 const POSTGRES_UNGUARDED_BACKLOG: &[(&str, &str)] = &[
-    ("agent_cards.rs", "update_async"),
-    ("warranties.rs", "transfer_async"),
-    ("warranties.rs", "create_claim_async"),
-    ("warranties.rs", "update_claim_async"),
-    ("warranties.rs", "approve_claim_async"),
-    ("warranties.rs", "deny_claim_async"),
-    ("warranties.rs", "complete_claim_async"),
-    ("warranties.rs", "cancel_claim_async"),
+    // The Postgres twins of the SQLite `void` / `expire` entries above, with
+    // the same delegated write and the same repair.
+    ("warranties.rs", "void_async"),
+    ("warranties.rs", "expire_async"),
 ];
 
 /// Postgres guarded mutations that *are* transactional but read the row they

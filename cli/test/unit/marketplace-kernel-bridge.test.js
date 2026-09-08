@@ -401,6 +401,68 @@ test('an expired award is dead-lettered on the first attempt with a reason', asy
   assert.equal(calls.length, 1);
 });
 
+test('a binding verdict that cannot change is dead-lettered on the first attempt', async () => {
+  // The binding has already looked at the input or the record's state and said
+  // no. Retrying VALIDATION / PRECONDITION_FAILED / NOT_FOUND `maxAttempts`
+  // times cannot change the answer, and on a bridge it holds the sequencer
+  // cursor behind a message that can never land.
+  for (const code of ['VALIDATION', 'PRECONDITION_FAILED', 'NOT_FOUND']) {
+    const { options, data } = runtimeOptions();
+    const store = new MemoryBridgeStore();
+    const bridge = new KernelMarketplaceBridge({
+      ...options,
+      sequencer: sequencerForAll([data.sequenced]),
+      store,
+      maxAttempts: 5,
+      commerce: {
+        async executeKernelCommand() {
+          const error = new Error(`refused: ${code}`);
+          error.code = code;
+          throw error;
+        },
+      },
+    });
+
+    const result = await bridge.pollOnce();
+    assert.equal(result.outcomes[0].status, 'dead_lettered', code);
+    assert.equal(result.outcomes[0].reason, code, 'the binding code is the dead-letter reason');
+    assert.equal(
+      store.record(options.id, EVENT).attempts,
+      1,
+      `${code}: a permanent verdict must not be retried`,
+    );
+    // ...and the cursor is past it, so later messages are not held hostage.
+    assert.equal(result.nextSequence, 2, code);
+    assert.equal(store.getCursor(options.id), 2, code);
+  }
+});
+
+test('a transient binding failure is still retried to the attempt ceiling', async () => {
+  const { options, data } = runtimeOptions();
+  const store = new MemoryBridgeStore();
+  const bridge = new KernelMarketplaceBridge({
+    ...options,
+    sequencer: sequencerForAll([data.sequenced]),
+    store,
+    maxAttempts: 3,
+    commerce: {
+      async executeKernelCommand() {
+        const error = new Error('the database went away');
+        error.code = 'DATABASE';
+        throw error;
+      },
+    },
+  });
+
+  await assert.rejects(bridge.pollOnce(), /database went away/);
+  await assert.rejects(bridge.pollOnce(), /database went away/);
+  assert.equal(store.getCursor(options.id), 1, 'cursor holds while retries remain');
+  const drained = await bridge.pollOnce();
+  assert.equal(drained.outcomes[0].status, 'dead_lettered');
+  assert.equal(drained.outcomes[0].reason, 'attempts_exhausted');
+  assert.equal(store.record(options.id, EVENT).attempts, 3);
+});
+
 test('dead letters survive worker reconstruction in the durable store', async (t) => {
   let Database;
   try {

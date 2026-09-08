@@ -1810,8 +1810,8 @@
       "packageName": "@stateset/embedded",
       "version": "1.33.0",
       "runtime": "napi-rs",
-      "entrypointCount": 7,
-      "packedFilePatternCount": 4,
+      "entrypointCount": 8,
+      "packedFilePatternCount": 6,
       "peerDependencies": [
         "@stateset/cli"
       ],
@@ -1825,6 +1825,11 @@
           "subpath": "./agent-toolkit",
           "runtimeEntry": "./agent-toolkit.mjs",
           "typesEntry": "./agent-toolkit.d.ts"
+        },
+        {
+          "subpath": "./canonical-json",
+          "runtimeEntry": "./canonical-json.mjs",
+          "typesEntry": "./canonical-json.d.ts"
         },
         {
           "subpath": "./generic",

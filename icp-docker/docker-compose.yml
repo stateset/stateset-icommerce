@@ -34,6 +34,14 @@ services:
     environment:
       PORT: "8787"
       NODE_ENV: "production"
+      # This stack runs the handler in memory mode with the self-signed
+      # delegation the integration test uses, i.e. demo trust. Say so: without
+      # it the handler got demo trust *implicitly* from "not durable, no mode
+      # set", on a published port under NODE_ENV=production — and it now
+      # refuses to start in that configuration rather than quietly accepting
+      # unverified delegations. A real deployment sets ICP_TRUST_MODE=enforce
+      # with ICP_PRINCIPAL_KEYS_JSON / ICP_AGENT_KEYS_JSON.
+      ICP_TRUST_MODE: "demo"
     ports:
       - "8787:8787"
     healthcheck:

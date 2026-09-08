@@ -99,23 +99,33 @@ impl ErrCode {
     /// The HTTP status a gateway should give this failure, reported as
     /// `details.httpStatus`.
     ///
-    /// These mirror `crates/stateset-http/src/error.rs`, which is the
+    /// Every arm mirrors `crates/stateset-http/src/error.rs`, which is the
     /// platform's actual mapping, rather than
     /// `CommerceError::suggested_status_code` — that helper has no arm for the
     /// business-rule and stock failures and sends them all to 500, while the
     /// HTTP layer answers 400. Keeping the binding and the HTTP surface in
-    /// agreement matters more than agreeing with the helper.
+    /// agreement matters more than agreeing with the helper, so where the two
+    /// disagreed the HTTP layer won: `Validation` is 422 (`HttpError::
+    /// ValidationError` -> `UNPROCESSABLE_ENTITY`), not the helper's 400, and
+    /// `ExternalService` is 500 (a carrier failure has no arm in
+    /// `HttpError::classify`, so it falls through to `InternalError`), not the
+    /// helper's 502. Both previously followed `suggested_status_code` while
+    /// this comment claimed otherwise.
     const fn http_status(self) -> u16 {
         match self {
             Self::NotFound => 404,
             Self::Conflict => 409,
+            // `HttpError::ValidationError` -> 422.
+            Self::Validation => 422,
             // `HttpError::BadRequest` — see the `InsufficientStock`,
             // `ShipmentExceedsOrdered`, `OrderCannotBeCancelled`,
             // `ReturnPeriodExpired`, `CustomerNotActive` and
             // `ProductNotPurchasable` arms of `HttpError::from`.
-            Self::Validation | Self::InsufficientStock | Self::PreconditionFailed => 400,
+            Self::InsufficientStock | Self::PreconditionFailed => 400,
             Self::PolicyRejected => 403,
-            Self::ExternalService => 502,
+            // No `HttpError` arm covers a carrier failure, so `classify`
+            // answers `InternalError`.
+            Self::ExternalService => 500,
             Self::Database | Self::Internal | Self::InternalPanic => 500,
         }
     }
@@ -330,6 +340,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stateset_core::CurrencyCode;
     use uuid::Uuid;
 
     fn reason(error: &Error) -> serde_json::Value {
@@ -427,16 +438,25 @@ mod tests {
 
     #[test]
     fn http_status_matches_the_platform_http_layer() {
-        // Mirrors `HttpError::from(CommerceError)` in crates/stateset-http.
+        // Mirrors `HttpError::from(CommerceError)` + `HttpError::status_code()`
+        // in crates/stateset-http. The two arms that used to disagree with it
+        // are pinned explicitly below.
         assert_eq!(ErrCode::NotFound.http_status(), 404);
         assert_eq!(ErrCode::Conflict.http_status(), 409);
-        assert_eq!(ErrCode::Validation.http_status(), 400);
         assert_eq!(ErrCode::InsufficientStock.http_status(), 400);
         assert_eq!(ErrCode::PreconditionFailed.http_status(), 400);
         assert_eq!(ErrCode::PolicyRejected.http_status(), 403);
-        assert_eq!(ErrCode::ExternalService.http_status(), 502);
         assert_eq!(ErrCode::Database.http_status(), 500);
         assert_eq!(ErrCode::Internal.http_status(), 500);
+        assert_eq!(ErrCode::InternalPanic.http_status(), 500);
+
+        // `HttpError::ValidationError` is UNPROCESSABLE_ENTITY, not 400: that
+        // 400 came from `CommerceError::suggested_status_code`, which this
+        // mapping deliberately does not follow.
+        assert_eq!(ErrCode::Validation.http_status(), 422);
+        // A carrier failure has no `HttpError` arm, so `classify` sends it to
+        // `InternalError` (500). 502 was, again, the helper's answer.
+        assert_eq!(ErrCode::ExternalService.http_status(), 500);
     }
 
     #[test]
@@ -515,6 +535,28 @@ mod tests {
     #[test]
     fn guard_passes_success_through() {
         assert_eq!(guard(|| Ok(7)).unwrap(), 7);
+    }
+
+    /// The two `Money::from_decimal_str` call sites in `lib.rs` classify a
+    /// malformed `amount` with `ErrCode::Validation`. `MoneyWireError` comes
+    /// from stateset-primitives, not from `CommerceError`, so `classify_cause`
+    /// cannot recognise it and the fallback code is exactly what the caller
+    /// sees — `Internal` reported bad input as INTERNAL/500.
+    #[test]
+    fn a_primitives_error_is_reported_with_the_fallback_code_it_is_given() {
+        let cause = stateset_core::Money::from_decimal_str("not-a-number", CurrencyCode::USD)
+            .expect_err("a malformed amount must not parse");
+        let error = from_cause(ErrCode::Validation, cause);
+        let payload = reason(&error);
+        assert_eq!(payload["code"], "VALIDATION");
+        assert_eq!(error.status, Status::InvalidArg, "bad input throws InvalidArg");
+        // No `details`: `classify_cause` found no `CommerceError` to describe.
+        assert!(payload["details"].is_null());
+
+        // The shape the two call sites used to have, pinned so the difference
+        // is visible: the same cause under the old fallback is a 500.
+        let old = from_cause(ErrCode::Internal, "not-a-number".parse::<i32>().unwrap_err());
+        assert_eq!(reason(&old)["code"], "INTERNAL");
     }
 
     #[test]

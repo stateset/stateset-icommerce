@@ -263,7 +263,7 @@ assert_status 0 "the happy path must succeed"
 assert_log_contains "git tag -a v1.34.0 -m" "the v tag must be annotated"
 assert_log_contains "git tag -a cli-v1.34.0 -m" "the cli-v tag must be annotated"
 assert_log_contains "git tag -a py-v1.34.0 -m" "the py-v tag must be annotated"
-assert_log_contains "git push origin refs/tags/v1.34.0 refs/tags/cli-v1.34.0 refs/tags/py-v1.34.0" \
+assert_log_contains "git push --atomic origin refs/tags/v1.34.0 refs/tags/cli-v1.34.0 refs/tags/py-v1.34.0" \
   "all three tags must go out in a single push (the v1.31/v1.32 failure)"
 push_count="$(grep -c '^git push' "$STUB_LOG" || true)"
 if [[ "$push_count" != "1" ]]; then
@@ -284,7 +284,7 @@ run_release_tag "1.34.0"
 assert_status 0 "a tag already on HEAD must be re-pushed rather than block the release"
 assert_log_missing "git tag -a v1.34.0" "the existing tag must not be recreated"
 assert_log_contains "git tag -a cli-v1.34.0 -m" "the missing sibling tags must still be created"
-assert_log_contains "git push origin refs/tags/v1.34.0 refs/tags/cli-v1.34.0 refs/tags/py-v1.34.0" \
+assert_log_contains "git push --atomic origin refs/tags/v1.34.0 refs/tags/cli-v1.34.0 refs/tags/py-v1.34.0" \
   "the resumed release must still push all three tags together"
 
 echo "==> a failed push leaves no dangling local tags"

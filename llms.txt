@@ -21,7 +21,7 @@ Install (all published and verified):
 - [Tool catalog](https://github.com/stateset/stateset-icommerce/blob/master/cli/docs/TOOLS.md): generated list of every MCP tool and its schema
 - [Rust API](https://docs.rs/stateset-sdk): crate docs (all 17 crates build green)
 - [Money contract](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/advanced/money.md): why money is exact-decimal and how that is enforced
-- [Trust foundation](https://github.com/stateset/stateset-icommerce/blob/master/TRUST_FOUNDATION.md): verifiability, audit, and compatibility guarantees
+- [Trust foundation](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/trust-foundation.md): verifiability, audit, and compatibility guarantees
 
 ## Optional
 

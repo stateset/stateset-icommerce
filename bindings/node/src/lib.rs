@@ -2994,8 +2994,12 @@ impl Payments {
             .unwrap_or_else(|| "USD".to_string())
             .parse::<CurrencyCode>()
             .map_err(|error| wrap(ErrCode::Validation, "Invalid currency", error))?;
+        // `MoneyWireError` is a stateset-primitives error, not a `CommerceError`,
+        // so `classify_cause` cannot recognise it and the fallback code is what
+        // the caller sees. A malformed `amount` is bad input, not a bug in the
+        // binding: `Internal` reported it as INTERNAL/500.
         let money = stateset_core::Money::from_decimal_str(&input.amount, currency)
-            .map_err(|error| from_cause(ErrCode::Internal, error))?;
+            .map_err(|error| from_cause(ErrCode::Validation, error))?;
         let payment_method = input
             .payment_method
             .and_then(|method| method.parse::<stateset_core::PaymentMethodType>().ok())
@@ -3123,8 +3127,9 @@ impl Payments {
             .get(payment_id)
             .map_err(|error| wrap(ErrCode::Internal, "Failed to get payment", error))?
             .ok_or_else(|| coded(ErrCode::NotFound, "Payment not found"))?;
+        // As above: a malformed refund `amount` is VALIDATION, not INTERNAL.
         let money = stateset_core::Money::from_decimal_str(&input.amount, payment.currency)
-            .map_err(|error| from_cause(ErrCode::Internal, error))?;
+            .map_err(|error| from_cause(ErrCode::Validation, error))?;
         let refund = commerce
             .payments()
             .create_refund(stateset_core::CreateRefund {

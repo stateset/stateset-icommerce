@@ -38,7 +38,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | Go | Go modules | `github.com/stateset/stateset-icommerce/bindings/go/stateset` | — | `detailed` | 81 API methods |
 | Java | Maven | `com.stateset:embedded` | `1.33.0` | `package-manifest` | manifest coverage |
 | Kotlin | Maven | `com.stateset:embedded-kotlin` | `1.33.0` | `package-manifest` | manifest coverage |
-| Node.js | npm | `@stateset/embedded` | `1.33.0` | `detailed` | 7 export entrypoints |
+| Node.js | npm | `@stateset/embedded` | `1.33.0` | `detailed` | 8 export entrypoints |
 | PHP | Composer | `stateset/embedded` | `1.33.0` | `package-manifest` | manifest coverage |
 | Python | PyPI | `stateset-embedded` | `1.33.0` | `detailed` | 244 public symbols |
 | Ruby | RubyGems | `stateset_embedded` | `1.33.0` | `package-manifest` | manifest coverage |
@@ -51,6 +51,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | --- | --- | --- |
 | `.` | `./index.js` | `./index.d.ts` |
 | `./agent-toolkit` | `./agent-toolkit.mjs` | `./agent-toolkit.d.ts` |
+| `./canonical-json` | `./canonical-json.mjs` | `./canonical-json.d.ts` |
 | `./generic` | `./generic.mjs` | `./generic.d.ts` |
 | `./langchain` | `./langchain.mjs` | `./langchain.d.ts` |
 | `./openai` | `./openai.mjs` | `./openai.d.ts` |

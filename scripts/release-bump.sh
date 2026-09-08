@@ -25,8 +25,8 @@
 #   * The untracked-at-the-time bindings/node/npm/ platform dirs were missed
 #     by `git grep`; this script bumps them explicitly.
 #
-# After running: update CHANGELOG.md and the README "What's New" section by
-# hand (content, not mechanics), then run the hygiene gate (done here last).
+# After running: update CHANGELOG.md by hand (content, not mechanics), then run
+# the hygiene gate (done here last).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -77,7 +77,6 @@ mapfile -t files < <(git grep -l "${FROM_RE}" -- . \
   ':(exclude)*package-lock.json' \
   ':(exclude)artifacts/*' \
   ':(exclude)docs/src/appendix/*' \
-  ':(exclude)docs/versions/*' \
   ':(exclude)supply-chain/*' \
   ':(exclude)bindings/php/Cargo.lock' \
   ':(exclude)bindings/ruby/Cargo.lock' \
@@ -123,11 +122,6 @@ for (const path of lockfiles) {
 }
 NODE
 
-# README "What's New" anchor tracks the version.
-old_anchor="whats-new-in-v${FROM//./}"
-new_anchor="whats-new-in-v${TO//./}"
-sed -i "s/(#${old_anchor})/(#${new_anchor})/" README.md
-
 echo "==> Regenerating Cargo.lock"
 cargo metadata --format-version 1 >/dev/null
 
@@ -139,17 +133,16 @@ cat <<EOF
 
 Mechanical bump complete. Release flow from here:
   1. Add the ${TO} entry to CHANGELOG.md
-  2. Update the "What's New in v${TO}" section content in README.md
-  3. bash ./scripts/ci/check_release_hygiene.sh
-  4. Open a PR and land it on master — a release is cut from master only
-  5. npm run release:tag -- ${TO}
+  2. bash ./scripts/ci/check_release_hygiene.sh
+  3. Open a PR and land it on master — a release is cut from master only
+  4. npm run release:tag -- ${TO}
        Creates v${TO}, cli-v${TO} and py-v${TO} and pushes all three in ONE
        push, and only from a clean tree at origin/master whose required checks
        are green. Run it with --dry-run first to see the preconditions.
        (v1.31.0 and v1.32.0 shipped with only v${TO}-style tags, so npm and
        PyPI stayed two releases behind; v1.33.0 was tagged off a branch with a
        red check. This command is what makes both impossible.)
-  6. Watch the three publish workflows, then:
+  5. Watch the three publish workflows, then:
        bash scripts/release-bump.sh --sync-locks   # after the npm publishes land
-  7. Commit the lockfile sync (bindings/node only, in practice)
+  6. Commit the lockfile sync (bindings/node only, in practice)
 EOF

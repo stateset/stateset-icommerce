@@ -46,6 +46,10 @@ macro_rules! require_db {
 fn quantity_policy() -> KernelPolicy {
     KernelPolicy::new("commerce-policy-1")
         .allow(
+            "inventory.item.create",
+            KernelCommandPolicy::requiring(["inventory.item.create"]).with_max_quantity(dec!(50)),
+        )
+        .allow(
             "inventory.reservation.confirm",
             KernelCommandPolicy::requiring(["inventory.reservation.confirm"])
                 .with_max_quantity(dec!(50)),
@@ -132,6 +136,118 @@ async fn reservation_of(db: &PostgresDatabase, sku: &str, quantity: Decimal) -> 
 
 async fn allocated(db: &PostgresDatabase, sku: &str) -> Decimal {
     db.inventory().get_stock_async(sku).await.expect("stock query").expect("stock").total_allocated
+}
+
+/// Seeding a SKU's opening stock moves units, so a declared ceiling has to
+/// bind to `initial_quantity`. Until `inventory.item.create` was listed in
+/// `supports_observed_quantity_binding` the whole command failed closed under
+/// any quantity rule, so this ceiling could not be used at all.
+#[tokio::test]
+async fn postgres_item_create_rejects_a_declared_quantity_the_opening_stock_does_not_match() {
+    let db = require_db!();
+    let suffix = Uuid::new_v4();
+    let sku = format!("R8-PG-ITEM-SUB-{suffix}");
+
+    let mut create = command(
+        "inventory.item.create",
+        format!("r8-pg-item-create-substitution-{suffix}"),
+        CreateInventoryItem {
+            sku: sku.clone(),
+            name: "Seeded stock".into(),
+            initial_quantity: Some(dec!(1000)),
+            ..Default::default()
+        },
+    );
+    create.commitment = declaring("1");
+
+    let receipt = db
+        .kernel_executor(quantity_policy())
+        .execute_create_inventory_item_async(&create)
+        .await
+        .expect("sealed rejection");
+    assert_eq!(receipt.status, ExecutionStatus::Rejected, "{receipt:?}");
+    assert_eq!(receipt.error_code.as_deref(), Some("kernel.commitment_quantity_mismatch"));
+    assert!(
+        db.inventory().get_stock_async(&sku).await.expect("stock query").is_none(),
+        "a refused create must seed nothing"
+    );
+}
+
+#[tokio::test]
+async fn postgres_item_create_accepts_a_declaration_that_matches_the_opening_stock() {
+    let db = require_db!();
+    let suffix = Uuid::new_v4();
+    let sku = format!("R8-PG-ITEM-OK-{suffix}");
+
+    let mut create = command(
+        "inventory.item.create",
+        format!("r8-pg-item-create-match-{suffix}"),
+        CreateInventoryItem {
+            sku: sku.clone(),
+            name: "Seeded stock".into(),
+            initial_quantity: Some(dec!(40)),
+            ..Default::default()
+        },
+    );
+    create.commitment = declaring("40");
+
+    let receipt = db
+        .kernel_executor(quantity_policy())
+        .execute_create_inventory_item_async(&create)
+        .await
+        .expect("create inventory item");
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
+    assert_eq!(
+        db.inventory()
+            .get_stock_async(&sku)
+            .await
+            .expect("stock query")
+            .expect("stock")
+            .total_on_hand,
+        dec!(40)
+    );
+}
+
+/// An over-request is clamped by the repository — `quantity >= reserved`
+/// confirms the reservation in full — so the observed figure is the clamped
+/// movement, not the payload. Binding to the raw payload both refused a
+/// correct declaration and would have accepted an inflated one.
+#[tokio::test]
+async fn postgres_confirm_binds_the_clamped_movement_not_the_over_request() {
+    let db = require_db!();
+    let suffix = Uuid::new_v4();
+    let sku = format!("R8-PG-CONFIRM-CLAMP-{suffix}");
+    stock(&db, &sku, dec!(200)).await;
+    let reservation = reservation_of(&db, &sku, dec!(40)).await;
+
+    let mut over = command(
+        "inventory.reservation.confirm",
+        format!("r8-pg-confirm-over-request-match-{suffix}"),
+        ConfirmInventoryReservation { reservation_id: reservation, quantity: Some(dec!(60)) },
+    );
+    over.commitment = declaring("40");
+    let receipt = db
+        .kernel_executor(quantity_policy())
+        .execute_confirm_inventory_reservation_async(&over)
+        .await
+        .expect("confirm reservation");
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
+    assert_eq!(allocated(&db, &sku).await, dec!(40));
+
+    let second = reservation_of(&db, &sku, dec!(40)).await;
+    let mut inflated = command(
+        "inventory.reservation.confirm",
+        format!("r8-pg-confirm-over-request-inflated-{suffix}"),
+        ConfirmInventoryReservation { reservation_id: second, quantity: Some(dec!(60)) },
+    );
+    inflated.commitment = declaring("45");
+    let receipt = db
+        .kernel_executor(quantity_policy())
+        .execute_confirm_inventory_reservation_async(&inflated)
+        .await
+        .expect("sealed rejection");
+    assert_eq!(receipt.status, ExecutionStatus::Rejected, "{receipt:?}");
+    assert_eq!(receipt.error_code.as_deref(), Some("kernel.commitment_quantity_mismatch"));
 }
 
 #[tokio::test]

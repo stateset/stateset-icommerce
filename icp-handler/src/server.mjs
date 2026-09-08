@@ -141,6 +141,27 @@ if (TRUST_MODE && TRUST_MODE !== 'enforce' && TRUST_MODE !== 'demo') {
 const DEMO_TRUST = TRUST_MODE === 'demo';
 const ENFORCE_TRUST = TRUST_MODE === 'enforce' || (state.isDurable() && !DEMO_TRUST);
 
+// Implicit demo trust in production is a configuration accident, not a
+// decision. An in-memory handler with no ICP_TRUST_MODE enforces nothing: it
+// accepts every `principal_binding` without checking who authorized the agent.
+// That is fine for a walkthrough on localhost and indefensible for something
+// started with NODE_ENV=production and a published port — which is exactly what
+// icp-docker/docker-compose.yml did. Demo trust must be asked for by name.
+if (!ENFORCE_TRUST && !DEMO_TRUST && process.env.NODE_ENV === 'production') {
+  throw new Error(
+    'icp-handler: refusing to start — NODE_ENV=production with neither durable state nor an ' +
+      'explicit ICP_TRUST_MODE, so delegations would be accepted unverified. Set ' +
+      'ICP_TRUST_MODE=enforce (with ICP_PRINCIPAL_KEYS_JSON and ICP_AGENT_KEYS_JSON) for a real ' +
+      'deployment, or ICP_TRUST_MODE=demo to accept unverified delegations deliberately.',
+  );
+}
+if (DEMO_TRUST && process.env.NODE_ENV === 'production') {
+  console.error(
+    'icp-handler: DEMO TRUST MODE under NODE_ENV=production — principal bindings are accepted ' +
+      'WITHOUT verification. This is a walkthrough posture, never a production one.',
+  );
+}
+
 /** Operator-owned identity → raw Ed25519 public key hex. Never caller input. */
 function keyRegistry(variable) {
   let parsed;

@@ -29,11 +29,13 @@ use crate::kernel::plans::finance::{
     post_journal_entry_guard, settle_x402_guard,
 };
 use crate::kernel::plans::inventory::{
-    economic_quantity_guard, reservation_lifecycle_guard, reserve_inventory_guard,
+    declares_quantity, economic_quantity_guard, reservation_lifecycle_guard,
+    reserve_inventory_guard,
 };
 use crate::kernel::plans::orders::{
-    OrderTransitionSnapshot, ShipOrderSnapshot, plan_order_transition, plan_ship_order,
-    reservation_expired_during_shipment, ship_order_guard, shipped_units, transition_order_guard,
+    CART_UNITS_SQL_POSTGRES, OrderTransitionSnapshot, ShipOrderSnapshot, plan_order_transition,
+    plan_ship_order, reservation_expired_during_shipment, ship_order_guard, shipped_units,
+    transition_order_guard,
 };
 use crate::kernel::plans::payments::{
     RefundSnapshot, create_payment_guard, economic_counterparty_guard, economic_money_guard,
@@ -256,7 +258,18 @@ impl PgKernelExecutor {
             EnvelopeGuard::create(CREATE_INVENTORY_ITEM_COMMAND),
             "inventory_item",
         )?
-        .then_guard(|_| create_inventory_item_guard(&input));
+        .then_guard(|_| create_inventory_item_guard(&input))
+        // The opening stock figure is the quantity this command moves, so a
+        // declared quantity ceiling has to bind to it. Without this the
+        // command was listed as unbindable and every quantity rule over it
+        // failed closed; with it, a commitment that declares one unit cannot
+        // seed a thousand.
+        .then_guard(|_| {
+            economic_quantity_guard(
+                command.commitment.as_ref(),
+                input.initial_quantity.unwrap_or_default(),
+            )
+        });
         let request_hash = run.request_hash.clone();
         let policy = run.policy.clone();
         let started_at = run.started_at;
@@ -1285,12 +1298,16 @@ impl PgKernelExecutor {
             return Ok(receipt);
         }
         // A confirmation moves the held units into allocated stock, so the
-        // declared quantity must bind to what is confirmed — the payload
-        // amount, or the whole reservation when confirming in full.
+        // declared quantity must bind to what is confirmed. The repository
+        // clamps an over-request to the reservation (`quantity >= reserved`
+        // confirms in full), so the figure the domain acts on is the minimum
+        // of the two — binding to the raw payload amount would let a
+        // commitment declare 1000 for a movement of 10.
         if let InventoryLifecycleAction::Confirm(quantity) = action
             && let Some(rejection) = economic_quantity_guard(
                 command.commitment.as_ref(),
-                quantity.unwrap_or(reservation.quantity),
+                quantity
+                    .map_or(reservation.quantity, |declared| declared.min(reservation.quantity)),
             )
         {
             let mut receipt = run.rejected_by(&rejection);
@@ -3619,10 +3636,15 @@ impl PgKernelExecutor {
                     return Ok(receipt);
                 }
             };
-            if let Some(rejection) = economic_quantity_guard(
-                command.commitment.as_ref(),
-                cart_units_pg(tx.as_mut(), command.payload.cart_id.into_uuid()).await?,
-            ) {
+            // The SUM is the observation, so only pay for it when a quantity
+            // was actually declared: without one the guard returns `None`
+            // regardless.
+            if declares_quantity(command.commitment.as_ref())
+                && let Some(rejection) = economic_quantity_guard(
+                    command.commitment.as_ref(),
+                    cart_units_pg(tx.as_mut(), command.payload.cart_id.into_uuid()).await?,
+                )
+            {
                 let mut receipt = run.rejected_by(&rejection);
                 receipt.aggregate_id = Some(command.payload.cart_id.to_string());
                 append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -3682,10 +3704,12 @@ impl PgKernelExecutor {
         }
         // Bind the declared units to the cart the order will be cut from,
         // before anything is applied. Preview refuses wherever apply does.
-        if let Some(rejection) = economic_quantity_guard(
-            command.commitment.as_ref(),
-            cart_units_pg(tx.as_mut(), command.payload.cart_id.into_uuid()).await?,
-        ) {
+        if declares_quantity(command.commitment.as_ref())
+            && let Some(rejection) = economic_quantity_guard(
+                command.commitment.as_ref(),
+                cart_units_pg(tx.as_mut(), command.payload.cart_id.into_uuid()).await?,
+            )
+        {
             let mut receipt = run.rejected_by(&rejection);
             receipt.aggregate_id = Some(command.payload.cart_id.to_string());
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -4192,12 +4216,11 @@ async fn cart_units_pg(
     tx: &mut sqlx::PgConnection,
     cart_id: Uuid,
 ) -> Result<rust_decimal::Decimal> {
-    let units: i64 =
-        sqlx::query_scalar("SELECT COALESCE(SUM(quantity), 0) FROM cart_items WHERE cart_id = $1")
-            .bind(cart_id)
-            .fetch_one(tx)
-            .await
-            .map_err(pg_err)?;
+    let units: i64 = sqlx::query_scalar(CART_UNITS_SQL_POSTGRES)
+        .bind(cart_id)
+        .fetch_one(tx)
+        .await
+        .map_err(pg_err)?;
     Ok(rust_decimal::Decimal::from(units))
 }
 

@@ -25,6 +25,10 @@ use uuid::Uuid;
 fn quantity_policy() -> KernelPolicy {
     KernelPolicy::new("commerce-policy-1")
         .allow(
+            "inventory.item.create",
+            KernelCommandPolicy::requiring(["inventory.item.create"]).with_max_quantity(dec!(50)),
+        )
+        .allow(
             "inventory.reservation.confirm",
             KernelCommandPolicy::requiring(["inventory.reservation.confirm"])
                 .with_max_quantity(dec!(50)),
@@ -108,6 +112,105 @@ fn reservation_of(db: &SqliteDatabase, sku: &str, quantity: Decimal) -> Uuid {
 
 fn allocated(db: &SqliteDatabase, sku: &str) -> Decimal {
     db.inventory().get_stock(sku).expect("stock query").expect("stock").total_allocated
+}
+
+/// Seeding a SKU's opening stock moves units, so a declared ceiling has to
+/// bind to `initial_quantity`. Until `inventory.item.create` was listed in
+/// `supports_observed_quantity_binding` the whole command failed closed under
+/// any quantity rule, so this ceiling could not be used at all.
+#[test]
+fn item_create_rejects_a_declared_quantity_the_opening_stock_does_not_match() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+
+    let mut create = command(
+        "inventory.item.create",
+        "r8-item-create-substitution",
+        CreateInventoryItem {
+            sku: "R8-ITEM-SUB".into(),
+            name: "Seeded stock".into(),
+            initial_quantity: Some(dec!(1000)),
+            ..Default::default()
+        },
+    );
+    create.commitment = declaring("1");
+
+    let receipt = db
+        .kernel_executor(quantity_policy())
+        .execute_create_inventory_item(&create)
+        .expect("sealed rejection");
+    assert_eq!(receipt.status, ExecutionStatus::Rejected, "{receipt:?}");
+    assert_eq!(receipt.error_code.as_deref(), Some("kernel.commitment_quantity_mismatch"));
+    assert!(
+        db.inventory().get_stock("R8-ITEM-SUB").expect("stock query").is_none(),
+        "a refused create must seed nothing"
+    );
+}
+
+#[test]
+fn item_create_accepts_a_declaration_that_matches_the_opening_stock() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+
+    let mut create = command(
+        "inventory.item.create",
+        "r8-item-create-match",
+        CreateInventoryItem {
+            sku: "R8-ITEM-OK".into(),
+            name: "Seeded stock".into(),
+            initial_quantity: Some(dec!(40)),
+            ..Default::default()
+        },
+    );
+    create.commitment = declaring("40");
+
+    let receipt = db
+        .kernel_executor(quantity_policy())
+        .execute_create_inventory_item(&create)
+        .expect("create inventory item");
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
+    assert_eq!(
+        db.inventory().get_stock("R8-ITEM-OK").expect("stock query").expect("stock").total_on_hand,
+        dec!(40)
+    );
+}
+
+/// An over-request is clamped by the repository — `quantity >= reserved`
+/// confirms the reservation in full — so the observed figure is the clamped
+/// movement, not the payload. Binding to the raw payload both refused a
+/// correct declaration and would have accepted an inflated one.
+#[test]
+fn confirm_binds_the_clamped_movement_not_the_over_request() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+    create_stock(&db, "R8-CONFIRM-CLAMP", dec!(200));
+    let reservation = reservation_of(&db, "R8-CONFIRM-CLAMP", dec!(40));
+
+    // Payload asks for 60, the reservation holds 40, so 40 is what moves.
+    let mut over = command(
+        "inventory.reservation.confirm",
+        "r8-confirm-over-request-match",
+        ConfirmInventoryReservation { reservation_id: reservation, quantity: Some(dec!(60)) },
+    );
+    over.commitment = declaring("40");
+    let receipt = db
+        .kernel_executor(quantity_policy())
+        .execute_confirm_inventory_reservation(&over)
+        .expect("confirm reservation");
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
+    assert_eq!(allocated(&db, "R8-CONFIRM-CLAMP"), dec!(40));
+
+    // And the inflated declaration the payload would have justified is refused.
+    let second = reservation_of(&db, "R8-CONFIRM-CLAMP", dec!(40));
+    let mut inflated = command(
+        "inventory.reservation.confirm",
+        "r8-confirm-over-request-inflated",
+        ConfirmInventoryReservation { reservation_id: second, quantity: Some(dec!(60)) },
+    );
+    inflated.commitment = declaring("45");
+    let receipt = db
+        .kernel_executor(quantity_policy())
+        .execute_confirm_inventory_reservation(&inflated)
+        .expect("sealed rejection");
+    assert_eq!(receipt.status, ExecutionStatus::Rejected, "{receipt:?}");
+    assert_eq!(receipt.error_code.as_deref(), Some("kernel.commitment_quantity_mismatch"));
 }
 
 #[test]

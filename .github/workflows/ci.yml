@@ -1167,7 +1167,13 @@ jobs:
             --features postgres
 
       - name: Upload coverage to Codecov
-        if: github.event_name == 'push'
+        # Pushes are master-only, so a push-only condition meant pull requests
+        # produced coverage and then threw it away - the PR comment/status that
+        # reviewers act on never appeared. The repo is public, so the upload is
+        # tokenless; if Codecov ever starts requiring a token here, add a
+        # `token:` input wired to a CODECOV_TOKEN secret rather than narrowing
+        # this condition back to pushes.
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage/cobertura.xml

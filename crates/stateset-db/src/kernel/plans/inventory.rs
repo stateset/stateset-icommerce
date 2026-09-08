@@ -46,6 +46,16 @@ pub fn economic_quantity_guard(
     }
 }
 
+/// Whether a commitment declares a quantity ceiling at all.
+///
+/// [`economic_quantity_guard`] returns `None` when it does not, so a backend
+/// that has to run a query to produce the observed figure can skip the query
+/// entirely rather than paying for it on every command.
+#[must_use]
+pub fn declares_quantity(commitment: Option<&EconomicCommitment>) -> bool {
+    commitment.is_some_and(|commitment| commitment.quantity.is_some())
+}
+
 /// Static payload checks shared by `inventory.reservation.confirm` and
 /// `inventory.reservation.release`. `confirm_quantity` is the optional partial
 /// confirmation amount; `None` means release, or confirm-in-full.
@@ -84,5 +94,26 @@ mod tests {
                 .map(|guard| guard.code),
             Some("kernel.commitment_quantity_mismatch")
         );
+    }
+
+    #[test]
+    fn declares_quantity_tracks_what_the_guard_would_look_at() {
+        let mut commitment = EconomicCommitment {
+            budget_id: None,
+            amount: None,
+            asset_amount: None,
+            counterparty_id: None,
+            quantity: Some("50.00".into()),
+            evidence: vec![],
+        };
+        assert!(declares_quantity(Some(&commitment)));
+        commitment.quantity = None;
+        assert!(!declares_quantity(Some(&commitment)));
+        assert!(!declares_quantity(None));
+        // The contract the callers rely on: whenever `declares_quantity` is
+        // false the guard cannot reject, so skipping the observation query is
+        // never a behaviour change.
+        assert!(economic_quantity_guard(Some(&commitment), Decimal::ONE).is_none());
+        assert!(economic_quantity_guard(None, Decimal::ONE).is_none());
     }
 }

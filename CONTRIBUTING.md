@@ -188,7 +188,7 @@ cargo test test_order_lifecycle
 CI note: Swift bindings run on macOS only when a PR has the `ci-swift` label (they run on pushes to main/master).
 CI note: Mutation testing runs on pushes to `main`/`master` and on PRs labeled `ci-mutants`.
 CI note: Benchmarks only run on pushes to `main`/`master`.
-CI note: Coverage runs in the `coverage.yml` workflow on PRs and pushes.
+CI note: The Rust workspace coverage gate (80% lines, `cargo llvm-cov`) runs in ci.yml as the `Code Coverage` job, on PRs and pushes to `master`; `coverage.yml` now only enforces the Node bindings coverage floor.
 If your change impacts core logic or performance, please run these locally before requesting review:
 
 ```bash
