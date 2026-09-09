@@ -27,6 +27,47 @@ import { compactReplayValue, sha256, stableStringify } from './replay-sanitizer.
  */
 export const replayEventHash = (value) => sha256(stableStringify(compactReplayValue(value)));
 
+export const COMMERCE_EXECUTION_EVIDENCE_VERSION = 'stateset.commerce-evidence.v1';
+export const COMMERCE_EXECUTION_META_KEY = 'com.stateset/commerce';
+
+/**
+ * Project a replay-log event into the privacy-minimal evidence carried across
+ * the MCP boundary. Payloads stay in the local audit store; only their hashes
+ * and correlation identifiers leave the commerce process.
+ *
+ * @param {object} event
+ * @returns {object}
+ */
+export const buildCommerceExecutionEvidence = (event) => ({
+  version: COMMERCE_EXECUTION_EVIDENCE_VERSION,
+  event_id: event.eventId,
+  event_type: 'McpToolExecution',
+  occurred_at: event.occurredAt,
+  tool: event.tool,
+  status: event.status,
+  request_id: event.requestId ?? null,
+  session_id: event.sessionId ?? null,
+  params_sha256: `sha256:${event.paramsHash || replayEventHash(event.params || {})}`,
+  result_sha256: `sha256:${event.resultHash || replayEventHash(event.result || {})}`,
+  policy_sha256: `sha256:${replayEventHash(event.policy || {})}`,
+  permission_sha256: `sha256:${replayEventHash(event.permission || {})}`,
+  mutation_manifest_sha256: `sha256:${replayEventHash(event.notes?.mutationManifest || {})}`,
+});
+
+/** Attach commerce evidence without disturbing existing MCP result metadata. */
+export const attachCommerceExecutionEvidence = (response, event) => {
+  if (!response || typeof response !== 'object' || Array.isArray(response)) return response;
+  return {
+    ...response,
+    _meta: {
+      ...(response._meta && typeof response._meta === 'object' && !Array.isArray(response._meta)
+        ? response._meta
+        : {}),
+      [COMMERCE_EXECUTION_META_KEY]: buildCommerceExecutionEvidence(event),
+    },
+  };
+};
+
 /**
  * Normalize a policy action into a plain JSON-friendly object.
  *

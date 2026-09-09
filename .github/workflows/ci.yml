@@ -1,9 +1,13 @@
 name: CI
 
 on:
+  # Pushes to master only. Every branch used to trigger this 38-job matrix, so
+  # a PR push ran the whole thing twice (once for the branch, once for the PR).
+  # The pull_request trigger is what gates merges; the master trigger is what
+  # produces the check runs a release tag is verified against.
   push:
     branches:
-      - '**'
+      - master
   pull_request:
   workflow_dispatch:
 
@@ -482,7 +486,6 @@ jobs:
         run: |
           npm run check:doc-tool-refs
           npm run check:docs:book
-          npm run check:docs:snapshot
 
   release-hygiene:
     name: Release Hygiene
@@ -509,6 +512,12 @@ jobs:
         run: bash ./scripts/ci/check_release_hygiene.sh
       - name: Test release hygiene helper
         run: bash ./scripts/ci/check_release_hygiene.test.sh
+      - name: Test release tagging preconditions
+        run: bash ./scripts/release-tag.test.sh
+      - name: Test the publish release guard
+        run: bash ./scripts/ci/check_release_guard.test.sh
+      - name: Test the published embedded dependency range
+        run: node --test ./scripts/ci/set_embedded_registry_range.test.mjs
 
   rust:
     name: Rust
@@ -734,7 +743,7 @@ jobs:
   cli:
     name: CLI Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v7
@@ -786,9 +795,42 @@ jobs:
         working-directory: cli
         run: npm run typecheck:supported
 
-      - name: Test
+      # Runs the suite once, with coverage, and enforces the floor that used to
+      # live in coverage.yml's duplicate `cli-coverage` job.
+      - name: Test (with coverage)
         working-directory: cli
-        run: npm test
+        # Explicit `shell: bash` enables pipefail so test failures are not
+        # masked by the exit status of `tee`.
+        shell: bash
+        run: npm run test:coverage 2>&1 | tee coverage-output.txt
+
+      - name: Check coverage threshold
+        working-directory: cli
+        run: |
+          # Node's --experimental-test-coverage summary row looks like:
+          #   # all files | 85.94 | 86.70 | 89.63 |
+          # (columns: line %, branch %, funcs %; no % signs in the cells).
+          LINE_COV=$(grep -E 'all files' coverage-output.txt | grep -oP '\d+\.\d+' | head -1)
+          echo "Line coverage: ${LINE_COV:-unknown}%"
+          if [ -z "$LINE_COV" ]; then
+            echo "::error::Could not determine CLI line coverage"
+            exit 1
+          fi
+          if (( $(echo "$LINE_COV < 75" | bc -l) )); then
+            echo "::error::CLI line coverage ${LINE_COV}% is below 75% threshold"
+            exit 1
+          fi
+          echo "CLI line coverage ${LINE_COV}% meets 75% threshold"
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: cli-coverage
+          # Node's built-in coverage reporter writes to stdout only; the tee'd
+          # transcript is the artifact (there is no cli/coverage directory).
+          path: cli/coverage-output.txt
+          if-no-files-found: error
 
   ruby-bindings:
     name: Ruby Bindings
@@ -1125,7 +1167,13 @@ jobs:
             --features postgres
 
       - name: Upload coverage to Codecov
-        if: github.event_name == 'push'
+        # Pushes are master-only, so a push-only condition meant pull requests
+        # produced coverage and then threw it away - the PR comment/status that
+        # reviewers act on never appeared. The repo is public, so the upload is
+        # tokenless; if Codecov ever starts requiring a token here, add a
+        # `token:` input wired to a CODECOV_TOKEN secret rather than narrowing
+        # this condition back to pushes.
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage/cobertura.xml

@@ -2514,7 +2514,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stateset-core"
-version = "1.28.1"
+version = "1.31.0"
 dependencies = [
  "auto_impl",
  "base64",
@@ -2536,7 +2536,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-crypto"
-version = "1.28.1"
+version = "1.31.0"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -2560,7 +2560,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-db"
-version = "1.28.1"
+version = "1.31.0"
 dependencies = [
  "chrono",
  "hex",
@@ -2580,7 +2580,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded"
-version = "1.28.1"
+version = "1.31.0"
 dependencies = [
  "chrono",
  "futures",
@@ -2602,7 +2602,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-php"
-version = "1.28.1"
+version = "1.31.0"
 dependencies = [
  "chrono",
  "ext-php-rs",
@@ -2615,7 +2615,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-observability"
-version = "1.28.1"
+version = "1.31.0"
 dependencies = [
  "thiserror",
  "tracing",
@@ -2624,7 +2624,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-pricing"
-version = "1.28.1"
+version = "1.31.0"
 dependencies = [
  "chrono",
  "rust_decimal",
@@ -2635,7 +2635,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-primitives"
-version = "1.28.1"
+version = "1.31.0"
 dependencies = [
  "rusqlite",
  "rust_decimal",

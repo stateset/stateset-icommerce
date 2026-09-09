@@ -15,21 +15,21 @@ crate without the facade re-exports.
 ### Node.js
 
 ```bash
-npm install @stateset/embedded@1.30.0
+npm install @stateset/embedded@1.34.0
 ```
 
 ### Python
 
 ```bash
-pip install stateset-embedded==1.30.0
+pip install stateset-embedded==1.34.0
 # or install optional framework adapters as well
-pip install "stateset-embedded[agents]==1.30.0"
+pip install "stateset-embedded[agents]==1.34.0"
 ```
 
 ### CLI (global)
 
 ```bash
-npm install -g @stateset/cli@1.30.0
+npm install -g @stateset/cli@1.34.0
 stateset-init --quickstart
 ```
 
@@ -120,7 +120,7 @@ stateset "find products similar to wireless earbuds"
 ### Embedded Toolkit (OpenAI, Vercel AI SDK, LangChain, Python runtimes)
 
 ```bash
-npm install @stateset/cli@1.30.0 @stateset/embedded@1.30.0
+npm install @stateset/cli@1.34.0 @stateset/embedded@1.34.0
 ```
 
 ```javascript
@@ -184,7 +184,7 @@ This registers the MCP server with your client. The full registry-generated tool
 
 ## Next Steps
 
-- [Standalone Quickstart](standalone-quickstart.md) — Full 5-minute walkthrough with Shopify import and Stripe webhooks
+- [CLI Quickstart](standalone-quickstart.md) — Full 5-minute walkthrough with Shopify import and Stripe webhooks
 - [AI Agent Quickstart](ai-agents.md) — Vercel AI SDK, LangChain, and OpenAI Responses API
 - [Examples](examples.md) — End-to-end scenarios
 - [API Reference](api/index.md) — Language-specific docs

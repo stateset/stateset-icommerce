@@ -450,6 +450,10 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         // columns. The accessor's read-then-create check was a TOCTOU that
         // let two concurrent creates double-charge one cart.
         ("094_x402_cart_order_claim", include_str!("../migrations/094_x402_cart_order_claim.sql")),
+        (
+            "095_kernel_economic_budgets",
+            include_str!("../migrations/095_kernel_economic_budgets.sql"),
+        ),
     ]
 }
 

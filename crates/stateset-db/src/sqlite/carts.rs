@@ -1365,25 +1365,45 @@ impl CartRepository for SqliteCartRepository {
         self.recalculate(id)
     }
 
+    /// Move a cart to `ready_for_payment`.
+    ///
+    /// The readiness check and the status flip run inside one IMMEDIATE
+    /// transaction — the cart is loaded through that transaction, not through a
+    /// second pooled connection — and the write is guarded on the same set of
+    /// statuses the check permits. Read outside and written unconditionally,
+    /// the check decided on a status nobody held: a `cancel` / `abandon` /
+    /// `expire` committing in between was overwritten and a cart the shopper
+    /// had killed came back as `ready_for_payment`.
     fn mark_ready_for_payment(&self, id: CartId) -> Result<Cart> {
-        let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            let cart = Self::load_cart_with_conn(tx, id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
 
-        if !cart.is_ready_for_checkout() {
-            return Err(CommerceError::ValidationError(
-                "Cart is not ready for checkout".to_string(),
-            ));
-        }
+            if !cart.is_ready_for_checkout() {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError("Cart is not ready for checkout".to_string()),
+                )));
+            }
 
-        {
-            let conn = self.conn()?;
-            conn.execute(
-                "UPDATE carts SET status = 'ready_for_payment', updated_at = ? WHERE id = ?",
+            let rows = tx.execute(
+                "UPDATE carts SET status = 'ready_for_payment', updated_at = ?
+                 WHERE id = ? AND status IN ('active', 'ready_for_payment', 'payment_pending')",
                 rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        }
+            )?;
+            if rows == 0 {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict(
+                        "Cart is no longer in a state that can be marked ready for payment"
+                            .to_string(),
+                    ),
+                )));
+            }
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+            Self::load_cart_with_conn(tx, id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                .ok_or(rusqlite::Error::QueryReturnedNoRows)
+        })
     }
 
     fn begin_checkout(&self, id: CartId) -> Result<Cart> {
@@ -2010,20 +2030,60 @@ impl SqliteCartRepository {
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
     }
 
-    pub(crate) fn validate_checkout_in_tx(
+    /// Validate checkout exactly as apply does and return the re-derived money
+    /// that the order would commit, without mutating the cart.
+    #[cfg(test)]
+    pub(crate) fn checkout_money_in_tx(
         &self,
         tx: &rusqlite::Transaction<'_>,
         cart_id: CartId,
-    ) -> std::result::Result<(), rusqlite::Error> {
-        let mut cart = tx.query_row(
+    ) -> std::result::Result<(Decimal, CurrencyCode), rusqlite::Error> {
+        self.checkout_money_with_policy_in_tx(
+            tx,
+            cart_id,
+            stateset_core::StockPolicy::default(),
+            None,
+        )
+    }
+
+    pub(crate) fn checkout_money_with_policy_in_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        cart_id: CartId,
+        stock_policy: stateset_core::StockPolicy,
+        expected_cart_fingerprint: Option<&str>,
+    ) -> std::result::Result<(Decimal, CurrencyCode), rusqlite::Error> {
+        // Speak the same missing-cart error the Postgres twin returns
+        // (`CommerceError::NotFound`) and that `complete_checkout_with_policy_in_tx`
+        // below already returns. A bare `QueryReturnedNoRows` is invisible to
+        // the kernel executor's `sqlite_commerce_error` downcast, which only
+        // unwraps a `CommerceError` boxed in `ToSqlConversionFailure`, so a
+        // `checkout.commit` for a cart that does not exist escaped as
+        // `Err(CommerceError::NotFound)` instead of being sealed as the
+        // `commerce.checkout.cart_not_found` rejection Postgres seals.
+        let mut cart = match tx.query_row(
             "SELECT * FROM carts WHERE id = ?",
             [cart_id.to_string()],
             Self::row_to_cart,
-        )?;
+        ) {
+            Ok(cart) => cart,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::NotFound,
+                )));
+            }
+            Err(error) => return Err(error),
+        };
         cart.items = Self::load_cart_items_with_conn(tx, cart_id)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        cart.verify_checkout_fingerprint(expected_cart_fingerprint)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
         if cart.status == CartStatus::Completed {
-            return Ok(());
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                CommerceError::Conflict(
+                    "cart was already checked out under a different economic command".into(),
+                ),
+            )));
         }
         if !cart.is_checkoutable_status() {
             return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -2085,6 +2145,7 @@ impl SqliteCartRepository {
         // carry their own usage limits; Preview must refuse those too.
         SqlitePromotionRepository::ensure_cart_promotions_consumable_with_conn(tx, &cart, redeemer)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let checkout_money = (derived.grand_total(&cart), cart.currency);
         let input = CreateOrder {
             customer_id,
             items: cart
@@ -2119,9 +2180,10 @@ impl SqliteCartRepository {
             tax_amount: Some(cart.tax_amount),
             shipping_amount: Some(cart.shipping_amount),
             discount_amount: Some(cart.discount_amount),
-            stock_policy: stateset_core::StockPolicy::default(),
+            stock_policy,
         };
-        SqliteOrderRepository::validate_create_order_in_tx(tx, &input)
+        SqliteOrderRepository::validate_create_order_in_tx(tx, &input)?;
+        Ok(checkout_money)
     }
 
     /// `mark_paid` promotes the minted order straight to `PaymentStatus::Paid`
@@ -2136,6 +2198,23 @@ impl SqliteCartRepository {
         cart_id: CartId,
         x402_settled: bool,
         mark_paid: bool,
+    ) -> std::result::Result<CheckoutResult, rusqlite::Error> {
+        self.complete_checkout_with_policy_in_tx(
+            tx,
+            cart_id,
+            x402_settled,
+            mark_paid,
+            stateset_core::StockPolicy::default(),
+        )
+    }
+
+    pub(crate) fn complete_checkout_with_policy_in_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        cart_id: CartId,
+        x402_settled: bool,
+        mark_paid: bool,
+        stock_policy: stateset_core::StockPolicy,
     ) -> std::result::Result<CheckoutResult, rusqlite::Error> {
         let mut cart = match tx.query_row(
             "SELECT * FROM carts WHERE id = ?",
@@ -2256,7 +2335,7 @@ impl SqliteCartRepository {
                 tax_amount: Some(cart.tax_amount),
                 shipping_amount: Some(cart.shipping_amount),
                 discount_amount: Some(cart.discount_amount),
-                stock_policy: stateset_core::StockPolicy::default(),
+                stock_policy,
             },
         )?;
 
@@ -4018,13 +4097,13 @@ mod tests {
             assert_refused(f.carts.apply_discount(other.id, "CHECKOUT10"), "usage limit");
         }
 
-        /// Run the kernel's PREVIEW path (`validate_checkout_in_tx`) against a
+        /// Run the kernel's PREVIEW path (`checkout_money_in_tx`) against a
         /// cart and return what it decided, rolling back whatever it touched.
         /// The refusal message, if it refused.
         fn preview_checkout(f: &Fixture, cart_id: CartId) -> std::result::Result<(), String> {
             let mut conn = f.carts.conn().expect("conn");
             let tx = crate::sqlite::begin_immediate(&mut conn).expect("begin");
-            let outcome = f.carts.validate_checkout_in_tx(&tx, cart_id);
+            let outcome = f.carts.checkout_money_in_tx(&tx, cart_id).map(|_| ());
             tx.rollback().expect("preview writes nothing");
             outcome.map_err(|error| match &error {
                 rusqlite::Error::ToSqlConversionFailure(source) => source
@@ -4492,7 +4571,7 @@ mod tests {
             assert_eq!(cart.grand_total, dec!(95));
         }
 
-        /// The kernel's checkout Preview (`validate_checkout_in_tx`) runs the
+        /// The kernel's checkout Preview (`checkout_money_in_tx`) runs the
         /// same coupon re-validation as Apply, so it cannot succeed where
         /// Apply would refuse, and it reports the same error.
         #[test]
@@ -4510,7 +4589,7 @@ mod tests {
                 .expect("reprice");
 
             let preview = crate::sqlite::with_immediate_transaction(&f.carts.pool, |tx| {
-                f.carts.validate_checkout_in_tx(tx, cart.id)
+                f.carts.checkout_money_in_tx(tx, cart.id).map(|_| ())
             });
             let apply = f.carts.complete(cart.id);
             let (preview_err, apply_err) = match (preview, apply) {
@@ -4690,6 +4769,107 @@ mod tests {
 
             let result = f.carts.complete(cart.id).expect("checks out without the coupon");
             assert_eq!(result.total_charged, dec!(30));
+        }
+    }
+
+    /// `mark_ready_for_payment` read the cart through a second pooled
+    /// connection and then wrote `ready_for_payment` unconditionally, so the
+    /// readiness check decided on a status nobody held: a `cancel` that
+    /// committed in between was overwritten and a cart the shopper had killed
+    /// came back ready to charge. The check and the flip now share one
+    /// IMMEDIATE transaction, and the write is guarded on the statuses the
+    /// check permits.
+    #[test]
+    fn mark_ready_for_payment_refuses_a_cancelled_cart() {
+        let repo = fresh_repo();
+        let cart = repo
+            .create(CreateCart {
+                customer_email: Some("ada@example.com".into()),
+                items: Some(vec![AddCartItem {
+                    requires_shipping: Some(false),
+                    ..add_item("SKU-READY", 1, dec!(10))
+                }]),
+                ..Default::default()
+            })
+            .expect("create cart");
+        repo.cancel(cart.id).expect("cancel cart");
+
+        let error = repo
+            .mark_ready_for_payment(cart.id)
+            .expect_err("a cancelled cart must not become ready for payment");
+        assert!(
+            matches!(error, CommerceError::ValidationError(_) | CommerceError::Conflict(_)),
+            "expected a refusal, got {error:?}"
+        );
+        let stored = repo.get(cart.id).expect("get cart").expect("cart row");
+        assert_eq!(stored.status, CartStatus::Cancelled);
+    }
+
+    #[test]
+    fn mark_ready_for_payment_still_promotes_an_active_cart() {
+        let repo = fresh_repo();
+        let cart = repo
+            .create(CreateCart {
+                customer_email: Some("ada@example.com".into()),
+                items: Some(vec![AddCartItem {
+                    requires_shipping: Some(false),
+                    ..add_item("SKU-READY-OK", 1, dec!(10))
+                }]),
+                ..Default::default()
+            })
+            .expect("create cart");
+        let ready = repo.mark_ready_for_payment(cart.id).expect("mark ready");
+        assert_eq!(ready.status, CartStatus::ReadyForPayment);
+        assert_eq!(ready.items.len(), 1, "the returned cart must carry its lines");
+    }
+
+    /// The same claim at runtime: a cancel and a mark-ready released together.
+    /// `cancel` writes unconditionally, so the cart must always end up
+    /// `cancelled` — the defect was mark-ready reading `active` on another
+    /// connection and then writing `ready_for_payment` over the cancel.
+    #[test]
+    fn cancel_racing_mark_ready_never_resurrects_the_cart() {
+        use std::sync::{Arc, Barrier};
+
+        let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory sqlite"));
+        for round in 0..40 {
+            let cart = db
+                .carts()
+                .create(CreateCart {
+                    customer_email: Some("ada@example.com".into()),
+                    items: Some(vec![AddCartItem {
+                        requires_shipping: Some(false),
+                        ..add_item(&format!("SKU-RACE-{round}"), 1, dec!(10))
+                    }]),
+                    ..Default::default()
+                })
+                .expect("create cart");
+
+            let barrier = Arc::new(Barrier::new(2));
+            let marking = {
+                let (db, barrier, id) = (Arc::clone(&db), Arc::clone(&barrier), cart.id);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    db.carts().mark_ready_for_payment(id)
+                })
+            };
+            let cancelling = {
+                let (db, barrier, id) = (Arc::clone(&db), Arc::clone(&barrier), cart.id);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    db.carts().cancel(id)
+                })
+            };
+            let _ = marking.join().expect("mark-ready thread");
+            cancelling.join().expect("cancel thread").expect("cancel a cart");
+
+            let stored = db.carts().get(cart.id).expect("get cart").expect("cart row");
+            assert_eq!(
+                stored.status,
+                CartStatus::Cancelled,
+                "round {round}: a cancelled cart must not be flipped back to {}",
+                stored.status
+            );
         }
     }
 }

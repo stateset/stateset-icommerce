@@ -117,7 +117,7 @@ The full verification recipe (`gh release download` → `cosign verify-blob`
 
 ## Known gaps (honest)
 
-In keeping with the [Trust Foundation](../../../TRUST_FOUNDATION.md), we
+In keeping with the [Trust Foundation](../trust-foundation.md), we
 publish the gaps explicitly so adopters can size them against their own
 threat model:
 
@@ -143,7 +143,7 @@ threat model:
 - [`SECURITY.md`](../../../SECURITY.md) — vulnerability reporting
   process, supported versions, advisory history, signed-release
   verification recipe.
-- [`TRUST_FOUNDATION.md`](../../../TRUST_FOUNDATION.md) — what we sign,
+- [`trust-foundation.md`](../trust-foundation.md) — what we sign,
   what we verify, and the explicit gap inventory.
 - [`deny.toml`](../../../deny.toml) — license allowlist, banned crates,
   advisory-handling policy.

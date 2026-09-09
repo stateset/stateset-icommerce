@@ -5,7 +5,7 @@ use crate::kernel::envelope::GuardRejection;
 use chrono::{DateTime, Utc};
 use stateset_core::{
     A2ADisputeResolutionType, A2AEscrow, A2AEscrowStatus, CreateA2AEscrow, DisputeA2AEscrow,
-    FileA2ADispute, ResolveA2ADispute, SubmitA2ADisputeEvidence,
+    EconomicCommitment, FileA2ADispute, ResolveA2ADispute, SubmitA2ADisputeEvidence,
 };
 
 const VALIDATION: &str = "commerce.a2a.escrow.validation_failed";
@@ -14,6 +14,17 @@ const VALIDATION: &str = "commerce.a2a.escrow.validation_failed";
 #[must_use]
 pub fn escrow_legacy_amount(input: &CreateA2AEscrow) -> Option<i64> {
     i64::try_from(input.amount.normalize().mantissa()).ok()
+}
+
+/// Normalize human-entered bare symbols while preserving chain-qualified
+/// identifiers and checksum-sensitive contract addresses byte-for-byte.
+#[must_use]
+pub fn canonical_escrow_asset(asset: &str) -> String {
+    if asset.chars().all(|character| character.is_ascii_alphanumeric()) {
+        asset.to_ascii_uppercase()
+    } else {
+        asset.to_owned()
+    }
 }
 
 /// Static payload checks for `a2a.escrow.create`.
@@ -25,6 +36,8 @@ pub fn create_escrow_guard(input: &CreateA2AEscrow, now: DateTime<Utc>) -> Optio
         || input.network.trim().is_empty()
     {
         "buyer_address, seller_address, asset, and network are required"
+    } else if input.asset != input.asset.trim() || input.asset.len() > 256 {
+        "asset must be trimmed and at most 256 bytes"
     } else if input.buyer_address == input.seller_address {
         "buyer_address and seller_address must differ"
     } else if input.amount <= rust_decimal::Decimal::ZERO {
@@ -41,6 +54,25 @@ pub fn create_escrow_guard(input: &CreateA2AEscrow, now: DateTime<Utc>) -> Optio
         return None;
     };
     Some(GuardRejection::never(VALIDATION, message))
+}
+
+/// Bind a declared asset commitment to the amount and denomination observed
+/// by the executor before escrow custody can change.
+#[must_use]
+pub fn economic_asset_guard(
+    commitment: Option<&EconomicCommitment>,
+    amount: rust_decimal::Decimal,
+    asset: &str,
+) -> Option<GuardRejection> {
+    commitment
+        .filter(|commitment| commitment.asset_amount.is_some())
+        .is_some_and(|commitment| !commitment.binds_asset(amount, asset))
+        .then(|| {
+            GuardRejection::never(
+                "kernel.commitment_asset_mismatch",
+                "declared asset commitment does not match the executor-observed amount and asset",
+            )
+        })
 }
 
 /// Static payload check shared by every escrow / dispute transition.
@@ -185,4 +217,16 @@ pub fn resolve_dispute_guard(input: &ResolveA2ADispute) -> Option<GuardRejection
             "split requires both exact allocations; other outcomes forbid allocations",
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_escrow_asset;
+
+    #[test]
+    fn asset_canonicalization_preserves_chain_qualified_identifiers() {
+        assert_eq!(canonical_escrow_asset("usdc"), "USDC");
+        let qualified = "eip155:8453/erc20:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+        assert_eq!(canonical_escrow_asset(qualified), qualified);
+    }
 }

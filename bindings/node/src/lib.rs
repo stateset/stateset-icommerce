@@ -12,6 +12,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+mod errors;
+
+use errors::{ErrCode, coded, from_cause, guard, guard_async, wrap};
+
 fn to_f64_or_nan<T>(value: T) -> f64
 where
     T: TryInto<f64>,
@@ -20,7 +24,13 @@ where
     match value.try_into() {
         Ok(converted) => converted,
         Err(err) => {
-            eprintln!("stateset-embedded: failed to convert to f64: {}", err);
+            // Semantics unchanged (still NaN), but the diagnostic goes out as the
+            // same coded envelope the thrown errors use, on stderr's warning
+            // channel rather than as a bare sentence.
+            eprintln!(
+                "stateset-embedded: {}",
+                coded(ErrCode::Internal, format!("Failed to convert to f64: {err}")).reason
+            );
             f64::NAN
         }
     }
@@ -33,7 +43,7 @@ where
 {
     value
         .try_into()
-        .map_err(|err| Error::from_reason(format!("Failed to convert {field} to f64: {err}")))
+        .map_err(|err| coded(ErrCode::Internal, format!("Failed to convert {field} to f64: {err}")))
 }
 
 fn optional_to_f64_result<T>(value: Option<T>, field: &str) -> Result<Option<f64>>
@@ -66,7 +76,7 @@ where
 }
 
 fn decimal_from_f64(value: f64, field: &str) -> Result<Decimal> {
-    Decimal::from_f64(value).ok_or_else(|| Error::from_reason(format!("Invalid {field}")))
+    Decimal::from_f64(value).ok_or_else(|| coded(ErrCode::Validation, format!("Invalid {field}")))
 }
 
 fn optional_decimal_from_f64(value: Option<f64>, field: &str) -> Result<Option<Decimal>> {
@@ -81,14 +91,49 @@ pub struct Commerce {
 
 #[napi]
 impl Commerce {
+    /// Execution features implemented by this native binary. Hosts must check
+    /// this before relying on optional safety fields that old binaries ignore.
+    #[napi]
+    pub fn kernel_features(&self) -> Result<Vec<String>> {
+        guard(|| {
+            Ok(vec![
+                "checkout.stock_policy.v1".to_owned(),
+                "checkout.cart_fingerprint.v1".to_owned(),
+            ])
+        })
+    }
+
+    /// Read exact quote terms and their fingerprint from the same cart snapshot.
+    /// Keep this result with the issued quote; never recalculate it at acceptance.
+    #[napi]
+    pub async fn checkout_snapshot(&self, cart_id: String) -> Result<serde_json::Value> {
+        guard_async(async move {
+            let id: CartId =
+                cart_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid cart UUID"))?;
+            let commerce = self.inner.lock().await;
+            let cart = commerce
+                .carts()
+                .get(id)
+                .map_err(|error| from_cause(ErrCode::Internal, error))?
+                .ok_or_else(|| coded(ErrCode::NotFound, "Cart not found"))?;
+            let fingerprint = cart
+                .checkout_fingerprint()
+                .map_err(|error| from_cause(ErrCode::Internal, error))?;
+            Ok(serde_json::json!({ "cart": cart, "fingerprint": fingerprint }))
+        })
+        .await
+    }
+
     /// Create a new Commerce instance with a database path
     /// Use ":memory:" for an in-memory database
     #[napi(constructor)]
     pub fn new(db_path: String) -> Result<Self> {
-        let commerce = RustCommerce::new(&db_path)
-            .map_err(|e| Error::from_reason(format!("Failed to initialize commerce: {}", e)))?;
+        guard(|| {
+            let commerce = RustCommerce::new(&db_path)
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize commerce", e))?;
 
-        Ok(Self { inner: Arc::new(Mutex::new(commerce)) })
+            Ok(Self { inner: Arc::new(Mutex::new(commerce)) })
+        })
     }
 
     /// Execute a versioned commerce kernel command under host-supplied policy.
@@ -101,12 +146,43 @@ impl Commerce {
         command: serde_json::Value,
         policy: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        let policy: stateset_core::KernelPolicy = serde_json::from_value(policy)
-            .map_err(|error| Error::from_reason(format!("Invalid kernel policy: {error}")))?;
+        guard_async(async move {
+            let policy: stateset_core::KernelPolicy = serde_json::from_value(policy)
+                .map_err(|error| wrap(ErrCode::Validation, "Invalid kernel policy", error))?;
+            let commerce = self.inner.lock().await;
+            commerce
+                .execute_kernel_command(command, policy)
+                .map_err(|error| wrap(ErrCode::Internal, "Kernel execution failed", error))
+        })
+        .await
+    }
+
+    /// Provision immutable, durable monetary authority for governed commands.
+    /// This is an operator API and should not be exposed as a model tool.
+    #[napi]
+    pub async fn provision_economic_budget(
+        &self,
+        budget: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let budget: stateset_core::EconomicBudget = serde_json::from_value(budget)
+            .map_err(|error| wrap(ErrCode::Validation, "Invalid economic budget", error))?;
         let commerce = self.inner.lock().await;
-        commerce
-            .execute_kernel_command(command, policy)
-            .map_err(|error| Error::from_reason(format!("Kernel execution failed: {error}")))
+        let status = commerce
+            .provision_economic_budget(&budget)
+            .map_err(|error| wrap(ErrCode::Internal, "Budget provisioning failed", error))?;
+        serde_json::to_value(status)
+            .map_err(|error| wrap(ErrCode::Internal, "Budget serialization failed", error))
+    }
+
+    /// Read exact committed and available balances for a durable budget.
+    #[napi]
+    pub async fn economic_budget_status(&self, budget_id: String) -> Result<serde_json::Value> {
+        let commerce = self.inner.lock().await;
+        let status = commerce
+            .economic_budget_status(&budget_id)
+            .map_err(|error| wrap(ErrCode::Internal, "Budget lookup failed", error))?;
+        serde_json::to_value(status)
+            .map_err(|error| wrap(ErrCode::Internal, "Budget serialization failed", error))
     }
 
     /// Get the customers API
@@ -528,8 +604,8 @@ impl Commerce {
     /// Vector search enables semantic similarity search across products,
     /// customers, orders, and inventory items using OpenAI embeddings.
     #[napi]
-    pub fn vector(&self, api_key: String) -> VectorSearch {
-        VectorSearch { commerce: self.inner.clone(), api_key }
+    pub fn vector(&self, api_key: String) -> Result<VectorSearch> {
+        guard(|| Ok(VectorSearch { commerce: self.inner.clone(), api_key }))
     }
 }
 
@@ -639,8 +715,8 @@ impl Events {
     #[napi]
     pub async fn unregister_webhook(&self, id: String) -> Result<bool> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
         Ok(commerce.unregister_webhook(uuid))
     }
 }
@@ -681,9 +757,8 @@ impl CommerceEventSubscription {
                 }
             }
 
-            let mut value = serde_json::to_value(&event).map_err(|e| {
-                Error::from_reason(format!("Failed to serialize commerce event: {}", e))
-            })?;
+            let mut value = serde_json::to_value(&event)
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to serialize commerce event", e))?;
 
             // Provide a stable `event_type` field for CLI/tools (the serde tag is `type`).
             if let serde_json::Value::Object(ref mut map) = value {
@@ -825,13 +900,15 @@ impl From<stateset_core::CustomerAddress> for CustomerAddressOutput {
 fn create_customer_address_from_input(
     input: CreateCustomerAddressInput,
 ) -> Result<stateset_core::CreateCustomerAddress> {
-    let customer_id: uuid::Uuid =
-        input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+    let customer_id: uuid::Uuid = input
+        .customer_id
+        .parse()
+        .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
     let address_type = input
         .address_type
         .map(|s| s.parse::<stateset_core::AddressType>())
         .transpose()
-        .map_err(|_| Error::from_reason("Invalid address type"))?;
+        .map_err(|_| coded(ErrCode::Validation, "Invalid address type"))?;
     Ok(stateset_core::CreateCustomerAddress {
         customer_id: customer_id.into(),
         address_type,
@@ -870,7 +947,7 @@ impl Customers {
                 tags: input.tags,
                 metadata: input.metadata,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create customer: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create customer", e))?;
 
         Ok(customer.into())
     }
@@ -878,12 +955,13 @@ impl Customers {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<CustomerOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let customer = commerce
             .customers()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get customer: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get customer", e))?;
 
         Ok(customer.map(|c| c.into()))
     }
@@ -894,7 +972,7 @@ impl Customers {
         let customer = commerce
             .customers()
             .get_by_email(&email)
-            .map_err(|e| Error::from_reason(format!("Failed to get customer: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get customer", e))?;
 
         Ok(customer.map(|c| c.into()))
     }
@@ -905,7 +983,7 @@ impl Customers {
         let customers = commerce
             .customers()
             .list(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list customers: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list customers", e))?;
 
         Ok(customers.into_iter().map(|c| c.into()).collect())
     }
@@ -916,7 +994,7 @@ impl Customers {
         let count = commerce
             .customers()
             .count(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count customers: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count customers", e))?;
 
         Ok(count as u32)
     }
@@ -924,12 +1002,13 @@ impl Customers {
     #[napi]
     pub async fn update(&self, id: String, input: UpdateCustomerInput) -> Result<CustomerOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let status = input
             .status
             .map(|s| s.parse::<stateset_core::CustomerStatus>())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid customer status"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer status"))?;
         let customer = commerce
             .customers()
             .update(
@@ -945,18 +1024,19 @@ impl Customers {
                     metadata: input.metadata,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update customer: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update customer", e))?;
         Ok(customer.into())
     }
 
     #[napi]
     pub async fn delete(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         commerce
             .customers()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete customer: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete customer", e))?;
         Ok(())
     }
 
@@ -973,7 +1053,7 @@ impl Customers {
                 accepts_marketing: input.accepts_marketing,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to find or create customer: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to find or create customer", e))?;
         Ok(customer.into())
     }
 
@@ -986,7 +1066,7 @@ impl Customers {
         let address = commerce
             .customers()
             .add_address(create_customer_address_from_input(input)?)
-            .map_err(|e| Error::from_reason(format!("Failed to add address: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to add address", e))?;
         Ok(address.into())
     }
 
@@ -994,11 +1074,11 @@ impl Customers {
     pub async fn get_addresses(&self, customer_id: String) -> Result<Vec<CustomerAddressOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+            customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let addresses = commerce
             .customers()
             .get_addresses(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get addresses: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get addresses", e))?;
         Ok(addresses.into_iter().map(|a| a.into()).collect())
     }
 
@@ -1010,11 +1090,11 @@ impl Customers {
     ) -> Result<CustomerAddressOutput> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            address_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+            address_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let address = commerce
             .customers()
             .update_address(uuid, create_customer_address_from_input(input)?)
-            .map_err(|e| Error::from_reason(format!("Failed to update address: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update address", e))?;
         Ok(address.into())
     }
 
@@ -1022,11 +1102,11 @@ impl Customers {
     pub async fn delete_address(&self, address_id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            address_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+            address_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         commerce
             .customers()
             .delete_address(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to delete address: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete address", e))?;
         Ok(())
     }
 
@@ -1039,16 +1119,16 @@ impl Customers {
     ) -> Result<()> {
         let commerce = self.commerce.lock().await;
         let cust: uuid::Uuid =
-            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+            customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let addr: uuid::Uuid =
-            address_id.parse().map_err(|_| Error::from_reason("Invalid address UUID"))?;
+            address_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid address UUID"))?;
         let atype = address_type
             .parse::<stateset_core::AddressType>()
-            .map_err(|_| Error::from_reason("Invalid address type"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid address type"))?;
         commerce
             .customers()
             .set_default_address(cust.into(), addr, atype)
-            .map_err(|e| Error::from_reason(format!("Failed to set default address: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set default address", e))?;
         Ok(())
     }
 }
@@ -1140,9 +1220,12 @@ fn parse_stock_policy(value: Option<String>) -> Result<stateset_core::StockPolic
         Some("reject_if_insufficient") | Some("reject-if-insufficient") => {
             Ok(stateset_core::StockPolicy::RejectIfInsufficient)
         }
-        Some(other) => Err(Error::from_reason(format!(
-            "Invalid stock policy '{other}'; expected allow_backorder or reject_if_insufficient"
-        ))),
+        Some(other) => Err(coded(
+            ErrCode::Validation,
+            format!(
+                "Invalid stock policy '{other}'; expected allow_backorder or reject_if_insufficient"
+            ),
+        )),
     }
 }
 
@@ -1265,8 +1348,10 @@ impl Orders {
     pub async fn create(&self, input: CreateOrderInput) -> Result<OrderOutput> {
         let commerce = self.commerce.lock().await;
 
-        let customer_id =
-            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let customer_id = input
+            .customer_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let stock_policy = parse_stock_policy(input.stock_policy)?;
         let shipping_address = input.shipping_address.map(input_to_order_address);
         let billing_address = input.billing_address.map(input_to_order_address);
@@ -1303,12 +1388,12 @@ impl Orders {
         };
         let order = match input.cart_id {
             Some(cart_id) => commerce.orders().create_from_cart(
-                cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?,
+                cart_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid cart UUID"))?,
                 create,
             ),
             None => commerce.orders().create(create),
         }
-        .map_err(|e| Error::from_reason(format!("Failed to create order: {}", e)))?;
+        .map_err(|e| wrap(ErrCode::Internal, "Failed to create order", e))?;
 
         convert_output(order)
     }
@@ -1317,8 +1402,10 @@ impl Orders {
     #[napi]
     pub async fn create_exact(&self, input: CreateOrderExactInput) -> Result<OrderOutput> {
         let commerce = self.commerce.lock().await;
-        let customer_id =
-            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let customer_id = input
+            .customer_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let stock_policy = parse_stock_policy(input.stock_policy)?;
         let shipping_address = input.shipping_address.map(input_to_order_address);
         let billing_address = input.billing_address.map(input_to_order_address);
@@ -1357,24 +1444,25 @@ impl Orders {
         };
         let order = match input.cart_id {
             Some(cart_id) => commerce.orders().create_from_cart(
-                cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?,
+                cart_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid cart UUID"))?,
                 create,
             ),
             None => commerce.orders().create(create),
         }
-        .map_err(|e| Error::from_reason(format!("Failed to create order: {}", e)))?;
+        .map_err(|e| wrap(ErrCode::Internal, "Failed to create order", e))?;
         convert_output(order)
     }
 
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<OrderOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let order = commerce
             .orders()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get order", e))?;
 
         convert_optional_output(order)
     }
@@ -1385,7 +1473,7 @@ impl Orders {
         let orders = commerce
             .orders()
             .list(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list orders: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list orders", e))?;
 
         convert_outputs(orders)
     }
@@ -1393,7 +1481,8 @@ impl Orders {
     #[napi]
     pub async fn update_status(&self, id: String, status: String) -> Result<OrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let order_status = match status.to_lowercase().as_str() {
             "pending" => stateset_core::OrderStatus::Pending,
@@ -1403,13 +1492,13 @@ impl Orders {
             "delivered" => stateset_core::OrderStatus::Delivered,
             "cancelled" => stateset_core::OrderStatus::Cancelled,
             "refunded" => stateset_core::OrderStatus::Refunded,
-            _ => return Err(Error::from_reason(format!("Invalid status: {}", status))),
+            _ => return Err(wrap(ErrCode::Validation, "Invalid status", status)),
         };
 
         let order = commerce
             .orders()
             .update_status(uuid.into(), order_status)
-            .map_err(|e| Error::from_reason(format!("Failed to update order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update order", e))?;
 
         convert_output(order)
     }
@@ -1417,12 +1506,13 @@ impl Orders {
     #[napi]
     pub async fn ship(&self, id: String, tracking_number: Option<String>) -> Result<OrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let order = commerce
             .orders()
             .ship(uuid.into(), tracking_number.as_deref())
-            .map_err(|e| Error::from_reason(format!("Failed to ship order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to ship order", e))?;
 
         convert_output(order)
     }
@@ -1430,12 +1520,13 @@ impl Orders {
     #[napi]
     pub async fn cancel(&self, id: String) -> Result<OrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let order = commerce
             .orders()
             .cancel(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to cancel order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel order", e))?;
 
         convert_output(order)
     }
@@ -1446,7 +1537,7 @@ impl Orders {
         let count = commerce
             .orders()
             .count(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count orders: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count orders", e))?;
 
         Ok(count as u32)
     }
@@ -1623,7 +1714,7 @@ impl Products {
                 variants,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create product: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create product", e))?;
 
         Ok(product.into())
     }
@@ -1631,12 +1722,13 @@ impl Products {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<ProductOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let product = commerce
             .products()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get product: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get product", e))?;
 
         Ok(product.map(|p| p.into()))
     }
@@ -1647,7 +1739,7 @@ impl Products {
         let variant = commerce
             .products()
             .get_variant_by_sku(&sku)
-            .map_err(|e| Error::from_reason(format!("Failed to get variant: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get variant", e))?;
 
         convert_optional_output(variant)
     }
@@ -1658,7 +1750,7 @@ impl Products {
         let products = commerce
             .products()
             .list(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list products: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list products", e))?;
 
         Ok(products.into_iter().map(|p| p.into()).collect())
     }
@@ -1669,7 +1761,7 @@ impl Products {
         let count = commerce
             .products()
             .count(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count products: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count products", e))?;
 
         Ok(count as u32)
     }
@@ -1677,12 +1769,13 @@ impl Products {
     #[napi]
     pub async fn update(&self, id: String, input: UpdateProductInput) -> Result<ProductOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let status = input
             .status
             .map(|s| s.parse::<stateset_core::ProductStatus>())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid product status"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid product status"))?;
         let product = commerce
             .products()
             .update(
@@ -1695,18 +1788,19 @@ impl Products {
                     ..Default::default()
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update product: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update product", e))?;
         Ok(product.into())
     }
 
     #[napi]
     pub async fn delete(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         commerce
             .products()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete product: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete product", e))?;
         Ok(())
     }
 
@@ -1716,29 +1810,31 @@ impl Products {
         let product = commerce
             .products()
             .get_by_slug(&slug)
-            .map_err(|e| Error::from_reason(format!("Failed to get product: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get product", e))?;
         Ok(product.map(|p| p.into()))
     }
 
     #[napi]
     pub async fn activate(&self, id: String) -> Result<ProductOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let product = commerce
             .products()
             .activate(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to activate product: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to activate product", e))?;
         Ok(product.into())
     }
 
     #[napi]
     pub async fn archive(&self, id: String) -> Result<ProductOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let product = commerce
             .products()
             .archive(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to archive product: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to archive product", e))?;
         Ok(product.into())
     }
 
@@ -1748,18 +1844,19 @@ impl Products {
         let products = commerce
             .products()
             .search(&query)
-            .map_err(|e| Error::from_reason(format!("Failed to search products: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to search products", e))?;
         Ok(products.into_iter().map(|p| p.into()).collect())
     }
 
     #[napi]
     pub async fn get_variant(&self, id: String) -> Result<Option<ProductVariantOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let variant = commerce
             .products()
             .get_variant(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get variant: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get variant", e))?;
         convert_optional_output(variant)
     }
 
@@ -1767,11 +1864,11 @@ impl Products {
     pub async fn get_variants(&self, product_id: String) -> Result<Vec<ProductVariantOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            product_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+            product_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let variants = commerce
             .products()
             .get_variants(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get variants: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get variants", e))?;
         variants.into_iter().map(|v| v.try_into()).collect::<Result<Vec<_>>>()
     }
 
@@ -1783,11 +1880,11 @@ impl Products {
     ) -> Result<ProductVariantOutput> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            product_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+            product_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let variant = commerce
             .products()
             .add_variant(uuid.into(), create_variant_from_input(input)?)
-            .map_err(|e| Error::from_reason(format!("Failed to add variant: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to add variant", e))?;
         variant.try_into()
     }
 
@@ -1798,23 +1895,24 @@ impl Products {
         input: CreateProductVariantInput,
     ) -> Result<ProductVariantOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let variant =
-            commerce
-                .products()
-                .update_variant(uuid, create_variant_from_input(input)?)
-                .map_err(|e| Error::from_reason(format!("Failed to update variant: {}", e)))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
+        let variant = commerce
+            .products()
+            .update_variant(uuid, create_variant_from_input(input)?)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update variant", e))?;
         variant.try_into()
     }
 
     #[napi]
     pub async fn delete_variant(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         commerce
             .products()
             .delete_variant(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to delete variant: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete variant", e))?;
         Ok(())
     }
 }
@@ -1824,8 +1922,9 @@ impl Products {
 // ============================================================================
 
 fn parse_custom_field_type(s: &str) -> Result<stateset_core::CustomFieldType> {
-    s.parse::<stateset_core::CustomFieldType>()
-        .map_err(|e| Error::from_reason(format!("Invalid custom field type '{}': {}", s, e)))
+    s.parse::<stateset_core::CustomFieldType>().map_err(|e| {
+        coded(ErrCode::Validation, format!("Invalid custom field type '{}': {}", s, e))
+    })
 }
 
 #[napi(object)]
@@ -2011,9 +2110,7 @@ impl CustomObjects {
                 description: input.description,
                 fields,
             })
-            .map_err(|e| {
-                Error::from_reason(format!("Failed to create custom object type: {}", e))
-            })?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create custom object type", e))?;
 
         Ok(ty.into())
     }
@@ -2021,13 +2118,13 @@ impl CustomObjects {
     #[napi]
     pub async fn get_type(&self, id: String) -> Result<Option<CustomObjectTypeOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let ty = commerce
             .custom_objects()
             .get_type(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get custom object type: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get custom object type", e))?;
 
         Ok(ty.map(|t| t.into()))
     }
@@ -2041,7 +2138,7 @@ impl CustomObjects {
         let ty = commerce
             .custom_objects()
             .get_type_by_handle(&handle)
-            .map_err(|e| Error::from_reason(format!("Failed to get custom object type: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get custom object type", e))?;
 
         Ok(ty.map(|t| t.into()))
     }
@@ -2053,8 +2150,8 @@ impl CustomObjects {
         input: UpdateCustomObjectTypeInput,
     ) -> Result<CustomObjectTypeOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let fields = if let Some(fields) = input.fields {
             let mut out = Vec::with_capacity(fields.len());
@@ -2082,9 +2179,7 @@ impl CustomObjects {
                     fields,
                 },
             )
-            .map_err(|e| {
-                Error::from_reason(format!("Failed to update custom object type: {}", e))
-            })?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update custom object type", e))?;
 
         Ok(updated.into())
     }
@@ -2104,9 +2199,7 @@ impl CustomObjects {
                 limit: filter.limit,
                 offset: filter.offset,
             })
-            .map_err(|e| {
-                Error::from_reason(format!("Failed to list custom object types: {}", e))
-            })?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list custom object types", e))?;
 
         Ok(list.into_iter().map(|t| t.into()).collect())
     }
@@ -2114,12 +2207,13 @@ impl CustomObjects {
     #[napi]
     pub async fn delete_type(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
-        commerce.custom_objects().delete_type(uuid).map_err(|e| {
-            Error::from_reason(format!("Failed to delete custom object type: {}", e))
-        })?;
+        commerce
+            .custom_objects()
+            .delete_type(uuid)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete custom object type", e))?;
 
         Ok(())
     }
@@ -2132,7 +2226,7 @@ impl CustomObjects {
         let commerce = self.commerce.lock().await;
 
         let values: serde_json::Value = serde_json::from_str(&input.values_json)
-            .map_err(|e| Error::from_reason(format!("Invalid valuesJson: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid valuesJson", e))?;
 
         let obj = commerce
             .custom_objects()
@@ -2143,7 +2237,7 @@ impl CustomObjects {
                 owner_id: input.owner_id,
                 values,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create custom object: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create custom object", e))?;
 
         Ok(obj.into())
     }
@@ -2151,13 +2245,13 @@ impl CustomObjects {
     #[napi]
     pub async fn get_object(&self, id: String) -> Result<Option<CustomObjectOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let obj = commerce
             .custom_objects()
             .get_object(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get custom object: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get custom object", e))?;
 
         Ok(obj.map(|o| o.into()))
     }
@@ -2172,7 +2266,7 @@ impl CustomObjects {
         let obj = commerce
             .custom_objects()
             .get_object_by_handle(&type_handle, &object_handle)
-            .map_err(|e| Error::from_reason(format!("Failed to get custom object: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get custom object", e))?;
 
         Ok(obj.map(|o| o.into()))
     }
@@ -2184,13 +2278,13 @@ impl CustomObjects {
         input: UpdateCustomObjectInput,
     ) -> Result<CustomObjectOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let values = match input.values_json {
             Some(s) => Some(
                 serde_json::from_str(&s)
-                    .map_err(|e| Error::from_reason(format!("Invalid valuesJson: {}", e)))?,
+                    .map_err(|e| wrap(ErrCode::Validation, "Invalid valuesJson", e))?,
             ),
             None => None,
         };
@@ -2206,7 +2300,7 @@ impl CustomObjects {
                     values,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update custom object: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update custom object", e))?;
 
         Ok(updated.into())
     }
@@ -2229,7 +2323,7 @@ impl CustomObjects {
                 limit: filter.limit,
                 offset: filter.offset,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list custom objects: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list custom objects", e))?;
 
         Ok(list.into_iter().map(|o| o.into()).collect())
     }
@@ -2237,13 +2331,13 @@ impl CustomObjects {
     #[napi]
     pub async fn delete_object(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         commerce
             .custom_objects()
             .delete_object(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to delete custom object: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete custom object", e))?;
 
         Ok(())
     }
@@ -2363,7 +2457,7 @@ impl Inventory {
                 )?,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create inventory item: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create inventory item", e))?;
 
         Ok(item.into())
     }
@@ -2374,7 +2468,7 @@ impl Inventory {
         let stock = commerce
             .inventory()
             .get_stock(&sku)
-            .map_err(|e| Error::from_reason(format!("Failed to get stock: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get stock", e))?;
 
         convert_optional_output(stock)
     }
@@ -2382,13 +2476,13 @@ impl Inventory {
     #[napi]
     pub async fn adjust(&self, sku: String, quantity: f64, reason: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let qty =
-            Decimal::from_f64(quantity).ok_or_else(|| Error::from_reason("Invalid quantity"))?;
+        let qty = Decimal::from_f64(quantity)
+            .ok_or_else(|| coded(ErrCode::Validation, "Invalid quantity"))?;
 
         commerce
             .inventory()
             .adjust(&sku, qty, &reason)
-            .map_err(|e| Error::from_reason(format!("Failed to adjust inventory: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to adjust inventory", e))?;
 
         Ok(())
     }
@@ -2403,13 +2497,13 @@ impl Inventory {
         expires_in_seconds: Option<i64>,
     ) -> Result<ReservationOutput> {
         let commerce = self.commerce.lock().await;
-        let qty =
-            Decimal::from_f64(quantity).ok_or_else(|| Error::from_reason("Invalid quantity"))?;
+        let qty = Decimal::from_f64(quantity)
+            .ok_or_else(|| coded(ErrCode::Validation, "Invalid quantity"))?;
 
         let reservation = commerce
             .inventory()
             .reserve(&sku, qty, &reference_type, &reference_id, expires_in_seconds)
-            .map_err(|e| Error::from_reason(format!("Failed to reserve inventory: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to reserve inventory", e))?;
 
         convert_output(reservation)
     }
@@ -2417,12 +2511,13 @@ impl Inventory {
     #[napi]
     pub async fn confirm_reservation(&self, reservation_id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid = reservation_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid =
+            reservation_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         commerce
             .inventory()
             .confirm_reservation(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to confirm reservation: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to confirm reservation", e))?;
 
         Ok(())
     }
@@ -2430,12 +2525,13 @@ impl Inventory {
     #[napi]
     pub async fn release_reservation(&self, reservation_id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid = reservation_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid =
+            reservation_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         commerce
             .inventory()
             .release_reservation(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to release reservation: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to release reservation", e))?;
 
         Ok(())
     }
@@ -2500,7 +2596,7 @@ impl Returns {
         let commerce = self.commerce.lock().await;
 
         let order_id =
-            input.order_id.parse().map_err(|_| Error::from_reason("Invalid order UUID"))?;
+            input.order_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid order UUID"))?;
 
         let reason = match input.reason.to_lowercase().as_str() {
             "defective" => stateset_core::ReturnReason::Defective,
@@ -2536,7 +2632,7 @@ impl Returns {
                 items,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create return: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create return", e))?;
 
         Ok(ret.into())
     }
@@ -2544,12 +2640,13 @@ impl Returns {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<ReturnOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let ret = commerce
             .returns()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get return: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get return", e))?;
 
         Ok(ret.map(|r| r.into()))
     }
@@ -2557,12 +2654,13 @@ impl Returns {
     #[napi]
     pub async fn approve(&self, id: String) -> Result<ReturnOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let ret = commerce
             .returns()
             .approve(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to approve return: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to approve return", e))?;
 
         Ok(ret.into())
     }
@@ -2570,12 +2668,13 @@ impl Returns {
     #[napi]
     pub async fn reject(&self, id: String, reason: String) -> Result<ReturnOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let ret = commerce
             .returns()
             .reject(uuid.into(), &reason)
-            .map_err(|e| Error::from_reason(format!("Failed to reject return: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to reject return", e))?;
 
         Ok(ret.into())
     }
@@ -2586,7 +2685,7 @@ impl Returns {
         let returns = commerce
             .returns()
             .list(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list returns: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list returns", e))?;
 
         Ok(returns.into_iter().map(|r| r.into()).collect())
     }
@@ -2597,7 +2696,7 @@ impl Returns {
         let count = commerce
             .returns()
             .count(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count returns: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count returns", e))?;
 
         Ok(count as u32)
     }
@@ -2606,11 +2705,11 @@ impl Returns {
     pub async fn list_for_order(&self, order_id: String) -> Result<Vec<ReturnOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            order_id.parse().map_err(|_| Error::from_reason("Invalid order UUID"))?;
+            order_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid order UUID"))?;
         let returns = commerce
             .returns()
             .list_for_order(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to list returns: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list returns", e))?;
         Ok(returns.into_iter().map(|r| r.into()).collect())
     }
 
@@ -2618,11 +2717,11 @@ impl Returns {
     pub async fn list_for_customer(&self, customer_id: String) -> Result<Vec<ReturnOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+            customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let returns = commerce
             .returns()
             .list_for_customer(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to list returns: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list returns", e))?;
         Ok(returns.into_iter().map(|r| r.into()).collect())
     }
 
@@ -2632,51 +2731,55 @@ impl Returns {
         let returns = commerce
             .returns()
             .list_pending()
-            .map_err(|e| Error::from_reason(format!("Failed to list pending returns: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list pending returns", e))?;
         Ok(returns.into_iter().map(|r| r.into()).collect())
     }
 
     #[napi]
     pub async fn mark_received(&self, id: String) -> Result<ReturnOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let ret = commerce
             .returns()
             .mark_received(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to mark return received: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to mark return received", e))?;
         Ok(ret.into())
     }
 
     #[napi]
     pub async fn complete(&self, id: String) -> Result<ReturnOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let ret = commerce
             .returns()
             .complete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to complete return: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to complete return", e))?;
         Ok(ret.into())
     }
 
     #[napi]
     pub async fn cancel(&self, id: String) -> Result<ReturnOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let ret = commerce
             .returns()
             .cancel(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to cancel return: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel return", e))?;
         Ok(ret.into())
     }
 
     #[napi]
     pub async fn add_tracking(&self, id: String, tracking_number: String) -> Result<ReturnOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let ret = commerce
             .returns()
             .add_tracking(uuid.into(), &tracking_number)
-            .map_err(|e| Error::from_reason(format!("Failed to add tracking: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to add tracking", e))?;
         Ok(ret.into())
     }
 }
@@ -2820,19 +2923,19 @@ impl Payments {
             .customer_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
 
         let order_id = input
             .order_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid order UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid order UUID"))?;
 
         let invoice_id = input
             .invoice_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid invoice UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid invoice UUID"))?;
 
         let payment_method = input
             .payment_method
@@ -2862,7 +2965,7 @@ impl Payments {
                 payment_method,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create payment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create payment", e))?;
 
         convert_output(payment)
     }
@@ -2875,24 +2978,28 @@ impl Payments {
             .customer_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let order_id = input
             .order_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid order UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid order UUID"))?;
         let invoice_id = input
             .invoice_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid invoice UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid invoice UUID"))?;
         let currency = input
             .currency
             .unwrap_or_else(|| "USD".to_string())
             .parse::<CurrencyCode>()
-            .map_err(|error| Error::from_reason(format!("Invalid currency: {error}")))?;
+            .map_err(|error| wrap(ErrCode::Validation, "Invalid currency", error))?;
+        // `MoneyWireError` is a stateset-primitives error, not a `CommerceError`,
+        // so `classify_cause` cannot recognise it and the fallback code is what
+        // the caller sees. A malformed `amount` is bad input, not a bug in the
+        // binding: `Internal` reported it as INTERNAL/500.
         let money = stateset_core::Money::from_decimal_str(&input.amount, currency)
-            .map_err(|error| Error::from_reason(error.to_string()))?;
+            .map_err(|error| from_cause(ErrCode::Validation, error))?;
         let payment_method = input
             .payment_method
             .and_then(|method| method.parse::<stateset_core::PaymentMethodType>().ok())
@@ -2909,19 +3016,20 @@ impl Payments {
                 payment_method,
                 ..Default::default()
             })
-            .map_err(|error| Error::from_reason(format!("Failed to create payment: {error}")))?;
+            .map_err(|error| wrap(ErrCode::Internal, "Failed to create payment", error))?;
         convert_output(payment)
     }
 
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<PaymentOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let payment = commerce
             .payments()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get payment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get payment", e))?;
 
         convert_optional_output(payment)
     }
@@ -2932,7 +3040,7 @@ impl Payments {
         let payments = commerce
             .payments()
             .list(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list payments: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list payments", e))?;
 
         convert_outputs(payments)
     }
@@ -2940,12 +3048,13 @@ impl Payments {
     #[napi]
     pub async fn mark_completed(&self, id: String) -> Result<PaymentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let payment = commerce
             .payments()
             .mark_completed(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to complete payment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to complete payment", e))?;
 
         convert_output(payment)
     }
@@ -2958,12 +3067,13 @@ impl Payments {
         code: Option<String>,
     ) -> Result<PaymentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let payment = commerce
             .payments()
             .mark_failed(uuid.into(), &reason, code.as_deref())
-            .map_err(|e| Error::from_reason(format!("Failed to fail payment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to fail payment", e))?;
 
         convert_output(payment)
     }
@@ -2971,12 +3081,13 @@ impl Payments {
     #[napi]
     pub async fn cancel(&self, id: String) -> Result<PaymentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let payment = commerce
             .payments()
             .cancel(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to cancel payment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel payment", e))?;
 
         convert_output(payment)
     }
@@ -2984,8 +3095,10 @@ impl Payments {
     #[napi]
     pub async fn create_refund(&self, input: CreateRefundInput) -> Result<RefundOutput> {
         let commerce = self.commerce.lock().await;
-        let payment_id =
-            input.payment_id.parse().map_err(|_| Error::from_reason("Invalid payment UUID"))?;
+        let payment_id = input
+            .payment_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid payment UUID"))?;
 
         let refund = commerce
             .payments()
@@ -2996,7 +3109,7 @@ impl Payments {
                 idempotency_key: input.idempotency_key,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create refund: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create refund", e))?;
 
         convert_output(refund)
     }
@@ -3005,15 +3118,18 @@ impl Payments {
     #[napi]
     pub async fn create_refund_exact(&self, input: CreateRefundExactInput) -> Result<RefundOutput> {
         let commerce = self.commerce.lock().await;
-        let payment_id =
-            input.payment_id.parse().map_err(|_| Error::from_reason("Invalid payment UUID"))?;
+        let payment_id = input
+            .payment_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid payment UUID"))?;
         let payment = commerce
             .payments()
             .get(payment_id)
-            .map_err(|error| Error::from_reason(format!("Failed to get payment: {error}")))?
-            .ok_or_else(|| Error::from_reason("Payment not found"))?;
+            .map_err(|error| wrap(ErrCode::Internal, "Failed to get payment", error))?
+            .ok_or_else(|| coded(ErrCode::NotFound, "Payment not found"))?;
+        // As above: a malformed refund `amount` is VALIDATION, not INTERNAL.
         let money = stateset_core::Money::from_decimal_str(&input.amount, payment.currency)
-            .map_err(|error| Error::from_reason(error.to_string()))?;
+            .map_err(|error| from_cause(ErrCode::Validation, error))?;
         let refund = commerce
             .payments()
             .create_refund(stateset_core::CreateRefund {
@@ -3023,7 +3139,7 @@ impl Payments {
                 idempotency_key: input.idempotency_key,
                 ..Default::default()
             })
-            .map_err(|error| Error::from_reason(format!("Failed to create refund: {error}")))?;
+            .map_err(|error| wrap(ErrCode::Internal, "Failed to create refund", error))?;
         convert_output(refund)
     }
 
@@ -3033,7 +3149,7 @@ impl Payments {
         let count = commerce
             .payments()
             .count(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count payments: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count payments", e))?;
 
         Ok(count as u32)
     }
@@ -3106,7 +3222,7 @@ impl Shipments {
         let commerce = self.commerce.lock().await;
 
         let order_id =
-            input.order_id.parse().map_err(|_| Error::from_reason("Invalid order UUID"))?;
+            input.order_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid order UUID"))?;
 
         let carrier = input.carrier.map(|c| match c.to_lowercase().as_str() {
             "ups" => stateset_core::ShippingCarrier::Ups,
@@ -3141,7 +3257,7 @@ impl Shipments {
                 shipping_address: input.shipping_address,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create shipment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create shipment", e))?;
 
         Ok(shipment.into())
     }
@@ -3149,12 +3265,13 @@ impl Shipments {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<ShipmentOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let shipment = commerce
             .shipments()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get shipment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get shipment", e))?;
 
         Ok(shipment.map(|s| s.into()))
     }
@@ -3165,7 +3282,7 @@ impl Shipments {
         let shipments = commerce
             .shipments()
             .list(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list shipments: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list shipments", e))?;
 
         Ok(shipments.into_iter().map(|s| s.into()).collect())
     }
@@ -3177,12 +3294,13 @@ impl Shipments {
         tracking_number: Option<String>,
     ) -> Result<ShipmentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let shipment = commerce
             .shipments()
             .ship(uuid.into(), tracking_number)
-            .map_err(|e| Error::from_reason(format!("Failed to ship: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to ship", e))?;
 
         Ok(shipment.into())
     }
@@ -3190,12 +3308,13 @@ impl Shipments {
     #[napi]
     pub async fn deliver(&self, id: String) -> Result<ShipmentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let shipment = commerce
             .shipments()
             .mark_delivered(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to deliver: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to deliver", e))?;
 
         Ok(shipment.into())
     }
@@ -3203,12 +3322,13 @@ impl Shipments {
     #[napi]
     pub async fn cancel(&self, id: String) -> Result<ShipmentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let shipment = commerce
             .shipments()
             .cancel(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to cancel shipment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel shipment", e))?;
 
         Ok(shipment.into())
     }
@@ -3219,7 +3339,7 @@ impl Shipments {
         let count = commerce
             .shipments()
             .count(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count shipments: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count shipments", e))?;
 
         Ok(count as u32)
     }
@@ -3318,20 +3438,22 @@ impl Warranties {
     pub async fn create(&self, input: CreateWarrantyInput) -> Result<WarrantyOutput> {
         let commerce = self.commerce.lock().await;
 
-        let customer_id =
-            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let customer_id = input
+            .customer_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
 
         let product_id = input
             .product_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid product UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid product UUID"))?;
 
         let order_id = input
             .order_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid order UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid order UUID"))?;
 
         let warranty_type = input.warranty_type.and_then(|t| match t.to_lowercase().as_str() {
             "standard" => Some(stateset_core::WarrantyType::Standard),
@@ -3352,7 +3474,7 @@ impl Warranties {
                 serial_number: input.serial_number,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create warranty: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create warranty", e))?;
 
         Ok(warranty.into())
     }
@@ -3360,12 +3482,13 @@ impl Warranties {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<WarrantyOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let warranty = commerce
             .warranties()
             .get(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get warranty: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get warranty", e))?;
 
         Ok(warranty.map(|w| w.into()))
     }
@@ -3376,7 +3499,7 @@ impl Warranties {
         let warranties = commerce
             .warranties()
             .list(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list warranties: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list warranties", e))?;
 
         Ok(warranties.into_iter().map(|w| w.into()).collect())
     }
@@ -3387,8 +3510,10 @@ impl Warranties {
         input: CreateWarrantyClaimInput,
     ) -> Result<WarrantyClaimOutput> {
         let commerce = self.commerce.lock().await;
-        let warranty_id =
-            input.warranty_id.parse().map_err(|_| Error::from_reason("Invalid warranty UUID"))?;
+        let warranty_id = input
+            .warranty_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid warranty UUID"))?;
 
         let claim = commerce
             .warranties()
@@ -3399,7 +3524,7 @@ impl Warranties {
                 contact_phone: input.contact_phone,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create claim: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create claim", e))?;
 
         Ok(claim.into())
     }
@@ -3407,12 +3532,13 @@ impl Warranties {
     #[napi]
     pub async fn approve_claim(&self, id: String) -> Result<WarrantyClaimOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let claim = commerce
             .warranties()
             .approve_claim(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to approve claim: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to approve claim", e))?;
 
         Ok(claim.into())
     }
@@ -3420,12 +3546,13 @@ impl Warranties {
     #[napi]
     pub async fn deny_claim(&self, id: String, reason: String) -> Result<WarrantyClaimOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let claim = commerce
             .warranties()
             .deny_claim(uuid, &reason)
-            .map_err(|e| Error::from_reason(format!("Failed to deny claim: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to deny claim", e))?;
 
         Ok(claim.into())
     }
@@ -3437,7 +3564,8 @@ impl Warranties {
         resolution: String,
     ) -> Result<WarrantyClaimOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let res = match resolution.to_lowercase().as_str() {
             "repair" => stateset_core::ClaimResolution::Repair,
@@ -3451,7 +3579,7 @@ impl Warranties {
         let claim = commerce
             .warranties()
             .complete_claim(uuid, res)
-            .map_err(|e| Error::from_reason(format!("Failed to complete claim: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to complete claim", e))?;
 
         Ok(claim.into())
     }
@@ -3462,7 +3590,7 @@ impl Warranties {
         let count = commerce
             .warranties()
             .count(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count warranties: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count warranties", e))?;
 
         Ok(count as u32)
     }
@@ -3574,7 +3702,7 @@ impl PurchaseOrders {
                 phone: input.phone,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create supplier: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create supplier", e))?;
 
         Ok(supplier.into())
     }
@@ -3582,12 +3710,13 @@ impl PurchaseOrders {
     #[napi]
     pub async fn get_supplier(&self, id: String) -> Result<Option<SupplierOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let supplier = commerce
             .purchase_orders()
             .get_supplier(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get supplier: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get supplier", e))?;
 
         Ok(supplier.map(|s| s.into()))
     }
@@ -3598,7 +3727,7 @@ impl PurchaseOrders {
         let suppliers = commerce
             .purchase_orders()
             .list_suppliers(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list suppliers: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list suppliers", e))?;
 
         Ok(suppliers.into_iter().map(|s| s.into()).collect())
     }
@@ -3607,8 +3736,10 @@ impl PurchaseOrders {
     pub async fn create(&self, input: CreatePurchaseOrderInput) -> Result<PurchaseOrderOutput> {
         let commerce = self.commerce.lock().await;
 
-        let supplier_id =
-            input.supplier_id.parse().map_err(|_| Error::from_reason("Invalid supplier UUID"))?;
+        let supplier_id = input
+            .supplier_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid supplier UUID"))?;
 
         let items: Vec<stateset_core::CreatePurchaseOrderItem> = input
             .items
@@ -3632,7 +3763,7 @@ impl PurchaseOrders {
                 notes: input.notes,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create PO: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create PO", e))?;
 
         convert_output(po)
     }
@@ -3640,12 +3771,13 @@ impl PurchaseOrders {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<PurchaseOrderOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
             .get(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get PO: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get PO", e))?;
 
         convert_optional_output(po)
     }
@@ -3663,7 +3795,7 @@ impl PurchaseOrders {
         let pos = commerce
             .purchase_orders()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list POs: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list POs", e))?;
 
         convert_outputs(pos)
     }
@@ -3671,12 +3803,13 @@ impl PurchaseOrders {
     #[napi]
     pub async fn submit(&self, id: String) -> Result<PurchaseOrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
             .submit(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to submit PO: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to submit PO", e))?;
 
         convert_output(po)
     }
@@ -3684,12 +3817,13 @@ impl PurchaseOrders {
     #[napi]
     pub async fn approve(&self, id: String, approved_by: String) -> Result<PurchaseOrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
             .approve(uuid, &approved_by)
-            .map_err(|e| Error::from_reason(format!("Failed to approve PO: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to approve PO", e))?;
 
         convert_output(po)
     }
@@ -3697,12 +3831,13 @@ impl PurchaseOrders {
     #[napi]
     pub async fn send(&self, id: String) -> Result<PurchaseOrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
             .send(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to send PO: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to send PO", e))?;
 
         convert_output(po)
     }
@@ -3710,12 +3845,13 @@ impl PurchaseOrders {
     #[napi]
     pub async fn cancel(&self, id: String) -> Result<PurchaseOrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
             .cancel(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to cancel PO: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel PO", e))?;
 
         convert_output(po)
     }
@@ -3726,7 +3862,7 @@ impl PurchaseOrders {
         let count = commerce
             .purchase_orders()
             .count(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count POs: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count POs", e))?;
 
         Ok(count as u32)
     }
@@ -3813,14 +3949,16 @@ impl Invoices {
     pub async fn create(&self, input: CreateInvoiceInput) -> Result<InvoiceOutput> {
         let commerce = self.commerce.lock().await;
 
-        let customer_id =
-            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let customer_id = input
+            .customer_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
 
         let order_id = input
             .order_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid order UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid order UUID"))?;
 
         let items: Vec<stateset_core::CreateInvoiceItem> = input
             .items
@@ -3847,7 +3985,7 @@ impl Invoices {
                 notes: input.notes,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create invoice: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create invoice", e))?;
 
         convert_output(invoice)
     }
@@ -3855,12 +3993,13 @@ impl Invoices {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<InvoiceOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let invoice = commerce
             .invoices()
             .get(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get invoice: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get invoice", e))?;
 
         convert_optional_output(invoice)
     }
@@ -3871,7 +4010,7 @@ impl Invoices {
         let invoices = commerce
             .invoices()
             .list(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list invoices: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list invoices", e))?;
 
         convert_outputs(invoices)
     }
@@ -3879,12 +4018,13 @@ impl Invoices {
     #[napi]
     pub async fn send(&self, id: String) -> Result<InvoiceOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let invoice = commerce
             .invoices()
             .send(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to send invoice: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to send invoice", e))?;
 
         convert_output(invoice)
     }
@@ -3892,12 +4032,13 @@ impl Invoices {
     #[napi]
     pub async fn void(&self, id: String) -> Result<InvoiceOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let invoice = commerce
             .invoices()
             .void(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to void invoice: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to void invoice", e))?;
 
         convert_output(invoice)
     }
@@ -3909,7 +4050,8 @@ impl Invoices {
         input: RecordPaymentInput,
     ) -> Result<InvoiceOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let invoice = commerce
             .invoices()
@@ -3922,7 +4064,7 @@ impl Invoices {
                     ..Default::default()
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to record payment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to record payment", e))?;
 
         convert_output(invoice)
     }
@@ -3933,7 +4075,7 @@ impl Invoices {
         let invoices = commerce
             .invoices()
             .get_overdue()
-            .map_err(|e| Error::from_reason(format!("Failed to get overdue invoices: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get overdue invoices", e))?;
 
         convert_outputs(invoices)
     }
@@ -3944,7 +4086,7 @@ impl Invoices {
         let count = commerce
             .invoices()
             .count(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count invoices: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count invoices", e))?;
 
         Ok(count as u32)
     }
@@ -4037,8 +4179,10 @@ impl Bom {
     pub async fn create(&self, input: CreateBomInput) -> Result<BomOutput> {
         let commerce = self.commerce.lock().await;
 
-        let product_id =
-            input.product_id.parse().map_err(|_| Error::from_reason("Invalid product UUID"))?;
+        let product_id = input
+            .product_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid product UUID"))?;
 
         let bom = commerce
             .bom()
@@ -4049,7 +4193,7 @@ impl Bom {
                 revision: input.revision,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create BOM: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create BOM", e))?;
 
         Ok(bom.into())
     }
@@ -4057,12 +4201,13 @@ impl Bom {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<BomOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let bom = commerce
             .bom()
             .get(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get BOM: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get BOM", e))?;
 
         Ok(bom.map(|b| b.into()))
     }
@@ -4073,7 +4218,7 @@ impl Bom {
         let boms = commerce
             .bom()
             .list(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list BOMs: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list BOMs", e))?;
 
         Ok(boms.into_iter().map(|b| b.into()).collect())
     }
@@ -4085,7 +4230,7 @@ impl Bom {
         input: CreateBomComponentInput,
     ) -> Result<BomComponentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = bom_id.parse().map_err(|_| Error::from_reason("Invalid BOM UUID"))?;
+        let uuid = bom_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid BOM UUID"))?;
 
         let component = commerce
             .bom()
@@ -4099,7 +4244,7 @@ impl Bom {
                     ..Default::default()
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to add component: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to add component", e))?;
 
         convert_output(component)
     }
@@ -4107,12 +4252,12 @@ impl Bom {
     #[napi]
     pub async fn get_components(&self, bom_id: String) -> Result<Vec<BomComponentOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = bom_id.parse().map_err(|_| Error::from_reason("Invalid BOM UUID"))?;
+        let uuid = bom_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid BOM UUID"))?;
 
         let components = commerce
             .bom()
             .get_components(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get components: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get components", e))?;
 
         convert_outputs(components)
     }
@@ -4120,12 +4265,13 @@ impl Bom {
     #[napi]
     pub async fn activate(&self, id: String) -> Result<BomOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let bom = commerce
             .bom()
             .activate(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to activate BOM: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to activate BOM", e))?;
 
         Ok(bom.into())
     }
@@ -4136,7 +4282,7 @@ impl Bom {
         let count = commerce
             .bom()
             .count(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count BOMs: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count BOMs", e))?;
 
         Ok(count as u32)
     }
@@ -4206,14 +4352,16 @@ impl WorkOrders {
     pub async fn create(&self, input: CreateWorkOrderInput) -> Result<WorkOrderOutput> {
         let commerce = self.commerce.lock().await;
 
-        let product_id =
-            input.product_id.parse().map_err(|_| Error::from_reason("Invalid product UUID"))?;
+        let product_id = input
+            .product_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid product UUID"))?;
 
         let bom_id = input
             .bom_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid BOM UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid BOM UUID"))?;
 
         let priority = input.priority.and_then(|p| match p.to_lowercase().as_str() {
             "low" => Some(stateset_core::WorkOrderPriority::Low),
@@ -4236,7 +4384,7 @@ impl WorkOrders {
                 notes: input.notes,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create work order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create work order", e))?;
 
         convert_output(wo)
     }
@@ -4244,12 +4392,13 @@ impl WorkOrders {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<WorkOrderOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let wo = commerce
             .work_orders()
             .get(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get work order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get work order", e))?;
 
         convert_optional_output(wo)
     }
@@ -4264,7 +4413,7 @@ impl WorkOrders {
         let orders = commerce
             .work_orders()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list work orders: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list work orders", e))?;
 
         convert_outputs(orders)
     }
@@ -4272,12 +4421,13 @@ impl WorkOrders {
     #[napi]
     pub async fn start(&self, id: String) -> Result<WorkOrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let wo = commerce
             .work_orders()
             .start(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to start work order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to start work order", e))?;
 
         convert_output(wo)
     }
@@ -4285,12 +4435,13 @@ impl WorkOrders {
     #[napi]
     pub async fn complete(&self, id: String, quantity_completed: f64) -> Result<WorkOrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let wo = commerce
             .work_orders()
             .complete(uuid, decimal_from_f64(quantity_completed, "work order quantity completed")?)
-            .map_err(|e| Error::from_reason(format!("Failed to complete work order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to complete work order", e))?;
 
         convert_output(wo)
     }
@@ -4298,12 +4449,13 @@ impl WorkOrders {
     #[napi]
     pub async fn cancel(&self, id: String) -> Result<WorkOrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let wo = commerce
             .work_orders()
             .cancel(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to cancel work order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel work order", e))?;
 
         convert_output(wo)
     }
@@ -4314,7 +4466,7 @@ impl WorkOrders {
         let count = commerce
             .work_orders()
             .count(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count work orders: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count work orders", e))?;
 
         Ok(count as u32)
     }
@@ -4696,7 +4848,7 @@ impl Carts {
             .customer_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
 
         let cart = commerce
             .carts()
@@ -4711,7 +4863,7 @@ impl Carts {
                 expires_in_minutes: input.expires_in_minutes,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create cart: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create cart", e))?;
 
         convert_output(cart)
     }
@@ -4720,12 +4872,13 @@ impl Carts {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<CartOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get cart: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get cart", e))?;
 
         convert_optional_output(cart)
     }
@@ -4738,7 +4891,7 @@ impl Carts {
         let cart = commerce
             .carts()
             .get_by_number(&cart_number)
-            .map_err(|e| Error::from_reason(format!("Failed to get cart: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get cart", e))?;
 
         convert_optional_output(cart)
     }
@@ -4747,7 +4900,8 @@ impl Carts {
     #[napi]
     pub async fn update(&self, id: String, input: UpdateCartInput) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -4763,7 +4917,7 @@ impl Carts {
                     ..Default::default()
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update cart: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update cart", e))?;
 
         convert_output(cart)
     }
@@ -4775,7 +4929,7 @@ impl Carts {
         let carts = commerce
             .carts()
             .list(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list carts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list carts", e))?;
 
         convert_outputs(carts)
     }
@@ -4785,12 +4939,12 @@ impl Carts {
     pub async fn for_customer(&self, customer_id: String) -> Result<Vec<CartOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+            customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
 
         let carts = commerce
             .carts()
             .for_customer(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get customer carts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get customer carts", e))?;
 
         convert_outputs(carts)
     }
@@ -4799,12 +4953,13 @@ impl Carts {
     #[napi]
     pub async fn delete(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         commerce
             .carts()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete cart: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete cart", e))?;
 
         Ok(())
     }
@@ -4818,19 +4973,19 @@ impl Carts {
     ) -> Result<CartItemOutput> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?;
+            cart_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid cart UUID"))?;
 
         let product_id = item
             .product_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid product UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid product UUID"))?;
 
         let variant_id = item
             .variant_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid variant UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid variant UUID"))?;
 
         let cart_item = commerce
             .carts()
@@ -4854,7 +5009,7 @@ impl Carts {
                     ..Default::default()
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to add item: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to add item", e))?;
 
         convert_output(cart_item)
     }
@@ -4868,17 +5023,17 @@ impl Carts {
     ) -> Result<CartItemOutput> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?;
+            cart_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid cart UUID"))?;
         let product_id = item
             .product_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid product UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid product UUID"))?;
         let variant_id = item
             .variant_id
             .map(|id| id.parse())
             .transpose()
-            .map_err(|_| Error::from_reason("Invalid variant UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid variant UUID"))?;
         let cart_item = commerce
             .carts()
             .add_item(
@@ -4906,7 +5061,7 @@ impl Carts {
                     ..Default::default()
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to add item: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to add item", e))?;
         convert_output(cart_item)
     }
 
@@ -4918,7 +5073,7 @@ impl Carts {
         input: UpdateCartItemInput,
     ) -> Result<CartItemOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = item_id.parse().map_err(|_| Error::from_reason("Invalid item UUID"))?;
+        let uuid = item_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid item UUID"))?;
 
         let cart_item = commerce
             .carts()
@@ -4933,7 +5088,7 @@ impl Carts {
                     ..Default::default()
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update item: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update item", e))?;
 
         convert_output(cart_item)
     }
@@ -4942,12 +5097,12 @@ impl Carts {
     #[napi]
     pub async fn remove_item(&self, item_id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid = item_id.parse().map_err(|_| Error::from_reason("Invalid item UUID"))?;
+        let uuid = item_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid item UUID"))?;
 
         commerce
             .carts()
             .remove_item(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to remove item: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to remove item", e))?;
 
         Ok(())
     }
@@ -4957,12 +5112,12 @@ impl Carts {
     pub async fn get_items(&self, cart_id: String) -> Result<Vec<CartItemOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?;
+            cart_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid cart UUID"))?;
 
         let items = commerce
             .carts()
             .get_items(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get items: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get items", e))?;
 
         convert_outputs(items)
     }
@@ -4972,12 +5127,12 @@ impl Carts {
     pub async fn clear_items(&self, cart_id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?;
+            cart_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid cart UUID"))?;
 
         commerce
             .carts()
             .clear_items(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to clear items: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to clear items", e))?;
 
         Ok(())
     }
@@ -4990,12 +5145,13 @@ impl Carts {
         address: CartAddressInput,
     ) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
             .set_shipping_address(uuid.into(), input_to_cart_address(address))
-            .map_err(|e| Error::from_reason(format!("Failed to set shipping address: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set shipping address", e))?;
 
         convert_output(cart)
     }
@@ -5008,12 +5164,13 @@ impl Carts {
         input: SetCartShippingInput,
     ) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let shipping_amount = match input.shipping_amount {
             Some(amount) => Some(
                 Decimal::from_f64(amount)
-                    .ok_or_else(|| Error::from_reason("Invalid shipping amount"))?,
+                    .ok_or_else(|| coded(ErrCode::Validation, "Invalid shipping amount"))?,
             ),
             None => None,
         };
@@ -5029,7 +5186,7 @@ impl Carts {
                     shipping_amount,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to set shipping: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set shipping", e))?;
 
         convert_output(cart)
     }
@@ -5042,12 +5199,13 @@ impl Carts {
         address: CartAddressInput,
     ) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
             .set_billing_address(uuid.into(), input_to_cart_address(address))
-            .map_err(|e| Error::from_reason(format!("Failed to set billing address: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set billing address", e))?;
 
         convert_output(cart)
     }
@@ -5056,12 +5214,13 @@ impl Carts {
     #[napi]
     pub async fn get_shipping_rates(&self, id: String) -> Result<Vec<ShippingRateOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let rates = commerce
             .carts()
             .get_shipping_rates(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get shipping rates: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get shipping rates", e))?;
 
         convert_outputs(rates)
     }
@@ -5070,7 +5229,8 @@ impl Carts {
     #[napi]
     pub async fn set_payment(&self, id: String, input: SetCartPaymentInput) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -5082,7 +5242,7 @@ impl Carts {
                     ..Default::default()
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to set payment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set payment", e))?;
 
         convert_output(cart)
     }
@@ -5091,12 +5251,13 @@ impl Carts {
     #[napi]
     pub async fn apply_discount(&self, id: String, coupon_code: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
             .apply_discount(uuid.into(), &coupon_code)
-            .map_err(|e| Error::from_reason(format!("Failed to apply discount: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to apply discount", e))?;
 
         convert_output(cart)
     }
@@ -5105,12 +5266,13 @@ impl Carts {
     #[napi]
     pub async fn remove_discount(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
             .remove_discount(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to remove discount: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to remove discount", e))?;
 
         convert_output(cart)
     }
@@ -5119,12 +5281,13 @@ impl Carts {
     #[napi]
     pub async fn mark_ready_for_payment(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
             .mark_ready_for_payment(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to mark ready: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to mark ready", e))?;
 
         convert_output(cart)
     }
@@ -5133,12 +5296,13 @@ impl Carts {
     #[napi]
     pub async fn begin_checkout(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
             .begin_checkout(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to begin checkout: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to begin checkout", e))?;
 
         convert_output(cart)
     }
@@ -5147,12 +5311,13 @@ impl Carts {
     #[napi]
     pub async fn complete(&self, id: String) -> Result<CheckoutResultOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let result = commerce
             .carts()
             .complete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to complete checkout: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to complete checkout", e))?;
 
         convert_output(result)
     }
@@ -5161,12 +5326,13 @@ impl Carts {
     #[napi]
     pub async fn cancel(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
             .cancel(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to cancel cart: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel cart", e))?;
 
         convert_output(cart)
     }
@@ -5175,12 +5341,13 @@ impl Carts {
     #[napi]
     pub async fn abandon(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
             .abandon(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to abandon cart: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to abandon cart", e))?;
 
         convert_output(cart)
     }
@@ -5189,12 +5356,13 @@ impl Carts {
     #[napi]
     pub async fn expire(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
             .expire(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to expire cart: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to expire cart", e))?;
 
         convert_output(cart)
     }
@@ -5203,12 +5371,13 @@ impl Carts {
     #[napi]
     pub async fn reserve_inventory(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
             .reserve_inventory(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to reserve inventory: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to reserve inventory", e))?;
 
         convert_output(cart)
     }
@@ -5217,12 +5386,13 @@ impl Carts {
     #[napi]
     pub async fn release_inventory(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
             .release_inventory(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to release inventory: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to release inventory", e))?;
 
         convert_output(cart)
     }
@@ -5231,12 +5401,13 @@ impl Carts {
     #[napi]
     pub async fn recalculate(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
             .recalculate(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to recalculate: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to recalculate", e))?;
 
         convert_output(cart)
     }
@@ -5245,12 +5416,13 @@ impl Carts {
     #[napi]
     pub async fn set_tax(&self, id: String, tax_amount: f64) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
             .set_tax(uuid.into(), decimal_from_f64(tax_amount, "tax amount")?)
-            .map_err(|e| Error::from_reason(format!("Failed to set tax: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set tax", e))?;
 
         convert_output(cart)
     }
@@ -5262,7 +5434,7 @@ impl Carts {
         let carts = commerce
             .carts()
             .get_abandoned()
-            .map_err(|e| Error::from_reason(format!("Failed to get abandoned carts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get abandoned carts", e))?;
 
         convert_outputs(carts)
     }
@@ -5274,7 +5446,7 @@ impl Carts {
         let carts = commerce
             .carts()
             .get_expired()
-            .map_err(|e| Error::from_reason(format!("Failed to get expired carts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get expired carts", e))?;
 
         convert_outputs(carts)
     }
@@ -5286,7 +5458,7 @@ impl Carts {
         let count = commerce
             .carts()
             .count(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count carts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count carts", e))?;
 
         Ok(count as u32)
     }
@@ -5522,7 +5694,7 @@ impl Analytics {
         let summary = commerce
             .analytics()
             .sales_summary(q)
-            .map_err(|e| Error::from_reason(format!("Failed to get sales summary: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get sales summary", e))?;
 
         Ok(SalesSummaryOutput {
             total_revenue: to_f64_or_nan(summary.total_revenue),
@@ -5554,7 +5726,7 @@ impl Analytics {
         let revenue = commerce
             .analytics()
             .revenue_by_period(q)
-            .map_err(|e| Error::from_reason(format!("Failed to get revenue: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get revenue", e))?;
 
         Ok(revenue
             .into_iter()
@@ -5588,7 +5760,7 @@ impl Analytics {
         let products = commerce
             .analytics()
             .top_products(q)
-            .map_err(|e| Error::from_reason(format!("Failed to get top products: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get top products", e))?;
 
         Ok(products
             .into_iter()
@@ -5624,7 +5796,7 @@ impl Analytics {
         let perf = commerce
             .analytics()
             .product_performance(q)
-            .map_err(|e| Error::from_reason(format!("Failed to get product performance: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get product performance", e))?;
 
         Ok(perf
             .into_iter()
@@ -5660,7 +5832,7 @@ impl Analytics {
         let metrics = commerce
             .analytics()
             .customer_metrics(q)
-            .map_err(|e| Error::from_reason(format!("Failed to get customer metrics: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get customer metrics", e))?;
 
         Ok(CustomerMetricsOutput {
             total_customers: metrics.total_customers as u32,
@@ -5692,7 +5864,7 @@ impl Analytics {
         let customers = commerce
             .analytics()
             .top_customers(q)
-            .map_err(|e| Error::from_reason(format!("Failed to get top customers: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get top customers", e))?;
 
         Ok(customers
             .into_iter()
@@ -5715,7 +5887,7 @@ impl Analytics {
         let health = commerce
             .analytics()
             .inventory_health()
-            .map_err(|e| Error::from_reason(format!("Failed to get inventory health: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get inventory health", e))?;
 
         Ok(InventoryHealthOutput {
             total_skus: health.total_skus as u32,
@@ -5736,7 +5908,7 @@ impl Analytics {
         let items = commerce
             .analytics()
             .low_stock_items(threshold_dec)
-            .map_err(|e| Error::from_reason(format!("Failed to get low stock items: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get low stock items", e))?;
 
         Ok(items
             .into_iter()
@@ -5771,7 +5943,7 @@ impl Analytics {
         let movements = commerce
             .analytics()
             .inventory_movement(q)
-            .map_err(|e| Error::from_reason(format!("Failed to get inventory movement: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get inventory movement", e))?;
 
         Ok(movements
             .into_iter()
@@ -5799,7 +5971,7 @@ impl Analytics {
         let forecasts = commerce
             .analytics()
             .demand_forecast(skus, days_ahead.unwrap_or(30))
-            .map_err(|e| Error::from_reason(format!("Failed to get demand forecast: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get demand forecast", e))?;
 
         Ok(forecasts
             .into_iter()
@@ -5833,7 +6005,7 @@ impl Analytics {
         let forecasts = commerce
             .analytics()
             .revenue_forecast(periods_ahead.unwrap_or(3), gran)
-            .map_err(|e| Error::from_reason(format!("Failed to get revenue forecast: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get revenue forecast", e))?;
 
         Ok(forecasts
             .into_iter()
@@ -5863,9 +6035,10 @@ impl Analytics {
             }
         }
 
-        let breakdown = commerce.analytics().order_status_breakdown(q).map_err(|e| {
-            Error::from_reason(format!("Failed to get order status breakdown: {}", e))
-        })?;
+        let breakdown = commerce
+            .analytics()
+            .order_status_breakdown(q)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get order status breakdown", e))?;
 
         Ok(OrderStatusBreakdownOutput {
             pending: breakdown.pending as u32,
@@ -5896,7 +6069,7 @@ impl Analytics {
         let metrics = commerce
             .analytics()
             .fulfillment_metrics(q)
-            .map_err(|e| Error::from_reason(format!("Failed to get fulfillment metrics: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get fulfillment metrics", e))?;
 
         Ok(FulfillmentMetricsOutput {
             avg_time_to_ship_hours: metrics.avg_time_to_ship_hours.map(to_f64_or_nan),
@@ -5926,7 +6099,7 @@ impl Analytics {
         let metrics = commerce
             .analytics()
             .return_metrics(q)
-            .map_err(|e| Error::from_reason(format!("Failed to get return metrics: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get return metrics", e))?;
 
         Ok(ReturnMetricsOutput {
             total_returns: metrics.total_returns as u32,
@@ -6023,7 +6196,7 @@ pub struct StoreCurrencySettingsOutput {
 fn parse_currency(code: &str) -> Result<stateset_embedded::Currency> {
     use std::str::FromStr;
     stateset_embedded::Currency::from_str(code)
-        .map_err(|e| Error::from_reason(format!("Invalid currency code '{}': {}", code, e)))
+        .map_err(|e| coded(ErrCode::Validation, format!("Invalid currency code '{}': {}", code, e)))
 }
 
 fn parse_rounding_mode(mode: &str) -> stateset_embedded::RoundingMode {
@@ -6078,7 +6251,7 @@ impl CurrencyOperations {
         let rate = commerce
             .currency()
             .get_rate(from_currency, to_currency)
-            .map_err(|e| Error::from_reason(format!("Failed to get rate: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get rate", e))?;
 
         Ok(rate.map(exchange_rate_to_output))
     }
@@ -6092,7 +6265,7 @@ impl CurrencyOperations {
         let rates = commerce
             .currency()
             .get_rates_for(currency)
-            .map_err(|e| Error::from_reason(format!("Failed to get rates: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get rates", e))?;
 
         Ok(rates.into_iter().map(exchange_rate_to_output).collect())
     }
@@ -6118,7 +6291,7 @@ impl CurrencyOperations {
         let rates = commerce
             .currency()
             .list_rates(f)
-            .map_err(|e| Error::from_reason(format!("Failed to list rates: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list rates", e))?;
 
         Ok(rates.into_iter().map(exchange_rate_to_output).collect())
     }
@@ -6134,10 +6307,10 @@ impl CurrencyOperations {
                 base_currency: parse_currency(&input.base_currency)?,
                 quote_currency: parse_currency(&input.quote_currency)?,
                 rate: Decimal::try_from(input.rate)
-                    .map_err(|e| Error::from_reason(format!("Invalid rate: {}", e)))?,
+                    .map_err(|e| wrap(ErrCode::Validation, "Invalid rate", e))?,
                 source: input.source,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to set rate: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set rate", e))?;
 
         Ok(exchange_rate_to_output(rate))
     }
@@ -6156,7 +6329,7 @@ impl CurrencyOperations {
                 base_currency: parse_currency(&input.base_currency)?,
                 quote_currency: parse_currency(&input.quote_currency)?,
                 rate: Decimal::try_from(input.rate)
-                    .map_err(|e| Error::from_reason(format!("Invalid rate: {}", e)))?,
+                    .map_err(|e| wrap(ErrCode::Validation, "Invalid rate", e))?,
                 source: input.source,
             });
         }
@@ -6164,7 +6337,7 @@ impl CurrencyOperations {
         let results = commerce
             .currency()
             .set_rates(rates)
-            .map_err(|e| Error::from_reason(format!("Failed to set rates: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set rates", e))?;
 
         Ok(results.into_iter().map(exchange_rate_to_output).collect())
     }
@@ -6174,12 +6347,12 @@ impl CurrencyOperations {
     pub async fn delete_rate(&self, id: String) -> Result<bool> {
         let commerce = self.commerce.lock().await;
         let rate_id = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid rate ID: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid rate ID", e))?;
 
         commerce
             .currency()
             .delete_rate(rate_id)
-            .map_err(|e| Error::from_reason(format!("Failed to delete rate: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete rate", e))?;
 
         Ok(true)
     }
@@ -6195,9 +6368,9 @@ impl CurrencyOperations {
                 from: parse_currency(&input.from)?,
                 to: parse_currency(&input.to)?,
                 amount: Decimal::try_from(input.amount)
-                    .map_err(|e| Error::from_reason(format!("Invalid amount: {}", e)))?,
+                    .map_err(|e| wrap(ErrCode::Validation, "Invalid amount", e))?,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to convert currency: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to convert currency", e))?;
 
         Ok(ConversionResultOutput {
             original_amount: to_f64_or_nan(result.original_amount),
@@ -6218,7 +6391,7 @@ impl CurrencyOperations {
         let settings = commerce
             .currency()
             .get_settings()
-            .map_err(|e| Error::from_reason(format!("Failed to get settings: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get settings", e))?;
 
         Ok(StoreCurrencySettingsOutput {
             base_currency: settings.base_currency.code().to_string(),
@@ -6257,7 +6430,7 @@ impl CurrencyOperations {
                     .map(parse_rounding_mode)
                     .unwrap_or_default(),
             })
-            .map_err(|e| Error::from_reason(format!("Failed to update settings: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update settings", e))?;
 
         Ok(StoreCurrencySettingsOutput {
             base_currency: settings.base_currency.code().to_string(),
@@ -6283,7 +6456,7 @@ impl CurrencyOperations {
         let settings = commerce
             .currency()
             .set_base_currency(currency)
-            .map_err(|e| Error::from_reason(format!("Failed to set base currency: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set base currency", e))?;
 
         Ok(StoreCurrencySettingsOutput {
             base_currency: settings.base_currency.code().to_string(),
@@ -6313,7 +6486,7 @@ impl CurrencyOperations {
         let settings = commerce
             .currency()
             .enable_currencies(currencies)
-            .map_err(|e| Error::from_reason(format!("Failed to enable currencies: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to enable currencies", e))?;
 
         Ok(StoreCurrencySettingsOutput {
             base_currency: settings.base_currency.code().to_string(),
@@ -6336,7 +6509,7 @@ impl CurrencyOperations {
         commerce
             .currency()
             .is_enabled(currency)
-            .map_err(|e| Error::from_reason(format!("Failed to check currency: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to check currency", e))
     }
 
     /// Get the store's base currency
@@ -6347,7 +6520,7 @@ impl CurrencyOperations {
         let currency = commerce
             .currency()
             .base_currency()
-            .map_err(|e| Error::from_reason(format!("Failed to get base currency: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get base currency", e))?;
 
         Ok(currency.code().to_string())
     }
@@ -6360,7 +6533,7 @@ impl CurrencyOperations {
         let currencies = commerce
             .currency()
             .enabled_currencies()
-            .map_err(|e| Error::from_reason(format!("Failed to get enabled currencies: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get enabled currencies", e))?;
 
         Ok(currencies.iter().map(|c| c.code().to_string()).collect())
     }
@@ -6371,7 +6544,7 @@ impl CurrencyOperations {
         let commerce = self.commerce.lock().await;
         let currency = parse_currency(&currency_code)?;
         let amount_decimal = Decimal::try_from(amount)
-            .map_err(|e| Error::from_reason(format!("Invalid amount: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid amount", e))?;
 
         Ok(commerce.currency().format(amount_decimal, currency))
     }
@@ -6706,7 +6879,7 @@ fn parse_billing_interval(s: &str) -> Result<stateset_core::BillingInterval> {
         "semiannual" => Ok(stateset_core::BillingInterval::Semiannual),
         "annual" => Ok(stateset_core::BillingInterval::Annual),
         "custom" => Ok(stateset_core::BillingInterval::Custom),
-        _ => Err(Error::from_reason(format!("Invalid billing interval: {}", s))),
+        _ => Err(coded(ErrCode::Validation, format!("Invalid billing interval: {s}"))),
     }
 }
 
@@ -6715,7 +6888,7 @@ fn parse_plan_status(s: &str) -> Result<stateset_core::PlanStatus> {
         "draft" => Ok(stateset_core::PlanStatus::Draft),
         "active" => Ok(stateset_core::PlanStatus::Active),
         "archived" => Ok(stateset_core::PlanStatus::Archived),
-        _ => Err(Error::from_reason(format!("Invalid plan status: {}", s))),
+        _ => Err(coded(ErrCode::Validation, format!("Invalid plan status: {s}"))),
     }
 }
 
@@ -6728,7 +6901,7 @@ fn parse_subscription_status(s: &str) -> Result<stateset_core::SubscriptionStatu
         "past_due" => Ok(stateset_core::SubscriptionStatus::PastDue),
         "cancelled" => Ok(stateset_core::SubscriptionStatus::Cancelled),
         "expired" => Ok(stateset_core::SubscriptionStatus::Expired),
-        _ => Err(Error::from_reason(format!("Invalid subscription status: {}", s))),
+        _ => Err(coded(ErrCode::Validation, format!("Invalid subscription status: {s}"))),
     }
 }
 
@@ -6741,7 +6914,7 @@ fn parse_billing_cycle_status(s: &str) -> Result<stateset_core::BillingCycleStat
         "skipped" => Ok(stateset_core::BillingCycleStatus::Skipped),
         "refunded" => Ok(stateset_core::BillingCycleStatus::Refunded),
         "voided" => Ok(stateset_core::BillingCycleStatus::Voided),
-        _ => Err(Error::from_reason(format!("Invalid billing cycle status: {}", s))),
+        _ => Err(coded(ErrCode::Validation, format!("Invalid billing cycle status: {s}"))),
     }
 }
 
@@ -6794,7 +6967,7 @@ impl Subscriptions {
                 items: None,
                 metadata: None,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create plan: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create plan", e))?;
 
         convert_output(plan)
     }
@@ -6803,13 +6976,13 @@ impl Subscriptions {
     #[napi]
     pub async fn get_plan(&self, id: String) -> Result<Option<SubscriptionPlanOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let plan = commerce
             .subscriptions()
             .get_plan(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get plan: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get plan", e))?;
 
         convert_optional_output(plan)
     }
@@ -6822,7 +6995,7 @@ impl Subscriptions {
         let plan = commerce
             .subscriptions()
             .get_plan_by_code(&code)
-            .map_err(|e| Error::from_reason(format!("Failed to get plan: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get plan", e))?;
 
         convert_optional_output(plan)
     }
@@ -6848,7 +7021,7 @@ impl Subscriptions {
                 limit: f.limit.map(|v| v as u32),
                 offset: f.offset.map(|v| v as u32),
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list plans: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list plans", e))?;
 
         convert_outputs(plans)
     }
@@ -6861,8 +7034,8 @@ impl Subscriptions {
         input: UpdateSubscriptionPlanInput,
     ) -> Result<SubscriptionPlanOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let plan = commerce
             .subscriptions()
@@ -6892,7 +7065,7 @@ impl Subscriptions {
                     metadata: None,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update plan: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update plan", e))?;
 
         convert_output(plan)
     }
@@ -6901,13 +7074,13 @@ impl Subscriptions {
     #[napi]
     pub async fn activate_plan(&self, id: String) -> Result<SubscriptionPlanOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let plan = commerce
             .subscriptions()
             .activate_plan(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to activate plan: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to activate plan", e))?;
 
         convert_output(plan)
     }
@@ -6916,13 +7089,13 @@ impl Subscriptions {
     #[napi]
     pub async fn archive_plan(&self, id: String) -> Result<SubscriptionPlanOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let plan = commerce
             .subscriptions()
             .archive_plan(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to archive plan: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to archive plan", e))?;
 
         convert_output(plan)
     }
@@ -6936,9 +7109,9 @@ impl Subscriptions {
     pub async fn subscribe(&self, input: CreateSubscriptionInput) -> Result<SubscriptionOutput> {
         let commerce = self.commerce.lock().await;
         let customer_id = uuid::Uuid::parse_str(&input.customer_id)
-            .map_err(|e| Error::from_reason(format!("Invalid customer UUID: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid customer UUID", e))?;
         let plan_id = uuid::Uuid::parse_str(&input.plan_id)
-            .map_err(|e| Error::from_reason(format!("Invalid plan UUID: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid plan UUID", e))?;
 
         let start_date = input.start_date.as_ref().and_then(|s| {
             chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
@@ -6959,7 +7132,7 @@ impl Subscriptions {
                 billing_address: None,
                 metadata: None,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create subscription: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create subscription", e))?;
 
         convert_output(subscription)
     }
@@ -6968,13 +7141,13 @@ impl Subscriptions {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<SubscriptionOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let subscription = commerce
             .subscriptions()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get subscription: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get subscription", e))?;
 
         convert_optional_output(subscription)
     }
@@ -6987,7 +7160,7 @@ impl Subscriptions {
         let subscription = commerce
             .subscriptions()
             .get_by_number(&number)
-            .map_err(|e| Error::from_reason(format!("Failed to get subscription: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get subscription", e))?;
 
         convert_optional_output(subscription)
     }
@@ -7026,7 +7199,7 @@ impl Subscriptions {
                 limit: f.limit.map(|v| v as u32),
                 offset: f.offset.map(|v| v as u32),
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list subscriptions: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list subscriptions", e))?;
 
         convert_outputs(subscriptions)
     }
@@ -7039,8 +7212,8 @@ impl Subscriptions {
         input: UpdateSubscriptionInput,
     ) -> Result<SubscriptionOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let next_billing_date = input.next_billing_date.as_ref().and_then(|s| {
             chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
@@ -7069,7 +7242,7 @@ impl Subscriptions {
                     metadata: None,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update subscription: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update subscription", e))?;
 
         convert_output(subscription)
     }
@@ -7082,8 +7255,8 @@ impl Subscriptions {
         input: Option<PauseSubscriptionInput>,
     ) -> Result<SubscriptionOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let i = input.unwrap_or_default();
         let resume_at = i.resume_at.as_ref().and_then(|s| {
@@ -7093,7 +7266,7 @@ impl Subscriptions {
         let subscription = commerce
             .subscriptions()
             .pause(uuid.into(), stateset_core::PauseSubscription { reason: i.reason, resume_at })
-            .map_err(|e| Error::from_reason(format!("Failed to pause subscription: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to pause subscription", e))?;
 
         convert_output(subscription)
     }
@@ -7102,13 +7275,13 @@ impl Subscriptions {
     #[napi]
     pub async fn resume(&self, id: String) -> Result<SubscriptionOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let subscription = commerce
             .subscriptions()
             .resume(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to resume subscription: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to resume subscription", e))?;
 
         convert_output(subscription)
     }
@@ -7121,8 +7294,8 @@ impl Subscriptions {
         input: Option<CancelSubscriptionInput>,
     ) -> Result<SubscriptionOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let i = input.unwrap_or_default();
 
@@ -7136,7 +7309,7 @@ impl Subscriptions {
                     feedback: i.feedback,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to cancel subscription: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel subscription", e))?;
 
         convert_output(subscription)
     }
@@ -7149,15 +7322,15 @@ impl Subscriptions {
         input: Option<SkipBillingCycleInput>,
     ) -> Result<SubscriptionOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let i = input.unwrap_or_default();
 
         let subscription = commerce
             .subscriptions()
             .skip_next_cycle(uuid.into(), stateset_core::SkipBillingCycle { reason: i.reason })
-            .map_err(|e| Error::from_reason(format!("Failed to skip billing: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to skip billing", e))?;
 
         convert_output(subscription)
     }
@@ -7197,7 +7370,7 @@ impl Subscriptions {
                 limit: f.limit.map(|v| v as u32),
                 offset: f.offset.map(|v| v as u32),
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list billing cycles: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list billing cycles", e))?;
 
         Ok(cycles.into_iter().map(|c| c.into()).collect())
     }
@@ -7206,13 +7379,13 @@ impl Subscriptions {
     #[napi]
     pub async fn get_billing_cycle(&self, id: String) -> Result<Option<BillingCycleOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let cycle = commerce
             .subscriptions()
             .get_billing_cycle(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get billing cycle: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get billing cycle", e))?;
 
         Ok(cycle.map(|c| c.into()))
     }
@@ -7229,12 +7402,12 @@ impl Subscriptions {
     ) -> Result<Vec<SubscriptionEventOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = uuid::Uuid::parse_str(&subscription_id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let events = commerce
             .subscriptions()
             .get_events(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get events: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get events", e))?;
 
         Ok(events.into_iter().map(|e| e.into()).collect())
     }
@@ -7779,7 +7952,7 @@ impl Promotions {
         let promo = commerce
             .promotions()
             .create(create)
-            .map_err(|e| Error::from_reason(format!("Failed to create promotion: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create promotion", e))?;
 
         convert_output(promo)
     }
@@ -7788,13 +7961,13 @@ impl Promotions {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<PromotionOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let promo = commerce
             .promotions()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get promotion: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get promotion", e))?;
 
         convert_optional_output(promo)
     }
@@ -7806,7 +7979,7 @@ impl Promotions {
         let promo = commerce
             .promotions()
             .get_by_code(&code)
-            .map_err(|e| Error::from_reason(format!("Failed to get promotion: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get promotion", e))?;
 
         convert_optional_output(promo)
     }
@@ -7830,7 +8003,7 @@ impl Promotions {
         let promos = commerce
             .promotions()
             .list(core_filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list promotions: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list promotions", e))?;
 
         convert_outputs(promos)
     }
@@ -7839,8 +8012,8 @@ impl Promotions {
     #[napi]
     pub async fn update(&self, id: String, input: UpdatePromotionInput) -> Result<PromotionOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let update = stateset_core::UpdatePromotion {
             name: input.name,
@@ -7874,7 +8047,7 @@ impl Promotions {
         let promo = commerce
             .promotions()
             .update(uuid.into(), update)
-            .map_err(|e| Error::from_reason(format!("Failed to update promotion: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update promotion", e))?;
 
         convert_output(promo)
     }
@@ -7883,13 +8056,13 @@ impl Promotions {
     #[napi]
     pub async fn delete(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         commerce
             .promotions()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete promotion: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete promotion", e))?;
 
         Ok(())
     }
@@ -7898,13 +8071,13 @@ impl Promotions {
     #[napi]
     pub async fn activate(&self, id: String) -> Result<PromotionOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let promo = commerce
             .promotions()
             .activate(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to activate promotion: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to activate promotion", e))?;
 
         convert_output(promo)
     }
@@ -7913,13 +8086,13 @@ impl Promotions {
     #[napi]
     pub async fn deactivate(&self, id: String) -> Result<PromotionOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let promo = commerce
             .promotions()
             .deactivate(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to deactivate promotion: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to deactivate promotion", e))?;
 
         convert_output(promo)
     }
@@ -7931,7 +8104,7 @@ impl Promotions {
         let promos = commerce
             .promotions()
             .get_active()
-            .map_err(|e| Error::from_reason(format!("Failed to get active promotions: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get active promotions", e))?;
 
         convert_outputs(promos)
     }
@@ -7940,12 +8113,13 @@ impl Promotions {
     #[napi]
     pub async fn is_valid(&self, id: String) -> Result<bool> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
-        let valid = commerce.promotions().is_valid(uuid.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to check promotion validity: {}", e))
-        })?;
+        let valid = commerce
+            .promotions()
+            .is_valid(uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to check promotion validity", e))?;
 
         Ok(valid)
     }
@@ -7959,7 +8133,7 @@ impl Promotions {
     pub async fn create_coupon(&self, input: CreateCouponInput) -> Result<CouponOutput> {
         let commerce = self.commerce.lock().await;
         let promotion_id = uuid::Uuid::parse_str(&input.promotion_id)
-            .map_err(|e| Error::from_reason(format!("Invalid promotion UUID: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid promotion UUID", e))?;
 
         let create = stateset_core::CreateCouponCode {
             promotion_id: promotion_id.into(),
@@ -7978,7 +8152,7 @@ impl Promotions {
         let coupon = commerce
             .promotions()
             .create_coupon(create)
-            .map_err(|e| Error::from_reason(format!("Failed to create coupon: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create coupon", e))?;
 
         Ok(coupon.into())
     }
@@ -7987,13 +8161,13 @@ impl Promotions {
     #[napi]
     pub async fn get_coupon(&self, id: String) -> Result<Option<CouponOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let coupon = commerce
             .promotions()
             .get_coupon(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get coupon: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get coupon", e))?;
 
         Ok(coupon.map(|c| c.into()))
     }
@@ -8005,7 +8179,7 @@ impl Promotions {
         let coupon = commerce
             .promotions()
             .get_coupon_by_code(&code)
-            .map_err(|e| Error::from_reason(format!("Failed to get coupon: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get coupon", e))?;
 
         Ok(coupon.map(|c| c.into()))
     }
@@ -8033,7 +8207,7 @@ impl Promotions {
         let coupons = commerce
             .promotions()
             .list_coupons(core_filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list coupons: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list coupons", e))?;
 
         Ok(coupons.into_iter().map(|c| c.into()).collect())
     }
@@ -8045,7 +8219,7 @@ impl Promotions {
         let coupon = commerce
             .promotions()
             .validate_coupon(&code)
-            .map_err(|e| Error::from_reason(format!("Failed to validate coupon: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to validate coupon", e))?;
 
         Ok(coupon.map(|c| c.into()))
     }
@@ -8116,7 +8290,7 @@ impl Promotions {
         let result = commerce
             .promotions()
             .apply(request)
-            .map_err(|e| Error::from_reason(format!("Failed to apply promotions: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to apply promotions", e))?;
 
         convert_output(result)
     }
@@ -8136,7 +8310,7 @@ impl Promotions {
     ) -> Result<PromotionUsageOutput> {
         let commerce = self.commerce.lock().await;
         let promotion_uuid = uuid::Uuid::parse_str(&promotion_id)
-            .map_err(|e| Error::from_reason(format!("Invalid promotion UUID: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid promotion UUID", e))?;
 
         let usage = commerce
             .promotions()
@@ -8149,7 +8323,7 @@ impl Promotions {
                 decimal_from_f64(discount_amount, "promotion discount amount")?,
                 &currency,
             )
-            .map_err(|e| Error::from_reason(format!("Failed to record usage: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to record usage", e))?;
 
         convert_output(usage)
     }
@@ -8871,7 +9045,7 @@ impl Tax {
         let result = commerce
             .tax()
             .calculate(request)
-            .map_err(|e| Error::from_reason(format!("Failed to calculate tax: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to calculate tax", e))?;
 
         convert_output(result)
     }
@@ -8904,7 +9078,7 @@ impl Tax {
                 category.map(|s| parse_product_tax_category(&s)).unwrap_or_default(),
                 &address,
             )
-            .map_err(|e| Error::from_reason(format!("Failed to calculate tax: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to calculate tax", e))?;
 
         to_f64_result(tax, "tax amount")
     }
@@ -8933,7 +9107,7 @@ impl Tax {
                 &tax_address,
                 category.map(|s| parse_product_tax_category(&s)).unwrap_or_default(),
             )
-            .map_err(|e| Error::from_reason(format!("Failed to get rate: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get rate", e))?;
 
         to_f64_result(rate, "tax rate")
     }
@@ -8946,13 +9120,13 @@ impl Tax {
     #[napi]
     pub async fn get_jurisdiction(&self, id: String) -> Result<Option<TaxJurisdictionOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let jurisdiction = commerce
             .tax()
             .get_jurisdiction(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get jurisdiction: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get jurisdiction", e))?;
 
         Ok(jurisdiction.map(|j| j.into()))
     }
@@ -8968,7 +9142,7 @@ impl Tax {
         let jurisdiction = commerce
             .tax()
             .get_jurisdiction_by_code(&code)
-            .map_err(|e| Error::from_reason(format!("Failed to get jurisdiction: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get jurisdiction", e))?;
 
         Ok(jurisdiction.map(|j| j.into()))
     }
@@ -8993,7 +9167,7 @@ impl Tax {
         let jurisdictions = commerce
             .tax()
             .list_jurisdictions(core_filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list jurisdictions: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list jurisdictions", e))?;
 
         Ok(jurisdictions.into_iter().map(|j| j.into()).collect())
     }
@@ -9021,7 +9195,7 @@ impl Tax {
         let jurisdiction = commerce
             .tax()
             .create_jurisdiction(create)
-            .map_err(|e| Error::from_reason(format!("Failed to create jurisdiction: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create jurisdiction", e))?;
 
         Ok(jurisdiction.into())
     }
@@ -9034,13 +9208,13 @@ impl Tax {
     #[napi]
     pub async fn get_rate(&self, id: String) -> Result<Option<TaxRateOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let rate = commerce
             .tax()
             .get_rate(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get rate: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get rate", e))?;
 
         convert_optional_output(rate)
     }
@@ -9068,7 +9242,7 @@ impl Tax {
         let rates = commerce
             .tax()
             .list_rates(core_filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list rates: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list rates", e))?;
 
         convert_outputs(rates)
     }
@@ -9079,11 +9253,10 @@ impl Tax {
         let commerce = self.commerce.lock().await;
 
         let jurisdiction_id = uuid::Uuid::parse_str(&input.jurisdiction_id)
-            .map_err(|e| Error::from_reason(format!("Invalid jurisdiction UUID: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid jurisdiction UUID", e))?;
 
-        let effective_from =
-            chrono::NaiveDate::parse_from_str(&input.effective_from, "%Y-%m-%d")
-                .map_err(|e| Error::from_reason(format!("Invalid date format: {}", e)))?;
+        let effective_from = chrono::NaiveDate::parse_from_str(&input.effective_from, "%Y-%m-%d")
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid date format", e))?;
 
         let create = stateset_core::CreateTaxRate {
             jurisdiction_id,
@@ -9109,7 +9282,7 @@ impl Tax {
         let rate = commerce
             .tax()
             .create_rate(create)
-            .map_err(|e| Error::from_reason(format!("Failed to create rate: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create rate", e))?;
 
         convert_output(rate)
     }
@@ -9122,13 +9295,13 @@ impl Tax {
     #[napi]
     pub async fn get_exemption(&self, id: String) -> Result<Option<TaxExemptionOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = uuid::Uuid::parse_str(&id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        let uuid =
+            uuid::Uuid::parse_str(&id).map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let exemption = commerce
             .tax()
             .get_exemption(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get exemption: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get exemption", e))?;
 
         Ok(exemption.map(|e| e.into()))
     }
@@ -9141,12 +9314,12 @@ impl Tax {
     ) -> Result<Vec<TaxExemptionOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = uuid::Uuid::parse_str(&customer_id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let exemptions = commerce
             .tax()
             .get_customer_exemptions(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get exemptions: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get exemptions", e))?;
 
         Ok(exemptions.into_iter().map(|e| e.into()).collect())
     }
@@ -9160,11 +9333,10 @@ impl Tax {
         let commerce = self.commerce.lock().await;
 
         let customer_id = uuid::Uuid::parse_str(&input.customer_id)
-            .map_err(|e| Error::from_reason(format!("Invalid customer UUID: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid customer UUID", e))?;
 
-        let effective_from =
-            chrono::NaiveDate::parse_from_str(&input.effective_from, "%Y-%m-%d")
-                .map_err(|e| Error::from_reason(format!("Invalid date format: {}", e)))?;
+        let effective_from = chrono::NaiveDate::parse_from_str(&input.effective_from, "%Y-%m-%d")
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid date format", e))?;
 
         let create = stateset_core::CreateTaxExemption {
             customer_id,
@@ -9193,7 +9365,7 @@ impl Tax {
         let exemption = commerce
             .tax()
             .create_exemption(create)
-            .map_err(|e| Error::from_reason(format!("Failed to create exemption: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create exemption", e))?;
 
         Ok(exemption.into())
     }
@@ -9203,12 +9375,12 @@ impl Tax {
     pub async fn customer_is_exempt(&self, customer_id: String) -> Result<bool> {
         let commerce = self.commerce.lock().await;
         let uuid = uuid::Uuid::parse_str(&customer_id)
-            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid UUID", e))?;
 
         let is_exempt = commerce
             .tax()
             .customer_is_exempt(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to check exemption: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to check exemption", e))?;
 
         Ok(is_exempt)
     }
@@ -9225,7 +9397,7 @@ impl Tax {
         let settings = commerce
             .tax()
             .get_settings()
-            .map_err(|e| Error::from_reason(format!("Failed to get settings: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get settings", e))?;
 
         Ok(settings.into())
     }
@@ -9238,7 +9410,7 @@ impl Tax {
         let mut settings = commerce
             .tax()
             .get_settings()
-            .map_err(|e| Error::from_reason(format!("Failed to get settings: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get settings", e))?;
 
         if let Some(enabled) = input.enabled {
             settings.enabled = enabled;
@@ -9277,7 +9449,7 @@ impl Tax {
         let updated = commerce
             .tax()
             .update_settings(settings)
-            .map_err(|e| Error::from_reason(format!("Failed to update settings: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update settings", e))?;
 
         Ok(updated.into())
     }
@@ -9290,7 +9462,7 @@ impl Tax {
         let settings = commerce
             .tax()
             .set_enabled(enabled)
-            .map_err(|e| Error::from_reason(format!("Failed to update settings: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update settings", e))?;
 
         Ok(settings.into())
     }
@@ -9303,7 +9475,7 @@ impl Tax {
         let enabled = commerce
             .tax()
             .is_enabled()
-            .map_err(|e| Error::from_reason(format!("Failed to check settings: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to check settings", e))?;
 
         Ok(enabled)
     }
@@ -9315,25 +9487,25 @@ impl Tax {
     /// Get US state tax information
     #[napi]
     pub fn get_us_state_info(state_code: String) -> Result<Option<UsStateTaxInfoOutput>> {
-        convert_optional_output(stateset_core::get_us_state_tax_info(&state_code))
+        guard(|| convert_optional_output(stateset_core::get_us_state_tax_info(&state_code)))
     }
 
     /// Get EU VAT information
     #[napi]
     pub fn get_eu_vat_info(country_code: String) -> Result<Option<EuVatInfoOutput>> {
-        convert_optional_output(stateset_core::get_eu_vat_info(&country_code))
+        guard(|| convert_optional_output(stateset_core::get_eu_vat_info(&country_code)))
     }
 
     /// Get Canadian tax information
     #[napi]
     pub fn get_canadian_tax_info(province_code: String) -> Result<Option<CanadianTaxInfoOutput>> {
-        convert_optional_output(stateset_core::get_canadian_tax_info(&province_code))
+        guard(|| convert_optional_output(stateset_core::get_canadian_tax_info(&province_code)))
     }
 
     /// Check if a country is in the EU
     #[napi]
-    pub fn is_eu_country(country_code: String) -> bool {
-        stateset_core::is_eu_member(&country_code)
+    pub fn is_eu_country(country_code: String) -> Result<bool> {
+        guard(|| Ok(stateset_core::is_eu_member(&country_code)))
     }
 }
 
@@ -9530,8 +9702,10 @@ impl Quality {
         input: CreateInspectionInput,
     ) -> Result<InspectionOutput> {
         let commerce = self.commerce.lock().await;
-        let reference_id =
-            input.reference_id.parse().map_err(|_| Error::from_reason("Invalid reference UUID"))?;
+        let reference_id = input
+            .reference_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid reference UUID"))?;
 
         let inspection = commerce
             .quality()
@@ -9544,7 +9718,7 @@ impl Quality {
                 notes: input.notes,
                 items: vec![],
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create inspection: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create inspection", e))?;
 
         Ok(inspection.into())
     }
@@ -9553,11 +9727,12 @@ impl Quality {
     #[napi]
     pub async fn get_inspection(&self, id: String) -> Result<Option<InspectionOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let inspection = commerce
             .quality()
             .get_inspection(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get inspection: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get inspection", e))?;
         Ok(inspection.map(|i| i.into()))
     }
 
@@ -9574,7 +9749,7 @@ impl Quality {
         let inspections = commerce
             .quality()
             .list_inspections(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list inspections: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list inspections", e))?;
         Ok(inspections.into_iter().map(|i| i.into()).collect())
     }
 
@@ -9582,11 +9757,12 @@ impl Quality {
     #[napi]
     pub async fn start_inspection(&self, id: String) -> Result<InspectionOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let inspection = commerce
             .quality()
             .start_inspection(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to start inspection: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to start inspection", e))?;
         Ok(inspection.into())
     }
 
@@ -9594,11 +9770,12 @@ impl Quality {
     #[napi]
     pub async fn complete_inspection(&self, id: String) -> Result<InspectionOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let inspection = commerce
             .quality()
             .complete_inspection(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to complete inspection: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to complete inspection", e))?;
         Ok(inspection.into())
     }
 
@@ -9622,7 +9799,7 @@ impl Quality {
                 description: input.description,
                 assigned_to: None,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create NCR: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create NCR", e))?;
         convert_output(ncr)
     }
 
@@ -9630,11 +9807,12 @@ impl Quality {
     #[napi]
     pub async fn get_ncr(&self, id: String) -> Result<Option<NcrOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let ncr = commerce
             .quality()
             .get_ncr(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get NCR: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get NCR", e))?;
         convert_optional_output(ncr)
     }
 
@@ -9648,7 +9826,7 @@ impl Quality {
         let ncrs = commerce
             .quality()
             .list_ncrs(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list NCRs: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list NCRs", e))?;
         convert_outputs(ncrs)
     }
 
@@ -9656,11 +9834,12 @@ impl Quality {
     #[napi]
     pub async fn close_ncr(&self, id: String) -> Result<NcrOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let ncr = commerce
             .quality()
             .close_ncr(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to close NCR: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to close NCR", e))?;
         convert_output(ncr)
     }
 
@@ -9683,7 +9862,7 @@ impl Quality {
                 placed_by: input.placed_by.unwrap_or_default(),
                 expires_at: None,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create hold: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create hold", e))?;
         convert_output(hold)
     }
 
@@ -9691,11 +9870,12 @@ impl Quality {
     #[napi]
     pub async fn get_hold(&self, id: String) -> Result<Option<QualityHoldOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let hold = commerce
             .quality()
             .get_hold(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get hold: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get hold", e))?;
         convert_optional_output(hold)
     }
 
@@ -9706,7 +9886,7 @@ impl Quality {
         let holds = commerce
             .quality()
             .list_holds(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list holds: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list holds", e))?;
         convert_outputs(holds)
     }
 
@@ -9719,14 +9899,15 @@ impl Quality {
         notes: Option<String>,
     ) -> Result<QualityHoldOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let hold = commerce
             .quality()
             .release_hold(
                 uuid,
                 stateset_core::ReleaseQualityHold { released_by, release_notes: notes },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to release hold: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to release hold", e))?;
         convert_output(hold)
     }
 
@@ -9737,7 +9918,7 @@ impl Quality {
         let holds = commerce
             .quality()
             .get_active_holds()
-            .map_err(|e| Error::from_reason(format!("Failed to get active holds: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get active holds", e))?;
         convert_outputs(holds)
     }
 
@@ -9748,7 +9929,7 @@ impl Quality {
         let count = commerce
             .quality()
             .count_active_holds()
-            .map_err(|e| Error::from_reason(format!("Failed to count holds: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count holds", e))?;
         Ok(count as u32)
     }
 }
@@ -9833,7 +10014,7 @@ impl Lots {
                 supplier_lot: input.supplier_lot_number,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create lot: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create lot", e))?;
         convert_output(lot)
     }
 
@@ -9841,11 +10022,12 @@ impl Lots {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<LotOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let lot = commerce
             .lots()
             .get(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get lot: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get lot", e))?;
         convert_optional_output(lot)
     }
 
@@ -9856,7 +10038,7 @@ impl Lots {
         let lot = commerce
             .lots()
             .get_by_number(&lot_number)
-            .map_err(|e| Error::from_reason(format!("Failed to get lot: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get lot", e))?;
         convert_optional_output(lot)
     }
 
@@ -9867,7 +10049,7 @@ impl Lots {
         let lots = commerce
             .lots()
             .list(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list lots: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list lots", e))?;
         convert_outputs(lots)
     }
 
@@ -9878,7 +10060,7 @@ impl Lots {
         let lots = commerce
             .lots()
             .get_active_lots(&sku)
-            .map_err(|e| Error::from_reason(format!("Failed to get active lots: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get active lots", e))?;
         convert_outputs(lots)
     }
 
@@ -9889,7 +10071,7 @@ impl Lots {
         let lots = commerce
             .lots()
             .get_available_lots_for_sku(&sku)
-            .map_err(|e| Error::from_reason(format!("Failed to get available lots: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get available lots", e))?;
         convert_outputs(lots)
     }
 
@@ -9897,11 +10079,12 @@ impl Lots {
     #[napi]
     pub async fn quarantine(&self, id: String, reason: String) -> Result<LotOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let lot = commerce
             .lots()
             .quarantine(uuid, &reason)
-            .map_err(|e| Error::from_reason(format!("Failed to quarantine lot: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to quarantine lot", e))?;
         convert_output(lot)
     }
 
@@ -9909,11 +10092,12 @@ impl Lots {
     #[napi]
     pub async fn release_quarantine(&self, id: String) -> Result<LotOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let lot = commerce
             .lots()
             .release_quarantine(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to release lot: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to release lot", e))?;
         convert_output(lot)
     }
 
@@ -9924,7 +10108,7 @@ impl Lots {
         let lots = commerce
             .lots()
             .get_expiring_lots(days)
-            .map_err(|e| Error::from_reason(format!("Failed to get expiring lots: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get expiring lots", e))?;
         convert_outputs(lots)
     }
 
@@ -9935,7 +10119,7 @@ impl Lots {
         let lots = commerce
             .lots()
             .get_expired_lots()
-            .map_err(|e| Error::from_reason(format!("Failed to get expired lots: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get expired lots", e))?;
         convert_outputs(lots)
     }
 
@@ -9946,7 +10130,7 @@ impl Lots {
         let lots = commerce
             .lots()
             .get_quarantined()
-            .map_err(|e| Error::from_reason(format!("Failed to get quarantined lots: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get quarantined lots", e))?;
         convert_outputs(lots)
     }
 
@@ -9957,7 +10141,7 @@ impl Lots {
         let count = commerce
             .lots()
             .count(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count lots: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count lots", e))?;
         Ok(count as u32)
     }
 }
@@ -10027,7 +10211,7 @@ impl Serials {
                 }),
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create serial: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create serial", e))?;
         Ok(serial.into())
     }
 
@@ -10035,11 +10219,12 @@ impl Serials {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<SerialOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let serial = commerce
             .serials()
             .get(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get serial: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get serial", e))?;
         Ok(serial.map(|s| s.into()))
     }
 
@@ -10050,7 +10235,7 @@ impl Serials {
         let s = commerce
             .serials()
             .get_by_serial(&serial)
-            .map_err(|e| Error::from_reason(format!("Failed to get serial: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get serial", e))?;
         Ok(s.map(|s| s.into()))
     }
 
@@ -10061,7 +10246,7 @@ impl Serials {
         let serials = commerce
             .serials()
             .list(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list serials: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list serials", e))?;
         Ok(serials.into_iter().map(|s| s.into()).collect())
     }
 
@@ -10072,7 +10257,7 @@ impl Serials {
         let serials = commerce
             .serials()
             .get_available(&sku, limit)
-            .map_err(|e| Error::from_reason(format!("Failed to get available serials: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get available serials", e))?;
         Ok(serials.into_iter().map(|s| s.into()).collect())
     }
 
@@ -10085,14 +10270,14 @@ impl Serials {
         order_id: Option<String>,
     ) -> Result<SerialOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid serial UUID"))?;
+        let uuid = id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid serial UUID"))?;
         let cust_uuid =
-            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+            customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let order_uuid = order_id.and_then(|s| s.parse().ok());
         let serial = commerce
             .serials()
             .mark_sold(uuid, cust_uuid, order_uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to mark sold: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to mark sold", e))?;
         Ok(serial.into())
     }
 
@@ -10100,11 +10285,12 @@ impl Serials {
     #[napi]
     pub async fn quarantine(&self, id: String, reason: String) -> Result<SerialOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let serial = commerce
             .serials()
             .quarantine(uuid, &reason)
-            .map_err(|e| Error::from_reason(format!("Failed to quarantine serial: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to quarantine serial", e))?;
         Ok(serial.into())
     }
 
@@ -10115,7 +10301,7 @@ impl Serials {
         let available = commerce
             .serials()
             .is_available(&serial)
-            .map_err(|e| Error::from_reason(format!("Failed to check availability: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to check availability", e))?;
         Ok(available)
     }
 
@@ -10126,7 +10312,7 @@ impl Serials {
         let count = commerce
             .serials()
             .count(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count serials: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count serials", e))?;
         Ok(count as u32)
     }
 }
@@ -10263,7 +10449,7 @@ impl Warehouse {
                 timezone: input.timezone,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create warehouse: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create warehouse", e))?;
         Ok(warehouse.into())
     }
 
@@ -10274,7 +10460,7 @@ impl Warehouse {
         let warehouse = commerce
             .warehouse()
             .get_warehouse(id)
-            .map_err(|e| Error::from_reason(format!("Failed to get warehouse: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get warehouse", e))?;
         Ok(warehouse.map(|w| w.into()))
     }
 
@@ -10285,7 +10471,7 @@ impl Warehouse {
         let warehouse = commerce
             .warehouse()
             .get_warehouse_by_code(&code)
-            .map_err(|e| Error::from_reason(format!("Failed to get warehouse: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get warehouse", e))?;
         Ok(warehouse.map(|w| w.into()))
     }
 
@@ -10296,7 +10482,7 @@ impl Warehouse {
         let warehouses = commerce
             .warehouse()
             .list_warehouses(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list warehouses: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list warehouses", e))?;
         Ok(warehouses.into_iter().map(|w| w.into()).collect())
     }
 
@@ -10317,7 +10503,7 @@ impl Warehouse {
                 is_receivable: input.is_receivable,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create location: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create location", e))?;
         Ok(location.into())
     }
 
@@ -10328,7 +10514,7 @@ impl Warehouse {
         let location = commerce
             .warehouse()
             .get_location(id)
-            .map_err(|e| Error::from_reason(format!("Failed to get location: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get location", e))?;
         Ok(location.map(|l| l.into()))
     }
 
@@ -10340,7 +10526,7 @@ impl Warehouse {
         let locations = commerce
             .warehouse()
             .list_locations(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list locations: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list locations", e))?;
         Ok(locations.into_iter().map(|l| l.into()).collect())
     }
 
@@ -10355,7 +10541,7 @@ impl Warehouse {
         let locations = commerce
             .warehouse()
             .get_pickable_locations(warehouse_id, &sku)
-            .map_err(|e| Error::from_reason(format!("Failed to get pickable locations: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get pickable locations", e))?;
         Ok(locations.into_iter().map(|l| l.into()).collect())
     }
 
@@ -10366,7 +10552,7 @@ impl Warehouse {
         let total = commerce
             .warehouse()
             .get_total_available(warehouse_id, &sku)
-            .map_err(|e| Error::from_reason(format!("Failed to get total: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get total", e))?;
         to_f64_result(total, "warehouse total available")
     }
 
@@ -10377,7 +10563,7 @@ impl Warehouse {
         let count = commerce
             .warehouse()
             .count_warehouses(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count warehouses: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count warehouses", e))?;
         Ok(count as u32)
     }
 }
@@ -10464,7 +10650,7 @@ impl Receiving {
                 created_by: None,
                 items: vec![],
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create receipt: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create receipt", e))?;
         Ok(receipt.into())
     }
 
@@ -10472,11 +10658,12 @@ impl Receiving {
     #[napi]
     pub async fn get_receipt(&self, id: String) -> Result<Option<ReceiptOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let receipt = commerce
             .receiving()
             .get_receipt(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get receipt: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get receipt", e))?;
         Ok(receipt.map(|r| r.into()))
     }
 
@@ -10487,7 +10674,7 @@ impl Receiving {
         let receipt = commerce
             .receiving()
             .get_receipt_by_number(&number)
-            .map_err(|e| Error::from_reason(format!("Failed to get receipt: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get receipt", e))?;
         Ok(receipt.map(|r| r.into()))
     }
 
@@ -10498,7 +10685,7 @@ impl Receiving {
         let receipts = commerce
             .receiving()
             .list_receipts(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list receipts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list receipts", e))?;
         Ok(receipts.into_iter().map(|r| r.into()).collect())
     }
 
@@ -10506,11 +10693,12 @@ impl Receiving {
     #[napi]
     pub async fn start_receiving(&self, id: String) -> Result<ReceiptOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let receipt = commerce
             .receiving()
             .start_receiving(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to start receiving: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to start receiving", e))?;
         Ok(receipt.into())
     }
 
@@ -10518,11 +10706,12 @@ impl Receiving {
     #[napi]
     pub async fn complete_receiving(&self, id: String) -> Result<ReceiptOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let receipt = commerce
             .receiving()
             .complete_receiving(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to complete receiving: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to complete receiving", e))?;
         Ok(receipt.into())
     }
 
@@ -10530,11 +10719,12 @@ impl Receiving {
     #[napi]
     pub async fn cancel_receipt(&self, id: String) -> Result<ReceiptOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let receipt = commerce
             .receiving()
             .cancel_receipt(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to cancel receipt: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel receipt", e))?;
         Ok(receipt.into())
     }
 
@@ -10546,11 +10736,11 @@ impl Receiving {
         warehouse_id: i32,
     ) -> Result<ReceiptOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = po_id.parse().map_err(|_| Error::from_reason("Invalid PO UUID"))?;
+        let uuid = po_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid PO UUID"))?;
         let receipt = commerce
             .receiving()
             .create_receipt_from_po(uuid, warehouse_id)
-            .map_err(|e| Error::from_reason(format!("Failed to create receipt from PO: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create receipt from PO", e))?;
         Ok(receipt.into())
     }
 
@@ -10561,7 +10751,7 @@ impl Receiving {
         let count = commerce
             .receiving()
             .count_receipts(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count receipts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count receipts", e))?;
         Ok(count as u32)
     }
 }
@@ -10659,7 +10849,7 @@ impl Fulfillment {
                 notes: input.notes,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create wave: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create wave", e))?;
         Ok(wave.into())
     }
 
@@ -10667,11 +10857,12 @@ impl Fulfillment {
     #[napi]
     pub async fn get_wave(&self, id: String) -> Result<Option<WaveOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let wave = commerce
             .fulfillment()
             .get_wave(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get wave: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get wave", e))?;
         Ok(wave.map(|w| w.into()))
     }
 
@@ -10682,7 +10873,7 @@ impl Fulfillment {
         let waves = commerce
             .fulfillment()
             .list_waves(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list waves: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list waves", e))?;
         Ok(waves.into_iter().map(|w| w.into()).collect())
     }
 
@@ -10690,11 +10881,12 @@ impl Fulfillment {
     #[napi]
     pub async fn release_wave(&self, id: String) -> Result<WaveOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let wave = commerce
             .fulfillment()
             .release_wave(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to release wave: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to release wave", e))?;
         Ok(wave.into())
     }
 
@@ -10702,11 +10894,12 @@ impl Fulfillment {
     #[napi]
     pub async fn complete_wave(&self, id: String) -> Result<WaveOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let wave = commerce
             .fulfillment()
             .complete_wave(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to complete wave: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to complete wave", e))?;
         Ok(wave.into())
     }
 
@@ -10714,11 +10907,12 @@ impl Fulfillment {
     #[napi]
     pub async fn cancel_wave(&self, id: String) -> Result<WaveOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let wave = commerce
             .fulfillment()
             .cancel_wave(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to cancel wave: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel wave", e))?;
         Ok(wave.into())
     }
 
@@ -10726,11 +10920,12 @@ impl Fulfillment {
     #[napi]
     pub async fn get_pick(&self, id: String) -> Result<Option<PickTaskOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let pick = commerce
             .fulfillment()
             .get_pick(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get pick: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get pick", e))?;
         convert_optional_output(pick)
     }
 
@@ -10741,7 +10936,7 @@ impl Fulfillment {
         let picks = commerce
             .fulfillment()
             .list_picks(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list picks: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list picks", e))?;
         convert_outputs(picks)
     }
 
@@ -10749,11 +10944,12 @@ impl Fulfillment {
     #[napi]
     pub async fn assign_pick(&self, id: String, assigned_to: String) -> Result<PickTaskOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let pick = commerce
             .fulfillment()
             .assign_pick(uuid, &assigned_to)
-            .map_err(|e| Error::from_reason(format!("Failed to assign pick: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to assign pick", e))?;
         convert_output(pick)
     }
 
@@ -10761,11 +10957,12 @@ impl Fulfillment {
     #[napi]
     pub async fn start_pick(&self, id: String) -> Result<PickTaskOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let pick = commerce
             .fulfillment()
             .start_pick(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to start pick: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to start pick", e))?;
         convert_output(pick)
     }
 
@@ -10773,11 +10970,12 @@ impl Fulfillment {
     #[napi]
     pub async fn cancel_pick(&self, id: String) -> Result<PickTaskOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let pick = commerce
             .fulfillment()
             .cancel_pick(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to cancel pick: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel pick", e))?;
         convert_output(pick)
     }
 
@@ -10785,11 +10983,11 @@ impl Fulfillment {
     #[napi]
     pub async fn is_order_ready_to_pack(&self, order_id: String) -> Result<bool> {
         let commerce = self.commerce.lock().await;
-        let uuid = order_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = order_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let ready = commerce
             .fulfillment()
             .is_order_ready_to_pack(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to check: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to check", e))?;
         Ok(ready)
     }
 
@@ -10797,11 +10995,11 @@ impl Fulfillment {
     #[napi]
     pub async fn is_order_ready_to_ship(&self, order_id: String) -> Result<bool> {
         let commerce = self.commerce.lock().await;
-        let uuid = order_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = order_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let ready = commerce
             .fulfillment()
             .is_order_ready_to_ship(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to check: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to check", e))?;
         Ok(ready)
     }
 
@@ -10812,7 +11010,7 @@ impl Fulfillment {
         let count = commerce
             .fulfillment()
             .count_waves(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count waves: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count waves", e))?;
         Ok(count as u32)
     }
 }
@@ -10975,10 +11173,12 @@ impl AccountsPayable {
     #[napi]
     pub async fn create_bill(&self, input: CreateBillInput) -> Result<BillOutput> {
         let commerce = self.commerce.lock().await;
-        let supplier_id =
-            input.supplier_id.parse().map_err(|_| Error::from_reason("Invalid supplier UUID"))?;
+        let supplier_id = input
+            .supplier_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid supplier UUID"))?;
         let due_date = chrono::DateTime::parse_from_rfc3339(&input.due_date)
-            .map_err(|_| Error::from_reason("Invalid due date format"))?
+            .map_err(|_| coded(ErrCode::Validation, "Invalid due date format"))?
             .with_timezone(&chrono::Utc);
         let bill = commerce
             .accounts_payable()
@@ -10994,7 +11194,7 @@ impl AccountsPayable {
                 memo: input.notes,
                 items: vec![],
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create bill: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create bill", e))?;
         convert_output(bill)
     }
 
@@ -11002,11 +11202,12 @@ impl AccountsPayable {
     #[napi]
     pub async fn get_bill(&self, id: String) -> Result<Option<BillOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let bill = commerce
             .accounts_payable()
             .get_bill(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get bill: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get bill", e))?;
         convert_optional_output(bill)
     }
 
@@ -11017,7 +11218,7 @@ impl AccountsPayable {
         let bill = commerce
             .accounts_payable()
             .get_bill_by_number(&number)
-            .map_err(|e| Error::from_reason(format!("Failed to get bill: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get bill", e))?;
         convert_optional_output(bill)
     }
 
@@ -11028,7 +11229,7 @@ impl AccountsPayable {
         let bills = commerce
             .accounts_payable()
             .list_bills(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list bills: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list bills", e))?;
         convert_outputs(bills)
     }
 
@@ -11036,11 +11237,12 @@ impl AccountsPayable {
     #[napi]
     pub async fn approve_bill(&self, id: String) -> Result<BillOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let bill = commerce
             .accounts_payable()
             .approve_bill(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to approve bill: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to approve bill", e))?;
         convert_output(bill)
     }
 
@@ -11048,11 +11250,12 @@ impl AccountsPayable {
     #[napi]
     pub async fn cancel_bill(&self, id: String) -> Result<BillOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let bill = commerce
             .accounts_payable()
             .cancel_bill(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to cancel bill: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel bill", e))?;
         convert_output(bill)
     }
 
@@ -11063,7 +11266,7 @@ impl AccountsPayable {
         let bills = commerce
             .accounts_payable()
             .get_overdue_bills()
-            .map_err(|e| Error::from_reason(format!("Failed to get overdue bills: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get overdue bills", e))?;
         convert_outputs(bills)
     }
 
@@ -11074,7 +11277,7 @@ impl AccountsPayable {
         let bills = commerce
             .accounts_payable()
             .get_bills_due_soon(days)
-            .map_err(|e| Error::from_reason(format!("Failed to get bills: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get bills", e))?;
         convert_outputs(bills)
     }
 
@@ -11085,7 +11288,7 @@ impl AccountsPayable {
         let aging = commerce
             .accounts_payable()
             .get_aging_summary()
-            .map_err(|e| Error::from_reason(format!("Failed to get aging: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get aging", e))?;
         convert_output(aging)
     }
 
@@ -11096,7 +11299,7 @@ impl AccountsPayable {
         let total = commerce
             .accounts_payable()
             .get_total_outstanding()
-            .map_err(|e| Error::from_reason(format!("Failed to get total: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get total", e))?;
         to_f64_result(total, "accounts payable total outstanding")
     }
 
@@ -11107,7 +11310,7 @@ impl AccountsPayable {
         let count = commerce
             .accounts_payable()
             .count_bills(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to count bills: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count bills", e))?;
         Ok(count as u32)
     }
 
@@ -11122,17 +11325,18 @@ impl AccountsPayable {
         tolerance_percent: Option<String>,
     ) -> Result<ThreeWayMatchOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = bill_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            bill_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let tolerance = tolerance_percent
             .map(|s| {
                 s.parse::<Decimal>()
-                    .map_err(|_| Error::from_reason("Invalid tolerance_percent decimal"))
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid tolerance_percent decimal"))
             })
             .transpose()?;
         let result = commerce
             .accounts_payable()
             .three_way_match(uuid, tolerance)
-            .map_err(|e| Error::from_reason(format!("Failed to three-way match bill: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to three-way match bill", e))?;
         Ok(result.into())
     }
 }
@@ -11235,7 +11439,7 @@ impl AccountsReceivable {
         let aging = commerce
             .accounts_receivable()
             .get_aging_summary()
-            .map_err(|e| Error::from_reason(format!("Failed to get aging: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get aging", e))?;
         convert_output(aging)
     }
 
@@ -11246,7 +11450,7 @@ impl AccountsReceivable {
         let total = commerce
             .accounts_receivable()
             .get_total_outstanding()
-            .map_err(|e| Error::from_reason(format!("Failed to get total: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get total", e))?;
         to_f64_result(total, "accounts receivable total outstanding")
     }
 
@@ -11257,7 +11461,7 @@ impl AccountsReceivable {
         let dso = commerce
             .accounts_receivable()
             .get_dso(days)
-            .map_err(|e| Error::from_reason(format!("Failed to get DSO: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get DSO", e))?;
         to_f64_result(dso, "days sales outstanding")
     }
 
@@ -11268,8 +11472,10 @@ impl AccountsReceivable {
         input: CreateCreditMemoInput,
     ) -> Result<CreditMemoOutput> {
         let commerce = self.commerce.lock().await;
-        let customer_id =
-            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let customer_id = input
+            .customer_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let memo = commerce
             .accounts_receivable()
             .create_credit_memo(stateset_core::CreateCreditMemo {
@@ -11279,7 +11485,7 @@ impl AccountsReceivable {
                 amount: decimal_from_f64(input.amount, "credit memo amount")?,
                 notes: input.notes,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create credit memo: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create credit memo", e))?;
         convert_output(memo)
     }
 
@@ -11287,11 +11493,12 @@ impl AccountsReceivable {
     #[napi]
     pub async fn get_credit_memo(&self, id: String) -> Result<Option<CreditMemoOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let memo = commerce
             .accounts_receivable()
             .get_credit_memo(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get credit memo: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get credit memo", e))?;
         convert_optional_output(memo)
     }
 
@@ -11302,7 +11509,7 @@ impl AccountsReceivable {
         let memos = commerce
             .accounts_receivable()
             .list_credit_memos(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list credit memos: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list credit memos", e))?;
         convert_outputs(memos)
     }
 
@@ -11310,11 +11517,12 @@ impl AccountsReceivable {
     #[napi]
     pub async fn void_credit_memo(&self, id: String) -> Result<CreditMemoOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let memo = commerce
             .accounts_receivable()
             .void_credit_memo(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to void credit memo: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to void credit memo", e))?;
         convert_output(memo)
     }
 
@@ -11325,11 +11533,11 @@ impl AccountsReceivable {
         customer_id: String,
     ) -> Result<Vec<CreditMemoOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let memos = commerce
             .accounts_receivable()
             .get_unapplied_credits(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get credits: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get credits", e))?;
         convert_outputs(memos)
     }
 }
@@ -11405,7 +11613,7 @@ impl CostAccounting {
         let cost = commerce
             .cost_accounting()
             .get_item_cost(&sku)
-            .map_err(|e| Error::from_reason(format!("Failed to get cost: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get cost", e))?;
         convert_optional_output(cost)
     }
 
@@ -11433,7 +11641,7 @@ impl CostAccounting {
                 )?,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to set cost: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set cost", e))?;
         convert_output(cost)
     }
 
@@ -11444,7 +11652,7 @@ impl CostAccounting {
         let costs = commerce
             .cost_accounting()
             .list_item_costs(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list costs: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list costs", e))?;
         convert_outputs(costs)
     }
 
@@ -11464,7 +11672,7 @@ impl CostAccounting {
                 decimal_from_f64(quantity, "average cost quantity")?,
                 decimal_from_f64(unit_cost, "average cost unit cost")?,
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update cost: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update cost", e))?;
         convert_output(cost)
     }
 
@@ -11475,7 +11683,7 @@ impl CostAccounting {
         let total = commerce
             .cost_accounting()
             .get_total_inventory_value()
-            .map_err(|e| Error::from_reason(format!("Failed to get value: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get value", e))?;
         to_f64_result(total, "inventory value")
     }
 }
@@ -11557,8 +11765,10 @@ impl Credit {
         input: CreateCreditAccountInput,
     ) -> Result<CreditAccountOutput> {
         let commerce = self.commerce.lock().await;
-        let customer_id =
-            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let customer_id = input
+            .customer_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let account = commerce
             .credit()
             .create_credit_account(stateset_core::CreateCreditAccount {
@@ -11568,7 +11778,7 @@ impl Credit {
                 notes: input.notes,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create credit account: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create credit account", e))?;
         convert_output(account)
     }
 
@@ -11576,11 +11786,12 @@ impl Credit {
     #[napi]
     pub async fn get_credit_account(&self, id: String) -> Result<Option<CreditAccountOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let account = commerce
             .credit()
             .get_credit_account(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get account: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get account", e))?;
         convert_optional_output(account)
     }
 
@@ -11591,11 +11802,11 @@ impl Credit {
         customer_id: String,
     ) -> Result<Option<CreditAccountOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let account = commerce
             .credit()
             .get_credit_account_by_customer(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get account: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get account", e))?;
         convert_optional_output(account)
     }
 
@@ -11606,7 +11817,7 @@ impl Credit {
         let accounts = commerce
             .credit()
             .list_credit_accounts(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list accounts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list accounts", e))?;
         convert_outputs(accounts)
     }
 
@@ -11618,11 +11829,11 @@ impl Credit {
         order_amount: f64,
     ) -> Result<CreditCheckOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let result = commerce
             .credit()
             .check_credit(uuid, decimal_from_f64(order_amount, "order amount")?)
-            .map_err(|e| Error::from_reason(format!("Failed to check credit: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to check credit", e))?;
         convert_output(result)
     }
 
@@ -11635,11 +11846,11 @@ impl Credit {
         reason: String,
     ) -> Result<CreditAccountOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let account = commerce
             .credit()
             .adjust_credit_limit(uuid, decimal_from_f64(new_limit, "new credit limit")?, &reason)
-            .map_err(|e| Error::from_reason(format!("Failed to adjust limit: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to adjust limit", e))?;
         convert_output(account)
     }
 
@@ -11651,11 +11862,11 @@ impl Credit {
         reason: String,
     ) -> Result<CreditAccountOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let account = commerce
             .credit()
             .suspend_credit_account(uuid, &reason)
-            .map_err(|e| Error::from_reason(format!("Failed to suspend account: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to suspend account", e))?;
         convert_output(account)
     }
 
@@ -11666,11 +11877,11 @@ impl Credit {
         customer_id: String,
     ) -> Result<CreditAccountOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let account = commerce
             .credit()
             .reactivate_credit_account(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to reactivate account: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to reactivate account", e))?;
         convert_output(account)
     }
 
@@ -11681,7 +11892,7 @@ impl Credit {
         let accounts = commerce
             .credit()
             .get_over_limit_customers()
-            .map_err(|e| Error::from_reason(format!("Failed to get accounts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get accounts", e))?;
         convert_outputs(accounts)
     }
 }
@@ -11787,9 +11998,11 @@ impl Backorders {
     pub async fn create_backorder(&self, input: CreateBackorderInput) -> Result<BackorderOutput> {
         let commerce = self.commerce.lock().await;
         let order_id =
-            input.order_id.parse().map_err(|_| Error::from_reason("Invalid order UUID"))?;
-        let customer_id =
-            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+            input.order_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid order UUID"))?;
+        let customer_id = input
+            .customer_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let backorder = commerce
             .backorder()
             .create_backorder(stateset_core::CreateBackorder {
@@ -11804,7 +12017,7 @@ impl Backorders {
                 source_location_id: None,
                 notes: input.notes,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create backorder: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create backorder", e))?;
         convert_output(backorder)
     }
 
@@ -11812,11 +12025,12 @@ impl Backorders {
     #[napi]
     pub async fn get_backorder(&self, id: String) -> Result<Option<BackorderOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let backorder = commerce
             .backorder()
             .get_backorder(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get backorder: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get backorder", e))?;
         convert_optional_output(backorder)
     }
 
@@ -11827,7 +12041,7 @@ impl Backorders {
         let backorder = commerce
             .backorder()
             .get_backorder_by_number(&number)
-            .map_err(|e| Error::from_reason(format!("Failed to get backorder: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get backorder", e))?;
         convert_optional_output(backorder)
     }
 
@@ -11838,7 +12052,7 @@ impl Backorders {
         let backorders = commerce
             .backorder()
             .list_backorders(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list backorders: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list backorders", e))?;
         convert_outputs(backorders)
     }
 
@@ -11846,11 +12060,12 @@ impl Backorders {
     #[napi]
     pub async fn cancel_backorder(&self, id: String) -> Result<BackorderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let backorder = commerce
             .backorder()
             .cancel_backorder(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to cancel backorder: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel backorder", e))?;
         convert_output(backorder)
     }
 
@@ -11858,11 +12073,11 @@ impl Backorders {
     #[napi]
     pub async fn get_backorders_for_order(&self, order_id: String) -> Result<Vec<BackorderOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = order_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = order_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let backorders = commerce
             .backorder()
             .get_backorders_for_order(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get backorders: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get backorders", e))?;
         convert_outputs(backorders)
     }
 
@@ -11873,7 +12088,7 @@ impl Backorders {
         let backorders = commerce
             .backorder()
             .get_backorders_for_sku(&sku)
-            .map_err(|e| Error::from_reason(format!("Failed to get backorders: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get backorders", e))?;
         convert_outputs(backorders)
     }
 
@@ -11884,7 +12099,7 @@ impl Backorders {
         let backorders = commerce
             .backorder()
             .get_overdue_backorders()
-            .map_err(|e| Error::from_reason(format!("Failed to get overdue backorders: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get overdue backorders", e))?;
         convert_outputs(backorders)
     }
 
@@ -11895,7 +12110,7 @@ impl Backorders {
         let summary = commerce
             .backorder()
             .get_summary()
-            .map_err(|e| Error::from_reason(format!("Failed to get summary: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get summary", e))?;
         convert_output(summary)
     }
 
@@ -11906,7 +12121,7 @@ impl Backorders {
         let count = commerce
             .backorder()
             .count_pending()
-            .map_err(|e| Error::from_reason(format!("Failed to count backorders: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count backorders", e))?;
         Ok(count as u32)
     }
 }
@@ -12153,7 +12368,7 @@ impl GeneralLedger {
                 is_posting: Some(true),
                 currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create account: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create account", e))?;
         convert_output(account)
     }
 
@@ -12161,11 +12376,12 @@ impl GeneralLedger {
     #[napi]
     pub async fn get_account(&self, id: String) -> Result<Option<GlAccountOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let account = commerce
             .general_ledger()
             .get_account(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get account: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get account", e))?;
         convert_optional_output(account)
     }
 
@@ -12179,7 +12395,7 @@ impl GeneralLedger {
         let account = commerce
             .general_ledger()
             .get_account_by_number(&account_number)
-            .map_err(|e| Error::from_reason(format!("Failed to get account: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get account", e))?;
         convert_optional_output(account)
     }
 
@@ -12190,7 +12406,7 @@ impl GeneralLedger {
         let accounts = commerce
             .general_ledger()
             .list_accounts(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list accounts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list accounts", e))?;
         convert_outputs(accounts)
     }
 
@@ -12201,7 +12417,7 @@ impl GeneralLedger {
         let accounts = commerce
             .general_ledger()
             .initialize_chart_of_accounts()
-            .map_err(|e| Error::from_reason(format!("Failed to initialize chart: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize chart", e))?;
         convert_outputs(accounts)
     }
 
@@ -12209,11 +12425,12 @@ impl GeneralLedger {
     #[napi]
     pub async fn get_journal_entry(&self, id: String) -> Result<Option<JournalEntryOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let entry = commerce
             .general_ledger()
             .get_journal_entry(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get entry: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get entry", e))?;
         Ok(entry.map(|e| e.into()))
     }
 
@@ -12224,7 +12441,7 @@ impl GeneralLedger {
         let entries = commerce
             .general_ledger()
             .list_journal_entries(Default::default())
-            .map_err(|e| Error::from_reason(format!("Failed to list entries: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list entries", e))?;
         Ok(entries.into_iter().map(|e| e.into()).collect())
     }
 
@@ -12236,11 +12453,12 @@ impl GeneralLedger {
         posted_by: String,
     ) -> Result<JournalEntryOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let entry = commerce
             .general_ledger()
             .post_journal_entry(uuid, &posted_by)
-            .map_err(|e| Error::from_reason(format!("Failed to post entry: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to post entry", e))?;
         Ok(entry.into())
     }
 
@@ -12248,11 +12466,12 @@ impl GeneralLedger {
     #[napi]
     pub async fn void_journal_entry(&self, id: String) -> Result<JournalEntryOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let entry = commerce
             .general_ledger()
             .void_journal_entry(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to void entry: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to void entry", e))?;
         Ok(entry.into())
     }
 
@@ -12261,11 +12480,11 @@ impl GeneralLedger {
     pub async fn get_trial_balance(&self, as_of_date: String) -> Result<TrialBalanceOutput> {
         let commerce = self.commerce.lock().await;
         let date = chrono::NaiveDate::parse_from_str(&as_of_date, "%Y-%m-%d")
-            .map_err(|_| Error::from_reason("Invalid date format"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid date format"))?;
         let balance = commerce
             .general_ledger()
             .get_trial_balance(date)
-            .map_err(|e| Error::from_reason(format!("Failed to get trial balance: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get trial balance", e))?;
         convert_output(balance)
     }
 
@@ -12274,11 +12493,11 @@ impl GeneralLedger {
     pub async fn get_balance_sheet(&self, as_of_date: String) -> Result<BalanceSheetOutput> {
         let commerce = self.commerce.lock().await;
         let date = chrono::NaiveDate::parse_from_str(&as_of_date, "%Y-%m-%d")
-            .map_err(|_| Error::from_reason("Invalid date format"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid date format"))?;
         let sheet = commerce
             .general_ledger()
             .get_balance_sheet(date)
-            .map_err(|e| Error::from_reason(format!("Failed to get balance sheet: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get balance sheet", e))?;
         convert_output(sheet)
     }
 
@@ -12291,13 +12510,13 @@ impl GeneralLedger {
     ) -> Result<IncomeStatementOutput> {
         let commerce = self.commerce.lock().await;
         let start = chrono::NaiveDate::parse_from_str(&start_date, "%Y-%m-%d")
-            .map_err(|_| Error::from_reason("Invalid start date format"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid start date format"))?;
         let end = chrono::NaiveDate::parse_from_str(&end_date, "%Y-%m-%d")
-            .map_err(|_| Error::from_reason("Invalid end date format"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid end date format"))?;
         let statement = commerce
             .general_ledger()
             .get_income_statement(start, end)
-            .map_err(|e| Error::from_reason(format!("Failed to get income statement: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get income statement", e))?;
         convert_output(statement)
     }
 
@@ -12309,14 +12528,14 @@ impl GeneralLedger {
         as_of_date: Option<String>,
     ) -> Result<f64> {
         let commerce = self.commerce.lock().await;
-        let uuid = account_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = account_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let date = as_of_date.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok());
         let balance = commerce
             .general_ledger()
             .get_account_balance(uuid, date)
-            .map_err(|e| Error::from_reason(format!("Failed to get balance: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get balance", e))?;
         optional_to_f64_result(balance, "account balance")?
-            .ok_or_else(|| Error::from_reason("Account balance unavailable"))
+            .ok_or_else(|| coded(ErrCode::NotFound, "Account balance unavailable"))
     }
 
     /// Revalue foreign-currency account balances at the as-of exchange rate.
@@ -12331,17 +12550,17 @@ impl GeneralLedger {
     ) -> Result<RevaluationOutput> {
         let commerce = self.commerce.lock().await;
         let date = chrono::NaiveDate::parse_from_str(&as_of_date, "%Y-%m-%d")
-            .map_err(|_| Error::from_reason("Invalid date format"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid date format"))?;
         let base = base_currency
             .map(|s| {
                 s.parse::<stateset_core::Currency>()
-                    .map_err(|_| Error::from_reason("Invalid base currency code"))
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid base currency code"))
             })
             .transpose()?;
         let result = commerce
             .general_ledger()
             .revalue(date, base)
-            .map_err(|e| Error::from_reason(format!("Failed to revalue: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to revalue", e))?;
         Ok(result.into())
     }
 
@@ -12356,11 +12575,11 @@ impl GeneralLedger {
                 fiscal_year: input.fiscal_year,
                 period_number: input.period_number,
                 start_date: chrono::NaiveDate::parse_from_str(&input.start_date, "%Y-%m-%d")
-                    .map_err(|_| Error::from_reason("Invalid start date format"))?,
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid start date format"))?,
                 end_date: chrono::NaiveDate::parse_from_str(&input.end_date, "%Y-%m-%d")
-                    .map_err(|_| Error::from_reason("Invalid end date format"))?,
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid end date format"))?,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create period: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create period", e))?;
         Ok(period.into())
     }
 
@@ -12368,11 +12587,12 @@ impl GeneralLedger {
     #[napi]
     pub async fn open_period(&self, id: String) -> Result<GlPeriodOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let period = commerce
             .general_ledger()
             .open_period(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to open period: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to open period", e))?;
         Ok(period.into())
     }
 
@@ -12389,7 +12609,7 @@ impl GeneralLedger {
             .as_deref()
             .map(|s| {
                 s.parse::<stateset_core::PeriodStatus>()
-                    .map_err(|_| Error::from_reason(format!("Invalid period status: {}", s)))
+                    .map_err(|_| coded(ErrCode::Validation, format!("Invalid period status: {s}")))
             })
             .transpose()?;
         let periods = commerce
@@ -12400,7 +12620,7 @@ impl GeneralLedger {
                 limit: filter.limit,
                 offset: filter.offset,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list periods: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list periods", e))?;
         Ok(periods.into_iter().map(Into::into).collect())
     }
 
@@ -12417,7 +12637,8 @@ impl GeneralLedger {
         options: Option<CloseMonthOptionsInput>,
     ) -> Result<CloseMonthReportOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = period_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            period_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let options = options.unwrap_or_default();
         let report = commerce
             .general_ledger()
@@ -12432,7 +12653,7 @@ impl GeneralLedger {
                     closed_by: options.closed_by,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to close month: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to close month", e))?;
         Ok(report.into())
     }
 }
@@ -12962,56 +13183,56 @@ impl From<stateset_core::X402CreditTransaction> for X402CreditTransactionOutput 
 
 fn parse_x402_asset(s: &str) -> Result<stateset_core::X402Asset> {
     s.parse::<stateset_core::X402Asset>()
-        .map_err(|e| Error::from_reason(format!("Invalid x402 asset: {}", e)))
+        .map_err(|e| wrap(ErrCode::Validation, "Invalid x402 asset", e))
 }
 
 fn parse_x402_network(s: &str) -> Result<stateset_core::X402Network> {
     s.parse::<stateset_core::X402Network>()
-        .map_err(|e| Error::from_reason(format!("Invalid x402 network: {}", e)))
+        .map_err(|e| wrap(ErrCode::Validation, "Invalid x402 network", e))
 }
 
 fn parse_x402_status(s: &str) -> Result<stateset_core::X402IntentStatus> {
     s.parse::<stateset_core::X402IntentStatus>()
-        .map_err(|e| Error::from_reason(format!("Invalid x402 status: {}", e)))
+        .map_err(|e| wrap(ErrCode::Validation, "Invalid x402 status", e))
 }
 
 fn parse_x402_signature_scheme(s: &str) -> Result<stateset_core::X402SignatureScheme> {
     s.parse::<stateset_core::X402SignatureScheme>()
-        .map_err(|e| Error::from_reason(format!("Invalid x402 signature scheme: {}", e)))
+        .map_err(|e| wrap(ErrCode::Validation, "Invalid x402 signature scheme", e))
 }
 
 fn parse_trust_level(s: &str) -> Result<stateset_core::TrustLevel> {
     s.parse::<stateset_core::TrustLevel>()
-        .map_err(|e| Error::from_reason(format!("Invalid trust level: {}", e)))
+        .map_err(|e| wrap(ErrCode::Validation, "Invalid trust level", e))
 }
 
 fn parse_a2a_skill(s: &str) -> Result<stateset_core::A2ASkill> {
     s.parse::<stateset_core::A2ASkill>()
-        .map_err(|e| Error::from_reason(format!("Invalid A2A skill: {}", e)))
+        .map_err(|e| wrap(ErrCode::Validation, "Invalid A2A skill", e))
 }
 
 fn parse_credit_direction(s: &str) -> Result<stateset_core::X402CreditDirection> {
     s.parse::<stateset_core::X402CreditDirection>()
-        .map_err(|e| Error::from_reason(format!("Invalid credit direction: {}", e)))
+        .map_err(|e| wrap(ErrCode::Validation, "Invalid credit direction", e))
 }
 
 fn parse_uuid_opt(value: Option<String>) -> Result<Option<uuid::Uuid>> {
     match value {
-        Some(id) => Ok(Some(id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?)),
+        Some(id) => Ok(Some(id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?)),
         None => Ok(None),
     }
 }
 
 fn parse_amount(value: i64) -> Result<u64> {
     if value < 0 {
-        return Err(Error::from_reason("Amount must be >= 0"));
+        return Err(coded(ErrCode::Validation, "Amount must be >= 0"));
     }
     Ok(value as u64)
 }
 
 fn parse_u64_field(field: &str, value: i64) -> Result<u64> {
     if value < 0 {
-        return Err(Error::from_reason(format!("{} must be >= 0", field)));
+        return Err(coded(ErrCode::Validation, format!("{} must be >= 0", field)));
     }
     Ok(value as u64)
 }
@@ -13026,46 +13247,48 @@ fn parse_u64_opt(field: &str, value: Option<i64>) -> Result<Option<u64>> {
 /// Compute the sequencer-compatible x402 signing hash for a payment intent shape.
 #[napi]
 pub fn ves_x402_compute_signing_hash(input: X402SigningHashInput) -> Result<Buffer> {
-    use sha2::{Digest, Sha256};
+    guard(|| {
+        use sha2::{Digest, Sha256};
 
-    let amount = parse_amount(input.amount)?;
-    let chain_id = parse_u64_field("chain_id", input.chain_id)?;
-    let valid_until = parse_u64_field("valid_until", input.valid_until)?;
-    let nonce = parse_u64_field("nonce", input.nonce)?;
-    let asset = parse_x402_asset(&input.asset)?;
-    let network = parse_x402_network(&input.network)?;
+        let amount = parse_amount(input.amount)?;
+        let chain_id = parse_u64_field("chain_id", input.chain_id)?;
+        let valid_until = parse_u64_field("valid_until", input.valid_until)?;
+        let nonce = parse_u64_field("nonce", input.nonce)?;
+        let asset = parse_x402_asset(&input.asset)?;
+        let network = parse_x402_network(&input.network)?;
 
-    let mut hasher = Sha256::new();
-    hasher.update(stateset_core::X402_DOMAIN_SEPARATOR.as_bytes());
-    hasher.update(input.payer_address.as_bytes());
-    hasher.update(input.payee_address.as_bytes());
-    hasher.update(amount.to_be_bytes());
-    hasher.update(format!("{:?}", asset).to_lowercase().as_bytes());
-    hasher.update(network.to_string().as_bytes());
-    hasher.update(chain_id.to_be_bytes());
-    hasher.update(valid_until.to_be_bytes());
-    hasher.update(nonce.to_be_bytes());
+        let mut hasher = Sha256::new();
+        hasher.update(stateset_core::X402_DOMAIN_SEPARATOR.as_bytes());
+        hasher.update(input.payer_address.as_bytes());
+        hasher.update(input.payee_address.as_bytes());
+        hasher.update(amount.to_be_bytes());
+        hasher.update(format!("{:?}", asset).to_lowercase().as_bytes());
+        hasher.update(network.to_string().as_bytes());
+        hasher.update(chain_id.to_be_bytes());
+        hasher.update(valid_until.to_be_bytes());
+        hasher.update(nonce.to_be_bytes());
 
-    match input.resource_uri {
-        Some(uri) => {
-            hasher.update([1u8]);
-            hasher.update((uri.len() as u64).to_be_bytes());
-            hasher.update(uri.as_bytes());
+        match input.resource_uri {
+            Some(uri) => {
+                hasher.update([1u8]);
+                hasher.update((uri.len() as u64).to_be_bytes());
+                hasher.update(uri.as_bytes());
+            }
+            None => hasher.update([0u8]),
         }
-        None => hasher.update([0u8]),
-    }
 
-    match input.resource_method {
-        Some(method) => {
-            hasher.update([1u8]);
-            hasher.update((method.len() as u64).to_be_bytes());
-            hasher.update(method.as_bytes());
+        match input.resource_method {
+            Some(method) => {
+                hasher.update([1u8]);
+                hasher.update((method.len() as u64).to_be_bytes());
+                hasher.update(method.as_bytes());
+            }
+            None => hasher.update([0u8]),
         }
-        None => hasher.update([0u8]),
-    }
 
-    let result: [u8; 32] = hasher.finalize().into();
-    Ok(Buffer::from(result.as_slice()))
+        let result: [u8; 32] = hasher.finalize().into();
+        Ok(Buffer::from(result.as_slice()))
+    })
 }
 
 #[napi]
@@ -13113,7 +13336,7 @@ impl X402 {
                 idempotency_key: input.idempotency_key,
                 metadata: input.metadata,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create x402 intent: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create x402 intent", e))?;
 
         Ok(intent.into())
     }
@@ -13125,7 +13348,7 @@ impl X402 {
         input: X402SignIntentInput,
     ) -> Result<X402IntentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = intent_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = intent_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let signed = commerce
             .x402()
             .sign_intent(
@@ -13151,7 +13374,7 @@ impl X402 {
                     }),
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to sign x402 intent: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to sign x402 intent", e))?;
 
         Ok(signed.into())
     }
@@ -13159,11 +13382,12 @@ impl X402 {
     #[napi]
     pub async fn get_intent(&self, id: String) -> Result<Option<X402IntentOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let intent = commerce
             .x402()
             .get_intent(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get x402 intent: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get x402 intent", e))?;
         Ok(intent.map(|i| i.into()))
     }
 
@@ -13196,7 +13420,7 @@ impl X402 {
                 offset: filter.offset,
                 ..Default::default()
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list x402 intents: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list x402 intents", e))?;
 
         Ok(intents.into_iter().map(|i| i.into()).collect())
     }
@@ -13209,12 +13433,12 @@ impl X402 {
         block_number: i64,
     ) -> Result<X402IntentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = intent_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = intent_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let block_number = parse_u64_field("block_number", block_number)?;
         let intent = commerce
             .x402()
             .mark_settled(uuid, &tx_hash, block_number)
-            .map_err(|e| Error::from_reason(format!("Failed to mark settled: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to mark settled", e))?;
         Ok(intent.into())
     }
 
@@ -13224,8 +13448,9 @@ impl X402 {
         let nonce = commerce
             .x402()
             .get_next_nonce(&payer_address)
-            .map_err(|e| Error::from_reason(format!("Failed to get nonce: {}", e)))?;
-        i64::try_from(nonce).map_err(|_| Error::from_reason("Nonce too large to fit in i64"))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get nonce", e))?;
+        i64::try_from(nonce)
+            .map_err(|_| coded(ErrCode::Validation, "Nonce too large to fit in i64"))
     }
 
     #[napi]
@@ -13295,7 +13520,7 @@ impl X402 {
                 requires_kyc: input.requires_kyc,
                 metadata: input.metadata,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to register agent: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to register agent", e))?;
 
         Ok(card.into())
     }
@@ -13329,7 +13554,7 @@ impl X402 {
         let agents = commerce
             .x402()
             .discover_agents(network, asset, skill, trust_level)
-            .map_err(|e| Error::from_reason(format!("Failed to discover agents: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to discover agents", e))?;
 
         Ok(agents.into_iter().map(|a| a.into()).collect())
     }
@@ -13337,11 +13562,12 @@ impl X402 {
     #[napi]
     pub async fn get_agent(&self, id: String) -> Result<Option<X402AgentCardOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let agent = commerce
             .x402()
             .get_agent(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get agent: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get agent", e))?;
         Ok(agent.map(|a| a.into()))
     }
 
@@ -13354,18 +13580,19 @@ impl X402 {
         let agent = commerce
             .x402()
             .get_agent_by_wallet(&wallet_address)
-            .map_err(|e| Error::from_reason(format!("Failed to get agent: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get agent", e))?;
         Ok(agent.map(|a| a.into()))
     }
 
     #[napi]
     pub async fn verify_agent(&self, id: String) -> Result<X402AgentCardOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let agent = commerce
             .x402()
             .verify_agent(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to verify agent: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to verify agent", e))?;
         Ok(agent.into())
     }
 
@@ -13404,7 +13631,7 @@ impl X402 {
                 limit: filter.limit,
                 offset: filter.offset,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list agents: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list agents", e))?;
 
         Ok(agents.into_iter().map(|a| a.into()).collect())
     }
@@ -13423,7 +13650,7 @@ impl X402 {
         let balance = commerce
             .x402()
             .get_credit_balance(&input.payer_address, asset, network)
-            .map_err(|e| Error::from_reason(format!("Failed to get credit balance: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get credit balance", e))?;
         Ok(balance as i64)
     }
 
@@ -13444,7 +13671,7 @@ impl X402 {
         let account = commerce
             .x402()
             .get_credit_account(&input.payer_address, asset, network)
-            .map_err(|e| Error::from_reason(format!("Failed to get credit account: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get credit account", e))?;
         Ok(account.map(|a| a.into()))
     }
 
@@ -13474,7 +13701,7 @@ impl X402 {
                 input.reference_id,
                 input.metadata,
             )
-            .map_err(|e| Error::from_reason(format!("Failed to credit account: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to credit account", e))?;
         Ok(txn.into())
     }
 
@@ -13504,7 +13731,7 @@ impl X402 {
                 input.reference_id,
                 input.metadata,
             )
-            .map_err(|e| Error::from_reason(format!("Failed to debit account: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to debit account", e))?;
         Ok(txn.into())
     }
 
@@ -13533,9 +13760,7 @@ impl X402 {
                 limit: filter.limit,
                 offset: filter.offset,
             })
-            .map_err(|e| {
-                Error::from_reason(format!("Failed to list credit transactions: {}", e))
-            })?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list credit transactions", e))?;
 
         Ok(transactions.into_iter().map(|t| t.into()).collect())
     }
@@ -13615,14 +13840,14 @@ impl VectorSearch {
     ) -> Result<Vec<ProductSearchResultOutput>> {
         let vector = {
             let commerce = self.commerce.lock().await;
-            commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?
+            commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?
         };
 
         let results = vector
             .search_products(&query, limit.unwrap_or(10) as usize)
-            .map_err(|e| Error::from_reason(format!("Failed to search products: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to search products", e))?;
 
         Ok(results
             .into_iter()
@@ -13643,14 +13868,14 @@ impl VectorSearch {
     ) -> Result<Vec<CustomerSearchResultOutput>> {
         let vector = {
             let commerce = self.commerce.lock().await;
-            commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?
+            commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?
         };
 
         let results = vector
             .search_customers(&query, limit.unwrap_or(10) as usize)
-            .map_err(|e| Error::from_reason(format!("Failed to search customers: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to search customers", e))?;
 
         Ok(results
             .into_iter()
@@ -13671,14 +13896,14 @@ impl VectorSearch {
     ) -> Result<Vec<OrderSearchResultOutput>> {
         let vector = {
             let commerce = self.commerce.lock().await;
-            commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?
+            commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?
         };
 
         let results = vector
             .search_orders(&query, limit.unwrap_or(10) as usize)
-            .map_err(|e| Error::from_reason(format!("Failed to search orders: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to search orders", e))?;
 
         results
             .into_iter()
@@ -13701,14 +13926,14 @@ impl VectorSearch {
     ) -> Result<Vec<InventorySearchResultOutput>> {
         let vector = {
             let commerce = self.commerce.lock().await;
-            commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?
+            commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?
         };
 
         let results = vector
             .search_inventory(&query, limit.unwrap_or(10) as usize)
-            .map_err(|e| Error::from_reason(format!("Failed to search inventory: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to search inventory", e))?;
 
         Ok(results
             .into_iter()
@@ -13724,26 +13949,26 @@ impl VectorSearch {
     #[napi]
     pub async fn index_product(&self, product_id: String) -> Result<()> {
         let uuid: uuid::Uuid =
-            product_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+            product_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let (product, vector) = {
             let commerce = self.commerce.lock().await;
             let product = commerce
                 .products()
                 .get(uuid.into())
-                .map_err(|e| Error::from_reason(format!("Failed to get product: {}", e)))?
-                .ok_or_else(|| Error::from_reason("Product not found"))?;
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to get product", e))?
+                .ok_or_else(|| coded(ErrCode::NotFound, "Product not found"))?;
 
-            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?;
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?;
 
             (product, vector)
         };
 
         vector
             .index_product(&product)
-            .map_err(|e| Error::from_reason(format!("Failed to index product: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to index product", e))?;
 
         Ok(())
     }
@@ -13752,26 +13977,26 @@ impl VectorSearch {
     #[napi]
     pub async fn index_customer(&self, customer_id: String) -> Result<()> {
         let uuid: uuid::Uuid =
-            customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+            customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let (customer, vector) = {
             let commerce = self.commerce.lock().await;
             let customer = commerce
                 .customers()
                 .get(uuid.into())
-                .map_err(|e| Error::from_reason(format!("Failed to get customer: {}", e)))?
-                .ok_or_else(|| Error::from_reason("Customer not found"))?;
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to get customer", e))?
+                .ok_or_else(|| coded(ErrCode::NotFound, "Customer not found"))?;
 
-            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?;
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?;
 
             (customer, vector)
         };
 
         vector
             .index_customer(&customer)
-            .map_err(|e| Error::from_reason(format!("Failed to index customer: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to index customer", e))?;
 
         Ok(())
     }
@@ -13779,26 +14004,27 @@ impl VectorSearch {
     /// Index an order for vector search
     #[napi]
     pub async fn index_order(&self, order_id: String) -> Result<()> {
-        let uuid: uuid::Uuid = order_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            order_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let (order, vector) = {
             let commerce = self.commerce.lock().await;
             let order = commerce
                 .orders()
                 .get(uuid.into())
-                .map_err(|e| Error::from_reason(format!("Failed to get order: {}", e)))?
-                .ok_or_else(|| Error::from_reason("Order not found"))?;
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to get order", e))?
+                .ok_or_else(|| coded(ErrCode::NotFound, "Order not found"))?;
 
-            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?;
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?;
 
             (order, vector)
         };
 
         vector
             .index_order(&order)
-            .map_err(|e| Error::from_reason(format!("Failed to index order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to index order", e))?;
 
         Ok(())
     }
@@ -13806,27 +14032,28 @@ impl VectorSearch {
     /// Index an inventory item for vector search
     #[napi]
     pub async fn index_inventory_item(&self, item_id: String) -> Result<()> {
-        let item_id =
-            item_id.parse::<i64>().map_err(|_| Error::from_reason("Invalid inventory item ID"))?;
+        let item_id = item_id
+            .parse::<i64>()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid inventory item ID"))?;
 
         let (item, vector) = {
             let commerce = self.commerce.lock().await;
             let item = commerce
                 .inventory()
                 .get_item(item_id)
-                .map_err(|e| Error::from_reason(format!("Failed to get inventory item: {}", e)))?
-                .ok_or_else(|| Error::from_reason("Inventory item not found"))?;
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to get inventory item", e))?
+                .ok_or_else(|| coded(ErrCode::NotFound, "Inventory item not found"))?;
 
-            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?;
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?;
 
             (item, vector)
         };
 
         vector
             .index_inventory_item(&item)
-            .map_err(|e| Error::from_reason(format!("Failed to index inventory item: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to index inventory item", e))?;
 
         Ok(())
     }
@@ -13839,18 +14066,18 @@ impl VectorSearch {
             let products = commerce
                 .products()
                 .list(Default::default())
-                .map_err(|e| Error::from_reason(format!("Failed to list products: {}", e)))?;
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to list products", e))?;
 
-            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?;
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?;
 
             (products, vector)
         };
 
         let count = vector
             .index_products(&products)
-            .map_err(|e| Error::from_reason(format!("Failed to index products: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to index products", e))?;
 
         Ok(count as u32)
     }
@@ -13863,18 +14090,18 @@ impl VectorSearch {
             let customers = commerce
                 .customers()
                 .list(Default::default())
-                .map_err(|e| Error::from_reason(format!("Failed to list customers: {}", e)))?;
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to list customers", e))?;
 
-            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?;
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?;
 
             (customers, vector)
         };
 
         let count = vector
             .index_customers(&customers)
-            .map_err(|e| Error::from_reason(format!("Failed to index customers: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to index customers", e))?;
 
         Ok(count as u32)
     }
@@ -13887,18 +14114,18 @@ impl VectorSearch {
             let orders = commerce
                 .orders()
                 .list(Default::default())
-                .map_err(|e| Error::from_reason(format!("Failed to list orders: {}", e)))?;
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to list orders", e))?;
 
-            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?;
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?;
 
             (orders, vector)
         };
 
         let count = vector
             .index_orders(&orders)
-            .map_err(|e| Error::from_reason(format!("Failed to index orders: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to index orders", e))?;
 
         Ok(count as u32)
     }
@@ -13908,20 +14135,21 @@ impl VectorSearch {
     pub async fn index_all_inventory(&self) -> Result<u32> {
         let (items, vector) = {
             let commerce = self.commerce.lock().await;
-            let items = commerce.inventory().list(Default::default()).map_err(|e| {
-                Error::from_reason(format!("Failed to list inventory items: {}", e))
-            })?;
+            let items = commerce
+                .inventory()
+                .list(Default::default())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to list inventory items", e))?;
 
-            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?;
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?;
 
             (items, vector)
         };
 
         let count = vector
             .index_inventory_items(&items)
-            .map_err(|e| Error::from_reason(format!("Failed to index inventory items: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to index inventory items", e))?;
 
         Ok(count as u32)
     }
@@ -13931,14 +14159,13 @@ impl VectorSearch {
     pub async fn stats(&self) -> Result<EmbeddingStatsOutput> {
         let vector = {
             let commerce = self.commerce.lock().await;
-            commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?
+            commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?
         };
 
-        let stats = vector
-            .stats()
-            .map_err(|e| Error::from_reason(format!("Failed to get stats: {}", e)))?;
+        let stats =
+            vector.stats().map_err(|e| wrap(ErrCode::Internal, "Failed to get stats", e))?;
 
         Ok(EmbeddingStatsOutput {
             product_count: *stats.counts.get(&stateset_core::EntityType::Product).unwrap_or(&0)
@@ -13960,17 +14187,17 @@ impl VectorSearch {
     pub async fn clear(&self, entity_type: String) -> Result<u32> {
         let vector = {
             let commerce = self.commerce.lock().await;
-            commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?
+            commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?
         };
 
         let et: stateset_core::EntityType =
-            entity_type.parse().map_err(|e: String| Error::from_reason(e))?;
+            entity_type.parse().map_err(|e: String| coded(ErrCode::Validation, e))?;
 
         let count = vector
             .clear(et)
-            .map_err(|e| Error::from_reason(format!("Failed to clear embeddings: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to clear embeddings", e))?;
 
         Ok(count as u32)
     }
@@ -13980,14 +14207,14 @@ impl VectorSearch {
     pub async fn clear_all(&self) -> Result<u32> {
         let vector = {
             let commerce = self.commerce.lock().await;
-            commerce.vector(self.api_key.clone()).map_err(|e| {
-                Error::from_reason(format!("Failed to initialize vector search: {}", e))
-            })?
+            commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize vector search", e))?
         };
 
         let count = vector
             .clear_all()
-            .map_err(|e| Error::from_reason(format!("Failed to clear all embeddings: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to clear all embeddings", e))?;
 
         Ok(count as u32)
     }
@@ -14059,10 +14286,12 @@ pub struct HybridEncryptionResultOutput {
 /// Canonicalize a JSON string per RFC 8785 JCS
 #[napi]
 pub fn jcs_canonicalize(json_str: String) -> Result<String> {
-    let value: serde_json::Value = serde_json::from_str(&json_str)
-        .map_err(|e| Error::from_reason(format!("Invalid JSON: {}", e)))?;
-    stateset_crypto::canonicalize::canonicalize_json(&value)
-        .map_err(|e| Error::from_reason(format!("JCS error: {}", e)))
+    guard(|| {
+        let value: serde_json::Value = serde_json::from_str(&json_str)
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid JSON", e))?;
+        stateset_crypto::canonicalize::canonicalize_json(&value)
+            .map_err(|e| wrap(ErrCode::Internal, "JCS error", e))
+    })
 }
 
 /// Compute domain-separated SHA-256 hash
@@ -14072,27 +14301,29 @@ pub fn jcs_canonicalize(json_str: String) -> Result<String> {
 /// data: hex-encoded data to hash (after the domain prefix)
 #[napi]
 pub fn domain_hash(domain: String, data: Buffer) -> Result<Buffer> {
-    use sha2::{Digest, Sha256};
+    guard(|| {
+        use sha2::{Digest, Sha256};
 
-    let prefix: &[u8] = match domain.as_str() {
-        "PAYLOAD_PLAIN" => stateset_crypto::domain::PAYLOAD_PLAIN,
-        "PAYLOAD_AAD" => stateset_crypto::domain::PAYLOAD_AAD,
-        "PAYLOAD_CIPHER" => stateset_crypto::domain::PAYLOAD_CIPHER,
-        "RECIPIENTS" => stateset_crypto::domain::RECIPIENTS,
-        "EVENTSIG" => stateset_crypto::domain::EVENTSIG,
-        "LEAF" => stateset_crypto::domain::LEAF,
-        "NODE" => stateset_crypto::domain::NODE,
-        "PAD_LEAF" => stateset_crypto::domain::PAD_LEAF,
-        "STREAM" => stateset_crypto::domain::STREAM,
-        "RECEIPT" => stateset_crypto::domain::RECEIPT,
-        _ => return Err(Error::from_reason(format!("Unknown domain: {}", domain))),
-    };
+        let prefix: &[u8] = match domain.as_str() {
+            "PAYLOAD_PLAIN" => stateset_crypto::domain::PAYLOAD_PLAIN,
+            "PAYLOAD_AAD" => stateset_crypto::domain::PAYLOAD_AAD,
+            "PAYLOAD_CIPHER" => stateset_crypto::domain::PAYLOAD_CIPHER,
+            "RECIPIENTS" => stateset_crypto::domain::RECIPIENTS,
+            "EVENTSIG" => stateset_crypto::domain::EVENTSIG,
+            "LEAF" => stateset_crypto::domain::LEAF,
+            "NODE" => stateset_crypto::domain::NODE,
+            "PAD_LEAF" => stateset_crypto::domain::PAD_LEAF,
+            "STREAM" => stateset_crypto::domain::STREAM,
+            "RECEIPT" => stateset_crypto::domain::RECEIPT,
+            _ => return Err(wrap(ErrCode::Validation, "Unknown domain", domain)),
+        };
 
-    let mut hasher = Sha256::new();
-    hasher.update(prefix);
-    hasher.update(data.as_ref());
-    let result: [u8; 32] = hasher.finalize().into();
-    Ok(Buffer::from(result.as_slice()))
+        let mut hasher = Sha256::new();
+        hasher.update(prefix);
+        hasher.update(data.as_ref());
+        let result: [u8; 32] = hasher.finalize().into();
+        Ok(Buffer::from(result.as_slice()))
+    })
 }
 
 /// Sign a 32-byte hash with Ed25519
@@ -14100,20 +14331,22 @@ pub fn domain_hash(domain: String, data: Buffer) -> Result<Buffer> {
 /// Returns 64-byte signature
 #[napi]
 pub fn ed25519_sign(hash: Buffer, private_key: Buffer) -> Result<Buffer> {
-    if hash.len() != 32 {
-        return Err(Error::from_reason("Hash must be 32 bytes"));
-    }
-    if private_key.len() != 32 {
-        return Err(Error::from_reason("Private key must be 32 bytes"));
-    }
-    let mut hash_arr = [0u8; 32];
-    hash_arr.copy_from_slice(hash.as_ref());
-    let mut key_arr = [0u8; 32];
-    key_arr.copy_from_slice(private_key.as_ref());
+    guard(|| {
+        if hash.len() != 32 {
+            return Err(coded(ErrCode::Validation, "Hash must be 32 bytes"));
+        }
+        if private_key.len() != 32 {
+            return Err(coded(ErrCode::Validation, "Private key must be 32 bytes"));
+        }
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(hash.as_ref());
+        let mut key_arr = [0u8; 32];
+        key_arr.copy_from_slice(private_key.as_ref());
 
-    let sig = stateset_crypto::sign::sign_event_hash(&hash_arr, &key_arr)
-        .map_err(|e| Error::from_reason(format!("Sign error: {}", e)))?;
-    Ok(Buffer::from(sig.as_slice()))
+        let sig = stateset_crypto::sign::sign_event_hash(&hash_arr, &key_arr)
+            .map_err(|e| wrap(ErrCode::Internal, "Sign error", e))?;
+        Ok(Buffer::from(sig.as_slice()))
+    })
 }
 
 /// Verify an Ed25519 signature
@@ -14121,30 +14354,34 @@ pub fn ed25519_sign(hash: Buffer, private_key: Buffer) -> Result<Buffer> {
 /// Returns true if signature is valid
 #[napi]
 pub fn ed25519_verify(hash: Buffer, signature: Buffer, public_key: Buffer) -> Result<bool> {
-    if hash.len() != 32 || signature.len() != 64 || public_key.len() != 32 {
-        return Ok(false);
-    }
-    let mut hash_arr = [0u8; 32];
-    hash_arr.copy_from_slice(hash.as_ref());
-    let mut sig_arr = [0u8; 64];
-    sig_arr.copy_from_slice(signature.as_ref());
-    let mut key_arr = [0u8; 32];
-    key_arr.copy_from_slice(public_key.as_ref());
+    guard(|| {
+        if hash.len() != 32 || signature.len() != 64 || public_key.len() != 32 {
+            return Ok(false);
+        }
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(hash.as_ref());
+        let mut sig_arr = [0u8; 64];
+        sig_arr.copy_from_slice(signature.as_ref());
+        let mut key_arr = [0u8; 32];
+        key_arr.copy_from_slice(public_key.as_ref());
 
-    Ok(stateset_crypto::sign::verify_event_signature(&hash_arr, &sig_arr, &key_arr))
+        Ok(stateset_crypto::sign::verify_event_signature(&hash_arr, &sig_arr, &key_arr))
+    })
 }
 
 /// Generate a hybrid `Ed25519 + ML-DSA-65` signing keypair.
 #[napi]
 pub fn ves_hybrid_generate_signing_keypair() -> Result<HybridSigningKeypairOutput> {
-    let keypair = stateset_crypto::pqc::generate_hybrid_signing_keypair()
-        .map_err(|e| Error::from_reason(format!("Hybrid signing key generation failed: {}", e)))?;
+    guard(|| {
+        let keypair = stateset_crypto::pqc::generate_hybrid_signing_keypair()
+            .map_err(|e| wrap(ErrCode::Internal, "Hybrid signing key generation failed", e))?;
 
-    Ok(HybridSigningKeypairOutput {
-        ed25519_public_key: Buffer::from(keypair.public.ed25519_public_key.as_slice()),
-        ed25519_private_key: Buffer::from(keypair.private.ed25519_private_key.as_slice()),
-        ml_dsa_65_public_key: Buffer::from(keypair.public.ml_dsa_65_public_key.as_slice()),
-        ml_dsa_65_seed: Buffer::from(keypair.private.ml_dsa_65_seed.as_slice()),
+        Ok(HybridSigningKeypairOutput {
+            ed25519_public_key: Buffer::from(keypair.public.ed25519_public_key.as_slice()),
+            ed25519_private_key: Buffer::from(keypair.private.ed25519_private_key.as_slice()),
+            ml_dsa_65_public_key: Buffer::from(keypair.public.ml_dsa_65_public_key.as_slice()),
+            ml_dsa_65_seed: Buffer::from(keypair.private.ml_dsa_65_seed.as_slice()),
+        })
     })
 }
 
@@ -14155,35 +14392,37 @@ pub fn ves_hybrid_sign_event_hash(
     ed25519_private_key: Buffer,
     ml_dsa_65_seed: Buffer,
 ) -> Result<HybridSignatureBundleOutput> {
-    if hash.len() != 32 {
-        return Err(Error::from_reason("Hash must be 32 bytes"));
-    }
-    if ed25519_private_key.len() != 32 {
-        return Err(Error::from_reason("Ed25519 private key must be 32 bytes"));
-    }
-    if ml_dsa_65_seed.len() != 32 {
-        return Err(Error::from_reason("ML-DSA-65 seed must be 32 bytes"));
-    }
+    guard(|| {
+        if hash.len() != 32 {
+            return Err(coded(ErrCode::Validation, "Hash must be 32 bytes"));
+        }
+        if ed25519_private_key.len() != 32 {
+            return Err(coded(ErrCode::Validation, "Ed25519 private key must be 32 bytes"));
+        }
+        if ml_dsa_65_seed.len() != 32 {
+            return Err(coded(ErrCode::Validation, "ML-DSA-65 seed must be 32 bytes"));
+        }
 
-    let mut hash_arr = [0u8; 32];
-    hash_arr.copy_from_slice(hash.as_ref());
-    let mut ed25519_private_key_arr = [0u8; 32];
-    ed25519_private_key_arr.copy_from_slice(ed25519_private_key.as_ref());
-    let mut ml_dsa_65_seed_arr = [0u8; 32];
-    ml_dsa_65_seed_arr.copy_from_slice(ml_dsa_65_seed.as_ref());
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(hash.as_ref());
+        let mut ed25519_private_key_arr = [0u8; 32];
+        ed25519_private_key_arr.copy_from_slice(ed25519_private_key.as_ref());
+        let mut ml_dsa_65_seed_arr = [0u8; 32];
+        ml_dsa_65_seed_arr.copy_from_slice(ml_dsa_65_seed.as_ref());
 
-    let signature = stateset_crypto::pqc::hybrid_sign_event_hash(
-        &hash_arr,
-        &stateset_crypto::pqc::HybridSigningPrivateKey {
-            ed25519_private_key: ed25519_private_key_arr,
-            ml_dsa_65_seed: ml_dsa_65_seed_arr,
-        },
-    )
-    .map_err(|e| Error::from_reason(format!("Hybrid signing failed: {}", e)))?;
+        let signature = stateset_crypto::pqc::hybrid_sign_event_hash(
+            &hash_arr,
+            &stateset_crypto::pqc::HybridSigningPrivateKey {
+                ed25519_private_key: ed25519_private_key_arr,
+                ml_dsa_65_seed: ml_dsa_65_seed_arr,
+            },
+        )
+        .map_err(|e| wrap(ErrCode::Internal, "Hybrid signing failed", e))?;
 
-    Ok(HybridSignatureBundleOutput {
-        ed25519_signature: Buffer::from(signature.ed25519_signature.as_slice()),
-        ml_dsa_65_signature: Buffer::from(signature.ml_dsa_65_signature.as_slice()),
+        Ok(HybridSignatureBundleOutput {
+            ed25519_signature: Buffer::from(signature.ed25519_signature.as_slice()),
+            ml_dsa_65_signature: Buffer::from(signature.ml_dsa_65_signature.as_slice()),
+        })
     })
 }
 
@@ -14196,66 +14435,73 @@ pub fn ves_hybrid_verify_event_signature(
     ed25519_public_key: Buffer,
     ml_dsa_65_public_key: Buffer,
 ) -> Result<bool> {
-    if hash.len() != 32 || ed25519_signature.len() != 64 || ed25519_public_key.len() != 32 {
-        return Ok(false);
-    }
+    guard(|| {
+        if hash.len() != 32 || ed25519_signature.len() != 64 || ed25519_public_key.len() != 32 {
+            return Ok(false);
+        }
 
-    let mut hash_arr = [0u8; 32];
-    hash_arr.copy_from_slice(hash.as_ref());
-    let mut ed25519_signature_arr = [0u8; 64];
-    ed25519_signature_arr.copy_from_slice(ed25519_signature.as_ref());
-    let mut ed25519_public_key_arr = [0u8; 32];
-    ed25519_public_key_arr.copy_from_slice(ed25519_public_key.as_ref());
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(hash.as_ref());
+        let mut ed25519_signature_arr = [0u8; 64];
+        ed25519_signature_arr.copy_from_slice(ed25519_signature.as_ref());
+        let mut ed25519_public_key_arr = [0u8; 32];
+        ed25519_public_key_arr.copy_from_slice(ed25519_public_key.as_ref());
 
-    Ok(stateset_crypto::pqc::hybrid_verify_event_signature(
-        &hash_arr,
-        &stateset_crypto::pqc::HybridSignatureBundle {
-            ed25519_signature: ed25519_signature_arr,
-            ml_dsa_65_signature: ml_dsa_65_signature.as_ref().to_vec(),
-        },
-        &stateset_crypto::pqc::HybridSigningPublicKey {
-            ed25519_public_key: ed25519_public_key_arr,
-            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
-        },
-    ))
+        Ok(stateset_crypto::pqc::hybrid_verify_event_signature(
+            &hash_arr,
+            &stateset_crypto::pqc::HybridSignatureBundle {
+                ed25519_signature: ed25519_signature_arr,
+                ml_dsa_65_signature: ml_dsa_65_signature.as_ref().to_vec(),
+            },
+            &stateset_crypto::pqc::HybridSigningPublicKey {
+                ed25519_public_key: ed25519_public_key_arr,
+                ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+            },
+        ))
+    })
 }
 
 /// Return the fixed-seed ML-DSA-65 public key used by cross-language test vectors.
 #[napi]
-pub fn ves_test_vector_ml_dsa_public_key() -> Buffer {
-    Buffer::from(
-        stateset_crypto::pqc::test_vector_ml_dsa_public_key(
-            &stateset_crypto::pqc::TEST_VECTOR_SIGNING_SEED,
-        )
-        .as_slice(),
-    )
+pub fn ves_test_vector_ml_dsa_public_key() -> Result<Buffer> {
+    guard(|| {
+        Ok(Buffer::from(
+            stateset_crypto::pqc::test_vector_ml_dsa_public_key(
+                &stateset_crypto::pqc::TEST_VECTOR_SIGNING_SEED,
+            )
+            .as_slice(),
+        ))
+    })
 }
 
 /// Generate a hybrid `X25519 + ML-KEM-768` recipient keypair.
 #[napi]
 pub fn ves_hybrid_generate_recipient_keypair(kid: u32) -> Result<HybridRecipientKeypairOutput> {
-    let keypair = stateset_crypto::pqc::generate_hybrid_recipient_keypair(kid).map_err(|e| {
-        Error::from_reason(format!("Hybrid recipient key generation failed: {}", e))
-    })?;
+    guard(|| {
+        let keypair = stateset_crypto::pqc::generate_hybrid_recipient_keypair(kid)
+            .map_err(|e| wrap(ErrCode::Internal, "Hybrid recipient key generation failed", e))?;
 
-    Ok(HybridRecipientKeypairOutput {
-        kid: keypair.public.kid,
-        x25519_public_key: Buffer::from(keypair.public.x25519_public_key.as_slice()),
-        x25519_private_key: Buffer::from(keypair.private.x25519_private_key.as_slice()),
-        ml_kem_768_public_key: Buffer::from(keypair.public.ml_kem_768_public_key.as_slice()),
-        ml_kem_768_seed: Buffer::from(keypair.private.ml_kem_768_seed.as_slice()),
+        Ok(HybridRecipientKeypairOutput {
+            kid: keypair.public.kid,
+            x25519_public_key: Buffer::from(keypair.public.x25519_public_key.as_slice()),
+            x25519_private_key: Buffer::from(keypair.private.x25519_private_key.as_slice()),
+            ml_kem_768_public_key: Buffer::from(keypair.public.ml_kem_768_public_key.as_slice()),
+            ml_kem_768_seed: Buffer::from(keypair.private.ml_kem_768_seed.as_slice()),
+        })
     })
 }
 
 /// Return the fixed-seed ML-KEM-768 public key used by cross-language test vectors.
 #[napi]
-pub fn ves_test_vector_ml_kem_public_key() -> Buffer {
-    Buffer::from(
-        stateset_crypto::pqc::test_vector_ml_kem_public_key(
-            &stateset_crypto::pqc::TEST_VECTOR_KEM_SEED,
-        )
-        .as_slice(),
-    )
+pub fn ves_test_vector_ml_kem_public_key() -> Result<Buffer> {
+    guard(|| {
+        Ok(Buffer::from(
+            stateset_crypto::pqc::test_vector_ml_kem_public_key(
+                &stateset_crypto::pqc::TEST_VECTOR_KEM_SEED,
+            )
+            .as_slice(),
+        ))
+    })
 }
 
 /// Encrypt a JSON payload using hybrid `X25519 + ML-KEM-768` recipient wrapping.
@@ -14265,58 +14511,59 @@ pub fn ves_hybrid_encrypt_payload(
     aad_params: HybridPayloadAadParamsInput,
     recipients: Vec<HybridRecipientPublicKeyInput>,
 ) -> Result<HybridEncryptionResultOutput> {
-    if aad_params.payload_plain_hash.len() != 32 {
-        return Err(Error::from_reason("payload_plain_hash must be 32 bytes"));
-    }
+    guard(|| {
+        if aad_params.payload_plain_hash.len() != 32 {
+            return Err(coded(ErrCode::Validation, "payload_plain_hash must be 32 bytes"));
+        }
 
-    let payload: serde_json::Value = serde_json::from_str(&payload_json)
-        .map_err(|e| Error::from_reason(format!("Invalid payload JSON: {}", e)))?;
+        let payload: serde_json::Value = serde_json::from_str(&payload_json)
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid payload JSON", e))?;
 
-    let mut payload_plain_hash = [0u8; 32];
-    payload_plain_hash.copy_from_slice(aad_params.payload_plain_hash.as_ref());
+        let mut payload_plain_hash = [0u8; 32];
+        payload_plain_hash.copy_from_slice(aad_params.payload_plain_hash.as_ref());
 
-    let recipient_keys = recipients
-        .into_iter()
-        .map(|recipient| {
-            let mut x25519_public_key = [0u8; 32];
-            if recipient.x25519_public_key.len() != 32 {
-                return Err(Error::from_reason("x25519_public_key must be 32 bytes".to_string()));
-            }
-            x25519_public_key.copy_from_slice(recipient.x25519_public_key.as_ref());
+        let recipient_keys = recipients
+            .into_iter()
+            .map(|recipient| {
+                let mut x25519_public_key = [0u8; 32];
+                if recipient.x25519_public_key.len() != 32 {
+                    return Err(coded(ErrCode::Validation, "x25519_public_key must be 32 bytes"));
+                }
+                x25519_public_key.copy_from_slice(recipient.x25519_public_key.as_ref());
 
-            Ok(stateset_crypto::pqc::HybridRecipientPublicKey {
-                kid: recipient.kid,
-                x25519_public_key,
-                ml_kem_768_public_key: recipient.ml_kem_768_public_key.as_ref().to_vec(),
+                Ok(stateset_crypto::pqc::HybridRecipientPublicKey {
+                    kid: recipient.kid,
+                    x25519_public_key,
+                    ml_kem_768_public_key: recipient.ml_kem_768_public_key.as_ref().to_vec(),
+                })
             })
+            .collect::<Result<Vec<_>>>()?;
+
+        let aad = stateset_crypto::hash::PayloadAadParams {
+            ves_version: aad_params.ves_version,
+            tenant_id: &aad_params.tenant_id,
+            store_id: &aad_params.store_id,
+            event_id: &aad_params.event_id,
+            source_agent_id: &aad_params.source_agent_id,
+            agent_key_id: aad_params.agent_key_id,
+            entity_type: &aad_params.entity_type,
+            entity_id: &aad_params.entity_id,
+            event_type: &aad_params.event_type,
+            created_at: &aad_params.created_at,
+            payload_plain_hash: &payload_plain_hash,
+        };
+
+        let encrypted =
+            stateset_crypto::pqc::encrypt_payload_hybrid(&payload, &aad, &recipient_keys)
+                .map_err(|e| wrap(ErrCode::Internal, "Hybrid payload encryption failed", e))?;
+
+        Ok(HybridEncryptionResultOutput {
+            payload_encrypted_json: serde_json::to_string(&encrypted.payload_encrypted)
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to serialize encrypted payload", e))?,
+            salt: Buffer::from(encrypted.salt.as_slice()),
+            payload_plain_hash: Buffer::from(encrypted.payload_plain_hash.as_slice()),
+            payload_cipher_hash: Buffer::from(encrypted.payload_cipher_hash.as_slice()),
         })
-        .collect::<Result<Vec<_>>>()?;
-
-    let aad = stateset_crypto::hash::PayloadAadParams {
-        ves_version: aad_params.ves_version,
-        tenant_id: &aad_params.tenant_id,
-        store_id: &aad_params.store_id,
-        event_id: &aad_params.event_id,
-        source_agent_id: &aad_params.source_agent_id,
-        agent_key_id: aad_params.agent_key_id,
-        entity_type: &aad_params.entity_type,
-        entity_id: &aad_params.entity_id,
-        event_type: &aad_params.event_type,
-        created_at: &aad_params.created_at,
-        payload_plain_hash: &payload_plain_hash,
-    };
-
-    let encrypted =
-        stateset_crypto::pqc::encrypt_payload_hybrid(&payload, &aad, &recipient_keys)
-            .map_err(|e| Error::from_reason(format!("Hybrid payload encryption failed: {}", e)))?;
-
-    Ok(HybridEncryptionResultOutput {
-        payload_encrypted_json: serde_json::to_string(&encrypted.payload_encrypted).map_err(
-            |e| Error::from_reason(format!("Failed to serialize encrypted payload: {}", e)),
-        )?,
-        salt: Buffer::from(encrypted.salt.as_slice()),
-        payload_plain_hash: Buffer::from(encrypted.payload_plain_hash.as_slice()),
-        payload_cipher_hash: Buffer::from(encrypted.payload_cipher_hash.as_slice()),
     })
 }
 
@@ -14329,42 +14576,47 @@ pub fn ves_hybrid_decrypt_payload(
     recipient_private_key: HybridRecipientPrivateKeyInput,
     expected_plain_hash: Buffer,
 ) -> Result<String> {
-    if payload_aad.len() != 32 {
-        return Err(Error::from_reason("payload_aad must be 32 bytes"));
-    }
-    if recipient_private_key.x25519_private_key.len() != 32 {
-        return Err(Error::from_reason("x25519_private_key must be 32 bytes"));
-    }
-    if recipient_private_key.ml_kem_768_seed.len() != 64 {
-        return Err(Error::from_reason("ml_kem_768_seed must be 64 bytes"));
-    }
-    if expected_plain_hash.len() != 32 {
-        return Err(Error::from_reason("expected_plain_hash must be 32 bytes"));
-    }
+    guard(|| {
+        if payload_aad.len() != 32 {
+            return Err(coded(ErrCode::Validation, "payload_aad must be 32 bytes"));
+        }
+        if recipient_private_key.x25519_private_key.len() != 32 {
+            return Err(coded(ErrCode::Validation, "x25519_private_key must be 32 bytes"));
+        }
+        if recipient_private_key.ml_kem_768_seed.len() != 64 {
+            return Err(coded(ErrCode::Validation, "ml_kem_768_seed must be 64 bytes"));
+        }
+        if expected_plain_hash.len() != 32 {
+            return Err(coded(ErrCode::Validation, "expected_plain_hash must be 32 bytes"));
+        }
 
-    let payload_encrypted: serde_json::Value = serde_json::from_str(&payload_encrypted_json)
-        .map_err(|e| Error::from_reason(format!("Invalid encrypted payload JSON: {}", e)))?;
+        let payload_encrypted: serde_json::Value = serde_json::from_str(&payload_encrypted_json)
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid encrypted payload JSON", e))?;
 
-    let mut payload_aad_arr = [0u8; 32];
-    payload_aad_arr.copy_from_slice(payload_aad.as_ref());
-    let mut x25519_private_key = [0u8; 32];
-    x25519_private_key.copy_from_slice(recipient_private_key.x25519_private_key.as_ref());
-    let mut ml_kem_768_seed = [0u8; 64];
-    ml_kem_768_seed.copy_from_slice(recipient_private_key.ml_kem_768_seed.as_ref());
-    let mut expected_plain_hash_arr = [0u8; 32];
-    expected_plain_hash_arr.copy_from_slice(expected_plain_hash.as_ref());
+        let mut payload_aad_arr = [0u8; 32];
+        payload_aad_arr.copy_from_slice(payload_aad.as_ref());
+        let mut x25519_private_key = [0u8; 32];
+        x25519_private_key.copy_from_slice(recipient_private_key.x25519_private_key.as_ref());
+        let mut ml_kem_768_seed = [0u8; 64];
+        ml_kem_768_seed.copy_from_slice(recipient_private_key.ml_kem_768_seed.as_ref());
+        let mut expected_plain_hash_arr = [0u8; 32];
+        expected_plain_hash_arr.copy_from_slice(expected_plain_hash.as_ref());
 
-    let decrypted = stateset_crypto::pqc::decrypt_payload_hybrid(
-        &payload_encrypted,
-        &payload_aad_arr,
-        recipient_kid,
-        &stateset_crypto::pqc::HybridRecipientPrivateKey { x25519_private_key, ml_kem_768_seed },
-        &expected_plain_hash_arr,
-    )
-    .map_err(|e| Error::from_reason(format!("Hybrid payload decryption failed: {}", e)))?;
+        let decrypted = stateset_crypto::pqc::decrypt_payload_hybrid(
+            &payload_encrypted,
+            &payload_aad_arr,
+            recipient_kid,
+            &stateset_crypto::pqc::HybridRecipientPrivateKey {
+                x25519_private_key,
+                ml_kem_768_seed,
+            },
+            &expected_plain_hash_arr,
+        )
+        .map_err(|e| wrap(ErrCode::Internal, "Hybrid payload decryption failed", e))?;
 
-    serde_json::to_string(&decrypted)
-        .map_err(|e| Error::from_reason(format!("Failed to serialize decrypted payload: {}", e)))
+        serde_json::to_string(&decrypted)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to serialize decrypted payload", e))
+    })
 }
 
 // =============================================================================
@@ -14406,37 +14658,41 @@ pub struct StrictEncryptionResultOutput {
 /// Generate an ML-DSA-65-only signing keypair for PQC-strict mode.
 #[napi]
 pub fn ves_strict_generate_signing_keypair() -> Result<StrictSigningKeypairOutput> {
-    let keypair = stateset_crypto::pqc::generate_strict_signing_keypair()
-        .map_err(|e| Error::from_reason(format!("Strict signing key generation failed: {}", e)))?;
+    guard(|| {
+        let keypair = stateset_crypto::pqc::generate_strict_signing_keypair()
+            .map_err(|e| wrap(ErrCode::Internal, "Strict signing key generation failed", e))?;
 
-    Ok(StrictSigningKeypairOutput {
-        ml_dsa_65_public_key: Buffer::from(keypair.public.ml_dsa_65_public_key.as_slice()),
-        ml_dsa_65_seed: Buffer::from(keypair.private.ml_dsa_65_seed.as_slice()),
+        Ok(StrictSigningKeypairOutput {
+            ml_dsa_65_public_key: Buffer::from(keypair.public.ml_dsa_65_public_key.as_slice()),
+            ml_dsa_65_seed: Buffer::from(keypair.private.ml_dsa_65_seed.as_slice()),
+        })
     })
 }
 
 /// Sign a 32-byte hash with ML-DSA-65 only (PQC-strict mode).
 #[napi]
 pub fn ves_strict_sign_event_hash(hash: Buffer, ml_dsa_65_seed: Buffer) -> Result<Buffer> {
-    if hash.len() != 32 {
-        return Err(Error::from_reason("Hash must be 32 bytes"));
-    }
-    if ml_dsa_65_seed.len() != 32 {
-        return Err(Error::from_reason("ML-DSA-65 seed must be 32 bytes"));
-    }
+    guard(|| {
+        if hash.len() != 32 {
+            return Err(coded(ErrCode::Validation, "Hash must be 32 bytes"));
+        }
+        if ml_dsa_65_seed.len() != 32 {
+            return Err(coded(ErrCode::Validation, "ML-DSA-65 seed must be 32 bytes"));
+        }
 
-    let mut hash_arr = [0u8; 32];
-    hash_arr.copy_from_slice(hash.as_ref());
-    let mut seed_arr = [0u8; 32];
-    seed_arr.copy_from_slice(ml_dsa_65_seed.as_ref());
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(hash.as_ref());
+        let mut seed_arr = [0u8; 32];
+        seed_arr.copy_from_slice(ml_dsa_65_seed.as_ref());
 
-    let signature = stateset_crypto::pqc::strict_sign_event_hash(
-        &hash_arr,
-        &stateset_crypto::pqc::StrictSigningPrivateKey { ml_dsa_65_seed: seed_arr },
-    )
-    .map_err(|e| Error::from_reason(format!("Strict signing failed: {}", e)))?;
+        let signature = stateset_crypto::pqc::strict_sign_event_hash(
+            &hash_arr,
+            &stateset_crypto::pqc::StrictSigningPrivateKey { ml_dsa_65_seed: seed_arr },
+        )
+        .map_err(|e| wrap(ErrCode::Internal, "Strict signing failed", e))?;
 
-    Ok(Buffer::from(signature))
+        Ok(Buffer::from(signature))
+    })
 }
 
 /// Verify a 32-byte hash with ML-DSA-65 only (PQC-strict mode).
@@ -14446,33 +14702,36 @@ pub fn ves_strict_verify_event_signature(
     ml_dsa_65_signature: Buffer,
     ml_dsa_65_public_key: Buffer,
 ) -> Result<bool> {
-    if hash.len() != 32 {
-        return Ok(false);
-    }
+    guard(|| {
+        if hash.len() != 32 {
+            return Ok(false);
+        }
 
-    let mut hash_arr = [0u8; 32];
-    hash_arr.copy_from_slice(hash.as_ref());
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(hash.as_ref());
 
-    Ok(stateset_crypto::pqc::strict_verify_event_signature(
-        &hash_arr,
-        ml_dsa_65_signature.as_ref(),
-        &stateset_crypto::pqc::StrictSigningPublicKey {
-            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
-        },
-    ))
+        Ok(stateset_crypto::pqc::strict_verify_event_signature(
+            &hash_arr,
+            ml_dsa_65_signature.as_ref(),
+            &stateset_crypto::pqc::StrictSigningPublicKey {
+                ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+            },
+        ))
+    })
 }
 
 /// Generate an ML-KEM-768-only recipient keypair for PQC-strict mode.
 #[napi]
 pub fn ves_strict_generate_recipient_keypair(kid: u32) -> Result<StrictRecipientKeypairOutput> {
-    let keypair = stateset_crypto::pqc::generate_strict_recipient_keypair(kid).map_err(|e| {
-        Error::from_reason(format!("Strict recipient key generation failed: {}", e))
-    })?;
+    guard(|| {
+        let keypair = stateset_crypto::pqc::generate_strict_recipient_keypair(kid)
+            .map_err(|e| wrap(ErrCode::Internal, "Strict recipient key generation failed", e))?;
 
-    Ok(StrictRecipientKeypairOutput {
-        kid: keypair.public.kid,
-        ml_kem_768_public_key: Buffer::from(keypair.public.ml_kem_768_public_key.as_slice()),
-        ml_kem_768_seed: Buffer::from(keypair.private.ml_kem_768_seed.as_slice()),
+        Ok(StrictRecipientKeypairOutput {
+            kid: keypair.public.kid,
+            ml_kem_768_public_key: Buffer::from(keypair.public.ml_kem_768_public_key.as_slice()),
+            ml_kem_768_seed: Buffer::from(keypair.private.ml_kem_768_seed.as_slice()),
+        })
     })
 }
 
@@ -14483,48 +14742,50 @@ pub fn ves_strict_encrypt_payload(
     aad_params: HybridPayloadAadParamsInput,
     recipients: Vec<StrictRecipientPublicKeyInput>,
 ) -> Result<StrictEncryptionResultOutput> {
-    if aad_params.payload_plain_hash.len() != 32 {
-        return Err(Error::from_reason("payload_plain_hash must be 32 bytes"));
-    }
+    guard(|| {
+        if aad_params.payload_plain_hash.len() != 32 {
+            return Err(coded(ErrCode::Validation, "payload_plain_hash must be 32 bytes"));
+        }
 
-    let payload: serde_json::Value = serde_json::from_str(&payload_json)
-        .map_err(|e| Error::from_reason(format!("Invalid payload JSON: {}", e)))?;
+        let payload: serde_json::Value = serde_json::from_str(&payload_json)
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid payload JSON", e))?;
 
-    let mut payload_plain_hash = [0u8; 32];
-    payload_plain_hash.copy_from_slice(aad_params.payload_plain_hash.as_ref());
+        let mut payload_plain_hash = [0u8; 32];
+        payload_plain_hash.copy_from_slice(aad_params.payload_plain_hash.as_ref());
 
-    let recipient_keys: Vec<stateset_crypto::pqc::StrictRecipientPublicKey> = recipients
-        .into_iter()
-        .map(|r| stateset_crypto::pqc::StrictRecipientPublicKey {
-            kid: r.kid,
-            ml_kem_768_public_key: r.ml_kem_768_public_key.as_ref().to_vec(),
+        let recipient_keys: Vec<stateset_crypto::pqc::StrictRecipientPublicKey> = recipients
+            .into_iter()
+            .map(|r| stateset_crypto::pqc::StrictRecipientPublicKey {
+                kid: r.kid,
+                ml_kem_768_public_key: r.ml_kem_768_public_key.as_ref().to_vec(),
+            })
+            .collect();
+
+        let aad = stateset_crypto::hash::PayloadAadParams {
+            ves_version: aad_params.ves_version,
+            tenant_id: &aad_params.tenant_id,
+            store_id: &aad_params.store_id,
+            event_id: &aad_params.event_id,
+            source_agent_id: &aad_params.source_agent_id,
+            agent_key_id: aad_params.agent_key_id,
+            entity_type: &aad_params.entity_type,
+            entity_id: &aad_params.entity_id,
+            event_type: &aad_params.event_type,
+            created_at: &aad_params.created_at,
+            payload_plain_hash: &payload_plain_hash,
+        };
+
+        let encrypted =
+            stateset_crypto::pqc::encrypt_payload_strict(&payload, &aad, &recipient_keys)
+                .map_err(|e| wrap(ErrCode::Internal, "Strict payload encryption failed", e))?;
+
+        Ok(StrictEncryptionResultOutput {
+            payload_encrypted_json: serde_json::to_string(&encrypted.payload_encrypted)
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to serialize", e))?,
+            salt: Buffer::from(encrypted.salt.as_slice()),
+            payload_plain_hash: Buffer::from(encrypted.payload_plain_hash.as_slice()),
+            payload_cipher_hash: Buffer::from(encrypted.payload_cipher_hash.as_slice()),
         })
-        .collect();
-
-    let aad = stateset_crypto::hash::PayloadAadParams {
-        ves_version: aad_params.ves_version,
-        tenant_id: &aad_params.tenant_id,
-        store_id: &aad_params.store_id,
-        event_id: &aad_params.event_id,
-        source_agent_id: &aad_params.source_agent_id,
-        agent_key_id: aad_params.agent_key_id,
-        entity_type: &aad_params.entity_type,
-        entity_id: &aad_params.entity_id,
-        event_type: &aad_params.event_type,
-        created_at: &aad_params.created_at,
-        payload_plain_hash: &payload_plain_hash,
-    };
-
-    let encrypted =
-        stateset_crypto::pqc::encrypt_payload_strict(&payload, &aad, &recipient_keys)
-            .map_err(|e| Error::from_reason(format!("Strict payload encryption failed: {}", e)))?;
-
-    Ok(StrictEncryptionResultOutput {
-        payload_encrypted_json: serde_json::to_string(&encrypted.payload_encrypted)
-            .map_err(|e| Error::from_reason(format!("Failed to serialize: {}", e)))?,
-        salt: Buffer::from(encrypted.salt.as_slice()),
-        payload_plain_hash: Buffer::from(encrypted.payload_plain_hash.as_slice()),
-        payload_cipher_hash: Buffer::from(encrypted.payload_cipher_hash.as_slice()),
     })
 }
 
@@ -14537,37 +14798,39 @@ pub fn ves_strict_decrypt_payload(
     recipient_private_key: StrictRecipientPrivateKeyInput,
     expected_plain_hash: Buffer,
 ) -> Result<String> {
-    if payload_aad.len() != 32 {
-        return Err(Error::from_reason("payload_aad must be 32 bytes"));
-    }
-    if recipient_private_key.ml_kem_768_seed.len() != 64 {
-        return Err(Error::from_reason("ml_kem_768_seed must be 64 bytes"));
-    }
-    if expected_plain_hash.len() != 32 {
-        return Err(Error::from_reason("expected_plain_hash must be 32 bytes"));
-    }
+    guard(|| {
+        if payload_aad.len() != 32 {
+            return Err(coded(ErrCode::Validation, "payload_aad must be 32 bytes"));
+        }
+        if recipient_private_key.ml_kem_768_seed.len() != 64 {
+            return Err(coded(ErrCode::Validation, "ml_kem_768_seed must be 64 bytes"));
+        }
+        if expected_plain_hash.len() != 32 {
+            return Err(coded(ErrCode::Validation, "expected_plain_hash must be 32 bytes"));
+        }
 
-    let payload_encrypted: serde_json::Value = serde_json::from_str(&payload_encrypted_json)
-        .map_err(|e| Error::from_reason(format!("Invalid encrypted payload JSON: {}", e)))?;
+        let payload_encrypted: serde_json::Value = serde_json::from_str(&payload_encrypted_json)
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid encrypted payload JSON", e))?;
 
-    let mut aad_arr = [0u8; 32];
-    aad_arr.copy_from_slice(payload_aad.as_ref());
-    let mut seed = [0u8; 64];
-    seed.copy_from_slice(recipient_private_key.ml_kem_768_seed.as_ref());
-    let mut hash_arr = [0u8; 32];
-    hash_arr.copy_from_slice(expected_plain_hash.as_ref());
+        let mut aad_arr = [0u8; 32];
+        aad_arr.copy_from_slice(payload_aad.as_ref());
+        let mut seed = [0u8; 64];
+        seed.copy_from_slice(recipient_private_key.ml_kem_768_seed.as_ref());
+        let mut hash_arr = [0u8; 32];
+        hash_arr.copy_from_slice(expected_plain_hash.as_ref());
 
-    let decrypted = stateset_crypto::pqc::decrypt_payload_strict(
-        &payload_encrypted,
-        &aad_arr,
-        recipient_kid,
-        &stateset_crypto::pqc::StrictRecipientPrivateKey { ml_kem_768_seed: seed },
-        &hash_arr,
-    )
-    .map_err(|e| Error::from_reason(format!("Strict payload decryption failed: {}", e)))?;
+        let decrypted = stateset_crypto::pqc::decrypt_payload_strict(
+            &payload_encrypted,
+            &aad_arr,
+            recipient_kid,
+            &stateset_crypto::pqc::StrictRecipientPrivateKey { ml_kem_768_seed: seed },
+            &hash_arr,
+        )
+        .map_err(|e| wrap(ErrCode::Internal, "Strict payload decryption failed", e))?;
 
-    serde_json::to_string(&decrypted)
-        .map_err(|e| Error::from_reason(format!("Failed to serialize: {}", e)))
+        serde_json::to_string(&decrypted)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to serialize", e))
+    })
 }
 
 /// Generate a hybrid signing proof-of-possession bundle.
@@ -14578,37 +14841,39 @@ pub fn ves_hybrid_generate_signing_pop(
     ed25519_public_key: Buffer,
     ml_dsa_65_public_key: Buffer,
 ) -> Result<HybridSignatureBundleOutput> {
-    if ed25519_private_key.len() != 32
-        || ml_dsa_65_seed.len() != 32
-        || ed25519_public_key.len() != 32
-    {
-        return Err(Error::from_reason("Key sizes invalid"));
-    }
+    guard(|| {
+        if ed25519_private_key.len() != 32
+            || ml_dsa_65_seed.len() != 32
+            || ed25519_public_key.len() != 32
+        {
+            return Err(coded(ErrCode::Validation, "Key sizes invalid"));
+        }
 
-    let mut ed_priv = [0u8; 32];
-    ed_priv.copy_from_slice(ed25519_private_key.as_ref());
-    let mut ml_seed = [0u8; 32];
-    ml_seed.copy_from_slice(ml_dsa_65_seed.as_ref());
-    let mut ed_pub = [0u8; 32];
-    ed_pub.copy_from_slice(ed25519_public_key.as_ref());
+        let mut ed_priv = [0u8; 32];
+        ed_priv.copy_from_slice(ed25519_private_key.as_ref());
+        let mut ml_seed = [0u8; 32];
+        ml_seed.copy_from_slice(ml_dsa_65_seed.as_ref());
+        let mut ed_pub = [0u8; 32];
+        ed_pub.copy_from_slice(ed25519_public_key.as_ref());
 
-    let keypair = stateset_crypto::pqc::HybridSigningKeypair {
-        public: stateset_crypto::pqc::HybridSigningPublicKey {
-            ed25519_public_key: ed_pub,
-            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
-        },
-        private: stateset_crypto::pqc::HybridSigningPrivateKey {
-            ed25519_private_key: ed_priv,
-            ml_dsa_65_seed: ml_seed,
-        },
-    };
+        let keypair = stateset_crypto::pqc::HybridSigningKeypair {
+            public: stateset_crypto::pqc::HybridSigningPublicKey {
+                ed25519_public_key: ed_pub,
+                ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+            },
+            private: stateset_crypto::pqc::HybridSigningPrivateKey {
+                ed25519_private_key: ed_priv,
+                ml_dsa_65_seed: ml_seed,
+            },
+        };
 
-    let pop = stateset_crypto::pqc::generate_hybrid_signing_pop(&keypair)
-        .map_err(|e| Error::from_reason(format!("PoP generation failed: {}", e)))?;
+        let pop = stateset_crypto::pqc::generate_hybrid_signing_pop(&keypair)
+            .map_err(|e| wrap(ErrCode::Internal, "PoP generation failed", e))?;
 
-    Ok(HybridSignatureBundleOutput {
-        ed25519_signature: Buffer::from(pop.ed25519_signature.as_slice()),
-        ml_dsa_65_signature: Buffer::from(pop.ml_dsa_65_signature.as_slice()),
+        Ok(HybridSignatureBundleOutput {
+            ed25519_signature: Buffer::from(pop.ed25519_signature.as_slice()),
+            ml_dsa_65_signature: Buffer::from(pop.ml_dsa_65_signature.as_slice()),
+        })
     })
 }
 
@@ -14620,25 +14885,27 @@ pub fn ves_hybrid_verify_signing_pop(
     ed25519_public_key: Buffer,
     ml_dsa_65_public_key: Buffer,
 ) -> Result<bool> {
-    if ed25519_signature.len() != 64 || ed25519_public_key.len() != 32 {
-        return Ok(false);
-    }
+    guard(|| {
+        if ed25519_signature.len() != 64 || ed25519_public_key.len() != 32 {
+            return Ok(false);
+        }
 
-    let mut ed_sig = [0u8; 64];
-    ed_sig.copy_from_slice(ed25519_signature.as_ref());
-    let mut ed_pub = [0u8; 32];
-    ed_pub.copy_from_slice(ed25519_public_key.as_ref());
+        let mut ed_sig = [0u8; 64];
+        ed_sig.copy_from_slice(ed25519_signature.as_ref());
+        let mut ed_pub = [0u8; 32];
+        ed_pub.copy_from_slice(ed25519_public_key.as_ref());
 
-    Ok(stateset_crypto::pqc::verify_hybrid_signing_pop(
-        &stateset_crypto::pqc::HybridSignatureBundle {
-            ed25519_signature: ed_sig,
-            ml_dsa_65_signature: ml_dsa_65_signature.as_ref().to_vec(),
-        },
-        &stateset_crypto::pqc::HybridSigningPublicKey {
-            ed25519_public_key: ed_pub,
-            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
-        },
-    ))
+        Ok(stateset_crypto::pqc::verify_hybrid_signing_pop(
+            &stateset_crypto::pqc::HybridSignatureBundle {
+                ed25519_signature: ed_sig,
+                ml_dsa_65_signature: ml_dsa_65_signature.as_ref().to_vec(),
+            },
+            &stateset_crypto::pqc::HybridSigningPublicKey {
+                ed25519_public_key: ed_pub,
+                ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+            },
+        ))
+    })
 }
 
 /// Generate a PQC-strict signing proof-of-possession.
@@ -14647,22 +14914,24 @@ pub fn ves_strict_generate_signing_pop(
     ml_dsa_65_seed: Buffer,
     ml_dsa_65_public_key: Buffer,
 ) -> Result<Buffer> {
-    if ml_dsa_65_seed.len() != 32 {
-        return Err(Error::from_reason("ML-DSA-65 seed must be 32 bytes"));
-    }
-    let mut seed = [0u8; 32];
-    seed.copy_from_slice(ml_dsa_65_seed.as_ref());
+    guard(|| {
+        if ml_dsa_65_seed.len() != 32 {
+            return Err(coded(ErrCode::Validation, "ML-DSA-65 seed must be 32 bytes"));
+        }
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(ml_dsa_65_seed.as_ref());
 
-    let keypair = stateset_crypto::pqc::StrictSigningKeypair {
-        public: stateset_crypto::pqc::StrictSigningPublicKey {
-            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
-        },
-        private: stateset_crypto::pqc::StrictSigningPrivateKey { ml_dsa_65_seed: seed },
-    };
+        let keypair = stateset_crypto::pqc::StrictSigningKeypair {
+            public: stateset_crypto::pqc::StrictSigningPublicKey {
+                ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+            },
+            private: stateset_crypto::pqc::StrictSigningPrivateKey { ml_dsa_65_seed: seed },
+        };
 
-    let pop = stateset_crypto::pqc::generate_strict_signing_pop(&keypair)
-        .map_err(|e| Error::from_reason(format!("Strict PoP generation failed: {}", e)))?;
-    Ok(Buffer::from(pop))
+        let pop = stateset_crypto::pqc::generate_strict_signing_pop(&keypair)
+            .map_err(|e| wrap(ErrCode::Internal, "Strict PoP generation failed", e))?;
+        Ok(Buffer::from(pop))
+    })
 }
 
 /// Verify a PQC-strict signing proof-of-possession.
@@ -14671,12 +14940,14 @@ pub fn ves_strict_verify_signing_pop(
     ml_dsa_65_signature: Buffer,
     ml_dsa_65_public_key: Buffer,
 ) -> Result<bool> {
-    Ok(stateset_crypto::pqc::verify_strict_signing_pop(
-        ml_dsa_65_signature.as_ref(),
-        &stateset_crypto::pqc::StrictSigningPublicKey {
-            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
-        },
-    ))
+    guard(|| {
+        Ok(stateset_crypto::pqc::verify_strict_signing_pop(
+            ml_dsa_65_signature.as_ref(),
+            &stateset_crypto::pqc::StrictSigningPublicKey {
+                ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+            },
+        ))
+    })
 }
 
 /// Encrypt a buffer with AES-256-GCM
@@ -14684,30 +14955,32 @@ pub fn ves_strict_verify_signing_pop(
 /// Returns nonce (12 bytes) || ciphertext || tag (16 bytes)
 #[napi]
 pub fn aes_gcm_encrypt(plaintext: Buffer, key: Buffer, aad: Buffer) -> Result<Buffer> {
-    use aes_gcm::aead::Aead;
-    use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+    guard(|| {
+        use aes_gcm::aead::Aead;
+        use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 
-    if key.len() != 32 {
-        return Err(Error::from_reason("Key must be 32 bytes"));
-    }
+        if key.len() != 32 {
+            return Err(coded(ErrCode::Validation, "Key must be 32 bytes"));
+        }
 
-    let aes_key = Key::<Aes256Gcm>::from_slice(key.as_ref());
-    let cipher = Aes256Gcm::new(aes_key);
+        let aes_key = Key::<Aes256Gcm>::from_slice(key.as_ref());
+        let cipher = Aes256Gcm::new(aes_key);
 
-    let mut nonce_bytes = [0u8; 12];
-    use rand::RngCore;
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
+        let mut nonce_bytes = [0u8; 12];
+        use rand::RngCore;
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
 
-    let payload = aes_gcm::aead::Payload { msg: plaintext.as_ref(), aad: aad.as_ref() };
-    let ciphertext_tag = cipher
-        .encrypt(nonce, payload)
-        .map_err(|e| Error::from_reason(format!("Encryption failed: {}", e)))?;
+        let payload = aes_gcm::aead::Payload { msg: plaintext.as_ref(), aad: aad.as_ref() };
+        let ciphertext_tag = cipher
+            .encrypt(nonce, payload)
+            .map_err(|e| wrap(ErrCode::Internal, "Encryption failed", e))?;
 
-    let mut result = Vec::with_capacity(12 + ciphertext_tag.len());
-    result.extend_from_slice(&nonce_bytes);
-    result.extend_from_slice(&ciphertext_tag);
-    Ok(Buffer::from(result))
+        let mut result = Vec::with_capacity(12 + ciphertext_tag.len());
+        result.extend_from_slice(&nonce_bytes);
+        result.extend_from_slice(&ciphertext_tag);
+        Ok(Buffer::from(result))
+    })
 }
 
 /// Decrypt a buffer with AES-256-GCM
@@ -14715,49 +14988,56 @@ pub fn aes_gcm_encrypt(plaintext: Buffer, key: Buffer, aad: Buffer) -> Result<Bu
 /// Input: nonce (12 bytes) || ciphertext || tag (16 bytes)
 #[napi]
 pub fn aes_gcm_decrypt(encrypted: Buffer, key: Buffer, aad: Buffer) -> Result<Buffer> {
-    use aes_gcm::aead::Aead;
-    use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+    guard(|| {
+        use aes_gcm::aead::Aead;
+        use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 
-    if key.len() != 32 {
-        return Err(Error::from_reason("Key must be 32 bytes"));
-    }
-    if encrypted.len() < 28 {
-        return Err(Error::from_reason("Encrypted data too short (need at least nonce + tag)"));
-    }
+        if key.len() != 32 {
+            return Err(coded(ErrCode::Validation, "Key must be 32 bytes"));
+        }
+        if encrypted.len() < 28 {
+            return Err(coded(
+                ErrCode::Validation,
+                "Encrypted data too short (need at least nonce + tag)",
+            ));
+        }
 
-    let nonce = Nonce::from_slice(&encrypted[..12]);
-    let ciphertext_tag = &encrypted[12..];
+        let nonce = Nonce::from_slice(&encrypted[..12]);
+        let ciphertext_tag = &encrypted[12..];
 
-    let aes_key = Key::<Aes256Gcm>::from_slice(key.as_ref());
-    let cipher = Aes256Gcm::new(aes_key);
+        let aes_key = Key::<Aes256Gcm>::from_slice(key.as_ref());
+        let cipher = Aes256Gcm::new(aes_key);
 
-    let payload = aes_gcm::aead::Payload { msg: ciphertext_tag, aad: aad.as_ref() };
-    let plaintext = cipher
-        .decrypt(nonce, payload)
-        .map_err(|e| Error::from_reason(format!("Decryption failed: {}", e)))?;
+        let payload = aes_gcm::aead::Payload { msg: ciphertext_tag, aad: aad.as_ref() };
+        let plaintext = cipher
+            .decrypt(nonce, payload)
+            .map_err(|e| wrap(ErrCode::Internal, "Decryption failed", e))?;
 
-    Ok(Buffer::from(plaintext))
+        Ok(Buffer::from(plaintext))
+    })
 }
 
 /// Compute Merkle root from an array of 32-byte leaf hashes
 #[napi]
 pub fn merkle_root(leaves: Vec<Buffer>) -> Result<Buffer> {
-    let leaf_arrays: std::result::Result<Vec<[u8; 32]>, _> = leaves
-        .iter()
-        .map(|b| {
-            if b.len() != 32 {
-                Err(Error::from_reason("Each leaf must be 32 bytes"))
-            } else {
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(b.as_ref());
-                Ok(arr)
-            }
-        })
-        .collect();
+    guard(|| {
+        let leaf_arrays: std::result::Result<Vec<[u8; 32]>, _> = leaves
+            .iter()
+            .map(|b| {
+                if b.len() != 32 {
+                    Err(coded(ErrCode::Validation, "Each leaf must be 32 bytes"))
+                } else {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(b.as_ref());
+                    Ok(arr)
+                }
+            })
+            .collect();
 
-    let leaf_arrays = leaf_arrays?;
-    let root = stateset_crypto::merkle::compute_merkle_root(&leaf_arrays);
-    Ok(Buffer::from(root.as_slice()))
+        let leaf_arrays = leaf_arrays?;
+        let root = stateset_crypto::merkle::compute_merkle_root(&leaf_arrays);
+        Ok(Buffer::from(root.as_slice()))
+    })
 }
 
 // ============================================================================
@@ -14883,15 +15163,17 @@ impl GiftCards {
         let initial_balance = input
             .initial_balance
             .parse::<Decimal>()
-            .map_err(|_| Error::from_reason("Invalid initial_balance decimal"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid initial_balance decimal"))?;
         let currency = input
             .currency
             .parse::<CurrencyCode>()
-            .map_err(|_| Error::from_reason("Invalid currency code"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid currency code"))?;
         let expires_at = match input.expires_at.as_deref() {
             Some(s) => Some(
                 chrono::DateTime::parse_from_rfc3339(s)
-                    .map_err(|_| Error::from_reason("Invalid expires_at RFC 3339 timestamp"))?
+                    .map_err(|_| {
+                        coded(ErrCode::Validation, "Invalid expires_at RFC 3339 timestamp")
+                    })?
                     .with_timezone(&chrono::Utc),
             ),
             None => None,
@@ -14907,18 +15189,19 @@ impl GiftCards {
                 message: input.message,
                 expires_at,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create gift card: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create gift card", e))?;
         Ok(card.into())
     }
 
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<GiftCardOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let card = commerce
             .gift_cards()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get gift card: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get gift card", e))?;
         Ok(card.map(Into::into))
     }
 
@@ -14928,18 +15211,19 @@ impl GiftCards {
         let card = commerce
             .gift_cards()
             .get_by_code(&code)
-            .map_err(|e| Error::from_reason(format!("Failed to get gift card by code: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get gift card by code", e))?;
         Ok(card.map(Into::into))
     }
 
     #[napi]
     pub async fn update(&self, id: String, input: UpdateGiftCardInput) -> Result<GiftCardOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let status = match input.status.as_deref() {
             Some(s) => Some(
                 s.parse::<stateset_core::GiftCardStatus>()
-                    .map_err(|_| Error::from_reason("Invalid gift card status"))?,
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid gift card status"))?,
             ),
             None => None,
         };
@@ -14953,7 +15237,7 @@ impl GiftCards {
                     ..Default::default()
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update gift card: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update gift card", e))?;
         Ok(card.into())
     }
 
@@ -14969,7 +15253,7 @@ impl GiftCards {
         let status = match filter.status.as_deref() {
             Some(s) => Some(
                 s.parse::<stateset_core::GiftCardStatus>()
-                    .map_err(|_| Error::from_reason("Invalid gift card status"))?,
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid gift card status"))?,
             ),
             None => None,
         };
@@ -14981,7 +15265,7 @@ impl GiftCards {
                 limit: filter.limit,
                 offset: filter.offset,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list gift cards: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list gift cards", e))?;
         Ok(cards.into_iter().map(Into::into).collect())
     }
 
@@ -14993,13 +15277,15 @@ impl GiftCards {
         reference_id: Option<String>,
     ) -> Result<GiftCardTransactionOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let amount =
-            amount.parse::<Decimal>().map_err(|_| Error::from_reason("Invalid amount decimal"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
+        let amount = amount
+            .parse::<Decimal>()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid amount decimal"))?;
         let txn = commerce
             .gift_cards()
             .charge(uuid.into(), amount, reference_id)
-            .map_err(|e| Error::from_reason(format!("Failed to charge gift card: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to charge gift card", e))?;
         Ok(txn.into())
     }
 
@@ -15011,24 +15297,27 @@ impl GiftCards {
         reference_id: Option<String>,
     ) -> Result<GiftCardTransactionOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let amount =
-            amount.parse::<Decimal>().map_err(|_| Error::from_reason("Invalid amount decimal"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
+        let amount = amount
+            .parse::<Decimal>()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid amount decimal"))?;
         let txn = commerce
             .gift_cards()
             .refund(uuid.into(), amount, reference_id)
-            .map_err(|e| Error::from_reason(format!("Failed to refund gift card: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to refund gift card", e))?;
         Ok(txn.into())
     }
 
     #[napi]
     pub async fn disable(&self, id: String) -> Result<GiftCardOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let card = commerce
             .gift_cards()
             .disable(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to disable gift card: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to disable gift card", e))?;
         Ok(card.into())
     }
 
@@ -15039,11 +15328,11 @@ impl GiftCards {
     ) -> Result<Vec<GiftCardTransactionOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            gift_card_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+            gift_card_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let txns = commerce
             .gift_cards()
             .get_transactions(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get transactions: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get transactions", e))?;
         Ok(txns.into_iter().map(Into::into).collect())
     }
 }
@@ -15173,26 +15462,30 @@ impl StoreCredits {
     #[napi]
     pub async fn create(&self, input: CreateStoreCreditInput) -> Result<StoreCreditOutput> {
         let commerce = self.commerce.lock().await;
-        let customer_uuid: uuid::Uuid =
-            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let customer_uuid: uuid::Uuid = input
+            .customer_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let amount = input
             .amount
             .parse::<Decimal>()
-            .map_err(|_| Error::from_reason("Invalid amount decimal"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid amount decimal"))?;
         let currency = input
             .currency
             .parse::<CurrencyCode>()
-            .map_err(|_| Error::from_reason("Invalid currency code"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid currency code"))?;
         let reason = match input.reason.as_deref() {
             Some(s) => s
                 .parse::<stateset_core::StoreCreditReason>()
-                .map_err(|_| Error::from_reason("Invalid store credit reason"))?,
+                .map_err(|_| coded(ErrCode::Validation, "Invalid store credit reason"))?,
             None => stateset_core::StoreCreditReason::default(),
         };
         let expires_at = match input.expires_at.as_deref() {
             Some(s) => Some(
                 chrono::DateTime::parse_from_rfc3339(s)
-                    .map_err(|_| Error::from_reason("Invalid expires_at RFC 3339 timestamp"))?
+                    .map_err(|_| {
+                        coded(ErrCode::Validation, "Invalid expires_at RFC 3339 timestamp")
+                    })?
                     .with_timezone(&chrono::Utc),
             ),
             None => None,
@@ -15208,18 +15501,19 @@ impl StoreCredits {
                 note: input.note,
                 expires_at,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create store credit: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create store credit", e))?;
         Ok(credit.into())
     }
 
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<StoreCreditOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let credit = commerce
             .store_credits()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get store credit: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get store credit", e))?;
         Ok(credit.map(Into::into))
     }
 
@@ -15239,7 +15533,7 @@ impl StoreCredits {
         let customer_id = match filter.customer_id.as_deref() {
             Some(s) => Some(
                 s.parse::<uuid::Uuid>()
-                    .map_err(|_| Error::from_reason("Invalid customer UUID"))?
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?
                     .into(),
             ),
             None => None,
@@ -15247,14 +15541,14 @@ impl StoreCredits {
         let status = match filter.status.as_deref() {
             Some(s) => Some(
                 s.parse::<stateset_core::StoreCreditStatus>()
-                    .map_err(|_| Error::from_reason("Invalid store credit status"))?,
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid store credit status"))?,
             ),
             None => None,
         };
         let reason = match filter.reason.as_deref() {
             Some(s) => Some(
                 s.parse::<stateset_core::StoreCreditReason>()
-                    .map_err(|_| Error::from_reason("Invalid store credit reason"))?,
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid store credit reason"))?,
             ),
             None => None,
         };
@@ -15267,7 +15561,7 @@ impl StoreCredits {
                 limit: filter.limit,
                 offset: filter.offset,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list store credits: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list store credits", e))?;
         Ok(credits.into_iter().map(Into::into).collect())
     }
 
@@ -15278,11 +15572,12 @@ impl StoreCredits {
         input: AdjustStoreCreditInput,
     ) -> Result<StoreCreditOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let amount = input
             .amount
             .parse::<Decimal>()
-            .map_err(|_| Error::from_reason("Invalid amount decimal"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid amount decimal"))?;
         let credit = commerce
             .store_credits()
             .adjust(
@@ -15293,7 +15588,7 @@ impl StoreCredits {
                     reference_id: input.reference_id,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to adjust store credit: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to adjust store credit", e))?;
         Ok(credit.into())
     }
 
@@ -15306,13 +15601,15 @@ impl StoreCredits {
         reference_id: Option<String>,
     ) -> Result<StoreCreditTransactionOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let amount =
-            amount.parse::<Decimal>().map_err(|_| Error::from_reason("Invalid amount decimal"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
+        let amount = amount
+            .parse::<Decimal>()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid amount decimal"))?;
         let txn = commerce
             .store_credits()
             .apply(uuid.into(), amount, reference_id)
-            .map_err(|e| Error::from_reason(format!("Failed to apply store credit: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to apply store credit", e))?;
         Ok(txn.into())
     }
 
@@ -15323,11 +15620,11 @@ impl StoreCredits {
     ) -> Result<Vec<StoreCreditTransactionOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            store_credit_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+            store_credit_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let txns = commerce
             .store_credits()
             .get_transactions(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get transactions: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get transactions", e))?;
         Ok(txns.into_iter().map(Into::into).collect())
     }
 }
@@ -15444,12 +15741,16 @@ impl Reviews {
     #[napi]
     pub async fn create(&self, input: CreateReviewInput) -> Result<ReviewOutput> {
         let commerce = self.commerce.lock().await;
-        let product_id: uuid::Uuid =
-            input.product_id.parse().map_err(|_| Error::from_reason("Invalid product UUID"))?;
-        let customer_id: uuid::Uuid =
-            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let product_id: uuid::Uuid = input
+            .product_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid product UUID"))?;
+        let customer_id: uuid::Uuid = input
+            .customer_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let rating = u8::try_from(input.rating)
-            .map_err(|_| Error::from_reason("rating must be between 1 and 5"))?;
+            .map_err(|_| coded(ErrCode::Validation, "rating must be between 1 and 5"))?;
         let review = commerce
             .reviews()
             .create(stateset_core::CreateReview {
@@ -15460,36 +15761,38 @@ impl Reviews {
                 body: input.body,
                 verified_purchase: input.verified_purchase.unwrap_or(false),
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create review: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create review", e))?;
         Ok(review.into())
     }
 
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<ReviewOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let review = commerce
             .reviews()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get review: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get review", e))?;
         Ok(review.map(Into::into))
     }
 
     #[napi]
     pub async fn update(&self, id: String, input: UpdateReviewInput) -> Result<ReviewOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let rating = match input.rating {
             Some(r) => Some(
                 u8::try_from(r)
-                    .map_err(|_| Error::from_reason("rating must be between 1 and 5"))?,
+                    .map_err(|_| coded(ErrCode::Validation, "rating must be between 1 and 5"))?,
             ),
             None => None,
         };
         let status = match input.status.as_deref() {
             Some(s) => Some(
                 s.parse::<stateset_core::ReviewStatus>()
-                    .map_err(|_| Error::from_reason("Invalid review status"))?,
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid review status"))?,
             ),
             None => None,
         };
@@ -15504,7 +15807,7 @@ impl Reviews {
                     status,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update review: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update review", e))?;
         Ok(review.into())
     }
 
@@ -15515,7 +15818,7 @@ impl Reviews {
         let product_id = match filter.product_id.as_deref() {
             Some(s) => Some(
                 s.parse::<uuid::Uuid>()
-                    .map_err(|_| Error::from_reason("Invalid product UUID"))?
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid product UUID"))?
                     .into(),
             ),
             None => None,
@@ -15523,7 +15826,7 @@ impl Reviews {
         let customer_id = match filter.customer_id.as_deref() {
             Some(s) => Some(
                 s.parse::<uuid::Uuid>()
-                    .map_err(|_| Error::from_reason("Invalid customer UUID"))?
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?
                     .into(),
             ),
             None => None,
@@ -15531,14 +15834,15 @@ impl Reviews {
         let status = match filter.status.as_deref() {
             Some(s) => Some(
                 s.parse::<stateset_core::ReviewStatus>()
-                    .map_err(|_| Error::from_reason("Invalid review status"))?,
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid review status"))?,
             ),
             None => None,
         };
         let min_rating = match filter.min_rating {
-            Some(r) => {
-                Some(u8::try_from(r).map_err(|_| Error::from_reason("min_rating out of range"))?)
-            }
+            Some(r) => Some(
+                u8::try_from(r)
+                    .map_err(|_| coded(ErrCode::Validation, "min_rating out of range"))?,
+            ),
             None => None,
         };
         let reviews = commerce
@@ -15552,18 +15856,19 @@ impl Reviews {
                 limit: filter.limit,
                 offset: filter.offset,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list reviews: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list reviews", e))?;
         Ok(reviews.into_iter().map(Into::into).collect())
     }
 
     #[napi]
     pub async fn delete(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         commerce
             .reviews()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete review: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete review", e))?;
         Ok(())
     }
 
@@ -15572,33 +15877,35 @@ impl Reviews {
     pub async fn get_summary(&self, product_id: String) -> Result<ReviewSummaryOutput> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            product_id.parse().map_err(|_| Error::from_reason("Invalid product UUID"))?;
+            product_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid product UUID"))?;
         let summary = commerce
             .reviews()
             .get_summary(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get review summary: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get review summary", e))?;
         Ok(summary.into())
     }
 
     #[napi]
     pub async fn mark_helpful(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         commerce
             .reviews()
             .mark_helpful(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to mark review helpful: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to mark review helpful", e))?;
         Ok(())
     }
 
     #[napi]
     pub async fn mark_reported(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         commerce
             .reviews()
             .mark_reported(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to mark review reported: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to mark review reported", e))?;
         Ok(())
     }
 }
@@ -15708,8 +16015,10 @@ impl Wishlists {
     #[napi]
     pub async fn create(&self, input: CreateWishlistInput) -> Result<WishlistOutput> {
         let commerce = self.commerce.lock().await;
-        let customer_id: uuid::Uuid =
-            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let customer_id: uuid::Uuid = input
+            .customer_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let wishlist = commerce
             .wishlists()
             .create(stateset_core::CreateWishlist {
@@ -15717,32 +16026,34 @@ impl Wishlists {
                 name: input.name,
                 is_public: input.is_public.unwrap_or(false),
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create wishlist: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create wishlist", e))?;
         Ok(wishlist.into())
     }
 
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<WishlistOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let wishlist = commerce
             .wishlists()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get wishlist: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get wishlist", e))?;
         Ok(wishlist.map(Into::into))
     }
 
     #[napi]
     pub async fn update(&self, id: String, input: UpdateWishlistInput) -> Result<WishlistOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let wishlist = commerce
             .wishlists()
             .update(
                 uuid.into(),
                 stateset_core::UpdateWishlist { name: input.name, is_public: input.is_public },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update wishlist: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update wishlist", e))?;
         Ok(wishlist.into())
     }
 
@@ -15753,7 +16064,7 @@ impl Wishlists {
         let customer_id = match filter.customer_id.as_deref() {
             Some(s) => Some(
                 s.parse::<uuid::Uuid>()
-                    .map_err(|_| Error::from_reason("Invalid customer UUID"))?
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?
                     .into(),
             ),
             None => None,
@@ -15766,18 +16077,19 @@ impl Wishlists {
                 limit: filter.limit,
                 offset: filter.offset,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list wishlists: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list wishlists", e))?;
         Ok(wishlists.into_iter().map(Into::into).collect())
     }
 
     #[napi]
     pub async fn delete(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         commerce
             .wishlists()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete wishlist: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete wishlist", e))?;
         Ok(())
     }
 
@@ -15790,9 +16102,11 @@ impl Wishlists {
     ) -> Result<WishlistItemOutput> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            wishlist_id.parse().map_err(|_| Error::from_reason("Invalid wishlist UUID"))?;
-        let product_id: uuid::Uuid =
-            item.product_id.parse().map_err(|_| Error::from_reason("Invalid product UUID"))?;
+            wishlist_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid wishlist UUID"))?;
+        let product_id: uuid::Uuid = item
+            .product_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid product UUID"))?;
         let added = commerce
             .wishlists()
             .add_item(
@@ -15805,7 +16119,7 @@ impl Wishlists {
                     priority: item.priority,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to add wishlist item: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to add wishlist item", e))?;
         Ok(added.into())
     }
 
@@ -15813,13 +16127,13 @@ impl Wishlists {
     pub async fn remove_item(&self, wishlist_id: String, product_id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            wishlist_id.parse().map_err(|_| Error::from_reason("Invalid wishlist UUID"))?;
+            wishlist_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid wishlist UUID"))?;
         let product_uuid: uuid::Uuid =
-            product_id.parse().map_err(|_| Error::from_reason("Invalid product UUID"))?;
+            product_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid product UUID"))?;
         commerce
             .wishlists()
             .remove_item(uuid.into(), product_uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to remove wishlist item: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to remove wishlist item", e))?;
         Ok(())
     }
 }
@@ -15859,7 +16173,7 @@ fn parse_segment_rules(rules: Vec<SegmentRuleInput>) -> Result<Vec<stateset_core
             Ok(stateset_core::SegmentRule {
                 field: r.field,
                 operator: r.operator.parse::<stateset_core::SegmentOperator>().map_err(|_| {
-                    Error::from_reason(format!("Invalid segment operator '{}'", r.operator))
+                    coded(ErrCode::Validation, format!("Invalid segment operator '{}'", r.operator))
                 })?,
                 value: r.value,
             })
@@ -15958,9 +16272,9 @@ impl Segments {
     pub async fn create(&self, input: CreateSegmentInput) -> Result<SegmentOutput> {
         let commerce = self.commerce.lock().await;
         let segment_type = match input.segment_type.as_deref() {
-            Some(s) => s
-                .parse::<stateset_core::SegmentType>()
-                .map_err(|_| Error::from_reason("Invalid segment_type (use static or dynamic)"))?,
+            Some(s) => s.parse::<stateset_core::SegmentType>().map_err(|_| {
+                coded(ErrCode::Validation, "Invalid segment_type (use static or dynamic)")
+            })?,
             None => stateset_core::SegmentType::default(),
         };
         let rules = parse_segment_rules(input.rules.unwrap_or_default())?;
@@ -15972,25 +16286,27 @@ impl Segments {
                 segment_type,
                 rules,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create segment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create segment", e))?;
         Ok(segment.into())
     }
 
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<SegmentOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let segment = commerce
             .segments()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get segment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get segment", e))?;
         Ok(segment.map(Into::into))
     }
 
     #[napi]
     pub async fn update(&self, id: String, input: UpdateSegmentInput) -> Result<SegmentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let rules = match input.rules {
             Some(r) => Some(parse_segment_rules(r)?),
             None => None,
@@ -16005,7 +16321,7 @@ impl Segments {
                     rules,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update segment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update segment", e))?;
         Ok(segment.into())
     }
 
@@ -16016,7 +16332,7 @@ impl Segments {
         let segment_type = match filter.segment_type.as_deref() {
             Some(s) => Some(
                 s.parse::<stateset_core::SegmentType>()
-                    .map_err(|_| Error::from_reason("Invalid segment_type"))?,
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid segment_type"))?,
             ),
             None => None,
         };
@@ -16028,18 +16344,19 @@ impl Segments {
                 limit: filter.limit,
                 offset: filter.offset,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list segments: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list segments", e))?;
         Ok(segments.into_iter().map(Into::into).collect())
     }
 
     #[napi]
     pub async fn delete(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         commerce
             .segments()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete segment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete segment", e))?;
         Ok(())
     }
 
@@ -16052,13 +16369,13 @@ impl Segments {
     ) -> Result<SegmentMembershipOutput> {
         let commerce = self.commerce.lock().await;
         let seg: uuid::Uuid =
-            segment_id.parse().map_err(|_| Error::from_reason("Invalid segment UUID"))?;
+            segment_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid segment UUID"))?;
         let cust: uuid::Uuid =
-            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+            customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let membership = commerce
             .segments()
             .add_member(seg.into(), cust.into())
-            .map_err(|e| Error::from_reason(format!("Failed to add segment member: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to add segment member", e))?;
         Ok(membership.into())
     }
 
@@ -16066,13 +16383,13 @@ impl Segments {
     pub async fn remove_member(&self, segment_id: String, customer_id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
         let seg: uuid::Uuid =
-            segment_id.parse().map_err(|_| Error::from_reason("Invalid segment UUID"))?;
+            segment_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid segment UUID"))?;
         let cust: uuid::Uuid =
-            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+            customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         commerce
             .segments()
             .remove_member(seg.into(), cust.into())
-            .map_err(|e| Error::from_reason(format!("Failed to remove segment member: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to remove segment member", e))?;
         Ok(())
     }
 
@@ -16085,11 +16402,11 @@ impl Segments {
     ) -> Result<Vec<SegmentMembershipOutput>> {
         let commerce = self.commerce.lock().await;
         let seg: uuid::Uuid =
-            segment_id.parse().map_err(|_| Error::from_reason("Invalid segment UUID"))?;
+            segment_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid segment UUID"))?;
         let members = commerce
             .segments()
             .list_members(seg.into(), limit, offset)
-            .map_err(|e| Error::from_reason(format!("Failed to list segment members: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list segment members", e))?;
         Ok(members.into_iter().map(Into::into).collect())
     }
 
@@ -16097,13 +16414,13 @@ impl Segments {
     pub async fn is_member(&self, segment_id: String, customer_id: String) -> Result<bool> {
         let commerce = self.commerce.lock().await;
         let seg: uuid::Uuid =
-            segment_id.parse().map_err(|_| Error::from_reason("Invalid segment UUID"))?;
+            segment_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid segment UUID"))?;
         let cust: uuid::Uuid =
-            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+            customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         commerce
             .segments()
             .is_member(seg.into(), cust.into())
-            .map_err(|e| Error::from_reason(format!("Failed to check segment membership: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to check segment membership", e))
     }
 }
 
@@ -16353,18 +16670,19 @@ impl Loyalty {
                 points_per_dollar: input.points_per_dollar,
                 tiers,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create loyalty program: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create loyalty program", e))?;
         Ok(program.into())
     }
 
     #[napi]
     pub async fn get_program(&self, id: String) -> Result<Option<LoyaltyProgramOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let program = commerce
             .loyalty()
             .get_program(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get loyalty program: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get loyalty program", e))?;
         Ok(program.map(Into::into))
     }
 
@@ -16374,35 +16692,40 @@ impl Loyalty {
         let programs = commerce
             .loyalty()
             .list_programs()
-            .map_err(|e| Error::from_reason(format!("Failed to list loyalty programs: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list loyalty programs", e))?;
         Ok(programs.into_iter().map(Into::into).collect())
     }
 
     #[napi]
     pub async fn enroll(&self, input: EnrollCustomerInput) -> Result<LoyaltyAccountOutput> {
         let commerce = self.commerce.lock().await;
-        let customer_id: uuid::Uuid =
-            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
-        let program_id: uuid::Uuid =
-            input.program_id.parse().map_err(|_| Error::from_reason("Invalid program UUID"))?;
+        let customer_id: uuid::Uuid = input
+            .customer_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
+        let program_id: uuid::Uuid = input
+            .program_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid program UUID"))?;
         let account = commerce
             .loyalty()
             .enroll(stateset_core::EnrollCustomer {
                 customer_id: customer_id.into(),
                 program_id: program_id.into(),
             })
-            .map_err(|e| Error::from_reason(format!("Failed to enroll customer: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to enroll customer", e))?;
         Ok(account.into())
     }
 
     #[napi]
     pub async fn get_account(&self, id: String) -> Result<Option<LoyaltyAccountOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let account = commerce
             .loyalty()
             .get_account(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get loyalty account: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get loyalty account", e))?;
         Ok(account.map(Into::into))
     }
 
@@ -16414,13 +16737,13 @@ impl Loyalty {
     ) -> Result<Option<LoyaltyAccountOutput>> {
         let commerce = self.commerce.lock().await;
         let customer_id: uuid::Uuid =
-            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+            customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let program_id: uuid::Uuid =
-            program_id.parse().map_err(|_| Error::from_reason("Invalid program UUID"))?;
+            program_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid program UUID"))?;
         let account = commerce
             .loyalty()
             .get_account_by_customer(customer_id.into(), program_id.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get loyalty account: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get loyalty account", e))?;
         Ok(account.map(Into::into))
     }
 
@@ -16440,7 +16763,7 @@ impl Loyalty {
         let customer_id = match filter.customer_id.as_deref() {
             Some(s) => Some(
                 s.parse::<uuid::Uuid>()
-                    .map_err(|_| Error::from_reason("Invalid customer UUID"))?
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?
                     .into(),
             ),
             None => None,
@@ -16448,7 +16771,7 @@ impl Loyalty {
         let program_id = match filter.program_id.as_deref() {
             Some(s) => Some(
                 s.parse::<uuid::Uuid>()
-                    .map_err(|_| Error::from_reason("Invalid program UUID"))?
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid program UUID"))?
                     .into(),
             ),
             None => None,
@@ -16462,7 +16785,7 @@ impl Loyalty {
                 limit: filter.limit,
                 offset: filter.offset,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list loyalty accounts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list loyalty accounts", e))?;
         Ok(accounts.into_iter().map(Into::into).collect())
     }
 
@@ -16472,12 +16795,14 @@ impl Loyalty {
         input: AdjustPointsInput,
     ) -> Result<LoyaltyTransactionOutput> {
         let commerce = self.commerce.lock().await;
-        let account_id: uuid::Uuid =
-            input.account_id.parse().map_err(|_| Error::from_reason("Invalid account UUID"))?;
+        let account_id: uuid::Uuid = input
+            .account_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid account UUID"))?;
         let transaction_type = input
             .transaction_type
             .parse::<stateset_core::LoyaltyTransactionType>()
-            .map_err(|_| Error::from_reason("Invalid transaction_type"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid transaction_type"))?;
         let txn = commerce
             .loyalty()
             .adjust_points(stateset_core::AdjustPoints {
@@ -16487,7 +16812,7 @@ impl Loyalty {
                 reference_id: input.reference_id,
                 description: input.description,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to adjust points: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to adjust points", e))?;
         Ok(txn.into())
     }
 
@@ -16499,26 +16824,29 @@ impl Loyalty {
     ) -> Result<Vec<LoyaltyTransactionOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            account_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+            account_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let txns = commerce
             .loyalty()
             .get_transactions(uuid.into(), limit)
-            .map_err(|e| Error::from_reason(format!("Failed to get transactions: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get transactions", e))?;
         Ok(txns.into_iter().map(Into::into).collect())
     }
 
     #[napi]
     pub async fn create_reward(&self, input: CreateRewardInput) -> Result<RewardOutput> {
         let commerce = self.commerce.lock().await;
-        let program_id: uuid::Uuid =
-            input.program_id.parse().map_err(|_| Error::from_reason("Invalid program UUID"))?;
+        let program_id: uuid::Uuid = input
+            .program_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid program UUID"))?;
         let reward_type = input
             .reward_type
             .parse::<stateset_core::RewardType>()
-            .map_err(|_| Error::from_reason("Invalid reward_type"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid reward_type"))?;
         let value = match input.value.as_deref() {
             Some(s) => Some(
-                s.parse::<Decimal>().map_err(|_| Error::from_reason("Invalid value decimal"))?,
+                s.parse::<Decimal>()
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid value decimal"))?,
             ),
             None => None,
         };
@@ -16532,18 +16860,19 @@ impl Loyalty {
                 reward_type,
                 value,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create reward: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create reward", e))?;
         Ok(reward.into())
     }
 
     #[napi]
     pub async fn get_reward(&self, id: String) -> Result<Option<RewardOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let reward = commerce
             .loyalty()
             .get_reward(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get reward: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get reward", e))?;
         Ok(reward.map(Into::into))
     }
 
@@ -16563,7 +16892,7 @@ impl Loyalty {
         let program_id = match filter.program_id.as_deref() {
             Some(s) => Some(
                 s.parse::<uuid::Uuid>()
-                    .map_err(|_| Error::from_reason("Invalid program UUID"))?
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid program UUID"))?
                     .into(),
             ),
             None => None,
@@ -16571,7 +16900,7 @@ impl Loyalty {
         let reward_type = match filter.reward_type.as_deref() {
             Some(s) => Some(
                 s.parse::<stateset_core::RewardType>()
-                    .map_err(|_| Error::from_reason("Invalid reward_type"))?,
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid reward_type"))?,
             ),
             None => None,
         };
@@ -16584,18 +16913,19 @@ impl Loyalty {
                 limit: filter.limit,
                 offset: filter.offset,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list rewards: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list rewards", e))?;
         Ok(rewards.into_iter().map(Into::into).collect())
     }
 
     #[napi]
     pub async fn delete_reward(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         commerce
             .loyalty()
             .delete_reward(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete reward: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete reward", e))?;
         Ok(())
     }
 }
@@ -16605,17 +16935,19 @@ impl Loyalty {
 // ============================================================================
 
 fn parse_iso_date(s: &str, field: &str) -> Result<chrono::NaiveDate> {
-    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-        .map_err(|_| Error::from_reason(format!("Invalid {field} date (expected YYYY-MM-DD)")))
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| {
+        coded(ErrCode::Validation, format!("Invalid {field} date (expected YYYY-MM-DD)"))
+    })
 }
 
 fn parse_decimal_str(s: &str, field: &str) -> Result<Decimal> {
-    s.parse::<Decimal>().map_err(|_| Error::from_reason(format!("Invalid {field} decimal")))
+    s.parse::<Decimal>().map_err(|_| coded(ErrCode::Validation, format!("Invalid {field} decimal")))
 }
 
 fn parse_optional_uuid(s: Option<String>, field: &str) -> Result<Option<uuid::Uuid>> {
     s.map(|s| {
-        s.parse::<uuid::Uuid>().map_err(|_| Error::from_reason(format!("Invalid {field} UUID")))
+        s.parse::<uuid::Uuid>()
+            .map_err(|_| coded(ErrCode::Validation, format!("Invalid {field} UUID")))
     })
     .transpose()
 }
@@ -16628,14 +16960,15 @@ fn parse_depreciation_method(
         "straight_line" => Ok(stateset_core::DepreciationMethod::StraightLine),
         "declining_balance" => {
             let rate = rate.ok_or_else(|| {
-                Error::from_reason("declining_balance requires declining_balance_rate")
+                coded(ErrCode::Validation, "declining_balance requires declining_balance_rate")
             })?;
             Ok(stateset_core::DepreciationMethod::DecliningBalance {
                 rate: parse_decimal_str(rate, "declining_balance_rate")?,
             })
         }
         "units_of_production" => Ok(stateset_core::DepreciationMethod::UnitsOfProduction),
-        _ => Err(Error::from_reason(
+        _ => Err(coded(
+            ErrCode::Validation,
             "Invalid depreciation method (expected straight_line, declining_balance, or units_of_production)",
         )),
     }
@@ -16893,7 +17226,7 @@ impl FixedAssets {
         let category = input
             .category
             .parse::<stateset_core::FixedAssetCategory>()
-            .map_err(|_| Error::from_reason("Invalid fixed asset category"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid fixed asset category"))?;
         let depreciation_method = parse_depreciation_method(
             &input.depreciation_method,
             input.declining_balance_rate.as_deref(),
@@ -16901,7 +17234,8 @@ impl FixedAssets {
         let currency = input
             .currency
             .map(|s| {
-                s.parse::<CurrencyCode>().map_err(|_| Error::from_reason("Invalid currency code"))
+                s.parse::<CurrencyCode>()
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid currency code"))
             })
             .transpose()?;
         let asset = commerce
@@ -16933,18 +17267,19 @@ impl FixedAssets {
                 )?,
                 currency,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create fixed asset: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create fixed asset", e))?;
         Ok(asset.into())
     }
 
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<FixedAssetOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let asset = commerce
             .fixed_assets()
             .get(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get fixed asset: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get fixed asset", e))?;
         Ok(asset.map(Into::into))
     }
 
@@ -16961,15 +17296,17 @@ impl FixedAssets {
                     category: f
                         .category
                         .map(|s| {
-                            s.parse::<stateset_core::FixedAssetCategory>()
-                                .map_err(|_| Error::from_reason("Invalid fixed asset category"))
+                            s.parse::<stateset_core::FixedAssetCategory>().map_err(|_| {
+                                coded(ErrCode::Validation, "Invalid fixed asset category")
+                            })
                         })
                         .transpose()?,
                     status: f
                         .status
                         .map(|s| {
-                            s.parse::<stateset_core::FixedAssetStatus>()
-                                .map_err(|_| Error::from_reason("Invalid fixed asset status"))
+                            s.parse::<stateset_core::FixedAssetStatus>().map_err(|_| {
+                                coded(ErrCode::Validation, "Invalid fixed asset status")
+                            })
                         })
                         .transpose()?,
                     location_id: parse_optional_uuid(f.location_id, "location_id")?,
@@ -16993,7 +17330,7 @@ impl FixedAssets {
         let assets = commerce
             .fixed_assets()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list fixed assets: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list fixed assets", e))?;
         Ok(assets.into_iter().map(Into::into).collect())
     }
 
@@ -17004,12 +17341,13 @@ impl FixedAssets {
         input: UpdateFixedAssetInput,
     ) -> Result<FixedAssetOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let category = input
             .category
             .map(|s| {
                 s.parse::<stateset_core::FixedAssetCategory>()
-                    .map_err(|_| Error::from_reason("Invalid fixed asset category"))
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid fixed asset category"))
             })
             .transpose()?;
         let asset = commerce
@@ -17046,7 +17384,7 @@ impl FixedAssets {
                     )?,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update fixed asset: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update fixed asset", e))?;
         Ok(asset.into())
     }
 
@@ -17054,12 +17392,13 @@ impl FixedAssets {
     #[napi]
     pub async fn place_in_service(&self, id: String, date: String) -> Result<FixedAssetOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let date = parse_iso_date(&date, "date")?;
         let asset = commerce
             .fixed_assets()
             .place_in_service(uuid, date)
-            .map_err(|e| Error::from_reason(format!("Failed to place asset in service: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to place asset in service", e))?;
         Ok(asset.into())
     }
 
@@ -17074,7 +17413,8 @@ impl FixedAssets {
         notes: Option<String>,
     ) -> Result<FixedAssetOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let proceeds = parse_decimal_str(&proceeds, "proceeds")?;
         let date = date
             .as_deref()
@@ -17084,7 +17424,7 @@ impl FixedAssets {
         let asset = commerce
             .fixed_assets()
             .dispose(uuid, date, proceeds, notes)
-            .map_err(|e| Error::from_reason(format!("Failed to dispose fixed asset: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to dispose fixed asset", e))?;
         Ok(asset.into())
     }
 
@@ -17098,7 +17438,8 @@ impl FixedAssets {
         notes: Option<String>,
     ) -> Result<FixedAssetOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let date = date
             .as_deref()
             .map(|s| parse_iso_date(s, "date"))
@@ -17107,7 +17448,7 @@ impl FixedAssets {
         let asset = commerce
             .fixed_assets()
             .write_off(uuid, date, notes)
-            .map_err(|e| Error::from_reason(format!("Failed to write off fixed asset: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to write off fixed asset", e))?;
         Ok(asset.into())
     }
 
@@ -17115,11 +17456,12 @@ impl FixedAssets {
     #[napi]
     pub async fn generate_schedule(&self, id: String) -> Result<DepreciationScheduleOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let schedule = commerce
             .fixed_assets()
             .generate_schedule(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to generate schedule: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to generate schedule", e))?;
         Ok(schedule.into())
     }
 
@@ -17127,11 +17469,12 @@ impl FixedAssets {
     #[napi]
     pub async fn get_schedule(&self, id: String) -> Result<Option<DepreciationScheduleOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let schedule = commerce
             .fixed_assets()
             .get_schedule(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get schedule: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get schedule", e))?;
         Ok(schedule.map(Into::into))
     }
 
@@ -17139,11 +17482,12 @@ impl FixedAssets {
     #[napi]
     pub async fn post_depreciation(&self, id: String, periods: u32) -> Result<FixedAssetOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let asset = commerce
             .fixed_assets()
             .post_depreciation(uuid, periods)
-            .map_err(|e| Error::from_reason(format!("Failed to post depreciation: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to post depreciation", e))?;
         Ok(asset.into())
     }
 }
@@ -17161,17 +17505,19 @@ fn parse_recognition_method(
         "point_in_time" => Ok(stateset_core::RecognitionMethod::PointInTime),
         "ratable_over_time" => {
             let start = start.ok_or_else(|| {
-                Error::from_reason("ratable_over_time requires recognition_start")
+                coded(ErrCode::Validation, "ratable_over_time requires recognition_start")
             })?;
-            let end = end
-                .ok_or_else(|| Error::from_reason("ratable_over_time requires recognition_end"))?;
+            let end = end.ok_or_else(|| {
+                coded(ErrCode::Validation, "ratable_over_time requires recognition_end")
+            })?;
             Ok(stateset_core::RecognitionMethod::RatableOverTime {
                 start: parse_iso_date(start, "recognition_start")?,
                 end: parse_iso_date(end, "recognition_end")?,
             })
         }
         "milestone" => Ok(stateset_core::RecognitionMethod::Milestone),
-        _ => Err(Error::from_reason(
+        _ => Err(coded(
+            ErrCode::Validation,
             "Invalid recognition method (expected point_in_time, ratable_over_time, or milestone)",
         )),
     }
@@ -17423,12 +17769,15 @@ impl RevenueRecognition {
         input: CreateRevenueContractInput,
     ) -> Result<RevenueContractOutput> {
         let commerce = self.commerce.lock().await;
-        let customer_id: uuid::Uuid =
-            input.customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let customer_id: uuid::Uuid = input
+            .customer_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let currency = input
             .currency
             .map(|s| {
-                s.parse::<CurrencyCode>().map_err(|_| Error::from_reason("Invalid currency code"))
+                s.parse::<CurrencyCode>()
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid currency code"))
             })
             .transpose()?;
         let obligations = input
@@ -17466,18 +17815,19 @@ impl RevenueRecognition {
                 effective_date: parse_iso_date(&input.effective_date, "effective_date")?,
                 obligations,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create revenue contract: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create revenue contract", e))?;
         Ok(contract.into())
     }
 
     #[napi]
     pub async fn get_contract(&self, id: String) -> Result<Option<RevenueContractOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let contract = commerce
             .revenue_recognition()
             .get_contract(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get revenue contract: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get revenue contract", e))?;
         Ok(contract.map(Into::into))
     }
 
@@ -17497,8 +17847,9 @@ impl RevenueRecognition {
                     status: f
                         .status
                         .map(|s| {
-                            s.parse::<stateset_core::RevenueContractStatus>()
-                                .map_err(|_| Error::from_reason("Invalid revenue contract status"))
+                            s.parse::<stateset_core::RevenueContractStatus>().map_err(|_| {
+                                coded(ErrCode::Validation, "Invalid revenue contract status")
+                            })
                         })
                         .transpose()?,
                     effective_from: f
@@ -17521,7 +17872,7 @@ impl RevenueRecognition {
         let contracts = commerce
             .revenue_recognition()
             .list_contracts(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list revenue contracts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list revenue contracts", e))?;
         Ok(contracts.into_iter().map(Into::into).collect())
     }
 
@@ -17532,12 +17883,13 @@ impl RevenueRecognition {
         input: UpdateRevenueContractInput,
     ) -> Result<RevenueContractOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let status = input
             .status
             .map(|s| {
                 s.parse::<stateset_core::RevenueContractStatus>()
-                    .map_err(|_| Error::from_reason("Invalid revenue contract status"))
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid revenue contract status"))
             })
             .transpose()?;
         let contract = commerce
@@ -17555,7 +17907,7 @@ impl RevenueRecognition {
                         .transpose()?,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update revenue contract: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update revenue contract", e))?;
         Ok(contract.into())
     }
 
@@ -17567,11 +17919,11 @@ impl RevenueRecognition {
     ) -> Result<Vec<PerformanceObligationOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            contract_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+            contract_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let obligations = commerce
             .revenue_recognition()
             .list_obligations(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to list obligations: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list obligations", e))?;
         Ok(obligations.into_iter().map(Into::into).collect())
     }
 
@@ -17580,11 +17932,11 @@ impl RevenueRecognition {
     pub async fn generate_schedule(&self, obligation_id: String) -> Result<RevenueScheduleOutput> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            obligation_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+            obligation_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let schedule = commerce
             .revenue_recognition()
             .generate_schedule(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to generate schedule: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to generate schedule", e))?;
         Ok(schedule.into())
     }
 
@@ -17596,11 +17948,11 @@ impl RevenueRecognition {
     ) -> Result<Option<RevenueScheduleOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            obligation_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+            obligation_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let schedule = commerce
             .revenue_recognition()
             .get_schedule(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get schedule: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get schedule", e))?;
         Ok(schedule.map(Into::into))
     }
 
@@ -17614,12 +17966,12 @@ impl RevenueRecognition {
     ) -> Result<RevenueScheduleOutput> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
-            obligation_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+            obligation_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let through = parse_iso_date(&through, "through")?;
         let schedule = commerce
             .revenue_recognition()
             .recognize_period(uuid, through)
-            .map_err(|e| Error::from_reason(format!("Failed to recognize revenue: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to recognize revenue", e))?;
         Ok(schedule.into())
     }
 }
@@ -17745,7 +18097,9 @@ impl CycleCounts {
         let scheduled_date = match input.scheduled_date.as_deref() {
             Some(s) => Some(
                 chrono::DateTime::parse_from_rfc3339(s)
-                    .map_err(|_| Error::from_reason("Invalid scheduled_date RFC 3339 timestamp"))?
+                    .map_err(|_| {
+                        coded(ErrCode::Validation, "Invalid scheduled_date RFC 3339 timestamp")
+                    })?
                     .with_timezone(&chrono::Utc),
             ),
             None => None,
@@ -17773,7 +18127,7 @@ impl CycleCounts {
                 counted_by: input.counted_by,
                 lines,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create cycle count: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create cycle count", e))?;
         Ok(count.into())
     }
 
@@ -17781,11 +18135,12 @@ impl CycleCounts {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<CycleCountOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let count = commerce
             .warehouse()
             .get_cycle_count(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get cycle count: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get cycle count", e))?;
         Ok(count.map(Into::into))
     }
 
@@ -17805,8 +18160,9 @@ impl CycleCounts {
                     status: f
                         .status
                         .map(|s| {
-                            s.parse::<stateset_core::CycleCountStatus>()
-                                .map_err(|_| Error::from_reason("Invalid cycle count status"))
+                            s.parse::<stateset_core::CycleCountStatus>().map_err(|_| {
+                                coded(ErrCode::Validation, "Invalid cycle count status")
+                            })
                         })
                         .transpose()?,
                     limit: f.limit,
@@ -17818,7 +18174,7 @@ impl CycleCounts {
         let counts = commerce
             .warehouse()
             .list_cycle_counts(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list cycle counts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list cycle counts", e))?;
         Ok(counts.into_iter().map(Into::into).collect())
     }
 
@@ -17826,11 +18182,12 @@ impl CycleCounts {
     #[napi]
     pub async fn start(&self, id: String) -> Result<CycleCountOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let count = commerce
             .warehouse()
             .start_cycle_count(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to start cycle count: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to start cycle count", e))?;
         Ok(count.into())
     }
 
@@ -17842,7 +18199,8 @@ impl CycleCounts {
         counts: Vec<RecordCycleCountLineInput>,
     ) -> Result<CycleCountOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let counts = counts
             .into_iter()
             .map(|c| -> Result<stateset_core::RecordCycleCountLine> {
@@ -17856,7 +18214,7 @@ impl CycleCounts {
         let count = commerce
             .warehouse()
             .record_cycle_counts(uuid, counts)
-            .map_err(|e| Error::from_reason(format!("Failed to record cycle counts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to record cycle counts", e))?;
         Ok(count.into())
     }
 
@@ -17864,11 +18222,12 @@ impl CycleCounts {
     #[napi]
     pub async fn complete(&self, id: String) -> Result<CycleCountOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let count = commerce
             .warehouse()
             .complete_cycle_count(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to complete cycle count: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to complete cycle count", e))?;
         Ok(count.into())
     }
 
@@ -17876,11 +18235,12 @@ impl CycleCounts {
     #[napi]
     pub async fn cancel(&self, id: String) -> Result<CycleCountOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let count = commerce
             .warehouse()
             .cancel_cycle_count(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to cancel cycle count: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel cycle count", e))?;
         Ok(count.into())
     }
 }
@@ -17891,12 +18251,12 @@ impl CycleCounts {
 
 fn parse_edi_direction(s: &str) -> Result<stateset_core::EdiDirection> {
     s.parse::<stateset_core::EdiDirection>()
-        .map_err(|_| Error::from_reason(format!("Invalid EDI direction: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid EDI direction: {s}")))
 }
 
 fn parse_edi_status(s: &str) -> Result<stateset_core::EdiStatus> {
     s.parse::<stateset_core::EdiStatus>()
-        .map_err(|_| Error::from_reason(format!("Invalid EDI status: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid EDI status: {s}")))
 }
 
 #[napi(object)]
@@ -18030,7 +18390,7 @@ impl EdiDocuments {
                 reference: input.reference,
                 payload: input.payload,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create EDI document: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create EDI document", e))?;
         Ok(doc.into())
     }
 
@@ -18040,11 +18400,11 @@ impl EdiDocuments {
         let commerce = self.commerce.lock().await;
         let doc_id = id
             .parse::<stateset_core::EdiDocumentId>()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let doc = commerce
             .edi_documents()
             .get(doc_id)
-            .map_err(|e| Error::from_reason(format!("Failed to get EDI document: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get EDI document", e))?;
         Ok(doc.map(Into::into))
     }
 
@@ -18066,7 +18426,7 @@ impl EdiDocuments {
                 limit: filter.limit,
                 offset: filter.offset,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list EDI documents: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list EDI documents", e))?;
         Ok(docs.into_iter().map(Into::into).collect())
     }
 
@@ -18084,12 +18444,12 @@ impl EdiDocuments {
         let commerce = self.commerce.lock().await;
         let doc_id = id
             .parse::<stateset_core::EdiDocumentId>()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let status = parse_edi_status(&status)?;
         let doc = commerce
             .edi_documents()
             .set_status(doc_id, status, error_message)
-            .map_err(|e| Error::from_reason(format!("Failed to set EDI document status: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set EDI document status", e))?;
         Ok(doc.into())
     }
 
@@ -18100,7 +18460,7 @@ impl EdiDocuments {
         let summary = commerce
             .edi_documents()
             .summary()
-            .map_err(|e| Error::from_reason(format!("Failed to get EDI summary: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get EDI summary", e))?;
         Ok(summary.into())
     }
 }
@@ -18117,20 +18477,22 @@ fn parse_rfc3339_opt(
 ) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
     s.as_deref()
         .map(|s| {
-            chrono::DateTime::parse_from_rfc3339(s)
-                .map(|d| d.with_timezone(&chrono::Utc))
-                .map_err(|_| Error::from_reason(format!("Invalid {field} RFC 3339 timestamp")))
+            chrono::DateTime::parse_from_rfc3339(s).map(|d| d.with_timezone(&chrono::Utc)).map_err(
+                |_| coded(ErrCode::Validation, format!("Invalid {field} RFC 3339 timestamp")),
+            )
         })
         .transpose()
 }
 
 fn parse_currency_opt(s: Option<String>) -> Result<Option<CurrencyCode>> {
-    s.map(|s| s.parse::<CurrencyCode>().map_err(|_| Error::from_reason("Invalid currency code")))
-        .transpose()
+    s.map(|s| {
+        s.parse::<CurrencyCode>().map_err(|_| coded(ErrCode::Validation, "Invalid currency code"))
+    })
+    .transpose()
 }
 
 fn parse_uuid_str(s: &str, field: &str) -> Result<uuid::Uuid> {
-    s.parse::<uuid::Uuid>().map_err(|_| Error::from_reason(format!("Invalid {field} UUID")))
+    s.parse::<uuid::Uuid>().map_err(|_| coded(ErrCode::Validation, format!("Invalid {field} UUID")))
 }
 
 fn parse_optional_decimal_str(s: Option<String>, field: &str) -> Result<Option<Decimal>> {
@@ -18269,7 +18631,7 @@ impl Prepayments {
                 reference: input.reference,
                 memo: input.memo,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create prepayment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create prepayment", e))?;
         Ok(prepayment.into())
     }
 
@@ -18280,7 +18642,7 @@ impl Prepayments {
         let prepayment = commerce
             .prepayments()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get prepayment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get prepayment", e))?;
         Ok(prepayment.map(Into::into))
     }
 
@@ -18298,8 +18660,9 @@ impl Prepayments {
                     status: f
                         .status
                         .map(|s| {
-                            s.parse::<stateset_core::PrepaymentStatus>()
-                                .map_err(|_| Error::from_reason("Invalid prepayment status"))
+                            s.parse::<stateset_core::PrepaymentStatus>().map_err(|_| {
+                                coded(ErrCode::Validation, "Invalid prepayment status")
+                            })
                         })
                         .transpose()?,
                     limit: f.limit,
@@ -18310,7 +18673,7 @@ impl Prepayments {
         let prepayments = commerce
             .prepayments()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list prepayments: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list prepayments", e))?;
         Ok(prepayments.into_iter().map(Into::into).collect())
     }
 
@@ -18322,7 +18685,7 @@ impl Prepayments {
         let target_type = input
             .target_type
             .parse::<stateset_core::PrepaymentTargetType>()
-            .map_err(|_| Error::from_reason("Invalid prepayment target type"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid prepayment target type"))?;
         let prepayment = commerce
             .prepayments()
             .apply(
@@ -18333,7 +18696,7 @@ impl Prepayments {
                     amount: parse_decimal_str(&input.amount, "amount")?,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to apply prepayment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to apply prepayment", e))?;
         Ok(prepayment.into())
     }
 
@@ -18342,9 +18705,10 @@ impl Prepayments {
     pub async fn list_applications(&self, id: String) -> Result<Vec<PrepaymentApplicationOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "prepayment")?;
-        let applications = commerce.prepayments().list_applications(uuid.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to list prepayment applications: {}", e))
-        })?;
+        let applications = commerce
+            .prepayments()
+            .list_applications(uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list prepayment applications", e))?;
         Ok(applications.into_iter().map(Into::into).collect())
     }
 
@@ -18360,7 +18724,7 @@ impl Prepayments {
         let app_uuid = parse_uuid_str(&application_id, "application")?;
         let prepayment =
             commerce.prepayments().reverse_application(uuid.into(), app_uuid.into()).map_err(
-                |e| Error::from_reason(format!("Failed to reverse prepayment application: {}", e)),
+                |e| wrap(ErrCode::Internal, "Failed to reverse prepayment application", e),
             )?;
         Ok(prepayment.into())
     }
@@ -18373,7 +18737,7 @@ impl Prepayments {
         let prepayment = commerce
             .prepayments()
             .refund(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to refund prepayment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to refund prepayment", e))?;
         Ok(prepayment.into())
     }
 }
@@ -18505,7 +18869,7 @@ impl VendorCredits {
                 currency: parse_currency_opt(input.currency)?,
                 memo: input.memo,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create vendor credit: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create vendor credit", e))?;
         Ok(credit.into())
     }
 
@@ -18516,7 +18880,7 @@ impl VendorCredits {
         let credit = commerce
             .vendor_credits()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get vendor credit: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get vendor credit", e))?;
         Ok(credit.map(Into::into))
     }
 
@@ -18534,8 +18898,9 @@ impl VendorCredits {
                     status: f
                         .status
                         .map(|s| {
-                            s.parse::<stateset_core::VendorCreditStatus>()
-                                .map_err(|_| Error::from_reason("Invalid vendor credit status"))
+                            s.parse::<stateset_core::VendorCreditStatus>().map_err(|_| {
+                                coded(ErrCode::Validation, "Invalid vendor credit status")
+                            })
                         })
                         .transpose()?,
                     limit: f.limit,
@@ -18546,7 +18911,7 @@ impl VendorCredits {
         let credits = commerce
             .vendor_credits()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list vendor credits: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list vendor credits", e))?;
         Ok(credits.into_iter().map(Into::into).collect())
     }
 
@@ -18562,7 +18927,7 @@ impl VendorCredits {
         let target_type = input
             .target_type
             .parse::<stateset_core::VendorCreditTargetType>()
-            .map_err(|_| Error::from_reason("Invalid vendor credit target type"))?;
+            .map_err(|_| coded(ErrCode::Validation, "Invalid vendor credit target type"))?;
         let credit = commerce
             .vendor_credits()
             .apply(
@@ -18573,7 +18938,7 @@ impl VendorCredits {
                     amount: parse_decimal_str(&input.amount, "amount")?,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to apply vendor credit: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to apply vendor credit", e))?;
         Ok(credit.into())
     }
 
@@ -18585,10 +18950,10 @@ impl VendorCredits {
     ) -> Result<Vec<VendorCreditApplicationOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "vendor credit")?;
-        let applications =
-            commerce.vendor_credits().list_applications(uuid.into()).map_err(|e| {
-                Error::from_reason(format!("Failed to list vendor credit applications: {}", e))
-            })?;
+        let applications = commerce
+            .vendor_credits()
+            .list_applications(uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list vendor credit applications", e))?;
         Ok(applications.into_iter().map(Into::into).collect())
     }
 
@@ -18602,12 +18967,10 @@ impl VendorCredits {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "vendor credit")?;
         let app_uuid = parse_uuid_str(&application_id, "application")?;
-        let credit = commerce
-            .vendor_credits()
-            .reverse_application(uuid.into(), app_uuid.into())
-            .map_err(|e| {
-                Error::from_reason(format!("Failed to reverse vendor credit application: {}", e))
-            })?;
+        let credit =
+            commerce.vendor_credits().reverse_application(uuid.into(), app_uuid.into()).map_err(
+                |e| wrap(ErrCode::Internal, "Failed to reverse vendor credit application", e),
+            )?;
         Ok(credit.into())
     }
 
@@ -18619,7 +18982,7 @@ impl VendorCredits {
         let credit = commerce
             .vendor_credits()
             .cancel(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to cancel vendor credit: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel vendor credit", e))?;
         Ok(credit.into())
     }
 }
@@ -18748,7 +19111,7 @@ impl PriceSchedules {
                 ends_at: parse_rfc3339_opt(input.ends_at, "ends_at")?,
                 priority: input.priority.unwrap_or(0),
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create price schedule: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create price schedule", e))?;
         Ok(schedule.into())
     }
 
@@ -18759,7 +19122,7 @@ impl PriceSchedules {
         let schedule = commerce
             .price_schedules()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get price schedule: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get price schedule", e))?;
         Ok(schedule.map(Into::into))
     }
 
@@ -18784,7 +19147,7 @@ impl PriceSchedules {
                     priority: input.priority,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update price schedule: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update price schedule", e))?;
         Ok(schedule.into())
     }
 
@@ -18804,7 +19167,7 @@ impl PriceSchedules {
         let schedules = commerce
             .price_schedules()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list price schedules: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list price schedules", e))?;
         Ok(schedules.into_iter().map(Into::into).collect())
     }
 
@@ -18816,7 +19179,7 @@ impl PriceSchedules {
         commerce
             .price_schedules()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete price schedule: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete price schedule", e))?;
         Ok(())
     }
 
@@ -18834,9 +19197,7 @@ impl PriceSchedules {
         let entry = commerce
             .price_schedules()
             .set_entry(uuid.into(), product_uuid.into(), parse_decimal_str(&price, "price")?)
-            .map_err(|e| {
-                Error::from_reason(format!("Failed to set price schedule entry: {}", e))
-            })?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set price schedule entry", e))?;
         Ok(entry.into())
     }
 
@@ -18846,9 +19207,10 @@ impl PriceSchedules {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "price schedule")?;
         let product_uuid = parse_uuid_str(&product_id, "product")?;
-        commerce.price_schedules().delete_entry(uuid.into(), product_uuid.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to delete price schedule entry: {}", e))
-        })?;
+        commerce
+            .price_schedules()
+            .delete_entry(uuid.into(), product_uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete price schedule entry", e))?;
         Ok(())
     }
 
@@ -18857,9 +19219,10 @@ impl PriceSchedules {
     pub async fn list_entries(&self, id: String) -> Result<Vec<PriceScheduleEntryOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "price schedule")?;
-        let entries = commerce.price_schedules().list_entries(uuid.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to list price schedule entries: {}", e))
-        })?;
+        let entries = commerce
+            .price_schedules()
+            .list_entries(uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list price schedule entries", e))?;
         Ok(entries.into_iter().map(Into::into).collect())
     }
 
@@ -18878,7 +19241,7 @@ impl PriceSchedules {
         let price = commerce
             .price_schedules()
             .resolve_price(product_uuid.into(), at)
-            .map_err(|e| Error::from_reason(format!("Failed to resolve scheduled price: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to resolve scheduled price", e))?;
         Ok(price.map(|p| p.to_string()))
     }
 }
@@ -18999,7 +19362,7 @@ impl PriceLevels {
             .adjustment_type
             .map(|s| {
                 s.parse::<stateset_core::PriceAdjustmentType>()
-                    .map_err(|_| Error::from_reason("Invalid price adjustment type"))
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid price adjustment type"))
             })
             .transpose()?
             .unwrap_or_default();
@@ -19019,7 +19382,7 @@ impl PriceLevels {
                 adjustment_value,
                 currency: parse_currency_opt(input.currency)?,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create price level: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create price level", e))?;
         Ok(level.into())
     }
 
@@ -19030,7 +19393,7 @@ impl PriceLevels {
         let level = commerce
             .price_levels()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get price level: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get price level", e))?;
         Ok(level.map(Into::into))
     }
 
@@ -19046,7 +19409,7 @@ impl PriceLevels {
             .adjustment_type
             .map(|s| {
                 s.parse::<stateset_core::PriceAdjustmentType>()
-                    .map_err(|_| Error::from_reason("Invalid price adjustment type"))
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid price adjustment type"))
             })
             .transpose()?;
         let level = commerce
@@ -19064,7 +19427,7 @@ impl PriceLevels {
                     is_active: input.is_active,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update price level: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update price level", e))?;
         Ok(level.into())
     }
 
@@ -19084,7 +19447,7 @@ impl PriceLevels {
         let levels = commerce
             .price_levels()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list price levels: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list price levels", e))?;
         Ok(levels.into_iter().map(Into::into).collect())
     }
 
@@ -19096,7 +19459,7 @@ impl PriceLevels {
         commerce
             .price_levels()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete price level: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete price level", e))?;
         Ok(())
     }
 
@@ -19114,7 +19477,7 @@ impl PriceLevels {
         let entry = commerce
             .price_levels()
             .set_entry(uuid.into(), product_uuid.into(), parse_decimal_str(&price, "price")?)
-            .map_err(|e| Error::from_reason(format!("Failed to set price level entry: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set price level entry", e))?;
         Ok(entry.into())
     }
 
@@ -19124,9 +19487,10 @@ impl PriceLevels {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "price level")?;
         let product_uuid = parse_uuid_str(&product_id, "product")?;
-        commerce.price_levels().delete_entry(uuid.into(), product_uuid.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to delete price level entry: {}", e))
-        })?;
+        commerce
+            .price_levels()
+            .delete_entry(uuid.into(), product_uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete price level entry", e))?;
         Ok(())
     }
 
@@ -19135,9 +19499,10 @@ impl PriceLevels {
     pub async fn list_entries(&self, id: String) -> Result<Vec<PriceLevelEntryOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "price level")?;
-        let entries = commerce.price_levels().list_entries(uuid.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to list price level entries: {}", e))
-        })?;
+        let entries = commerce
+            .price_levels()
+            .list_entries(uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list price level entries", e))?;
         Ok(entries.into_iter().map(Into::into).collect())
     }
 }
@@ -19289,7 +19654,7 @@ impl TransferOrders {
                 expected_at: parse_rfc3339_opt(input.expected_at, "expected_at")?,
                 notes: input.notes,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create transfer order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create transfer order", e))?;
         Ok(order.into())
     }
 
@@ -19300,7 +19665,7 @@ impl TransferOrders {
         let order = commerce
             .transfer_orders()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get transfer order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get transfer order", e))?;
         Ok(order.map(Into::into))
     }
 
@@ -19317,8 +19682,9 @@ impl TransferOrders {
                     status: f
                         .status
                         .map(|s| {
-                            s.parse::<stateset_core::TransferOrderStatus>()
-                                .map_err(|_| Error::from_reason("Invalid transfer order status"))
+                            s.parse::<stateset_core::TransferOrderStatus>().map_err(|_| {
+                                coded(ErrCode::Validation, "Invalid transfer order status")
+                            })
                         })
                         .transpose()?,
                     source_warehouse_id: parse_optional_uuid(
@@ -19339,7 +19705,7 @@ impl TransferOrders {
         let orders = commerce
             .transfer_orders()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list transfer orders: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list transfer orders", e))?;
         Ok(orders.into_iter().map(Into::into).collect())
     }
 
@@ -19351,7 +19717,7 @@ impl TransferOrders {
         let order = commerce
             .transfer_orders()
             .ship(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to ship transfer order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to ship transfer order", e))?;
         Ok(order.into())
     }
 
@@ -19370,9 +19736,7 @@ impl TransferOrders {
         let order = commerce
             .transfer_orders()
             .receive_line(uuid.into(), item_uuid.into(), parse_decimal_str(&quantity, "quantity")?)
-            .map_err(|e| {
-                Error::from_reason(format!("Failed to receive transfer order line: {}", e))
-            })?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to receive transfer order line", e))?;
         Ok(order.into())
     }
 
@@ -19384,7 +19748,7 @@ impl TransferOrders {
         let order = commerce
             .transfer_orders()
             .cancel(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to cancel transfer order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel transfer order", e))?;
         Ok(order.into())
     }
 }
@@ -19499,7 +19863,7 @@ impl ProductionBatches {
                 scheduled_start: parse_rfc3339_opt(input.scheduled_start, "scheduled_start")?,
                 scheduled_end: parse_rfc3339_opt(input.scheduled_end, "scheduled_end")?,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create production batch: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create production batch", e))?;
         Ok(batch.into())
     }
 
@@ -19510,7 +19874,7 @@ impl ProductionBatches {
         let batch = commerce
             .production_batches()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get production batch: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get production batch", e))?;
         Ok(batch.map(Into::into))
     }
 
@@ -19526,7 +19890,7 @@ impl ProductionBatches {
             .status
             .map(|s| {
                 s.parse::<stateset_core::ProductionBatchStatus>()
-                    .map_err(|_| Error::from_reason("Invalid production batch status"))
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid production batch status"))
             })
             .transpose()?;
         let batch = commerce
@@ -19542,7 +19906,7 @@ impl ProductionBatches {
                     scheduled_end: parse_rfc3339_opt(input.scheduled_end, "scheduled_end")?,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update production batch: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update production batch", e))?;
         Ok(batch.into())
     }
 
@@ -19559,8 +19923,9 @@ impl ProductionBatches {
                     status: f
                         .status
                         .map(|s| {
-                            s.parse::<stateset_core::ProductionBatchStatus>()
-                                .map_err(|_| Error::from_reason("Invalid production batch status"))
+                            s.parse::<stateset_core::ProductionBatchStatus>().map_err(|_| {
+                                coded(ErrCode::Validation, "Invalid production batch status")
+                            })
                         })
                         .transpose()?,
                     vendor_id: parse_optional_uuid(f.vendor_id, "vendor_id")?,
@@ -19572,7 +19937,7 @@ impl ProductionBatches {
         let batches = commerce
             .production_batches()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list production batches: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list production batches", e))?;
         Ok(batches.into_iter().map(Into::into).collect())
     }
 
@@ -19584,7 +19949,7 @@ impl ProductionBatches {
         commerce
             .production_batches()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete production batch: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete production batch", e))?;
         Ok(())
     }
 
@@ -19604,7 +19969,7 @@ impl ProductionBatches {
         let batch = commerce
             .production_batches()
             .add_work_orders(uuid.into(), work_order_ids)
-            .map_err(|e| Error::from_reason(format!("Failed to add work orders: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to add work orders", e))?;
         Ok(batch.into())
     }
 
@@ -19618,11 +19983,10 @@ impl ProductionBatches {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "production batch")?;
         let work_order_uuid = parse_uuid_str(&work_order_id, "work_order")?;
-        let batch =
-            commerce
-                .production_batches()
-                .remove_work_order(uuid.into(), work_order_uuid)
-                .map_err(|e| Error::from_reason(format!("Failed to remove work order: {}", e)))?;
+        let batch = commerce
+            .production_batches()
+            .remove_work_order(uuid.into(), work_order_uuid)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to remove work order", e))?;
         Ok(batch.into())
     }
 }
@@ -19742,7 +20106,7 @@ impl SupplierSkus {
                 min_order_qty: parse_optional_decimal_str(input.min_order_qty, "min_order_qty")?,
                 lead_time_days: input.lead_time_days,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create supplier SKU: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create supplier SKU", e))?;
         Ok(record.into())
     }
 
@@ -19753,7 +20117,7 @@ impl SupplierSkus {
         let record = commerce
             .supplier_skus()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get supplier SKU: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get supplier SKU", e))?;
         Ok(record.map(Into::into))
     }
 
@@ -19781,7 +20145,7 @@ impl SupplierSkus {
                     is_preferred: input.is_preferred,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update supplier SKU: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update supplier SKU", e))?;
         Ok(record.into())
     }
 
@@ -19805,7 +20169,7 @@ impl SupplierSkus {
         let records = commerce
             .supplier_skus()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list supplier SKUs: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list supplier SKUs", e))?;
         Ok(records.into_iter().map(Into::into).collect())
     }
 
@@ -19817,7 +20181,7 @@ impl SupplierSkus {
         commerce
             .supplier_skus()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete supplier SKU: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete supplier SKU", e))?;
         Ok(())
     }
 
@@ -19841,10 +20205,12 @@ impl SupplierSkus {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let count = commerce.supplier_skus().bulk_upsert(supplier_uuid, items).map_err(|e| {
-            Error::from_reason(format!("Failed to bulk upsert supplier SKUs: {}", e))
-        })?;
-        i64::try_from(count).map_err(|_| Error::from_reason("Bulk upsert count exceeds i64 range"))
+        let count = commerce
+            .supplier_skus()
+            .bulk_upsert(supplier_uuid, items)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to bulk upsert supplier SKUs", e))?;
+        i64::try_from(count)
+            .map_err(|_| coded(ErrCode::Validation, "Bulk upsert count exceeds i64 range"))
     }
 }
 
@@ -20002,7 +20368,7 @@ impl InboundShipments {
                 items,
                 notes: input.notes,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create inbound shipment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create inbound shipment", e))?;
         Ok(shipment.into())
     }
 
@@ -20013,7 +20379,7 @@ impl InboundShipments {
         let shipment = commerce
             .inbound_shipments()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get inbound shipment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get inbound shipment", e))?;
         Ok(shipment.map(Into::into))
     }
 
@@ -20033,8 +20399,9 @@ impl InboundShipments {
                     status: f
                         .status
                         .map(|s| {
-                            s.parse::<stateset_core::InboundShipmentStatus>()
-                                .map_err(|_| Error::from_reason("Invalid inbound shipment status"))
+                            s.parse::<stateset_core::InboundShipmentStatus>().map_err(|_| {
+                                coded(ErrCode::Validation, "Invalid inbound shipment status")
+                            })
                         })
                         .transpose()?,
                     limit: f.limit,
@@ -20045,7 +20412,7 @@ impl InboundShipments {
         let shipments = commerce
             .inbound_shipments()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list inbound shipments: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list inbound shipments", e))?;
         Ok(shipments.into_iter().map(Into::into).collect())
     }
 
@@ -20055,7 +20422,7 @@ impl InboundShipments {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "inbound shipment")?;
         let shipment = commerce.inbound_shipments().mark_in_transit(uuid.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to mark inbound shipment in transit: {}", e))
+            wrap(ErrCode::Internal, "Failed to mark inbound shipment in transit", e)
         })?;
         Ok(shipment.into())
     }
@@ -20065,9 +20432,10 @@ impl InboundShipments {
     pub async fn mark_arrived(&self, id: String) -> Result<InboundShipmentOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "inbound shipment")?;
-        let shipment = commerce.inbound_shipments().mark_arrived(uuid.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to mark inbound shipment arrived: {}", e))
-        })?;
+        let shipment = commerce
+            .inbound_shipments()
+            .mark_arrived(uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to mark inbound shipment arrived", e))?;
         Ok(shipment.into())
     }
 
@@ -20085,9 +20453,7 @@ impl InboundShipments {
         let shipment = commerce
             .inbound_shipments()
             .receive_line(uuid.into(), item_uuid.into(), parse_decimal_str(&quantity, "quantity")?)
-            .map_err(|e| {
-                Error::from_reason(format!("Failed to receive inbound shipment line: {}", e))
-            })?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to receive inbound shipment line", e))?;
         Ok(shipment.into())
     }
 
@@ -20099,7 +20465,7 @@ impl InboundShipments {
         let shipment = commerce
             .inbound_shipments()
             .cancel(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to cancel inbound shipment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel inbound shipment", e))?;
         Ok(shipment.into())
     }
 }
@@ -20170,13 +20536,13 @@ impl From<stateset_core::ActivityLogEntry> for ActivityLogEntryOutput {
 
 fn parse_actor_kind(s: &str) -> Result<stateset_core::ActorKind> {
     s.parse::<stateset_core::ActorKind>()
-        .map_err(|_| Error::from_reason(format!("Invalid actor kind: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid actor kind: {s}")))
 }
 
 fn parse_metadata_json(s: Option<String>) -> Result<serde_json::Value> {
     match s {
         Some(s) => serde_json::from_str(&s)
-            .map_err(|e| Error::from_reason(format!("Invalid metadata JSON: {}", e))),
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid metadata JSON", e)),
         None => Ok(serde_json::Value::Null),
     }
 }
@@ -20214,7 +20580,7 @@ impl ActivityLogs {
                 actor: input.actor,
                 metadata: parse_metadata_json(input.metadata)?,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to record activity: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to record activity", e))?;
         Ok(entry.into())
     }
 
@@ -20225,7 +20591,7 @@ impl ActivityLogs {
         let entry = commerce
             .activity_logs()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get activity log entry: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get activity log entry", e))?;
         Ok(entry.map(Into::into))
     }
 
@@ -20251,7 +20617,7 @@ impl ActivityLogs {
         let entries = commerce
             .activity_logs()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list activity logs: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list activity logs", e))?;
         Ok(entries.into_iter().map(Into::into).collect())
     }
 
@@ -20267,7 +20633,7 @@ impl ActivityLogs {
         let entries = commerce
             .activity_logs()
             .history_for_subject(&subject_type, uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to get activity history: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get activity history", e))?;
         Ok(entries.into_iter().map(Into::into).collect())
     }
 }
@@ -20388,12 +20754,12 @@ impl From<stateset_core::ChannelProductMapping> for ChannelProductMappingOutput 
 
 fn parse_channel_type(s: &str) -> Result<stateset_core::ChannelType> {
     s.parse::<stateset_core::ChannelType>()
-        .map_err(|_| Error::from_reason(format!("Invalid channel type: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid channel type: {s}")))
 }
 
 fn parse_channel_status(s: &str) -> Result<stateset_core::ChannelStatus> {
     s.parse::<stateset_core::ChannelStatus>()
-        .map_err(|_| Error::from_reason(format!("Invalid channel status: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid channel status: {s}")))
 }
 
 #[napi]
@@ -20427,7 +20793,7 @@ impl Channels {
                 tags: input.tags.unwrap_or_default(),
                 metadata: parse_metadata_json(input.metadata)?,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create channel: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create channel", e))?;
         Ok(channel.into())
     }
 
@@ -20438,7 +20804,7 @@ impl Channels {
         let channel = commerce
             .channels()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get channel: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get channel", e))?;
         Ok(channel.map(Into::into))
     }
 
@@ -20463,7 +20829,7 @@ impl Channels {
                     metadata: input.metadata.map(Some).map(parse_metadata_json).transpose()?,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update channel: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update channel", e))?;
         Ok(channel.into())
     }
 
@@ -20486,7 +20852,7 @@ impl Channels {
         let channels = commerce
             .channels()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list channels: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list channels", e))?;
         Ok(channels.into_iter().map(Into::into).collect())
     }
 
@@ -20498,7 +20864,7 @@ impl Channels {
         commerce
             .channels()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete channel: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete channel", e))
     }
 
     /// Lock or unlock a channel against external mutations.
@@ -20509,7 +20875,7 @@ impl Channels {
         let channel = commerce
             .channels()
             .set_lock(uuid.into(), locked)
-            .map_err(|e| Error::from_reason(format!("Failed to set channel lock: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set channel lock", e))?;
         Ok(channel.into())
     }
 
@@ -20536,8 +20902,8 @@ impl Channels {
         let count = commerce
             .channels()
             .sync_products(uuid.into(), items)
-            .map_err(|e| Error::from_reason(format!("Failed to sync channel products: {}", e)))?;
-        u32::try_from(count).map_err(|_| Error::from_reason("Sync count overflowed u32"))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to sync channel products", e))?;
+        u32::try_from(count).map_err(|_| coded(ErrCode::Validation, "Sync count overflowed u32"))
     }
 
     /// List a channel's SKU mappings.
@@ -20548,9 +20914,10 @@ impl Channels {
     ) -> Result<Vec<ChannelProductMappingOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "channel")?;
-        let mappings = commerce.channels().list_product_mappings(uuid.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to list channel product mappings: {}", e))
-        })?;
+        let mappings = commerce
+            .channels()
+            .list_product_mappings(uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list channel product mappings", e))?;
         Ok(mappings.into_iter().map(Into::into).collect())
     }
 }
@@ -20749,7 +21116,7 @@ impl From<stateset_core::Contact> for ContactOutput {
 
 fn parse_company_status(s: &str) -> Result<stateset_core::CompanyStatus> {
     s.parse::<stateset_core::CompanyStatus>()
-        .map_err(|_| Error::from_reason(format!("Invalid company status: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid company status: {s}")))
 }
 
 #[napi]
@@ -20781,7 +21148,7 @@ impl Companies {
                 tags: input.tags.unwrap_or_default(),
                 metadata: parse_metadata_json(input.metadata)?,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create company: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create company", e))?;
         Ok(company.into())
     }
 
@@ -20792,7 +21159,7 @@ impl Companies {
         let company = commerce
             .companies()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get company: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get company", e))?;
         Ok(company.map(Into::into))
     }
 
@@ -20816,7 +21183,7 @@ impl Companies {
                     metadata: input.metadata.map(Some).map(parse_metadata_json).transpose()?,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update company: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update company", e))?;
         Ok(company.into())
     }
 
@@ -20837,7 +21204,7 @@ impl Companies {
         let companies = commerce
             .companies()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list companies: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list companies", e))?;
         Ok(companies.into_iter().map(Into::into).collect())
     }
 
@@ -20848,7 +21215,7 @@ impl Companies {
         commerce
             .companies()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete company: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete company", e))
     }
 
     /// List a company's shipping addresses.
@@ -20859,7 +21226,7 @@ impl Companies {
         let addresses = commerce
             .companies()
             .list_addresses(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to list company addresses: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list company addresses", e))?;
         Ok(addresses.into_iter().map(Into::into).collect())
     }
 
@@ -20871,9 +21238,10 @@ impl Companies {
     ) -> Result<Vec<CompanyPriceOverrideOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "company")?;
-        let overrides = commerce.companies().list_price_overrides(uuid.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to list company price overrides: {}", e))
-        })?;
+        let overrides = commerce
+            .companies()
+            .list_price_overrides(uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list company price overrides", e))?;
         Ok(overrides.into_iter().map(Into::into).collect())
     }
 
@@ -20897,7 +21265,7 @@ impl Companies {
                 title: input.title,
                 company_ids,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create contact: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create contact", e))?;
         Ok(contact.into())
     }
 
@@ -20908,7 +21276,7 @@ impl Companies {
         let contact = commerce
             .companies()
             .get_contact(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get contact: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get contact", e))?;
         Ok(contact.map(Into::into))
     }
 
@@ -20920,7 +21288,7 @@ impl Companies {
         let contacts = commerce
             .companies()
             .list_contacts(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to list contacts: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list contacts", e))?;
         Ok(contacts.into_iter().map(Into::into).collect())
     }
 }
@@ -21051,7 +21419,7 @@ impl From<stateset_core::UnitConversionRule> for UnitConversionRuleOutput {
 
 fn parse_conversion_rule_type(s: &str) -> Result<stateset_core::ConversionRuleType> {
     s.parse::<stateset_core::ConversionRuleType>()
-        .map_err(|_| Error::from_reason(format!("Invalid conversion rule type: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid conversion rule type: {s}")))
 }
 
 #[napi]
@@ -21077,7 +21445,7 @@ impl UnitsOfMeasure {
                 name: input.name,
                 description: input.description,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create unit class: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create unit class", e))?;
         Ok(class.into())
     }
 
@@ -21087,7 +21455,7 @@ impl UnitsOfMeasure {
         let classes = commerce
             .units_of_measure()
             .list_classes()
-            .map_err(|e| Error::from_reason(format!("Failed to list unit classes: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list unit classes", e))?;
         Ok(classes.into_iter().map(Into::into).collect())
     }
 
@@ -21098,7 +21466,7 @@ impl UnitsOfMeasure {
         commerce
             .units_of_measure()
             .delete_class(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete unit class: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete unit class", e))
     }
 
     #[napi]
@@ -21112,7 +21480,7 @@ impl UnitsOfMeasure {
                 abbreviation: input.abbreviation,
                 factor: parse_decimal_str(&input.factor, "factor")?,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create unit of measure: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create unit of measure", e))?;
         Ok(uom.into())
     }
 
@@ -21135,7 +21503,7 @@ impl UnitsOfMeasure {
         let uoms = commerce
             .units_of_measure()
             .list_uoms(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list units of measure: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list units of measure", e))?;
         Ok(uoms.into_iter().map(Into::into).collect())
     }
 
@@ -21144,9 +21512,10 @@ impl UnitsOfMeasure {
     pub async fn set_base_uom(&self, id: String) -> Result<UnitOfMeasureOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "unit_of_measure")?;
-        let uom = commerce.units_of_measure().set_base_uom(uuid.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to set base unit of measure: {}", e))
-        })?;
+        let uom = commerce
+            .units_of_measure()
+            .set_base_uom(uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set base unit of measure", e))?;
         Ok(uom.into())
     }
 
@@ -21157,7 +21526,7 @@ impl UnitsOfMeasure {
         commerce
             .units_of_measure()
             .delete_uom(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete unit of measure: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete unit of measure", e))
     }
 
     #[napi]
@@ -21175,7 +21544,7 @@ impl UnitsOfMeasure {
                 to_uom_id: parse_uuid_str(&input.to_uom_id, "to_uom_id")?.into(),
                 factor: parse_decimal_str(&input.factor, "factor")?,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create conversion rule: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create conversion rule", e))?;
         Ok(rule.into())
     }
 
@@ -21185,7 +21554,7 @@ impl UnitsOfMeasure {
         let rules = commerce
             .units_of_measure()
             .list_rules()
-            .map_err(|e| Error::from_reason(format!("Failed to list conversion rules: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list conversion rules", e))?;
         Ok(rules.into_iter().map(Into::into).collect())
     }
 
@@ -21196,7 +21565,7 @@ impl UnitsOfMeasure {
         commerce
             .units_of_measure()
             .delete_rule(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete conversion rule: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete conversion rule", e))
     }
 }
 
@@ -21418,12 +21787,12 @@ impl From<stateset_core::ZoneShippingRate> for ZoneShippingRateOutput {
 
 fn parse_shipping_method_type(s: &str) -> Result<stateset_core::ShippingMethodType> {
     s.parse::<stateset_core::ShippingMethodType>()
-        .map_err(|_| Error::from_reason(format!("Invalid shipping method type: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid shipping method type: {s}")))
 }
 
 fn parse_currency_required(s: &str) -> Result<CurrencyCode> {
     s.parse::<CurrencyCode>()
-        .map_err(|_| Error::from_reason(format!("Invalid currency code: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid currency code: {s}")))
 }
 
 fn build_shipping_conditions(
@@ -21470,7 +21839,7 @@ impl ShippingZones {
                 postal_codes: input.postal_codes.unwrap_or_default(),
                 priority: input.priority,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create shipping zone: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create shipping zone", e))?;
         Ok(zone.into())
     }
 
@@ -21481,7 +21850,7 @@ impl ShippingZones {
         let zone = commerce
             .shipping_zones()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get shipping zone: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get shipping zone", e))?;
         Ok(zone.map(Into::into))
     }
 
@@ -21506,7 +21875,7 @@ impl ShippingZones {
                     is_active: input.is_active,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update shipping zone: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update shipping zone", e))?;
         Ok(zone.into())
     }
 
@@ -21527,7 +21896,7 @@ impl ShippingZones {
         let zones = commerce
             .shipping_zones()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list shipping zones: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list shipping zones", e))?;
         Ok(zones.into_iter().map(Into::into).collect())
     }
 
@@ -21538,7 +21907,7 @@ impl ShippingZones {
         commerce
             .shipping_zones()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete shipping zone: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete shipping zone", e))
     }
 
     /// Find zones whose geographic criteria match a destination.
@@ -21553,7 +21922,7 @@ impl ShippingZones {
         let zones = commerce
             .shipping_zones()
             .find_matching_zones(&country, region.as_deref(), postal_code.as_deref())
-            .map_err(|e| Error::from_reason(format!("Failed to find matching zones: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to find matching zones", e))?;
         Ok(zones.into_iter().map(Into::into).collect())
     }
 
@@ -21576,7 +21945,7 @@ impl ShippingZones {
                 max_delivery_days: input.max_delivery_days,
                 conditions: build_shipping_conditions(input.conditions)?,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create shipping method: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create shipping method", e))?;
         Ok(method.into())
     }
 
@@ -21587,7 +21956,7 @@ impl ShippingZones {
         let method = commerce
             .shipping_zones()
             .get_method(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get shipping method: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get shipping method", e))?;
         Ok(method.map(Into::into))
     }
 
@@ -21617,7 +21986,7 @@ impl ShippingZones {
         let methods = commerce
             .shipping_zones()
             .list_methods(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list shipping methods: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list shipping methods", e))?;
         Ok(methods.into_iter().map(Into::into).collect())
     }
 
@@ -21628,7 +21997,7 @@ impl ShippingZones {
         commerce
             .shipping_zones()
             .delete_method(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete shipping method: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete shipping method", e))
     }
 
     /// Calculate available shipping rates for a destination.
@@ -21648,9 +22017,7 @@ impl ShippingZones {
                 order_total: parse_optional_decimal_str(request.order_total, "order_total")?,
                 currency: parse_currency_required(&request.currency)?,
             })
-            .map_err(|e| {
-                Error::from_reason(format!("Failed to calculate shipping rates: {}", e))
-            })?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to calculate shipping rates", e))?;
         Ok(rates.into_iter().map(Into::into).collect())
     }
 }
@@ -21775,7 +22142,7 @@ impl StockSnapshots {
         let snapshot = commerce
             .stock_snapshots()
             .capture(stateset_core::CaptureStockSnapshot { label: input.label, lines })
-            .map_err(|e| Error::from_reason(format!("Failed to capture stock snapshot: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to capture stock snapshot", e))?;
         Ok(snapshot.into())
     }
 
@@ -21786,7 +22153,7 @@ impl StockSnapshots {
         let snapshot = commerce
             .stock_snapshots()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get stock snapshot: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get stock snapshot", e))?;
         Ok(snapshot.map(Into::into))
     }
 
@@ -21794,9 +22161,10 @@ impl StockSnapshots {
     #[napi]
     pub async fn latest(&self) -> Result<Option<StockSnapshotOutput>> {
         let commerce = self.commerce.lock().await;
-        let snapshot = commerce.stock_snapshots().latest().map_err(|e| {
-            Error::from_reason(format!("Failed to get latest stock snapshot: {}", e))
-        })?;
+        let snapshot = commerce
+            .stock_snapshots()
+            .latest()
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get latest stock snapshot", e))?;
         Ok(snapshot.map(Into::into))
     }
 
@@ -21812,7 +22180,7 @@ impl StockSnapshots {
         let snapshots = commerce
             .stock_snapshots()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list stock snapshots: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list stock snapshots", e))?;
         Ok(snapshots.into_iter().map(Into::into).collect())
     }
 
@@ -21823,7 +22191,7 @@ impl StockSnapshots {
         commerce
             .stock_snapshots()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete stock snapshot: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete stock snapshot", e))
     }
 }
 
@@ -21928,12 +22296,12 @@ impl From<stateset_core::PrintJob> for PrintJobOutput {
 
 fn parse_print_payload_kind(s: &str) -> Result<stateset_core::PrintPayloadKind> {
     s.parse::<stateset_core::PrintPayloadKind>()
-        .map_err(|_| Error::from_reason(format!("Invalid print payload kind: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid print payload kind: {s}")))
 }
 
 fn parse_print_job_status(s: &str) -> Result<stateset_core::PrintJobStatus> {
     s.parse::<stateset_core::PrintJobStatus>()
-        .map_err(|_| Error::from_reason(format!("Invalid print job status: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid print job status: {s}")))
 }
 
 #[napi]
@@ -21960,7 +22328,7 @@ impl PrintStations {
                 name: input.name,
                 printers: input.printers.unwrap_or_default(),
             })
-            .map_err(|e| Error::from_reason(format!("Failed to pair print station: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to pair print station", e))?;
         Ok(result.into())
     }
 
@@ -21970,7 +22338,7 @@ impl PrintStations {
         let stations = commerce
             .print_stations()
             .list_stations()
-            .map_err(|e| Error::from_reason(format!("Failed to list print stations: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list print stations", e))?;
         Ok(stations.into_iter().map(Into::into).collect())
     }
 
@@ -21981,7 +22349,7 @@ impl PrintStations {
         let station = commerce
             .print_stations()
             .get_station(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get print station: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get print station", e))?;
         Ok(station.map(Into::into))
     }
 
@@ -21992,7 +22360,7 @@ impl PrintStations {
         let station = commerce
             .print_stations()
             .revoke_station(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to revoke print station: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to revoke print station", e))?;
         Ok(station.into())
     }
 
@@ -22018,7 +22386,7 @@ impl PrintStations {
                     payload: input.payload,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to enqueue print job: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to enqueue print job", e))?;
         Ok(job.into())
     }
 
@@ -22030,7 +22398,7 @@ impl PrintStations {
         let job = commerce
             .print_stations()
             .next_job(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get next print job: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get next print job", e))?;
         Ok(job.map(Into::into))
     }
 
@@ -22042,7 +22410,7 @@ impl PrintStations {
         let job = commerce
             .print_stations()
             .complete_job(uuid.into(), success)
-            .map_err(|e| Error::from_reason(format!("Failed to complete print job: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to complete print job", e))?;
         Ok(job.into())
     }
 
@@ -22067,7 +22435,7 @@ impl PrintStations {
         let jobs = commerce
             .print_stations()
             .list_jobs(uuid.into(), filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list print jobs: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list print jobs", e))?;
         Ok(jobs.into_iter().map(Into::into).collect())
     }
 }
@@ -22077,8 +22445,9 @@ impl PrintStations {
 // ============================================================================
 
 fn parse_naive_date(s: &str, field: &str) -> Result<chrono::NaiveDate> {
-    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-        .map_err(|_| Error::from_reason(format!("Invalid {field} date (expected YYYY-MM-DD)")))
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| {
+        coded(ErrCode::Validation, format!("Invalid {field} date (expected YYYY-MM-DD)"))
+    })
 }
 
 #[napi(object)]
@@ -22180,9 +22549,10 @@ impl IntegrationMappings {
         input: CreateIntegrationMappingInput,
     ) -> Result<IntegrationMappingOutput> {
         let commerce = self.commerce.lock().await;
-        let mapping = commerce.integration_mappings().create(input.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to create integration mapping: {}", e))
-        })?;
+        let mapping = commerce
+            .integration_mappings()
+            .create(input.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create integration mapping", e))?;
         Ok(mapping.into())
     }
 
@@ -22193,7 +22563,7 @@ impl IntegrationMappings {
         let mapping = commerce
             .integration_mappings()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get integration mapping: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get integration mapping", e))?;
         Ok(mapping.map(Into::into))
     }
 
@@ -22214,9 +22584,7 @@ impl IntegrationMappings {
                     is_active: input.is_active,
                 },
             )
-            .map_err(|e| {
-                Error::from_reason(format!("Failed to update integration mapping: {}", e))
-            })?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update integration mapping", e))?;
         Ok(mapping.into())
     }
 
@@ -22236,9 +22604,10 @@ impl IntegrationMappings {
                 offset: f.offset,
             }
         });
-        let mappings = commerce.integration_mappings().list(filter).map_err(|e| {
-            Error::from_reason(format!("Failed to list integration mappings: {}", e))
-        })?;
+        let mappings = commerce
+            .integration_mappings()
+            .list(filter)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list integration mappings", e))?;
         Ok(mappings.into_iter().map(Into::into).collect())
     }
 
@@ -22249,7 +22618,7 @@ impl IntegrationMappings {
         commerce
             .integration_mappings()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete integration mapping: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete integration mapping", e))
     }
 
     /// Bulk upsert mappings; returns the number of rows affected as a string.
@@ -22260,7 +22629,7 @@ impl IntegrationMappings {
             .integration_mappings()
             .bulk_upsert(items.into_iter().map(Into::into).collect())
             .map_err(|e| {
-                Error::from_reason(format!("Failed to bulk upsert integration mappings: {}", e))
+                wrap(ErrCode::Internal, "Failed to bulk upsert integration mappings", e)
             })?;
         Ok(affected.to_string())
     }
@@ -22277,9 +22646,7 @@ impl IntegrationMappings {
                 field_name: lookup.field_name,
                 external_value: lookup.external_value,
             })
-            .map_err(|e| {
-                Error::from_reason(format!("Failed to resolve integration mapping: {}", e))
-            })
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to resolve integration mapping", e))
     }
 }
 
@@ -22289,7 +22656,7 @@ impl IntegrationMappings {
 
 fn parse_field_transform(s: &str) -> Result<stateset_core::FieldTransform> {
     s.parse::<stateset_core::FieldTransform>()
-        .map_err(|_| Error::from_reason(format!("Invalid field transform: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid field transform: {s}")))
 }
 
 #[napi(object)]
@@ -22404,7 +22771,7 @@ impl IntegrationFieldMappings {
         let commerce = self.commerce.lock().await;
         let mapping =
             commerce.integration_field_mappings().create(input.try_into()?).map_err(|e| {
-                Error::from_reason(format!("Failed to create integration field mapping: {}", e))
+                wrap(ErrCode::Internal, "Failed to create integration field mapping", e)
             })?;
         Ok(mapping.into())
     }
@@ -22413,9 +22780,10 @@ impl IntegrationFieldMappings {
     pub async fn get(&self, id: String) -> Result<Option<IntegrationFieldMappingOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "integration_field_mapping")?;
-        let mapping = commerce.integration_field_mappings().get(uuid.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to get integration field mapping: {}", e))
-        })?;
+        let mapping = commerce
+            .integration_field_mappings()
+            .get(uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get integration field mapping", e))?;
         Ok(mapping.map(Into::into))
     }
 
@@ -22440,7 +22808,7 @@ impl IntegrationFieldMappings {
                 },
             )
             .map_err(|e| {
-                Error::from_reason(format!("Failed to update integration field mapping: {}", e))
+                wrap(ErrCode::Internal, "Failed to update integration field mapping", e)
             })?;
         Ok(mapping.into())
     }
@@ -22462,9 +22830,10 @@ impl IntegrationFieldMappings {
                     offset: f.offset,
                 }
             });
-        let mappings = commerce.integration_field_mappings().list(filter).map_err(|e| {
-            Error::from_reason(format!("Failed to list integration field mappings: {}", e))
-        })?;
+        let mappings = commerce
+            .integration_field_mappings()
+            .list(filter)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list integration field mappings", e))?;
         Ok(mappings.into_iter().map(Into::into).collect())
     }
 
@@ -22472,9 +22841,10 @@ impl IntegrationFieldMappings {
     pub async fn delete(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "integration_field_mapping")?;
-        commerce.integration_field_mappings().delete(uuid.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to delete integration field mapping: {}", e))
-        })
+        commerce
+            .integration_field_mappings()
+            .delete(uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete integration field mapping", e))
     }
 
     /// Bulk create field mappings; returns the number of rows affected as a string.
@@ -22489,7 +22859,7 @@ impl IntegrationFieldMappings {
             .map(TryInto::try_into)
             .collect::<Result<Vec<stateset_core::CreateIntegrationFieldMapping>>>()?;
         let affected = commerce.integration_field_mappings().bulk_create(items).map_err(|e| {
-            Error::from_reason(format!("Failed to bulk create integration field mappings: {}", e))
+            wrap(ErrCode::Internal, "Failed to bulk create integration field mappings", e)
         })?;
         Ok(affected.to_string())
     }
@@ -22506,7 +22876,7 @@ impl IntegrationFieldMappings {
             })
             .collect::<Result<Vec<_>>>()?;
         let affected = commerce.integration_field_mappings().bulk_delete(ids).map_err(|e| {
-            Error::from_reason(format!("Failed to bulk delete integration field mappings: {}", e))
+            wrap(ErrCode::Internal, "Failed to bulk delete integration field mappings", e)
         })?;
         Ok(affected.to_string())
     }
@@ -22518,7 +22888,7 @@ impl IntegrationFieldMappings {
         commerce
             .integration_field_mappings()
             .distinct_groups(&integration_account)
-            .map_err(|e| Error::from_reason(format!("Failed to list mapping groups: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list mapping groups", e))
     }
 }
 
@@ -22528,7 +22898,7 @@ impl IntegrationFieldMappings {
 
 fn parse_payment_obligation_status(s: &str) -> Result<stateset_core::PaymentObligationStatus> {
     s.parse::<stateset_core::PaymentObligationStatus>()
-        .map_err(|_| Error::from_reason(format!("Invalid payment obligation status: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid payment obligation status: {s}")))
 }
 
 #[napi(object)]
@@ -22657,9 +23027,7 @@ impl PaymentObligations {
                 due_date: parse_naive_date(&input.due_date, "due_date")?,
                 notes: input.notes,
             })
-            .map_err(|e| {
-                Error::from_reason(format!("Failed to create payment obligation: {}", e))
-            })?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create payment obligation", e))?;
         Ok(obligation.into())
     }
 
@@ -22670,7 +23038,7 @@ impl PaymentObligations {
         let obligation = commerce
             .payment_obligations()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get payment obligation: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get payment obligation", e))?;
         Ok(obligation.map(Into::into))
     }
 
@@ -22696,9 +23064,10 @@ impl PaymentObligations {
                 })
             },
         )?;
-        let obligations = commerce.payment_obligations().list(filter).map_err(|e| {
-            Error::from_reason(format!("Failed to list payment obligations: {}", e))
-        })?;
+        let obligations = commerce
+            .payment_obligations()
+            .list(filter)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list payment obligations", e))?;
         Ok(obligations.into_iter().map(Into::into).collect())
     }
 
@@ -22714,7 +23083,7 @@ impl PaymentObligations {
         let obligation = commerce
             .payment_obligations()
             .record_payment(uuid.into(), parse_decimal_str(&amount, "amount")?)
-            .map_err(|e| Error::from_reason(format!("Failed to record payment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to record payment", e))?;
         Ok(obligation.into())
     }
 
@@ -22726,9 +23095,7 @@ impl PaymentObligations {
         let obligation = commerce
             .payment_obligations()
             .set_status(uuid.into(), parse_payment_obligation_status(&status)?)
-            .map_err(|e| {
-                Error::from_reason(format!("Failed to set payment obligation status: {}", e))
-            })?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set payment obligation status", e))?;
         Ok(obligation.into())
     }
 
@@ -22741,7 +23108,7 @@ impl PaymentObligations {
         let obligation = commerce
             .payment_obligations()
             .link_bill(uuid.into(), bill_uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to link bill: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to link bill", e))?;
         Ok(obligation.into())
     }
 
@@ -22751,7 +23118,7 @@ impl PaymentObligations {
         let commerce = self.commerce.lock().await;
         let day = parse_naive_date(&today, "today")?;
         let dashboard = commerce.payment_obligations().dashboard(day).map_err(|e| {
-            Error::from_reason(format!("Failed to build payment obligation dashboard: {}", e))
+            wrap(ErrCode::Internal, "Failed to build payment obligation dashboard", e)
         })?;
         Ok(dashboard.into())
     }
@@ -22887,7 +23254,7 @@ impl Purgatory {
         let commerce = self.commerce.lock().await;
         let metadata = match input.metadata {
             Some(s) => serde_json::from_str(&s)
-                .map_err(|e| Error::from_reason(format!("Invalid metadata JSON: {}", e)))?,
+                .map_err(|e| wrap(ErrCode::Validation, "Invalid metadata JSON", e))?,
             None => serde_json::Value::Null,
         };
         let items = input
@@ -22910,7 +23277,7 @@ impl Purgatory {
                 metadata,
                 items,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to ingest purgatory order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to ingest purgatory order", e))?;
         Ok(order.into())
     }
 
@@ -22921,7 +23288,7 @@ impl Purgatory {
         let order = commerce
             .purgatory()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get purgatory order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get purgatory order", e))?;
         Ok(order.map(Into::into))
     }
 
@@ -22945,7 +23312,7 @@ impl Purgatory {
         let orders = commerce
             .purgatory()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list purgatory orders: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list purgatory orders", e))?;
         Ok(orders.into_iter().map(Into::into).collect())
     }
 
@@ -22972,7 +23339,7 @@ impl Purgatory {
                     non_physical: input.non_physical,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to map purgatory line: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to map purgatory line", e))?;
         Ok(order.into())
     }
 
@@ -22984,7 +23351,7 @@ impl Purgatory {
         let order = commerce
             .purgatory()
             .post(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to post purgatory order: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to post purgatory order", e))?;
         Ok(order.into())
     }
 
@@ -22995,7 +23362,7 @@ impl Purgatory {
         commerce
             .purgatory()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete purgatory order: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete purgatory order", e))
     }
 }
 
@@ -23005,11 +23372,11 @@ impl Purgatory {
 
 fn parse_health_grade(s: &str) -> Result<stateset_core::HealthGrade> {
     s.parse::<stateset_core::HealthGrade>()
-        .map_err(|_| Error::from_reason(format!("Invalid health grade: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid health grade: {s}")))
 }
 
 fn parse_u64_str(s: &str, field: &str) -> Result<u64> {
-    s.parse::<u64>().map_err(|_| Error::from_reason(format!("Invalid {field} count")))
+    s.parse::<u64>().map_err(|_| coded(ErrCode::Validation, format!("Invalid {field} count")))
 }
 
 #[napi(object)]
@@ -23088,7 +23455,7 @@ impl TopologySnapshots {
         let commerce = self.commerce.lock().await;
         let signals = match input.signals {
             Some(s) => serde_json::from_str(&s)
-                .map_err(|e| Error::from_reason(format!("Invalid signals JSON: {}", e)))?,
+                .map_err(|e| wrap(ErrCode::Validation, "Invalid signals JSON", e))?,
             None => serde_json::Value::Null,
         };
         let snapshot = commerce
@@ -23101,9 +23468,7 @@ impl TopologySnapshots {
                 open_orders: parse_u64_str(&input.open_orders, "open_orders")?,
                 signals,
             })
-            .map_err(|e| {
-                Error::from_reason(format!("Failed to capture topology snapshot: {}", e))
-            })?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to capture topology snapshot", e))?;
         Ok(snapshot.into())
     }
 
@@ -23114,7 +23479,7 @@ impl TopologySnapshots {
         let snapshot = commerce
             .topology_snapshots()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get topology snapshot: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get topology snapshot", e))?;
         Ok(snapshot.map(Into::into))
     }
 
@@ -23122,9 +23487,10 @@ impl TopologySnapshots {
     #[napi]
     pub async fn latest(&self) -> Result<Option<TopologySnapshotOutput>> {
         let commerce = self.commerce.lock().await;
-        let snapshot = commerce.topology_snapshots().latest().map_err(|e| {
-            Error::from_reason(format!("Failed to get latest topology snapshot: {}", e))
-        })?;
+        let snapshot = commerce
+            .topology_snapshots()
+            .latest()
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get latest topology snapshot", e))?;
         Ok(snapshot.map(Into::into))
     }
 
@@ -23147,7 +23513,7 @@ impl TopologySnapshots {
         let snapshots = commerce
             .topology_snapshots()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list topology snapshots: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list topology snapshots", e))?;
         Ok(snapshots.into_iter().map(Into::into).collect())
     }
 
@@ -23158,7 +23524,7 @@ impl TopologySnapshots {
         commerce
             .topology_snapshots()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete topology snapshot: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete topology snapshot", e))
     }
 }
 
@@ -23168,12 +23534,12 @@ impl TopologySnapshots {
 
 fn parse_vendor_return_status(s: &str) -> Result<stateset_core::VendorReturnStatus> {
     s.parse::<stateset_core::VendorReturnStatus>()
-        .map_err(|_| Error::from_reason(format!("Invalid vendor return status: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid vendor return status: {s}")))
 }
 
 fn parse_vendor_return_reason(s: &str) -> Result<stateset_core::VendorReturnReason> {
     s.parse::<stateset_core::VendorReturnReason>()
-        .map_err(|_| Error::from_reason(format!("Invalid vendor return reason: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid vendor return reason: {s}")))
 }
 
 #[napi(object)]
@@ -23328,7 +23694,7 @@ impl VendorReturns {
                 items,
                 notes: input.notes,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create vendor return: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create vendor return", e))?;
         Ok(vendor_return.into())
     }
 
@@ -23339,7 +23705,7 @@ impl VendorReturns {
         let vendor_return = commerce
             .vendor_returns()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get vendor return: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get vendor return", e))?;
         Ok(vendor_return.map(Into::into))
     }
 
@@ -23363,7 +23729,7 @@ impl VendorReturns {
         let returns = commerce
             .vendor_returns()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list vendor returns: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list vendor returns", e))?;
         Ok(returns.into_iter().map(Into::into).collect())
     }
 
@@ -23375,7 +23741,7 @@ impl VendorReturns {
         let vendor_return = commerce
             .vendor_returns()
             .submit(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to submit vendor return: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to submit vendor return", e))?;
         Ok(vendor_return.into())
     }
 
@@ -23387,7 +23753,7 @@ impl VendorReturns {
         let vendor_return = commerce
             .vendor_returns()
             .process(uuid.into(), generate_credit)
-            .map_err(|e| Error::from_reason(format!("Failed to process vendor return: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to process vendor return", e))?;
         Ok(vendor_return.into())
     }
 
@@ -23399,7 +23765,7 @@ impl VendorReturns {
         let vendor_return = commerce
             .vendor_returns()
             .cancel(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to cancel vendor return: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel vendor return", e))?;
         Ok(vendor_return.into())
     }
 }
@@ -23410,12 +23776,12 @@ impl VendorReturns {
 
 fn parse_fraud_decision(s: &str) -> Result<stateset_core::FraudDecision> {
     s.parse::<stateset_core::FraudDecision>()
-        .map_err(|_| Error::from_reason(format!("Invalid fraud decision: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid fraud decision: {s}")))
 }
 
 fn parse_fraud_signal_type(s: &str) -> Result<stateset_core::FraudSignalType> {
     s.parse::<stateset_core::FraudSignalType>()
-        .map_err(|_| Error::from_reason(format!("Invalid fraud signal type: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid fraud signal type: {s}")))
 }
 
 #[napi(object)]
@@ -23606,7 +23972,7 @@ impl Fraud {
                 order_id: parse_uuid_str(&input.order_id, "order_id")?.into(),
                 signals,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create fraud assessment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create fraud assessment", e))?;
         Ok(assessment.into())
     }
 
@@ -23617,7 +23983,7 @@ impl Fraud {
         let assessment = commerce
             .fraud()
             .get_assessment(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get fraud assessment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get fraud assessment", e))?;
         Ok(assessment.map(Into::into))
     }
 
@@ -23642,7 +24008,7 @@ impl Fraud {
         let assessments = commerce
             .fraud()
             .list_assessments(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list fraud assessments: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list fraud assessments", e))?;
         Ok(assessments.into_iter().map(Into::into).collect())
     }
 
@@ -23660,7 +24026,7 @@ impl Fraud {
         let assessment = commerce
             .fraud()
             .review_assessment(uuid.into(), parse_fraud_decision(&decision)?, reviewer, notes)
-            .map_err(|e| Error::from_reason(format!("Failed to review fraud assessment: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to review fraud assessment", e))?;
         Ok(assessment.into())
     }
 
@@ -23676,7 +24042,7 @@ impl Fraud {
                 threshold: input.threshold,
                 action: parse_fraud_decision(&input.action)?,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create fraud rule: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create fraud rule", e))?;
         Ok(rule.into())
     }
 
@@ -23687,7 +24053,7 @@ impl Fraud {
         let rule = commerce
             .fraud()
             .get_rule(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get fraud rule: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get fraud rule", e))?;
         Ok(rule.map(Into::into))
     }
 
@@ -23711,7 +24077,7 @@ impl Fraud {
                     enabled: input.enabled,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update fraud rule: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update fraud rule", e))?;
         Ok(rule.into())
     }
 
@@ -23740,7 +24106,7 @@ impl Fraud {
         let rules = commerce
             .fraud()
             .list_rules(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list fraud rules: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list fraud rules", e))?;
         Ok(rules.into_iter().map(Into::into).collect())
     }
 
@@ -23751,7 +24117,7 @@ impl Fraud {
         commerce
             .fraud()
             .delete_rule(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete fraud rule: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete fraud rule", e))
     }
 
     /// All currently enabled fraud rules.
@@ -23761,7 +24127,7 @@ impl Fraud {
         let rules = commerce
             .fraud()
             .get_active_rules()
-            .map_err(|e| Error::from_reason(format!("Failed to get active fraud rules: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get active fraud rules", e))?;
         Ok(rules.into_iter().map(Into::into).collect())
     }
 }
@@ -23772,12 +24138,12 @@ impl Fraud {
 
 fn parse_tokenizer(s: &str) -> Result<stateset_core::Tokenizer> {
     s.parse::<stateset_core::Tokenizer>()
-        .map_err(|_| Error::from_reason(format!("Invalid tokenizer: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid tokenizer: {s}")))
 }
 
 fn parse_facet_type(s: &str) -> Result<stateset_core::FacetType> {
     s.parse::<stateset_core::FacetType>()
-        .map_err(|_| Error::from_reason(format!("Invalid facet type: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid facet type: {s}")))
 }
 
 #[napi(object)]
@@ -24037,7 +24403,7 @@ impl SearchConfigs {
                 synonyms: convert_synonyms(input.synonyms.unwrap_or_default()),
                 boost_rules: convert_boost_rules(input.boost_rules.unwrap_or_default()),
             })
-            .map_err(|e| Error::from_reason(format!("Failed to create search config: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create search config", e))?;
         Ok(config.into())
     }
 
@@ -24048,7 +24414,7 @@ impl SearchConfigs {
         let config = commerce
             .search_config()
             .get(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to get search config: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get search config", e))?;
         Ok(config.map(Into::into))
     }
 
@@ -24077,7 +24443,7 @@ impl SearchConfigs {
                     is_active: input.is_active,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update search config: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update search config", e))?;
         Ok(config.into())
     }
 
@@ -24098,7 +24464,7 @@ impl SearchConfigs {
         let configs = commerce
             .search_config()
             .list(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list search configs: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list search configs", e))?;
         Ok(configs.into_iter().map(Into::into).collect())
     }
 
@@ -24109,16 +24475,17 @@ impl SearchConfigs {
         commerce
             .search_config()
             .delete(uuid.into())
-            .map_err(|e| Error::from_reason(format!("Failed to delete search config: {}", e)))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to delete search config", e))
     }
 
     /// The currently active search configuration, if any.
     #[napi]
     pub async fn get_active(&self) -> Result<Option<SearchConfigOutput>> {
         let commerce = self.commerce.lock().await;
-        let config = commerce.search_config().get_active().map_err(|e| {
-            Error::from_reason(format!("Failed to get active search config: {}", e))
-        })?;
+        let config = commerce
+            .search_config()
+            .get_active()
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get active search config", e))?;
         Ok(config.map(Into::into))
     }
 
@@ -24127,9 +24494,10 @@ impl SearchConfigs {
     pub async fn set_active(&self, id: String) -> Result<SearchConfigOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = parse_uuid_str(&id, "search_config")?;
-        let config = commerce.search_config().set_active(uuid.into()).map_err(|e| {
-            Error::from_reason(format!("Failed to set active search config: {}", e))
-        })?;
+        let config = commerce
+            .search_config()
+            .set_active(uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set active search config", e))?;
         Ok(config.into())
     }
 }
@@ -24140,16 +24508,18 @@ impl SearchConfigs {
 
 fn parse_wallet_proof_type(s: &str) -> Result<stateset_core::AgentWalletProofType> {
     s.parse::<stateset_core::AgentWalletProofType>()
-        .map_err(|_| Error::from_reason(format!("Invalid agent wallet proof type: {}", s)))
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid agent wallet proof type: {s}")))
 }
 
 fn parse_i128_str(s: &str, field: &str) -> Result<i128> {
-    s.parse::<i128>()
-        .map_err(|_| Error::from_reason(format!("Invalid {field}: expected integer string")))
+    s.parse::<i128>().map_err(|_| {
+        coded(ErrCode::Validation, format!("Invalid {field}: expected integer string"))
+    })
 }
 
 fn parse_u8_field(value: u32, field: &str) -> Result<u8> {
-    u8::try_from(value).map_err(|_| Error::from_reason(format!("Invalid {field}: out of range")))
+    u8::try_from(value)
+        .map_err(|_| coded(ErrCode::Validation, format!("Invalid {field}: out of range")))
 }
 
 #[napi(object)]
@@ -24521,7 +24891,7 @@ impl Erc8004 {
                 )?,
                 active: input.active,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to register agent identity: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to register agent identity", e))?;
         Ok(identity.into())
     }
 
@@ -24535,7 +24905,7 @@ impl Erc8004 {
         let identity = commerce
             .erc8004()
             .get_identity(&agent_registry, &agent_id)
-            .map_err(|e| Error::from_reason(format!("Failed to get agent identity: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get agent identity", e))?;
         Ok(identity.map(Into::into))
     }
 
@@ -24545,9 +24915,10 @@ impl Erc8004 {
         agent_wallet: String,
     ) -> Result<Option<AgentIdentityOutput>> {
         let commerce = self.commerce.lock().await;
-        let identity = commerce.erc8004().get_identity_by_wallet(&agent_wallet).map_err(|e| {
-            Error::from_reason(format!("Failed to get agent identity by wallet: {}", e))
-        })?;
+        let identity = commerce
+            .erc8004()
+            .get_identity_by_wallet(&agent_wallet)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get agent identity by wallet", e))?;
         Ok(identity.map(Into::into))
     }
 
@@ -24589,7 +24960,7 @@ impl Erc8004 {
                     active: input.active,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to update agent identity: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update agent identity", e))?;
         Ok(identity.into())
     }
 
@@ -24619,7 +24990,7 @@ impl Erc8004 {
                     .transpose()?,
                 parse_rfc3339_opt(proof.proof_deadline, "proof_deadline")?,
             )
-            .map_err(|e| Error::from_reason(format!("Failed to set agent wallet: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set agent wallet", e))?;
         Ok(identity.into())
     }
 
@@ -24634,7 +25005,7 @@ impl Erc8004 {
         let identity = commerce
             .erc8004()
             .clear_agent_wallet(&agent_registry, &agent_id)
-            .map_err(|e| Error::from_reason(format!("Failed to clear agent wallet: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to clear agent wallet", e))?;
         Ok(identity.into())
     }
 
@@ -24648,7 +25019,7 @@ impl Erc8004 {
         let identities = commerce
             .erc8004()
             .list_identities(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to list agent identities: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list agent identities", e))?;
         Ok(identities.into_iter().map(Into::into).collect())
     }
 
@@ -24663,7 +25034,7 @@ impl Erc8004 {
         let count = commerce
             .erc8004()
             .count_identities(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to count agent identities: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to count agent identities", e))?;
         Ok(count.to_string())
     }
 
@@ -24690,7 +25061,7 @@ impl Erc8004 {
                 feedback_uri: input.feedback_uri,
                 feedback_hash: input.feedback_hash,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to give agent feedback: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to give agent feedback", e))?;
         Ok(feedback.into())
     }
 
@@ -24712,7 +25083,7 @@ impl Erc8004 {
                 &client_address,
                 parse_u64_str(&feedback_index, "feedback_index")?,
             )
-            .map_err(|e| Error::from_reason(format!("Failed to revoke agent feedback: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to revoke agent feedback", e))?;
         Ok(feedback.into())
     }
 
@@ -24733,7 +25104,7 @@ impl Erc8004 {
                 &client_address,
                 parse_u64_str(&feedback_index, "feedback_index")?,
             )
-            .map_err(|e| Error::from_reason(format!("Failed to read agent feedback: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to read agent feedback", e))?;
         Ok(feedback.map(Into::into))
     }
 
@@ -24758,7 +25129,7 @@ impl Erc8004 {
         let feedback = commerce
             .erc8004()
             .read_all_feedback(filter)
-            .map_err(|e| Error::from_reason(format!("Failed to read agent feedback: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to read agent feedback", e))?;
         Ok(feedback.into_iter().map(Into::into).collect())
     }
 
@@ -24782,7 +25153,7 @@ impl Erc8004 {
                 tag1,
                 tag2,
             )
-            .map_err(|e| Error::from_reason(format!("Failed to get feedback summary: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get feedback summary", e))?;
         Ok(summary.into())
     }
 
@@ -24804,7 +25175,7 @@ impl Erc8004 {
                 validator_address: input.validator_address,
                 request_uri: input.request_uri,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to request validation: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to request validation", e))?;
         Ok(request.into())
     }
 
@@ -24827,7 +25198,7 @@ impl Erc8004 {
                     tag: input.tag,
                 },
             )
-            .map_err(|e| Error::from_reason(format!("Failed to respond to validation: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to respond to validation", e))?;
         Ok(response.into())
     }
 
@@ -24840,7 +25211,7 @@ impl Erc8004 {
         let status = commerce
             .erc8004()
             .validation_status(&request_hash)
-            .map_err(|e| Error::from_reason(format!("Failed to get validation status: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get validation status", e))?;
         Ok(status.map(Into::into))
     }
 
@@ -24857,7 +25228,7 @@ impl Erc8004 {
         let summary = commerce
             .erc8004()
             .validation_summary(&agent_registry, &agent_id, validator_addresses, tag)
-            .map_err(|e| Error::from_reason(format!("Failed to get validation summary: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get validation summary", e))?;
         Ok(summary.into())
     }
 }
@@ -25017,7 +25388,7 @@ impl Maintenance {
         let report = commerce
             .maintenance()
             .backup_to(&backup_path)
-            .map_err(|e| Error::from_reason(format!("Failed to back up database: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to back up database", e))?;
         let m = report.manifest;
         Ok(BackupReportOutput {
             backup_path: report.backup_path.display().to_string(),
@@ -25063,7 +25434,7 @@ impl Maintenance {
         let report = commerce
             .maintenance()
             .restore_from(&backup_path, &target_path, &restore_options)
-            .map_err(|e| Error::from_reason(format!("Failed to restore database: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to restore database", e))?;
         Ok(RestoreReportOutput {
             target_path: report.target_path.display().to_string(),
             schema_version: report.schema_version,
@@ -25107,7 +25478,7 @@ impl Maintenance {
         let report = commerce
             .maintenance()
             .export_to_file_with(&path, &export_options)
-            .map_err(|e| Error::from_reason(format!("Failed to export data: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to export data", e))?;
         Ok(ExportReportOutput { total: report.total as u32, counts: domain_counts(report.counts) })
     }
 
@@ -25139,10 +25510,10 @@ impl Maintenance {
                     "skip" => stateset_embedded::maintenance::ConflictPolicy::Skip,
                     "fail" => stateset_embedded::maintenance::ConflictPolicy::Fail,
                     other => {
-                        return Err(Error::from_reason(format!(
-                            "Invalid onConflict '{}': expected 'skip' or 'fail'",
-                            other
-                        )));
+                        return Err(coded(
+                            ErrCode::Validation,
+                            format!("Invalid onConflict '{}': expected 'skip' or 'fail'", other),
+                        ));
                     }
                 };
             }
@@ -25153,7 +25524,7 @@ impl Maintenance {
         let report = commerce
             .maintenance()
             .import_from_file(&path, &import_options)
-            .map_err(|e| Error::from_reason(format!("Failed to import data: {}", e)))?;
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to import data", e))?;
         Ok(ImportReportOutput {
             created: domain_counts(report.created),
             skipped: domain_counts(report.skipped),
@@ -25216,9 +25587,9 @@ fn parse_rfc3339_field(
 ) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
     value
         .map(|s| {
-            chrono::DateTime::parse_from_rfc3339(s)
-                .map(|d| d.with_timezone(&chrono::Utc))
-                .map_err(|_| Error::from_reason(format!("Invalid RFC 3339 timestamp for {field}")))
+            chrono::DateTime::parse_from_rfc3339(s).map(|d| d.with_timezone(&chrono::Utc)).map_err(
+                |_| coded(ErrCode::Validation, format!("Invalid RFC 3339 timestamp for {field}")),
+            )
         })
         .transpose()
 }
@@ -25227,7 +25598,7 @@ fn parse_uuid_field(value: Option<&String>, field: &str) -> Result<Option<uuid::
     value
         .map(|s| {
             uuid::Uuid::parse_str(s)
-                .map_err(|_| Error::from_reason(format!("Invalid UUID for {field}")))
+                .map_err(|_| coded(ErrCode::Validation, format!("Invalid UUID for {field}")))
         })
         .transpose()
 }
@@ -25263,7 +25634,7 @@ fn parse_after_cursor_input(cursor: Option<Vec<String>>) -> Result<Option<(Strin
             let id = it.next().unwrap_or_default();
             Ok(Some((sort_key, id)))
         }
-        Some(_) => Err(Error::from_reason("afterCursor must be [sortKey, id]")),
+        Some(_) => Err(coded(ErrCode::Validation, "afterCursor must be [sortKey, id]")),
     }
 }
 
@@ -25279,8 +25650,9 @@ fn purchase_order_filter_from_input(
             .status
             .as_deref()
             .map(|s| {
-                s.parse::<stateset_core::PurchaseOrderStatus>()
-                    .map_err(|_| Error::from_reason(format!("Invalid purchase order status: {s}")))
+                s.parse::<stateset_core::PurchaseOrderStatus>().map_err(|_| {
+                    coded(ErrCode::Validation, format!("Invalid purchase order status: {s}"))
+                })
             })
             .transpose()?,
         from_date: parse_rfc3339_field(f.from_date.as_ref(), "fromDate")?,
@@ -25327,16 +25699,18 @@ fn work_order_filter_from_input(
             .status
             .as_deref()
             .map(|s| {
-                s.parse::<stateset_core::WorkOrderStatus>()
-                    .map_err(|_| Error::from_reason(format!("Invalid work order status: {s}")))
+                s.parse::<stateset_core::WorkOrderStatus>().map_err(|_| {
+                    coded(ErrCode::Validation, format!("Invalid work order status: {s}"))
+                })
             })
             .transpose()?,
         priority: f
             .priority
             .as_deref()
             .map(|s| {
-                s.parse::<stateset_core::WorkOrderPriority>()
-                    .map_err(|_| Error::from_reason(format!("Invalid work order priority: {s}")))
+                s.parse::<stateset_core::WorkOrderPriority>().map_err(|_| {
+                    coded(ErrCode::Validation, format!("Invalid work order priority: {s}"))
+                })
             })
             .transpose()?,
         assigned_to: parse_uuid_field(f.assigned_to.as_ref(), "assignedTo")?,
@@ -25381,16 +25755,18 @@ fn inspection_filter_from_input(
             .inspection_type
             .as_deref()
             .map(|s| {
-                s.parse::<stateset_core::InspectionType>()
-                    .map_err(|_| Error::from_reason(format!("Invalid inspection type: {s}")))
+                s.parse::<stateset_core::InspectionType>().map_err(|_| {
+                    coded(ErrCode::Validation, format!("Invalid inspection type: {s}"))
+                })
             })
             .transpose()?,
         status: f
             .status
             .as_deref()
             .map(|s| {
-                s.parse::<stateset_core::InspectionStatus>()
-                    .map_err(|_| Error::from_reason(format!("Invalid inspection status: {s}")))
+                s.parse::<stateset_core::InspectionStatus>().map_err(|_| {
+                    coded(ErrCode::Validation, format!("Invalid inspection status: {s}"))
+                })
             })
             .transpose()?,
         reference_type: f.reference_type,
@@ -25440,7 +25816,7 @@ fn ncr_filter_from_input(
             .as_deref()
             .map(|s| {
                 s.parse::<stateset_core::NonConformanceSource>()
-                    .map_err(|_| Error::from_reason(format!("Invalid NCR source: {s}")))
+                    .map_err(|_| coded(ErrCode::Validation, format!("Invalid NCR source: {s}")))
             })
             .transpose()?,
         severity: f
@@ -25448,7 +25824,7 @@ fn ncr_filter_from_input(
             .as_deref()
             .map(|s| {
                 s.parse::<stateset_core::Severity>()
-                    .map_err(|_| Error::from_reason(format!("Invalid NCR severity: {s}")))
+                    .map_err(|_| coded(ErrCode::Validation, format!("Invalid NCR severity: {s}")))
             })
             .transpose()?,
         status: f
@@ -25456,7 +25832,7 @@ fn ncr_filter_from_input(
             .as_deref()
             .map(|s| {
                 s.parse::<stateset_core::NcrStatus>()
-                    .map_err(|_| Error::from_reason(format!("Invalid NCR status: {s}")))
+                    .map_err(|_| coded(ErrCode::Validation, format!("Invalid NCR status: {s}")))
             })
             .transpose()?,
         sku: f.sku,
@@ -25468,4 +25844,52 @@ fn ncr_filter_from_input(
         offset: f.offset,
         after_cursor: parse_after_cursor_input(f.after_cursor)?,
     })
+}
+
+// ============================================================================
+// Panic containment probes (feature `test-panic` only)
+// ============================================================================
+//
+// Off by default, so these symbols never reach a published binary and the
+// committed `native-binding.js` / `index.d.ts` do not declare them.
+// `npm run build:debug` turns the feature on for `test/panic-containment.js`.
+
+/// Panic on purpose, synchronously, inside a [`guard`].
+///
+/// A sync `#[napi]` entry point has no safety net of its own: napi generates an
+/// `extern "C"` shim, and an unwind escaping that aborts the process whatever
+/// the panic strategy is. [`guard`] is what turns it into a JavaScript error
+/// with `code: 'INTERNAL_PANIC'`.
+#[cfg(feature = "test-panic")]
+#[napi(js_name = "__testPanic")]
+pub fn test_panic(message: Option<String>) -> Result<()> {
+    guard(|| panic!("{}", message.unwrap_or_else(|| "deliberate test panic".to_owned())))
+}
+
+/// The async twin of [`test_panic`]: panics while the future is being polled,
+/// inside a [`guard_async`], which reports the panic payload verbatim.
+#[cfg(feature = "test-panic")]
+#[napi(js_name = "__testPanicAsync")]
+pub async fn test_panic_async(message: Option<String>) -> Result<()> {
+    guard_async(async move {
+        panic!("{}", message.unwrap_or_else(|| "deliberate test panic".to_owned()))
+    })
+    .await
+}
+
+/// Panic inside an async entry point that is **not** guarded, to prove the
+/// fallback path.
+///
+/// `napi::tokio_runtime::execute_tokio_future` watches the spawned task and
+/// rejects the promise with `Status::GenericFailure` if it panicked — so all 728
+/// async entry points already fail soft once `panic = "unwind"` is in effect.
+/// They just carry no code, which `decorate()` in `errors.js` supplies. Note
+/// napi only forwards a `&'static str` payload; a formatted `String` becomes
+/// the fixed text `"Panic in async function"`, which is why this probe panics
+/// with a literal.
+#[cfg(feature = "test-panic")]
+#[napi(js_name = "__testPanicAsyncUnguarded")]
+pub async fn test_panic_async_unguarded() -> Result<()> {
+    tokio::task::yield_now().await;
+    panic!("unguarded async panic")
 }

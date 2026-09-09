@@ -165,6 +165,7 @@ async function handleAdminEvent(req, res) {
 
   // State-machine dispatch. The settler is the authority on every transition.
   let event;
+  let settlementReceipt = null;
   switch (kind) {
     case 'fund': {
       // First-time funding event. Create the escrow and emit pending → funded.
@@ -221,6 +222,7 @@ async function handleAdminEvent(req, res) {
         rail_txid: rail_event?.tx_hash ?? '0x' + 'cafe'.repeat(16),
       });
       state.recordSettlement(receipt);
+      settlementReceipt = receipt;
       break;
     }
     case 'refund': {
@@ -240,6 +242,7 @@ async function handleAdminEvent(req, res) {
         rail_txid: rail_event?.tx_hash ?? '0xbeefbeef'.repeat(8),
       });
       state.recordSettlement(receipt);
+      settlementReceipt = receipt;
       break;
     }
     case 'dispute': {
@@ -260,7 +263,7 @@ async function handleAdminEvent(req, res) {
   }
 
   state.appendEvent(escrow_id, event);
-  return reply(res, 200, { event });
+  return reply(res, 200, { event, receipt: settlementReceipt });
 }
 
 function handleObserve(req, res, _url, [escrowId]) {
@@ -346,6 +349,7 @@ function makeReceipt(escrowId, escrowRecord, finalState, opts) {
     settlement_id: newId('icp_set'),
     escrow_id: escrowId,
     intent_id: escrowRecord.intent_id,
+    settler: SETTLER_ID,
     final_state: finalState,
     amount: opts.amount,
     rail: 'base-sepolia',

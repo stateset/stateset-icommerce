@@ -13,7 +13,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  attachCommerceExecutionEvidence,
   buildApprovalStagesFromActions,
+  buildCommerceExecutionEvidence,
   buildRollbackContract,
   normalizePolicyAction,
   normalizePolicyExplanation,
@@ -43,6 +45,41 @@ describe('replayEventHash', () => {
 
   it('returns a 64-char lowercase hex string', () => {
     assert.match(replayEventHash({ x: 1 }), /^[0-9a-f]{64}$/);
+  });
+});
+
+describe('commerce execution evidence', () => {
+  const event = {
+    eventId: 'event-1',
+    tool: 'create_refund',
+    status: 'success',
+    requestId: 'request-1',
+    sessionId: 'session-1',
+    occurredAt: '2026-09-04T12:00:00.000Z',
+    params: { paymentId: 'pay-1', amount: '10.00' },
+    result: { success: true, refund: { id: 'refund-1' } },
+    policy: { allowed: true },
+    permission: { allowed: true },
+    notes: { mutationManifest: { phase: 'success' } },
+  };
+
+  it('exports privacy-minimal hashes and correlation identifiers', () => {
+    const evidence = buildCommerceExecutionEvidence(event);
+    assert.equal(evidence.version, 'stateset.commerce-evidence.v1');
+    assert.equal(evidence.event_id, 'event-1');
+    assert.equal(evidence.tool, 'create_refund');
+    assert.match(evidence.params_sha256, /^sha256:[a-f0-9]{64}$/);
+    assert.match(evidence.result_sha256, /^sha256:[a-f0-9]{64}$/);
+    assert.equal(Object.hasOwn(evidence, 'params'), false);
+    assert.equal(Object.hasOwn(evidence, 'result'), false);
+  });
+
+  it('attaches evidence without replacing existing MCP metadata', () => {
+    const response = { content: [], _meta: { existing: { value: 1 } } };
+    const output = attachCommerceExecutionEvidence(response, event);
+    assert.deepEqual(output._meta.existing, { value: 1 });
+    assert.equal(output._meta['com.stateset/commerce'].event_id, 'event-1');
+    assert.equal(response._meta['com.stateset/commerce'], undefined);
   });
 });
 

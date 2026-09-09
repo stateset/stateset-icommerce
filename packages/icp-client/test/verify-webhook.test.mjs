@@ -246,6 +246,7 @@ test.skip('verifyWebhook: end-to-end against live handler (covered handler-side)
   const {
     canonicalJson: handlerCanonicalJson,
     signEd25519: handlerSign,
+    signQuoteAcceptance,
   } = await import('../../../icp-handler/src/codec.mjs');
   const { generateKeyPairSync, createHash } = await import('node:crypto');
 
@@ -351,7 +352,7 @@ test.skip('verifyWebhook: end-to-end against live handler (covered handler-side)
       const ar = await (await fetch(`${handlerBase}/icp/v1/quotes/${qr.quote.quote_id}/accept`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: '{}',
+        body: JSON.stringify(signQuoteAcceptance(qr.quote.quote_id, agentAid, agentKp.privateKey)),
       })).json();
       const escrowId = ar.funding?.escrow_id ?? ar.escrow_id ?? ar.escrow;
       await fetch(`${handlerBase}/icp/v1/escrows/${escrowId}/fulfill`, {

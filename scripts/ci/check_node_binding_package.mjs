@@ -12,11 +12,20 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '../..');
 const bindingDir = path.join(rootDir, 'bindings/node');
 
+// Every file the published package needs at require()/import() time. The
+// `exports` sweep below only covers files a subpath export names, so anything
+// pulled in transitively (the native loader shim, the error taxonomy) must be
+// listed here or a dropped `files` entry in package.json ships a tarball that
+// throws MODULE_NOT_FOUND on the first require.
 const REQUIRED_PACKED_FILES = [
   'README.md',
   'package.json',
   'index.js',
   'index.d.ts',
+  'native-binding.js',
+  'errors.js',
+  'canonical-json.mjs',
+  'canonical-json.d.ts',
   'agent-toolkit.mjs',
   'agent-toolkit.d.ts',
   'openai.mjs',
@@ -28,6 +37,10 @@ const REQUIRED_PACKED_FILES = [
   'vercel-ai.mjs',
   'vercel-ai.d.ts',
   'toolkit-helpers.mjs',
+  'purchase-runtime.mjs',
+  'purchase-runtime.d.ts',
+  'set-payment.mjs',
+  'set-submission.mjs',
 ];
 
 function runPackDryRun() {
@@ -125,6 +138,13 @@ function stageHostNativeBinding(packageDir) {
 }
 
 async function verifyPackedImports(packageDir) {
+  const purchase = await import(pathToFileURL(path.join(packageDir, 'purchase-runtime.mjs')).href);
+  assert.equal(typeof purchase.PurchaseRuntime, 'function');
+  assert.equal(typeof purchase.SqlitePurchaseStore, 'function');
+  assert.equal(typeof purchase.createKernelPurchaseAdapter, 'function');
+  assert.equal(typeof purchase.createAgentCommerce, 'function');
+  assert.equal(typeof purchase.createSetPaymentAdapter, 'function');
+  assert.equal(typeof purchase.createDurableSetSubmission, 'function');
   const rootModule = await import(pathToFileURL(path.join(packageDir, 'index.js')).href);
   const Commerce = rootModule.Commerce || rootModule.default?.Commerce;
   assert.equal(typeof Commerce, 'function', 'Packed root module should expose Commerce.');

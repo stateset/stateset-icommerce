@@ -145,7 +145,7 @@ pub(crate) fn semantic_request_hash<C: Serialize, T: Serialize>(
     let mut capabilities = command.principal.capabilities.clone();
     capabilities.sort();
     capabilities.dedup();
-    let value = serde_json::json!({
+    let mut value = serde_json::json!({
         "contract_version": command.contract_version,
         "command_type": command.command_type,
         "principal": {
@@ -163,6 +163,22 @@ pub(crate) fn semantic_request_hash<C: Serialize, T: Serialize>(
         "deadline": command.deadline,
         "payload": payload,
     });
+    if let serde_json::Value::Object(fields) = &mut value {
+        if let Some(mandate) = &command.mandate {
+            fields.insert(
+                "mandate".into(),
+                serde_json::to_value(mandate)
+                    .map_err(|error| CommerceError::ValidationError(error.to_string()))?,
+            );
+        }
+        if let Some(commitment) = &command.commitment {
+            fields.insert(
+                "commitment".into(),
+                serde_json::to_value(commitment)
+                    .map_err(|error| CommerceError::ValidationError(error.to_string()))?,
+            );
+        }
+    }
     let canonical = serde_jcs::to_vec(&value)
         .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
     Ok(format!("{:x}", Sha256::digest(canonical)))

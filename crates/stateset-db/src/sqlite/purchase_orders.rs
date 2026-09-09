@@ -844,7 +844,9 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
             CommerceError::DatabaseError(format!("Invalid purchase_order.status '{status}': {e}"))
         })?;
         if parsed_status != PurchaseOrderStatus::Draft {
-            return Err(CommerceError::ValidationError(
+            // A non-draft purchase order is a state conflict, not a malformed
+            // request — and the Postgres twin has always said Conflict.
+            return Err(CommerceError::Conflict(
                 "Can only delete draft purchase orders".to_string(),
             ));
         }
@@ -1466,7 +1468,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
                 ))
             })?;
             if parsed_status != PurchaseOrderStatus::Draft {
-                return Err(CommerceError::ValidationError(
+                return Err(CommerceError::Conflict(
                     "Can only delete draft purchase orders".to_string(),
                 ));
             }
@@ -1524,7 +1526,7 @@ mod tests {
     use rust_decimal_macros::dec;
     use stateset_core::{
         CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier, PurchaseOrderFilter,
-        PurchaseOrderRepository, PurchaseOrderStatus, ReceivePurchaseOrderItem,
+        PurchaseOrderId, PurchaseOrderRepository, PurchaseOrderStatus, ReceivePurchaseOrderItem,
         ReceivePurchaseOrderItems, SupplierFilter,
     };
 
@@ -1688,6 +1690,42 @@ mod tests {
             .expect("create");
         let cancelled = repo.cancel(po.id).expect("cancel");
         assert_eq!(cancelled.status, PurchaseOrderStatus::Cancelled);
+    }
+
+    /// A non-draft delete is a state conflict, not a malformed request. The
+    /// Postgres twin has always answered `Conflict`; SQLite answered
+    /// `ValidationError`, so the same call produced a 422 on one backend and a
+    /// 409 on the other.
+    #[test]
+    fn delete_of_a_non_draft_purchase_order_is_a_conflict() {
+        let repo = fresh_repo();
+        let supplier = make_supplier(&repo, "ACME");
+        let po = |sku: &str| {
+            repo.create(CreatePurchaseOrder {
+                supplier_id: supplier.id,
+                items: vec![make_po_item(sku, dec!(1), dec!(10))],
+                ..Default::default()
+            })
+            .expect("create")
+        };
+
+        let cancelled = po("SKU-DEL-1");
+        repo.cancel(cancelled.id).expect("cancel");
+        let err = repo.delete(cancelled.id).expect_err("a cancelled PO cannot be deleted");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+
+        let batched = po("SKU-DEL-2");
+        repo.cancel(batched.id).expect("cancel");
+        let err = repo
+            .delete_batch_atomic(vec![batched.id])
+            .expect_err("a cancelled PO cannot be batch-deleted");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+
+        // A draft still deletes, and a missing id is still NotFound.
+        let draft = po("SKU-DEL-3");
+        repo.delete(draft.id).expect("a draft deletes");
+        let err = repo.delete(PurchaseOrderId::new()).expect_err("deleting nothing");
+        assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
     }
 
     #[test]

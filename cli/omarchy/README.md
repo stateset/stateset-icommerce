@@ -11,7 +11,7 @@ Install the version-matched controller explicitly, then add the plugin from its
 public repository:
 
 ```bash
-npm install --global @stateset/cli@1.30.0
+npm install --global @stateset/cli@1.34.0
 omarchy plugin add https://github.com/stateset/stateset-omarchy-plugin.git --enable
 ```
 
@@ -75,7 +75,7 @@ retained.
 Commerce writes remain preview-only unless an operator explicitly configures
 governed apply mode with kernel policy, principal, and store identity files.
 The plugin never receives those identities as model arguments. Review
-[the trust model](https://github.com/stateset/stateset-icommerce/blob/master/TRUST_FOUNDATION.md)
+[the trust model](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/trust-foundation.md)
 before enabling mutations.
 
 ## Development

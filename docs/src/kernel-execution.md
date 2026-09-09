@@ -14,7 +14,10 @@ in prompts or process-local context:
 - authenticated principal, tenant, delegation, and capabilities;
 - store, correlation, causation, trace, and deadline context;
 - expected aggregate version and expected policy version;
-- approval evidence;
+- approval and cryptographic authority evidence;
+- an optional economic mandate (objective, issuer, subject, scope, validity);
+- an optional exact resource commitment (budget, fiat money or non-fiat asset,
+  quantity, counterparty, and supporting evidence);
 - an explicit `preview` or `apply` execution mode.
 
 Constructors default to `preview`. Runtimes must never infer `apply` from model
@@ -39,6 +42,205 @@ tenant, store, payload, versions, deadline, and approval. Changing any bound
 field invalidates the signature; key ID, issuer, and validity-window failures
 produce stable policy reason codes.
 
+## Bounded economic autonomy
+
+`EconomicAgent` is the first-class operator-owned identity for an autonomous
+actor. It binds an agent ID to its delegating principal, organizational role,
+tenant, store, capabilities, budget IDs, credentials, and optional Ed25519
+public key. `agent.command(...)` produces a correctly scoped, delegated kernel
+envelope; the identity document itself stays outside model arguments.
+
+`EconomicAuthority` productizes command policy as three explicit tiers. Each
+rule names an autonomous ceiling, a higher approval ceiling, and therefore an
+implicit deny range above it. `compile(agent)` verifies that the agent actually
+holds the named capability and emits a deny-by-default `KernelPolicy` scoped to
+that agent's tenant and store. Tiers may use exact fiat money or exact asset
+amounts, but never mix denominations.
+
+```rust,ignore
+let agent = EconomicAgent::new(
+    "agent:acme:procurement:7",
+    "company:acme",
+    "procurement",
+    "tenant:acme",
+    "store:production",
+)
+.with_capabilities(["payments.create"])
+.with_budgets(["budget:procurement:monthly"]);
+
+let authority = EconomicAuthority::new("procurement-v4").allow(
+    "payments.create",
+    EconomicAuthorityRule::money(
+        "payments.create",
+        Money::new(dec!(2500.00), CurrencyCode::USD),
+        Money::new(dec!(25000.00), CurrencyCode::USD),
+    )
+    .with_budget(),
+);
+let policy = authority.compile(&agent)?;
+```
+
+Complete operator-owned JSON documents are available in
+[`economic-agent.json`](../../kernel/examples/economic-agent.json) and
+[`economic-authority.json`](../../kernel/examples/economic-authority.json).
+The all-zero example key is deliberately non-production material.
+
+The public intent vocabulary is deliberately smaller than the domain catalog.
+`commerce.transactions(agent)` exposes `quote`, `buy`, `sell`, `pay`,
+`fulfill`, `return_order`, `refund`, and `subscribe`. These methods create
+framework-neutral `EconomicIntent` values carrying identity, scope,
+idempotency, exact commitments, and protocol/domain payloads. Adapters map that
+stable vocabulary onto ICP and governed domain commands; hundreds of lower-level
+tools remain implementation detail.
+
+`EconomicReceipt::from_execution(...)` projects a domain receipt into a compact
+artifact containing the agent, principal, intent, exact commitment, policy
+decision, canonical result hash, audit-chain hash, and optional settlement
+evidence. Agent, merchant, and settler can independently Ed25519 co-sign the
+same RFC 8785/SHA-256 digest. Verification uses a caller-owned trusted-key map;
+embedded key material is never accepted as its own trust proof. Any change to
+the result hash, transaction ID, amount, policy decision, or audit anchor
+invalidates every signature.
+
+`EconomicMandate` turns an objective into durable, machine-checkable command
+context. It binds the objective to its issuing principal, the agent that may
+pursue it, allowed command names, tenant/store boundaries, and a validity
+window. `KernelCommandPolicy::with_mandate()` makes this context mandatory.
+Policy rejects subject or issuer substitution, cross-tenant/store reuse,
+commands outside the mandate, future mandates, and expired mandates.
+
+`EconomicCommitment` declares what the command will place at risk:
+
+```json
+{
+  "budget_id": "budget:cx-daily",
+  "amount": { "amount": "149.00", "currency": "USD" },
+  "counterparty_id": "customer:1837",
+  "quantity": "1",
+  "evidence": ["ticket:991", "return:rma-42"]
+}
+```
+
+Non-fiat and chain-qualified assets use a separate exact contract rather than
+pretending token symbols are ISO currencies:
+
+```json
+{
+  "asset_amount": {
+    "amount": "25.125",
+    "asset": "eip155:8453/erc20:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+  }
+}
+```
+
+Asset amounts are decimal strings and asset identifiers are trimmed,
+case-sensitive values of at most 256 bytes. A commitment cannot contain both
+`amount` and `asset_amount`, and an asset commitment cannot name a fiat budget.
+Command rules can set `max_asset_amount` and `approval_above_asset`; both bind
+the amount and exact asset identifier. A2A escrow creation and funding bind
+these declarations to executor-observed escrow state before custody changes.
+The escrow model canonicalizes bare symbols to uppercase, so those commitments
+use forms such as `USDC`; chain-qualified identifiers and checksum-sensitive
+addresses are preserved byte-for-byte.
+
+Asset authority on other commands fails closed with
+`policy.asset_binding_unsupported`. In particular, `x402.settle` records a
+transfer that already occurred externally, so enforcing a newly declared limit
+there would be after-the-fact accounting rather than authorization. Durable
+asset budgets are intentionally deferred until the kernel has reservation,
+release, expiry, refund, and final-settlement semantics; a permanent debit at
+escrow funding would strand authority when custody later unwinds.
+
+## Sequencer-to-kernel marketplace execution
+
+The sequencer is an ordered transport, not an authority oracle.
+`@stateset/cli/marketplace` provides `KernelMarketplaceBridge`, which consumes
+signed `marketplace.award.created` events and derives governed commands from
+local configuration. Buyer and merchant workers remain separate economic
+actors: the buyer creates escrow while the winning merchant reserves inventory,
+each under its own identity, principal delegation, capabilities, and policy.
+
+The bridge maintains a durable SQLite inbox and cursor. It authenticates the
+message against an operator-owned agent registry, enforces tenant/store scope,
+and rejects planner output that changes the local principal. Command IDs and
+idempotency keys are deterministically derived from the sequencer event, so a
+crash between kernel execution and receipt publication safely replays the
+sealed receipt instead of executing commerce twice. The cursor advances only
+after terminal handling.
+
+Marketplace signatures bind the complete canonical message, including the
+award, accepted bid, counterparty, exact money and settlement asset, quantity,
+addresses, expiry, and reply chain. Transport-level VES signatures should also
+be enabled in production; application and transport signatures protect
+different boundaries.
+
+Command policy can apply a per-transaction `max_amount`, require approval only
+above `approval_above`, cap inventory or capacity with `max_quantity`, and
+evaluate declared `allowed_counterparty_ids`.
+Currency mismatches fail closed and amounts remain decimal strings end to end.
+Checkout, payment, refund, and subscription-charge executors on both SQLite
+and PostgreSQL additionally bind the declared amount to the exact domain amount
+before preview or apply. This stops an agent from obtaining authorization for
+`$10.00` while placing `$100.00` in the payload. Refund binding occurs after
+the payment is locked and the actual refundable amount is resolved;
+subscription binding uses the locked billing-cycle total. Checkout preview
+re-derives coupons and automatic promotions, then binds the resulting order
+total. Apply performs the same comparison inside its checkout savepoint, so a
+mismatch rolls back the order and inventory reservations. A completed cart
+can only replay through its original kernel idempotency key; a different
+economic command is rejected rather than receiving success or another debit.
+
+`with_budget()` additionally requires a named, operator-provisioned durable
+budget. SQLite and PostgreSQL lock its balance, verify principal, tenant, store,
+currency, and validity window, then record exactly one debit per idempotency key
+in the same transaction as the domain mutation and receipt. Preview performs
+the complete balance check without debiting. Concurrent commands cannot spend
+the same remaining balance, failed commands roll the debit back, and replaying
+a successful command does not debit twice. `economic_budget_status` exposes
+exact committed and available decimal-string balances.
+
+Budget debits currently bind to `checkout.commit`, `payments.create`,
+`payments.create_refund`, and `subscriptions.charge`. A policy that configures `with_budget()`,
+`max_amount`, or `approval_above` for another command fails closed with
+`policy.money_binding_unsupported` until that command has a domain-specific
+observed-amount binding. A signed declaration alone is not treated as proof of
+what the underlying mutation commits.
+
+The same distinction applies to counterparties. Payments, refunds, and
+subscription charges map their customer to the canonical economic identity
+`customer:<uuid>` and compare it with the signed declaration. A mismatch or an
+unresolvable declared target is rejected before mutation. Other executor
+policies with a non-empty `allowed_counterparty_ids` reject with
+`policy.counterparty_binding_unsupported` until they define an equivalent
+observed identity mapping.
+
+Provision budgets from trusted operator code, never from a model-facing tool:
+
+```javascript
+await commerce.provisionEconomicBudget({
+  budget_id: 'budget:procurement:2026-09',
+  principal_id: 'agent:procurement',
+  tenant_id: 'tenant:acme',
+  store_id: 'store:production',
+  limit: { amount: '100000.00', currency: 'USD' },
+  valid_from: '2026-09-01T00:00:00Z',
+  expires_at: '2026-10-01T00:00:00Z',
+});
+```
+
+Provisioning the identical definition is idempotent, which makes deployment
+restarts safe. Reusing an ID with a changed principal, scope, limit, currency,
+or validity window is rejected; budget authority cannot be reset by replacing
+configuration. Native agent toolkits accept trusted `mandate` and `commitment`
+values (or callbacks) through execution options before approval and authority
+signing occur.
+
+Every newly produced `ExecutionReceipt` contains `economic_context`: the
+authenticated principal and delegation, store and correlation ID, mandate,
+commitment, approval ID, and signed-authority issuer. That context is sealed in
+the append-only receipt audit chain, producing a portable economic receipt
+rather than an opaque success message.
+
 To produce the signature, first attach `AuthorityEvidence` with its issuer, key
 ID, issue time, expiry, and an empty signature. Compute
 `authority_signing_hash`, sign that digest, then replace the empty signature
@@ -47,8 +249,8 @@ signed preimage, so a bearer cannot extend the expiry or substitute an issuer.
 
 `ExecutionReceipt<T>` is the stable response contract. It includes structured
 status and retry guidance, affected aggregate/version, committed event IDs,
-policy evidence, and an optional audit hash. Agents should branch on status,
-error codes, and retry disposition—not error prose.
+policy evidence, portable economic context, and an optional audit hash. Agents
+should branch on status, error codes, and retry disposition—not error prose.
 
 The current additive wire version is `1.0`. Existing direct repository APIs are
 unchanged; adapters can adopt the envelope incrementally.
@@ -94,6 +296,10 @@ Starting templates are available in
 and
 [`kernel/examples/strict-principal.json`](../../kernel/examples/strict-principal.json);
 replace every placeholder and narrow capabilities before deployment.
+[`kernel/examples/bounded-economic-policy.json`](../../kernel/examples/bounded-economic-policy.json)
+shows a signed procurement-style rule with a `$25,000.00` hard ceiling and
+human approval above `$2,500.00`; its all-zero public key is intentionally a
+non-production placeholder.
 
 ## Exact money
 
@@ -153,8 +359,8 @@ envelope-aware executors. Receipts are stored under both `command_id` and
 the invocation ID, issue time, and preview/apply mode are excluded. A genuine
 retry can therefore use a new invocation ID, and an authorized apply can
 atomically promote its stored preview. Changes to command type, principal,
-authority evidence (including its signature and validity window), deadline, or
-payload produce `kernel.idempotency_conflict`. SQLite and PostgreSQL call the
+mandate, commitment, authority evidence (including its signature and validity
+window), deadline, or payload produce `kernel.idempotency_conflict`. SQLite and PostgreSQL call the
 same RFC 8785 canonical hashing implementation for this contract.
 
 `SqliteDatabase::kernel_executor(policy)` now executes checkout commit, payment
@@ -249,6 +455,29 @@ local receipt.
 transaction hash and block number to the intent, causal event, receipt, and
 audit chain. Retries return the original anchored settlement receipt.
 
+`checkout.commit` accepts an optional `payload.stock_policy`:
+
+```json
+{ "cart_id": "<cart UUID>", "stock_policy": "reject_if_insufficient" }
+```
+
+For tracked inventory SKUs, `reject_if_insufficient` requires enough stock for
+the entire checkout inside the database transaction. Preview checks the combined
+demand of repeated SKU lines. Omit the field, or specify `allow_backorder`, to
+retain historical backorder behavior. Untracked SKUs remain non-inventory lines.
+This source-tree addition requires rebuilt native bindings; do not rely on older
+binaries to enforce new payload fields. Rust `CommitCheckout` literals now need
+`stock_policy: None` for the legacy behavior.
+
+Strict shortage rejections carry `commerce.inventory.insufficient_available`. Retrying the
+same command returns its original receipt; changing stock policy under the same
+idempotency key is a conflict, not permission to retry with weaker constraints.
+Run the SQLite checkout regressions with:
+
+```bash
+cargo test -p stateset-db --test sqlite_kernel_outbox kernel_checkout
+```
+
 `checkout.commit` runs customer resolution, order and line creation, inventory
 reservation/backorder decisions, order confirmation, cart completion, causal
 event emission, and receipt sealing in one transaction on both databases. Its
@@ -342,6 +571,9 @@ conflicts are durable rejection receipts and never create a domain row or event.
    subscriptions and finance automation.
 3. Expand multi-process crash-recovery and policy-version compatibility
    suites beyond the current release-gated critical command catalog.
+4. Extend durable budget binding beyond payment/refund commands, then add
+   explicit release, settlement, and period-rollover semantics for long-lived
+   reservations.
 
 This preserves the embedded, single-file deployment model while making safety,
 authority, causality, and retries deterministic enough for autonomous agents.

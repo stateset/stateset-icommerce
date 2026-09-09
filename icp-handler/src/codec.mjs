@@ -13,6 +13,14 @@ import {
 const ED25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
+/** Acceptance is bound to the immutable quote ID and its original buyer. */
+export function signQuoteAcceptance(quoteId, buyer, privateKey) {
+  const acceptance = { type: 'quote.accept', quote_id: quoteId, buyer };
+  return { acceptance, signature: {
+    alg: 'ed25519', kid: buyer, sig: signEd25519(canonicalJson(acceptance), privateKey),
+  } };
+}
+
 export function privateKeyFromSeed(seed32) {
   if (seed32.length !== 32) throw new Error('seed must be 32 bytes');
   const der = Buffer.concat([ED25519_PKCS8_PREFIX, seed32]);
@@ -156,13 +164,28 @@ export class AidBindingError extends Error {
  *     that genuinely cannot supply the X25519 key must register through a real
  *     resolver (out of scope for the reference handler).
  *
+ * Admission rule (`options`):
+ *   - `knownKeyHex` is the key an OPERATOR-owned source already binds to this
+ *     AID (a configured registry entry, or a pin recorded by an earlier
+ *     authenticated action). When present, the supplied `_pubkey_hex` MUST
+ *     equal it — a caller cannot rotate someone else's AID onto its own key.
+ *   - `requireKnown` refuses AIDs that no operator-owned source knows. §4.2
+ *     derivation stops a caller impersonating an EXISTING AID, but says
+ *     nothing about minting endless new ones: anyone can generate a keypair,
+ *     derive its AID and be a brand-new signer. An operator-keyed handler
+ *     therefore admits only registered or previously pinned signers.
+ *
  * @param {string} aid              The claimed Agent AID (`intent.buyer`/`seller`).
  * @param {string} edHintHex        Raw hex of the Ed25519 public key.
  * @param {string} [xHintHex]       Raw hex of the X25519 public key.
+ * @param {object} [options]
+ * @param {string|null} [options.knownKeyHex]  Operator-owned key already bound to `aid`.
+ * @param {boolean} [options.requireKnown]     Refuse AIDs no operator source knows.
  * @returns {Buffer} the 32-byte raw Ed25519 public key, bound to `aid`.
  * @throws {AidBindingError} if the binding cannot be established or fails.
  */
-export function resolveAidPubkey(aid, edHintHex, xHintHex) {
+export function resolveAidPubkey(aid, edHintHex, xHintHex, options = {}) {
+  const { knownKeyHex = null, requireKnown = false } = options;
   if (!edHintHex) {
     throw new AidBindingError(
       `cannot resolve ${aid}: no resolver configured and no _pubkey_hex hint provided`,
@@ -182,19 +205,34 @@ export function resolveAidPubkey(aid, edHintHex, xHintHex) {
         `cannot verify AID binding for ${aid}: _x_pubkey_hex (X25519 public key) is required to re-derive the AID per §4.2`,
       );
     }
-    // Non-spec AID with no X key: nothing to bind against; return the key as-is.
-    return edRaw;
+    // Non-spec AID with no X key: nothing to bind against; admission below is
+    // the only thing standing between this key and the claimed AID.
+  } else {
+    const xRaw = Buffer.from(xHintHex, 'hex');
+    if (xRaw.length !== 32) {
+      throw new AidBindingError(`_x_pubkey_hex must be 32 bytes, got ${xRaw.length}`);
+    }
+    const derived = deriveAidFromPubkeys(edRaw, xRaw);
+    if (derived !== aid) {
+      throw new AidBindingError(
+        `AID binding failed: supplied pubkeys derive to ${derived}, not the claimed ${aid}`,
+      );
+    }
   }
 
-  const xRaw = Buffer.from(xHintHex, 'hex');
-  if (xRaw.length !== 32) {
-    throw new AidBindingError(`_x_pubkey_hex must be 32 bytes, got ${xRaw.length}`);
-  }
-
-  const derived = deriveAidFromPubkeys(edRaw, xRaw);
-  if (derived !== aid) {
+  // Admission. Derivation proves the key/AID pair is self-consistent; it says
+  // nothing about whether this handler ever agreed to serve the AID.
+  if (knownKeyHex) {
+    if (edRaw.toString('hex') !== String(knownKeyHex).toLowerCase()) {
+      throw new AidBindingError(
+        `AID ${aid} is bound to a different public key`,
+        'auth.aid_key_mismatch',
+      );
+    }
+  } else if (requireKnown) {
     throw new AidBindingError(
-      `AID binding failed: supplied pubkeys derive to ${derived}, not the claimed ${aid}`,
+      `signer ${aid} is not registered: an operator-keyed handler does not admit caller-minted AIDs`,
+      'auth.aid_unregistered',
     );
   }
   return edRaw;

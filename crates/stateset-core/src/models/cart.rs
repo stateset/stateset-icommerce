@@ -456,9 +456,53 @@ pub struct CheckoutResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitCheckout {
     pub cart_id: CartId,
+    /// Inventory policy for tracked SKUs. Omission preserves historical backorders.
+    /// The policy is enforced inside the checkout transaction, in preview and apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stock_policy: Option<super::order::StockPolicy>,
+    /// Fingerprint issued with the quote, checked under the checkout transaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_cart_fingerprint: Option<String>,
+}
+
+impl CommitCheckout {
+    /// Legacy checkout behavior with optional quote constraints unset.
+    #[must_use]
+    pub const fn new(cart_id: CartId) -> Self {
+        Self { cart_id, stock_policy: None, expected_cart_fingerprint: None }
+    }
 }
 
 impl Cart {
+    /// Versioned commitment to the complete cart snapshot. Sorting line identities
+    /// makes database row order irrelevant; changing even same-price goods,
+    /// addresses, customer identity, metadata, or expiry requires a fresh quote.
+    pub fn checkout_fingerprint(&self) -> Result<String> {
+        use sha2::{Digest, Sha256};
+        let mut snapshot = self.clone();
+        snapshot.items.sort_by_key(|item| item.id);
+        let bytes =
+            serde_jcs::to_vec(&("stateset.checkout.cart.v1", snapshot)).map_err(|error| {
+                crate::CommerceError::from(crate::errors::DbError::serialization_error(
+                    "checkout_fingerprint",
+                    error.to_string(),
+                ))
+            })?;
+        Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+    }
+
+    /// Validate a quote's snapshot commitment without mutating commerce state.
+    pub fn verify_checkout_fingerprint(&self, expected: Option<&str>) -> Result<()> {
+        if let Some(expected) = expected {
+            if expected != self.checkout_fingerprint()? {
+                return Err(crate::CommerceError::Conflict(
+                    "quoted cart fingerprint does not match current cart".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Check if cart has items
     #[must_use]
     pub fn has_items(&self) -> bool {

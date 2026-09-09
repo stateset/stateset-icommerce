@@ -671,24 +671,30 @@ impl PgInvoiceRepository {
             .await
     }
 
+    /// Delete an invoice, but only while it is still a draft.
+    ///
+    /// The draft check reads the status and the deletes act on it, so both are
+    /// in one transaction with the invoice row locked `FOR UPDATE`. Reading on
+    /// the pool and then opening the transaction decided on a status nobody
+    /// held: a `send` that committed in between was erased along with the
+    /// invoice it had just put into AR aging.
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
-        // Check status first
-        let status: String = sqlx::query_scalar("SELECT status FROM invoices WHERE id = $1")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM invoices WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        let status = status.ok_or(CommerceError::NotFound)?;
 
         let parsed_status: InvoiceStatus = status.parse().map_err(|e| {
             CommerceError::DatabaseError(format!("Invalid invoice.status '{}': {}", status, e))
         })?;
         if parsed_status != InvoiceStatus::Draft {
-            return Err(CommerceError::ValidationError(
-                "Can only delete draft invoices".to_string(),
-            ));
+            return Err(CommerceError::Conflict("Can only delete draft invoices".to_string()));
         }
-
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         sqlx::query("DELETE FROM invoice_items WHERE invoice_id = $1")
             .bind(id)
@@ -1421,20 +1427,26 @@ impl PgInvoiceRepository {
         validate_batch_size(&ids)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        // Verify all invoices are in draft status before deleting
-        let statuses: Vec<(Uuid, String)> =
-            sqlx::query_as("SELECT id, status FROM invoices WHERE id = ANY($1)")
-                .bind(&ids)
-                .fetch_all(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
+        // Verify all invoices are in draft status before deleting. `FOR UPDATE`
+        // holds every row this batch is about to decide on: without it a `send`
+        // could commit between the check and the DELETE and the batch would
+        // erase an invoice that had just entered AR aging. Ordered by id to
+        // reduce the chance that two overlapping batches take the same rows in
+        // opposite orders and deadlock.
+        let statuses: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, status FROM invoices WHERE id = ANY($1) ORDER BY id FOR UPDATE",
+        )
+        .bind(&ids)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
         for (id, status) in &statuses {
             let parsed_status: InvoiceStatus = status.parse().map_err(|e| {
                 CommerceError::DatabaseError(format!("Invalid invoice.status '{}': {}", status, e))
             })?;
             if parsed_status != InvoiceStatus::Draft {
-                return Err(CommerceError::ValidationError(format!(
+                return Err(CommerceError::Conflict(format!(
                     "Invoice {} is not in draft status and cannot be deleted",
                     id
                 )));

@@ -191,72 +191,88 @@ impl AgentCardRepository for SqliteAgentCardRepository {
         stmt.query_row([wallet_address], Self::row_to_agent_card).optional().map_err(map_db_error)
     }
 
+    /// Update an agent card.
+    ///
+    /// One partial UPDATE: a column the caller did not name is neither read nor
+    /// rewritten. The old read-merge-write loaded the whole card, folded the
+    /// caller's `Option`s over that snapshot in Rust and wrote every column
+    /// back, so two agents editing different fields at once each rewrote the
+    /// other's column with the value they had read and the later commit
+    /// silently reverted its neighbour's edit.
     fn update(&self, id: Uuid, input: UpdateAgentCard) -> Result<AgentCard> {
         let conn = self.conn()?;
 
-        let existing = self.get(id)?.ok_or(CommerceError::NotFound)?;
-
-        let name = input.name.unwrap_or(existing.name);
-        let description = input.description.or(existing.description);
-        let supported_networks = input.supported_networks.unwrap_or(existing.supported_networks);
-        let supported_assets = input.supported_assets.unwrap_or(existing.supported_assets);
-        let a2a_skills = input.a2a_skills.unwrap_or(existing.a2a_skills);
-        let trust_level = input.trust_level.unwrap_or(existing.trust_level);
-        let endpoint_url = input.endpoint_url.or(existing.endpoint_url);
-        let endpoint_protocol = input.endpoint_protocol.or(existing.endpoint_protocol);
-        let merchant_id = input.merchant_id.or(existing.merchant_id);
-        let merchant_name = input.merchant_name.or(existing.merchant_name);
-        let business_category = input.business_category.or(existing.business_category);
-        let max_transaction_amount =
-            input.max_transaction_amount.or(existing.max_transaction_amount);
-        let daily_volume_limit = input.daily_volume_limit.or(existing.daily_volume_limit);
-        let requires_kyc = input.requires_kyc.unwrap_or(existing.requires_kyc);
-        let active = input.active.unwrap_or(existing.active);
-        let metadata = input.metadata.or(existing.metadata);
-
-        let networks_json = serde_json::to_string(&supported_networks)
+        let networks_json = input
+            .supported_networks
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
             .map_err(|e| CommerceError::Internal(e.to_string()))?;
-        let assets_json = serde_json::to_string(&supported_assets)
+        let assets_json = input
+            .supported_assets
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
             .map_err(|e| CommerceError::Internal(e.to_string()))?;
-        let skills_json = if a2a_skills.is_empty() {
-            None
-        } else {
-            Some(
-                serde_json::to_string(&a2a_skills)
+        // `Some(vec![])` still means "clear the column", so the skills write is
+        // driven by an explicit "was it named" flag rather than COALESCE.
+        let skills_named = input.a2a_skills.is_some();
+        let skills_json = match input.a2a_skills.as_ref() {
+            Some(skills) if !skills.is_empty() => Some(
+                serde_json::to_string(skills)
                     .map_err(|e| CommerceError::Internal(e.to_string()))?,
-            )
+            ),
+            _ => None,
         };
 
-        conn.execute(
-            "UPDATE agent_cards SET
-                name = ?, description = ?, supported_networks = ?, supported_assets = ?,
-                a2a_skills = ?, trust_level = ?, endpoint_url = ?, endpoint_protocol = ?,
-                merchant_id = ?, merchant_name = ?, business_category = ?,
-                max_transaction_amount = ?, daily_volume_limit = ?, requires_kyc = ?,
-                active = ?, metadata = ?, updated_at = ?
-             WHERE id = ?",
-            rusqlite::params![
-                name,
-                description,
-                networks_json,
-                assets_json,
-                skills_json,
-                trust_level.to_string(),
-                endpoint_url,
-                endpoint_protocol,
-                merchant_id,
-                merchant_name,
-                business_category,
-                max_transaction_amount.map(|n| n as i64),
-                daily_volume_limit.map(|n| n as i64),
-                i32::from(requires_kyc),
-                i32::from(active),
-                metadata,
-                Utc::now().to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+        let rows = conn
+            .execute(
+                "UPDATE agent_cards SET
+                name = COALESCE(?1, name),
+                description = COALESCE(?2, description),
+                supported_networks = COALESCE(?3, supported_networks),
+                supported_assets = COALESCE(?4, supported_assets),
+                a2a_skills = CASE WHEN ?5 THEN ?6 ELSE a2a_skills END,
+                trust_level = COALESCE(?7, trust_level),
+                endpoint_url = COALESCE(?8, endpoint_url),
+                endpoint_protocol = COALESCE(?9, endpoint_protocol),
+                merchant_id = COALESCE(?10, merchant_id),
+                merchant_name = COALESCE(?11, merchant_name),
+                business_category = COALESCE(?12, business_category),
+                max_transaction_amount = COALESCE(?13, max_transaction_amount),
+                daily_volume_limit = COALESCE(?14, daily_volume_limit),
+                requires_kyc = COALESCE(?15, requires_kyc),
+                active = COALESCE(?16, active),
+                metadata = COALESCE(?17, metadata),
+                updated_at = ?18
+             WHERE id = ?19",
+                rusqlite::params![
+                    input.name,
+                    input.description,
+                    networks_json,
+                    assets_json,
+                    i32::from(skills_named),
+                    skills_json,
+                    input.trust_level.map(|level| level.to_string()),
+                    input.endpoint_url,
+                    input.endpoint_protocol,
+                    input.merchant_id,
+                    input.merchant_name,
+                    input.business_category,
+                    input.max_transaction_amount.map(|n| n as i64),
+                    input.daily_volume_limit.map(|n| n as i64),
+                    input.requires_kyc.map(i32::from),
+                    input.active.map(i32::from),
+                    input.metadata,
+                    Utc::now().to_rfc3339(),
+                    id.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+        if rows == 0 {
+            return Err(CommerceError::NotFound);
+        }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }

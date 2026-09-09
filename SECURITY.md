@@ -44,7 +44,7 @@ Include the following information in your report:
 - We follow coordinated disclosure practices
 - We will work with you to understand and resolve the issue quickly
 
-For the current audit, formal-verification, and trust-assumption status of the repo, see `TRUST_FOUNDATION.md`.
+For the current audit, formal-verification, and trust-assumption status of the repo, see `docs/src/trust-foundation.md`.
 
 ## Security Considerations
 

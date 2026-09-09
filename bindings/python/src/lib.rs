@@ -183,6 +183,35 @@ impl Commerce {
         serialize_json(&receipt, "kernel receipt")
     }
 
+    /// Provision immutable, durable monetary authority for governed commands.
+    /// This is an operator API and must not be exposed as a model tool.
+    fn provision_economic_budget(&self, budget_json: String) -> PyResult<String> {
+        let budget: stateset_core::EconomicBudget =
+            serde_json::from_str(&budget_json).map_err(|error| {
+                PyValueError::new_err(format!("Invalid economic budget JSON: {error}"))
+            })?;
+        let commerce = self
+            .inner
+            .lock()
+            .map_err(|error| PyRuntimeError::new_err(format!("Lock error: {error}")))?;
+        let status = commerce.provision_economic_budget(&budget).map_err(|error| {
+            PyRuntimeError::new_err(format!("Budget provisioning failed: {error}"))
+        })?;
+        serialize_json(&status, "economic budget status")
+    }
+
+    /// Read exact committed and available balances for a durable budget.
+    fn economic_budget_status(&self, budget_id: String) -> PyResult<String> {
+        let commerce = self
+            .inner
+            .lock()
+            .map_err(|error| PyRuntimeError::new_err(format!("Lock error: {error}")))?;
+        let status = commerce
+            .economic_budget_status(&budget_id)
+            .map_err(|error| PyRuntimeError::new_err(format!("Budget lookup failed: {error}")))?;
+        serialize_json(&status, "economic budget status")
+    }
+
     /// Get the customers API.
     #[getter]
     fn customers(&self) -> Customers {

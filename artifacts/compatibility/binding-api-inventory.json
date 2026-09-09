@@ -48,7 +48,7 @@
       "readmePath": "bindings/dotnet/README.md",
       "coverageLevel": "detailed",
       "packageName": "StateSet.Embedded",
-      "version": "1.30.0",
+      "version": "1.34.0",
       "sourceFiles": [
         "bindings/dotnet/dotnet/StateSet/StateSetCommerce.cs",
         "bindings/dotnet/dotnet/StateSet/APIs.cs",
@@ -1786,7 +1786,7 @@
       "readmePath": "bindings/java/README.md",
       "coverageLevel": "package-manifest",
       "packageName": "com.stateset:embedded",
-      "version": "1.30.0",
+      "version": "1.34.0",
       "targetJava": "11"
     },
     {
@@ -1797,7 +1797,7 @@
       "readmePath": null,
       "coverageLevel": "package-manifest",
       "packageName": "com.stateset:embedded-kotlin",
-      "version": "1.30.0",
+      "version": "1.34.0",
       "targetJava": "11"
     },
     {
@@ -1808,10 +1808,10 @@
       "readmePath": "bindings/node/README.md",
       "coverageLevel": "detailed",
       "packageName": "@stateset/embedded",
-      "version": "1.30.0",
+      "version": "1.34.0",
       "runtime": "napi-rs",
-      "entrypointCount": 6,
-      "packedFilePatternCount": 4,
+      "entrypointCount": 8,
+      "packedFilePatternCount": 6,
       "peerDependencies": [
         "@stateset/cli"
       ],
@@ -1825,6 +1825,11 @@
           "subpath": "./agent-toolkit",
           "runtimeEntry": "./agent-toolkit.mjs",
           "typesEntry": "./agent-toolkit.d.ts"
+        },
+        {
+          "subpath": "./canonical-json",
+          "runtimeEntry": "./canonical-json.mjs",
+          "typesEntry": "./canonical-json.d.ts"
         },
         {
           "subpath": "./generic",
@@ -1842,6 +1847,11 @@
           "typesEntry": "./openai.d.ts"
         },
         {
+          "subpath": "./purchase-runtime",
+          "runtimeEntry": "./purchase-runtime.mjs",
+          "typesEntry": "./purchase-runtime.d.ts"
+        },
+        {
           "subpath": "./vercel-ai",
           "runtimeEntry": "./vercel-ai.mjs",
           "typesEntry": "./vercel-ai.d.ts"
@@ -1856,7 +1866,7 @@
       "readmePath": "bindings/php/README.md",
       "coverageLevel": "package-manifest",
       "packageName": "stateset/embedded",
-      "version": "1.30.0",
+      "version": "1.34.0",
       "requiresPhp": ">=8.1",
       "autoloadFiles": [
         "stubs/StateSet.php"
@@ -1873,7 +1883,7 @@
       "readmePath": "bindings/python/README.md",
       "coverageLevel": "detailed",
       "packageName": "stateset-embedded",
-      "version": "1.30.0",
+      "version": "1.34.0",
       "requiresPython": ">=3.9",
       "optionalDependencyGroups": [
         "agents",
@@ -2148,7 +2158,7 @@
       "readmePath": "bindings/ruby/README.md",
       "coverageLevel": "package-manifest",
       "packageName": "stateset_embedded",
-      "version": "1.30.0",
+      "version": "1.34.0",
       "requiredVersion": ">= 3.0",
       "nativeExtensions": [
         "ext/stateset_embedded/extconf.rb"
@@ -2709,7 +2719,7 @@
       "readmePath": "bindings/wasm/README.md",
       "coverageLevel": "package-manifest",
       "packageName": "@stateset/embedded-wasm",
-      "version": "1.30.0",
+      "version": "1.34.0",
       "entrypoints": {
         "main": "pkg/stateset_embedded.js",
         "module": "pkg/stateset_embedded.js",

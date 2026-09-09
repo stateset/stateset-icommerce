@@ -37,8 +37,8 @@ permissions:
   contents: read
 
 jobs:
-  reference-demo:
-    name: Reference IUT — JavaScript (icp-1.0-core)
+  runner-self-test:
+    name: Conformance runner self-test
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -46,14 +46,35 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '20'
+      - name: Runner exit-code contract (--fail-on-skip)
+        working-directory: icp-conformance
+        run: node --test test/runner.test.mjs
+
+  reference-demo:
+    name: Reference IUT — JavaScript (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [icp-1.0-core, icp-1.0-commerce]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
       - name: Run conformance suite
         working-directory: icp-conformance
-        run: node runner/run.mjs --profile icp-1.0-core --iut reference-demo --verbose
+        run: node runner/run.mjs --profile ${{ matrix.profile }} --iut reference-demo --fail-on-skip --verbose
 
   stateset-rust:
-    name: stateset-rust IUT — Rust (icp-1.0-core)
+    name: stateset-rust IUT — Rust (${{ matrix.profile }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [icp-1.0-core, icp-1.0-commerce]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -69,12 +90,16 @@ jobs:
         run: cargo test -p stateset-icp-iut --release
       - name: Run conformance suite (Rust)
         working-directory: icp-conformance
-        run: node runner/run.mjs --profile icp-1.0-core --iut stateset-rust --verbose
+        run: node runner/run.mjs --profile ${{ matrix.profile }} --iut stateset-rust --fail-on-skip --verbose
 
   stateset-go:
-    name: stateset-go IUT — Go (icp-1.0-core)
+    name: stateset-go IUT — Go (${{ matrix.profile }})
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [icp-1.0-core, icp-1.0-commerce]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -88,12 +113,16 @@ jobs:
         run: go build -o stateset-icp-iut-go .
       - name: Run conformance suite (Go)
         working-directory: icp-conformance
-        run: node runner/run.mjs --profile icp-1.0-core --iut stateset-go --verbose
+        run: node runner/run.mjs --profile ${{ matrix.profile }} --iut stateset-go --fail-on-skip --verbose
 
   stateset-python:
-    name: stateset-python IUT — Python (icp-1.0-core)
+    name: stateset-python IUT — Python (${{ matrix.profile }})
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [icp-1.0-core, icp-1.0-commerce]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -106,7 +135,7 @@ jobs:
         run: pip install cryptography
       - name: Run conformance suite (Python)
         working-directory: icp-conformance
-        run: node runner/run.mjs --profile icp-1.0-core --iut stateset-python --verbose
+        run: node runner/run.mjs --profile ${{ matrix.profile }} --iut stateset-python --fail-on-skip --verbose
 
   cross-iut-determinism:
     name: Cross-IUT determinism (JS × Rust × Go × Python)
@@ -304,6 +333,31 @@ jobs:
             echo "OK: ceiling decisions identical (reference-demo vs $impl)"
           done
           echo "All 10 refund/payout ceiling decisions identical across JS + Rust + Go + Python IUTs."
+      - name: Cross-IUT commerce-invariant determinism (10)
+        working-directory: icp-conformance
+        run: |
+          echo "All IUTs MUST agree on every economic verdict in the"
+          echo "icp-1.0-commerce profile. Divergence here means one impl"
+          echo "authorises a refund, capture, return or reservation another"
+          echo "blocks — cryptographically interoperable, financially unsafe."
+          inputs=vectors/icp-1.0/10-commerce-invariants/inputs.json
+          normalize() {
+            python3 -c "import sys,json;d=json.load(sys.stdin);print(json.dumps(d['decisions'],sort_keys=True))"
+          }
+          js_out=$(node iut-adapters/reference-demo.mjs 10-commerce-invariants < "$inputs" | normalize)
+          rs_out=$(../target/release/stateset-icp-iut 10-commerce-invariants < "$inputs" | normalize)
+          go_out=$(../crates/stateset-icp-iut-go/stateset-icp-iut-go 10-commerce-invariants < "$inputs" | normalize)
+          py_out=$(python3 ../crates/stateset-icp-iut-py/iut.py 10-commerce-invariants < "$inputs" | normalize)
+          for pair in "rust:$rs_out" "go:$go_out" "python:$py_out"; do
+            impl="${pair%%:*}"
+            out="${pair#*:}"
+            if [ "$js_out" != "$out" ]; then
+              echo "FAIL: commerce-invariant divergence (reference-demo vs $impl)"
+              exit 1
+            fi
+            echo "OK: commerce-invariant decisions identical (reference-demo vs $impl)"
+          done
+          echo "All 37 commerce-invariant decisions identical across JS + Rust + Go + Python IUTs."
       - name: Differential canonicalization fuzz (JS × Rust × Go × Python)
         working-directory: icp-conformance
         run: |
@@ -436,6 +490,8 @@ jobs:
       - name: Run chain-watcher test suite
         working-directory: services/icp-chain-watcher
         run: node --test test/watcher.test.mjs
+      - name: Run mock-RPC service tests (chain → watcher → settler)
+        run: node --test icp-docker/test/mock-rpc.test.mjs
 
   two-sided-demo:
     name: Two-sided integration demo (handler + Settler)
@@ -472,18 +528,31 @@ jobs:
         run: docker compose -f icp-docker/docker-compose.yml up -d --build
       - name: Wait for health
         run: |
-          for i in $(seq 1 30); do
+          # handler, settler, mock-rpc, chain-watcher — the mcp service is
+          # on-demand (stdio) and has no healthcheck.
+          for i in $(seq 1 90); do
             healthy=$(docker compose -f icp-docker/docker-compose.yml ps --format json | \
               jq -r 'select(.Health != null) | .Health' | grep -c healthy || true)
-            if [ "$healthy" -ge 2 ]; then echo "Both services healthy after ${i}s"; exit 0; fi
+            if [ "$healthy" -ge 4 ]; then echo "All 4 services healthy after ${i}s"; exit 0; fi
             sleep 1
           done
           echo "Services did not become healthy in time"
           docker compose -f icp-docker/docker-compose.yml ps
           docker compose -f icp-docker/docker-compose.yml logs
           exit 1
-      - name: Integration test
+      - name: Integration test (includes chain → watcher → settler settlement)
         run: node icp-docker/integration-test.mjs
+      - name: Chain-watcher forwarding evidence
+        if: always()
+        run: |
+          echo "--- chain-watcher /healthz ---"
+          curl -sS http://127.0.0.1:8789/healthz || true
+          echo ""
+          echo "--- mock-rpc /healthz ---"
+          curl -sS http://127.0.0.1:8790/healthz || true
+          echo ""
+          echo "--- chain-watcher logs ---"
+          docker compose -f icp-docker/docker-compose.yml logs chain-watcher || true
       - name: Tear down
         if: always()
         run: docker compose -f icp-docker/docker-compose.yml down -v

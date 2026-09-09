@@ -67,13 +67,11 @@
 //! shrink. New violations fail. When you fix one, delete its entry.
 //!
 //! The genuinely-safe exceptions live in [`SAFE_EXCEPTIONS`], one reason each.
-//!
-//! Deliberately **not** backlogged: `transfer_orders::cancel` /
-//! `cancel_async`. They are live findings of the audit this lint came from —
-//! both read the order's status outside the transaction that then cancels it,
-//! so an order can be cancelled after a concurrent receipt completes. They
-//! belong to the transfer-order repair, not to the backlog; the two gates stay
-//! red until that lands.
+//! The bar is high: an entry has to explain what holds the row, not assert that
+//! nothing goes wrong. In practice that means the guard is *in* the write —
+//! `WHERE status = 'draft'`, `WHERE reversed_at IS NULL`, `WHERE version = $n`
+//! — with `rows_affected() == 0` treated as a conflict, so the check cannot be
+//! separated from the act even in principle.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -88,9 +86,61 @@ use std::path::{Path, PathBuf};
 /// Entries are `(backend, file, method, reason)`. Fail-closed: an entry that no
 /// longer matches a real method fails the gate, so the list cannot rot.
 const SAFE_EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
-    // (none yet — cross-table precondition reads are already excluded by the
-    // "reads a table it then writes" clause, which is where most of the
-    // genuinely-safe cases live.)
+    (
+        "sqlite",
+        "accounts_receivable.rs",
+        "reverse_write_off",
+        "the pre-tx read is a cheap early-out; the reversal is `UPDATE ap/ar_write_offs \
+         SET reversed_at = ? WHERE id = ? AND reversed_at IS NULL` inside the IMMEDIATE \
+         transaction, and 0 rows is a Conflict — a duplicate reversal cannot double-restore \
+         the invoice",
+    ),
+    (
+        "postgres",
+        "accounts_receivable.rs",
+        "reverse_write_off_async",
+        "same shape as the SQLite twin: the guard lives in the write \
+         (`WHERE reversed_at IS NULL`) inside the transaction, with 0 rows mapped to Conflict",
+    ),
+    (
+        "sqlite",
+        "accounts_receivable.rs",
+        "apply_credit_memo",
+        "the pre-tx checks are early-outs; the authoritative unapplied balance is re-read \
+         INSIDE the IMMEDIATE transaction and the memo update is guarded on that re-read \
+         amount, so two concurrent applications cannot both validate against a stale balance",
+    ),
+    (
+        "postgres",
+        "general_ledger.rs",
+        "post_journal_entry_async",
+        "the in-transaction `UPDATE gl_journal_entries … WHERE id = $3 AND status = 'draft'` \
+         IS the lock — a concurrent poster blocks on the row and then matches zero rows \
+         (Conflict); the entry's lines, which the pre-tx read supplies, are immutable once \
+         written",
+    ),
+    (
+        "postgres",
+        "general_ledger.rs",
+        "void_journal_entry_async",
+        "same: the in-transaction `WHERE id = $1 AND status = 'posted'` update is the lock, \
+         0 rows is a Conflict, and the lines it reverses are immutable",
+    ),
+    (
+        "postgres",
+        "custom_objects.rs",
+        "update_type_async",
+        "optimistic concurrency, not check-then-act: the write is \
+         `… version = version + 1 WHERE id = $5 AND version = $6` against the version read \
+         above, and a lost race raises VersionConflict instead of overwriting",
+    ),
+    (
+        "postgres",
+        "custom_objects.rs",
+        "update_object_async",
+        "same optimistic `WHERE id = $6 AND version = $7` guard, with VersionConflict on 0 \
+         rows affected",
+    ),
 ];
 
 /// SQLite guarded mutations that read outside the write transaction.
@@ -98,54 +148,40 @@ const SAFE_EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
 /// Pre-existing at the time this lint was written; tracked for repair, not
 /// blessed. Delete an entry when you fix the method.
 const SQLITE_UNGUARDED_BACKLOG: &[(&str, &str)] = &[
-    ("accounts_payable.rs", "delete_bill"),
-    ("accounts_receivable.rs", "reverse_write_off"),
-    ("accounts_receivable.rs", "apply_credit_memo"),
-    ("agent_cards.rs", "update"),
-    ("carts.rs", "mark_ready_for_payment"),
-    ("lots.rs", "update"),
-    ("warranties.rs", "transfer"),
-    ("warranties.rs", "create_claim"),
-    ("warranties.rs", "update_claim"),
-    ("warranties.rs", "approve_claim"),
-    ("warranties.rs", "deny_claim"),
-    ("warranties.rs", "complete_claim"),
-    ("warranties.rs", "cancel_claim"),
+    // `void` and `expire` are a pooled `get()` -> `ensure_can_*` ->
+    // `self.update(...)`. The lint cannot see them: the write is delegated to
+    // another method, so no guarded statement appears in the body it scans.
+    // They are the same check-then-act the claim mutators had — two operators
+    // voiding and expiring at once each decide on their own snapshot and the
+    // later write wins — and the repair is the same: put the allowed status set
+    // into the UPDATE's own `WHERE` and report `Conflict` on zero rows.
+    ("warranties.rs", "void"),
+    ("warranties.rs", "expire"),
 ];
 
 /// Postgres guarded mutations that read on the pool instead of in a
 /// transaction. Same policy as [`SQLITE_UNGUARDED_BACKLOG`].
 const POSTGRES_UNGUARDED_BACKLOG: &[(&str, &str)] = &[
-    ("accounts_payable.rs", "delete_bill_async"),
-    ("accounts_receivable.rs", "reverse_write_off_async"),
-    ("agent_cards.rs", "update_async"),
-    ("carts.rs", "mark_ready_for_payment_async"),
-    ("channels.rs", "update_async"),
-    ("channels.rs", "delete_async"),
-    ("custom_objects.rs", "update_type_async"),
-    ("custom_objects.rs", "update_object_async"),
-    ("general_ledger.rs", "post_journal_entry_async"),
-    ("general_ledger.rs", "void_journal_entry_async"),
-    ("inbound_shipments.rs", "receive_line_async"),
-    ("invoices.rs", "delete_async"),
-    ("lots.rs", "update_async"),
-    ("purchase_orders.rs", "delete_async"),
-    ("warranties.rs", "transfer_async"),
-    ("warranties.rs", "create_claim_async"),
-    ("warranties.rs", "update_claim_async"),
-    ("warranties.rs", "approve_claim_async"),
-    ("warranties.rs", "deny_claim_async"),
-    ("warranties.rs", "complete_claim_async"),
-    ("warranties.rs", "cancel_claim_async"),
+    // The Postgres twins of the SQLite `void` / `expire` entries above, with
+    // the same delegated write and the same repair.
+    ("warranties.rs", "void_async"),
+    ("warranties.rs", "expire_async"),
 ];
 
 /// Postgres guarded mutations that *are* transactional but read the row they
 /// write without `FOR UPDATE`. Same policy as [`SQLITE_UNGUARDED_BACKLOG`].
 const POSTGRES_UNLOCKED_BACKLOG: &[(&str, &str)] = &[
+    // `delete_bin_async` locks the BIN it deletes (`load_bin_pg` is
+    // `SELECT … FOR UPDATE`), which is why the for-update gate no longer flags
+    // it — but the guard it actually rejects on is a `SELECT COUNT(*) FROM
+    // inventory_bin_levels … WHERE quantity_on_hand <> 0 OR quantity_allocated
+    // <> 0`, and *those* child rows are not locked. Stock can be moved into the
+    // bin between the count and the two DELETEs, so the bin is emptied of levels
+    // that were non-zero when they were removed. The lint's row-lock heuristic
+    // works on the parent row and cannot see this; the entry is kept so the
+    // child-table check-then-act stays visible until it is repaired (lock the
+    // levels too, or make the delete a guarded `DELETE … WHERE NOT EXISTS (…)`).
     ("bins.rs", "delete_bin_async"),
-    ("carts.rs", "update_item_async"),
-    ("invoices.rs", "delete_batch_atomic_async"),
-    ("purchase_orders.rs", "delete_batch_atomic_async"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -217,11 +253,38 @@ impl Finding {
     }
 }
 
-fn backend_dir(backend: Backend) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(backend.dir())
+/// Backend-owned sources that live outside `src/<backend>/`.
+///
+/// `saga.rs` is Postgres-only (it takes a `PostgresDatabase` and speaks sqlx)
+/// and holds 13 SQL statements across two transactions, including the
+/// `execute_step` check-then-act — so it belongs under the same rules as the
+/// files in `src/postgres/`. Note the lint only recognises `CommerceError`
+/// rejections and `ensure_*` helpers as state guards; `saga.rs` raises
+/// `SagaError`, so today it is scanned but produces no findings. It is listed
+/// here so that the moment a guard in it is written in the crate's normal
+/// vocabulary, the gate covers it.
+const EXTRA_SOURCES: &[(&str, &str)] = &[("postgres", "saga.rs")];
+
+fn src_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
 }
 
-/// `(file name, source)` for every `.rs` file in a backend directory.
+fn backend_dir(backend: Backend) -> PathBuf {
+    src_dir().join(backend.dir())
+}
+
+/// Where a scanned file lives: inside `src/<backend>/`, unless it is one of
+/// [`EXTRA_SOURCES`], which sit directly in `src/`.
+fn source_path(backend: Backend, file: &str) -> PathBuf {
+    if EXTRA_SOURCES.iter().any(|(dir, name)| *dir == backend.dir() && *name == file) {
+        src_dir().join(file)
+    } else {
+        backend_dir(backend).join(file)
+    }
+}
+
+/// `(file name, source)` for every `.rs` file in a backend directory, plus this
+/// backend's [`EXTRA_SOURCES`].
 fn backend_sources(backend: Backend) -> Vec<(String, String)> {
     let dir = backend_dir(backend);
     let mut files: Vec<(String, String)> = fs::read_dir(&dir)
@@ -238,6 +301,17 @@ fn backend_sources(backend: Backend) -> Vec<(String, String)> {
             Some((name, source))
         })
         .collect();
+    for (dir, name) in EXTRA_SOURCES.iter().filter(|(dir, _)| *dir == backend.dir()) {
+        let path = src_dir().join(name);
+        let source = fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "backend_transaction_parity: extra {dir} source {} cannot be read ({e}) — \
+                 remove it from EXTRA_SOURCES or fix the path",
+                path.display()
+            )
+        });
+        files.push(((*name).to_string(), source));
+    }
     files.sort_by(|a, b| a.0.cmp(&b.0));
     files
 }
@@ -306,8 +380,16 @@ const READ_PREFIXES: &[&str] = &["get", "find_", "load_", "lookup", "fetch_"];
 /// `CommerceError` variants that only mean "the row is not there" — a
 /// `NotFound` check is not a state guard, so a blind `UPDATE … WHERE id = ?`
 /// after one is not a check-then-act.
-const NOT_A_STATE_GUARD: &[&str] =
-    &["NotFound", "DatabaseError", "SerializationError", "InternalError", "ConfigurationError"];
+const NOT_A_STATE_GUARD: &[&str] = &[
+    "NotFound",
+    "DatabaseError",
+    "SerializationError",
+    // Both spellings exist in this workspace; neither says anything about the
+    // row's state, so neither turns a blind write into a check-then-act.
+    "Internal",
+    "InternalError",
+    "ConfigurationError",
+];
 
 /// Every `self.foo(args)` / `Self::foo(args)` call on a line, as
 /// `(name, args-up-to-the-first-close-paren)`.
@@ -501,8 +583,9 @@ fn classify(
     }
 
     let transaction = method.first(|line| backend.opens_transaction(line));
-    let row_locked = body.contains("FOR UPDATE")
-        || body.lines().flat_map(self_calls).any(|(name, _)| locking_helpers.contains(name));
+    let row_locked = takes_row_lock(&body)
+        || body.lines().flat_map(self_calls).any(|(name, _)| locking_helpers.contains(name))
+        || body.lines().flat_map(free_calls).any(|name| locking_helpers.contains(name));
 
     Some(GuardedMutation {
         guard_line: method.line_of(guard),
@@ -512,14 +595,61 @@ fn classify(
     })
 }
 
-/// Names of methods in a file whose own body takes `FOR UPDATE`, so a caller
+/// Does this text take a row lock on the rows it selects?
+///
+/// `FOR UPDATE` is the strong form, but two weaker ones are locks too and the
+/// repo uses both deliberately: `FOR NO KEY UPDATE` (carts, checkout — same
+/// exclusion against other writers, but rows referencing `carts(id)` can still
+/// be inserted) and `FOR SHARE` (blocks writers, admits readers). Matching only
+/// the literal `FOR UPDATE` reported `carts::update_item_async` as unlocked
+/// when its `lock_cart_in_tx` helper holds the row throughout.
+fn takes_row_lock(text: &str) -> bool {
+    text.contains("FOR UPDATE") || text.contains("FOR NO KEY UPDATE") || text.contains("FOR SHARE")
+}
+
+/// Names of functions in a file whose own body takes a row lock, so a caller
 /// that delegates its read to one of them is locking the row.
+///
+/// `methods` parses free functions as well as inherent methods, so this covers
+/// both `Self::lock_cart_in_tx(..)`-style helpers and module-level ones such as
+/// `bins.rs::load_bin_pg`, which is `SELECT … FOR UPDATE` and is called
+/// unqualified.
 fn locking_helpers(parsed: &[Method]) -> BTreeSet<String> {
     parsed
         .iter()
-        .filter(|method| method.body().contains("FOR UPDATE"))
+        .filter(|method| takes_row_lock(&method.body()))
         .map(|method| method.name.clone())
         .collect()
+}
+
+/// Every `name(` call on a line that is not a method call on a value, as the
+/// bare name: `load_bin_pg(tx, id)` and `super::load_bin_pg(tx, id)` both yield
+/// `load_bin_pg`, while `row.get(0)` yields nothing (a `.` before the name
+/// means the receiver decides what runs, not this file).
+fn free_calls(line: &str) -> Vec<&str> {
+    let bytes = line.as_bytes();
+    let mut names = Vec::new();
+    let mut index = 0;
+    while index < line.len() {
+        if !(bytes[index].is_ascii_alphabetic() || bytes[index] == b'_') {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < line.len() && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_') {
+            index += 1;
+        }
+        if !line[index..].starts_with('(') {
+            continue;
+        }
+        // `.foo(` is a method call on a value; anything else (`foo(`, `::foo(`,
+        // start of line) names a function this file can see.
+        if start > 0 && bytes[start - 1] == b'.' {
+            continue;
+        }
+        names.push(&line[start..index]);
+    }
+    names
 }
 
 fn is_allowlisted(backend: Backend, file: &str, method: &str) -> bool {
@@ -689,7 +819,7 @@ fn allowlist_entries_still_name_real_methods() {
     }
 
     for (backend, file, method) in known {
-        let path = backend_dir(backend).join(file);
+        let path = source_path(backend, file);
         let source = fs::read_to_string(&path).unwrap_or_else(|e| {
             panic!(
                 "backend_transaction_parity: allowlist entry `{}/{file}` names a file that \
@@ -786,6 +916,67 @@ impl Store {
         "backend_transaction_parity: the rule no longer recognises the fixed form as compliant \
          — it would force churn instead of correctness"
     );
+}
+
+/// The three heuristics that were relaxed to clear real false positives must
+/// recognise exactly what they were widened for, and nothing more. Each of
+/// these hid a compliant method behind a red gate before; a regression the
+/// other way (accepting an unlocked read) would be worse, so both directions
+/// are pinned here on fixtures.
+#[test]
+fn the_row_lock_heuristics_recognise_the_forms_this_repo_actually_uses() {
+    // `FOR NO KEY UPDATE` (carts/checkout) and `FOR SHARE` are row locks;
+    // an ordinary SELECT is not.
+    assert!(takes_row_lock("SELECT * FROM carts WHERE id = $1 FOR UPDATE"));
+    assert!(takes_row_lock("SELECT * FROM carts WHERE id = $1 FOR NO KEY UPDATE"));
+    assert!(takes_row_lock("SELECT * FROM carts WHERE id = $1 FOR SHARE"));
+    assert!(!takes_row_lock("SELECT * FROM carts WHERE id = $1"));
+
+    // A lock helper reached by a bare call (`load_bin_pg`) counts, exactly like
+    // `Self::`-qualified ones; a method call on a value (`row.get(..)`) never
+    // does, or every accessor in the crate would look like a lock helper.
+    assert_eq!(free_calls("    load_bin_pg(tx.as_mut(), id).await?;"), vec!["load_bin_pg"]);
+    assert_eq!(free_calls("    super::load_bin_pg(tx.as_mut(), id).await?;"), vec!["load_bin_pg"]);
+    assert!(free_calls("    let x: i64 = row.get(0)?;").is_empty());
+
+    let source = r#"
+async fn load_thing(conn: &mut PgConnection, id: i32) -> Result<Thing> {
+    sqlx::query_as("SELECT * FROM things WHERE id = $1 FOR UPDATE").fetch_one(conn).await
+}
+
+impl Store {
+    async fn retire(&self, id: i32) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        load_thing(tx.as_mut(), id).await?;
+        let busy: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM things WHERE id = $1 AND busy")
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await?;
+        if busy > 0 {
+            return Err(CommerceError::NotPermitted("busy".into()));
+        }
+        sqlx::query("UPDATE things SET retired = true WHERE id = $1").execute(tx.as_mut()).await?;
+        tx.commit().await
+    }
+}
+"#;
+    let parsed = methods(source);
+    let helpers = locking_helpers(&parsed);
+    assert!(helpers.contains("load_thing"), "a free function that takes FOR UPDATE is a helper");
+    let retire = parsed.iter().find(|method| method.name == "retire").expect("fixture parses");
+    let verdict =
+        classify(retire, Backend::Postgres, &helpers).expect("fixture is a guarded write");
+    assert!(verdict.guard_inside_transaction);
+    assert!(verdict.row_locked, "delegating the read to a free FOR UPDATE helper locks the row");
+
+    // `Internal` / `InternalError` say nothing about the row's state, so they
+    // must not turn a blind `UPDATE … WHERE id = ?` into a check-then-act — but
+    // a real state rejection still must.
+    assert!(!is_state_guard(r#"CommerceError::Internal("boom".into())"#));
+    assert!(!is_state_guard(r#"CommerceError::InternalError("boom".into())"#));
+    assert!(!is_state_guard(r#"CommerceError::NotFound"#));
+    assert!(is_state_guard(r#"CommerceError::Conflict("already approved".into())"#));
+    assert!(is_state_guard(r#"CommerceError::ValidationError("not a draft".into())"#));
 }
 
 // ---------------------------------------------------------------------------

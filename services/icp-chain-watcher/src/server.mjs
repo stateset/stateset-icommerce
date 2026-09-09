@@ -12,7 +12,11 @@
 //   STATE_FILE           — persist last-processed block here (default: ./.icp-chain-watcher-state.json)
 //
 // Health endpoint:
-//   GET /healthz — returns { ok: true, last_block, pending_forward, errors }
+//   GET /healthz — 200 { ok: true, ... } while the last poll succeeded (or none
+//                   has run yet), 503 { ok: false, last_poll: { ok, error, at } }
+//                   once a poll fails. Liveness alone is not the property worth
+//                   probing: a watcher whose RPC has gone away forwards nothing
+//                   and the settler silently misses every on-chain event.
 
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -61,23 +65,55 @@ export class ChainWatcher {
     this.settlerUrl = settlerUrl;
     this.startBlock = startBlock;
     this.state = loadState();
-    this.metrics = { events_seen: 0, events_forwarded: 0, errors: 0, last_block: null };
+    this.metrics = {
+      events_seen: 0,
+      events_forwarded: 0,
+      errors: 0,
+      last_block: null,
+      // null until the first poll completes; then { ok, error, at }.
+      last_poll: null,
+    };
     this._stopped = false;
     this._eventTopics = Object.values(EVENT_TOPICS);
   }
 
-  /** Run one polling cycle: scan new blocks for events and forward them. */
+  /**
+   * Run one polling cycle, recording its outcome for `/healthz`.
+   *
+   * Rethrows whatever `#poll()` throws so the caller's error accounting is
+   * unchanged; the outcome is recorded either way.
+   *
+   * @returns {Promise<{ok: boolean, error: string|null}>}
+   */
   async tick() {
+    try {
+      const outcome = await this.#poll();
+      this.#notePoll(outcome.ok, outcome.error);
+      return outcome;
+    } catch (err) {
+      this.#notePoll(false, err.message);
+      throw err;
+    }
+  }
+
+  #notePoll(ok, error) {
+    this.metrics.last_poll = { ok, error: error ?? null, at: new Date().toISOString() };
+  }
+
+  /** Scan new blocks for events and forward them. */
+  async #poll() {
     const head = await this.rpc.blockNumber();
     const finalized = head - FINALITY_BLOCKS;
-    if (finalized < 0) return;
+    // Chain shallower than the finality depth: nothing is confirmed yet, which
+    // is a healthy state, not a failure.
+    if (finalized < 0) return { ok: true, error: null };
 
     let from = this.state.last_processed_block !== null
       ? this.state.last_processed_block + 1
       : (this.startBlock ?? Math.max(0, head - 1000));
     if (from > finalized) {
       this.metrics.last_block = finalized;
-      return; // nothing new past finality
+      return { ok: true, error: null }; // nothing new past finality
     }
     const to = Math.min(finalized, from + LOG_BATCH_MAX_BLOCKS - 1);
 
@@ -99,17 +135,19 @@ export class ChainWatcher {
         this.metrics.events_forwarded++;
       } catch (err) {
         this.metrics.errors++;
-        process.stderr.write(
-          `forward error for ${decoded.eventName} ${decoded.escrow_id}: ${err.message}\n`,
-        );
-        // Don't advance past failures — retry next tick.
-        return;
+        const reason = `forward error for ${decoded.eventName} ${decoded.escrow_id}: ${err.message}`;
+        process.stderr.write(`${reason}\n`);
+        // Don't advance past failures — retry next tick. The chain was
+        // reachable but the settler is now behind, so this poll did not
+        // succeed and /healthz must say so.
+        return { ok: false, error: reason };
       }
     }
 
     this.state.last_processed_block = to;
     saveState(this.state);
     this.metrics.last_block = to;
+    return { ok: true, error: null };
   }
 
   /** Long-running poll loop. */
@@ -141,9 +179,14 @@ function sleep(ms) {
 export function startHealthServer(watcher, port = HTTP_PORT) {
   const server = createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/healthz') {
-      res.writeHead(200, { 'content-type': 'application/json' });
+      // Healthy while the last poll succeeded, or before any poll has run
+      // (start-up grace). A 503 is what makes docker/Kubernetes act on a
+      // watcher that can no longer see the chain.
+      const lastPoll = watcher.metrics.last_poll;
+      const ok = lastPoll === null || lastPoll.ok === true;
+      res.writeHead(ok ? 200 : 503, { 'content-type': 'application/json' });
       res.end(JSON.stringify({
-        ok: true,
+        ok,
         ...watcher.metrics,
         last_processed_block: watcher.state.last_processed_block,
       }));

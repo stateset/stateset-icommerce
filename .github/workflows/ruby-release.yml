@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   release_hygiene:
-    name: Release Hygiene
+    name: Release Hygiene (publish)
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

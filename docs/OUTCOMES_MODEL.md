@@ -302,4 +302,4 @@ StateSet can become a large infrastructure company only if it answers two questi
 
 - [Competitive Landscape](./COMPETITIVE_LANDSCAPE.md)
 - [Agentic Commerce Baseline](./AGENTIC_COMMERCE_BASELINE.md)
-- [Trust Foundation](../TRUST_FOUNDATION.md)
+- [Trust Foundation](src/trust-foundation.md)

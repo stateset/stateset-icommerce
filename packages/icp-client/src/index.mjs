@@ -450,10 +450,15 @@ export class ICPClient {
    * the buyer wallet must execute on-chain (or off-chain rail).
    */
   async accept(quoteId, body = {}) {
+    const acceptance = { type: 'quote.accept', quote_id: quoteId, buyer: this.identity.aid };
+    const envelope = { ...body, acceptance, signature: {
+      alg: 'ed25519', kid: this.identity.aid,
+      sig: signEd25519(canonicalJson(acceptance), this.identity),
+    } };
     const r = await fetch(`${this.handlerUrl}/icp/v1/quotes/${encodeURIComponent(quoteId)}/accept`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify(envelope),
     });
     const j = await r.json();
     if (!r.ok) throw new ICPError(j.code ?? 'format.unknown', j.message ?? `accept returned ${r.status}`, j);

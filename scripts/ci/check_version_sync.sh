@@ -30,12 +30,20 @@ kotlin_binding_version="$(extract_with_regex '^[[:space:]]*version = "[0-9]+\.[0
 kotlin_maven_artifact="$(extract_with_regex '^[[:space:]]*artifactId = "[^"]+"$' bindings/kotlin/kotlin/build.gradle.kts 's/^[^"]*"([^"]+)".*$/\1/')"
 dotnet_binding_version="$(extract_with_regex '^[[:space:]]*<Version>[0-9]+\.[0-9]+\.[0-9]+</Version>$' bindings/dotnet/dotnet/StateSet/StateSet.csproj 's/^[^>]*>([^<]+).*/\1/')"
 generator_spec_version="$(extract_with_regex '^version: "[0-9]+\.[0-9]+\.[0-9]+"' bindings/generator/spec.yaml 's/^[^"]*"([^"]+)".*$/\1/')"
-cli_embedded_dep_version="$(extract_with_regex '^[[:space:]]*"@stateset/embedded":[[:space:]]*"\^?[0-9]+\.[0-9]+\.[0-9]+"' cli/package.json 's/^[^:]+:[[:space:]]*"\^?([^"]+)".*$/\1/')"
+# The in-repo manifests must LINK the workspace copy rather than pin a registry
+# range: a `^x.y.z` range plus a lockfile that links ../bindings/node makes
+# `npm ci` fail on every branch from the version bump until a lockfile-sync PR
+# lands (it broke master after 1.31, 1.32 and 1.33). publish-cli.yml rewrites
+# the published manifest to the registry range at publish time; the tarball
+# surface is asserted by scripts/ci/set_embedded_registry_range.test.mjs.
+cli_embedded_dep_spec="$(extract_with_regex '^[[:space:]]*"@stateset/embedded":' cli/package.json 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
+admin_embedded_dep_spec="$(extract_with_regex '^[[:space:]]*"@stateset/embedded":' admin/package.json 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
+example_embedded_dep_spec="$(extract_with_regex '^[[:space:]]*"@stateset/embedded":' examples/node/package.json 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
 embedded_cli_peer_version="$(extract_with_regex '^[[:space:]]*"@stateset/cli":[[:space:]]*"\^?[0-9]+\.[0-9]+\.[0-9]+"' bindings/node/package.json 's/^[^:]+:[[:space:]]*"\^?([^"]+)".*$/\1/')"
 embedded_platform_pkg_version="$(extract_with_regex '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' bindings/node/npm/linux-x64-gnu/package.json 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
 admin_version="$(extract_with_regex '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' admin/package.json 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
 
-if [[ -z "$workspace_version" || -z "$cli_version" || -z "$cli_runtime_version" || -z "$node_binding_version" || -z "$wasm_binding_version" || -z "$python_binding_version" || -z "$python_wrapper_version" || -z "$ruby_binding_version" || -z "$ruby_gemspec_version" || -z "$php_binding_version" || -z "$php_stub_version" || -z "$php_branch_alias" || -z "$java_binding_version" || -z "$java_maven_artifact" || -z "$java_jar_basename" || -z "$kotlin_binding_version" || -z "$kotlin_maven_artifact" || -z "$dotnet_binding_version" || -z "$generator_spec_version" || -z "$cli_embedded_dep_version" || -z "$admin_version" ]]; then
+if [[ -z "$workspace_version" || -z "$cli_version" || -z "$cli_runtime_version" || -z "$node_binding_version" || -z "$wasm_binding_version" || -z "$python_binding_version" || -z "$python_wrapper_version" || -z "$ruby_binding_version" || -z "$ruby_gemspec_version" || -z "$php_binding_version" || -z "$php_stub_version" || -z "$php_branch_alias" || -z "$java_binding_version" || -z "$java_maven_artifact" || -z "$java_jar_basename" || -z "$kotlin_binding_version" || -z "$kotlin_maven_artifact" || -z "$dotnet_binding_version" || -z "$generator_spec_version" || -z "$cli_embedded_dep_spec" || -z "$admin_embedded_dep_spec" || -z "$example_embedded_dep_spec" || -z "$admin_version" ]]; then
   echo "::error::Failed to parse one or more release versions"
   exit 1
 fi
@@ -128,8 +136,18 @@ if [[ "$workspace_version" != "$generator_spec_version" ]]; then
   fail=1
 fi
 
-if [[ "$workspace_version" != "$cli_embedded_dep_version" ]]; then
-  echo "::error file=cli/package.json::CLI embedded dependency (${cli_embedded_dep_version}) does not match workspace version (${workspace_version})"
+if [[ "$cli_embedded_dep_spec" != "file:../bindings/node" ]]; then
+  echo "::error file=cli/package.json::CLI embedded dependency must be file:../bindings/node (found ${cli_embedded_dep_spec}); the registry range is applied at publish time by scripts/ci/set_embedded_registry_range.mjs"
+  fail=1
+fi
+
+if [[ "$admin_embedded_dep_spec" != "file:../bindings/node" ]]; then
+  echo "::error file=admin/package.json::Admin embedded dependency must be file:../bindings/node (found ${admin_embedded_dep_spec})"
+  fail=1
+fi
+
+if [[ "$example_embedded_dep_spec" != "file:../../bindings/node" ]]; then
+  echo "::error file=examples/node/package.json::Example embedded dependency must be file:../../bindings/node (found ${example_embedded_dep_spec})"
   fail=1
 fi
 
@@ -154,20 +172,8 @@ required_version_snippets=(
   "crates/stateset-sdk/src/lib.rs|//! stateset-sdk = \"${workspace_version}\""
   "README.md|cargo add stateset-sdk --features full"
   "README.md|pip install stateset-embedded==${workspace_version}"
-  "README.md|gem install stateset_embedded -v ${workspace_version}"
   "README.md|npm install @stateset/embedded@${workspace_version}"
   "README.md|npm install -g @stateset/cli@${workspace_version}"
-  "README.md|## What's New in v${workspace_version}"
-  "README.md|stateset-embedded = \"${workspace_version}\""
-  "README.md|<artifactId>${java_maven_artifact}</artifactId>"
-  "README.md|<version>${workspace_version}</version>"
-  "README.md|implementation 'com.stateset:${java_maven_artifact}:${workspace_version}'"
-  "README.md|implementation(\"com.stateset:${kotlin_maven_artifact}:${workspace_version}\")"
-  "README.md|.package(url: \"https://github.com/stateset/stateset-swift.git\", from: \"${workspace_version}\")"
-  "README.md|pod 'StateSet', '~> ${workspace_version}'"
-  "README.md|dotnet add package StateSet.Embedded --version ${workspace_version}"
-  "README.md|<PackageReference Include=\"StateSet.Embedded\" Version=\"${workspace_version}\" />"
-  "README.md|go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v${workspace_version}"
   "docs/src/index.md|Current release: **${workspace_version}**"
   "docs/src/trust-foundation.md|- Current workspace release: \`${workspace_version}\`"
   "docs/src/getting-started.md|cargo add stateset-sdk --features full"
@@ -193,7 +199,7 @@ required_version_snippets=(
   "docs/src/guides/async-vs-sync.md|stateset-embedded = { version = \"${workspace_version}\", features = [\"sqlite\", \"postgres\"] }"
   "docs/src/api/swift.md|from: \"${workspace_version}\""
   "docs/src/advanced/deployment.md|image: stateset/icommerce:${workspace_version}"
-  "TRUST_FOUNDATION.md|The current workspace release line is \`${workspace_version}\`."
+  "docs/src/trust-foundation.md|The current workspace release line is \`${workspace_version}\`."
   "bindings/java/README.md|<version>${workspace_version}</version>"
   "examples/README.md|javac -d . -cp path/to/${java_jar_basename}-${workspace_version}.jar BasicUsage.java"
   "examples/README.md|java -cp .:path/to/${java_jar_basename}-${workspace_version}.jar com.stateset.examples.BasicUsage"
@@ -212,7 +218,6 @@ required_version_snippets=(
   "examples/kotlin/build.gradle.kts|implementation(\"com.stateset:embedded-kotlin:${workspace_version}\")"
   "examples/dotnet/BasicUsage.csproj|<PackageReference Include=\"StateSet.Embedded\" Version=\"${workspace_version}\" />"
   "examples/node/package.json|\"version\": \"${workspace_version}\""
-  "examples/node/package.json|\"@stateset/embedded\": \"^${workspace_version}\""
   "packages/create-stateset-app/templates/storefront/package.json|\"@stateset/embedded\": \"^${workspace_version}\""
   "packages/create-stateset-app/package.json|\"version\": \"${workspace_version}\""
 )

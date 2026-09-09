@@ -130,6 +130,7 @@
 // docs builds instead.
 #![cfg_attr(docsrs, warn(missing_docs))]
 
+pub mod economic;
 pub mod errors;
 pub mod events;
 pub mod kernel;
@@ -143,6 +144,7 @@ pub mod services;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 
+pub use economic::*;
 pub use errors::*;
 pub use events::*;
 pub use kernel::*;
@@ -173,6 +175,7 @@ pub use stateset_primitives::{
 
 /// Re-export common types for convenience
 pub mod prelude {
+    pub use crate::economic::*;
     pub use crate::errors::*;
     pub use crate::events::*;
     pub use crate::kernel::*;

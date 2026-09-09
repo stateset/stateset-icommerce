@@ -328,13 +328,16 @@ impl PgOrderRepository {
         if input.stock_policy.allows_backorder() {
             return Ok(());
         }
+        let mut demand = std::collections::BTreeMap::<&str, Decimal>::new();
         for item in &input.items {
-            if item.quantity <= 0 {
-                continue;
+            if item.quantity > 0 {
+                *demand.entry(item.sku.as_str()).or_default() += Decimal::from(item.quantity);
             }
+        }
+        for (sku, requested) in demand {
             let item_id: Option<i64> =
                 sqlx::query_scalar("SELECT id FROM inventory_items WHERE sku = $1")
-                    .bind(&item.sku)
+                    .bind(sku)
                     .fetch_optional(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
@@ -346,10 +349,9 @@ impl PgOrderRepository {
             .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
-            let requested = Decimal::from(item.quantity);
             if available < requested {
                 return Err(CommerceError::InsufficientStock {
-                    sku: item.sku.clone(),
+                    sku: sku.to_owned(),
                     requested: requested.to_string(),
                     available: available.to_string(),
                 });

@@ -729,36 +729,37 @@ impl PgPurchaseOrderRepository {
         .await
     }
 
+    /// Delete a purchase order, but only while it is still a draft.
+    ///
+    /// The draft check and the two deletes now run in one transaction with the
+    /// PO row held by `locked_status`. Before, the status was read on
+    /// the pool and the deletes ran as two more autocommit statements: a
+    /// `submit_for_approval` / `approve` that committed in between was erased
+    /// along with the PO it had just put in flight, and the items delete could
+    /// commit while the header delete failed.
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
-        let status: String = sqlx::query_scalar("SELECT status FROM purchase_orders WHERE id = $1")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let parsed_status: PurchaseOrderStatus = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid purchase_order.status '{}': {}",
-                status, e
-            ))
-        })?;
-        if parsed_status != PurchaseOrderStatus::Draft {
-            return Err(CommerceError::ValidationError(
+        let status = Self::locked_status(&mut tx, id).await?;
+        if status != PurchaseOrderStatus::Draft {
+            return Err(CommerceError::Conflict(
                 "Can only delete draft purchase orders".to_string(),
             ));
         }
 
         sqlx::query("DELETE FROM purchase_order_items WHERE purchase_order_id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         sqlx::query("DELETE FROM purchase_orders WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(())
     }
@@ -1557,19 +1558,31 @@ impl PgPurchaseOrderRepository {
         validate_batch_size(&ids)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        // Verify all are drafts before deleting
-        let non_draft_count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM purchase_orders WHERE id = ANY($1) AND status != 'draft'",
+        // Verify all are drafts before deleting. The rows are taken `FOR UPDATE`
+        // and held for the rest of the transaction: an aggregate COUNT locked
+        // nothing, so an `approve` committing between the check and the DELETE
+        // erased a PO that was already in flight. Ordered by id to reduce the
+        // chance that two overlapping batches take the same rows in opposite
+        // orders and deadlock.
+        let statuses: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, status FROM purchase_orders WHERE id = ANY($1) ORDER BY id FOR UPDATE",
         )
         .bind(&ids)
-        .fetch_one(tx.as_mut())
+        .fetch_all(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        if non_draft_count.0 > 0 {
-            return Err(CommerceError::ValidationError(
-                "Can only delete draft purchase orders".to_string(),
-            ));
+        for (po_id, status) in &statuses {
+            let parsed: PurchaseOrderStatus = status.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid purchase_order.status '{status}': {e}"
+                ))
+            })?;
+            if parsed != PurchaseOrderStatus::Draft {
+                return Err(CommerceError::Conflict(format!(
+                    "Purchase order {po_id} is in status {parsed} and cannot be deleted"
+                )));
+            }
         }
 
         // Delete order items first (foreign key constraint)

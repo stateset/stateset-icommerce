@@ -344,6 +344,13 @@ impl SqliteDatabase {
 
         let pool = Pool::builder()
             .max_size(max_connections)
+            // r2d2 otherwise treats an unspecified minimum as max_size and
+            // opens the whole pool during construction. On a fresh SQLite
+            // file those connections all race through journal-mode setup;
+            // under constrained sandboxes this can consume the full checkout
+            // timeout before migrations even begin. Open one connection for
+            // setup and grow lazily when concurrent work arrives.
+            .min_idle(Some(1))
             .connection_timeout(Duration::from_secs(30))
             .build(manager)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;

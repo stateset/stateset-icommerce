@@ -283,7 +283,7 @@ class TestICPClient(unittest.TestCase):
         purchase = self.client.purchase(
             merchant=caps["merchant_aid"],
             settler="settler:stateset.usdc.base-sepolia",
-            items=[{"sku": "WIDGET-PY-RECOV", "quantity": 1, "unit_price": {"amount": "12.00", "currency": "USDC"}}],
+            items=[{"sku": "WIDGET-003", "quantity": 1, "unit_price": {"amount": "12.00", "currency": "USDC"}}],
             max_total={"amount": "15.00", "currency": "USDC"},
         )
         accepted = self.client.accept(purchase["quote"]["quote_id"])

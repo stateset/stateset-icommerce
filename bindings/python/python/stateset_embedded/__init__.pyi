@@ -27,6 +27,17 @@ class Commerce:
         """
         ...
 
+    def provision_economic_budget(self, budget_json: str) -> str:
+        """Provision an immutable budget and return its exact status as JSON.
+
+        This is an operator API and must not be exposed as a model tool.
+        """
+        ...
+
+    def economic_budget_status(self, budget_id: str) -> str:
+        """Return exact committed and available budget balances as JSON."""
+        ...
+
     @property
     def customers(self) -> Customers:
         """Get the customers API."""
@@ -976,6 +987,17 @@ class Products:
         variants: Optional[List[CreateProductVariantInput]] = None,
     ) -> Product:
         """Create a new product."""
+        ...
+
+    def update(
+        self,
+        id: str,
+        name: Optional[str] = None,
+        slug: Optional[str] = None,
+        description: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> Product:
+        """Update a product, including publishing it as active."""
         ...
 
     def get(self, id: str) -> Optional[Product]:

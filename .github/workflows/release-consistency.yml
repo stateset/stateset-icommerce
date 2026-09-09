@@ -1,0 +1,114 @@
+name: Release Consistency
+
+# Nothing in CI notices when a release only half-ships. v1.31.0 and v1.32.0
+# were tagged with `v*` alone, so crates.io advanced while npm and PyPI sat on
+# 1.30.0 for two releases. This workflow compares the latest `v*` tag against
+# what every registry actually serves, every day, and files one tracking issue
+# when they disagree.
+
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to compare against (default: latest v* tag)'
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-consistency
+  cancel-in-progress: false
+
+jobs:
+  registry-drift:
+    name: Registry Drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Tags are the source of truth for the expected version.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Compare tags against published registry versions
+        id: drift
+        continue-on-error: true
+        env:
+          REGISTRY_CONSISTENCY_REPORT: artifacts/registry-consistency/report.md
+          # Via env, never interpolated into the script body: a dispatch input
+          # is attacker-controlled text.
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${EXPECTED_VERSION:-}" ]; then
+            bash ./scripts/ci/check_registry_consistency.sh --version "$EXPECTED_VERSION"
+          else
+            bash ./scripts/ci/check_registry_consistency.sh
+          fi
+
+      - name: Upload drift report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: registry-consistency-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/registry-consistency
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Open or update the Registry drift issue
+        if: steps.drift.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title='Registry drift'
+          body_file="$RUNNER_TEMP/registry-drift.md"
+          {
+            cat artifacts/registry-consistency/report.md 2>/dev/null || echo 'The drift check produced no report.'
+            echo ''
+            echo "Detected by [Release Consistency](${RUN_URL})."
+          } > "$body_file"
+
+          number="$(gh issue list --state open --limit 100 --json number,title \
+            --jq "map(select(.title == \"${title}\")) | .[0].number // empty")"
+
+          if [ -z "$number" ]; then
+            gh issue create --title "$title" --body-file "$body_file"
+          else
+            # One issue per drift, updated in place: a daily cron must not open
+            # a new issue every morning until someone fixes the release.
+            gh issue comment "$number" --body-file "$body_file"
+          fi
+
+      - name: Close the Registry drift issue
+        if: steps.drift.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          title='Registry drift'
+          number="$(gh issue list --state open --limit 100 --json number,title \
+            --jq "map(select(.title == \"${title}\")) | .[0].number // empty")"
+          if [ -n "$number" ]; then
+            gh issue close "$number" --comment 'Every registry now serves the latest tag.'
+          fi
+
+      - name: Fail on drift
+        if: steps.drift.outcome == 'failure'
+        run: |
+          echo '::error::Published registry versions do not match the latest v* tag'
+          exit 1

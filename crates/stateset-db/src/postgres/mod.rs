@@ -531,6 +531,10 @@ impl PostgresDatabase {
             "101_x402_cart_order_claim",
             include_str!("migrations/101_x402_cart_order_claim.sql"),
         ));
+        migrations.push((
+            "102_kernel_economic_budgets",
+            include_str!("migrations/102_kernel_economic_budgets.sql"),
+        ));
 
         migrations
     }

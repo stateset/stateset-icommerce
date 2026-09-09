@@ -555,7 +555,27 @@ describe('agent-toolkit', () => {
     const result = await toolkit.executeTool(
       'create_payment',
       { orderId: 'order-1', amount: '12.34', currency: 'USD' },
-      { idempotencyKey: 'payment-attempt-1' },
+      {
+        idempotencyKey: 'payment-attempt-1',
+        mandate: {
+          mandate_id: 'mandate-1',
+          subject_id: 'agent-1',
+          issued_by: 'user-1',
+          objective: 'pay approved supplier',
+          allowed_commands: ['payments.create'],
+          tenant_id: 'tenant-1',
+          store_id: 'store-1',
+          issued_at: '2026-01-01T00:00:00.000Z',
+          expires_at: '2027-01-01T00:00:00.000Z',
+        },
+        commitment: {
+          budget_id: 'budget-1',
+          amount: { amount: '12.34', currency: 'USD' },
+          counterparty_id: 'supplier-1',
+          quantity: null,
+          evidence: ['quote-1'],
+        },
+      },
     );
 
     assert.equal(result.result.kernel, true);
@@ -567,6 +587,9 @@ describe('agent-toolkit', () => {
     assert.equal(captured.command.principal.tenant_id, 'tenant-1');
     assert.equal(captured.command.store_id, 'store-1');
     assert.equal(captured.command.payload.amount, '12.34');
+    assert.equal(captured.command.mandate.mandate_id, 'mandate-1');
+    assert.equal(captured.command.commitment.budget_id, 'budget-1');
+    assert.equal(captured.command.commitment.amount.amount, '12.34');
   });
 
   it('routes product creation with exact-decimal variants through the kernel', async () => {

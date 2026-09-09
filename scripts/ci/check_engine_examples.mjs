@@ -57,9 +57,9 @@ function validateDocumentedRepoPaths() {
   );
 }
 
-function runNodeExample(relativeExamplePath) {
+function runNodeExample(relativeExamplePath, args = []) {
   const examplePath = path.join(rootDir, relativeExamplePath);
-  const run = spawnSync(process.execPath, [examplePath], {
+  const run = spawnSync(process.execPath, [examplePath, ...args], {
     cwd: rootDir,
     encoding: 'utf8',
     env: {
@@ -130,6 +130,28 @@ function runPythonExample(pythonBin, relativeExamplePath) {
 validateDocumentedRepoPaths();
 
 if (!pythonOnly) {
+  const marketplace = runNodeExample('examples/sequencer-marketplace/demo.mjs', ['--kernel']);
+  assert.equal(marketplace.eventCount, 11, 'Marketplace demo should sequence the full auction.');
+  assert.equal(
+    marketplace.winningMerchant,
+    'merchant.beta',
+    'Marketplace demo should enforce price and delivery constraints before awarding.',
+  );
+  assert.deepEqual(
+    marketplace.winningTotal,
+    { amount: '4550.00', currency: 'USD' },
+    'Marketplace demo should preserve exact money through negotiation and order creation.',
+  );
+  assert.equal(
+    marketplace.kernel?.inventoryAllocated,
+    '50',
+    'Marketplace bridge should reserve real inventory through the merchant kernel.',
+  );
+  assert.ok(
+    marketplace.kernel?.escrowId,
+    'Marketplace bridge should create real escrow through the buyer kernel.',
+  );
+
   const openai = runNodeExample('examples/agents/openai-embedded-toolkit.mjs');
   assert.ok(openai.toolCount > 0, 'OpenAI toolkit demo should export at least one tool.');
   assert.equal(

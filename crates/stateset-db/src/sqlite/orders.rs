@@ -401,19 +401,23 @@ impl SqliteOrderRepository {
         if input.stock_policy.allows_backorder() {
             return Ok(());
         }
+        // Multiple lines can name the same SKU. Preview must validate their
+        // combined demand, just as sequential reservations do during apply.
+        let mut demand = std::collections::BTreeMap::<&str, Decimal>::new();
         for item in &input.items {
-            if item.quantity <= 0 {
-                continue;
+            if item.quantity > 0 {
+                *demand.entry(item.sku.as_str()).or_default() += Decimal::from(item.quantity);
             }
-            let item_id = match tx.query_row(
-                "SELECT id FROM inventory_items WHERE sku = ?",
-                [&item.sku],
-                |row| row.get::<_, i64>(0),
-            ) {
-                Ok(id) => id,
-                Err(rusqlite::Error::QueryReturnedNoRows) => continue,
-                Err(error) => return Err(error),
-            };
+        }
+        for (sku, requested) in demand {
+            let item_id =
+                match tx.query_row("SELECT id FROM inventory_items WHERE sku = ?", [sku], |row| {
+                    row.get::<_, i64>(0)
+                }) {
+                    Ok(id) => id,
+                    Err(rusqlite::Error::QueryReturnedNoRows) => continue,
+                    Err(error) => return Err(error),
+                };
             let available = sum_decimal_query(
                 tx,
                 "SELECT quantity_available FROM inventory_balances WHERE item_id = ?",
@@ -422,11 +426,10 @@ impl SqliteOrderRepository {
                 "quantity_available",
             )
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-            let requested = Decimal::from(item.quantity);
             if available < requested {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                     CommerceError::InsufficientStock {
-                        sku: item.sku.clone(),
+                        sku: sku.to_owned(),
                         requested: requested.to_string(),
                         available: available.to_string(),
                     },

@@ -181,6 +181,15 @@ async fn postgres_concurrent_claims_are_disjoint_and_bill_each_subscription_once
             let claimed = subs.claim_due_for_billing(6, &worker_id, 300, now).await.expect("claim");
             let all_claimed: Vec<_> = claimed.iter().map(|s| s.id).collect();
             let mine = keep_mine(&commerce, &worker_id, claimed, &due_ids).await;
+            // Every worker has finished claiming before ANY worker bills.
+            // Paying a cycle releases the lease and moves `next_billing_date`
+            // one interval — which still leaves a 1971 fixture due — so
+            // without this second rendezvous a late worker legitimately
+            // re-claims a subscription an early worker has already settled,
+            // and the run bills more (subscription, cycle) pairs than there
+            // are fixtures. The barrier is reusable, so the same one serves
+            // both rendezvous.
+            barrier.wait().await;
             let mut billed = Vec::new();
             for sub in mine {
                 assert_eq!(sub.billing_lease_owner.as_deref(), Some(worker_id.as_str()));
@@ -214,19 +223,38 @@ async fn postgres_concurrent_claims_are_disjoint_and_bill_each_subscription_once
         }));
     }
 
-    // These fixtures are overdue by decades, so paying one cycle advances them
-    // by a single interval and leaves them due again. Since a settled cycle
-    // releases its lease, another worker may legitimately claim such a
-    // subscription to continue catching it up — so claims are NOT disjoint for
-    // the whole run, only while a lease is held. What must never happen is two
-    // workers billing the same PERIOD, which the `(subscription, cycle_number)`
-    // key enforces.
+    // Both barriers put every claim strictly before every settlement, so for
+    // the run's own fixtures the claim really is a partition: `SELECT ... FOR
+    // UPDATE SKIP LOCKED` must hand each of the nine to exactly one worker,
+    // and no id may appear twice inside one batch either.
+    //
+    // The disjointness assertion is scoped to those fixtures on purpose. The
+    // claim API has no tenant filter, so a batch also sweeps up whatever else
+    // the shared database has due; `keep_mine` hands those straight back, and
+    // a released row is legitimately re-claimable by a later worker in the
+    // same window. The fixtures are never released that way — they are held
+    // until after the second barrier, by which point every claim has already
+    // happened.
+    //
+    // Without the second barrier this run was inherently racy: these fixtures
+    // are overdue by decades, so settling a cycle released the lease and left
+    // the subscription due again, and a late worker re-claimed it and billed
+    // it for a further period. `seen_billed` then held more than nine pairs
+    // (CI saw 14) with no "billed twice" panic, because each of those pairs
+    // was a *different* period.
+    let mut seen_claimed = std::collections::HashSet::new();
     let mut seen_billed = std::collections::HashSet::new();
     for handle in handles {
         let (claimed, billed) = handle.await.expect("worker task");
         let mut batch = std::collections::HashSet::new();
         for id in claimed {
             assert!(batch.insert(id), "subscription {id} appeared twice in one claim batch");
+            if due_ids.contains(&id) {
+                assert!(
+                    seen_claimed.insert(id),
+                    "subscription {id} was claimed by two workers at once"
+                );
+            }
         }
         for (id, cycle_number) in billed {
             assert!(
@@ -235,6 +263,7 @@ async fn postgres_concurrent_claims_are_disjoint_and_bill_each_subscription_once
             );
         }
     }
+    assert_eq!(seen_claimed.len(), 9, "every due subscription claimed by exactly one worker");
     assert_eq!(seen_billed.len(), 9, "every due subscription billed exactly once");
 
     for sub in &due {

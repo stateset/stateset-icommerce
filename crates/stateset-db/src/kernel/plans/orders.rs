@@ -214,6 +214,36 @@ pub fn plan_ship_order<D: Clone>(
     })
 }
 
+/// Exact units a planned shipment will move, summed over its line deltas.
+///
+/// Only positive deltas count: a plan that leaves a line untouched moves
+/// nothing, and no shipment ever un-ships units. This is the figure a
+/// declared `commitment.quantity` is bound against, so both backends must
+/// derive it the same way.
+#[must_use]
+pub fn shipped_units(deltas: impl IntoIterator<Item = i32>) -> Decimal {
+    Decimal::from(deltas.into_iter().filter(|delta| *delta > 0).map(i64::from).sum::<i64>())
+}
+
+/// The projection both backends use to observe the units a checkout moves.
+///
+/// `checkout.commit` carries no quantity of its own, so this SUM *is* the
+/// observed figure a declared `commitment.quantity` binds against — the
+/// checkout twin of [`shipped_units`]. The two backends must read exactly the
+/// same thing, and only the placeholder dialect differs, so both spellings are
+/// generated from this one text.
+macro_rules! cart_units_sql {
+    ($placeholder:literal) => {
+        concat!("SELECT COALESCE(SUM(quantity), 0) FROM cart_items WHERE cart_id = ", $placeholder)
+    };
+}
+
+/// The cart-units projection in SQLite placeholder dialect.
+pub const CART_UNITS_SQL_SQLITE: &str = cart_units_sql!("?");
+
+/// The cart-units projection in Postgres placeholder dialect.
+pub const CART_UNITS_SQL_POSTGRES: &str = cart_units_sql!("$1");
+
 /// Rejection sealed when a reservation expires while it is being confirmed.
 #[must_use]
 pub fn reservation_expired_during_shipment() -> GuardRejection {

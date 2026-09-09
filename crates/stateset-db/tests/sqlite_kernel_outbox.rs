@@ -10,15 +10,15 @@ use stateset_core::{
     CreateJournalEntryLine, CreateOrder, CreateOrderItem, CreatePayment, CreateProduct,
     CreateProductVariant, CreateRefund, CreateReturn, CreateReturnItem, CreateSubscription,
     CreateSubscriptionPlan, CreateX402PaymentIntent, CurrencyCode, CustomerRepository,
-    DisputeA2AEscrow, ExecutionMode, ExecutionStatus, FileA2ADispute, FundA2AEscrow,
-    GeneralLedgerRepository, InventoryRepository, JournalEntryStatus, KernelCommandPolicy,
-    KernelPolicy, KernelPrincipal, OrderRepository, OrderStatus, PaymentMethodType,
-    PaymentRepository, PostJournalEntry, PrincipalKind, ProductId, ProductRepository,
-    RefundA2AEscrow, ReleaseA2AEscrow, ReleaseInventoryReservation, ReservationStatus,
-    ReserveInventory, ResolveA2ADispute, ReturnRepository, ReturnStatus, SetCartPayment,
-    SettleX402Intent, ShipOrderCommand, ShipmentLineInput, SubmitA2ADisputeEvidence,
-    TransitionOrder, TransitionReturn, UpdateOrder, X402Asset, X402IntentStatus, X402Network,
-    X402PaymentIntentRepository,
+    DisputeA2AEscrow, EconomicCommitment, ExecutionMode, ExecutionStatus, FileA2ADispute,
+    FundA2AEscrow, GeneralLedgerRepository, InventoryRepository, JournalEntryStatus,
+    KernelCommandPolicy, KernelPolicy, KernelPrincipal, OrderRepository, OrderStatus,
+    PaymentMethodType, PaymentRepository, PostJournalEntry, PrincipalKind, ProductId,
+    ProductRepository, RefundA2AEscrow, ReleaseA2AEscrow, ReleaseInventoryReservation,
+    ReservationStatus, ReserveInventory, ResolveA2ADispute, ReturnRepository, ReturnStatus,
+    SetCartPayment, SettleX402Intent, ShipOrderCommand, ShipmentLineInput,
+    SubmitA2ADisputeEvidence, TransitionOrder, TransitionReturn, UpdateOrder, X402Asset,
+    X402IntentStatus, X402Network, X402PaymentIntentRepository,
 };
 use stateset_db::SqliteDatabase;
 use uuid::Uuid;
@@ -976,6 +976,37 @@ fn kernel_inventory_preview_promotes_applies_and_replays_exactly_once() {
     assert_eq!(events[0].command_id, Some(apply.command_id));
     assert_eq!(events[0].principal_id.as_deref(), Some("agent:allocator-1"));
     assert_eq!(events[0].payload["quantity"], "2.500");
+}
+
+#[test]
+fn kernel_inventory_rejects_award_quantity_substitution() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+    create_stock(&db, "KERNEL-AWARD-1", dec!(100));
+    let mut command = inventory_command("marketplace-award-1", "KERNEL-AWARD-1", dec!(75));
+    command.mode = ExecutionMode::Apply;
+    command.commitment = Some(EconomicCommitment {
+        budget_id: None,
+        amount: None,
+        asset_amount: None,
+        counterparty_id: Some("agent:buyer".into()),
+        quantity: Some("50".into()),
+        evidence: vec!["award:1".into()],
+    });
+
+    let receipt = db
+        .kernel_executor(payment_policy())
+        .execute_reserve_inventory(&command)
+        .expect("sealed rejection");
+    assert_eq!(receipt.status, ExecutionStatus::Rejected);
+    assert_eq!(receipt.error_code.as_deref(), Some("kernel.commitment_quantity_mismatch"));
+    assert_eq!(
+        db.inventory()
+            .get_stock("KERNEL-AWARD-1")
+            .expect("stock query")
+            .expect("stock")
+            .total_allocated,
+        dec!(0)
+    );
 }
 
 #[test]
@@ -2055,7 +2086,7 @@ fn checkout_command(key: &str, cart_id: stateset_core::CartId) -> CommandEnvelop
             delegated_by: Some("user-1".into()),
             capabilities: vec!["checkout.commit".into()],
         },
-        CommitCheckout { cart_id },
+        CommitCheckout::new(cart_id),
     );
     command.store_id = Some("store-1".into());
     command.policy_version = Some("commerce-policy-1".into());
@@ -2123,6 +2154,236 @@ fn ready_checkout_cart(db: &SqliteDatabase, email: &str) -> stateset_core::CartI
         )
         .expect("set payment");
     cart.id
+}
+
+#[test]
+fn kernel_checkout_fingerprint_rejects_changed_terms_without_economic_effects() {
+    for mutation in [
+        "UPDATE cart_items SET sku = 'SUBSTITUTED-SAME-PRICE'",
+        "UPDATE carts SET customer_email = 'other@example.com'",
+        "UPDATE carts SET shipping_address = json_set(shipping_address, '$.line1', 'Different destination')",
+        "UPDATE carts SET expires_at = '2099-01-01T00:00:00Z'",
+    ] {
+        let db = SqliteDatabase::in_memory().unwrap();
+        create_stock(&db, "KERNEL-CHECKOUT-SKU", dec!(2));
+        let id = ready_checkout_cart(&db, "fingerprint@example.com");
+        let quoted = db.carts().get(id).unwrap().unwrap().checkout_fingerprint().unwrap();
+        db.pool().get().unwrap().execute_batch(mutation).unwrap();
+        for mode in [ExecutionMode::Preview, ExecutionMode::Apply] {
+            let mut command = checkout_command(&format!("fingerprint-{mode:?}"), id);
+            command.mode = mode;
+            command.payload.expected_cart_fingerprint = Some(quoted.clone());
+            let receipt =
+                db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+            assert_eq!(receipt.status, ExecutionStatus::Rejected, "{mutation}: {receipt:?}");
+            assert!(receipt.error_message.as_deref().unwrap().contains("fingerprint"));
+        }
+        let conn = db.pool().get().unwrap();
+        for table in ["orders", "inventory_reservations", "backorders"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 0, "{mutation}: {table}");
+        }
+    }
+}
+
+#[test]
+fn kernel_checkout_fingerprint_commits_exact_snapshot_and_replays_after_cart_changes() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let id = ready_checkout_cart(&db, "fingerprint-valid@example.com");
+    let mut command = checkout_command("fingerprint-valid", id);
+    command.mode = ExecutionMode::Apply;
+    command.payload.expected_cart_fingerprint =
+        Some(db.carts().get(id).unwrap().unwrap().checkout_fingerprint().unwrap());
+    let receipt = db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded);
+    let replay = db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+    assert_eq!(receipt.receipt_id, replay.receipt_id);
+    command.payload.expected_cart_fingerprint = Some("sha256:invalid".into());
+    assert_eq!(
+        db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap().status,
+        ExecutionStatus::Rejected
+    );
+}
+
+#[test]
+fn kernel_checkout_fingerprint_is_independent_of_line_query_order() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let id = ready_checkout_cart(&db, "fingerprint-order@example.com");
+    let mut cart = db.carts().get(id).unwrap().unwrap();
+    let mut another = cart.items[0].clone();
+    another.id = Uuid::new_v4();
+    cart.items.push(another);
+    let fingerprint = cart.checkout_fingerprint().unwrap();
+    cart.items.reverse();
+    assert_eq!(cart.checkout_fingerprint().unwrap(), fingerprint);
+    cart.items[0].name = "Substituted description".into();
+    assert_ne!(cart.checkout_fingerprint().unwrap(), fingerprint);
+}
+
+#[test]
+fn kernel_checkout_stock_policy_wire_compatibility() {
+    let legacy = serde_json::json!({"cart_id": stateset_core::CartId::new()});
+    let command: CommitCheckout = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(command.stock_policy, None);
+    // Keep old request hashes stable when the optional field is omitted.
+    assert_eq!(serde_json::to_value(command).unwrap(), legacy);
+    let invalid = serde_json::json!({"cart_id": stateset_core::CartId::new(), "stock_policy": "ignore_stock"});
+    assert!(serde_json::from_value::<CommitCheckout>(invalid).is_err());
+}
+
+#[test]
+fn kernel_checkout_strict_stock_preview_aggregates_duplicate_skus() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    create_stock(&db, "KERNEL-CHECKOUT-SKU", dec!(3));
+    let cart_id = ready_checkout_cart(&db, "strict-duplicate@example.com");
+    db.carts()
+        .add_item(
+            cart_id,
+            AddCartItem {
+                product_id: Some(ProductId::new()),
+                sku: "KERNEL-CHECKOUT-SKU".into(),
+                name: "Another line of the same SKU".into(),
+                quantity: 2,
+                unit_price: dec!(19.99),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    for mode in [ExecutionMode::Preview, ExecutionMode::Apply] {
+        let mut command = checkout_command(&format!("strict-duplicate-{mode:?}"), cart_id);
+        command.mode = mode;
+        command.payload.stock_policy = Some(stateset_core::StockPolicy::RejectIfInsufficient);
+        let result =
+            db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+        assert_eq!(result.status, ExecutionStatus::Rejected, "{result:?}");
+        assert_eq!(result.error_code.as_deref(), Some("commerce.inventory.insufficient_available"));
+    }
+    let conn = db.pool().get().unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM inventory_reservations", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn kernel_checkout_strict_stock_rejects_preview_and_apply_without_effects() {
+    let db = SqliteDatabase::in_memory().expect("database");
+    create_stock(&db, "KERNEL-CHECKOUT-SKU", dec!(1));
+    let cart_id = ready_checkout_cart(&db, "strict-short@example.com");
+    for mode in [ExecutionMode::Preview, ExecutionMode::Apply] {
+        let mut command = checkout_command(&format!("strict-short-{mode:?}"), cart_id);
+        command.mode = mode;
+        command.payload.stock_policy = Some(stateset_core::StockPolicy::RejectIfInsufficient);
+        let result =
+            db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+        assert_eq!(result.status, ExecutionStatus::Rejected, "{result:?}");
+        let replay =
+            db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+        assert_eq!(result.receipt_id, replay.receipt_id);
+    }
+    let conn = db.pool().get().unwrap();
+    for table in ["orders", "inventory_reservations", "backorders"] {
+        let count: i64 =
+            conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0, "unexpected effect in {table}");
+    }
+}
+
+#[test]
+fn kernel_checkout_default_still_backorders_shortages() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    create_stock(&db, "KERNEL-CHECKOUT-SKU", dec!(1));
+    let cart_id = ready_checkout_cart(&db, "legacy-backorder@example.com");
+    let mut command = checkout_command("legacy-backorder", cart_id);
+    command.mode = ExecutionMode::Apply;
+    let result = db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+    assert_eq!(result.status, ExecutionStatus::Succeeded);
+    assert_eq!(
+        db.inventory().get_stock("KERNEL-CHECKOUT-SKU").unwrap().unwrap().total_allocated,
+        dec!(1)
+    );
+    let conn = db.pool().get().unwrap();
+    let count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM backorders", [], |row| row.get(0)).unwrap();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn kernel_checkout_strict_stock_concurrent_buyers_cannot_oversell() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    create_stock(&db, "KERNEL-CHECKOUT-SKU", dec!(3));
+    let carts = [
+        ready_checkout_cart(&db, "strict-race-a@example.com"),
+        ready_checkout_cart(&db, "strict-race-b@example.com"),
+    ];
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let executor = db.kernel_executor(payment_policy());
+    let handles: Vec<_> = carts
+        .into_iter()
+        .enumerate()
+        .map(|(index, cart_id)| {
+            let executor = executor.clone();
+            let barrier = barrier.clone();
+            let mut command = checkout_command(&format!("strict-race-{index}"), cart_id);
+            command.mode = ExecutionMode::Apply;
+            command.payload.stock_policy = Some(stateset_core::StockPolicy::RejectIfInsufficient);
+            std::thread::spawn(move || {
+                barrier.wait();
+                let receipt = executor.execute_commit_checkout(&command).unwrap();
+                let replay = executor.execute_commit_checkout(&command).unwrap();
+                assert_eq!(receipt.receipt_id, replay.receipt_id);
+                receipt
+            })
+        })
+        .collect();
+    barrier.wait();
+    let results: Vec<_> = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
+    assert_eq!(results.iter().filter(|r| r.status == ExecutionStatus::Succeeded).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|r| r.error_code.as_deref() == Some("commerce.inventory.insufficient_available"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        db.inventory().get_stock("KERNEL-CHECKOUT-SKU").unwrap().unwrap().total_allocated,
+        dec!(2)
+    );
+    let conn = db.pool().get().unwrap();
+    let orders: i64 = conn.query_row("SELECT COUNT(*) FROM orders", [], |row| row.get(0)).unwrap();
+    let backorders: i64 =
+        conn.query_row("SELECT COUNT(*) FROM backorders", [], |row| row.get(0)).unwrap();
+    assert_eq!((orders, backorders), (1, 0));
+}
+
+#[test]
+fn kernel_checkout_strict_stock_succeeds_and_policy_changes_conflict() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    create_stock(&db, "KERNEL-CHECKOUT-SKU", dec!(2));
+    let cart_id = ready_checkout_cart(&db, "strict-enough@example.com");
+    let mut command = checkout_command("strict-enough", cart_id);
+    command.payload.stock_policy = Some(stateset_core::StockPolicy::RejectIfInsufficient);
+    assert_eq!(
+        db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap().status,
+        ExecutionStatus::Previewed
+    );
+    command.mode = ExecutionMode::Apply;
+    command.command_id = Uuid::new_v4();
+    let result = db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+    assert_eq!(result.status, ExecutionStatus::Succeeded);
+    assert_eq!(
+        db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap().receipt_id,
+        result.receipt_id
+    );
+    command.payload.stock_policy = Some(stateset_core::StockPolicy::AllowBackorder);
+    let changed = db.kernel_executor(payment_policy()).execute_commit_checkout(&command).unwrap();
+    assert_eq!(changed.status, ExecutionStatus::Rejected);
+    let conn = db.pool().get().unwrap();
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM orders", [], |row| row.get(0)).unwrap();
+    assert_eq!(count, 1);
 }
 
 #[test]

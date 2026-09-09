@@ -27,6 +27,55 @@ impl SqliteWarrantyRepository {
         Self { pool }
     }
 
+    /// Wrap a domain error so it survives the `rusqlite` closure boundary of
+    /// [`with_immediate_transaction`]; `map_db_error` unwraps it again.
+    fn smuggle(err: CommerceError) -> rusqlite::Error {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(err))
+    }
+
+    /// Read a warranty through the transaction that is about to write it.
+    fn load_warranty_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id: WarrantyId,
+    ) -> rusqlite::Result<Option<Warranty>> {
+        let mut stmt = tx.prepare("SELECT * FROM warranties WHERE id = ?")?;
+        match stmt.query_row([id.to_string()], Self::row_to_warranty) {
+            Ok(warranty) => Ok(Some(warranty)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Read a claim through the transaction that is about to write it.
+    fn load_claim_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id: Uuid,
+    ) -> rusqlite::Result<Option<WarrantyClaim>> {
+        let mut stmt = tx.prepare("SELECT * FROM warranty_claims WHERE id = ?")?;
+        match stmt.query_row([id.to_string()], Self::row_to_claim) {
+            Ok(claim) => Ok(Some(claim)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Explain a guarded claim UPDATE that matched no row: the claim is either
+    /// gone, or it left the status set the operation allows while the caller
+    /// was deciding. Re-running the guard on the row as it stands now gives the
+    /// same message the pre-check used to give, as a `Conflict`.
+    fn claim_write_lost(&self, id: Uuid, guard: fn(&WarrantyClaim) -> Result<()>) -> CommerceError {
+        match self.get_claim(id) {
+            Ok(Some(claim)) => match guard(&claim) {
+                Err(err) => err,
+                Ok(()) => {
+                    CommerceError::Conflict(format!("Warranty claim {id} changed concurrently"))
+                }
+            },
+            Ok(None) => CommerceError::NotFound,
+            Err(err) => err,
+        }
+    }
+
     fn ensure_can_void(warranty: &Warranty) -> Result<()> {
         match warranty.status {
             WarrantyStatus::Active | WarrantyStatus::Transferred => Ok(()),
@@ -69,13 +118,13 @@ impl SqliteWarrantyRepository {
                 }
                 Ok(())
             }
-            WarrantyStatus::Expired => Err(CommerceError::ValidationError(
-                "Cannot transfer an expired warranty".to_string(),
-            )),
-            WarrantyStatus::Voided => {
-                Err(CommerceError::ValidationError("Cannot transfer a voided warranty".to_string()))
+            WarrantyStatus::Expired => {
+                Err(CommerceError::Conflict("Cannot transfer an expired warranty".to_string()))
             }
-            _ => Err(CommerceError::ValidationError(format!(
+            WarrantyStatus::Voided => {
+                Err(CommerceError::Conflict("Cannot transfer a voided warranty".to_string()))
+            }
+            _ => Err(CommerceError::Conflict(format!(
                 "Cannot transfer warranty in status: {:?}",
                 warranty.status
             ))),
@@ -88,21 +137,21 @@ impl SqliteWarrantyRepository {
                 Ok(())
             }
             ClaimStatus::Approved => {
-                Err(CommerceError::ValidationError("Claim is already approved".to_string()))
+                Err(CommerceError::Conflict("Claim is already approved".to_string()))
             }
             ClaimStatus::Denied => {
-                Err(CommerceError::ValidationError("Cannot approve a denied claim".to_string()))
+                Err(CommerceError::Conflict("Cannot approve a denied claim".to_string()))
             }
             ClaimStatus::Completed => {
-                Err(CommerceError::ValidationError("Cannot approve a completed claim".to_string()))
+                Err(CommerceError::Conflict("Cannot approve a completed claim".to_string()))
             }
             ClaimStatus::Cancelled => {
-                Err(CommerceError::ValidationError("Cannot approve a cancelled claim".to_string()))
+                Err(CommerceError::Conflict("Cannot approve a cancelled claim".to_string()))
             }
-            ClaimStatus::InProgress => Err(CommerceError::ValidationError(
+            ClaimStatus::InProgress => Err(CommerceError::Conflict(
                 "Cannot approve a claim already in progress".to_string(),
             )),
-            _ => Err(CommerceError::ValidationError(format!(
+            _ => Err(CommerceError::Conflict(format!(
                 "Cannot approve claim in status: {:?}",
                 claim.status
             ))),
@@ -115,58 +164,61 @@ impl SqliteWarrantyRepository {
                 Ok(())
             }
             ClaimStatus::Approved => {
-                Err(CommerceError::ValidationError("Cannot deny an approved claim".to_string()))
+                Err(CommerceError::Conflict("Cannot deny an approved claim".to_string()))
             }
             ClaimStatus::Denied => {
-                Err(CommerceError::ValidationError("Claim is already denied".to_string()))
+                Err(CommerceError::Conflict("Claim is already denied".to_string()))
             }
             ClaimStatus::Completed => {
-                Err(CommerceError::ValidationError("Cannot deny a completed claim".to_string()))
+                Err(CommerceError::Conflict("Cannot deny a completed claim".to_string()))
             }
             ClaimStatus::Cancelled => {
-                Err(CommerceError::ValidationError("Cannot deny a cancelled claim".to_string()))
+                Err(CommerceError::Conflict("Cannot deny a cancelled claim".to_string()))
             }
             ClaimStatus::InProgress => {
-                Err(CommerceError::ValidationError("Cannot deny a claim in progress".to_string()))
+                Err(CommerceError::Conflict("Cannot deny a claim in progress".to_string()))
             }
-            _ => Err(CommerceError::ValidationError(format!(
+            _ => Err(CommerceError::Conflict(format!(
                 "Cannot deny claim in status: {:?}",
                 claim.status
             ))),
         }
     }
 
-    fn ensure_claim_can_complete(claim: &WarrantyClaim, resolution: ClaimResolution) -> Result<()> {
+    fn ensure_claim_can_complete(claim: &WarrantyClaim) -> Result<()> {
         match claim.status {
             ClaimStatus::Approved | ClaimStatus::InProgress => {}
             ClaimStatus::Submitted | ClaimStatus::UnderReview | ClaimStatus::InfoRequested => {
-                return Err(CommerceError::ValidationError(
+                return Err(CommerceError::Conflict(
                     "Claim must be approved before completion".to_string(),
                 ));
             }
             ClaimStatus::Denied => {
-                return Err(CommerceError::ValidationError(
-                    "Cannot complete a denied claim".to_string(),
-                ));
+                return Err(CommerceError::Conflict("Cannot complete a denied claim".to_string()));
             }
             ClaimStatus::Completed => {
-                return Err(CommerceError::ValidationError(
-                    "Claim is already completed".to_string(),
-                ));
+                return Err(CommerceError::Conflict("Claim is already completed".to_string()));
             }
             ClaimStatus::Cancelled => {
-                return Err(CommerceError::ValidationError(
+                return Err(CommerceError::Conflict(
                     "Cannot complete a cancelled claim".to_string(),
                 ));
             }
             _ => {
-                return Err(CommerceError::ValidationError(format!(
+                return Err(CommerceError::Conflict(format!(
                     "Cannot complete claim in status: {:?}",
                     claim.status
                 )));
             }
         }
 
+        Ok(())
+    }
+
+    /// The resolution a completion carries is caller input, not repository
+    /// state: it is rejected before the guarded UPDATE runs, and stays a
+    /// validation error rather than a conflict.
+    fn ensure_resolution_can_complete(resolution: ClaimResolution) -> Result<()> {
         match resolution {
             ClaimResolution::None => Err(CommerceError::ValidationError(
                 "Claim resolution is required for completion".to_string(),
@@ -186,15 +238,15 @@ impl SqliteWarrantyRepository {
             | ClaimStatus::Approved
             | ClaimStatus::InProgress => Ok(()),
             ClaimStatus::Denied => {
-                Err(CommerceError::ValidationError("Cannot cancel a denied claim".to_string()))
+                Err(CommerceError::Conflict("Cannot cancel a denied claim".to_string()))
             }
             ClaimStatus::Completed => {
-                Err(CommerceError::ValidationError("Cannot cancel a completed claim".to_string()))
+                Err(CommerceError::Conflict("Cannot cancel a completed claim".to_string()))
             }
             ClaimStatus::Cancelled => {
-                Err(CommerceError::ValidationError("Claim is already cancelled".to_string()))
+                Err(CommerceError::Conflict("Claim is already cancelled".to_string()))
             }
-            _ => Err(CommerceError::ValidationError(format!(
+            _ => Err(CommerceError::Conflict(format!(
                 "Cannot cancel claim in status: {:?}",
                 claim.status
             ))),
@@ -613,56 +665,79 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         )
     }
 
+    /// Transfer a warranty to a new owner.
+    ///
+    /// Everything `ensure_can_transfer` decides lives in the UPDATE's own
+    /// `WHERE`, so the check and the write are one statement. Read on the pool
+    /// and written unconditionally, the transfer could land on a warranty that
+    /// had been voided or expired in the meantime, resurrecting it as
+    /// `transferred`.
     fn transfer(&self, id: WarrantyId, new_customer_id: CustomerId) -> Result<Warranty> {
-        let warranty = self.get(id)?.ok_or(CommerceError::NotFound)?;
-        Self::ensure_can_transfer(&warranty, new_customer_id)?;
         let now = chrono::Utc::now();
 
-        {
+        let rows = {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
-                "UPDATE warranties SET customer_id = ?, status = ?, updated_at = ? WHERE id = ?",
+                "UPDATE warranties SET customer_id = ?1, status = ?2, updated_at = ?3
+                 WHERE id = ?4 AND customer_id <> ?1 AND status IN (?5, ?6)",
                 params![
                     new_customer_id.to_string(),
                     WarrantyStatus::Transferred.to_string(),
                     now.to_rfc3339(),
-                    id.to_string()
+                    id.to_string(),
+                    WarrantyStatus::Active.to_string(),
+                    WarrantyStatus::Transferred.to_string(),
                 ],
             )
-            .map_err(map_db_error)?;
+            .map_err(map_db_error)?
+        };
+
+        if rows == 0 {
+            let warranty = self.get(id)?.ok_or(CommerceError::NotFound)?;
+            Self::ensure_can_transfer(&warranty, new_customer_id)?;
+            return Err(CommerceError::Conflict(format!("Warranty {id} changed concurrently")));
         }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn create_claim(&self, input: CreateWarrantyClaim) -> Result<WarrantyClaim> {
-        // Get warranty to get customer_id and validate
-        let warranty = self.get(input.warranty_id)?.ok_or(CommerceError::NotFound)?;
-
-        if !warranty.is_valid() {
-            return Err(CommerceError::ValidationError(
-                "Warranty is not valid for claims".to_string(),
-            ));
-        }
-
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
         let claim_number = generate_claim_number();
 
         // One IMMEDIATE transaction so concurrent claims serialize (with
-        // retry) instead of failing with SQLITE_BUSY.
+        // retry) instead of failing with SQLITE_BUSY — and so the validity
+        // decision is taken on the row this transaction owns. Read on the pool
+        // first, the warranty could be voided or expired between the
+        // `is_valid()` check and the increment, and the claim was filed (and a
+        // claim slot burned) against a warranty that was already dead.
         with_immediate_transaction(&self.pool, |tx| {
-            // Enforce max_claims in the increment itself — the is_valid()
-            // pre-check above reads a snapshot, so concurrent claims would
-            // race past the limit otherwise.
+            let warranty = Self::load_warranty_tx(tx, input.warranty_id)?
+                .ok_or_else(|| Self::smuggle(CommerceError::NotFound))?;
+            if !warranty.is_valid() {
+                return Err(Self::smuggle(CommerceError::ValidationError(
+                    "Warranty is not valid for claims".to_string(),
+                )));
+            }
+
+            // Status, expiry and max_claims are all re-asserted by the
+            // increment itself, so nothing can slip between the read above and
+            // the write below even if the transaction is ever relaxed.
             let rows = tx.execute(
-                "UPDATE warranties SET claims_used = claims_used + 1, updated_at = ?
-                     WHERE id = ? AND (max_claims IS NULL OR claims_used < max_claims)",
-                params![now.to_rfc3339(), input.warranty_id.to_string()],
+                "UPDATE warranties SET claims_used = claims_used + 1, updated_at = ?1
+                     WHERE id = ?2 AND status = ?3
+                       AND (end_date IS NULL OR end_date > ?1)
+                       AND (max_claims IS NULL OR claims_used < max_claims)",
+                params![
+                    now.to_rfc3339(),
+                    input.warranty_id.to_string(),
+                    WarrantyStatus::Active.to_string(),
+                ],
             )?;
             if rows == 0 {
-                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                    CommerceError::ValidationError("Warranty claim limit reached".to_string()),
+                return Err(Self::smuggle(CommerceError::ValidationError(
+                    "Warranty claim limit reached".to_string(),
                 )));
             }
 
@@ -722,121 +797,134 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         }
     }
 
+    /// Update a warranty claim.
+    ///
+    /// This is a read-merge-write over nullable columns — every field is
+    /// rewritten from the snapshot the call read — so the read and the write
+    /// have to share one write-locked connection. Split across two pooled
+    /// statements, two operators filling in different fields each wrote the
+    /// other's column back as the `None` they had read, and whichever
+    /// committed last silently reverted its neighbour's edit.
     fn update_claim(&self, id: Uuid, input: UpdateWarrantyClaim) -> Result<WarrantyClaim> {
         let now = chrono::Utc::now();
-        let claim = self.get_claim(id)?.ok_or(CommerceError::NotFound)?;
 
-        // Payout guards: amounts must be non-negative, and the combined
-        // refund + repair payout must fit the warranty's coverage limit.
-        if input.refund_amount.is_some() || input.repair_cost.is_some() {
-            let new_refund = input.refund_amount.or(claim.refund_amount);
-            let new_repair = input.repair_cost.or(claim.repair_cost);
-            if new_refund.is_some_and(|a| a < rust_decimal::Decimal::ZERO)
-                || new_repair.is_some_and(|a| a < rust_decimal::Decimal::ZERO)
-            {
-                return Err(CommerceError::ValidationError(
-                    "Claim payout amounts must be non-negative".to_string(),
-                ));
-            }
-            let warranty = self.get(claim.warranty_id)?.ok_or(CommerceError::NotFound)?;
-            if let Some(max) = warranty.max_coverage_amount {
-                let total = new_refund.unwrap_or_default() + new_repair.unwrap_or_default();
-                if total > max {
-                    return Err(CommerceError::ValidationError(format!(
-                        "Claim payout {total} exceeds warranty coverage limit {max}"
+        with_immediate_transaction(&self.pool, |tx| {
+            let claim = Self::load_claim_tx(tx, id)?
+                .ok_or_else(|| Self::smuggle(CommerceError::NotFound))?;
+
+            // Payout guards: amounts must be non-negative, and the combined
+            // refund + repair payout must fit the warranty's coverage limit.
+            if input.refund_amount.is_some() || input.repair_cost.is_some() {
+                let new_refund = input.refund_amount.or(claim.refund_amount);
+                let new_repair = input.repair_cost.or(claim.repair_cost);
+                if new_refund.is_some_and(|a| a < rust_decimal::Decimal::ZERO)
+                    || new_repair.is_some_and(|a| a < rust_decimal::Decimal::ZERO)
+                {
+                    return Err(Self::smuggle(CommerceError::ValidationError(
+                        "Claim payout amounts must be non-negative".to_string(),
                     )));
                 }
-            }
-        }
-
-        let status = input.status.unwrap_or(claim.status);
-        if status != claim.status {
-            Self::ensure_claim_transition(claim.status, status)?;
-        }
-
-        let mut resolution = input.resolution.unwrap_or(claim.resolution);
-        let denial_reason = input.denial_reason.or(claim.denial_reason);
-        let mut approved_at = claim.approved_at;
-        let mut resolved_at = claim.resolved_at;
-
-        match status {
-            ClaimStatus::Approved => {
-                if claim.status != ClaimStatus::Approved {
-                    approved_at = Some(now);
-                }
-            }
-            ClaimStatus::Denied => {
-                if let Some(res) = input.resolution {
-                    if res != ClaimResolution::Denied {
-                        return Err(CommerceError::ValidationError(
-                            "Denied claims must use denied resolution".to_string(),
-                        ));
+                let warranty = Self::load_warranty_tx(tx, claim.warranty_id)?
+                    .ok_or_else(|| Self::smuggle(CommerceError::NotFound))?;
+                if let Some(max) = warranty.max_coverage_amount {
+                    let total = new_refund.unwrap_or_default() + new_repair.unwrap_or_default();
+                    if total > max {
+                        return Err(Self::smuggle(CommerceError::ValidationError(format!(
+                            "Claim payout {total} exceeds warranty coverage limit {max}"
+                        ))));
                     }
                 }
-                resolution = ClaimResolution::Denied;
-                if denial_reason.as_deref().is_none_or(|value| value.trim().is_empty()) {
-                    return Err(CommerceError::ValidationError(
-                        "Denial reason is required".to_string(),
-                    ));
-                }
-                if claim.status != ClaimStatus::Denied {
-                    resolved_at = Some(now);
-                }
             }
-            ClaimStatus::Completed => {
-                if matches!(resolution, ClaimResolution::None | ClaimResolution::Denied) {
-                    return Err(CommerceError::ValidationError(
-                        "Completed claims require a non-denied resolution".to_string(),
-                    ));
-                }
-                if claim.status != ClaimStatus::Completed {
-                    resolved_at = Some(now);
-                }
-            }
-            ClaimStatus::Cancelled => {
-                if claim.status != ClaimStatus::Cancelled {
-                    resolved_at = Some(now);
-                }
-            }
-            _ => {}
-        }
 
-        if status != ClaimStatus::Denied && resolution == ClaimResolution::Denied {
-            return Err(CommerceError::ValidationError(
-                "Denied resolution is only valid for denied claims".to_string(),
-            ));
-        }
+            let status = input.status.unwrap_or(claim.status);
+            if status != claim.status {
+                Self::ensure_claim_transition(claim.status, status).map_err(Self::smuggle)?;
+            }
 
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
+            let mut resolution = input.resolution.unwrap_or(claim.resolution);
+            let denial_reason = input.denial_reason.clone().or(claim.denial_reason);
+            let mut approved_at = claim.approved_at;
+            let mut resolved_at = claim.resolved_at;
+
+            match status {
+                ClaimStatus::Approved => {
+                    if claim.status != ClaimStatus::Approved {
+                        approved_at = Some(now);
+                    }
+                }
+                ClaimStatus::Denied => {
+                    if let Some(res) = input.resolution {
+                        if res != ClaimResolution::Denied {
+                            return Err(Self::smuggle(CommerceError::ValidationError(
+                                "Denied claims must use denied resolution".to_string(),
+                            )));
+                        }
+                    }
+                    resolution = ClaimResolution::Denied;
+                    if denial_reason.as_deref().is_none_or(|value| value.trim().is_empty()) {
+                        return Err(Self::smuggle(CommerceError::ValidationError(
+                            "Denial reason is required".to_string(),
+                        )));
+                    }
+                    if claim.status != ClaimStatus::Denied {
+                        resolved_at = Some(now);
+                    }
+                }
+                ClaimStatus::Completed => {
+                    if matches!(resolution, ClaimResolution::None | ClaimResolution::Denied) {
+                        return Err(Self::smuggle(CommerceError::ValidationError(
+                            "Completed claims require a non-denied resolution".to_string(),
+                        )));
+                    }
+                    if claim.status != ClaimStatus::Completed {
+                        resolved_at = Some(now);
+                    }
+                }
+                ClaimStatus::Cancelled => {
+                    if claim.status != ClaimStatus::Cancelled {
+                        resolved_at = Some(now);
+                    }
+                }
+                _ => {}
+            }
+
+            if status != ClaimStatus::Denied && resolution == ClaimResolution::Denied {
+                return Err(Self::smuggle(CommerceError::ValidationError(
+                    "Denied resolution is only valid for denied claims".to_string(),
+                )));
+            }
+
+            tx.execute(
                 "UPDATE warranty_claims SET status = ?, resolution = ?, repair_cost = ?,
                  replacement_product_id = ?, refund_amount = ?, denial_reason = ?,
                  internal_notes = ?, customer_notes = ?, approved_at = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
                 params![
                     status.to_string(),
                     resolution.to_string(),
-                    input.repair_cost
+                    input
+                        .repair_cost
                         .map(|d| d.to_string())
                         .or(claim.repair_cost.map(|d| d.to_string())),
                     input
                         .replacement_product_id
-                        .map(|id| id.to_string())
-                        .or(claim.replacement_product_id.map(|id| id.to_string())),
+                        .map(|pid| pid.to_string())
+                        .or(claim.replacement_product_id.map(|pid| pid.to_string())),
                     input
                         .refund_amount
                         .map(|d| d.to_string())
                         .or(claim.refund_amount.map(|d| d.to_string())),
                     denial_reason,
-                    input.internal_notes.or(claim.internal_notes),
-                    input.customer_notes.or(claim.customer_notes),
+                    input.internal_notes.clone().or(claim.internal_notes),
+                    input.customer_notes.clone().or(claim.customer_notes),
                     approved_at.map(|d| d.to_rfc3339()),
                     resolved_at.map(|d| d.to_rfc3339()),
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            ).map_err(map_db_error)?;
-        }
+            )?;
+
+            Ok(())
+        })?;
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
     }
@@ -884,74 +972,132 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         })
     }
 
+    /// Approve a claim.
+    ///
+    /// The status set `ensure_claim_can_approve` allows is the UPDATE's own
+    /// `WHERE`, so the check and the act are one statement. Read on the pool
+    /// and written unconditionally, an approve that decided on a `submitted`
+    /// snapshot could overwrite a deny or a cancel that had already committed,
+    /// with both callers told they had won.
     fn approve_claim(&self, id: Uuid) -> Result<WarrantyClaim> {
         let now = chrono::Utc::now();
-        let claim = self.get_claim(id)?.ok_or(CommerceError::NotFound)?;
-        Self::ensure_claim_can_approve(&claim)?;
 
-        {
+        let rows = {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
-                "UPDATE warranty_claims SET status = ?, approved_at = ?, updated_at = ? WHERE id = ?",
-                params![ClaimStatus::Approved.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-            ).map_err(map_db_error)?;
+                "UPDATE warranty_claims SET status = ?1, approved_at = ?2, updated_at = ?2
+                 WHERE id = ?3 AND status IN (?4, ?5, ?6)",
+                params![
+                    ClaimStatus::Approved.to_string(),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                    ClaimStatus::Submitted.to_string(),
+                    ClaimStatus::UnderReview.to_string(),
+                    ClaimStatus::InfoRequested.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?
+        };
+
+        if rows == 0 {
+            return Err(self.claim_write_lost(id, Self::ensure_claim_can_approve));
         }
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
     }
 
+    /// Deny a claim. Same guarded write as `approve_claim`; the reason is
+    /// caller input and is rejected before the statement runs.
     fn deny_claim(&self, id: Uuid, reason: &str) -> Result<WarrantyClaim> {
-        let now = chrono::Utc::now();
-        let claim = self.get_claim(id)?.ok_or(CommerceError::NotFound)?;
-        Self::ensure_claim_can_deny(&claim)?;
         if reason.trim().is_empty() {
             return Err(CommerceError::ValidationError("Denial reason is required".to_string()));
         }
-
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
-                "UPDATE warranty_claims SET status = ?, resolution = ?, denial_reason = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
-                params![ClaimStatus::Denied.to_string(), ClaimResolution::Denied.to_string(), reason, now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-            ).map_err(map_db_error)?;
-        }
-
-        self.get_claim(id)?.ok_or(CommerceError::NotFound)
-    }
-
-    fn complete_claim(&self, id: Uuid, resolution: ClaimResolution) -> Result<WarrantyClaim> {
         let now = chrono::Utc::now();
-        let claim = self.get_claim(id)?.ok_or(CommerceError::NotFound)?;
-        Self::ensure_claim_can_complete(&claim, resolution)?;
 
-        {
+        let rows = {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
-                "UPDATE warranty_claims SET status = ?, resolution = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
-                params![ClaimStatus::Completed.to_string(), resolution.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-            ).map_err(map_db_error)?;
+                "UPDATE warranty_claims SET status = ?1, resolution = ?2, denial_reason = ?3,
+                     resolved_at = ?4, updated_at = ?4
+                 WHERE id = ?5 AND status IN (?6, ?7, ?8)",
+                params![
+                    ClaimStatus::Denied.to_string(),
+                    ClaimResolution::Denied.to_string(),
+                    reason,
+                    now.to_rfc3339(),
+                    id.to_string(),
+                    ClaimStatus::Submitted.to_string(),
+                    ClaimStatus::UnderReview.to_string(),
+                    ClaimStatus::InfoRequested.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?
+        };
+
+        if rows == 0 {
+            return Err(self.claim_write_lost(id, Self::ensure_claim_can_deny));
         }
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
     }
 
+    /// Complete a claim. The resolution is caller input and is validated up
+    /// front; the status the claim must be in is the UPDATE's `WHERE`.
+    fn complete_claim(&self, id: Uuid, resolution: ClaimResolution) -> Result<WarrantyClaim> {
+        Self::ensure_resolution_can_complete(resolution)?;
+        let now = chrono::Utc::now();
+
+        let rows = {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE warranty_claims SET status = ?1, resolution = ?2, resolved_at = ?3,
+                     updated_at = ?3
+                 WHERE id = ?4 AND status IN (?5, ?6)",
+                params![
+                    ClaimStatus::Completed.to_string(),
+                    resolution.to_string(),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                    ClaimStatus::Approved.to_string(),
+                    ClaimStatus::InProgress.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?
+        };
+
+        if rows == 0 {
+            return Err(self.claim_write_lost(id, Self::ensure_claim_can_complete));
+        }
+
+        self.get_claim(id)?.ok_or(CommerceError::NotFound)
+    }
+
+    /// Cancel a claim. Cancelling is legal from every live status, so the
+    /// guard is the set of statuses that are not already terminal.
     fn cancel_claim(&self, id: Uuid) -> Result<WarrantyClaim> {
         let now = chrono::Utc::now();
-        let claim = self.get_claim(id)?.ok_or(CommerceError::NotFound)?;
-        Self::ensure_claim_can_cancel(&claim)?;
 
-        {
+        let rows = {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
-                "UPDATE warranty_claims SET status = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
+                "UPDATE warranty_claims SET status = ?1, resolved_at = ?2, updated_at = ?2
+                 WHERE id = ?3 AND status IN (?4, ?5, ?6, ?7, ?8)",
                 params![
                     ClaimStatus::Cancelled.to_string(),
                     now.to_rfc3339(),
-                    now.to_rfc3339(),
                     id.to_string(),
+                    ClaimStatus::Submitted.to_string(),
+                    ClaimStatus::UnderReview.to_string(),
+                    ClaimStatus::InfoRequested.to_string(),
+                    ClaimStatus::Approved.to_string(),
+                    ClaimStatus::InProgress.to_string(),
                 ],
             )
-            .map_err(map_db_error)?;
+            .map_err(map_db_error)?
+        };
+
+        if rows == 0 {
+            return Err(self.claim_write_lost(id, Self::ensure_claim_can_cancel));
         }
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)

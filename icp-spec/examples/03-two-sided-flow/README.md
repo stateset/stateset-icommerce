@@ -31,13 +31,13 @@ to `transcript.md`.
 |---|---|
 | 1 | Both servers spawned, ports announced |
 | 2 | Each entity's `.well-known/` endpoint queried; **keys confirmed independent** |
-| 3 | Buyer Agent generates its own keypair + AID per spec §4.2 |
-| 4 | Buyer submits signed Intent → receives signed Quote |
+| 3 | Buyer Agent generates its AID and receives a principal-signed procurement delegation |
+| 4 | Buyer requests 50 × SKU-100 under 5,000 USDC → receives a signed Quote |
 | 5 | **Merchant signature verified independently** + tampered Quote rejected |
-| 6 | Mock chain events injected into Settler (simulating Base Sepolia ICPEscrow.sol observation) |
+| 6 | Quote accepted, inventory reserved, order created, and mock funding observed |
 | 7 | **Settler signature verified independently** + tampered EscrowEvent rejected |
-| 8 | Full state-machine walk: fund → fulfill → release (3 monotonic-seq events) |
-| 9 | Audit narrative: regulator presented with the receipt can independently verify everything |
+| 8 | Full lifecycle; merchant verifies and co-signs the Settler receipt |
+| 9 | Both receipt signatures verified independently + tampered amount rejected |
 | 10 | Summary |
 
 ## Why this matters
@@ -77,14 +77,17 @@ Merchant Quote signature verified independently: PASS ✓
 Tampered Quote rejected by signature check:       PASS ✓
 Settler EscrowEvent signature verified:           PASS ✓
 Tampered EscrowEvent rejected:                    PASS ✓
+Merchant SettlementReceipt signature verified:   PASS ✓
+Settler SettlementReceipt signature verified:    PASS ✓
+Tampered receipt amount rejected:                 PASS ✓
 ```
 
 If any of these fails, the demo exits non-zero. CI will block the merge.
 
 ## Production parallel
 
-In production, the "mock chain event injection" in step 6 is replaced by
-the Settler daemon's chain-mode subscriber watching `ICPEscrow.sol`
-events on Base L2. Everything else — the architecture, the key
-separation, the independent verifiability — is identical. The demo and
-production paths diverge only at the rail-event source.
+In production, the mock chain injection is replaced by the Settler daemon's
+subscriber watching `ICPEscrow.sol`, the reference merchant's in-memory
+inventory/order state is replaced by the embedded engine, and principal keys
+are resolved from operator-trusted identity infrastructure. The key separation,
+canonical signed bytes, and independent verification remain the same.
