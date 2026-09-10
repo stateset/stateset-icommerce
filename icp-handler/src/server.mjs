@@ -218,8 +218,11 @@ function warnPermissiveDelegation(principal) {
  * silently inherit the wrong one. An unknown verb resolves to `buyer`, i.e.
  * fails closed.
  */
+function actingPartyField(verb) {
+  return verb === 'payout.request' ? 'seller' : 'buyer';
+}
 function actingAgent(intent) {
-  return intent.verb === 'payout.request' ? intent.seller : intent.buyer;
+  return intent[actingPartyField(intent.verb)];
 }
 
 /**
@@ -484,9 +487,25 @@ async function handleSubmitIntent(req, res) {
   // the supplied key material (§4.2) and reject any mismatch, then verify the
   // Ed25519 signature under the now-bound key. This closes the hole where any
   // key could verify as any AID.
+  //
+  // The signer must also BE the party the Intent acts as. `purchase.create`
+  // has always been held to this; every other verb that names an acting party
+  // now is too — above all `payout.request`, where the acting party is the
+  // `seller` drawing its own held funds and an unchecked signer could request
+  // a payout in somebody else's name. This holds in EVERY trust mode: demo
+  // trust relaxes who *delegated* an Agent, never who *signed* a message.
   const signerAid = signature.kid;
-  if (intent.verb === 'purchase.create' && signerAid !== intent.buyer) {
-    return reply(res, 401, err('auth.buyer_mismatch', 'intent signer must be its buyer'));
+  if (intent.verb === 'purchase.create') {
+    if (signerAid !== intent.buyer) {
+      return reply(res, 401, err('auth.buyer_mismatch', 'intent signer must be its buyer'));
+    }
+  } else if (signerAid !== actingAgent(intent)) {
+    const field = actingPartyField(intent.verb);
+    return reply(
+      res,
+      401,
+      err('auth.acting_party_mismatch', `intent signer must be its ${field}`),
+    );
   }
   let edPubRaw;
   try {

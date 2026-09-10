@@ -64,6 +64,7 @@ humans).
 | `auth.aid_key_mismatch`       | Supplied public key differs from the key an operator-owned source already binds to this AID |
 | `auth.aid_unregistered`       | Signer AID is neither operator-registered nor previously pinned; an operator-keyed handler does not admit caller-minted AIDs |
 | `auth.buyer_mismatch`         | `purchase.create` signer is not the Intent's `buyer` |
+| `auth.acting_party_mismatch`  | Signer of any other verb is not the Intent's acting party — its `buyer`, or its `seller` for the inverted-direction `payout.request` |
 | `auth.acceptance_invalid`     | Quote acceptance is not signed by the original buyer |
 | `auth.signer_capacity`        | Handler is at its signer-admission bound (503, not 401/403 — it is capacity, not authorization) |
 | `auth.principal_binding_invalid` | PrincipalBinding signature does not verify. *The reference handler emits the finer-grained `delegation.signature_invalid` / `delegation.signature_missing`.* |

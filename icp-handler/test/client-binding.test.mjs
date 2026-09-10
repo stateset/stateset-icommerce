@@ -199,7 +199,10 @@ function payoutIntent(seller) {
   };
 }
 
-async function submitPayout(intent) {
+// Always signed by (and shipping the keys of) the one registered agent; `kid`
+// defaults to the seller the Intent names, so a test can separate "who signed
+// this" from "who it claims to act as".
+async function submitPayout(intent, { kid = intent.seller } = {}) {
   const response = await fetch(`${handlerUrl}/icp/v1/intents`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -207,7 +210,7 @@ async function submitPayout(intent) {
       intent,
       signature: {
         alg: 'ed25519',
-        kid: intent.seller,
+        kid,
         sig: signEd25519(canonicalJson(intent), identity),
       },
       _pubkey_hex: identity.ed25519_pubkey.toString('hex'),
@@ -244,6 +247,21 @@ test('a payout binding delegating a different agent is still scope_mismatch', as
   const { status, json } = await submitPayout(intent);
   assert.equal(status, 403);
   assert.equal(json.code, 'delegation.scope_mismatch');
+});
+
+test('a payout signed by someone other than its seller is refused in enforce mode', async () => {
+  // The signer here IS a registered agent with a valid binding — it simply is
+  // not the seller it named. The acting-party check runs before signer
+  // admission and before delegation, so this never reaches the balance.
+  const victim = generateIdentity();
+  const intent = payoutIntent(victim.aid);
+  intent.principal_binding = signPrincipalBinding(
+    { principal: PRINCIPAL, agent: victim.aid, verbs: ['payout.request'] },
+    principalIdentity,
+  );
+  const { status, json } = await submitPayout(intent, { kid: identity.aid });
+  assert.equal(status, 401, JSON.stringify(json));
+  assert.equal(json.code, 'auth.acting_party_mismatch');
 });
 
 test('a payout binding that omits the verb is still scope_mismatch', async () => {
