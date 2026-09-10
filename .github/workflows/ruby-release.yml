@@ -107,7 +107,7 @@ jobs:
           bundle exec rake native gem
 
       - name: Upload gem
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: gem-${{ matrix.platform }}-ruby${{ matrix.ruby }}
           path: bindings/ruby/pkg/*.gem
@@ -138,7 +138,7 @@ jobs:
           gem build stateset_embedded.gemspec
 
       - name: Upload source gem
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: gem-source
           path: bindings/ruby/*.gem
@@ -175,7 +175,7 @@ jobs:
           rb-sys-dock --platform ${{ matrix.platform }} -r 3.2 -- bundle exec rake native gem
 
       - name: Upload gem
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: gem-${{ matrix.platform }}
           path: bindings/ruby/pkg/*.gem

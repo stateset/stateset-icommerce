@@ -66,7 +66,7 @@ jobs:
           git -C "$RUNNER_TEMP/omarchy" checkout "$OMARCHY_REVISION"
           "$RUNNER_TEMP/omarchy/bin/omarchy-plugin-validate" dist/stateset-omarchy-plugin
       - name: Upload installable plugin
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: stateset-omarchy-plugin
           path: dist/stateset-omarchy-plugin
@@ -824,7 +824,7 @@ jobs:
 
       - name: Upload coverage artifact
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: cli-coverage
           # Node's built-in coverage reporter writes to stdout only; the tee'd
@@ -1284,7 +1284,7 @@ jobs:
           npm run check:workspace-inventory
 
       - name: Upload compatibility report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: compatibility-report
           path: artifacts/compatibility
@@ -1323,7 +1323,7 @@ jobs:
 
       - name: Upload perf regression report
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: perf-regression-${{ github.sha }}-${{ github.run_attempt }}
           path: artifacts/perf-regression
