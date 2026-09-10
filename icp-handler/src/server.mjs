@@ -203,6 +203,29 @@ function warnPermissiveDelegation(principal) {
 }
 
 /**
+ * The Agent an Intent is acting AS — the party a PrincipalBinding must name.
+ *
+ * Nearly every verb carries it as `buyer`. `payout.request` is
+ * inverted-direction (§6.6 / ICPIP-0004): the Agent is a seller drawing its
+ * own held funds from a platform, so the Intent carries `seller`/`platform`
+ * where the others carry `buyer`/`merchant`. Reading `buyer` unconditionally
+ * meant `binding.agent !== undefined` for every payout, so NO binding —
+ * however correctly signed — could authorize one on an enforcing handler.
+ *
+ * Deliberately verb-driven rather than `intent.buyer ?? intent.seller`: a
+ * fallback would let a caller pick which field the delegation is checked
+ * against by omitting the other, and an inverted verb added later would
+ * silently inherit the wrong one. An unknown verb resolves to `buyer`, i.e.
+ * fails closed.
+ */
+function actingPartyField(verb) {
+  return verb === 'payout.request' ? 'seller' : 'buyer';
+}
+function actingAgent(intent) {
+  return intent[actingPartyField(intent.verb)];
+}
+
+/**
  * Verify that the Intent's stated principal really delegated this agent and
  * verb. Returns `null` when the Intent may proceed, or `{ status, body }`.
  *
@@ -257,7 +280,7 @@ function checkDelegation(intent, body, now) {
       body: err('delegation.signature_missing', 'principal binding signature is required'),
     };
   }
-  if (binding.agent !== intent.buyer || !binding.authority?.verbs?.includes(intent.verb)) {
+  if (binding.agent !== actingAgent(intent) || !binding.authority?.verbs?.includes(intent.verb)) {
     return {
       status: 403,
       body: err(
@@ -464,9 +487,38 @@ async function handleSubmitIntent(req, res) {
   // the supplied key material (§4.2) and reject any mismatch, then verify the
   // Ed25519 signature under the now-bound key. This closes the hole where any
   // key could verify as any AID.
+  //
+  // The signer must also BE the party the Intent acts as. `purchase.create`
+  // has always been held to this; every other verb that names an acting party
+  // now is too — above all `payout.request`, where the acting party is the
+  // `seller` drawing its own held funds and an unchecked signer could request
+  // a payout in somebody else's name. This holds in EVERY trust mode: demo
+  // trust relaxes who *delegated* an Agent, never who *signed* a message.
+  //
+  // Presence is checked BEFORE the comparison. Two absent fields are not a
+  // match: an Intent carrying neither `signature.kid` nor an acting party
+  // satisfied `undefined === undefined`, and — with no spec-shaped AID to
+  // re-derive and no operator key to check against — went on to be served as
+  // a signer with no identity at all. On a permissive handler that returned a
+  // merchant-signed payout authorization to an anonymous caller.
   const signerAid = signature.kid;
-  if (intent.verb === 'purchase.create' && signerAid !== intent.buyer) {
-    return reply(res, 401, err('auth.buyer_mismatch', 'intent signer must be its buyer'));
+  const actingField = actingPartyField(intent.verb);
+  if (typeof signerAid !== 'string' || signerAid.length === 0) {
+    return reply(res, 400, err('format.missing_field', 'signature.kid is required'));
+  }
+  if (typeof intent[actingField] !== 'string' || intent[actingField].length === 0) {
+    return reply(res, 400, err('format.missing_field', `Intent.${actingField} is required`));
+  }
+  if (intent.verb === 'purchase.create') {
+    if (signerAid !== intent.buyer) {
+      return reply(res, 401, err('auth.buyer_mismatch', 'intent signer must be its buyer'));
+    }
+  } else if (signerAid !== actingAgent(intent)) {
+    return reply(
+      res,
+      401,
+      err('auth.acting_party_mismatch', `intent signer must be its ${actingField}`),
+    );
   }
   let edPubRaw;
   try {

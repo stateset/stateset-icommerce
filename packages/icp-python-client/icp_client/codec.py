@@ -1,10 +1,13 @@
 """ICP-1.0 wire codec: canonical JSON, Ed25519 signing, AID derivation."""
 
+from __future__ import annotations
+
+import datetime
 import hashlib
 import json
 import secrets
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional, Sequence, Union
 
 try:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -91,7 +94,7 @@ def canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
-def sign_ed25519(canonical: str, identity: Identity) -> str:
+def sign_ed25519(canonical: str, identity: "Union[Identity, PrincipalIdentity]") -> str:
     """Sign canonical bytes with the identity's Ed25519 key. Returns hex."""
     priv = Ed25519PrivateKey.from_private_bytes(identity.ed25519_seed)
     sig = priv.sign(canonical.encode("utf-8"))
@@ -109,6 +112,151 @@ def verify_ed25519(canonical: str, signature_hex: str, ed_pubkey_raw: bytes) -> 
         return True
     except (InvalidSignature, ValueError):
         return False
+
+
+# ---------------------------------------------------------------------------
+# PrincipalBinding (§4.4) — the delegation an Agent carries on every Intent
+# ---------------------------------------------------------------------------
+
+#: Verbs an Agent is delegated by default: EVERY verb this client can emit,
+#: and nothing else. A default binding that omitted a verb the SDK sends would
+#: hand the caller `delegation.scope_mismatch` from the client's own method;
+#: one that included a verb the SDK cannot send would be over-delegation.
+#: `tests/test_client.py` fails if a new verb method drifts from this list.
+#:
+#: This is one verb longer than the JavaScript SDK's default, which has no
+#: `payout()` method. The two SDKs agree byte-for-byte on the binding they
+#: build from the SAME inputs (see tests/fixtures parity vector); they do not
+#: pretend to have the same method surface.
+DEFAULT_VERBS = [
+    "channel.register",
+    "inventory.query",
+    "payout.request",
+    "purchase.create",
+    "purchase.return",
+    "quote.request",
+    "subscription.cancel",
+    "subscription.create",
+]
+#: Default per-Intent spend ceiling carried in the PrincipalBinding.
+DEFAULT_MAX_PER_INTENT = {"amount": "10000", "currency": "USDC"}
+#: Default PrincipalBinding lifetime: 24h.
+DEFAULT_BINDING_TTL = datetime.timedelta(days=1)
+
+
+@dataclass
+class PrincipalIdentity:
+    """A principal's Ed25519 signing key.
+
+    A principal is an organization (``did:web:…``), not an Agent: no AID and
+    no X25519 half. The public key is what an operator registers with the
+    handler (``ICP_PRINCIPAL_KEYS_JSON``); the seed belongs in a KMS.
+    """
+
+    ed25519_seed: bytes   # 32 bytes
+    ed25519_pubkey: bytes  # 32 bytes
+
+
+def generate_principal_identity() -> PrincipalIdentity:
+    """Generate a fresh principal signing key. Persist ``ed25519_seed``."""
+    return principal_identity_from_seed(Ed25519PrivateKey.generate().private_bytes_raw())
+
+
+def principal_identity_from_seed(ed_seed: bytes) -> PrincipalIdentity:
+    """Restore a principal signing key from its 32-byte Ed25519 seed."""
+    if len(ed_seed) != 32:
+        raise ValueError("principal ed25519_seed must be 32 bytes")
+    priv = Ed25519PrivateKey.from_private_bytes(ed_seed)
+    return PrincipalIdentity(
+        ed25519_seed=ed_seed,
+        ed25519_pubkey=priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw),
+    )
+
+
+def _binding_expiry(expires_at: Union[datetime.datetime, str, None]) -> str:
+    """Normalise an expiry to the one form both SDKs emit.
+
+    JavaScript builds this field as `new Date(expiresAt).toISOString()`, which
+    is always UTC with exactly three fractional digits. A Python SDK that
+    passed an RFC 3339 string through untouched would produce different
+    canonical bytes for the same input — a signature the JS SDK cannot
+    reproduce — so strings are parsed and re-emitted in that form too.
+    """
+    if expires_at is None:
+        expires_at = datetime.datetime.now(datetime.timezone.utc) + DEFAULT_BINDING_TTL
+    if isinstance(expires_at, str):
+        # Parse rather than trust: an unparsable expiry is a binding no
+        # handler can accept, and the failure would otherwise surface as a
+        # signature error hours later.
+        try:
+            expires_at = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError("principal_binding expires_at is not RFC 3339") from None
+    if not isinstance(expires_at, datetime.datetime):
+        raise ValueError("principal_binding expires_at must be a datetime or RFC 3339 string")
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
+    return (
+        expires_at.astimezone(datetime.timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def sign_principal_binding(
+    principal: str,
+    agent: str,
+    principal_identity: PrincipalIdentity,
+    expires_at: Union[datetime.datetime, str, None] = None,
+    verbs: Optional[Sequence[str]] = None,
+    max_per_intent: Optional[dict] = None,
+    revocation: Optional[str] = None,
+    **extra: Any,
+) -> dict:
+    """Sign a PrincipalBinding: the principal's statement that this Agent may
+    act for it, over these verbs, up to this ceiling, until this expiry.
+
+    This is the artifact a handler checks before it will quote anything. The
+    signing input is ``canonical_json(binding)`` with the ``signature`` field
+    removed — the rule the reference handler's ``checkDelegation`` applies — so
+    every other field is covered and mutating one after signing invalidates it.
+
+    Given the same inputs, byte-identical to the JavaScript SDK's
+    ``signPrincipalBinding`` — asserted by a committed vector both test suites
+    read (``packages/icp-client/test/fixtures/principal-binding-vector.json``).
+    Defaults differ only where the method surfaces do: see DEFAULT_VERBS.
+    """
+    extra.pop("signature", None)  # never signed over; the real one is appended below
+    if not isinstance(principal, str) or not principal or principal.strip() != principal:
+        raise ValueError("principal_binding.principal is required")
+    if not isinstance(agent, str) or not agent:
+        raise ValueError("principal_binding.agent is required")
+    authorized_verbs = list(DEFAULT_VERBS if verbs is None else verbs)
+    if not authorized_verbs:
+        raise ValueError("principal_binding.authority.verbs must be non-empty")
+    if not isinstance(principal_identity, PrincipalIdentity) and not hasattr(
+        principal_identity, "ed25519_seed"
+    ):
+        raise ValueError("principal_identity must hold a 32-byte ed25519_seed")
+    body = {
+        **extra,
+        "principal": principal,
+        "agent": agent,
+        "authority": {
+            "max_per_intent": dict(max_per_intent or DEFAULT_MAX_PER_INTENT),
+            "verbs": authorized_verbs,
+        },
+        "expiry": _binding_expiry(expires_at),
+        "revocation": revocation or f"https://example.com/icp-revocation/{agent}",
+    }
+    return {
+        **body,
+        "signature": {
+            "alg": "ed25519",
+            "kid": principal,
+            "sig": sign_ed25519(canonical_json(body), principal_identity),
+        },
+    }
 
 
 def new_id(prefix: str) -> str:

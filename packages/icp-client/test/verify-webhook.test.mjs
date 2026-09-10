@@ -23,6 +23,8 @@ import { generateKeyPairSync, createPrivateKey, createPublicKey } from 'node:cry
 import {
   canonicalJson,
   signEd25519,
+  signPrincipalBinding,
+  generatePrincipalIdentity,
   verifyWebhook,
   ICPError,
 } from '../src/index.mjs';
@@ -282,6 +284,7 @@ test.skip('verifyWebhook: end-to-end against live handler (covered handler-side)
       const recvUrl = `http://127.0.0.1:${recv.address().port}/icp/events`;
 
       // Build Agent identity matching the handler's required shape.
+      const webhookPrincipal = generatePrincipalIdentity();
       const agentKp = generateKeyPairSync('ed25519');
       const agentXkp = generateKeyPairSync('x25519');
       const agentEdRaw = publicKeyToRaw(agentKp.publicKey);
@@ -301,14 +304,20 @@ test.skip('verifyWebhook: end-to-end against live handler (covered handler-side)
           merchant: 'aid:v1:zMerchantPlaceholder',
           settler: 'settler:stateset.usdc.base-sepolia',
           expiry: exp.toISOString(),
-          principal_binding: {
-            principal: 'did:web:test.example',
-            agent: agentAid,
-            authority: { max_per_intent: { amount: '500', currency: 'USDC' }, verbs: [verb] },
-            expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-            revocation: 'https://test.example/revoke',
-            signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-          },
+          // A real delegation, signed by the principal's key. This handler is
+          // permissive (no ICP_PRINCIPAL_KEYS_JSON), so a placeholder would
+          // also be waved through — which is exactly why it does not belong
+          // in a test that claims to be wire-compatible with the handler.
+          principal_binding: signPrincipalBinding(
+            {
+              principal: 'did:web:test.example',
+              agent: agentAid,
+              verbs: [verb],
+              maxPerIntent: { amount: '500', currency: 'USDC' },
+              revocation: 'https://test.example/revoke',
+            },
+            webhookPrincipal,
+          ),
           nonce: newNonceHex(),
           iat: now.toISOString(),
           exp: exp.toISOString(),
