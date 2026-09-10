@@ -117,7 +117,13 @@ fi
 echo "    working tree clean"
 
 echo "==> Fetching ${REMOTE}"
-git fetch --quiet --tags "$REMOTE" "$BRANCH"
+# --force: a local tag that diverged from the remote (a hand-made or stale tag
+# with the same name) otherwise makes this fetch fail, and with --quiet it
+# failed silently. The remote is authoritative for published tags.
+if ! git fetch --force --tags "$REMOTE" "$BRANCH"; then
+  echo "error: fetching ${REMOTE} failed; releases need the remote's branch and tags" >&2
+  exit 1
+fi
 
 head_sha="$(git rev-parse HEAD)"
 remote_sha="$(git rev-parse "${REMOTE}/${BRANCH}")"
