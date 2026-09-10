@@ -185,7 +185,7 @@ def _binding_expiry(expires_at: Union[datetime.datetime, str, None]) -> str:
     if expires_at is None:
         expires_at = datetime.datetime.now(datetime.timezone.utc) + DEFAULT_BINDING_TTL
     if isinstance(expires_at, str):
-        # Parse rather than trust: an unparseable expiry is a binding no
+        # Parse rather than trust: an unparsable expiry is a binding no
         # handler can accept, and the failure would otherwise surface as a
         # signature error hours later.
         try:

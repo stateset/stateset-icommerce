@@ -93,7 +93,7 @@ class ICPClient:
                 "(signed elsewhere), not both",
             )
         if principal_binding is not None:
-            # Catch the mis-wiring locally instead of shipping an Intent the
+            # Catch the miswiring locally instead of shipping an Intent the
             # handler will answer with delegation.scope_mismatch.
             if principal_binding.get("agent") != ident.aid:
                 raise ICPError(

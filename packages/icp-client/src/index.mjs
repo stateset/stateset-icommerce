@@ -527,7 +527,7 @@ export class ICPClient {
       );
     }
     if (opts.principalBinding) {
-      // Catch the mis-wiring locally instead of shipping an Intent the handler
+      // Catch the miswiring locally instead of shipping an Intent the handler
       // will answer with delegation.scope_mismatch.
       if (opts.principalBinding.agent !== identity.aid) {
         throw new ICPError(
