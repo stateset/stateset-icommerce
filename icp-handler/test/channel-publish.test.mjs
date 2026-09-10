@@ -22,7 +22,7 @@ import {
   newNonceHex,
   base58btcEncode,
 } from '../src/codec.mjs';
-import { enforceTrust } from './helpers/trust.mjs';
+import { assertEnforcing, enforceTrust } from './helpers/trust.mjs';
 
 let handlerBaseUrl;
 let receiverBaseUrl;
@@ -135,6 +135,8 @@ before(async () => {
   });
   const addr = server.address();
   handlerBaseUrl = `http://127.0.0.1:${addr.port}`;
+  // The suite's bindings are only meaningful if the handler verifies them.
+  assertEnforcing(await (await fetch(`${handlerBaseUrl}/icp/v1/.well-known/icp`)).json());
   await startReceiver();
 
   const wk = await (await fetch(`${handlerBaseUrl}/icp/v1/.well-known/icp`)).json();

@@ -19,7 +19,7 @@ import {
   resolveAidPubkey,
   AidBindingError,
 } from '../src/codec.mjs';
-import { enforceTrust } from './helpers/trust.mjs';
+import { assertEnforcing, enforceTrust } from './helpers/trust.mjs';
 
 // ---------------------------------------------------------------------------
 // Test identities
@@ -58,6 +58,8 @@ before(async () => {
     server.once('listening', resolve);
   });
   baseUrl = `http://127.0.0.1:${server.address().port}`;
+  // The suite's bindings are only meaningful if the handler verifies them.
+  assertEnforcing(await (await fetch(`${baseUrl}/icp/v1/.well-known/icp`)).json());
 });
 
 after(() => server.close());

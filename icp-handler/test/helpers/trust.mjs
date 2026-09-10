@@ -23,6 +23,15 @@
 //     const { server } = await import('../src/server.mjs');
 //     ...
 //     principal_binding: trust.binding({ agent: agentAid, verbs: ['purchase.create'] })
+//
+// And because that ordering is the whole guarantee — a hoisted static import,
+// or a helper file that imports the server for its own reasons, silently puts
+// the suite back on the permissive path where nothing is verified — every
+// converted suite asks the running handler what posture it is in:
+//
+//     assertEnforcing(await (await fetch(`${baseUrl}/icp/v1/.well-known/icp`)).json());
+
+import assert from 'node:assert/strict';
 
 import {
   canonicalJson,
@@ -88,4 +97,29 @@ export function enforceTrust({ agents = [], principals = [DEFAULT_PRINCIPAL] } =
   }
 
   return { binding, principals: identities };
+}
+
+/**
+ * Fail the suite unless the handler it is talking to is actually enforcing.
+ *
+ * `enforceTrust()` only sets environment variables; the handler reads them
+ * once, at module evaluation. If the server module was already evaluated by
+ * the time it ran — a hoisted `import { server } from '../src/server.mjs'`, or
+ * any transitive import that pulls it in — the suite runs permissive, every
+ * binding in it is waved through unverified, and every assertion still passes.
+ * That is the exact failure this helper exists to prevent, so check the
+ * posture the handler reports rather than the one the suite intended.
+ *
+ * @param {{ trust_mode?: string }} wellKnown the parsed `.well-known/icp` document
+ * @returns {object} the same document, so it can be used inline
+ */
+export function assertEnforcing(wellKnown) {
+  assert.equal(
+    wellKnown?.trust_mode,
+    'enforce',
+    `handler reports trust_mode=${JSON.stringify(wellKnown?.trust_mode)}, not "enforce": this ` +
+      'suite would accept bindings it never verified. enforceTrust() must run BEFORE the server ' +
+      "module is evaluated — import it dynamically (`await import('../src/server.mjs')`).",
+  );
+  return wellKnown;
 }

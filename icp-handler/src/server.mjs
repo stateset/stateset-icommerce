@@ -127,11 +127,17 @@ try {
 // admitted. A durable, operator-keyed handler always enforces; an in-memory one
 // enforces with ICP_TRUST_MODE=enforce.
 //
-// `permissive` is what is left: an in-memory handler with ICP_TRUST_MODE unset.
-// It checks nothing about who authorized the agent — a binding naming a
-// principal the operator never registered is waved through. That is a
-// localhost walkthrough posture and nothing else, so it announces itself
-// loudly at startup and refuses to run under NODE_ENV=production.
+// `permissive` is what is left: an in-memory handler with ICP_TRUST_MODE unset
+// or set to `permissive`. It checks nothing about who authorized the agent — a
+// binding naming a principal the operator never registered is waved through.
+// That is a localhost walkthrough posture and nothing else, so it announces
+// itself loudly at startup and refuses to run under NODE_ENV=production.
+//
+// `permissive` is accepted because it is the state name the banner, the
+// startup line and `.well-known/icp` all report: a value an operator reads out
+// of the handler's own output should be a value they can set. It buys nothing
+// that unset does not — same checks, same production refusal — and a durable
+// handler still enforces regardless, exactly as when it is unset.
 //
 // There used to be a third value, ICP_TRUST_MODE=demo, which selected the
 // permissive path *explicitly* — and, being explicit, was allowed in
@@ -154,9 +160,9 @@ if (TRUST_MODE === 'demo') {
       'clients sign real bindings: see packages/icp-client signPrincipalBinding().',
   );
 }
-if (TRUST_MODE && TRUST_MODE !== 'enforce') {
+if (TRUST_MODE && TRUST_MODE !== 'enforce' && TRUST_MODE !== 'permissive') {
   throw new Error(
-    'ICP_TRUST_MODE must be "enforce", or unset for a permissive in-memory walkthrough',
+    'ICP_TRUST_MODE must be "enforce", or "permissive"/unset for an in-memory walkthrough',
   );
 }
 const ENFORCE_TRUST = TRUST_MODE === 'enforce' || state.isDurable();
@@ -170,7 +176,8 @@ const ENFORCE_TRUST = TRUST_MODE === 'enforce' || state.isDurable();
 if (!ENFORCE_TRUST && process.env.NODE_ENV === 'production') {
   throw new Error(
     'icp-handler: refusing to start — NODE_ENV=production with neither durable state nor ' +
-      'ICP_TRUST_MODE=enforce, so delegations would be accepted unverified. Set ' +
+      'ICP_TRUST_MODE=enforce, so delegations would be accepted unverified (ICP_TRUST_MODE=permissive ' +
+      'is the same posture spelled out loud, and is refused here too). Set ' +
       'ICP_TRUST_MODE=enforce (with ICP_PRINCIPAL_KEYS_JSON and ICP_AGENT_KEYS_JSON) for a real ' +
       'deployment. There is no env var that makes an unverifying handler acceptable here.',
   );
@@ -179,7 +186,7 @@ if (!ENFORCE_TRUST && process.env.NODE_ENV === 'production') {
 // operator must see this even when the port is already taken.
 if (!ENFORCE_TRUST) {
   console.error(
-    'icp-handler: PERMISSIVE TRUST — in-memory handler with ICP_TRUST_MODE unset. Principal ' +
+    'icp-handler: PERMISSIVE TRUST — in-memory handler with ICP_TRUST_MODE unset or permissive. Principal ' +
       'bindings naming a principal this operator never registered are accepted WITHOUT ' +
       'verification, and any caller may mint a signer AID. Walkthrough posture only. Set ' +
       'ICP_TRUST_MODE=enforce with ICP_PRINCIPAL_KEYS_JSON and ICP_AGENT_KEYS_JSON for anything real.',

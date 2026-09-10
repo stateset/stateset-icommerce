@@ -3,11 +3,15 @@
 //   enforce     — every Intent MUST carry a `principal_binding` the operator
 //                 can verify. Durable handlers always enforce; an in-memory
 //                 handler enforces with ICP_TRUST_MODE=enforce.
-//   permissive  — an in-memory handler with ICP_TRUST_MODE unset. A binding
-//                 naming a principal the operator never registered is waved
-//                 through unverified. It is a localhost walkthrough posture,
-//                 it says so loudly at startup, and it refuses to run under
-//                 NODE_ENV=production.
+//   permissive  — an in-memory handler with ICP_TRUST_MODE unset, or set to
+//                 `permissive`, which is an exact alias of unset: the state
+//                 name the banner and `.well-known/icp` report is also a value
+//                 an operator may set. A binding naming a principal the
+//                 operator never registered is waved through unverified. It is
+//                 a localhost walkthrough posture, it says so loudly at
+//                 startup, and it refuses to run under NODE_ENV=production —
+//                 spelling it out does not buy permission, which is exactly
+//                 what `demo` used to do.
 //
 // There used to be a third value, `ICP_TRUST_MODE=demo`, which selected the
 // permissive path *explicitly* — including under NODE_ENV=production on a
@@ -77,9 +81,27 @@ test('ICP_TRUST_MODE=demo is refused under NODE_ENV=production too', () => {
 });
 
 test('an unrecognized ICP_TRUST_MODE refuses to start', () => {
-  const run = startServer({ ICP_TRUST_MODE: 'permissive' });
+  const run = startServer({ ICP_TRUST_MODE: 'lenient' });
   assert.notEqual(run.status, 0, `expected a refusal, got:\n${run.stdout}\n${run.stderr}`);
   assert.match(run.stderr, /ICP_TRUST_MODE/);
+});
+
+test('ICP_TRUST_MODE=permissive is an accepted spelling of unset', () => {
+  // The banner, the startup line and `.well-known/icp` all call this state
+  // `permissive`; a value the handler reports about itself has to be a value
+  // an operator can set, or the first thing they try is a startup crash.
+  const run = startServer({ ICP_TRUST_MODE: 'permissive' });
+  assert.equal(run.status, 0, `expected a clean start, got:\n${run.stdout}\n${run.stderr}`);
+  assert.match(run.stderr, /PERMISSIVE TRUST/);
+  assert.match(run.stderr, /WITHOUT verification/);
+});
+
+test('ICP_TRUST_MODE=permissive is still refused under NODE_ENV=production', () => {
+  // Being explicit is not a licence. `demo` bought exactly that permission and
+  // is why this test file exists; the alias must not re-open the door.
+  const run = startServer({ NODE_ENV: 'production', ICP_TRUST_MODE: 'permissive' });
+  assert.notEqual(run.status, 0, `expected a refusal, got:\n${run.stdout}\n${run.stderr}`);
+  assert.match(run.stderr, /refusing to start/);
 });
 
 test('ICP_TRUST_MODE=enforce starts in production', () => {

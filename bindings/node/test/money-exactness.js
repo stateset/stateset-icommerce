@@ -82,34 +82,71 @@ function declaredInterfaces() {
 }
 
 /**
+ * The index of the last line of the `#[…]` attribute starting at `lines[start]`.
+ *
+ * An attribute may span lines — `#[napi(` … `)]` with one option per line is
+ * ordinary rustfmt output — and a parser that assumed one line walked straight
+ * past the fn below it, taking every `f64` argument in that signature out of
+ * the census without a word.
+ */
+function attributeEnd(lines, start) {
+  let depth = 0;
+  for (let i = start; i < lines.length; i += 1) {
+    // String literals carry brackets of their own (`ts_args_type = "x: T[]"`).
+    for (const ch of lines[i].replace(/"(?:[^"\\]|\\.)*"/g, '""')) {
+      if (ch === '[' || ch === '(') depth += 1;
+      else if (ch === ']' || ch === ')') depth -= 1;
+    }
+    if (depth <= 0) return i;
+  }
+  return lines.length - 1;
+}
+
+/**
  * Every `#[napi]` fn in `src/lib.rs` that takes at least one `f64` argument, as
  * `{ 'Owner.method': { params: { argName: 'rustType' }, line } }`.
  *
  * A money argument is money whether it is a struct field or a bare parameter,
- * so the census has to see both. `Owner` is the enclosing `impl` block — the
- * class a JavaScript caller reaches through `commerce.credit`, `commerce.tax`
- * and so on — because method names alone collide (three different `complete`s).
+ * so the census has to see both. `Owner` is the enclosing **inherent** `impl`
+ * block — the class a JavaScript caller reaches through `commerce.credit`,
+ * `commerce.tax` and so on — because method names alone collide (three
+ * different `complete`s). `impl Trait for Type` names the trait, which is not a
+ * class anyone reaches; a free `#[napi] pub fn` belongs to no class at all and
+ * keys as `(module)` however far below the last `impl` block it sits.
+ *
+ * The method half of the key is the name JavaScript calls: the attribute's
+ * `js_name` when it sets one, otherwise the camelCased Rust fn name.
+ *
+ * @param source `src/lib.rs` by default; a probe string in the parser's own tests.
  */
-function napiFloatMethods() {
-  const lines = fs.readFileSync(path.join(ROOT, 'src', 'lib.rs'), 'utf8').split('\n');
+function napiFloatMethods(source = fs.readFileSync(path.join(ROOT, 'src', 'lib.rs'), 'utf8')) {
+  const lines = source.split('\n');
   const methods = {};
   let owner = '(module)';
 
   for (let i = 0; i < lines.length; i += 1) {
-    const implBlock = /^impl(?:<[^>]*>)? (\w+)/.exec(lines[i]);
+    const implBlock = /^impl(?:<[^>]*>)?\s+(\w+)(?:<[^>]*>)?\s*\{/.exec(lines[i]);
     if (implBlock) owner = implBlock[1];
     if (!/^\s*#\[napi[([\]]/.test(lines[i])) continue;
+    // A `#[napi]` at column 0 is a free function or an `impl` header, neither of
+    // which belongs to the class the last inherent `impl` opened.
+    if (/^#\[napi/.test(lines[i])) owner = '(module)';
 
-    // `#[napi]` may be followed by more attributes (`#[allow(...)]`) before the fn.
-    let start = i + 1;
-    while (start < lines.length && /^\s*#\[/.test(lines[start])) start += 1;
+    const attribute = lines.slice(i, attributeEnd(lines, i) + 1).join(' ');
+    // The `#[napi(...)]` itself may span lines, and more attributes
+    // (`#[allow(...)]`) may follow before the fn — each of those may too.
+    let start = i;
+    while (start < lines.length && /^\s*#\[/.test(lines[start])) {
+      start = attributeEnd(lines, start) + 1;
+    }
     const signature = /^\s*pub (?:async )?fn (\w+)\s*\(/.exec(lines[start] ?? '');
     if (!signature) continue;
 
     const params = signatureParams(lines, start);
     if (!Object.values(params).some((type) => type === 'f64' || type === 'Option<f64>')) continue;
 
-    const key = `${owner}.${camel(signature[1])}`;
+    const jsName = /\bjs_name\s*=\s*"([^"]+)"/.exec(attribute);
+    const key = `${owner}.${jsName ? jsName[1] : camel(signature[1])}`;
     assert.ok(
       !(key in methods),
       `two #[napi] fns named ${key} take f64 arguments; the census key is ambiguous`,
@@ -210,6 +247,52 @@ test('money census: the source parser actually sees the float fields', () => {
   assert.ok(Object.keys(declaredInterfaces()).length > 100, 'index.d.ts parser found no interfaces');
 });
 
+// A synthetic `src/lib.rs` for the parser itself. Every construct in it is one
+// the census got wrong: a trait impl was read as the owning class, a free
+// `#[napi] pub fn` inherited whatever class happened to be above it, and a
+// `#[napi(` spread over several lines hid the whole signature beneath it — the
+// parser walked past the fn and its `f64` arguments were never classified at
+// all, which is a silent hole in a census whose entire job is to have none.
+const PARSER_PROBE = [
+  'impl From<stateset_core::Widget> for WidgetOutput {',
+  '    fn from(widget: stateset_core::Widget) -> Self { Self { amount: 0.0 } }',
+  '}',
+  '',
+  '#[napi]',
+  'impl Credit {',
+  '    #[napi(',
+  '        js_name = "checkCredit",',
+  '        ts_return_type = "Promise<CreditCheck>"',
+  '    )]',
+  '    #[allow(clippy::too_many_arguments)]',
+  '    pub async fn check_credit(',
+  '        &self,',
+  '        customer_id: String,',
+  '        order_amount: f64,',
+  '        order_amount_exact: Option<String>,',
+  '    ) -> Result<CreditCheckOutput> {',
+  '        todo!()',
+  '    }',
+  '}',
+  '',
+  '#[napi(js_name = "__probeFreeFunction")]',
+  'pub fn probe_free_function(amount: f64) -> f64 {',
+  '    amount',
+  '}',
+].join('\n');
+
+test('money census: the signature parser reads the shapes Rust source comes in', () => {
+  const methods = napiFloatMethods(PARSER_PROBE);
+  assert.deepStrictEqual(
+    Object.keys(methods).sort(),
+    ['(module).__probeFreeFunction', 'Credit.checkCredit'],
+    'a trait impl must not become the owner, and a free #[napi] fn keys as (module)',
+  );
+  // The point of the probe: the f64 under a multi-line attribute is seen.
+  assert.strictEqual(methods['Credit.checkCredit'].params.orderAmount, 'f64');
+  assert.strictEqual(methods['Credit.checkCredit'].params.orderAmountExact, 'Option<String>');
+});
+
 test('money census: the source parser actually sees the float method arguments', () => {
   const seen = Object.values(napiFloatMethods()).reduce(
     (total, { params }) =>
@@ -283,6 +366,20 @@ test('money census: every money method argument has an exact sibling argument', 
         failures.push(
           `${key}(${name}) is money but has no \`${sibling}: Option<String>\` sibling argument ` +
             `(src/lib.rs:${method.line}); money must be sendable exactly, not only as an f64`,
+        );
+        continue;
+      }
+      // Trailing, not merely present. These are positional arguments: the whole
+      // reason the exact half was added at the end is that every caller written
+      // before it existed keeps working. Slot it anywhere else and the argument
+      // after it silently shifts one place — which, for money, means a caller
+      // that passes a currency where a price is now read.
+      const positional = Object.keys(method.params);
+      if (positional[positional.length - 1] !== sibling) {
+        failures.push(
+          `${key}(${name}) — src/lib.rs:${method.line} — has its \`${sibling}\` sibling at ` +
+            `position ${positional.indexOf(sibling) + 1} of ${positional.length}, not last; a ` +
+            'trailing exact argument is what keeps existing positional callers working',
         );
         continue;
       }

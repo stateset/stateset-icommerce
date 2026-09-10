@@ -149,39 +149,69 @@ impl Client {
         Ok(self)
     }
 
+    /// Every one of these four settings describes a binding *this client
+    /// signs*. A binding signed elsewhere is sent verbatim — its authority is
+    /// fixed by the signature over it, and re-reading it here would need the
+    /// principal's key, which is the whole point of not having it. So they are
+    /// a configuration error together, not a silent no-op: an Agent that
+    /// thought it had narrowed its own authority to one verb, and had not,
+    /// finds out from the handler or not at all.
+    fn refuse_when_pre_signed(&self, setting: &str) -> Result<(), Error> {
+        if self.principal_binding.is_some() {
+            return Err(Error::InvalidInput(format!(
+                "{setting} configures a binding this client signs, but a pre-signed principal \
+                 binding is already configured; its authority is covered by the principal's \
+                 signature and cannot be changed here — narrow it where it is signed"
+            )));
+        }
+        Ok(())
+    }
+
     /// Narrow the verbs a self-signed binding authorizes. Default:
     /// [`crate::DEFAULT_VERBS`] — every verb this client can emit.
-    #[must_use]
-    pub fn with_verbs<I, S>(mut self, verbs: I) -> Self
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] if a pre-signed binding is configured.
+    pub fn with_verbs<I, S>(mut self, verbs: I) -> Result<Self, Error>
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
+        self.refuse_when_pre_signed("with_verbs")?;
         self.verbs = Some(verbs.into_iter().map(Into::into).collect());
-        self
+        Ok(self)
     }
 
     /// Set the per-Intent ceiling a self-signed binding carries.
     /// Default: 10000 USDC.
-    #[must_use]
-    pub fn with_max_per_intent(mut self, max_per_intent: Money) -> Self {
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] if a pre-signed binding is configured.
+    pub fn with_max_per_intent(mut self, max_per_intent: Money) -> Result<Self, Error> {
+        self.refuse_when_pre_signed("with_max_per_intent")?;
         self.max_per_intent = max_per_intent;
-        self
+        Ok(self)
     }
 
     /// Set the per-payout ceiling a self-signed binding carries (ICPIP-0004).
     /// Omitted by default, which the handler reads as uncapped.
-    #[must_use]
-    pub fn with_max_per_payout(mut self, max_per_payout: Money) -> Self {
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] if a pre-signed binding is configured.
+    pub fn with_max_per_payout(mut self, max_per_payout: Money) -> Result<Self, Error> {
+        self.refuse_when_pre_signed("with_max_per_payout")?;
         self.max_per_payout = Some(max_per_payout);
-        self
+        Ok(self)
     }
 
     /// Set the revocation URL a self-signed binding publishes.
-    #[must_use]
-    pub fn with_revocation_url(mut self, revocation_url: impl Into<String>) -> Self {
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] if a pre-signed binding is configured.
+    pub fn with_revocation_url(mut self, revocation_url: impl Into<String>) -> Result<Self, Error> {
+        self.refuse_when_pre_signed("with_revocation_url")?;
         self.revocation_url = Some(revocation_url.into());
-        self
+        Ok(self)
     }
 
     /// The `PrincipalBinding` to carry, or `None` when this Agent holds no
@@ -688,6 +718,92 @@ mod tests {
             }
             other => panic!("expected Icp error, got {other:?}"),
         }
+    }
+
+    /// This file, read back at compile time so the verb list can be checked
+    /// against the methods rather than against a comment. Mirrors the Python
+    /// SDK's `test_default_binding_authorizes_every_verb_this_client_emits`.
+    const CLIENT_SOURCE: &str = include_str!("client.rs");
+
+    /// Every verb this client actually emits, scraped from its own source.
+    ///
+    /// A verb reaches the wire exactly one way: as the second argument of an
+    /// `intent_base` call. The needle is assembled at runtime so that this
+    /// function does not match itself.
+    fn emitted_verbs() -> std::collections::BTreeSet<String> {
+        let needle = concat!("intent_base", "(");
+        let mut verbs = std::collections::BTreeSet::new();
+        for (index, _) in CLIENT_SOURCE.match_indices(needle) {
+            let tail = &CLIENT_SOURCE[index + needle.len()..];
+            let Some(open) = tail.find('"') else { continue };
+            let rest = &tail[open + 1..];
+            let Some(close) = rest.find('"') else { continue };
+            verbs.insert(rest[..close].to_string());
+        }
+        verbs
+    }
+
+    #[test]
+    fn default_verbs_match_the_verbs_this_client_emits() {
+        // A default binding missing a verb the SDK sends makes the client
+        // answer `delegation.scope_mismatch` from its own methods; one
+        // carrying a verb the SDK cannot send is authority handed out for
+        // nothing. Neither is visible until a handler enforces, which is late.
+        let emitted = emitted_verbs();
+        assert!(
+            emitted.len() >= 8,
+            "expected one verb per method, scraped {emitted:?} — has the call shape changed?"
+        );
+        let declared: std::collections::BTreeSet<String> =
+            crate::DEFAULT_VERBS.iter().map(|v| (*v).to_string()).collect();
+        assert_eq!(declared, emitted, "DEFAULT_VERBS has drifted from the method surface");
+    }
+
+    #[test]
+    fn binding_settings_are_refused_when_a_binding_was_signed_elsewhere() {
+        // Silently ignoring these is the dangerous shape: an Agent that
+        // believes it narrowed its own authority to one verb, and did not.
+        let identity = Identity::generate();
+        let binding = crate::PrincipalBindingParams::new("did:web:test.example", identity.aid())
+            .sign(&crate::PrincipalIdentity::generate())
+            .expect("sign");
+        let configured = || {
+            Client::new("http://localhost:7402", identity.clone())
+                .with_principal_binding(binding.clone())
+                .expect("binding delegates this agent")
+        };
+        let money = || Money { amount: "1".to_string(), currency: "USDC".to_string() };
+
+        for result in [
+            configured().with_verbs(["purchase.create"]).map(|_| ()),
+            configured().with_max_per_intent(money()).map(|_| ()),
+            configured().with_max_per_payout(money()).map(|_| ()),
+            configured().with_revocation_url("https://x.example/revoke").map(|_| ()),
+        ] {
+            match result {
+                Err(Error::InvalidInput(message)) => {
+                    assert!(
+                        message.contains("pre-signed principal binding"),
+                        "unhelpful message: {message}"
+                    );
+                }
+                other => panic!("expected a configuration error, got {other:?}"),
+            }
+        }
+
+        // Without a pre-signed binding they configure the client as before.
+        let signing = Client::new("http://localhost:7402", identity)
+            .with_principal_identity("did:web:test.example", crate::PrincipalIdentity::generate())
+            .expect("principal identity")
+            .with_verbs(["purchase.create"])
+            .expect("verbs")
+            .with_max_per_intent(money())
+            .expect("max per intent")
+            .with_max_per_payout(money())
+            .expect("max per payout")
+            .with_revocation_url("https://x.example/revoke")
+            .expect("revocation url");
+        assert_eq!(signing.verbs.as_deref(), Some(["purchase.create".to_string()].as_slice()));
     }
 
     #[test]
