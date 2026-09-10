@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Compare the latest `v*` tag against every public registry we publish to.
 #
-#   scripts/ci/check_registry_consistency.sh [--version 1.34.0] [--report PATH]
+#   scripts/ci/check_registry_consistency.sh [--version 1.35.0] [--report PATH]
 #
 # v1.31.0 and v1.32.0 were tagged with only `v*`, so crates.io moved to 1.32.0
 # while npm and PyPI silently stayed on 1.30.0 for two releases. Nothing noticed

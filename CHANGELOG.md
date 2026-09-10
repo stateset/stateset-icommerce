@@ -6,6 +6,8 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.35.0] - 2026-09-10
+
 ### Added
 
 - Node binding: every money `f64` method argument (`credit.checkCredit`,
