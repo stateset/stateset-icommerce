@@ -132,7 +132,7 @@ jobs:
             -C dist .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: php-ext-${{ matrix.artifact }}
           path: bindings/php/${{ env.EXT_NAME }}-${{ matrix.artifact }}.tar.gz
@@ -178,7 +178,7 @@ jobs:
           Compress-Archive -Path dist\* -DestinationPath "${{ env.EXT_NAME }}-windows-x86_64-php${{ matrix.php }}.zip"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: php-ext-windows-x86_64-php${{ matrix.php }}
           path: bindings/php/${{ env.EXT_NAME }}-windows-x86_64-php${{ matrix.php }}.zip

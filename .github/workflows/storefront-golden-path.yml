@@ -70,7 +70,7 @@ jobs:
 
       - name: Upload immutable golden-path evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: storefront-golden-path-${{ github.sha }}-${{ github.run_attempt }}
           path: artifacts/storefront-golden-path
@@ -105,7 +105,7 @@ jobs:
 
       - name: Upload registry-install evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: storefront-registry-install-${{ github.sha }}-${{ github.run_attempt }}
           path: artifacts/storefront-golden-path-registry

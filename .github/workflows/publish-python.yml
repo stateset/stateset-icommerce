@@ -132,7 +132,7 @@ jobs:
           maturin build --release --compatibility pypi -o dist --target x86_64-apple-darwin
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.os }}-py${{ matrix.python-version }}
           path: bindings/python/dist/*.whl
@@ -172,7 +172,7 @@ jobs:
         run: maturin sdist -o dist
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: bindings/python/dist/*.tar.gz
@@ -220,7 +220,7 @@ jobs:
             dist/release-checksums.txt
 
       - name: Publish checksums
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: python-release-checksums
           path: dist/release-checksums.txt

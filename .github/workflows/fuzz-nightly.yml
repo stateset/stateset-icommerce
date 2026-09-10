@@ -66,7 +66,7 @@ jobs:
 
       - name: Upload corpus on crash
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-crash-${{ matrix.crate }}-${{ matrix.target }}
           path: crates/${{ matrix.crate }}/fuzz/artifacts/${{ matrix.target }}/

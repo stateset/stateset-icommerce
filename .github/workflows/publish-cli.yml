@@ -208,7 +208,7 @@ jobs:
           exit $status
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: bindings-${{ matrix.target }}
           path: bindings/node/*.node
@@ -276,7 +276,7 @@ jobs:
             bindings/node/release-checksums.txt
 
       - name: Publish checksums
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: cli-embedded-release-checksums
           path: bindings/node/release-checksums.txt
@@ -396,14 +396,14 @@ jobs:
             cli-release-checksums.txt
 
       - name: Publish checksums
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: cli-package-release-checksums
           path: cli-release-checksums.txt
           if-no-files-found: error
 
       - name: Publish standalone Omarchy plugin
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: stateset-omarchy-plugin-release
           path: stateset-omarchy-plugin-*.tar.gz
