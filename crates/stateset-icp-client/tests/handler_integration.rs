@@ -373,6 +373,14 @@ fn enforcing_handler_accepts_a_real_binding_and_rejects_the_alternatives() {
         ("ICP_PRINCIPAL_KEYS_JSON", principal_keys),
         ("ICP_AGENT_KEYS_JSON", agent_keys),
     ]) else {
+        // A new test that skips itself is a test that never ran. CI sets
+        // ICP_HANDLER_REQUIRED=1 so a missing handler is a hard failure
+        // rather than a green run for the wrong reason.
+        assert!(
+            std::env::var("ICP_HANDLER_REQUIRED").as_deref() != Ok("1"),
+            "ICP_HANDLER_REQUIRED=1 but the JS handler could not be spawned \
+             (node missing or icp-handler/package.json not found)"
+        );
         eprintln!("skipping: handler unavailable");
         return;
     };

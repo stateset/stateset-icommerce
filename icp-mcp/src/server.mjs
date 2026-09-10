@@ -32,6 +32,7 @@ import {
   newNonceHex,
   base58btcEncode,
 } from '../../icp-handler/src/codec.mjs';
+import { principalIdentityFromSeed, signPrincipalBinding } from '../../packages/icp-client/src/index.mjs';
 import {
   submitIntent,
   acceptQuote,
@@ -49,6 +50,64 @@ import {
 const merchantKp = generateKeyPairSync('ed25519');
 const merchantPubRaw = publicKeyToRaw(merchantKp.publicKey);
 const merchantAid = `aid:v1:zMcpMerchant${process.pid}${Date.now()}`;
+
+// ---------------------------------------------------------------------------
+// Principal delegation for the Intents this server signs
+// ---------------------------------------------------------------------------
+//
+// An Intent may carry a PrincipalBinding: the principal's signed statement
+// that this Agent may act for it, over these verbs, up to this ceiling, until
+// this expiry. An enforcing handler verifies it against the principal key its
+// operator registered (ICP_PRINCIPAL_KEYS_JSON) and refuses anything else.
+//
+// This server used to stamp every Intent with `kid: 'self'`, `sig:
+// 'deadbeef'` under an invented principal. It looked like a delegation and
+// proved nothing, so the tools could only transact against a handler with
+// delegation checking turned off. Configure the real thing with:
+//
+//   ICP_MCP_PRINCIPAL           the principal identifier, e.g. did:web:my-store.example
+//   ICP_MCP_PRINCIPAL_SEED_HEX  its 32-byte Ed25519 seed, hex (keep it in a secret store)
+//
+// With NEITHER set, Intents carry no principal_binding at all and the handler
+// decides whether an undelegated Agent may transact — an enforcing one answers
+// `delegation.required`. That is the honest outcome. With only one set the
+// server refuses to start rather than quietly transact undelegated.
+
+const PRINCIPAL = (process.env.ICP_MCP_PRINCIPAL ?? '').trim();
+const PRINCIPAL_SEED_HEX = (process.env.ICP_MCP_PRINCIPAL_SEED_HEX ?? '').trim();
+
+function loadPrincipalIdentity() {
+  if (!PRINCIPAL && !PRINCIPAL_SEED_HEX) return null;
+  if (!PRINCIPAL) {
+    throw new Error('ICP_MCP_PRINCIPAL_SEED_HEX is set without ICP_MCP_PRINCIPAL');
+  }
+  if (!PRINCIPAL_SEED_HEX) {
+    throw new Error('ICP_MCP_PRINCIPAL is set without ICP_MCP_PRINCIPAL_SEED_HEX');
+  }
+  const seed = Buffer.from(PRINCIPAL_SEED_HEX, 'hex');
+  if (seed.length !== 32) {
+    throw new Error('ICP_MCP_PRINCIPAL_SEED_HEX must decode to exactly 32 bytes');
+  }
+  return principalIdentityFromSeed(seed);
+}
+
+let principalIdentity = null;
+try {
+  principalIdentity = loadPrincipalIdentity();
+} catch (error) {
+  // Fail fast and loudly: a half-configured principal would otherwise ship
+  // undelegated Intents that only fail at the merchant, hours later.
+  console.error(`icp-mcp: ${error.message}`);
+  process.exit(1);
+}
+if (principalIdentity) {
+  console.error(`icp-mcp: signing PrincipalBindings for ${PRINCIPAL}`);
+} else {
+  console.error(
+    'icp-mcp: no ICP_MCP_PRINCIPAL configured — Intents will carry no principal_binding, ' +
+      'and an enforcing handler will answer delegation.required.',
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Tool definitions
@@ -148,6 +207,8 @@ const handlers = {
     settler_allowlist: [...ALLOWED_SETTLERS],
     supported_verbs: ['purchase.create'],
     backend: 'stub (in-memory, auto-fulfilling — for demos)',
+    principal: principalIdentity ? PRINCIPAL : null,
+    principal_pubkey_hex: principalIdentity ? principalIdentity.ed25519_pubkey.toString('hex') : null,
     counts: counts(),
   }),
 
@@ -196,18 +257,26 @@ const handlers = {
       items: args.items,
       max_total: args.max_total,
       expiry: exp.toISOString(),
-      principal_binding: {
-        principal: 'did:web:icp-mcp-demo.example',
-        agent: aid,
-        authority: { max_per_intent: { amount: '10000', currency: args.max_total.currency }, verbs: ['purchase.create'] },
-        expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-        revocation: 'https://icp-mcp-demo.example/revoke',
-        signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-      },
       nonce: newNonceHex(),
       iat: now.toISOString(),
       exp: exp.toISOString(),
     };
+    if (principalIdentity) {
+      // Absent, not `undefined`: canonicalJson would emit a literal
+      // `undefined` for a present-but-undefined key and the Intent signature
+      // would then cover bytes that are not JSON. The authority is exactly
+      // the verb this tool can build — a capability grant has no business
+      // being wider than the surface that uses it.
+      intent.principal_binding = signPrincipalBinding(
+        {
+          principal: PRINCIPAL,
+          agent: aid,
+          verbs: ['purchase.create'],
+          maxPerIntent: { amount: '10000', currency: args.max_total.currency },
+        },
+        principalIdentity,
+      );
+    }
     const canonical = canonicalJson(intent);
     const sig = signEd25519(canonical, edPriv);
     return {
