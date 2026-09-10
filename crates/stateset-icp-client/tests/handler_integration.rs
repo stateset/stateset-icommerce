@@ -15,7 +15,9 @@
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-use stateset_icp_client::{Client, Identity, LineItem, Money};
+use stateset_icp_client::{
+    Client, Identity, LineItem, Money, PrincipalBindingParams, PrincipalIdentity,
+};
 
 struct Handler {
     child: Child,
@@ -36,6 +38,16 @@ fn workspace_root() -> std::path::PathBuf {
 }
 
 fn maybe_spawn_handler() -> Option<Handler> {
+    maybe_spawn_handler_with_env(&[])
+}
+
+/// Spawn the reference handler with extra environment.
+///
+/// `ICP_TRUST_MODE=enforce` plus the two key registries turn the handler into
+/// the thing a real deployment runs: one that verifies every delegation
+/// against operator-configured keys. Mirrors the JS suite's
+/// `icp-handler/test/client-binding.test.mjs` setup.
+fn maybe_spawn_handler_with_env(env: &[(&str, String)]) -> Option<Handler> {
     let root = workspace_root();
     let handler_dir = root.join("icp-handler");
     if !handler_dir.join("package.json").exists() {
@@ -56,6 +68,9 @@ fn maybe_spawn_handler() -> Option<Handler> {
         .env("PORT", "0")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
     let mut child = cmd.spawn().ok()?;
 
     // Read stderr until we see "listening on http://127.0.0.1:PORT", then
@@ -330,4 +345,252 @@ fn rust_sdk_roundtrips_against_js_handler() {
         }
         Err(other) => panic!("unexpected error variant: {other:?}"),
     }
+}
+
+/// The enforcing handler is the one a real deployment runs: it verifies every
+/// delegation against operator-configured principal keys. Until this test
+/// existed the Rust SDK could not transact with one at all — it shipped a
+/// placeholder binding (`kid: "self"`, `sig: "deadbeef"`) that looked like a
+/// delegation and proved nothing, so the only way through was to turn
+/// delegation checking off.
+///
+/// This is the contract between the two halves: the binding
+/// `sign_principal_binding` produces verifies against the principal key an
+/// operator registered, every verb the client can emit is covered by the
+/// default delegation, and each way of getting it wrong fails closed with the
+/// code the handler's delegation suite pins.
+#[test]
+fn enforcing_handler_accepts_a_real_binding_and_rejects_the_alternatives() {
+    const PRINCIPAL: &str = "did:web:rust-sdk-binding.example";
+    const OTHER_PRINCIPAL: &str = "did:web:not-registered.example";
+
+    // Both identities must exist before the handler starts: an operator-keyed
+    // handler admits only signer AIDs it was configured with.
+    let identity = Identity::generate();
+    let seller_identity = Identity::generate();
+    let principal_key = PrincipalIdentity::generate();
+
+    let agent_keys = serde_json::json!({
+        identity.aid(): hex::encode(identity.ed_pubkey()),
+        seller_identity.aid(): hex::encode(seller_identity.ed_pubkey()),
+    })
+    .to_string();
+    let principal_keys =
+        serde_json::json!({ PRINCIPAL: principal_key.ed_pubkey_hex() }).to_string();
+
+    let Some(handler) = maybe_spawn_handler_with_env(&[
+        ("ICP_TRUST_MODE", "enforce".to_string()),
+        ("ICP_PRINCIPAL_KEYS_JSON", principal_keys),
+        ("ICP_AGENT_KEYS_JSON", agent_keys),
+    ]) else {
+        // A new test that skips itself is a test that never ran. CI sets
+        // ICP_HANDLER_REQUIRED=1 so a missing handler is a hard failure
+        // rather than a green run for the wrong reason.
+        assert!(
+            std::env::var("ICP_HANDLER_REQUIRED").as_deref() != Ok("1"),
+            "ICP_HANDLER_REQUIRED=1 but the JS handler could not be spawned \
+             (node missing or icp-handler/package.json not found)"
+        );
+        eprintln!("skipping: handler unavailable");
+        return;
+    };
+    let url = format!("http://127.0.0.1:{}", handler.port);
+
+    let delegated = |id: Identity| -> Client {
+        Client::new(&url, id)
+            .with_principal_identity(PRINCIPAL, principal_key.clone())
+            .expect("principal identity")
+    };
+
+    let client = delegated(identity.clone());
+    let well_known = client.well_known().expect("well_known");
+    assert_eq!(well_known["trust_mode"], "enforce", "handler must be enforcing: {well_known}");
+    let merchant = well_known["merchant_aid"].as_str().expect("merchant_aid").to_string();
+    let settler = well_known["settler_allowlist"][0].as_str().expect("settler").to_string();
+
+    let purchase_items = || {
+        vec![LineItem {
+            sku: "WIDGET-001".to_string(),
+            quantity: 1,
+            unit_price: Money { amount: "29.99".to_string(), currency: "USDC".to_string() },
+        }]
+    };
+    let max_total = || Money { amount: "200.00".to_string(), currency: "USDC".to_string() };
+
+    // 1. The happy path: a binding this SDK signed clears checkDelegation.
+    let quote = client
+        .purchase(&merchant, &settler, purchase_items(), max_total())
+        .expect("a signed binding must be accepted by an enforcing handler");
+    assert!(quote.payload["quote_id"].as_str().is_some_and(|q| !q.is_empty()));
+    client.verify_signed_response(&quote).expect("quote signature must verify");
+
+    // 2. The DEFAULT delegation must cover this client's whole verb surface —
+    //    a client whose own methods answer delegation.scope_mismatch is not
+    //    usable, and the enforcing handler is the only judge of that.
+    client.inventory(&merchant, &settler, &["WIDGET-001"]).expect("inventory.query");
+    let sub = client
+        .subscribe(
+            &merchant,
+            &settler,
+            "pro-tier",
+            "monthly",
+            Money { amount: "20.00".to_string(), currency: "USDC".to_string() },
+            Some(12),
+            "2026-06-01T00:00:00.000Z",
+        )
+        .expect("subscription.create");
+    client
+        .cancel(
+            &merchant,
+            &settler,
+            sub.payload["subscription_id"].as_str().unwrap_or("icp_sub_ENFORCE0000000000000001"),
+            "end-of-period",
+            Some("enforce-mode-test"),
+        )
+        .expect("subscription.cancel");
+    client
+        .return_purchase(
+            &merchant,
+            &settler,
+            "icp_set_ENFORCE0000000000000001",
+            serde_json::json!([{ "sku": "WIDGET-001", "quantity": 1, "reason": "damaged" }]),
+            "refund",
+        )
+        .expect("purchase.return");
+    client
+        .request_quote(
+            &merchant,
+            &settler,
+            serde_json::json!([{ "sku": "WIDGET-001", "quantity": 50 }]),
+        )
+        .expect("quote.request");
+    client
+        .register_webhook(
+            &merchant,
+            &settler,
+            "webhook",
+            Some("https://agent.example.com/icp/events"),
+            &["settlement.released"],
+        )
+        .expect("channel.register");
+
+    // payout.request binds the delegation to the *seller*, not the buyer, so
+    // the seller signs its own. A policy rejection is still a valid handler
+    // outcome for an unknown seller — what must not happen is a delegation
+    // failure.
+    let seller_aid = seller_identity.aid().to_string();
+    let seller_client = delegated(seller_identity);
+    seller_client.well_known().expect("seller well_known");
+    match seller_client.payout(
+        &merchant,
+        &settler,
+        &seller_aid,
+        &merchant,
+        Money { amount: "10.00".to_string(), currency: "USDC".to_string() },
+    ) {
+        Ok(_) => {}
+        Err(stateset_icp_client::Error::Icp { code, .. }) => {
+            assert!(code.starts_with("policy."), "payout.request delegation failed: {code}");
+        }
+        Err(other) => panic!("payout failed unexpectedly: {other:?}"),
+    }
+
+    // 3. No delegation at all → delegation.required. This is the honest
+    //    outcome for an undelegated Agent, and the one the placeholder used
+    //    to hide.
+    let undelegated = Client::new(&url, identity.clone());
+    assert_eq!(
+        icp_code(undelegated.purchase(&merchant, &settler, purchase_items(), max_total())),
+        "delegation.required"
+    );
+
+    // 4. Authority widened after signing → delegation.signature_invalid. The
+    //    classic escalation attempt: every field but `signature` is covered.
+    let mut tampered =
+        PrincipalBindingParams::new(PRINCIPAL, identity.aid()).sign(&principal_key).expect("sign");
+    tampered.authority.max_per_intent =
+        Money { amount: "1000000".to_string(), currency: "USDC".to_string() };
+    let tampering = Client::new(&url, identity.clone())
+        .with_principal_binding(tampered)
+        .expect("binding delegates this agent");
+    assert_eq!(
+        icp_code(tampering.purchase(&merchant, &settler, purchase_items(), max_total())),
+        "delegation.signature_invalid"
+    );
+
+    // 5. Signed by a key that is not the principal's → same failure.
+    let impostor = Client::new(&url, identity.clone())
+        .with_principal_identity(PRINCIPAL, PrincipalIdentity::generate())
+        .expect("principal identity");
+    assert_eq!(
+        icp_code(impostor.purchase(&merchant, &settler, purchase_items(), max_total())),
+        "delegation.signature_invalid"
+    );
+
+    // 6. A binding that does not cover the verb → scope_mismatch, not a
+    //    silent pass.
+    let narrow = Client::new(&url, identity.clone())
+        .with_principal_identity(PRINCIPAL, principal_key.clone())
+        .expect("principal identity")
+        .with_verbs(["inventory.query"]);
+    assert_eq!(
+        icp_code(narrow.purchase(&merchant, &settler, purchase_items(), max_total())),
+        "delegation.scope_mismatch"
+    );
+
+    // 7. A principal the operator never configured → principal_unknown.
+    let stranger = Client::new(&url, identity.clone())
+        .with_principal_identity(OTHER_PRINCIPAL, principal_key.clone())
+        .expect("principal identity");
+    assert_eq!(
+        icp_code(stranger.purchase(&merchant, &settler, purchase_items(), max_total())),
+        "delegation.principal_unknown"
+    );
+
+    // 8. An expired binding is refused even though its signature is good.
+    let expired = PrincipalBindingParams::new(PRINCIPAL, identity.aid())
+        .expires_at("2020-01-01T00:00:00Z")
+        .sign(&principal_key)
+        .expect("sign");
+    let stale = Client::new(&url, identity)
+        .with_principal_binding(expired)
+        .expect("binding delegates this agent");
+    assert_eq!(
+        icp_code(stale.purchase(&merchant, &settler, purchase_items(), max_total())),
+        "delegation.expired"
+    );
+}
+
+/// The typed ICP error code from a call that must not have succeeded.
+fn icp_code<T: std::fmt::Debug>(result: Result<T, stateset_icp_client::Error>) -> String {
+    match result {
+        Ok(value) => panic!("expected an ICP error, got: {value:?}"),
+        Err(stateset_icp_client::Error::Icp { code, .. }) => code,
+        Err(other) => panic!("expected a typed ICP error, got: {other:?}"),
+    }
+}
+
+/// A client can hold a principal key or a binding signed elsewhere — never
+/// both, since accepting both would silently pick one. And a binding that
+/// delegates somebody else is caught here rather than by the handler.
+#[test]
+fn miswired_delegation_configuration_is_refused_locally() {
+    let identity = Identity::generate();
+    let principal_key = PrincipalIdentity::generate();
+    let binding = PrincipalBindingParams::new("did:web:x.example", identity.aid())
+        .sign(&principal_key)
+        .expect("sign");
+
+    let err = Client::new("http://127.0.0.1:1", identity)
+        .with_principal_identity("did:web:x.example", principal_key)
+        .expect("principal identity")
+        .with_principal_binding(binding.clone())
+        .expect_err("both must be refused");
+    assert!(format!("{err}").contains("not both"), "got: {err}");
+
+    let other = Identity::generate();
+    let err = Client::new("http://127.0.0.1:1", other)
+        .with_principal_binding(binding)
+        .expect_err("a binding for a different agent must be refused");
+    assert!(format!("{err}").contains("delegates"), "got: {err}");
 }

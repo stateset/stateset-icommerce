@@ -7,6 +7,6 @@
   "engines": { "node": ">=20.20.0" },
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "node --test test/mcp.test.mjs"
+    "test": "node --test test/"
   }
 }

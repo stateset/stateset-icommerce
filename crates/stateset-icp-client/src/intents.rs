@@ -1,7 +1,8 @@
 //! Intent envelope builders.
 
-use crate::types::{Authority, IntentBase, PrincipalBinding, Signature};
-use crate::{Error, Identity, Money, canonical_json};
+use crate::time::{format_rfc3339_millis, now_millis};
+use crate::types::{IntentBase, PrincipalBinding, Signature};
+use crate::{Error, Identity, canonical_json};
 use rand_core::{OsRng, RngCore};
 use serde::Serialize;
 use serde_json::Value;
@@ -58,37 +59,8 @@ pub(crate) fn fresh_intent_id() -> String {
 
 /// Format `now` and `now+window_secs` as RFC 3339 in UTC.
 pub(crate) fn rfc3339_window(window_secs: i64) -> (String, String) {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_secs() as i64;
-    (format_rfc3339(now), format_rfc3339(now + window_secs))
-}
-
-/// Minimal RFC 3339 formatter for UTC `Z` timestamps. Mirrors what
-/// `new Date(...).toISOString()` produces in the JS SDK (millisecond
-/// precision with `.000Z` suffix).
-fn format_rfc3339(epoch_secs: i64) -> String {
-    // Algorithm from Howard Hinnant's date library (civil_from_days).
-    let days = epoch_secs.div_euclid(86_400);
-    let secs_of_day = epoch_secs.rem_euclid(86_400);
-
-    let hh = secs_of_day / 3600;
-    let mm = (secs_of_day % 3600) / 60;
-    let ss = secs_of_day % 60;
-
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if m <= 2 { y + 1 } else { y };
-
-    format!("{year:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}.000Z")
+    let now = now_millis();
+    (format_rfc3339_millis(now), format_rfc3339_millis(now + window_secs * 1000))
 }
 
 /// Build the verb-agnostic base portion of an Intent.
@@ -100,25 +72,9 @@ pub(crate) fn intent_base(
     verb: &str,
     merchant: &str,
     settler: &str,
-    max_per_intent: Money,
-    authorized_verbs: Vec<String>,
-    max_per_payout: Option<Money>,
+    principal_binding: Option<PrincipalBinding>,
 ) -> IntentBase {
     let (iat, exp) = rfc3339_window(300);
-    let principal_binding = PrincipalBinding {
-        principal: identity.aid().to_string(),
-        agent: identity.aid().to_string(),
-        authority: Authority { max_per_intent, verbs: authorized_verbs, max_per_payout },
-        expiry: rfc3339_window(86_400).1,
-        revocation: format!("https://{merchant}/.well-known/icp/revocation"),
-        // Demo: principal is self-binding. A real Principal would
-        // issue this signature via a separate key-management flow.
-        signature: Signature {
-            alg: "ed25519".to_string(),
-            kid: "self".to_string(),
-            sig: "deadbeef".to_string(),
-        },
-    };
     IntentBase {
         v: "icp-1.0".to_string(),
         verb: verb.to_string(),
@@ -174,12 +130,18 @@ mod tests {
     }
 
     #[test]
-    fn rfc3339_format_is_z_suffixed_millis() {
-        let s = format_rfc3339(0);
-        assert_eq!(s, "1970-01-01T00:00:00.000Z");
-        let s = format_rfc3339(1_700_000_000);
-        // Sanity: starts with a 4-digit year + dashes + T + colons + Z
-        assert!(s.starts_with("2023-"));
-        assert!(s.ends_with("Z"));
+    fn intent_window_is_five_minutes_and_omits_an_absent_binding() {
+        let identity = Identity::generate();
+        let base = intent_base(&identity, "inventory.query", "aid:v1:zM", "settler:test", None);
+        let iat = crate::time::parse_rfc3339_millis(&base.iat).unwrap();
+        let exp = crate::time::parse_rfc3339_millis(&base.exp).unwrap();
+        assert_eq!(exp - iat, 300_000, "handler caps the Intent window at 600s");
+        assert_eq!(base.expiry, base.exp);
+
+        // No delegation configured => the key is absent from the wire bytes,
+        // not present-and-null: a `null` would be signed over and read by the
+        // handler as a malformed binding.
+        let wire = serde_json::to_value(&base).unwrap();
+        assert!(wire.get("principal_binding").is_none(), "{wire}");
     }
 }

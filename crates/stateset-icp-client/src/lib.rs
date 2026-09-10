@@ -42,7 +42,9 @@ mod client;
 mod error;
 mod identity;
 mod intents;
+mod principal;
 mod settlement;
+mod time;
 mod types;
 mod webhook;
 
@@ -51,6 +53,10 @@ pub use client::{Client, SignedResponse};
 pub use error::Error;
 pub use identity::{Identity, verify_ed25519};
 pub use intents::{IntentEnvelope, build_intent_envelope};
+pub use principal::{
+    DEFAULT_VERBS, PrincipalBindingParams, PrincipalIdentity, default_max_per_intent,
+    sign_principal_binding,
+};
 pub use settlement::{VerifySettlementReceiptOptions, verify_settlement_receipt};
 pub use types::{AID, Authority, IntentBase, LineItem, Money, PrincipalBinding, Signature};
 pub use webhook::{HeaderPair, VerifyWebhookOptions, verify_webhook};
