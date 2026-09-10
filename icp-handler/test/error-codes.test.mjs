@@ -79,3 +79,105 @@ test('every emitted namespace is declared in the Namespaces table', () => {
     `namespaces emitted but never declared: ${undeclared.join(', ')}`,
   );
 });
+
+// ---------------------------------------------------------------------------
+// Documented status vs returned status
+// ---------------------------------------------------------------------------
+//
+// A registry row tells a caller what a code *means*; the mapping table tells
+// it what to branch on over HTTP. Both had drifted from the handler:
+// `replay.intent_seen` is answered 409 while the table said `replay.*` is
+// 400/410, and `channel.durable_delivery_unavailable` is answered 503 while
+// the `channel.*` row listed neither. A caller that trusted the table would
+// have treated a conflict as a malformed request and retried a 503 as fatal.
+//
+// So derive the truth instead of restating it: every `reply(res, <status>,
+// err('<code>', …))` and every `{ status: <status>, body: err('<code>', …) }`
+// in the handler is a (code, status) pair, and each pair must be one the
+// table allows.
+
+const serverSource = readFileSync(join(srcDir, 'server.mjs'), 'utf8');
+
+/** `{ code: Set<status> }` — the statuses the handler actually replies with. */
+function returnedStatuses() {
+  const byCode = new Map();
+  const add = (code, status) => {
+    if (!byCode.has(code)) byCode.set(code, new Set());
+    byCode.get(code).add(status);
+  };
+  const CODE = "'([a-z][a-z0-9_]*(?:\\.[a-z0-9_]+)+)'";
+  for (const m of serverSource.matchAll(
+    new RegExp(`\\breply\\(\\s*res\\s*,\\s*(\\d{3})\\s*,\\s*err\\(\\s*${CODE}`, 'g'),
+  )) {
+    add(m[2], m[1]);
+  }
+  for (const m of serverSource.matchAll(
+    new RegExp(`\\bstatus:\\s*(\\d{3})\\s*,\\s*body:\\s*err\\(\\s*${CODE}`, 'g'),
+  )) {
+    add(m[2], m[1]);
+  }
+  return byCode;
+}
+
+/**
+ * The statuses the mapping table allows for `code`.
+ *
+ * A cell is `;`-separated clauses. A clause naming codes in backticks (a
+ * trailing `*` globs) applies only to those codes; a clause naming none is the
+ * namespace default. Every three-digit number in an applicable clause counts.
+ */
+function documentedStatuses(code) {
+  const namespace = code.split('.')[0];
+  const table = registry.slice(registry.indexOf('## HTTP status mapping'));
+  const row = new RegExp(`^\\|\\s*\`${namespace}\\.\\*\`\\s*\\|(.+?)\\|\\s*$`, 'm').exec(table);
+  if (!row) return null;
+  const allowed = new Set();
+  for (const clause of row[1].split(';')) {
+    const scoped = [...clause.matchAll(/`([a-z][a-z0-9_.]*\*?)`/g)].map((m) => m[1]);
+    const applies =
+      scoped.length === 0 ||
+      scoped.some((pattern) =>
+        new RegExp(`^${pattern.replace(/[.]/g, '\\.').replace(/\*/g, '.*')}$`).test(code),
+      );
+    if (!applies) continue;
+    for (const status of clause.matchAll(/\b(\d{3})\b/g)) allowed.add(status[1]);
+  }
+  return allowed;
+}
+
+test('the status extraction actually sees the handler replying', () => {
+  // Same guard as above: a refactor that stops matching would make the
+  // mapping assertion below pass by checking nothing.
+  const returned = returnedStatuses();
+  assert.ok(
+    returned.size >= 30,
+    `only derived statuses for ${returned.size} codes — has the reply() shape changed?`,
+  );
+  // The two the registry had wrong, pinned by name so a future edit to the
+  // table cannot quietly re-break them.
+  assert.deepEqual([...(returned.get('replay.intent_seen') ?? [])], ['409']);
+  assert.deepEqual([...(returned.get('channel.durable_delivery_unavailable') ?? [])], ['503']);
+});
+
+test('every status the handler returns is one the mapping table documents', () => {
+  const wrong = [];
+  for (const [code, statuses] of returnedStatuses()) {
+    const allowed = documentedStatuses(code);
+    if (allowed === null) {
+      wrong.push(`${code}: no \`${code.split('.')[0]}.*\` row in the HTTP status mapping table`);
+      continue;
+    }
+    for (const status of statuses) {
+      if (!allowed.has(status)) {
+        wrong.push(
+          `${code}: handler replies ${status}, table allows ${[...allowed].sort().join('/') || '(nothing)'}`,
+        );
+      }
+    }
+  }
+  assert.deepEqual(
+    wrong,
+    [],
+    `HTTP status mapping in icp-spec/schemas/error-codes.md disagrees with the handler:\n  ${wrong.join('\n  ')}`,
+  );
+});

@@ -13,8 +13,12 @@ import { createHash } from 'node:crypto';
 import { priceDemoQuote, amount, exactMoney, roundCents, quantity } from './quote-money.mjs';
 import { availableInventory, collection } from './state.mjs';
 
+// `format.bad_money` is the normative code for money that is not a valid
+// decimal string (icp-spec/schemas/error-codes.md). This used to emit
+// `format.invalid_money`, a second spelling of the same condition that no
+// counterparty branching on the registry would ever match.
 function invalidMoney(error) {
-  return { ok: false, error: { type: 'icp.error', code: 'format.invalid_money', message: error.message } };
+  return { ok: false, error: { type: 'icp.error', code: 'format.bad_money', message: error.message } };
 }
 
 /**
@@ -79,7 +83,7 @@ export function stubQuote(intent, merchantSigningKey) {
   try {
     priced = priceDemoQuote(intent.items, intent.max_total);
   } catch (error) {
-    return { ok: false, error: { type: 'icp.error', code: 'format.invalid_money', message: error.message } };
+    return { ok: false, error: { type: 'icp.error', code: 'format.bad_money', message: error.message } };
   }
   const total = priced.amount;
 

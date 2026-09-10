@@ -181,8 +181,7 @@ signing yields `delegation.signature_invalid`.
 | `format.bad_timestamp`        | Timestamp not RFC 3339                               |
 | `format.bad_aid`              | AID does not match `aid:v1:z…` regex or fails Base58btc decode |
 | `format.bad_settler_id`       | SettlerID does not match `settler:<rail>.<asset>.<network>` |
-| `format.bad_money`            | `Money.amount` is not a valid decimal string         |
-| `format.invalid_money`        | Money in the request cannot be priced exactly — the reference handler's spelling of the `format.bad_money` case it detects while quoting (422, since it is the backend refusing a well-formed request) |
+| `format.bad_money`            | `Money.amount` is not a valid decimal string — including money the backend cannot price exactly, which it detects while quoting (422 there, since the request itself was well-formed) |
 | `format.bad_query_param`      | Query-string value is not of the required type or range (e.g. `?since=` is not a non-negative integer) |
 | `format.unknown_channel_type` | `channel.type` is neither `webhook` nor `sse` (422 — the merchant understood the value and refused it, rather than failing to route the request) |
 | `format.bad_currency`         | Unknown currency / not ISO 4217 + canonical tickers |
@@ -311,28 +310,36 @@ SHOULD retry with the same identity and the same Intent, which is safe because
 
 ## HTTP status mapping
 
-For HTTP transports, error codes map to status codes as follows:
+For HTTP transports, error codes map to status codes as follows.
+
+The table is machine-checked against the reference handler
+(`icp-handler/test/error-codes.test.mjs` derives the status each code is
+actually returned with and requires this table to allow it), so it is written
+in a grammar a parser can read: a cell is a list of clauses separated by `;`,
+a clause naming one or more codes in backticks (a trailing `*` globs) applies
+only to those codes, and a clause naming none is the namespace default. Every
+three-digit number in a clause is one of its allowed statuses.
 
 | Code prefix    | HTTP status |
 |----------------|-------------|
-| `auth.*`       | 401 / 403 (503 for `auth.signer_capacity`) |
-| `delegation.*` | 401 (signature) / 403 (missing, unknown, scope, expiry) / 400 (`untrusted_key_material`) |
+| `auth.*`       | 401 / 403; 503 for `auth.signer_capacity` — capacity, not authorization |
+| `delegation.*` | 401 when the binding does not verify / 403 when it is missing, unknown, out of scope or expired; 400 for `delegation.untrusted_key_material` |
 | `signature.*`  | 401         |
-| `replay.*`     | 400 (or 410 for `replay.expired`) |
-| `policy.*`     | 422 (semantic policy reject) or 403 (authorization) |
+| `replay.*`     | 400; 409 for `replay.intent_seen` — the identity is already bound, which is a conflict, not a malformed request; 410 for `replay.expired` when the resource it names is gone (an expired Quote) |
+| `policy.*`     | 422 (semantic policy reject) or 403 (authorization); 400 for `policy.settler.not_allowed`, which the reference handler rejects while validating the Intent's shape |
 | `quote.*`      | 422         |
-| `format.*`     | 400 (or 404 for `format.unknown_*`; 422 where the merchant understood the value and refused it — `format.invalid_money`, `format.unknown_channel_type`) |
+| `format.*`     | 400; 404 for `format.unknown_intent`, `format.unknown_quote`, `format.unknown_escrow`, `format.unknown_settlement`, `format.unknown_route`; 422 for `format.bad_money` raised while pricing and for `format.unknown_channel_type` — the merchant understood the value and refused it |
 | `version.*`    | 400         |
 | `escrow.*`     | 409 (state conflict) or 404 |
 | `inventory.*`  | 409 (another buyer took the units) |
-| `settlement.*` | 404 / 500   |
+| `settlement.*` | 404 / 409 when the receipt conflicts with the escrow it names / 500; 401 for `settlement.settler_signature_invalid` |
 | `dispute.*`    | 409 / 403   |
 | `arbiter.*`    | 403         |
 | `rate.*`       | 429         |
 | `settler.*`    | 503         |
-| `channel.*`    | 401 / 404 / 409 / 410 / 422 (see per-code table) |
+| `channel.*`    | 401 / 404 / 409 / 410 / 422 (see per-code table); 503 for `channel.durable_delivery_unavailable` — the handler cannot honour a channel it could not replay |
 | `idempotency.*` | 409 |
-| `pagination.*` | 400 (or 410 for `pagination.cursor_expired`) |
+| `pagination.*` | 400; 410 for `pagination.cursor_expired` |
 | `internal.*`   | 500         |
 
 ## Stability
