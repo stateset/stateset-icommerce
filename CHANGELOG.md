@@ -6,6 +6,36 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- ICP reference clients (JavaScript and Python) sign a real `principal_binding`
+  with `signPrincipalBinding` / `sign_principal_binding`; a client without a
+  principal identity sends no binding. Both SDKs' default `authority.verbs` cover
+  every verb that SDK can emit, pinned by a drift guard and a shared cross-language
+  signing vector. The CLI durable-store suite runs in enforce mode.
+- `auth.acting_party_mismatch` registered alongside `auth.buyer_mismatch`; the
+  reference handler's `delegation.*`, `auth.aid_*` and `settlement.*` codes are
+  registered in the spec's error-code table.
+
+### Fixed
+
+- Reference handler: `payout.request` could not be delegated in enforce mode
+  because the binding was checked against `buyer`; it is now checked against the
+  intent's acting party (`seller` for payouts, fail-closed to `buyer` otherwise).
+- Reference handler: the intent signer is now bound to the acting party for every
+  verb in every trust mode, and an intent missing `signature.kid` or its acting-party
+  field is refused with `format.missing_field`. Previously only `purchase.create`
+  was checked, so in permissive mode a caller could submit a payout naming another
+  seller, or naming no party at all.
+
+### Changed (behaviour, needs a release note)
+
+- Intents whose signer is not the acting party now fail with `auth.acting_party_mismatch`
+  (401) on every verb; `purchase.create` keeps `auth.buyer_mismatch`.
+- JavaScript SDK default `authority.verbs` widens from 4 to 7; Python normalises a
+  string `expires_at` to millisecond ISO form, which changes the canonical bytes and
+  signature for that input.
+
 ## [1.34.0] - 2026-09-08
 
 ### Added
