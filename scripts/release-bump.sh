@@ -140,7 +140,7 @@ Mechanical bump complete. Release flow from here:
        push, and only from a clean tree at origin/master whose required checks
        are green. Run it with --dry-run first to see the preconditions.
        (v1.31.0 and v1.32.0 shipped with only v${TO}-style tags, so npm and
-       PyPI stayed two releases behind; v1.34.0 was tagged off a branch with a
+       PyPI stayed two releases behind; v1.35.0 was tagged off a branch with a
        red check. This command is what makes both impossible.)
   5. Watch the three publish workflows, then:
        bash scripts/release-bump.sh --sync-locks   # after the npm publishes land
