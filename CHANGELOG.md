@@ -8,6 +8,29 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Added
 
+- Node binding: every money `f64` method argument (`credit.checkCredit`,
+  `credit.adjustCreditLimit`, `costAccounting.updateAverageCost`, `currency.format`,
+  `promotions.recordUsage`, `tax.calculateForItem`) accepts a trailing `…Exact` string
+  that wins over the float; `CreateTaxRateInput` gains `…Exact` siblings. The money
+  census test now covers method arguments and derives its floors from the fixture.
+- ICP conformance CI runs the Rust client's handler roundtrip as its own job and
+  fails instead of skipping when the handler cannot start (`ICP_HANDLER_REQUIRED=1`).
+- `icp-handler/test/error-codes.test.mjs` fails when the handler emits a code the
+  spec's error-code table does not register; the table gains the `internal.*`,
+  `inventory.*` and `quote` namespaces and every previously unregistered code.
+
+### Changed (behaviour, needs a release note)
+
+- ICP reference handler trust has two states: **enforce** (durable always, or
+  `ICP_TRUST_MODE=enforce`) and **permissive** (in-memory, no `ICP_TRUST_MODE`,
+  walkthroughs only, refused under `NODE_ENV=production`). `ICP_TRUST_MODE=demo` is
+  now a startup error; unset it for a walkthrough. The compose stack runs in enforce
+  mode with committed, clearly labelled test-vector keys.
+- Every handler test and the compose integration test send real principal bindings
+  signed by the reference client; no placeholder bindings remain in tests.
+
+### Added
+
 - Node binding: every money output field has an exact-decimal twin (`<name>Exact`,
   112 fields across 47 structs) rendered from the engine's `Decimal` with no float
   round trip; money inputs on orders, payments, refunds, carts (including
@@ -120,8 +143,8 @@ This project follows Keep a Changelog and Semantic Versioning.
   validation failures use napi status `InvalidArg`. Messages are byte-identical.
   `err.details.httpStatus` now mirrors the HTTP layer (`VALIDATION` 422, `EXTERNAL_SERVICE`
   500); a malformed `amount` on payment create/refund is `VALIDATION`, not `INTERNAL`.
-- ICP handler refuses to start with implicit demo trust under `NODE_ENV=production`;
-  set `ICP_TRUST_MODE=demo` explicitly for walkthroughs (the compose stack does).
+- ICP handler refuses to start with implicit demo trust under `NODE_ENV=production`
+  (superseded in the next release: the `demo` value is removed).
 - SQLite invoice and purchase-order deletes of non-draft documents return `Conflict`,
   matching Postgres; `/inbound-shipments/{id}/in-transit` and `/arrived` document 404/409.
 - Kernel: `inventory.item.create` is quantity-bindable; `inventory.reservation.confirm`
