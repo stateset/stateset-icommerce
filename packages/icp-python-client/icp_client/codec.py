@@ -118,15 +118,25 @@ def verify_ed25519(canonical: str, signature_hex: str, ed_pubkey_raw: bytes) -> 
 # PrincipalBinding (§4.4) — the delegation an Agent carries on every Intent
 # ---------------------------------------------------------------------------
 
-#: Verbs an Agent is delegated by default.
+#: Verbs an Agent is delegated by default: EVERY verb this client can emit,
+#: and nothing else. A default binding that omitted a verb the SDK sends would
+#: hand the caller `delegation.scope_mismatch` from the client's own method;
+#: one that included a verb the SDK cannot send would be over-delegation.
+#: `tests/test_client.py` fails if a new verb method drifts from this list.
+#:
+#: This is one verb longer than the JavaScript SDK's default, which has no
+#: `payout()` method. The two SDKs agree byte-for-byte on the binding they
+#: build from the SAME inputs (see tests/fixtures parity vector); they do not
+#: pretend to have the same method surface.
 DEFAULT_VERBS = [
-    "purchase.create",
-    "subscription.create",
-    "subscription.cancel",
-    "purchase.return",
+    "channel.register",
     "inventory.query",
-    "quote.request",
     "payout.request",
+    "purchase.create",
+    "purchase.return",
+    "quote.request",
+    "subscription.cancel",
+    "subscription.create",
 ]
 #: Default per-Intent spend ceiling carried in the PrincipalBinding.
 DEFAULT_MAX_PER_INTENT = {"amount": "10000", "currency": "USDC"}
@@ -164,17 +174,24 @@ def principal_identity_from_seed(ed_seed: bytes) -> PrincipalIdentity:
 
 
 def _binding_expiry(expires_at: Union[datetime.datetime, str, None]) -> str:
+    """Normalise an expiry to the one form both SDKs emit.
+
+    JavaScript builds this field as `new Date(expiresAt).toISOString()`, which
+    is always UTC with exactly three fractional digits. A Python SDK that
+    passed an RFC 3339 string through untouched would produce different
+    canonical bytes for the same input — a signature the JS SDK cannot
+    reproduce — so strings are parsed and re-emitted in that form too.
+    """
     if expires_at is None:
         expires_at = datetime.datetime.now(datetime.timezone.utc) + DEFAULT_BINDING_TTL
     if isinstance(expires_at, str):
-        # Validate rather than trust: an unparseable expiry is a binding no
-        # handler can accept, and the failure would surface as a signature
-        # error hours later.
+        # Parse rather than trust: an unparseable expiry is a binding no
+        # handler can accept, and the failure would otherwise surface as a
+        # signature error hours later.
         try:
-            datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            expires_at = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
         except ValueError:
             raise ValueError("principal_binding expires_at is not RFC 3339") from None
-        return expires_at
     if not isinstance(expires_at, datetime.datetime):
         raise ValueError("principal_binding expires_at must be a datetime or RFC 3339 string")
     if expires_at.tzinfo is None:
@@ -204,8 +221,12 @@ def sign_principal_binding(
     removed — the rule the reference handler's ``checkDelegation`` applies — so
     every other field is covered and mutating one after signing invalidates it.
 
-    Byte-identical to the JavaScript SDK's ``signPrincipalBinding``.
+    Given the same inputs, byte-identical to the JavaScript SDK's
+    ``signPrincipalBinding`` — asserted by a committed vector both test suites
+    read (``packages/icp-client/test/fixtures/principal-binding-vector.json``).
+    Defaults differ only where the method surfaces do: see DEFAULT_VERBS.
     """
+    extra.pop("signature", None)  # never signed over; the real one is appended below
     if not isinstance(principal, str) or not principal or principal.strip() != principal:
         raise ValueError("principal_binding.principal is required")
     if not isinstance(agent, str) or not agent:

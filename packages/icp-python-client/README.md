@@ -110,7 +110,7 @@ receipt = client.settlement("icp_set_...")
 | `handler_url` | str | Base URL of the ICP HTTP handler |
 | `principal` | str | DID/LEI of the principal authorizing this agent |
 | `identity` | `Identity?` | Pre-existing identity. Default: generate fresh. |
-| `verbs` | `list[str]?` | PrincipalBinding `authority.verbs`. Default: all 7 ICP-1.0 verbs. |
+| `verbs` | `list[str]?` | PrincipalBinding `authority.verbs`. Default: every verb this client can emit (8, incl. `payout.request` and `channel.register`) — and nothing wider. |
 | `max_per_intent` | `dict?` | Authority cap. Default: $10,000 USDC. |
 | `revocation_url` | `str?` | Where revocation can be checked. |
 | `principal_identity` | `PrincipalIdentity?` | The principal's Ed25519 key. The client signs a real PrincipalBinding on every Intent. |
@@ -150,8 +150,23 @@ fabricates a self-signed binding — a delegation an Agent could mint for
 itself proves nothing.
 
 The signing input is `canonical_json(binding)` with the `signature` field
-removed, byte-identical to the JavaScript SDK, so every other field is
-covered. Mutating one after signing yields `delegation.signature_invalid`.
+removed, so every other field is covered. Mutating one after signing yields
+`delegation.signature_invalid`.
+
+**Cross-SDK parity.** Given the *same inputs*, this function and the
+JavaScript `signPrincipalBinding` produce byte-identical canonical bytes and
+therefore the same signature — including expiry normalisation, where an
+RFC 3339 string is re-emitted in JavaScript's `toISOString()` millisecond
+form. A committed vector
+(`packages/icp-client/test/fixtures/principal-binding-vector.json`) is
+asserted by both test suites, so the claim is checked rather than asserted.
+The *defaults* are not identical, and are not meant to be: each SDK delegates
+exactly the verbs it can emit, and only this one has a `payout()` method.
+
+> Known handler limitation: `payout.request` renames `buyer` to `seller`
+> (inverted direction), while the reference handler checks a binding against
+> `intent.buyer` — so no binding can authorize a payout on an enforcing
+> handler today. Pinned by `test_payout_cannot_be_delegated_to_this_handler`.
 
 ### Methods (all 7 ICP verbs)
 

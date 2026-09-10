@@ -62,7 +62,7 @@ const receipt = await client.settlement('icp_set_01HXYZ...');
 | `handlerUrl` | string | Base URL of the ICP HTTP handler |
 | `principal` | string | Principal identifier (DID, LEI, etc.) |
 | `identity` | Identity? | Pre-existing identity. Default: generate fresh. |
-| `verbs` | string[]? | PrincipalBinding authority.verbs. Default: all 4 ICP-1.0 verbs. |
+| `verbs` | string[]? | PrincipalBinding authority.verbs. Default: every verb this client can emit (7) — and nothing wider. |
 | `maxPerIntent` | Money? | Authority cap. Default: $10,000 USDC. |
 | `revocationUrl` | string? | Where revocation can be checked. |
 | `principalIdentity` | PrincipalIdentity? | The principal's Ed25519 key. The client signs a real PrincipalBinding on every Intent. |
@@ -104,6 +104,14 @@ for itself proves nothing.
 The signing input is `canonicalJson(binding)` with the `signature` field
 removed, so every other field — including `expiry` and `authority` — is
 covered. Mutating one after signing yields `delegation.signature_invalid`.
+
+**Cross-SDK parity.** Given the *same inputs*, this and the Python SDK's
+`sign_principal_binding` produce byte-identical canonical bytes and therefore
+the same signature. A committed vector
+(`test/fixtures/principal-binding-vector.json`) is asserted by both test
+suites, so the claim is checked rather than asserted. The *defaults* are not
+identical, and are not meant to be: each SDK delegates exactly the verbs it
+can emit, and only the Python client has a `payout()` method.
 
 ### Methods
 

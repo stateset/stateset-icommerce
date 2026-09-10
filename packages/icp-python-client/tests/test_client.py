@@ -28,6 +28,19 @@ from icp_client import (  # noqa: E402
     sign_principal_binding,
     verify_ed25519,
 )
+from icp_client.codec import DEFAULT_VERBS  # noqa: E402
+
+# The cross-language PrincipalBinding vector lives with the JavaScript SDK and
+# is read by BOTH suites: same params + same seed MUST give the same canonical
+# bytes and the same signature in every SDK.
+VECTOR_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "icp-client"
+    / "test"
+    / "fixtures"
+    / "principal-binding-vector.json"
+)
+CLIENT_SOURCE = Path(__file__).resolve().parents[1] / "icp_client" / "client.py"
 
 
 HANDLER_SCRIPT = (
@@ -476,6 +489,142 @@ class TestPrincipalBinding(unittest.TestCase):
         with self.assertRaises(ICPError) as ctx:
             self._client(principal_identity=None, principal_binding=binding)
         self.assertEqual(ctx.exception.code, "format.bad_field")
+
+    def test_default_binding_authorizes_every_verb_this_client_emits(self) -> None:
+        # A default delegation that omits a verb the SDK sends hands the caller
+        # delegation.scope_mismatch from the client's own method; one that
+        # includes a verb the SDK cannot send is over-delegation. Read the
+        # verbs out of the source rather than trusting a hand-kept list.
+        emitted = set(
+            re.findall(r'_base_intent\(\s*"([a-z.]+)"', CLIENT_SOURCE.read_text())
+        )
+        self.assertGreaterEqual(len(emitted), 8, f"expected the verb methods, found {emitted}")
+        self.assertEqual(sorted(DEFAULT_VERBS), sorted(emitted))
+        client = ICPClient.create(handler_url=self.handler.base_url, principal=self.PRINCIPAL)
+        self.assertEqual(sorted(client.verbs), sorted(emitted))
+
+    def test_every_client_method_transacts_under_the_default_binding(self) -> None:
+        # The handler is the judge of scope, and this is the only place the
+        # scope check actually runs: a permissive handler never reaches it.
+        agent = self._client(verbs=None)
+        merchant = "aid:v1:zPyBindingTestMerchant"
+        settler = "settler:stateset.usdc.base-sepolia"
+        import datetime
+
+        agent.inventory(merchant=merchant, settler=settler)
+        bought = self._purchase(agent)
+        self.assertTrue(bought["quote"]["quote_id"])
+        agent.subscribe(
+            merchant=merchant,
+            settler=settler,
+            service_id="premium-monthly",
+            cadence="30d",
+            max_total_per_period={"amount": "29.99", "currency": "USDC"},
+            first_charge_at=(
+                datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
+            )
+            .isoformat()
+            .replace("+00:00", "Z"),
+        )
+        agent.cancel(
+            merchant=merchant,
+            settler=settler,
+            subscription_id="icp_sub_DEFAULTBINDINGTEST000001",
+            effective="immediate",
+        )
+        agent.return_(
+            merchant=merchant,
+            settler=settler,
+            original_settlement_id="icp_set_DEFAULTBINDINGTEST000001",
+            items=[{"sku": "WIDGET-001", "quantity": 1, "reason": "defective"}],
+            desired_outcome="refund",
+        )
+        agent.request_quote(
+            merchant=merchant,
+            settler=settler,
+            items=[{"sku": "WIDGET-001", "quantity": 500}],
+            purchase_window="30d",
+        )
+        # payout.request is the one verb the default binding cannot get past
+        # this handler — see test_payout_cannot_be_delegated_to_this_handler.
+        channel = agent.register_webhook(
+            merchant=merchant,
+            settler=settler,
+            url="https://agent.example.com/icp/events",
+            event_filters=["settlement.released"],
+        )
+        self.assertTrue(channel["channel"]["channel_id"].startswith("icp_ch_"))
+
+    def test_payout_cannot_be_delegated_to_this_handler(self) -> None:
+        """Pins a HANDLER defect, not a client one.
+
+        `payout.request` is inverted-direction: this Agent is the seller, so
+        the Intent renames `buyer` to `seller`. The handler's checkDelegation
+        (icp-handler/src/server.mjs:260) compares `binding.agent` against
+        `intent.buyer`, which a payout Intent does not have — so NO binding,
+        however correctly signed, can authorize a payout in enforce mode. The
+        verb only ever "worked" against a handler that skipped the check.
+
+        The fix is `intent.buyer ?? intent.seller` in the handler, which is
+        outside this task's file scope. This assertion fails the day that
+        lands, which is the point.
+        """
+        with self.assertRaises(ICPError) as ctx:
+            self._client(verbs=None).payout(
+                platform="aid:v1:zPyBindingTestMerchant",
+                settler="settler:stateset.usdc.base-sepolia",
+                amount={"amount": "1000.00", "currency": "USDC"},
+                destination={
+                    "type": "wallet",
+                    "wallet_address": "0x1111111111111111111111111111111111111111",
+                },
+            )
+        self.assertEqual(ctx.exception.code, "delegation.scope_mismatch")
+
+    def test_cross_language_vector_reproduces_byte_for_byte(self) -> None:
+        # What makes the "byte-identical across SDKs" claim in both READMEs
+        # checkable rather than aspirational — including the expiry
+        # normalisation (RFC 3339 in, JS toISOString() millisecond form out).
+        vector = json.loads(VECTOR_PATH.read_text())
+        principal_identity = principal_identity_from_seed(
+            bytes.fromhex(vector["principal_seed_hex"])
+        )
+        self.assertEqual(
+            principal_identity.ed25519_pubkey.hex(),
+            vector["expected_principal_pubkey_hex"],
+        )
+        params = vector["params"]
+        binding = sign_principal_binding(
+            principal=params["principal"],
+            agent=params["agent"],
+            principal_identity=principal_identity,
+            expires_at=params["expires_at"],
+            verbs=params["verbs"],
+            max_per_intent=params["max_per_intent"],
+            revocation=params["revocation"],
+        )
+        self.assertEqual(binding, vector["expected_binding"])
+        unsigned = {k: v for k, v in binding.items() if k != "signature"}
+        self.assertEqual(canonical_json(unsigned), vector["expected_canonical"])
+        self.assertEqual(binding["signature"]["sig"], vector["expected_signature_hex"])
+
+    def test_a_caller_supplied_signature_is_never_signed_over(self) -> None:
+        binding = sign_principal_binding(
+            principal=self.PRINCIPAL,
+            agent="aid:v1:zAgent",
+            principal_identity=self.principal_identity,
+            signature={"alg": "ed25519", "kid": "self", "sig": "deadbeef"},
+        )
+        self.assertNotEqual(binding["signature"]["sig"], "deadbeef")
+        unsigned = {k: v for k, v in binding.items() if k != "signature"}
+        self.assertNotIn("signature", unsigned)
+        self.assertTrue(
+            verify_ed25519(
+                canonical_json(unsigned),
+                binding["signature"]["sig"],
+                self.principal_identity.ed25519_pubkey,
+            )
+        )
 
 
 if __name__ == "__main__":

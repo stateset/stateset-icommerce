@@ -37,15 +37,21 @@ const agentKeys = (...identities) =>
   );
 
 async function start(path, keyFile, env = {}) {
+  const childEnv = {
+    ...process.env,
+    PORT: '0',
+    ICP_MERCHANT_KEY_FILE: keyFile,
+    ICP_MERCHANT_AID: 'aid:v1:zDurableDemoMerchant',
+    ICP_PRINCIPAL_KEYS_JSON: allPrincipalKeys,
+    ...env,
+  };
+  // This suite asserts the ENFORCING posture. Inheriting process.env means an
+  // ambient ICP_TRUST_MODE=demo in the developer's shell or the CI job would
+  // silently downgrade every assertion below to "the handler checked nothing",
+  // and the suite would still pass. Never inherit it.
+  delete childEnv.ICP_TRUST_MODE;
   const proc = spawn(process.execPath, [launcher, '--apply', '--demo', '--db', path], {
-    env: {
-      ...process.env,
-      PORT: '0',
-      ICP_MERCHANT_KEY_FILE: keyFile,
-      ICP_MERCHANT_AID: 'aid:v1:zDurableDemoMerchant',
-      ICP_PRINCIPAL_KEYS_JSON: allPrincipalKeys,
-      ...env,
-    },
+    env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';

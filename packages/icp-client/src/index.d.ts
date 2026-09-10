@@ -284,9 +284,14 @@ export interface ICPClientCreateOptions {
   handlerUrl: string;
   principal: string;
   identity?: Identity;
-  /** Default $500 USDC; per-Intent spend ceiling. */
+  /** Default $10,000 USDC; per-Intent spend ceiling. */
   maxPerIntent?: Money;
-  /** Verbs the Agent is authorized for. Defaults to all 7 commerce verbs. */
+  /**
+   * Verbs the Agent is authorized for. Default: every verb this client can
+   * emit (the 7 `channel.register`, `inventory.query`, `purchase.create`,
+   * `purchase.return`, `quote.request`, `subscription.cancel`,
+   * `subscription.create`) — and nothing wider.
+   */
   verbs?: string[];
   /** Revocation URL the merchant uses to validate the binding. */
   revocationUrl?: string;

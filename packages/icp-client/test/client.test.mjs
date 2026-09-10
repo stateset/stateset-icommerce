@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
+import { readFileSync } from 'node:fs';
 import {
   ICPClient,
   ICPError,
@@ -446,4 +447,50 @@ test('a pre-signed binding is sent verbatim and checked against this agent', asy
     }),
     (error) => error instanceof ICPError && error.code === 'format.bad_field',
   );
+});
+
+test('the default binding authorizes every verb this client can emit', async () => {
+  // A default delegation that omits a verb the SDK sends hands the caller
+  // delegation.scope_mismatch from the client's own method; one that includes
+  // a verb the SDK cannot send is over-delegation. Both are drift, so read the
+  // verbs out of the source rather than trusting a hand-kept list.
+  const source = readFileSync(new URL('../src/index.mjs', import.meta.url), 'utf8');
+  const emitted = new Set(
+    [...source.matchAll(/_baseIntent\('([a-z.]+)'/g)].map((match) => match[1]),
+  );
+  assert.ok(emitted.size >= 7, `expected to find the verb methods, found ${emitted.size}`);
+  const client = await ICPClient.create({ handlerUrl: baseUrl, principal: 'did:web:verbs.example' });
+  assert.deepEqual([...client.verbs].sort(), [...emitted].sort());
+});
+
+test('the committed cross-language vector reproduces byte for byte', () => {
+  // The same fixture is asserted by the Python SDK. It is what makes the
+  // "byte-identical across SDKs" claim in both READMEs checkable rather than
+  // aspirational: same params + same seed → same canonical bytes → same
+  // signature, including the expiry normalisation (JS `toISOString()` form).
+  const vector = JSON.parse(
+    readFileSync(new URL('./fixtures/principal-binding-vector.json', import.meta.url), 'utf8'),
+  );
+  const principalIdentity = principalIdentityFromSeed(
+    Buffer.from(vector.principal_seed_hex, 'hex'),
+  );
+  assert.equal(
+    principalIdentity.ed25519_pubkey.toString('hex'),
+    vector.expected_principal_pubkey_hex,
+  );
+  const binding = signPrincipalBinding(
+    {
+      principal: vector.params.principal,
+      agent: vector.params.agent,
+      expiresAt: vector.params.expires_at,
+      verbs: vector.params.verbs,
+      maxPerIntent: vector.params.max_per_intent,
+      revocation: vector.params.revocation,
+    },
+    principalIdentity,
+  );
+  assert.deepEqual(binding, vector.expected_binding);
+  const { signature, ...unsigned } = binding;
+  assert.equal(canonicalJson(unsigned), vector.expected_canonical);
+  assert.equal(signature.sig, vector.expected_signature_hex);
 });

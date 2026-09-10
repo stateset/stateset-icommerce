@@ -42,12 +42,26 @@ const ED25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'he
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
-/** Verbs an Agent is delegated by default. */
+/**
+ * Verbs an Agent is delegated by default: EVERY verb this client can emit,
+ * and nothing else.
+ *
+ * A default binding that omitted a verb the SDK sends would hand the caller
+ * `delegation.scope_mismatch` from the client's own method — the delegation
+ * has to cover the surface it ships with. It is also nothing wider than that:
+ * the binding is a capability grant, so a verb this client cannot emit
+ * (`payout.request`, which only the Python SDK exposes) has no business in a
+ * default. `test/client.test.mjs` fails if a new verb method drifts from this
+ * list.
+ */
 const DEFAULT_VERBS = Object.freeze([
-  'purchase.create',
-  'subscription.create',
-  'purchase.return',
+  'channel.register',
   'inventory.query',
+  'purchase.create',
+  'purchase.return',
+  'quote.request',
+  'subscription.cancel',
+  'subscription.create',
 ]);
 /** Default per-Intent spend ceiling carried in the PrincipalBinding. */
 const DEFAULT_MAX_PER_INTENT = Object.freeze({ amount: '10000', currency: 'USDC' });
@@ -264,8 +278,12 @@ export function signPrincipalBinding(params, principalIdentity) {
     principal,
     agent,
     authority: {
-      max_per_intent: maxPerIntent ?? DEFAULT_MAX_PER_INTENT,
-      verbs: authorizedVerbs,
+      // Copies, never the frozen module-level defaults by reference: a binding
+      // is a value the caller may inspect and re-serialise, and sharing one
+      // mutable object across every binding this process signs is the classic
+      // shared-default bug.
+      max_per_intent: { ...(maxPerIntent ?? DEFAULT_MAX_PER_INTENT) },
+      verbs: [...authorizedVerbs],
     },
     expiry: expiry.toISOString(),
     revocation: revocation ?? `https://example.com/icp-revocation/${agent}`,
@@ -475,7 +493,8 @@ export function verifyWebhook(opts) {
  * @property {string} handlerUrl      Base URL of the ICP HTTP handler.
  * @property {string} principal       Principal identifier (e.g. did:web:my-store.example).
  * @property {Identity} [identity]    Pre-existing identity. If absent, a fresh one is generated.
- * @property {string[]} [verbs]       PrincipalBinding authority.verbs. Default: all 4 verbs.
+ * @property {string[]} [verbs]       PrincipalBinding authority.verbs. Default: every verb this
+ *   client can emit (see DEFAULT_VERBS) — and nothing wider.
  * @property {Money} [maxPerIntent]   PrincipalBinding authority cap. Default: $10,000 USDC.
  * @property {string} [revocationUrl] Where to publish revocation. Default: example.
  * @property {PrincipalIdentity|Identity} [principalIdentity] The principal's Ed25519 key. When

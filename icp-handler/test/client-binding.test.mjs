@@ -115,6 +115,54 @@ test('a binding that does not cover the verb is rejected as scope_mismatch', asy
   assert.equal(await codeOf(client.purchase(PURCHASE)), 'delegation.scope_mismatch');
 });
 
+test('every client method transacts under the DEFAULT binding, in enforce mode', async () => {
+  // The default delegation must cover the SDK's whole verb surface: a client
+  // whose own methods answer delegation.scope_mismatch is not usable. The
+  // handler is the judge here — this is the only place the scope check
+  // actually runs, since a permissive handler never reaches it.
+  const agent = await ICPClient.create({ handlerUrl, principal: PRINCIPAL, identity, principalIdentity });
+  const merchant = 'aid:v1:zClientBindingTestMerchant';
+  const settler = 'settler:stateset.usdc.base-sepolia';
+
+  await agent.inventory({ merchant, settler });
+  const bought = await agent.purchase(PURCHASE);
+  assert.ok(bought.quote.quote_id);
+  await agent.subscribe({
+    merchant,
+    settler,
+    service_id: 'premium-monthly',
+    cadence: '30d',
+    max_total_per_period: { amount: '29.99', currency: 'USDC' },
+    first_charge_at: new Date(Date.now() + 86_400_000).toISOString(),
+  });
+  await agent.cancel({
+    merchant,
+    settler,
+    subscription_id: 'icp_sub_DEFAULTBINDINGTEST00001',
+    effective: 'immediate',
+  });
+  await agent.return_({
+    merchant,
+    settler,
+    original_settlement_id: 'icp_set_DEFAULTBINDINGTEST00001',
+    items: [{ sku: 'WIDGET-001', quantity: 1, reason: 'defective' }],
+    desired_outcome: 'refund',
+  });
+  await agent.requestQuote({
+    merchant,
+    settler,
+    items: [{ sku: 'WIDGET-001', quantity: 500 }],
+    purchase_window: '30d',
+  });
+  const channel = await agent.registerWebhook({
+    merchant,
+    settler,
+    url: 'https://agent.example.com/icp/events',
+    event_filters: ['settlement.released'],
+  });
+  assert.match(channel.channel.channel_id, /^icp_ch_/);
+});
+
 test('a client with no principal identity sends no binding and the handler decides', async () => {
   const client = await ICPClient.create({ handlerUrl, principal: PRINCIPAL, identity });
   assert.equal(await codeOf(client.purchase(PURCHASE)), 'delegation.required');
