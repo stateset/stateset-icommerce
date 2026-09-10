@@ -95,7 +95,7 @@ refuses.
 | `delegation.untrusted_key_material` | Request nominated the principal's key (e.g. `_principal_pubkey_hex`); principal keys come from operator configuration only |
 | `delegation.signature_missing`    | Binding carries no `signature.sig`                        |
 | `delegation.signature_invalid`    | Binding signature fails under the operator-configured principal key |
-| `delegation.scope_mismatch`       | Binding does not name this agent, or its `authority.verbs` omits the Intent's verb |
+| `delegation.scope_mismatch`       | Binding does not name the Intent's acting Agent (`buyer`, or `seller` for the inverted-direction `payout.request`), or its `authority.verbs` omits the Intent's verb |
 | `delegation.expired`              | Binding's `expiry` is in the past                         |
 
 The signing input is the canonical JSON of the binding with its `signature`

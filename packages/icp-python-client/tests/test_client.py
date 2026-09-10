@@ -545,8 +545,7 @@ class TestPrincipalBinding(unittest.TestCase):
             items=[{"sku": "WIDGET-001", "quantity": 500}],
             purchase_window="30d",
         )
-        # payout.request is the one verb the default binding cannot get past
-        # this handler — see test_payout_cannot_be_delegated_to_this_handler.
+        self._payout(agent)
         channel = agent.register_webhook(
             merchant=merchant,
             settler=settler,
@@ -555,30 +554,45 @@ class TestPrincipalBinding(unittest.TestCase):
         )
         self.assertTrue(channel["channel"]["channel_id"].startswith("icp_ch_"))
 
-    def test_payout_cannot_be_delegated_to_this_handler(self) -> None:
-        """Pins a HANDLER defect, not a client one.
+    def _payout(self, client: ICPClient) -> dict:
+        return client.payout(
+            platform="aid:v1:zPyBindingTestMerchant",
+            settler="settler:stateset.usdc.base-sepolia",
+            amount={"amount": "100.00", "currency": "USDC"},
+            destination={
+                "type": "wallet",
+                "wallet_address": "0x1111111111111111111111111111111111111111",
+            },
+        )
 
-        `payout.request` is inverted-direction: this Agent is the seller, so
-        the Intent renames `buyer` to `seller`. The handler's checkDelegation
-        (icp-handler/src/server.mjs:260) compares `binding.agent` against
-        `intent.buyer`, which a payout Intent does not have — so NO binding,
-        however correctly signed, can authorize a payout in enforce mode. The
-        verb only ever "worked" against a handler that skipped the check.
-
-        The fix is `intent.buyer ?? intent.seller` in the handler, which is
-        outside this task's file scope. This assertion fails the day that
-        lands, which is the point.
+    def test_payout_is_delegable_under_the_default_binding(self) -> None:
+        """`payout.request` is inverted-direction: this Agent is the SELLER, so
+        the Intent carries `seller`/`platform` where every other verb carries
+        `buyer`/`merchant`. The handler's checkDelegation used to read
+        `intent.buyer` unconditionally, so `binding.agent` never matched and no
+        binding — however correctly signed — could authorize a payout with
+        trust enforced. Fixed in icp-handler/src/server.mjs (`actingAgent`).
         """
+        result = self._payout(self._client(verbs=None))
+        self.assertEqual(result["authorization"]["type"], "payout.authorization")
+        self.assertEqual(result["authorization"]["seller"], self.identity.aid)
+
+    def test_payout_binding_for_a_different_agent_is_scope_mismatch(self) -> None:
+        # The acting-party fix widened WHICH field is compared, not whether it
+        # is compared: a binding delegating somebody else still fails closed.
+        binding = sign_principal_binding(
+            principal=self.PRINCIPAL,
+            agent=generate_identity().aid,
+            principal_identity=self.principal_identity,
+            verbs=["payout.request"],
+        )
+        # The client refuses a binding for another agent locally, so post the
+        # mis-delegated binding the way a hand-rolled client would.
+        client = self._client(verbs=None)
+        client.principal_identity = None
+        client.principal_binding = binding
         with self.assertRaises(ICPError) as ctx:
-            self._client(verbs=None).payout(
-                platform="aid:v1:zPyBindingTestMerchant",
-                settler="settler:stateset.usdc.base-sepolia",
-                amount={"amount": "1000.00", "currency": "USDC"},
-                destination={
-                    "type": "wallet",
-                    "wallet_address": "0x1111111111111111111111111111111111111111",
-                },
-            )
+            self._payout(client)
         self.assertEqual(ctx.exception.code, "delegation.scope_mismatch")
 
     def test_cross_language_vector_reproduces_byte_for_byte(self) -> None:

@@ -18,8 +18,10 @@ import assert from 'node:assert/strict';
 import {
   ICPClient,
   ICPError,
+  canonicalJson,
   generateIdentity,
   generatePrincipalIdentity,
+  signEd25519,
   signPrincipalBinding,
 } from '../../packages/icp-client/src/index.mjs';
 
@@ -166,4 +168,91 @@ test('every client method transacts under the DEFAULT binding, in enforce mode',
 test('a client with no principal identity sends no binding and the handler decides', async () => {
   const client = await ICPClient.create({ handlerUrl, principal: PRINCIPAL, identity });
   assert.equal(await codeOf(client.purchase(PURCHASE)), 'delegation.required');
+});
+
+// ---------------------------------------------------------------------------
+// payout.request — the inverted-direction verb (§6.6 / ICPIP-0004).
+//
+// The Agent here is a SELLER drawing its own held funds, so the Intent carries
+// `seller`/`platform` where every other verb carries `buyer`/`merchant`. The
+// delegation check read `intent.buyer` unconditionally, so `binding.agent`
+// never matched and NO binding could authorize a payout on an enforcing
+// handler — the verb only worked where the check was skipped. Driven over raw
+// HTTP because the JS SDK has no `payout()` method (the Python one does).
+// ---------------------------------------------------------------------------
+
+function payoutIntent(seller) {
+  const now = new Date();
+  return {
+    v: 'icp-1.0',
+    verb: 'payout.request',
+    intent_id: `icp_int_${Date.now()}${Math.floor(Math.random() * 1e6)}`,
+    seller,
+    platform: 'aid:v1:zClientBindingTestMerchant',
+    settler: 'settler:stateset.usdc.base-sepolia',
+    amount: { amount: '100.00', currency: 'USDC' },
+    destination: { type: 'wallet', wallet_address: '0x1111111111111111111111111111111111111111' },
+    expiry: new Date(now.getTime() + 300_000).toISOString(),
+    nonce: Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('hex'),
+    iat: now.toISOString(),
+    exp: new Date(now.getTime() + 300_000).toISOString(),
+  };
+}
+
+async function submitPayout(intent) {
+  const response = await fetch(`${handlerUrl}/icp/v1/intents`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      intent,
+      signature: {
+        alg: 'ed25519',
+        kid: intent.seller,
+        sig: signEd25519(canonicalJson(intent), identity),
+      },
+      _pubkey_hex: identity.ed25519_pubkey.toString('hex'),
+      _x_pubkey_hex: identity.x25519_pubkey.toString('hex'),
+    }),
+  });
+  return { status: response.status, json: await response.json() };
+}
+
+test('a signed binding authorizes payout.request in enforce mode', async () => {
+  const intent = payoutIntent(identity.aid);
+  intent.principal_binding = signPrincipalBinding(
+    {
+      principal: PRINCIPAL,
+      agent: identity.aid,
+      verbs: ['payout.request'],
+      maxPerIntent: { amount: '0', currency: 'USDC' },
+      max_per_payout: { amount: '2000', currency: 'USDC' },
+    },
+    principalIdentity,
+  );
+  const { status, json } = await submitPayout(intent);
+  assert.equal(status, 200, JSON.stringify(json));
+  assert.equal(json.authorization.type, 'payout.authorization');
+  assert.equal(json.authorization.seller, identity.aid);
+});
+
+test('a payout binding delegating a different agent is still scope_mismatch', async () => {
+  const intent = payoutIntent(identity.aid);
+  intent.principal_binding = signPrincipalBinding(
+    { principal: PRINCIPAL, agent: generateIdentity().aid, verbs: ['payout.request'] },
+    principalIdentity,
+  );
+  const { status, json } = await submitPayout(intent);
+  assert.equal(status, 403);
+  assert.equal(json.code, 'delegation.scope_mismatch');
+});
+
+test('a payout binding that omits the verb is still scope_mismatch', async () => {
+  const intent = payoutIntent(identity.aid);
+  intent.principal_binding = signPrincipalBinding(
+    { principal: PRINCIPAL, agent: identity.aid, verbs: ['purchase.create'] },
+    principalIdentity,
+  );
+  const { status, json } = await submitPayout(intent);
+  assert.equal(status, 403);
+  assert.equal(json.code, 'delegation.scope_mismatch');
 });

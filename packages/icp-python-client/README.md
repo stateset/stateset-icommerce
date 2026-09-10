@@ -163,10 +163,10 @@ asserted by both test suites, so the claim is checked rather than asserted.
 The *defaults* are not identical, and are not meant to be: each SDK delegates
 exactly the verbs it can emit, and only this one has a `payout()` method.
 
-> Known handler limitation: `payout.request` renames `buyer` to `seller`
-> (inverted direction), while the reference handler checks a binding against
-> `intent.buyer` — so no binding can authorize a payout on an enforcing
-> handler today. Pinned by `test_payout_cannot_be_delegated_to_this_handler`.
+`payout.request` is inverted-direction — this Agent is the seller drawing its
+own held funds, so the Intent carries `seller`/`platform` — and a handler
+checks the binding against that acting party, not `buyer`. `payout()` works
+under the default binding with trust enforced.
 
 ### Methods (all 7 ICP verbs)
 

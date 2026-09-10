@@ -203,6 +203,26 @@ function warnPermissiveDelegation(principal) {
 }
 
 /**
+ * The Agent an Intent is acting AS — the party a PrincipalBinding must name.
+ *
+ * Nearly every verb carries it as `buyer`. `payout.request` is
+ * inverted-direction (§6.6 / ICPIP-0004): the Agent is a seller drawing its
+ * own held funds from a platform, so the Intent carries `seller`/`platform`
+ * where the others carry `buyer`/`merchant`. Reading `buyer` unconditionally
+ * meant `binding.agent !== undefined` for every payout, so NO binding —
+ * however correctly signed — could authorize one on an enforcing handler.
+ *
+ * Deliberately verb-driven rather than `intent.buyer ?? intent.seller`: a
+ * fallback would let a caller pick which field the delegation is checked
+ * against by omitting the other, and an inverted verb added later would
+ * silently inherit the wrong one. An unknown verb resolves to `buyer`, i.e.
+ * fails closed.
+ */
+function actingAgent(intent) {
+  return intent.verb === 'payout.request' ? intent.seller : intent.buyer;
+}
+
+/**
  * Verify that the Intent's stated principal really delegated this agent and
  * verb. Returns `null` when the Intent may proceed, or `{ status, body }`.
  *
@@ -257,7 +277,7 @@ function checkDelegation(intent, body, now) {
       body: err('delegation.signature_missing', 'principal binding signature is required'),
     };
   }
-  if (binding.agent !== intent.buyer || !binding.authority?.verbs?.includes(intent.verb)) {
+  if (binding.agent !== actingAgent(intent) || !binding.authority?.verbs?.includes(intent.verb)) {
     return {
       status: 403,
       body: err(
