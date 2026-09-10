@@ -199,11 +199,30 @@ await commerce.orders.create({
 `carts.addItemExact` are the fully string-typed variants, for callers that would
 rather not carry the float half at all.
 
+Money that a method takes as a bare argument rather than inside an input object
+works the same way, with the exact string as a **trailing optional argument** —
+trailing so that every call written against the older signature keeps working:
+
+```typescript
+await commerce.carts.setTax(cartId, 0, '8.25');
+await commerce.credit.checkCredit(customerId, 0, '5000');
+await commerce.credit.adjustCreditLimit(customerId, 0, 'annual review', '2500.75');
+await commerce.costAccounting.updateAverageCost(sku, 10, 0, '19.99');
+await commerce.currency.format(0, 'USD', '25.00');           // "$25.00", not "$25"
+await commerce.promotions.recordUsage(promoId, null, null, orderId, null, 0, 'USD', '42.42');
+await commerce.tax.calculateForItem(0, 1, null, address, '100');
+```
+
+A malformed exact string is rejected with `err.code === 'VALIDATION'` rather
+than falling back to the float, which would quietly use a different amount than
+the one that was sent.
+
 A money value the engine cannot narrow to a `number` no longer becomes `NaN`: it
 throws with `err.code === 'INTERNAL'` and a message naming the field.
-`test/fixtures/money-fields.json` is the census of which fields are money, and
-`test/money-exactness.js` fails if a new float money field is added without a
-twin.
+`test/fixtures/money-fields.json` is the census of which fields and which method
+arguments are money, and `test/money-exactness.js` fails if a new float money
+field is added without a twin, or a new float money argument without an exact
+sibling.
 
 ## API Reference
 
