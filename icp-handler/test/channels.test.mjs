@@ -15,7 +15,7 @@ import {
   newNonceHex,
   base58btcEncode,
 } from '../src/codec.mjs';
-import { server } from '../src/server.mjs';
+import { enforceTrust } from './helpers/trust.mjs';
 
 let baseUrl;
 const agentKp = generateKeyPairSync('ed25519');
@@ -28,6 +28,12 @@ const agentAid = (() => {
   const digest = createHash('sha256').update(buf).digest();
   return `aid:v1:z${base58btcEncode(digest)}`;
 })();
+
+// Trust is ENFORCED for this suite: the handler verifies every binding below
+// against the principal key registered here, so a placeholder signature fails
+// the test instead of being waved through. See test/helpers/trust.mjs.
+const trust = enforceTrust({ agents: [{ aid: agentAid, edHex: agentEdPubRaw.toString('hex') }] });
+const { server } = await import('../src/server.mjs');
 
 before(async () => {
   await new Promise((resolve) => {
@@ -52,14 +58,12 @@ function buildChannelRegisterIntent(channel) {
     settler: 'settler:stateset.usdc.base-sepolia',
     channel,
     expiry: exp.toISOString(),
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: agentAid,
-      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['channel.register'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['channel.register'],
+      maxPerIntent: { amount: '0', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),

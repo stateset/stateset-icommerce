@@ -19,7 +19,7 @@ import {
   resolveAidPubkey,
   AidBindingError,
 } from '../src/codec.mjs';
-import { server } from '../src/server.mjs';
+import { enforceTrust } from './helpers/trust.mjs';
 
 // ---------------------------------------------------------------------------
 // Test identities
@@ -36,6 +36,19 @@ const evilXkp = generateKeyPairSync('x25519');
 const evilEdPubRaw = publicKeyToRaw(evilKp.publicKey);
 const evilXPubRaw = publicKeyToRaw(evilXkp.publicKey);
 const evilAid = deriveAidFromPubkeys(evilEdPubRaw, evilXPubRaw);
+
+// Trust is ENFORCED for this suite. Both AIDs are admitted as signers so that
+// the HTTP cases below still exercise what they claim to — AID binding and
+// signature verification — rather than stopping at `auth.aid_unregistered`.
+// The binding in buildIntent() is signed by the registered principal, so the
+// accept cases prove `checkDelegation` passed a real signature.
+const trust = enforceTrust({
+  agents: [
+    { aid: buyerAid, edHex: buyerEdPubRaw.toString('hex') },
+    { aid: evilAid, edHex: evilEdPubRaw.toString('hex') },
+  ],
+});
+const { server } = await import('../src/server.mjs');
 
 let baseUrl;
 
@@ -106,14 +119,12 @@ function buildIntent(overrides = {}) {
     items: [{ sku: 'WIDGET-001', quantity: 1, unit_price: { amount: '29.99', currency: 'USDC' } }],
     max_total: { amount: '40.00', currency: 'USDC' },
     expiry: exp.toISOString(),
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: buyerAid,
-      authority: { max_per_intent: { amount: '500', currency: 'USDC' }, verbs: ['purchase.create'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['purchase.create'],
+      maxPerIntent: { amount: '500', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),
@@ -174,6 +185,9 @@ test('HTTP: attacker substituting their key for a self-derived AID still fails s
   // Attacker uses their OWN consistent AID (binding passes) but signs with the
   // wrong key → falls through to signature.invalid. Proves the two checks are
   // independent and both enforced.
+  // No binding at all: the delegation check never runs, because signature
+  // verification rejects this Intent first. Sending a fake one here would
+  // prove nothing and hide which check fired.
   const intent = buildIntent({ buyer: evilAid, principal_binding: undefined });
   delete intent.principal_binding;
   const sig = signEd25519(canonicalJson(intent), buyerKp.privateKey); // wrong key
