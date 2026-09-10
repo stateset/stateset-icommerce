@@ -47,8 +47,15 @@ test('the handler emits at least the codes this test knows about', () => {
   // `err()` call moves behind a constant) would otherwise make this file pass
   // by finding nothing.
   const codes = emittedCodes();
-  assert.ok(codes.length >= 50, `only found ${codes.length} codes — is the extraction still right?`);
-  for (const expected of ['delegation.required', 'internal.transaction_failed', 'signature.invalid']) {
+  assert.ok(
+    codes.length >= 50,
+    `only found ${codes.length} codes — is the extraction still right?`,
+  );
+  for (const expected of [
+    'delegation.required',
+    'internal.transaction_failed',
+    'signature.invalid',
+  ]) {
     assert.ok(codes.includes(expected), `expected to find ${expected} among the emitted codes`);
   }
 });
