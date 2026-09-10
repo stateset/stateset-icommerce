@@ -37,6 +37,7 @@ humans).
 | Namespace   | Meaning                                                |
 |-------------|--------------------------------------------------------|
 | `auth`      | Identity/AID resolution and principal-binding errors  |
+| `delegation`| PrincipalBinding verification (reference-handler refinement of `auth.principal_binding_*`) |
 | `signature` | Cryptographic signature validation errors             |
 | `replay`    | Nonce reuse and timestamp window violations           |
 | `policy`    | Counterparty's policy rejection (allowlist, ceilings) |
@@ -60,12 +61,46 @@ humans).
 | Code                          | When emitted                                         |
 |-------------------------------|------------------------------------------------------|
 | `auth.aid_resolution_failed`  | Cannot resolve AID to a public key                   |
-| `auth.principal_binding_invalid` | PrincipalBinding signature does not verify        |
-| `auth.principal_binding_expired` | PrincipalBinding `expiry` is in the past          |
+| `auth.aid_key_mismatch`       | Supplied public key differs from the key an operator-owned source already binds to this AID |
+| `auth.aid_unregistered`       | Signer AID is neither operator-registered nor previously pinned; an operator-keyed handler does not admit caller-minted AIDs |
+| `auth.buyer_mismatch`         | `purchase.create` signer is not the Intent's `buyer` |
+| `auth.acceptance_invalid`     | Quote acceptance is not signed by the original buyer |
+| `auth.signer_capacity`        | Handler is at its signer-admission bound (503, not 401/403 — it is capacity, not authorization) |
+| `auth.principal_binding_invalid` | PrincipalBinding signature does not verify. *The reference handler emits the finer-grained `delegation.signature_invalid` / `delegation.signature_missing`.* |
+| `auth.principal_binding_expired` | PrincipalBinding `expiry` is in the past. *The reference handler emits `delegation.expired`.* |
 | `auth.principal_binding_revoked` | PrincipalBinding revocation endpoint says revoked |
 | `auth.authority_insufficient` | Intent value exceeds PrincipalBinding's `max_per_intent` or `max_per_period` |
 | `auth.verb_not_authorized`    | Intent verb not in PrincipalBinding's `authority.verbs` |
 | `auth.counterparty_not_allowed` | Counterparty AID not in `allowed_counterparties` |
+
+### delegation
+
+Principal delegation (§4.4) as the reference handler enforces it. These
+refine `auth.principal_binding_*`: they distinguish *no binding* from *a
+binding this handler cannot verify* from *a binding that does not cover this
+request*, which callers need in order to know whether to re-delegate, ask the
+operator to register a key, or stop. Implementations that emit only the
+ICP-1.0 `auth.principal_binding_*` codes remain conformant; a caller
+encountering a `delegation.*` code SHOULD treat it as an `auth.*` failure.
+
+A handler resolves the principal's public key from **operator configuration
+only** (`ICP_PRINCIPAL_KEYS_JSON` in the reference handler). Key material in
+the request body is never trusted — that is what `untrusted_key_material`
+refuses.
+
+| Code                              | When emitted                                              |
+|-----------------------------------|-----------------------------------------------------------|
+| `delegation.required`             | Handler requires a `principal_binding` and the Intent carries none (or none naming a principal) |
+| `delegation.principal_unknown`    | No operator-configured key for the named principal        |
+| `delegation.untrusted_key_material` | Request nominated the principal's key (e.g. `_principal_pubkey_hex`); principal keys come from operator configuration only |
+| `delegation.signature_missing`    | Binding carries no `signature.sig`                        |
+| `delegation.signature_invalid`    | Binding signature fails under the operator-configured principal key |
+| `delegation.scope_mismatch`       | Binding does not name this agent, or its `authority.verbs` omits the Intent's verb |
+| `delegation.expired`              | Binding's `expiry` is in the past                         |
+
+The signing input is the canonical JSON of the binding with its `signature`
+field removed, so `expiry` and `authority` are covered: widening either after
+signing yields `delegation.signature_invalid`.
 
 ### signature
 
@@ -174,6 +209,9 @@ humans).
 | `settlement.rail_unsupported` | Rail named in Intent not supported by this Settler    |
 | `settlement.not_found`     | `settlement_id` exists nowhere in this Settler's records |
 | `settlement.amount_mismatch` | Receipt amount does not match escrow amount            |
+| `settlement.escrow_mismatch` | Receipt names an escrow that does not belong to its `intent_id` |
+| `settlement.already_settled` | Escrow already settled under a different `settlement_id` — one escrow settles once |
+| `settlement.not_final`     | Receipt's `final_state` is not a terminal state, so it cannot be co-signed |
 
 ### dispute
 
@@ -248,7 +286,8 @@ For HTTP transports, error codes map to status codes as follows:
 
 | Code prefix    | HTTP status |
 |----------------|-------------|
-| `auth.*`       | 401 / 403   |
+| `auth.*`       | 401 / 403 (503 for `auth.signer_capacity`) |
+| `delegation.*` | 401 (signature) / 403 (missing, unknown, scope, expiry) / 400 (`untrusted_key_material`) |
 | `signature.*`  | 401         |
 | `replay.*`     | 400 (or 410 for `replay.expired`) |
 | `policy.*`     | 422 (semantic policy reject) or 403 (authorization) |
