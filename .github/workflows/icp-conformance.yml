@@ -427,8 +427,12 @@ jobs:
         with:
           node-version: '20'
       - name: Run MCP test suite
+        # The whole directory, not one file: `test/principal-binding.test.mjs`
+        # is the only place the MCP server's real bindings are checked against
+        # an enforcing handler, and pinning the job to `test/mcp.test.mjs`
+        # meant CI never ran it. Matches icp-mcp/package.json's `test` script.
         working-directory: icp-mcp
-        run: node --test test/mcp.test.mjs
+        run: node --test test/
 
   sdk:
     name: '@stateset/icp-client SDK roundtrip'
@@ -456,10 +460,15 @@ jobs:
         with:
           toolchain: '1.85'
       - uses: Swatinem/rust-cache@v2
-      - name: Run Rust SDK handler roundtrip
+      - name: Run Rust SDK test suite
+        # The whole crate, not just the handler roundtrip: `principal_binding_vector`
+        # asserts the Rust SDK signs the same canonical bytes and the same
+        # signature hex as the JS and Python SDKs, off one committed vector.
+        # That cross-language byte-identity contract is only a contract if CI
+        # breaks when it breaks.
         env:
           ICP_HANDLER_REQUIRED: '1'
-        run: cargo test -p stateset-icp-client --test handler_integration -- --nocapture
+        run: cargo test -p stateset-icp-client -- --nocapture
 
   flagship-demo:
     name: End-to-end flagship demo
