@@ -119,6 +119,34 @@ fn optional_decimal_from_f64(value: Option<f64>, field: &str) -> Result<Option<D
     value.map(|value| decimal_from_f64(value, field)).transpose()
 }
 
+/// Resolves a money input that accepts either an exact base-10 string or an
+/// `f64`, preferring the string.
+///
+/// The string wins when both arrive, for two reasons: it is what a caller who
+/// bothered to send one meant, and it is the only one of the two that can carry
+/// a value an `f64` cannot hold exactly. `19.99` typed as a JavaScript number
+/// is already `19.989999999999998` before the binding sees it; typed as
+/// `"19.99"` it survives.
+fn money_input(exact: Option<&str>, value: f64, field: &str) -> Result<Decimal> {
+    match exact {
+        Some(text) => parse_decimal_str(text, field),
+        None => decimal_from_f64(value, field),
+    }
+}
+
+/// [`money_input`] where the `f64` half is itself optional. The exact string
+/// still wins; absent on both halves stays absent.
+fn optional_money_input(
+    exact: Option<&str>,
+    value: Option<f64>,
+    field: &str,
+) -> Result<Option<Decimal>> {
+    match exact {
+        Some(text) => parse_decimal_str(text, field).map(Some),
+        None => optional_decimal_from_f64(value, field),
+    }
+}
+
 /// JavaScript-friendly Commerce instance
 #[napi]
 pub struct Commerce {
@@ -1180,6 +1208,8 @@ pub struct CreateOrderItemInput {
     pub name: String,
     pub quantity: i32,
     pub unit_price: f64,
+    /// Exact base-10 unit price. Takes precedence over `unit_price` when present.
+    pub unit_price_exact: Option<String>,
     pub product_id: Option<String>,
     pub variant_id: Option<String>,
 }
@@ -1272,11 +1302,11 @@ pub struct OrderItemOutput {
     pub sku: String,
     pub name: String,
     pub quantity: i32,
-    /// @deprecated Use the `unit_price_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `unitPriceExact` twin; float money will be removed in 2.0.
     pub unit_price: f64,
     /// Exact base-10 unit price. Prefer this field for calculations.
     pub unit_price_exact: String,
-    /// @deprecated Use the `total_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
     /// Exact base-10 line total. Prefer this field for calculations.
     pub total_exact: String,
@@ -1313,7 +1343,7 @@ pub struct OrderOutput {
     pub order_number: String,
     pub customer_id: String,
     pub status: String,
-    /// @deprecated Use the `total_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalAmountExact` twin; float money will be removed in 2.0.
     pub total_amount: f64,
     /// Exact base-10 order total. Prefer this field for calculations.
     pub total_amount_exact: String,
@@ -1409,7 +1439,11 @@ impl Orders {
                     sku: i.sku,
                     name: i.name,
                     quantity: i.quantity,
-                    unit_price: decimal_from_f64(i.unit_price, "order item unit price")?,
+                    unit_price: money_input(
+                        i.unit_price_exact.as_deref(),
+                        i.unit_price,
+                        "order item unit price",
+                    )?,
                     ..Default::default()
                 })
             })
@@ -1593,7 +1627,11 @@ pub struct CreateProductVariantInput {
     pub sku: String,
     pub name: Option<String>,
     pub price: f64,
+    /// Exact base-10 price. Takes precedence over `price` when present.
+    pub price_exact: Option<String>,
     pub compare_at_price: Option<f64>,
+    /// Exact base-10 comparison price. Takes precedence over `compare_at_price` when present.
+    pub compare_at_price_exact: Option<String>,
     pub is_default: Option<bool>,
 }
 
@@ -1647,11 +1685,11 @@ pub struct ProductVariantOutput {
     pub product_id: String,
     pub sku: String,
     pub name: String,
-    /// @deprecated Use the `price_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `priceExact` twin; float money will be removed in 2.0.
     pub price: f64,
     /// Exact base-10 price. Prefer this field for calculations.
     pub price_exact: String,
-    /// @deprecated Use the `compare_at_price_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `compareAtPriceExact` twin; float money will be removed in 2.0.
     pub compare_at_price: Option<f64>,
     /// Exact base-10 comparison price.
     pub compare_at_price_exact: Option<String>,
@@ -1694,8 +1732,9 @@ fn create_variant_from_input(
     Ok(stateset_core::CreateProductVariant {
         sku: v.sku,
         name: v.name,
-        price: decimal_from_f64(v.price, "variant price")?,
-        compare_at_price: optional_decimal_from_f64(
+        price: money_input(v.price_exact.as_deref(), v.price, "variant price")?,
+        compare_at_price: optional_money_input(
+            v.compare_at_price_exact.as_deref(),
             v.compare_at_price,
             "variant compare at price",
         )?,
@@ -1723,8 +1762,9 @@ impl Products {
                         Ok(stateset_core::CreateProductVariant {
                             sku: v.sku,
                             name: v.name,
-                            price: decimal_from_f64(v.price, "variant price")?,
-                            compare_at_price: optional_decimal_from_f64(
+                            price: money_input(v.price_exact.as_deref(), v.price, "variant price")?,
+                            compare_at_price: optional_money_input(
+                                v.compare_at_price_exact.as_deref(),
                                 v.compare_at_price,
                                 "variant compare at price",
                             )?,
@@ -2836,6 +2876,8 @@ pub struct CreatePaymentInput {
     pub customer_id: Option<String>,
     pub idempotency_key: Option<String>,
     pub amount: f64,
+    /// Exact base-10 amount. Takes precedence over `amount` when present.
+    pub amount_exact: Option<String>,
     pub currency: Option<String>,
     pub payment_method: Option<String>,
 }
@@ -2862,7 +2904,7 @@ pub struct PaymentOutput {
     pub invoice_id: Option<String>,
     pub customer_id: Option<String>,
     pub idempotency_key: Option<String>,
-    /// @deprecated Use the `amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `amountExact` twin; float money will be removed in 2.0.
     pub amount: f64,
     /// Exact base-10 amount. Prefer this field for all calculations.
     pub amount_exact: String,
@@ -2901,6 +2943,8 @@ impl TryFrom<stateset_core::Payment> for PaymentOutput {
 pub struct CreateRefundInput {
     pub payment_id: String,
     pub amount: f64,
+    /// Exact base-10 amount. Takes precedence over `amount` when present.
+    pub amount_exact: Option<String>,
     pub reason: Option<String>,
     pub idempotency_key: Option<String>,
 }
@@ -2921,7 +2965,7 @@ pub struct RefundOutput {
     pub id: String,
     pub refund_number: String,
     pub payment_id: String,
-    /// @deprecated Use the `amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `amountExact` twin; float money will be removed in 2.0.
     pub amount: f64,
     /// Exact base-10 amount. Prefer this field for all calculations.
     pub amount_exact: String,
@@ -3002,7 +3046,7 @@ impl Payments {
                 invoice_id,
                 customer_id,
                 idempotency_key: input.idempotency_key,
-                amount: decimal_from_f64(input.amount, "payment amount")?,
+                amount: money_input(input.amount_exact.as_deref(), input.amount, "payment amount")?,
                 currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
                 payment_method,
                 ..Default::default()
@@ -3146,7 +3190,11 @@ impl Payments {
             .payments()
             .create_refund(stateset_core::CreateRefund {
                 payment_id,
-                amount: Some(decimal_from_f64(input.amount, "refund amount")?),
+                amount: Some(money_input(
+                    input.amount_exact.as_deref(),
+                    input.amount,
+                    "refund amount",
+                )?),
                 reason: input.reason,
                 idempotency_key: input.idempotency_key,
                 ..Default::default()
@@ -3701,11 +3749,11 @@ pub struct PurchaseOrderOutput {
     pub po_number: String,
     pub supplier_id: String,
     pub status: String,
-    /// @deprecated Use the `subtotal_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0.
     pub subtotal: f64,
     /// Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money.
     pub subtotal_exact: String,
-    /// @deprecated Use the `total_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
     /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_exact: String,
@@ -3930,6 +3978,8 @@ pub struct CreateInvoiceItemInput {
     pub description: String,
     pub quantity: f64,
     pub unit_price: f64,
+    /// Exact base-10 unit price. Takes precedence over `unit_price` when present.
+    pub unit_price_exact: Option<String>,
     pub sku: Option<String>,
 }
 
@@ -3952,19 +4002,19 @@ pub struct InvoiceOutput {
     pub customer_id: String,
     pub order_id: Option<String>,
     pub status: String,
-    /// @deprecated Use the `subtotal_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0.
     pub subtotal: f64,
     /// Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money.
     pub subtotal_exact: String,
-    /// @deprecated Use the `tax_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0.
     pub tax_amount: f64,
     /// Exact base-10 tax amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub tax_amount_exact: String,
-    /// @deprecated Use the `total_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
     /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_exact: String,
-    /// @deprecated Use the `amount_paid_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `amountPaidExact` twin; float money will be removed in 2.0.
     pub amount_paid: f64,
     /// Exact base-10 amount paid, straight from the engine's `Decimal`. Prefer this field for money.
     pub amount_paid_exact: String,
@@ -4006,6 +4056,8 @@ impl TryFrom<stateset_core::Invoice> for InvoiceOutput {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct RecordPaymentInput {
     pub amount: f64,
+    /// Exact base-10 amount. Takes precedence over `amount` when present.
+    pub amount_exact: Option<String>,
     pub payment_method: Option<String>,
     pub reference: Option<String>,
 }
@@ -4039,7 +4091,11 @@ impl Invoices {
                 Ok(stateset_core::CreateInvoiceItem {
                     description: i.description,
                     quantity: decimal_from_f64(i.quantity, "invoice item quantity")?,
-                    unit_price: decimal_from_f64(i.unit_price, "invoice item unit price")?,
+                    unit_price: money_input(
+                        i.unit_price_exact.as_deref(),
+                        i.unit_price,
+                        "invoice item unit price",
+                    )?,
                     sku: i.sku,
                     ..Default::default()
                 })
@@ -4130,7 +4186,11 @@ impl Invoices {
             .record_payment(
                 uuid,
                 stateset_core::RecordInvoicePayment {
-                    amount: decimal_from_f64(input.amount, "invoice payment amount")?,
+                    amount: money_input(
+                        input.amount_exact.as_deref(),
+                        input.amount,
+                        "invoice payment amount",
+                    )?,
                     payment_method: input.payment_method,
                     reference: input.reference,
                     ..Default::default()
@@ -4578,7 +4638,11 @@ pub struct AddCartItemInput {
     pub image_url: Option<String>,
     pub quantity: i32,
     pub unit_price: f64,
+    /// Exact base-10 unit price. Takes precedence over `unit_price` when present.
+    pub unit_price_exact: Option<String>,
     pub original_price: Option<f64>,
+    /// Exact base-10 original price. Takes precedence over `original_price` when present.
+    pub original_price_exact: Option<String>,
     pub weight: Option<f64>,
     pub requires_shipping: Option<bool>,
 }
@@ -4629,6 +4693,8 @@ pub struct UpdateCartInput {
 pub struct UpdateCartItemInput {
     pub quantity: Option<i32>,
     pub unit_price: Option<f64>,
+    /// Exact base-10 unit price. Takes precedence over `unit_price` when present.
+    pub unit_price_exact: Option<String>,
 }
 
 #[napi(object)]
@@ -4645,6 +4711,8 @@ pub struct SetCartShippingInput {
     pub shipping_method: Option<String>,
     pub shipping_carrier: Option<String>,
     pub shipping_amount: Option<f64>,
+    /// Exact base-10 shipping amount. Takes precedence over `shipping_amount` when present.
+    pub shipping_amount_exact: Option<String>,
 }
 
 #[napi(object)]
@@ -4659,19 +4727,19 @@ pub struct CartItemOutput {
     pub description: Option<String>,
     pub image_url: Option<String>,
     pub quantity: i32,
-    /// @deprecated Use the `unit_price_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `unitPriceExact` twin; float money will be removed in 2.0.
     pub unit_price: f64,
     pub unit_price_exact: String,
-    /// @deprecated Use the `original_price_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `originalPriceExact` twin; float money will be removed in 2.0.
     pub original_price: Option<f64>,
     pub original_price_exact: Option<String>,
-    /// @deprecated Use the `discount_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0.
     pub discount_amount: f64,
     pub discount_amount_exact: String,
-    /// @deprecated Use the `tax_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0.
     pub tax_amount: f64,
     pub tax_amount_exact: String,
-    /// @deprecated Use the `total_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
     pub total_exact: String,
     pub requires_shipping: bool,
@@ -4759,19 +4827,19 @@ pub struct CartOutput {
     pub customer_id: Option<String>,
     pub status: String,
     pub currency: String,
-    /// @deprecated Use the `subtotal_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0.
     pub subtotal: f64,
     pub subtotal_exact: String,
-    /// @deprecated Use the `tax_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0.
     pub tax_amount: f64,
     pub tax_amount_exact: String,
-    /// @deprecated Use the `shipping_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `shippingAmountExact` twin; float money will be removed in 2.0.
     pub shipping_amount: f64,
     pub shipping_amount_exact: String,
-    /// @deprecated Use the `discount_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0.
     pub discount_amount: f64,
     pub discount_amount_exact: String,
-    /// @deprecated Use the `grand_total_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `grandTotalExact` twin; float money will be removed in 2.0.
     pub grand_total: f64,
     pub grand_total_exact: String,
     pub customer_email: Option<String>,
@@ -4852,7 +4920,7 @@ pub struct CheckoutResultOutput {
     pub order_id: String,
     pub order_number: String,
     pub payment_id: Option<String>,
-    /// @deprecated Use the `total_charged_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalChargedExact` twin; float money will be removed in 2.0.
     pub total_charged: f64,
     pub total_charged_exact: String,
     pub currency: String,
@@ -4883,7 +4951,7 @@ pub struct ShippingRateOutput {
     pub carrier: String,
     pub service: String,
     pub description: Option<String>,
-    /// @deprecated Use the `price_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `priceExact` twin; float money will be removed in 2.0.
     pub price: f64,
     /// Exact base-10 price, straight from the engine's `Decimal`. Prefer this field for money.
     pub price_exact: String,
@@ -5092,8 +5160,13 @@ impl Carts {
                     description: item.description,
                     image_url: item.image_url,
                     quantity: item.quantity,
-                    unit_price: decimal_from_f64(item.unit_price, "cart item unit price")?,
-                    original_price: optional_decimal_from_f64(
+                    unit_price: money_input(
+                        item.unit_price_exact.as_deref(),
+                        item.unit_price,
+                        "cart item unit price",
+                    )?,
+                    original_price: optional_money_input(
+                        item.original_price_exact.as_deref(),
                         item.original_price,
                         "cart item original price",
                     )?,
@@ -5174,7 +5247,8 @@ impl Carts {
                 uuid,
                 stateset_core::UpdateCartItem {
                     quantity: input.quantity,
-                    unit_price: optional_decimal_from_f64(
+                    unit_price: optional_money_input(
+                        input.unit_price_exact.as_deref(),
                         input.unit_price,
                         "cart item unit price",
                     )?,
@@ -5260,13 +5334,11 @@ impl Carts {
         let uuid: uuid::Uuid =
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
-        let shipping_amount = match input.shipping_amount {
-            Some(amount) => Some(
-                Decimal::from_f64(amount)
-                    .ok_or_else(|| coded(ErrCode::Validation, "Invalid shipping amount"))?,
-            ),
-            None => None,
-        };
+        let shipping_amount = optional_money_input(
+            input.shipping_amount_exact.as_deref(),
+            input.shipping_amount,
+            "cart shipping amount",
+        )?;
 
         let cart = commerce
             .carts()
@@ -5576,12 +5648,12 @@ pub struct AnalyticsQueryInput {
 #[napi(object)]
 #[derive(Serialize, Clone)]
 pub struct SalesSummaryOutput {
-    /// @deprecated Use the `total_revenue_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalRevenueExact` twin; float money will be removed in 2.0.
     pub total_revenue: f64,
     /// Exact base-10 total revenue, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_revenue_exact: String,
     pub order_count: u32,
-    /// @deprecated Use the `average_order_value_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `averageOrderValueExact` twin; float money will be removed in 2.0.
     pub average_order_value: f64,
     /// Exact base-10 average order value, straight from the engine's `Decimal`. Prefer this field for money.
     pub average_order_value_exact: String,
@@ -5593,7 +5665,7 @@ pub struct SalesSummaryOutput {
 #[derive(Serialize, Clone)]
 pub struct RevenueByPeriodOutput {
     pub period: String,
-    /// @deprecated Use the `revenue_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `revenueExact` twin; float money will be removed in 2.0.
     pub revenue: f64,
     /// Exact base-10 revenue, straight from the engine's `Decimal`. Prefer this field for money.
     pub revenue_exact: String,
@@ -5608,7 +5680,7 @@ pub struct TopProductOutput {
     pub sku: String,
     pub name: String,
     pub units_sold: u32,
-    /// @deprecated Use the `revenue_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `revenueExact` twin; float money will be removed in 2.0.
     pub revenue: f64,
     /// Exact base-10 revenue, straight from the engine's `Decimal`. Prefer this field for money.
     pub revenue_exact: String,
@@ -5622,12 +5694,12 @@ pub struct ProductPerformanceOutput {
     pub sku: String,
     pub name: String,
     pub units_sold: u32,
-    /// @deprecated Use the `revenue_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `revenueExact` twin; float money will be removed in 2.0.
     pub revenue: f64,
     /// Exact base-10 revenue, straight from the engine's `Decimal`. Prefer this field for money.
     pub revenue_exact: String,
     pub previous_units_sold: u32,
-    /// @deprecated Use the `previous_revenue_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `previousRevenueExact` twin; float money will be removed in 2.0.
     pub previous_revenue: f64,
     /// Exact base-10 previous revenue, straight from the engine's `Decimal`. Prefer this field for money.
     pub previous_revenue_exact: String,
@@ -5641,7 +5713,7 @@ pub struct CustomerMetricsOutput {
     pub total_customers: u32,
     pub new_customers: u32,
     pub returning_customers: u32,
-    /// @deprecated Use the `average_lifetime_value_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `averageLifetimeValueExact` twin; float money will be removed in 2.0.
     pub average_lifetime_value: f64,
     /// Exact base-10 average lifetime value, straight from the engine's `Decimal`. Prefer this field for money.
     pub average_lifetime_value_exact: String,
@@ -5655,11 +5727,11 @@ pub struct TopCustomerOutput {
     pub name: String,
     pub email: String,
     pub order_count: u32,
-    /// @deprecated Use the `total_spent_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalSpentExact` twin; float money will be removed in 2.0.
     pub total_spent: f64,
     /// Exact base-10 total spent, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_spent_exact: String,
-    /// @deprecated Use the `average_order_value_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `averageOrderValueExact` twin; float money will be removed in 2.0.
     pub average_order_value: f64,
     /// Exact base-10 average order value, straight from the engine's `Decimal`. Prefer this field for money.
     pub average_order_value_exact: String,
@@ -5672,7 +5744,7 @@ pub struct InventoryHealthOutput {
     pub in_stock_skus: u32,
     pub low_stock_skus: u32,
     pub out_of_stock_skus: u32,
-    /// @deprecated Use the `total_value_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalValueExact` twin; float money will be removed in 2.0.
     pub total_value: f64,
     /// Exact base-10 total value, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_value_exact: String,
@@ -5721,15 +5793,15 @@ pub struct DemandForecastOutput {
 #[derive(Serialize, Clone)]
 pub struct RevenueForecastOutput {
     pub period: String,
-    /// @deprecated Use the `forecasted_revenue_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `forecastedRevenueExact` twin; float money will be removed in 2.0.
     pub forecasted_revenue: f64,
     /// Exact base-10 forecasted revenue, straight from the engine's `Decimal`. Prefer this field for money.
     pub forecasted_revenue_exact: String,
-    /// @deprecated Use the `lower_bound_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `lowerBoundExact` twin; float money will be removed in 2.0.
     pub lower_bound: f64,
     /// Exact base-10 lower bound, straight from the engine's `Decimal`. Prefer this field for money.
     pub lower_bound_exact: String,
-    /// @deprecated Use the `upper_bound_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `upperBoundExact` twin; float money will be removed in 2.0.
     pub upper_bound: f64,
     /// Exact base-10 upper bound, straight from the engine's `Decimal`. Prefer this field for money.
     pub upper_bound_exact: String,
@@ -5765,7 +5837,7 @@ pub struct FulfillmentMetricsOutput {
 pub struct ReturnMetricsOutput {
     pub total_returns: u32,
     pub return_rate_percent: f64,
-    /// @deprecated Use the `total_refunded_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalRefundedExact` twin; float money will be removed in 2.0.
     pub total_refunded: f64,
     /// Exact base-10 total refunded, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_refunded_exact: String,
@@ -6391,12 +6463,12 @@ pub struct ExchangeRateOutput {
 #[napi(object)]
 #[derive(Serialize, Clone)]
 pub struct ConversionResultOutput {
-    /// @deprecated Use the `original_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `originalAmountExact` twin; float money will be removed in 2.0.
     pub original_amount: f64,
     /// Exact base-10 original amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub original_amount_exact: String,
     pub original_currency: String,
-    /// @deprecated Use the `converted_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `convertedAmountExact` twin; float money will be removed in 2.0.
     pub converted_amount: f64,
     /// Exact base-10 converted amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub converted_amount_exact: String,
@@ -6849,11 +6921,11 @@ pub struct SubscriptionPlanOutput {
     pub status: String,
     pub billing_interval: String,
     pub custom_interval_days: Option<i32>,
-    /// @deprecated Use the `price_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `priceExact` twin; float money will be removed in 2.0.
     pub price: f64,
     /// Exact base-10 price, straight from the engine's `Decimal`. Prefer this field for money.
     pub price_exact: String,
-    /// @deprecated Use the `setup_fee_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `setupFeeExact` twin; float money will be removed in 2.0.
     pub setup_fee: Option<f64>,
     /// Exact base-10 setup fee, straight from the engine's `Decimal`. Prefer this field for money.
     pub setup_fee_exact: Option<String>,
@@ -6863,7 +6935,7 @@ pub struct SubscriptionPlanOutput {
     pub min_cycles: Option<i32>,
     pub max_cycles: Option<i32>,
     pub discount_percent: Option<f64>,
-    /// @deprecated Use the `discount_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0.
     pub discount_amount: Option<f64>,
     /// Exact base-10 discount amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub discount_amount_exact: Option<String>,
@@ -6957,7 +7029,7 @@ pub struct SubscriptionOutput {
     pub status: String,
     pub billing_interval: String,
     pub custom_interval_days: Option<i32>,
-    /// @deprecated Use the `price_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `priceExact` twin; float money will be removed in 2.0.
     pub price: f64,
     /// Exact base-10 price, straight from the engine's `Decimal`. Prefer this field for money.
     pub price_exact: String,
@@ -6975,7 +7047,7 @@ pub struct SubscriptionOutput {
     pub billing_cycle_count: i32,
     pub failed_payment_attempts: i32,
     pub discount_percent: Option<f64>,
-    /// @deprecated Use the `discount_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0.
     pub discount_amount: Option<f64>,
     /// Exact base-10 discount amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub discount_amount_exact: Option<String>,
@@ -7069,19 +7141,19 @@ pub struct BillingCycleOutput {
     pub status: String,
     pub period_start: String,
     pub period_end: String,
-    /// @deprecated Use the `subtotal_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0.
     pub subtotal: f64,
     /// Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money.
     pub subtotal_exact: String,
-    /// @deprecated Use the `discount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `discountExact` twin; float money will be removed in 2.0.
     pub discount: f64,
     /// Exact base-10 discount, straight from the engine's `Decimal`. Prefer this field for money.
     pub discount_exact: String,
-    /// @deprecated Use the `tax_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `taxExact` twin; float money will be removed in 2.0.
     pub tax: f64,
     /// Exact base-10 tax, straight from the engine's `Decimal`. Prefer this field for money.
     pub tax_exact: String,
-    /// @deprecated Use the `total_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
     /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_exact: String,
@@ -7838,11 +7910,11 @@ pub struct PromotionOutput {
     pub stacking: String,
     pub status: String,
     pub percentage_off: Option<f64>,
-    /// @deprecated Use the `fixed_amount_off_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `fixedAmountOffExact` twin; float money will be removed in 2.0.
     pub fixed_amount_off: Option<f64>,
     /// Exact base-10 fixed amount off, straight from the engine's `Decimal`. Prefer this field for money.
     pub fixed_amount_off_exact: Option<String>,
-    /// @deprecated Use the `max_discount_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `maxDiscountAmountExact` twin; float money will be removed in 2.0.
     pub max_discount_amount: Option<f64>,
     /// Exact base-10 max discount amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub max_discount_amount_exact: Option<String>,
@@ -8001,31 +8073,31 @@ pub struct PromotionLineItemInput {
 /// Result of applying promotions
 #[napi(object)]
 pub struct ApplyPromotionsOutput {
-    /// @deprecated Use the `original_subtotal_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `originalSubtotalExact` twin; float money will be removed in 2.0.
     pub original_subtotal: f64,
     /// Exact base-10 original subtotal, straight from the engine's `Decimal`. Prefer this field for money.
     pub original_subtotal_exact: String,
-    /// @deprecated Use the `total_discount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalDiscountExact` twin; float money will be removed in 2.0.
     pub total_discount: f64,
     /// Exact base-10 total discount, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_discount_exact: String,
-    /// @deprecated Use the `discounted_subtotal_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `discountedSubtotalExact` twin; float money will be removed in 2.0.
     pub discounted_subtotal: f64,
     /// Exact base-10 discounted subtotal, straight from the engine's `Decimal`. Prefer this field for money.
     pub discounted_subtotal_exact: String,
-    /// @deprecated Use the `original_shipping_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `originalShippingExact` twin; float money will be removed in 2.0.
     pub original_shipping: f64,
     /// Exact base-10 original shipping, straight from the engine's `Decimal`. Prefer this field for money.
     pub original_shipping_exact: String,
-    /// @deprecated Use the `shipping_discount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `shippingDiscountExact` twin; float money will be removed in 2.0.
     pub shipping_discount: f64,
     /// Exact base-10 shipping discount, straight from the engine's `Decimal`. Prefer this field for money.
     pub shipping_discount_exact: String,
-    /// @deprecated Use the `final_shipping_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `finalShippingExact` twin; float money will be removed in 2.0.
     pub final_shipping: f64,
     /// Exact base-10 final shipping, straight from the engine's `Decimal`. Prefer this field for money.
     pub final_shipping_exact: String,
-    /// @deprecated Use the `grand_total_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `grandTotalExact` twin; float money will be removed in 2.0.
     pub grand_total: f64,
     /// Exact base-10 grand total, straight from the engine's `Decimal`. Prefer this field for money.
     pub grand_total_exact: String,
@@ -8038,7 +8110,7 @@ pub struct AppliedPromotionOutput {
     pub promotion_id: String,
     pub promotion_name: String,
     pub coupon_code: Option<String>,
-    /// @deprecated Use the `discount_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0.
     pub discount_amount: f64,
     /// Exact base-10 discount amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub discount_amount_exact: String,
@@ -8108,7 +8180,7 @@ pub struct PromotionUsageOutput {
     pub customer_id: Option<String>,
     pub order_id: Option<String>,
     pub cart_id: Option<String>,
-    /// @deprecated Use the `discount_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0.
     pub discount_amount: f64,
     /// Exact base-10 discount amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub discount_amount_exact: String,
@@ -8849,7 +8921,7 @@ pub struct TaxRateOutput {
     pub priority: i32,
     pub threshold_min: Option<f64>,
     pub threshold_max: Option<f64>,
-    /// @deprecated Use the `fixed_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `fixedAmountExact` twin; float money will be removed in 2.0.
     pub fixed_amount: Option<f64>,
     /// Exact base-10 fixed amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub fixed_amount_exact: Option<String>,
@@ -8939,11 +9011,11 @@ pub struct TaxBreakdownOutput {
     pub tax_type: String,
     pub rate_name: String,
     pub rate: f64,
-    /// @deprecated Use the `taxable_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `taxableAmountExact` twin; float money will be removed in 2.0.
     pub taxable_amount: f64,
     /// Exact base-10 taxable amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub taxable_amount_exact: String,
-    /// @deprecated Use the `tax_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0.
     pub tax_amount: f64,
     /// Exact base-10 tax amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub tax_amount_exact: String,
@@ -8978,7 +9050,7 @@ pub struct TaxDetailOutput {
     pub tax_type: String,
     pub jurisdiction_name: String,
     pub rate: f64,
-    /// @deprecated Use the `amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `amountExact` twin; float money will be removed in 2.0.
     pub amount: f64,
     /// Exact base-10 amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub amount_exact: String,
@@ -9003,11 +9075,11 @@ impl TryFrom<stateset_core::TaxDetail> for TaxDetailOutput {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct LineItemTaxOutput {
     pub line_item_id: String,
-    /// @deprecated Use the `taxable_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `taxableAmountExact` twin; float money will be removed in 2.0.
     pub taxable_amount: f64,
     /// Exact base-10 taxable amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub taxable_amount_exact: String,
-    /// @deprecated Use the `tax_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0.
     pub tax_amount: f64,
     /// Exact base-10 tax amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub tax_amount_exact: String,
@@ -9044,11 +9116,11 @@ pub struct ExemptionDetailsOutput {
     pub exemption_id: String,
     pub exemption_type: String,
     pub certificate_number: Option<String>,
-    /// @deprecated Use the `amount_exempt_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `amountExemptExact` twin; float money will be removed in 2.0.
     pub amount_exempt: f64,
     /// Exact base-10 amount exempt, straight from the engine's `Decimal`. Prefer this field for money.
     pub amount_exempt_exact: String,
-    /// @deprecated Use the `tax_saved_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `taxSavedExact` twin; float money will be removed in 2.0.
     pub tax_saved: f64,
     /// Exact base-10 tax saved, straight from the engine's `Decimal`. Prefer this field for money.
     pub tax_saved_exact: String,
@@ -9080,7 +9152,7 @@ pub struct JurisdictionSummaryOutput {
     pub code: String,
     pub level: String,
     pub total_rate: f64,
-    /// @deprecated Use the `total_tax_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalTaxExact` twin; float money will be removed in 2.0.
     pub total_tax: f64,
     /// Exact base-10 total tax, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_tax_exact: String,
@@ -9107,19 +9179,19 @@ impl TryFrom<stateset_core::JurisdictionSummary> for JurisdictionSummaryOutput {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TaxCalculationOutput {
     pub id: String,
-    /// @deprecated Use the `total_tax_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalTaxExact` twin; float money will be removed in 2.0.
     pub total_tax: f64,
     /// Exact base-10 total tax, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_tax_exact: String,
-    /// @deprecated Use the `subtotal_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0.
     pub subtotal: f64,
     /// Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money.
     pub subtotal_exact: String,
-    /// @deprecated Use the `total_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
     /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_exact: String,
-    /// @deprecated Use the `shipping_tax_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `shippingTaxExact` twin; float money will be removed in 2.0.
     pub shipping_tax: f64,
     /// Exact base-10 shipping tax, straight from the engine's `Decimal`. Prefer this field for money.
     pub shipping_tax_exact: String,
@@ -11445,15 +11517,15 @@ pub struct BillOutput {
     pub bill_number: String,
     pub supplier_id: String,
     pub status: String,
-    /// @deprecated Use the `total_amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalAmountExact` twin; float money will be removed in 2.0.
     pub total_amount: f64,
     /// Exact base-10 total amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_amount_exact: String,
-    /// @deprecated Use the `amount_paid_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `amountPaidExact` twin; float money will be removed in 2.0.
     pub amount_paid: f64,
     /// Exact base-10 amount paid, straight from the engine's `Decimal`. Prefer this field for money.
     pub amount_paid_exact: String,
-    /// @deprecated Use the `amount_due_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `amountDueExact` twin; float money will be removed in 2.0.
     pub amount_due: f64,
     /// Exact base-10 amount due, straight from the engine's `Decimal`. Prefer this field for money.
     pub amount_due_exact: String,
@@ -11488,27 +11560,27 @@ impl TryFrom<stateset_core::Bill> for BillOutput {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ApAgingSummaryOutput {
-    /// @deprecated Use the `current_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `currentExact` twin; float money will be removed in 2.0.
     pub current: f64,
     /// Exact base-10 current, straight from the engine's `Decimal`. Prefer this field for money.
     pub current_exact: String,
-    /// @deprecated Use the `days_1_30_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `days130Exact` twin; float money will be removed in 2.0.
     pub days_1_30: f64,
     /// Exact base-10 days 1 30, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_1_30_exact: String,
-    /// @deprecated Use the `days_31_60_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `days3160Exact` twin; float money will be removed in 2.0.
     pub days_31_60: f64,
     /// Exact base-10 days 31 60, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_31_60_exact: String,
-    /// @deprecated Use the `days_61_90_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `days6190Exact` twin; float money will be removed in 2.0.
     pub days_61_90: f64,
     /// Exact base-10 days 61 90, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_61_90_exact: String,
-    /// @deprecated Use the `days_over_90_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `daysOver90Exact` twin; float money will be removed in 2.0.
     pub days_over_90: f64,
     /// Exact base-10 days over 90, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_over_90_exact: String,
-    /// @deprecated Use the `total_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
     /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_exact: String,
@@ -11803,27 +11875,27 @@ impl AccountsPayable {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ArAgingSummaryOutput {
-    /// @deprecated Use the `current_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `currentExact` twin; float money will be removed in 2.0.
     pub current: f64,
     /// Exact base-10 current, straight from the engine's `Decimal`. Prefer this field for money.
     pub current_exact: String,
-    /// @deprecated Use the `days_1_30_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `days130Exact` twin; float money will be removed in 2.0.
     pub days_1_30: f64,
     /// Exact base-10 days 1 30, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_1_30_exact: String,
-    /// @deprecated Use the `days_31_60_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `days3160Exact` twin; float money will be removed in 2.0.
     pub days_31_60: f64,
     /// Exact base-10 days 31 60, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_31_60_exact: String,
-    /// @deprecated Use the `days_61_90_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `days6190Exact` twin; float money will be removed in 2.0.
     pub days_61_90: f64,
     /// Exact base-10 days 61 90, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_61_90_exact: String,
-    /// @deprecated Use the `days_over_90_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `daysOver90Exact` twin; float money will be removed in 2.0.
     pub days_over_90: f64,
     /// Exact base-10 days over 90, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_over_90_exact: String,
-    /// @deprecated Use the `total_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
     /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_exact: String,
@@ -11873,7 +11945,7 @@ pub struct CreditMemoOutput {
     pub id: String,
     pub credit_memo_number: String,
     pub customer_id: String,
-    /// @deprecated Use the `amount_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `amountExact` twin; float money will be removed in 2.0.
     pub amount: f64,
     /// Exact base-10 amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub amount_exact: String,
@@ -12054,27 +12126,27 @@ pub struct ItemCostOutput {
     pub id: String,
     pub sku: String,
     pub cost_method: String,
-    /// @deprecated Use the `standard_cost_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `standardCostExact` twin; float money will be removed in 2.0.
     pub standard_cost: f64,
     /// Exact base-10 standard cost, straight from the engine's `Decimal`. Prefer this field for money.
     pub standard_cost_exact: String,
-    /// @deprecated Use the `average_cost_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `averageCostExact` twin; float money will be removed in 2.0.
     pub average_cost: f64,
     /// Exact base-10 average cost, straight from the engine's `Decimal`. Prefer this field for money.
     pub average_cost_exact: String,
-    /// @deprecated Use the `last_cost_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `lastCostExact` twin; float money will be removed in 2.0.
     pub last_cost: f64,
     /// Exact base-10 last cost, straight from the engine's `Decimal`. Prefer this field for money.
     pub last_cost_exact: String,
-    /// @deprecated Use the `material_cost_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `materialCostExact` twin; float money will be removed in 2.0.
     pub material_cost: f64,
     /// Exact base-10 material cost, straight from the engine's `Decimal`. Prefer this field for money.
     pub material_cost_exact: String,
-    /// @deprecated Use the `labor_cost_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `laborCostExact` twin; float money will be removed in 2.0.
     pub labor_cost: f64,
     /// Exact base-10 labor cost, straight from the engine's `Decimal`. Prefer this field for money.
     pub labor_cost_exact: String,
-    /// @deprecated Use the `overhead_cost_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `overheadCostExact` twin; float money will be removed in 2.0.
     pub overhead_cost: f64,
     /// Exact base-10 overhead cost, straight from the engine's `Decimal`. Prefer this field for money.
     pub overhead_cost_exact: String,
@@ -12227,15 +12299,15 @@ pub struct CreateCreditAccountInput {
 pub struct CreditAccountOutput {
     pub id: String,
     pub customer_id: String,
-    /// @deprecated Use the `credit_limit_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `creditLimitExact` twin; float money will be removed in 2.0.
     pub credit_limit: f64,
     /// Exact base-10 credit limit, straight from the engine's `Decimal`. Prefer this field for money.
     pub credit_limit_exact: String,
-    /// @deprecated Use the `credit_used_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `creditUsedExact` twin; float money will be removed in 2.0.
     pub credit_used: f64,
     /// Exact base-10 credit used, straight from the engine's `Decimal`. Prefer this field for money.
     pub credit_used_exact: String,
-    /// @deprecated Use the `credit_available_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `creditAvailableExact` twin; float money will be removed in 2.0.
     pub credit_available: f64,
     /// Exact base-10 credit available, straight from the engine's `Decimal`. Prefer this field for money.
     pub credit_available_exact: String,
@@ -12271,7 +12343,7 @@ impl TryFrom<stateset_core::CreditAccount> for CreditAccountOutput {
 pub struct CreditCheckOutput {
     pub approved: bool,
     pub reason: Option<String>,
-    /// @deprecated Use the `available_credit_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `availableCreditExact` twin; float money will be removed in 2.0.
     pub available_credit: f64,
     /// Exact base-10 available credit, straight from the engine's `Decimal`. Prefer this field for money.
     pub available_credit_exact: String,
@@ -12503,7 +12575,7 @@ pub struct BackorderSummaryOutput {
     pub total_backorders: i32,
     pub critical_count: i32,
     pub overdue_count: i32,
-    /// @deprecated Use the `total_value_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalValueExact` twin; float money will be removed in 2.0.
     pub total_value: f64,
     /// Exact base-10 total value, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_value_exact: String,
@@ -12696,7 +12768,7 @@ pub struct GlAccountOutput {
     pub account_number: String,
     pub name: String,
     pub account_type: String,
-    /// @deprecated Use the `balance_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `balanceExact` twin; float money will be removed in 2.0.
     pub balance: f64,
     /// Exact base-10 balance, straight from the engine's `Decimal`. Prefer this field for money.
     pub balance_exact: String,
@@ -12750,11 +12822,11 @@ impl From<stateset_core::JournalEntry> for JournalEntryOutput {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TrialBalanceOutput {
     pub as_of_date: String,
-    /// @deprecated Use the `total_debits_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalDebitsExact` twin; float money will be removed in 2.0.
     pub total_debits: f64,
     /// Exact base-10 total debits, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_debits_exact: String,
-    /// @deprecated Use the `total_credits_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalCreditsExact` twin; float money will be removed in 2.0.
     pub total_credits: f64,
     /// Exact base-10 total credits, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_credits_exact: String,
@@ -12784,15 +12856,15 @@ impl TryFrom<stateset_core::TrialBalance> for TrialBalanceOutput {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct BalanceSheetOutput {
     pub as_of_date: String,
-    /// @deprecated Use the `total_assets_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalAssetsExact` twin; float money will be removed in 2.0.
     pub total_assets: f64,
     /// Exact base-10 total assets, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_assets_exact: String,
-    /// @deprecated Use the `total_liabilities_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalLiabilitiesExact` twin; float money will be removed in 2.0.
     pub total_liabilities: f64,
     /// Exact base-10 total liabilities, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_liabilities_exact: String,
-    /// @deprecated Use the `total_equity_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalEquityExact` twin; float money will be removed in 2.0.
     pub total_equity: f64,
     /// Exact base-10 total equity, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_equity_exact: String,
@@ -12823,15 +12895,15 @@ impl TryFrom<stateset_core::BalanceSheet> for BalanceSheetOutput {
 pub struct IncomeStatementOutput {
     pub period_start: String,
     pub period_end: String,
-    /// @deprecated Use the `total_revenue_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalRevenueExact` twin; float money will be removed in 2.0.
     pub total_revenue: f64,
     /// Exact base-10 total revenue, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_revenue_exact: String,
-    /// @deprecated Use the `total_expenses_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `totalExpensesExact` twin; float money will be removed in 2.0.
     pub total_expenses: f64,
     /// Exact base-10 total expenses, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_expenses_exact: String,
-    /// @deprecated Use the `net_income_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `netIncomeExact` twin; float money will be removed in 2.0.
     pub net_income: f64,
     /// Exact base-10 net income, straight from the engine's `Decimal`. Prefer this field for money.
     pub net_income_exact: String,
@@ -13488,7 +13560,7 @@ pub struct X402IntentOutput {
     pub payer_address: String,
     pub payee_address: String,
     pub amount: i64,
-    /// @deprecated Use the `amount_decimal_exact` twin; float money will be removed in 2.0.
+    /// @deprecated Use the `amountDecimalExact` twin; float money will be removed in 2.0.
     pub amount_decimal: f64,
     /// Exact base-10 amount decimal, straight from the engine's `Decimal`. Prefer this field for money.
     pub amount_decimal_exact: String,
@@ -26496,4 +26568,106 @@ pub async fn test_panic_async(message: Option<String>) -> Result<()> {
 pub async fn test_panic_async_unguarded() -> Result<()> {
     tokio::task::yield_now().await;
     panic!("unguarded async panic")
+}
+
+/// Feed a value the `f64` narrowing cannot represent through
+/// [`to_f64_checked`], so `test/money-exactness.js` can assert the failure
+/// reaches JavaScript as `code: 'INTERNAL'` naming the field, rather than as a
+/// silent `NaN`.
+///
+/// A non-finite `f64` is the only input that actually reaches the failure arm
+/// today — `Decimal::to_f64` is total, `Decimal::MAX` included — so that is what
+/// this probe sends. The field label is the caller's, to prove the message
+/// carries it.
+#[cfg(feature = "test-panic")]
+#[napi(js_name = "__testMoneyNotRepresentable")]
+pub fn test_money_not_representable(field: String) -> Result<f64> {
+    guard(|| to_f64_checked(f64::NAN, &format!("money value {field}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{money_input, money_pair, optional_money_input, to_f64_checked};
+    use rust_decimal::Decimal;
+
+    /// `Decimal::to_f64` — which `TryFrom<Decimal> for f64` delegates to — has
+    /// no reachable `None` arm, so the conversion cannot fail for any money the
+    /// engine can hold. This pins that at the extreme, and pins the reason the
+    /// `_exact` twin exists: at `Decimal::MAX` the `f64` half has thrown away
+    /// eleven significant digits while the exact half still has all 29.
+    #[test]
+    fn decimal_max_is_representable() {
+        let (approx, exact) = money_pair(Decimal::MAX, "test value").expect("MAX converts");
+        assert!(approx.is_finite(), "Decimal::MAX must narrow to a finite f64, got {approx}");
+        assert_eq!(exact, "79228162514264337593543950335");
+        assert_ne!(
+            exact,
+            format!("{approx:.0}"),
+            "the f64 half is expected to be lossy here — that is the point of the twin"
+        );
+    }
+
+    #[test]
+    fn decimal_min_is_representable() {
+        let (approx, exact) = money_pair(Decimal::MIN, "test value").expect("MIN converts");
+        assert!(approx.is_finite());
+        assert_eq!(exact, "-79228162514264337593543950335");
+    }
+
+    /// The reachable failure: a value that is already `NaN` or infinite when it
+    /// arrives must not be handed to JavaScript as a number.
+    #[test]
+    fn non_finite_is_rejected_with_the_field_name() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let err = to_f64_checked(bad, "sales total revenue").expect_err("must reject");
+            assert!(
+                err.reason.contains("sales total revenue"),
+                "the error must name the field, got {}",
+                err.reason
+            );
+            assert!(err.reason.contains("INTERNAL"), "coded INTERNAL, got {}", err.reason);
+        }
+    }
+
+    /// The exact half keeps the engine's scale, which is what makes it exact:
+    /// `0.30` stays two decimal places rather than collapsing to `0.3`, and a
+    /// sum that a float would render as `0.30000000000000004` renders as
+    /// `"0.30"`.
+    #[test]
+    fn money_pair_renders_the_exact_scale() {
+        let sum = Decimal::new(10, 2) + Decimal::new(20, 2);
+        let (approx, exact) = money_pair(sum, "test value").expect("converts");
+        assert_eq!(exact, "0.30");
+        assert!((approx - 0.3).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn money_input_prefers_the_exact_string() {
+        // 19.99 is not representable in binary floating point; the string is.
+        let from_float = money_input(None, 19.99, "unit price").expect("float parses");
+        let from_exact = money_input(Some("19.99"), 0.0, "unit price").expect("string parses");
+        assert_eq!(from_exact.to_string(), "19.99");
+        // The exact string beats the float even when both are supplied.
+        let both = money_input(Some("19.99"), 1.0, "unit price").expect("string wins");
+        assert_eq!(both, from_exact);
+        assert_eq!(both.to_string(), "19.99");
+        assert_eq!(from_float.to_string(), "19.99", "sanity: from_f64 rounds to the same value");
+    }
+
+    #[test]
+    fn money_input_carries_precision_no_f64_can_hold() {
+        // 28 significant digits: `Decimal::from_f64` cannot produce this.
+        let exact = "1234567890123456789012.3456";
+        let parsed = money_input(Some(exact), 0.0, "unit price").expect("parses");
+        assert_eq!(parsed.to_string(), exact);
+    }
+
+    #[test]
+    fn optional_money_input_keeps_absence() {
+        assert_eq!(optional_money_input(None, None, "unit price").expect("ok"), None);
+        assert_eq!(
+            optional_money_input(Some("2.50"), None, "unit price").expect("ok"),
+            Some(Decimal::new(250, 2))
+        );
+    }
 }

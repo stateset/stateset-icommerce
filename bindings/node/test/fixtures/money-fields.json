@@ -1,0 +1,378 @@
+{
+  "$comment": [
+    "The money census for the Node binding's output surface, maintained by hand.",
+    "test/money-exactness.js reads it and asserts that",
+    "(a) every field listed under `money` has a `<field>Exact` string twin in the",
+    "generated index.d.ts, and",
+    "(b) every f64 field on every `*Output` struct in src/lib.rs appears here as",
+    "either money or notMoney.",
+    "So a new float money field without a twin fails, and any new float output",
+    "field fails until someone decides which it is.",
+    "`notMoney` holds rates, percentages, scores, quantities, distances and",
+    "durations: values that are not currency amounts and need no exact twin."
+  ],
+  "twinSuffix": "Exact",
+  "money": {
+    "OrderItemOutput": [
+      "total",
+      "unitPrice"
+    ],
+    "OrderOutput": [
+      "totalAmount"
+    ],
+    "ProductVariantOutput": [
+      "compareAtPrice",
+      "price"
+    ],
+    "PaymentOutput": [
+      "amount"
+    ],
+    "RefundOutput": [
+      "amount"
+    ],
+    "CartItemOutput": [
+      "discountAmount",
+      "originalPrice",
+      "taxAmount",
+      "total",
+      "unitPrice"
+    ],
+    "CartOutput": [
+      "discountAmount",
+      "grandTotal",
+      "shippingAmount",
+      "subtotal",
+      "taxAmount"
+    ],
+    "CheckoutResultOutput": [
+      "totalCharged"
+    ],
+    "PurchaseOrderOutput": [
+      "subtotal",
+      "total"
+    ],
+    "InvoiceOutput": [
+      "amountPaid",
+      "subtotal",
+      "taxAmount",
+      "total"
+    ],
+    "ShippingRateOutput": [
+      "price"
+    ],
+    "SalesSummaryOutput": [
+      "averageOrderValue",
+      "totalRevenue"
+    ],
+    "RevenueByPeriodOutput": [
+      "revenue"
+    ],
+    "TopProductOutput": [
+      "revenue"
+    ],
+    "ProductPerformanceOutput": [
+      "previousRevenue",
+      "revenue"
+    ],
+    "CustomerMetricsOutput": [
+      "averageLifetimeValue"
+    ],
+    "TopCustomerOutput": [
+      "averageOrderValue",
+      "totalSpent"
+    ],
+    "InventoryHealthOutput": [
+      "totalValue"
+    ],
+    "RevenueForecastOutput": [
+      "forecastedRevenue",
+      "lowerBound",
+      "upperBound"
+    ],
+    "ReturnMetricsOutput": [
+      "totalRefunded"
+    ],
+    "ConversionResultOutput": [
+      "convertedAmount",
+      "originalAmount"
+    ],
+    "SubscriptionPlanOutput": [
+      "discountAmount",
+      "price",
+      "setupFee"
+    ],
+    "SubscriptionOutput": [
+      "discountAmount",
+      "price"
+    ],
+    "BillingCycleOutput": [
+      "discount",
+      "subtotal",
+      "tax",
+      "total"
+    ],
+    "PromotionOutput": [
+      "fixedAmountOff",
+      "maxDiscountAmount"
+    ],
+    "ApplyPromotionsOutput": [
+      "discountedSubtotal",
+      "finalShipping",
+      "grandTotal",
+      "originalShipping",
+      "originalSubtotal",
+      "shippingDiscount",
+      "totalDiscount"
+    ],
+    "AppliedPromotionOutput": [
+      "discountAmount"
+    ],
+    "PromotionUsageOutput": [
+      "discountAmount"
+    ],
+    "TaxRateOutput": [
+      "fixedAmount"
+    ],
+    "TaxBreakdownOutput": [
+      "taxAmount",
+      "taxableAmount"
+    ],
+    "TaxDetailOutput": [
+      "amount"
+    ],
+    "LineItemTaxOutput": [
+      "taxAmount",
+      "taxableAmount"
+    ],
+    "ExemptionDetailsOutput": [
+      "amountExempt",
+      "taxSaved"
+    ],
+    "JurisdictionSummaryOutput": [
+      "totalTax"
+    ],
+    "TaxCalculationOutput": [
+      "shippingTax",
+      "subtotal",
+      "total",
+      "totalTax"
+    ],
+    "BillOutput": [
+      "amountDue",
+      "amountPaid",
+      "totalAmount"
+    ],
+    "ApAgingSummaryOutput": [
+      "current",
+      "days130",
+      "days3160",
+      "days6190",
+      "daysOver90",
+      "total"
+    ],
+    "ArAgingSummaryOutput": [
+      "current",
+      "days130",
+      "days3160",
+      "days6190",
+      "daysOver90",
+      "total"
+    ],
+    "CreditMemoOutput": [
+      "amount"
+    ],
+    "ItemCostOutput": [
+      "averageCost",
+      "laborCost",
+      "lastCost",
+      "materialCost",
+      "overheadCost",
+      "standardCost"
+    ],
+    "CreditAccountOutput": [
+      "creditAvailable",
+      "creditLimit",
+      "creditUsed"
+    ],
+    "CreditCheckOutput": [
+      "availableCredit"
+    ],
+    "BackorderSummaryOutput": [
+      "totalValue"
+    ],
+    "GlAccountOutput": [
+      "balance"
+    ],
+    "TrialBalanceOutput": [
+      "totalCredits",
+      "totalDebits"
+    ],
+    "BalanceSheetOutput": [
+      "totalAssets",
+      "totalEquity",
+      "totalLiabilities"
+    ],
+    "IncomeStatementOutput": [
+      "netIncome",
+      "totalExpenses",
+      "totalRevenue"
+    ],
+    "X402IntentOutput": [
+      "amountDecimal"
+    ]
+  },
+  "notMoney": {
+    "ProductPerformanceOutput": [
+      "revenueGrowthPercent",
+      "unitsGrowthPercent"
+    ],
+    "CustomerMetricsOutput": [
+      "averageOrdersPerCustomer"
+    ],
+    "RevenueForecastOutput": [
+      "confidenceLevel"
+    ],
+    "ReturnMetricsOutput": [
+      "returnRatePercent"
+    ],
+    "ConversionResultOutput": [
+      "inverseRate",
+      "rate"
+    ],
+    "SubscriptionPlanOutput": [
+      "discountPercent"
+    ],
+    "SubscriptionOutput": [
+      "discountPercent"
+    ],
+    "PromotionOutput": [
+      "getDiscountPercent",
+      "percentageOff"
+    ],
+    "TaxRateOutput": [
+      "rate",
+      "thresholdMax",
+      "thresholdMin"
+    ],
+    "TaxBreakdownOutput": [
+      "rate"
+    ],
+    "TaxDetailOutput": [
+      "rate"
+    ],
+    "LineItemTaxOutput": [
+      "effectiveRate"
+    ],
+    "JurisdictionSummaryOutput": [
+      "totalRate"
+    ],
+    "LowStockItemOutput": [
+      "allocated",
+      "available",
+      "averageDailySales",
+      "daysOfStock",
+      "onHand",
+      "reorderPoint"
+    ],
+    "DemandForecastOutput": [
+      "averageDailyDemand",
+      "confidence",
+      "currentStock",
+      "forecastedDemand",
+      "recommendedReorderQty"
+    ],
+    "FulfillmentMetricsOutput": [
+      "avgTimeToDeliverHours",
+      "avgTimeToShipHours",
+      "onTimeDeliveryPercent",
+      "onTimeShippingPercent"
+    ],
+    "ExchangeRateOutput": [
+      "rate"
+    ],
+    "BomComponentOutput": [
+      "quantity"
+    ],
+    "WorkOrderOutput": [
+      "quantityCompleted",
+      "quantityToBuild"
+    ],
+    "NcrOutput": [
+      "quantityAffected"
+    ],
+    "QualityHoldOutput": [
+      "quantityHeld"
+    ],
+    "LotOutput": [
+      "quantityAvailable",
+      "quantityProduced",
+      "quantityReserved"
+    ],
+    "PickTaskOutput": [
+      "quantityPicked",
+      "quantityRequested"
+    ],
+    "BackorderOutput": [
+      "quantityFulfilled",
+      "quantityOrdered",
+      "quantityRemaining"
+    ],
+    "VectorSearchResultOutput": [
+      "distance",
+      "score"
+    ],
+    "ProductSearchResultOutput": [
+      "distance",
+      "score"
+    ],
+    "CustomerSearchResultOutput": [
+      "distance",
+      "score"
+    ],
+    "OrderSearchResultOutput": [
+      "distance",
+      "score"
+    ],
+    "InventorySearchResultOutput": [
+      "distance",
+      "score"
+    ],
+    "ReviewSummaryOutput": [
+      "averageRating"
+    ],
+    "LoyaltyTierOutput": [
+      "multiplier"
+    ],
+    "FraudSignalOutput": [
+      "score"
+    ],
+    "FraudAssessmentOutput": [
+      "riskScore"
+    ],
+    "FraudRuleOutput": [
+      "threshold"
+    ],
+    "SearchFieldOutput": [
+      "weight"
+    ],
+    "BoostRuleOutput": [
+      "boostFactor"
+    ],
+    "UsStateTaxInfoOutput": [
+      "stateRate"
+    ],
+    "EuVatInfoOutput": [
+      "parkingRate",
+      "reducedRate",
+      "standardRate",
+      "superReducedRate"
+    ],
+    "CanadianTaxInfoOutput": [
+      "gstRate",
+      "hstRate",
+      "pstRate",
+      "qstRate",
+      "totalRate"
+    ]
+  }
+}
