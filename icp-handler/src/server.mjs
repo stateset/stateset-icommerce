@@ -494,17 +494,30 @@ async function handleSubmitIntent(req, res) {
   // `seller` drawing its own held funds and an unchecked signer could request
   // a payout in somebody else's name. This holds in EVERY trust mode: demo
   // trust relaxes who *delegated* an Agent, never who *signed* a message.
+  //
+  // Presence is checked BEFORE the comparison. Two absent fields are not a
+  // match: an Intent carrying neither `signature.kid` nor an acting party
+  // satisfied `undefined === undefined`, and — with no spec-shaped AID to
+  // re-derive and no operator key to check against — went on to be served as
+  // a signer with no identity at all. On a permissive handler that returned a
+  // merchant-signed payout authorization to an anonymous caller.
   const signerAid = signature.kid;
+  const actingField = actingPartyField(intent.verb);
+  if (typeof signerAid !== 'string' || signerAid.length === 0) {
+    return reply(res, 400, err('format.missing_field', 'signature.kid is required'));
+  }
+  if (typeof intent[actingField] !== 'string' || intent[actingField].length === 0) {
+    return reply(res, 400, err('format.missing_field', `Intent.${actingField} is required`));
+  }
   if (intent.verb === 'purchase.create') {
     if (signerAid !== intent.buyer) {
       return reply(res, 401, err('auth.buyer_mismatch', 'intent signer must be its buyer'));
     }
   } else if (signerAid !== actingAgent(intent)) {
-    const field = actingPartyField(intent.verb);
     return reply(
       res,
       401,
-      err('auth.acting_party_mismatch', `intent signer must be its ${field}`),
+      err('auth.acting_party_mismatch', `intent signer must be its ${actingField}`),
     );
   }
   let edPubRaw;

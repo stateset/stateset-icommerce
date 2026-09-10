@@ -168,7 +168,7 @@ own held funds, so the Intent carries `seller`/`platform` — and a handler
 checks the binding against that acting party, not `buyer`. `payout()` works
 under the default binding with trust enforced.
 
-### Methods (all 7 ICP verbs)
+### Methods (all 8 verbs this client emits)
 
 | Method | Returns | Verb |
 |---|---|---|
@@ -181,8 +181,10 @@ under the default binding with trust enforced.
 | `client.return_(merchant, settler, original_settlement_id, items, desired_outcome, ...)` | signed ReturnAuthorization | purchase.return |
 | `client.request_quote(merchant, settler, items, ...)` | signed PriceProposal | quote.request |
 | `client.payout(platform, settler, amount, destination, ...)` | signed PayoutAuthorization | payout.request |
+| `client.register_webhook(merchant, settler, url=..., type="webhook", event_filters=...)` | signed ChannelRegistration | channel.register |
 | `client.observe(escrow_id)` | iterator over EscrowEvents (SSE) | (real-time) |
 | `client.settlement(settlement_id)` | SettlementReceipt | (audit) |
+| `client.fetch_channel_events(channel_id, since=0)` | verified EscrowEvent envelopes | (recovery) |
 
 **Every merchant response is independently signature-verified** against
 the public key from the merchant's `.well-known/icp` discovery

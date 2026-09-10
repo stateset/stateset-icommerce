@@ -80,19 +80,24 @@ function payoutIntent(sellerAid) {
   };
 }
 
-async function submit(intent, signer) {
+// `kid` defaults to the signer's own AID; pass `kid: undefined` to omit it
+// (or `x: null` to withhold the X25519 half, which is what lets a caller with
+// no AID slip past §4.2 re-derivation).
+async function submit(intent, signer, options = {}) {
+  // `Object.hasOwn`, not a destructuring default: `{ kid = signer.aid }` would
+  // quietly restore the AID for the very cases that omit it on purpose.
+  const kid = Object.hasOwn(options, 'kid') ? options.kid : signer.aid;
+  const x = Object.hasOwn(options, 'x') ? options.x : signer.xPub;
+  const signature = { alg: 'ed25519', sig: signEd25519(canonicalJson(intent), signer.key) };
+  if (kid !== undefined) signature.kid = kid;
   const response = await fetch(`${baseUrl}/icp/v1/intents`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       intent,
-      signature: {
-        alg: 'ed25519',
-        kid: signer.aid,
-        sig: signEd25519(canonicalJson(intent), signer.key),
-      },
+      signature,
       _pubkey_hex: signer.edPub.toString('hex'),
-      _x_pubkey_hex: signer.xPub.toString('hex'),
+      ...(x ? { _x_pubkey_hex: x.toString('hex') } : {}),
     }),
   });
   return { status: response.status, json: await response.json() };
@@ -117,8 +122,49 @@ test('a payout that names no seller at all is refused, not defaulted', async () 
   const intent = payoutIntent(seller.aid);
   delete intent.seller;
   const { status, json } = await submit(intent, stranger);
-  assert.equal(status, 401);
-  assert.equal(json.code, 'auth.acting_party_mismatch');
+  assert.equal(status, 400, JSON.stringify(json));
+  assert.equal(json.code, 'format.missing_field');
+  assert.match(json.message, /seller/);
+});
+
+// Two ABSENT fields are not a match. The acting-party comparison alone was
+// satisfied by `undefined === undefined`, and nothing downstream caught it:
+// with no `_x_pubkey_hex` there is no AID to re-derive, a permissive handler
+// requires no registration and no delegation, and the payout stub happily
+// opened a fresh balance keyed on `undefined`. The probe below returned a
+// merchant-signed authorization for thousands of dollars to a caller who
+// named no identity whatsoever.
+test('an Intent naming NO signer and NO acting party is refused', async () => {
+  const intent = payoutIntent(seller.aid);
+  delete intent.seller;
+  const { status, json } = await submit(intent, stranger, { kid: undefined, x: null });
+  assert.notEqual(status, 200);
+  assert.equal(status, 400, JSON.stringify(json));
+  assert.equal(json.code, 'format.missing_field');
+  assert.match(json.message, /signature\.kid/);
+  assert.equal(json.authorization, undefined);
+});
+
+test('an Intent naming an acting party but no signer is refused', async () => {
+  const { status, json } = await submit(payoutIntent(seller.aid), stranger, {
+    kid: undefined,
+    x: null,
+  });
+  assert.equal(status, 400, JSON.stringify(json));
+  assert.equal(json.code, 'format.missing_field');
+  assert.match(json.message, /signature\.kid/);
+});
+
+test('an empty-string signer or acting party is not a signer either', async () => {
+  const blankKid = await submit(payoutIntent(seller.aid), stranger, { kid: '', x: null });
+  assert.equal(blankKid.status, 400);
+  assert.equal(blankKid.json.code, 'format.missing_field');
+  const blankSeller = payoutIntent(seller.aid);
+  blankSeller.seller = '';
+  const { status, json } = await submit(blankSeller, stranger);
+  assert.equal(status, 400, JSON.stringify(json));
+  assert.equal(json.code, 'format.missing_field');
+  assert.match(json.message, /seller/);
 });
 
 test('the buyer-side check keeps its own code, so consumers do not move', async () => {
