@@ -141,6 +141,14 @@ impl PrincipalBindingParams {
     ///
     /// Normalized to the millisecond `…Z` form every SDK emits, so the same
     /// instant spelled three ways signs the same bytes.
+    ///
+    /// `Z` and a numeric `±HH:MM` / `±HHMM` offset are both read as written.
+    /// A string carrying **no offset at all** (`2026-01-01T00:00:00`) is read
+    /// as **UTC**, matching the Python SDK's naive-`datetime` handling — not
+    /// as local time, which is what `JavaScript`'s `new Date()` would make of
+    /// the same string. Pass an explicit offset if the distinction matters:
+    /// an expiry that means a different instant in a different SDK is an
+    /// expiry two parties disagree about.
     #[must_use]
     pub fn expires_at(mut self, expires_at: impl Into<String>) -> Self {
         self.expires_at = Some(expires_at.into());

@@ -532,7 +532,8 @@ fn enforcing_handler_accepts_a_real_binding_and_rejects_the_alternatives() {
     let narrow = Client::new(&url, identity.clone())
         .with_principal_identity(PRINCIPAL, principal_key.clone())
         .expect("principal identity")
-        .with_verbs(["inventory.query"]);
+        .with_verbs(["inventory.query"])
+        .expect("no pre-signed binding is configured");
     assert_eq!(
         icp_code(narrow.purchase(&merchant, &settler, purchase_items(), max_total())),
         "delegation.scope_mismatch"

@@ -58,6 +58,21 @@ the `signature` field removed — the rule the reference handler's
 `checkDelegation` applies — so every other field is covered, and mutating one
 after signing invalidates the signature.
 
+The four settings that shape a binding this client signs — `with_verbs`,
+`with_max_per_intent`, `with_max_per_payout`, `with_revocation_url` — are a
+configuration error once `with_principal_binding` is set, rather than a silent
+no-op. A binding signed elsewhere is sent verbatim, and its authority is
+covered by the principal's signature: narrow it where it is signed.
+
+**Expiry and time zones.** `PrincipalBindingParams::expires_at` takes any
+RFC 3339 string and re-emits it in the millisecond `…Z` form every SDK
+produces, so the same instant spelled three ways signs identical bytes. `Z`
+and a numeric `±HH:MM` / `±HHMM` offset are read as written; a string with **no
+offset at all** (`2026-01-01T00:00:00`) is read as **UTC**, matching the Python
+SDK. JavaScript's `new Date()` reads that same string as *local* time, so pass
+an explicit offset when the difference would matter — an expiry two SDKs
+disagree about is a delegation that outlives itself somewhere.
+
 ## Tests
 
 ```bash

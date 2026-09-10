@@ -153,6 +153,14 @@ The signing input is `canonical_json(binding)` with the `signature` field
 removed, so every other field is covered. Mutating one after signing yields
 `delegation.signature_invalid`.
 
+**Expiry and time zones.** An `expires_at` string is re-emitted in the
+millisecond `…Z` form every SDK produces, so the same instant spelled several
+ways signs identical bytes. `Z` and a numeric offset are read as written; a
+naive string with **no offset at all** (`2026-01-01T00:00:00`) is read as
+**UTC**. The Rust SDK follows this rule; JavaScript's `new Date()` reads the
+same string as *local* time, so pass an explicit offset when the difference
+would matter.
+
 **Cross-SDK parity.** Given the *same inputs*, this function and the
 JavaScript `signPrincipalBinding` produce byte-identical canonical bytes and
 therefore the same signature — including expiry normalisation, where an
