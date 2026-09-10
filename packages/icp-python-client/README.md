@@ -113,6 +113,45 @@ receipt = client.settlement("icp_set_...")
 | `verbs` | `list[str]?` | PrincipalBinding `authority.verbs`. Default: all 7 ICP-1.0 verbs. |
 | `max_per_intent` | `dict?` | Authority cap. Default: $10,000 USDC. |
 | `revocation_url` | `str?` | Where revocation can be checked. |
+| `principal_identity` | `PrincipalIdentity?` | The principal's Ed25519 key. The client signs a real PrincipalBinding on every Intent. |
+| `principal_binding` | `dict?` | A binding signed elsewhere (offline/KMS). Must delegate this client's AID. |
+
+### Delegation — `principal_binding`
+
+An Intent says "this Agent acts for that principal". A handler running in
+enforcing trust mode checks it against the principal key its **operator**
+registered (`ICP_PRINCIPAL_KEYS_JSON`), never against key material from the
+request — so the client needs the principal's signature.
+
+```python
+from icp_client import ICPClient, generate_principal_identity, sign_principal_binding
+
+# (a) the client signs each binding — fine for tests and single-tenant agents
+principal_identity = generate_principal_identity()   # persist ed25519_seed
+client = ICPClient.create(handler_url=..., principal=..., principal_identity=principal_identity)
+
+# give the merchant: ICP_PRINCIPAL_KEYS_JSON={"did:web:my-store.example": "<hex>"}
+principal_identity.ed25519_pubkey.hex()
+
+# (b) sign offline / in a KMS and hand the Agent only the finished binding —
+#     the production shape, since the Agent never holds the principal's key
+binding = sign_principal_binding(
+    principal="did:web:my-store.example",
+    agent=identity.aid,
+    principal_identity=principal_identity,
+    verbs=["purchase.create"],
+)
+agent = ICPClient.create(handler_url=..., principal=..., identity=identity, principal_binding=binding)
+```
+
+With **neither**, Intents carry no `principal_binding` at all and the handler
+decides: an enforcing one answers `delegation.required`. The client never
+fabricates a self-signed binding — a delegation an Agent could mint for
+itself proves nothing.
+
+The signing input is `canonical_json(binding)` with the `signature` field
+removed, byte-identical to the JavaScript SDK, so every other field is
+covered. Mutating one after signing yields `delegation.signature_invalid`.
 
 ### Methods (all 7 ICP verbs)
 
