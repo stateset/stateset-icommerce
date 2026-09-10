@@ -37,12 +37,15 @@ humans).
 | Namespace   | Meaning                                                |
 |-------------|--------------------------------------------------------|
 | `auth`      | Identity/AID resolution and principal-binding errors  |
+| `delegation`| PrincipalBinding verification (reference-handler refinement of `auth.principal_binding_*`) |
 | `signature` | Cryptographic signature validation errors             |
 | `replay`    | Nonce reuse and timestamp window violations           |
 | `policy`    | Counterparty's policy rejection (allowlist, ceilings) |
+| `quote`     | PriceProposal referencing errors (`from_proposal_id`, ICPIP-0006); the codes are listed with `policy` below |
 | `format`    | Wire format / schema validation errors                |
 | `version`   | Spec version incompatibility                          |
 | `escrow`    | Escrow state machine errors                           |
+| `inventory` | Merchant stock availability at reservation time       |
 | `settlement`| Settlement / rail errors                              |
 | `dispute`   | Dispute and arbitration errors                        |
 | `rate`      | Rate-limit and quota errors                           |
@@ -52,6 +55,7 @@ humans).
 | `channel`   | Push-channel registration / delivery errors (ICPIP-0005) |
 | `idempotency` | `purchase.create` idempotency-key conflicts (ICPIP-0006) |
 | `pagination` | `inventory.query` cursor pagination errors (ICPIP-0006) |
+| `internal`  | Counterparty-side failure with no protocol cause; the request was well-formed and authorized |
 
 ## Codes (ICP-1.0 normative)
 
@@ -60,12 +64,47 @@ humans).
 | Code                          | When emitted                                         |
 |-------------------------------|------------------------------------------------------|
 | `auth.aid_resolution_failed`  | Cannot resolve AID to a public key                   |
-| `auth.principal_binding_invalid` | PrincipalBinding signature does not verify        |
-| `auth.principal_binding_expired` | PrincipalBinding `expiry` is in the past          |
+| `auth.aid_key_mismatch`       | Supplied public key differs from the key an operator-owned source already binds to this AID |
+| `auth.aid_unregistered`       | Signer AID is neither operator-registered nor previously pinned; an operator-keyed handler does not admit caller-minted AIDs |
+| `auth.buyer_mismatch`         | `purchase.create` signer is not the Intent's `buyer` |
+| `auth.acting_party_mismatch`  | Signer of any other verb is not the Intent's acting party — its `buyer`, or its `seller` for the inverted-direction `payout.request` |
+| `auth.acceptance_invalid`     | Quote acceptance is not signed by the original buyer |
+| `auth.signer_capacity`        | Handler is at its signer-admission bound (503, not 401/403 — it is capacity, not authorization) |
+| `auth.principal_binding_invalid` | PrincipalBinding signature does not verify. *The reference handler emits the finer-grained `delegation.signature_invalid` / `delegation.signature_missing`.* |
+| `auth.principal_binding_expired` | PrincipalBinding `expiry` is in the past. *The reference handler emits `delegation.expired`.* |
 | `auth.principal_binding_revoked` | PrincipalBinding revocation endpoint says revoked |
 | `auth.authority_insufficient` | Intent value exceeds PrincipalBinding's `max_per_intent` or `max_per_period` |
 | `auth.verb_not_authorized`    | Intent verb not in PrincipalBinding's `authority.verbs` |
 | `auth.counterparty_not_allowed` | Counterparty AID not in `allowed_counterparties` |
+
+### delegation
+
+Principal delegation (§4.4) as the reference handler enforces it. These
+refine `auth.principal_binding_*`: they distinguish *no binding* from *a
+binding this handler cannot verify* from *a binding that does not cover this
+request*, which callers need in order to know whether to re-delegate, ask the
+operator to register a key, or stop. Implementations that emit only the
+ICP-1.0 `auth.principal_binding_*` codes remain conformant; a caller
+encountering a `delegation.*` code SHOULD treat it as an `auth.*` failure.
+
+A handler resolves the principal's public key from **operator configuration
+only** (`ICP_PRINCIPAL_KEYS_JSON` in the reference handler). Key material in
+the request body is never trusted — that is what `untrusted_key_material`
+refuses.
+
+| Code                              | When emitted                                              |
+|-----------------------------------|-----------------------------------------------------------|
+| `delegation.required`             | Handler requires a `principal_binding` and the Intent carries none (or none naming a principal) |
+| `delegation.principal_unknown`    | No operator-configured key for the named principal        |
+| `delegation.untrusted_key_material` | Request nominated the principal's key (e.g. `_principal_pubkey_hex`); principal keys come from operator configuration only |
+| `delegation.signature_missing`    | Binding carries no `signature.sig`                        |
+| `delegation.signature_invalid`    | Binding signature fails under the operator-configured principal key |
+| `delegation.scope_mismatch`       | Binding does not name the Intent's acting Agent (`buyer`, or `seller` for the inverted-direction `payout.request`), or its `authority.verbs` omits the Intent's verb |
+| `delegation.expired`              | Binding's `expiry` is in the past                         |
+
+The signing input is the canonical JSON of the binding with its `signature`
+field removed, so `expiry` and `authority` are covered: widening either after
+signing yields `delegation.signature_invalid`.
 
 ### signature
 
@@ -82,6 +121,7 @@ humans).
 | Code                       | When emitted                                              |
 |----------------------------|-----------------------------------------------------------|
 | `replay.nonce_seen`        | Nonce already used within the protocol window            |
+| `replay.intent_seen`       | `intent_id` already carries state from an earlier submission; Intent identity is immutable, so a fresh nonce cannot rebind it (409) |
 | `replay.expired`           | `exp` is in the past                                     |
 | `replay.window_too_long`   | `exp - iat` exceeds the spec maximum (600s for Intents, 86400s otherwise) |
 | `replay.iat_in_future`     | `iat` is more than allowed clock skew in the future      |
@@ -142,6 +182,9 @@ humans).
 | `format.bad_aid`              | AID does not match `aid:v1:z…` regex or fails Base58btc decode |
 | `format.bad_settler_id`       | SettlerID does not match `settler:<rail>.<asset>.<network>` |
 | `format.bad_money`            | `Money.amount` is not a valid decimal string         |
+| `format.invalid_money`        | Money in the request cannot be priced exactly — the reference handler's spelling of the `format.bad_money` case it detects while quoting (422, since it is the backend refusing a well-formed request) |
+| `format.bad_query_param`      | Query-string value is not of the required type or range (e.g. `?since=` is not a non-negative integer) |
+| `format.unknown_channel_type` | `channel.type` is neither `webhook` nor `sse` (422 — the merchant understood the value and refused it, rather than failing to route the request) |
 | `format.bad_currency`         | Unknown currency / not ISO 4217 + canonical tickers |
 | `format.bad_schema`           | Value does not match its JSON Schema                 |
 
@@ -174,6 +217,27 @@ humans).
 | `settlement.rail_unsupported` | Rail named in Intent not supported by this Settler    |
 | `settlement.not_found`     | `settlement_id` exists nowhere in this Settler's records |
 | `settlement.amount_mismatch` | Receipt amount does not match escrow amount            |
+| `settlement.escrow_mismatch` | Receipt names an escrow that does not belong to its `intent_id` |
+| `settlement.already_settled` | Escrow already settled under a different `settlement_id` — one escrow settles once |
+| `settlement.not_final`     | Receipt's `final_state` is not a terminal state, so it cannot be co-signed |
+
+### inventory
+
+| Code                       | When emitted                                              |
+|----------------------------|-----------------------------------------------------------|
+| `inventory.insufficient`   | Quoted stock is no longer available at reservation time — the Quote was valid when issued and someone else took the units first (409) |
+
+### internal
+
+Emitted when the counterparty failed for a reason the protocol does not model:
+the request was well-formed, authenticated and authorized, and the failure is
+the counterparty's own. It carries no diagnostic detail on purpose. A caller
+SHOULD retry with the same identity and the same Intent, which is safe because
+`intent_id` is idempotent.
+
+| Code                          | When emitted                                            |
+|-------------------------------|---------------------------------------------------------|
+| `internal.transaction_failed` | A state transition failed or was rolled back; nothing was committed (500) |
 
 ### dispute
 
@@ -208,6 +272,8 @@ humans).
 | `settler.paused`           | Settler in compliance-pause state                        |
 | `settler.por_stale`        | Settler proof-of-reserves older than allowed             |
 | `settler.por_failed`       | POR arithmetic check failed (reserves < open escrows)    |
+| `settler.key_unavailable`  | Counterparty holds no operator-configured key for the named Settler and so cannot co-sign; the key is never read from the receipt being authorized (503) |
+| `settler.key_invalid`      | Operator-configured Settler key is present but unusable (wrong length, or not Ed25519) |
 
 ### conformance
 
@@ -228,6 +294,7 @@ humans).
 | `channel.token_expired`           | SSE subscription token TTL elapsed                        |
 | `channel.event_type_unsupported`  | Filter requested an unknown event type                    |
 | `channel.url_unverified`          | Webhook URL failed verification challenge                 |
+| `channel.durable_delivery_unavailable` | Handler is running durable state with no durable delivery backend, so it refuses a channel it could not replay (503) |
 
 ### idempotency (ICPIP-0006)
 
@@ -248,13 +315,16 @@ For HTTP transports, error codes map to status codes as follows:
 
 | Code prefix    | HTTP status |
 |----------------|-------------|
-| `auth.*`       | 401 / 403   |
+| `auth.*`       | 401 / 403 (503 for `auth.signer_capacity`) |
+| `delegation.*` | 401 (signature) / 403 (missing, unknown, scope, expiry) / 400 (`untrusted_key_material`) |
 | `signature.*`  | 401         |
 | `replay.*`     | 400 (or 410 for `replay.expired`) |
 | `policy.*`     | 422 (semantic policy reject) or 403 (authorization) |
-| `format.*`     | 400 (or 404 for `format.unknown_*`) |
+| `quote.*`      | 422         |
+| `format.*`     | 400 (or 404 for `format.unknown_*`; 422 where the merchant understood the value and refused it — `format.invalid_money`, `format.unknown_channel_type`) |
 | `version.*`    | 400         |
 | `escrow.*`     | 409 (state conflict) or 404 |
+| `inventory.*`  | 409 (another buyer took the units) |
 | `settlement.*` | 404 / 500   |
 | `dispute.*`    | 409 / 403   |
 | `arbiter.*`    | 403         |
@@ -263,6 +333,7 @@ For HTTP transports, error codes map to status codes as follows:
 | `channel.*`    | 401 / 404 / 409 / 410 / 422 (see per-code table) |
 | `idempotency.*` | 409 |
 | `pagination.*` | 400 (or 410 for `pagination.cursor_expired`) |
+| `internal.*`   | 500         |
 
 ## Stability
 

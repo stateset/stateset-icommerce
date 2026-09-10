@@ -196,18 +196,24 @@ fn rust_sdk_roundtrips_against_js_handler() {
         .expect("return");
     client.verify_signed_response(&ret).expect("return signature must verify");
 
-    // 8. payout.request → authorization (verified). Payout to a synthetic seller AID.
-    //    The stub may reject for policy reasons depending on platform state; tolerate
-    //    that path explicitly while still exercising the signed request.
-    match client.payout(
+    // 8. payout.request → authorization (verified). A payout must be signed by the
+    //    seller it names — the handler binds the intent signer to the acting party
+    //    on every verb — so a second identity acts as the seller and submits its own
+    //    payout. The stub may still reject for policy reasons depending on platform
+    //    state; tolerate that path explicitly while exercising the signed request.
+    let seller_identity = Identity::generate();
+    let seller_aid = seller_identity.aid().to_string();
+    let seller_client = Client::new(&url, seller_identity);
+    seller_client.well_known().expect("seller well_known");
+    match seller_client.payout(
         &merchant_aid,
         &settler,
-        "aid:v1:zSellerExampleForIntegrationTest",
+        &seller_aid,
         &merchant_aid, // platform = merchant for the demo stub
         Money { amount: "10.00".to_string(), currency: "USDC".to_string() },
     ) {
         Ok(payout) => {
-            client.verify_signed_response(&payout).expect("payout signature must verify");
+            seller_client.verify_signed_response(&payout).expect("payout signature must verify");
         }
         Err(stateset_icp_client::Error::Icp { code, .. }) => {
             // Policy rejection is a valid handler outcome for an unknown seller; we

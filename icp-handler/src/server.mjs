@@ -119,46 +119,70 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// Trust mode.
+// Trust mode. Two states, no third.
 //
 // `enforce` is the posture of any real deployment: every Intent MUST carry a
 // principal binding, the principal's key is resolved from operator
 // configuration ONLY, and only registered or previously pinned signer AIDs are
-// admitted. A durable, operator-keyed handler enforces by default.
+// admitted. A durable, operator-keyed handler always enforces; an in-memory one
+// enforces with ICP_TRUST_MODE=enforce.
 //
-// `demo` keeps the historical permissive path for walkthroughs whose client
-// self-signs its own delegation. Selecting it requires the explicit, unambiguous
-// ICP_TRUST_MODE=demo and NOTHING else — in particular no CLI flag, since a flag
-// like the reference launcher's `--demo` means "simulated economic rails", which
-// is a completely different claim from "do not check who authorized this agent".
-// Demo trust is logged loudly at startup and once per principal, and it is NEVER
-// a production mode.
+// `permissive` is what is left: an in-memory handler with ICP_TRUST_MODE unset.
+// It checks nothing about who authorized the agent — a binding naming a
+// principal the operator never registered is waved through. That is a
+// localhost walkthrough posture and nothing else, so it announces itself
+// loudly at startup and refuses to run under NODE_ENV=production.
+//
+// There used to be a third value, ICP_TRUST_MODE=demo, which selected the
+// permissive path *explicitly* — and, being explicit, was allowed in
+// production, which is exactly what icp-docker/docker-compose.yml did.
+// "Deliberate" is not "safe": the only thing that value bought was permission
+// to publish a handler that accepts unverified delegations to the internet.
+// It is now a startup error naming its two replacements. A CLI flag never
+// selected it and never could: the reference launcher's `--demo` means
+// "simulated economic rails", a completely different claim from "do not check
+// who authorized this agent".
 // ---------------------------------------------------------------------------
 const TRUST_MODE = process.env.ICP_TRUST_MODE ?? '';
-if (TRUST_MODE && TRUST_MODE !== 'enforce' && TRUST_MODE !== 'demo') {
-  throw new Error('ICP_TRUST_MODE must be "enforce" or "demo"');
-}
-const DEMO_TRUST = TRUST_MODE === 'demo';
-const ENFORCE_TRUST = TRUST_MODE === 'enforce' || (state.isDurable() && !DEMO_TRUST);
-
-// Implicit demo trust in production is a configuration accident, not a
-// decision. An in-memory handler with no ICP_TRUST_MODE enforces nothing: it
-// accepts every `principal_binding` without checking who authorized the agent.
-// That is fine for a walkthrough on localhost and indefensible for something
-// started with NODE_ENV=production and a published port — which is exactly what
-// icp-docker/docker-compose.yml did. Demo trust must be asked for by name.
-if (!ENFORCE_TRUST && !DEMO_TRUST && process.env.NODE_ENV === 'production') {
+if (TRUST_MODE === 'demo') {
   throw new Error(
-    'icp-handler: refusing to start — NODE_ENV=production with neither durable state nor an ' +
-      'explicit ICP_TRUST_MODE, so delegations would be accepted unverified. Set ' +
-      'ICP_TRUST_MODE=enforce (with ICP_PRINCIPAL_KEYS_JSON and ICP_AGENT_KEYS_JSON) for a real ' +
-      'deployment, or ICP_TRUST_MODE=demo to accept unverified delegations deliberately.',
+    'icp-handler: ICP_TRUST_MODE=demo is no longer accepted — it started a handler that ' +
+      'accepted principal bindings WITHOUT verification, including on a published port. ' +
+      'Unset ICP_TRUST_MODE for a permissive in-memory walkthrough (localhost only; it will ' +
+      'not start under NODE_ENV=production), or set ICP_TRUST_MODE=enforce with ' +
+      'ICP_PRINCIPAL_KEYS_JSON and ICP_AGENT_KEYS_JSON for anything real. The reference ' +
+      'clients sign real bindings: see packages/icp-client signPrincipalBinding().',
   );
 }
-if (DEMO_TRUST && process.env.NODE_ENV === 'production') {
+if (TRUST_MODE && TRUST_MODE !== 'enforce') {
+  throw new Error(
+    'ICP_TRUST_MODE must be "enforce", or unset for a permissive in-memory walkthrough',
+  );
+}
+const ENFORCE_TRUST = TRUST_MODE === 'enforce' || state.isDurable();
+
+// Permissive trust in production is a configuration accident, not a decision.
+// An in-memory handler with no ICP_TRUST_MODE enforces nothing: it accepts a
+// `principal_binding` for an unregistered principal without checking who
+// authorized the agent. That is fine for a walkthrough on localhost and
+// indefensible for something started with NODE_ENV=production and a published
+// port — which is exactly what icp-docker/docker-compose.yml did.
+if (!ENFORCE_TRUST && process.env.NODE_ENV === 'production') {
+  throw new Error(
+    'icp-handler: refusing to start — NODE_ENV=production with neither durable state nor ' +
+      'ICP_TRUST_MODE=enforce, so delegations would be accepted unverified. Set ' +
+      'ICP_TRUST_MODE=enforce (with ICP_PRINCIPAL_KEYS_JSON and ICP_AGENT_KEYS_JSON) for a real ' +
+      'deployment. There is no env var that makes an unverifying handler acceptable here.',
+  );
+}
+// Printed at module evaluation rather than from the `listen` callback: an
+// operator must see this even when the port is already taken.
+if (!ENFORCE_TRUST) {
   console.error(
-    'icp-handler: DEMO TRUST MODE under NODE_ENV=production — principal bindings are accepted ' +
-      'WITHOUT verification. This is a walkthrough posture, never a production one.',
+    'icp-handler: PERMISSIVE TRUST — in-memory handler with ICP_TRUST_MODE unset. Principal ' +
+      'bindings naming a principal this operator never registered are accepted WITHOUT ' +
+      'verification, and any caller may mint a signer AID. Walkthrough posture only. Set ' +
+      'ICP_TRUST_MODE=enforce with ICP_PRINCIPAL_KEYS_JSON and ICP_AGENT_KEYS_JSON for anything real.',
   );
 }
 
@@ -189,7 +213,7 @@ const TRUSTED_AGENT_KEYS = keyRegistry('ICP_AGENT_KEYS_JSON');
 if (ENFORCE_TRUST && TRUSTED_PRINCIPAL_KEYS.size === 0) {
   console.error(
     'icp-handler: enforcing trust with an empty ICP_PRINCIPAL_KEYS_JSON — every Intent will be rejected. ' +
-      'Set ICP_PRINCIPAL_KEYS_JSON (and ICP_AGENT_KEYS_JSON), or ICP_TRUST_MODE=demo for a walkthrough.',
+      'Set ICP_PRINCIPAL_KEYS_JSON (and ICP_AGENT_KEYS_JSON), or unset ICP_TRUST_MODE for an in-memory walkthrough.',
   );
 }
 const permissiveWarned = new Set();
@@ -197,9 +221,32 @@ function warnPermissiveDelegation(principal) {
   if (permissiveWarned.size > 1_000 || permissiveWarned.has(principal)) return;
   permissiveWarned.add(principal);
   console.error(
-    `icp-handler: DEMO TRUST MODE — principal_binding for ${principal} accepted WITHOUT verification ` +
+    `icp-handler: PERMISSIVE TRUST — principal_binding for ${principal} accepted WITHOUT verification ` +
       '(no operator-configured key). Set ICP_PRINCIPAL_KEYS_JSON and ICP_TRUST_MODE=enforce for any real deployment.',
   );
+}
+
+/**
+ * The Agent an Intent is acting AS — the party a PrincipalBinding must name.
+ *
+ * Nearly every verb carries it as `buyer`. `payout.request` is
+ * inverted-direction (§6.6 / ICPIP-0004): the Agent is a seller drawing its
+ * own held funds from a platform, so the Intent carries `seller`/`platform`
+ * where the others carry `buyer`/`merchant`. Reading `buyer` unconditionally
+ * meant `binding.agent !== undefined` for every payout, so NO binding —
+ * however correctly signed — could authorize one on an enforcing handler.
+ *
+ * Deliberately verb-driven rather than `intent.buyer ?? intent.seller`: a
+ * fallback would let a caller pick which field the delegation is checked
+ * against by omitting the other, and an inverted verb added later would
+ * silently inherit the wrong one. An unknown verb resolves to `buyer`, i.e.
+ * fails closed.
+ */
+function actingPartyField(verb) {
+  return verb === 'payout.request' ? 'seller' : 'buyer';
+}
+function actingAgent(intent) {
+  return intent[actingPartyField(intent.verb)];
 }
 
 /**
@@ -257,7 +304,7 @@ function checkDelegation(intent, body, now) {
       body: err('delegation.signature_missing', 'principal binding signature is required'),
     };
   }
-  if (binding.agent !== intent.buyer || !binding.authority?.verbs?.includes(intent.verb)) {
+  if (binding.agent !== actingAgent(intent) || !binding.authority?.verbs?.includes(intent.verb)) {
     return {
       status: 403,
       body: err(
@@ -339,12 +386,7 @@ server.listen(PORT, state.isDurable() ? '127.0.0.1' : undefined, () => {
   console.error(`  merchant_aid: ${merchantAid}`);
   console.error(`  merchant_pubkey_hex: ${merchantPubRaw.toString('hex')}`);
   console.error(`  allowed_settlers: ${[...ALLOWED_SETTLERS].join(', ')}`);
-  console.error(`  trust_mode: ${ENFORCE_TRUST ? 'enforce' : 'demo'}`);
-  if (!ENFORCE_TRUST) {
-    console.error(
-      '  WARNING: DEMO TRUST MODE — principal delegations without an operator-configured key are accepted unverified, and any caller may mint a signer AID. Not a production posture.',
-    );
-  }
+  console.error(`  trust_mode: ${ENFORCE_TRUST ? 'enforce' : 'permissive'}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -365,7 +407,7 @@ function handleWellKnown(req, res) {
     spec: 'icp-1.0',
     handler: 'stateset-icp-handler-stub',
     handler_version: '0.1.0',
-    trust_mode: ENFORCE_TRUST ? 'enforce' : 'demo',
+    trust_mode: ENFORCE_TRUST ? 'enforce' : 'permissive',
     merchant_aid: merchantAid,
     merchant_pubkey: {
       alg: 'ed25519',
@@ -464,9 +506,38 @@ async function handleSubmitIntent(req, res) {
   // the supplied key material (§4.2) and reject any mismatch, then verify the
   // Ed25519 signature under the now-bound key. This closes the hole where any
   // key could verify as any AID.
+  //
+  // The signer must also BE the party the Intent acts as. `purchase.create`
+  // has always been held to this; every other verb that names an acting party
+  // now is too — above all `payout.request`, where the acting party is the
+  // `seller` drawing its own held funds and an unchecked signer could request
+  // a payout in somebody else's name. This holds in EVERY trust mode: demo
+  // trust relaxes who *delegated* an Agent, never who *signed* a message.
+  //
+  // Presence is checked BEFORE the comparison. Two absent fields are not a
+  // match: an Intent carrying neither `signature.kid` nor an acting party
+  // satisfied `undefined === undefined`, and — with no spec-shaped AID to
+  // re-derive and no operator key to check against — went on to be served as
+  // a signer with no identity at all. On a permissive handler that returned a
+  // merchant-signed payout authorization to an anonymous caller.
   const signerAid = signature.kid;
-  if (intent.verb === 'purchase.create' && signerAid !== intent.buyer) {
-    return reply(res, 401, err('auth.buyer_mismatch', 'intent signer must be its buyer'));
+  const actingField = actingPartyField(intent.verb);
+  if (typeof signerAid !== 'string' || signerAid.length === 0) {
+    return reply(res, 400, err('format.missing_field', 'signature.kid is required'));
+  }
+  if (typeof intent[actingField] !== 'string' || intent[actingField].length === 0) {
+    return reply(res, 400, err('format.missing_field', `Intent.${actingField} is required`));
+  }
+  if (intent.verb === 'purchase.create') {
+    if (signerAid !== intent.buyer) {
+      return reply(res, 401, err('auth.buyer_mismatch', 'intent signer must be its buyer'));
+    }
+  } else if (signerAid !== actingAgent(intent)) {
+    return reply(
+      res,
+      401,
+      err('auth.acting_party_mismatch', `intent signer must be its ${actingField}`),
+    );
   }
   let edPubRaw;
   try {

@@ -13,13 +13,19 @@ from dataclasses import dataclass
 from typing import Any, Iterator
 
 from .codec import (
+    DEFAULT_MAX_PER_INTENT,
+    DEFAULT_VERBS,
     Identity,
+    PrincipalIdentity,
     canonical_json,
     generate_identity,
+    generate_principal_identity,
     identity_from_seeds,
     new_id,
     new_nonce_hex,
+    principal_identity_from_seed,
     sign_ed25519,
+    sign_principal_binding,
     verify_ed25519,
 )
 
@@ -43,6 +49,14 @@ class ICPClient:
     verbs: list[str]
     max_per_intent: dict
     revocation_url: str
+    #: The principal's Ed25519 key. When present the client signs a real
+    #: PrincipalBinding for every Intent. Mutually exclusive with
+    #: `principal_binding`. With neither, Intents carry NO `principal_binding`
+    #: and the handler decides: an enforcing one answers `delegation.required`.
+    principal_identity: PrincipalIdentity | None = None
+    #: A PrincipalBinding signed elsewhere (offline / KMS) — the production
+    #: shape, since the Agent never needs the principal's key.
+    principal_binding: dict | None = None
     _merchant_pub_cache: bytes | None = None
 
     # ------------------------------------------------------------------
@@ -58,28 +72,50 @@ class ICPClient:
         verbs: list[str] | None = None,
         max_per_intent: dict | None = None,
         revocation_url: str | None = None,
+        principal_identity: PrincipalIdentity | None = None,
+        principal_binding: dict | None = None,
     ) -> "ICPClient":
-        """Create a client with a fresh or restored identity."""
+        """Create a client with a fresh or restored identity.
+
+        Pass `principal_identity` to sign each Intent's PrincipalBinding here,
+        or `principal_binding` for one signed elsewhere (offline / KMS). With
+        neither, Intents carry no delegation at all and the handler decides.
+        """
         if not handler_url:
             raise ICPError("format.missing_field", "handler_url required")
         if not principal:
             raise ICPError("format.missing_field", "principal required")
         ident = identity or generate_identity()
+        if principal_binding is not None and principal_identity is not None:
+            raise ICPError(
+                "format.bad_field",
+                "pass principal_identity (sign here) or principal_binding "
+                "(signed elsewhere), not both",
+            )
+        if principal_binding is not None:
+            # Catch the miswiring locally instead of shipping an Intent the
+            # handler will answer with delegation.scope_mismatch.
+            if principal_binding.get("agent") != ident.aid:
+                raise ICPError(
+                    "format.bad_field",
+                    f"principal_binding delegates {principal_binding.get('agent')}, "
+                    f"not this agent {ident.aid}",
+                )
+            if principal_binding.get("principal") != principal:
+                raise ICPError(
+                    "format.bad_field",
+                    f"principal_binding names principal "
+                    f"{principal_binding.get('principal')}, not {principal}",
+                )
         return cls(
             handler_url=handler_url.rstrip("/"),
             principal=principal,
             identity=ident,
-            verbs=verbs or [
-                "purchase.create",
-                "subscription.create",
-                "subscription.cancel",
-                "purchase.return",
-                "inventory.query",
-                "quote.request",
-                "payout.request",
-            ],
-            max_per_intent=max_per_intent or {"amount": "10000", "currency": "USDC"},
+            verbs=verbs or list(DEFAULT_VERBS),
+            max_per_intent=max_per_intent or dict(DEFAULT_MAX_PER_INTENT),
             revocation_url=revocation_url or f"https://example.com/icp-revocation/{ident.aid}",
+            principal_identity=principal_identity,
+            principal_binding=principal_binding,
         )
 
     @property
@@ -409,7 +445,7 @@ class ICPClient:
     def _base_intent(self, verb: str, counterparty_aid: str, settler: str) -> dict:
         now = datetime.datetime.now(datetime.timezone.utc)
         exp = now + datetime.timedelta(seconds=300)
-        return {
+        intent = {
             "v": "icp-1.0",
             "verb": verb,
             "intent_id": new_id("icp_int"),
@@ -417,26 +453,33 @@ class ICPClient:
             "merchant": counterparty_aid,
             "settler": settler,
             "expiry": exp.isoformat().replace("+00:00", "Z"),
-            "principal_binding": self._principal_binding(),
             "nonce": new_nonce_hex(),
             "iat": now.isoformat().replace("+00:00", "Z"),
             "exp": exp.isoformat().replace("+00:00", "Z"),
         }
+        binding = self._principal_binding()
+        # Absent, not null: a `"principal_binding": null` field is not the same
+        # wire message as an Intent that carries no delegation.
+        if binding is not None:
+            intent["principal_binding"] = binding
+        return intent
 
-    def _principal_binding(self) -> dict:
-        now = datetime.datetime.now(datetime.timezone.utc)
-        binding_exp = now + datetime.timedelta(days=1)
-        return {
-            "principal": self.principal,
-            "agent": self.identity.aid,
-            "authority": {
-                "max_per_intent": self.max_per_intent,
-                "verbs": self.verbs,
-            },
-            "expiry": binding_exp.isoformat().replace("+00:00", "Z"),
-            "revocation": self.revocation_url,
-            "signature": {"alg": "ed25519", "kid": "self", "sig": "deadbeef"},
-        }
+    def _principal_binding(self) -> dict | None:
+        """The PrincipalBinding to carry, or None when this Agent holds no
+        delegation. A pre-signed binding is sent verbatim; a principal identity
+        signs a fresh one (so `expiry` is always live)."""
+        if self.principal_binding is not None:
+            return self.principal_binding
+        if self.principal_identity is None:
+            return None
+        return sign_principal_binding(
+            principal=self.principal,
+            agent=self.identity.aid,
+            principal_identity=self.principal_identity,
+            verbs=self.verbs,
+            max_per_intent=self.max_per_intent,
+            revocation=self.revocation_url,
+        )
 
     def _submit(self, intent: dict) -> dict:
         canonical = canonical_json(intent)

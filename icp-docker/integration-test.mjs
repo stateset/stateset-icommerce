@@ -12,16 +12,17 @@
 // Spawns a buyer Agent IN THIS PROCESS, talks to the two containerized
 // services over the host network, and INDEPENDENTLY verifies signatures.
 
-import { generateKeyPairSync, createHash } from 'node:crypto';
+import { createHash } from 'node:crypto';
+import { canonicalJson, verifyEd25519, newId, newNonceHex } from '../icp-handler/src/codec.mjs';
+// The buyer Agent is a real SDK client: it holds its own key and carries a
+// delegation signed with the helper partners call, so this test also proves
+// the shipped client is wire-compatible with the shipped handler.
 import {
-  canonicalJson,
+  identityFromSeeds,
+  principalIdentityFromSeed,
   signEd25519,
-  verifyEd25519,
-  publicKeyToRaw,
-  newId,
-  newNonceHex,
-  base58btcEncode,
-} from '../icp-handler/src/codec.mjs';
+  signPrincipalBinding,
+} from '../packages/icp-client/src/index.mjs';
 
 const HANDLER = process.env.ICP_HANDLER_URL ?? 'http://127.0.0.1:8787';
 const SETTLER = process.env.ICP_SETTLER_URL ?? 'http://127.0.0.1:8788';
@@ -33,6 +34,19 @@ const MOCK_RPC = process.env.ICP_MOCK_RPC_URL ?? 'http://127.0.0.1:8790';
 const CHAIN_ESCROW_ID =
   process.env.ICP_MOCK_ESCROW_ID ??
   '0xabc1234567890abcdef1234567890abcdef1234567890abcdef1234567890abc';
+
+// The principal the compose stack registers under ICP_PRINCIPAL_KEYS_JSON.
+const PRINCIPAL = 'did:web:docker-test.example';
+
+/**
+ * Development key material for this walkthrough, derived from a fixed label so
+ * icp-docker/docker-compose.yml can register the public halves. These are
+ * published test vectors, worthless anywhere else; a real deployment holds the
+ * private halves in a KMS and never commits them.
+ */
+function devSeed(label) {
+  return createHash('sha256').update(`icp-docker walkthrough seed: ${label}`).digest();
+}
 
 let pass = 0;
 let fail = 0;
@@ -97,13 +111,18 @@ async function main() {
   const settlerPubRaw = Buffer.from(settlerDisc.signing_keys[0].pub_hex, 'hex');
 
   // ---- Buyer identity ---------------------------------------------------
-  const buyerEdKp = generateKeyPairSync('ed25519');
-  const buyerXKp = generateKeyPairSync('x25519');
-  const buyerEdPubRaw = publicKeyToRaw(buyerEdKp.publicKey);
-  const buyerXPubRaw = publicKeyToRaw(buyerXKp.publicKey);
-  const buyerAid = `aid:v1:z${base58btcEncode(createHash('sha256').update(
-    Buffer.concat([buyerEdPubRaw, Buffer.from([0x00]), buyerXPubRaw])
-  ).digest())}`;
+  // The stack runs with trust ENFORCED (docker-compose.yml). Enforcement means
+  // the operator registers the principal's key and admits the agent's AID
+  // BEFORE the handler starts, so this test cannot mint a throwaway identity —
+  // it uses the fixed development identities whose public halves the compose
+  // file registers. Change a seed here and the matching key there must change
+  // too; until it does the handler answers `delegation.principal_unknown` or
+  // `auth.aid_unregistered`, and the first purchase check below fails loudly.
+  const buyerIdentity = identityFromSeeds(devSeed('buyer-ed'), devSeed('buyer-x'));
+  const principalIdentity = principalIdentityFromSeed(devSeed('principal'));
+  const buyerEdPubRaw = buyerIdentity.ed25519_pubkey;
+  const buyerXPubRaw = buyerIdentity.x25519_pubkey;
+  const buyerAid = buyerIdentity.aid;
 
   // ---- Purchase flow ----------------------------------------------------
   console.log('Purchase flow:');
@@ -119,20 +138,26 @@ async function main() {
     items: [{ sku: 'DOCKER-INT-TEST', quantity: 1, unit_price: { amount: '50.00', currency: 'USDC' } }],
     max_total: { amount: '55.00', currency: 'USDC' },
     expiry: exp.toISOString(),
-    principal_binding: {
-      principal: 'did:web:docker-test.example',
-      agent: buyerAid,
-      authority: { max_per_intent: { amount: '1000', currency: 'USDC' }, verbs: ['purchase.create'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://example.com/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+    // A delegation the handler actually verifies, signed by the principal's
+    // key — not the self-signed placeholder this test used to post at a
+    // handler configured not to look at it.
+    principal_binding: signPrincipalBinding(
+      {
+        principal: PRINCIPAL,
+        agent: buyerAid,
+        verbs: ['purchase.create'],
+        maxPerIntent: { amount: '1000', currency: 'USDC' },
+        expiresAt: new Date(now.getTime() + 86400 * 1000),
+        revocation: 'https://example.com/revoke',
+      },
+      principalIdentity,
+    ),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),
   };
   const intentCanonical = canonicalJson(intent);
-  const buyerSig = signEd25519(intentCanonical, buyerEdKp.privateKey);
+  const buyerSig = signEd25519(intentCanonical, buyerIdentity);
 
   const submitRes = await fetch(`${HANDLER}/icp/v1/intents`, {
     method: 'POST',
