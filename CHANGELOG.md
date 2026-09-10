@@ -8,6 +8,13 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Added
 
+- Node binding: every money output field has an exact-decimal twin (`<name>Exact`,
+  112 fields across 47 structs) rendered from the engine's `Decimal` with no float
+  round trip; money inputs on orders, payments, refunds, carts (including
+  `carts.setTax`), products, invoices and bills accept an `…Exact` string that takes
+  precedence over the float. The float fields remain and are marked `@deprecated`
+  in the generated typings. A fixture-driven test fails when a new float money
+  field ships without a twin.
 - ICP reference clients (JavaScript and Python) sign a real `principal_binding`
   with `signPrincipalBinding` / `sign_principal_binding`; a client without a
   principal identity sends no binding. Both SDKs' default `authority.verbs` cover
@@ -19,6 +26,8 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Fixed
 
+- Node binding: a `Decimal` that narrows to a non-finite `f64` is now a coded
+  `INTERNAL` error naming the field instead of a silent `NaN`/`Infinity`.
 - Reference handler: `payout.request` could not be delegated in enforce mode
   because the binding was checked against `buyer`; it is now checked against the
   intent's acting party (`seller` for payouts, fail-closed to `buyer` otherwise).
