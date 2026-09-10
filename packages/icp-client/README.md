@@ -65,6 +65,45 @@ const receipt = await client.settlement('icp_set_01HXYZ...');
 | `verbs` | string[]? | PrincipalBinding authority.verbs. Default: all 4 ICP-1.0 verbs. |
 | `maxPerIntent` | Money? | Authority cap. Default: $10,000 USDC. |
 | `revocationUrl` | string? | Where revocation can be checked. |
+| `principalIdentity` | PrincipalIdentity? | The principal's Ed25519 key. The client signs a real PrincipalBinding on every Intent. |
+| `principalBinding` | PrincipalBinding? | A binding signed elsewhere (offline/KMS). Must delegate this client's AID. |
+
+### Delegation — `principal_binding`
+
+An Intent says "this Agent acts for that principal". A handler is entitled
+to check it, and one running in enforcing trust mode does: it verifies the
+binding against the principal key its **operator** registered
+(`ICP_PRINCIPAL_KEYS_JSON`), never against key material from the request.
+
+So the client needs the principal's signature. Two ways:
+
+```js
+import { generatePrincipalIdentity, signPrincipalBinding } from '@stateset/icp-client';
+
+// (a) the client signs each binding — fine for tests and single-tenant agents
+const principalIdentity = generatePrincipalIdentity();   // persist ed25519_seed
+const client = await ICPClient.create({ handlerUrl, principal, principalIdentity });
+
+// give the merchant: ICP_PRINCIPAL_KEYS_JSON={"did:web:my-store.example":"<hex>"}
+principalIdentity.ed25519_pubkey.toString('hex');
+
+// (b) sign offline / in a KMS and hand the Agent only the finished binding —
+//     the production shape, since the Agent never holds the principal's key
+const principalBinding = signPrincipalBinding(
+  { principal, agent: identity.aid, verbs: ['purchase.create'], expiresAt: Date.now() + 86_400_000 },
+  principalIdentity,
+);
+const agent = await ICPClient.create({ handlerUrl, principal, identity, principalBinding });
+```
+
+With **neither**, Intents carry no `principal_binding` at all and the
+handler decides: an enforcing one answers `delegation.required`. The client
+never fabricates a self-signed binding — a delegation an Agent could mint
+for itself proves nothing.
+
+The signing input is `canonicalJson(binding)` with the `signature` field
+removed, so every other field — including `expiry` and `authority` — is
+covered. Mutating one after signing yields `delegation.signature_invalid`.
 
 ### Methods
 

@@ -42,6 +42,18 @@ const ED25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'he
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
+/** Verbs an Agent is delegated by default. */
+const DEFAULT_VERBS = Object.freeze([
+  'purchase.create',
+  'subscription.create',
+  'purchase.return',
+  'inventory.query',
+]);
+/** Default per-Intent spend ceiling carried in the PrincipalBinding. */
+const DEFAULT_MAX_PER_INTENT = Object.freeze({ amount: '10000', currency: 'USDC' });
+/** Default PrincipalBinding lifetime: 24h, the §5.3 ceiling for non-Intents. */
+const DEFAULT_BINDING_TTL_MS = 86_400_000;
+
 // ===========================================================================
 // Errors — typed so callers can branch on .code
 // ===========================================================================
@@ -154,6 +166,118 @@ export function verifyEd25519(canonical, signatureHex, edPubRaw) {
   } catch (_) {
     return false;
   }
+}
+
+// ===========================================================================
+// PrincipalBinding — the delegation an Agent carries on every Intent (§4.4)
+// ===========================================================================
+
+/** @typedef {{ ed25519_seed: Buffer, ed25519_pubkey: Buffer }} PrincipalIdentity */
+
+/**
+ * Generate a fresh principal signing key.
+ *
+ * A principal is an organization (`did:web:…`), not an Agent, so it has no
+ * AID and no X25519 half — only the Ed25519 key whose public half an operator
+ * registers with the handler (`ICP_PRINCIPAL_KEYS_JSON`). Persist
+ * `ed25519_seed` in a KMS/secret store and restore it with
+ * `principalIdentityFromSeed`; the public key is what you hand the merchant.
+ * @returns {PrincipalIdentity}
+ */
+export function generatePrincipalIdentity() {
+  const ed = generateKeyPairSync('ed25519');
+  return principalIdentityFromSeed(ed.privateKey.export({ format: 'der', type: 'pkcs8' }).subarray(16, 48));
+}
+
+/**
+ * Restore a principal signing key from its 32-byte Ed25519 seed.
+ * @param {Buffer} edSeed
+ * @returns {PrincipalIdentity}
+ */
+export function principalIdentityFromSeed(edSeed) {
+  if (!Buffer.isBuffer(edSeed) || edSeed.length !== 32) {
+    throw new ICPError('format.bad_field', 'principal ed25519_seed must be 32 bytes');
+  }
+  const priv = createPrivateKey({
+    key: Buffer.concat([ED25519_PKCS8_PREFIX, edSeed]),
+    format: 'der',
+    type: 'pkcs8',
+  });
+  return { ed25519_seed: edSeed, ed25519_pubkey: extractRawPublicKey(createPublicKey(priv)) };
+}
+
+/**
+ * Sign a PrincipalBinding: the principal's statement that this Agent may act
+ * for it, over these verbs, up to this ceiling, until this expiry.
+ *
+ * This is the artifact a handler checks before it will quote anything. The
+ * canonical bytes are `canonicalJson(binding)` with the `signature` field
+ * removed — the same rule the reference handler's `checkDelegation` applies —
+ * so any field added here is covered by the signature and any field mutated
+ * after signing invalidates it.
+ *
+ * The principal key is deliberately separate from the Agent identity: an
+ * Agent that could sign its own delegation proves nothing. Sign offline (or
+ * in a KMS) and hand the Agent the finished binding when you can.
+ *
+ * @param {{
+ *   principal: string,
+ *   agent: string,
+ *   expiresAt?: Date|number|string,
+ *   verbs?: string[],
+ *   maxPerIntent?: Money,
+ *   revocation?: string,
+ * }} params
+ * @param {PrincipalIdentity|Identity} principalIdentity Holder of the principal's Ed25519 key.
+ * @returns {object} the signed PrincipalBinding, ready to place on an Intent.
+ */
+export function signPrincipalBinding(params, principalIdentity) {
+  const {
+    principal,
+    agent,
+    expiresAt,
+    verbs,
+    maxPerIntent,
+    revocation,
+    signature: _ignored,
+    ...rest
+  } = params ?? {};
+  if (typeof principal !== 'string' || principal.trim() !== principal || !principal) {
+    throw new ICPError('format.missing_field', 'principal_binding.principal is required');
+  }
+  if (typeof agent !== 'string' || !agent) {
+    throw new ICPError('format.missing_field', 'principal_binding.agent is required');
+  }
+  const authorizedVerbs = verbs ?? DEFAULT_VERBS;
+  if (!Array.isArray(authorizedVerbs) || authorizedVerbs.length === 0) {
+    throw new ICPError('format.bad_field', 'principal_binding.authority.verbs must be non-empty');
+  }
+  if (!Buffer.isBuffer(principalIdentity?.ed25519_seed) || principalIdentity.ed25519_seed.length !== 32) {
+    throw new ICPError('format.bad_field', 'principalIdentity must hold a 32-byte ed25519_seed');
+  }
+  const expiry = new Date(expiresAt ?? Date.now() + DEFAULT_BINDING_TTL_MS);
+  if (Number.isNaN(expiry.getTime())) {
+    throw new ICPError('format.bad_field', 'principal_binding.expiresAt is not a valid date');
+  }
+  const body = {
+    ...rest,
+    principal,
+    agent,
+    authority: {
+      max_per_intent: maxPerIntent ?? DEFAULT_MAX_PER_INTENT,
+      verbs: authorizedVerbs,
+    },
+    expiry: expiry.toISOString(),
+    revocation: revocation ?? `https://example.com/icp-revocation/${agent}`,
+  };
+  return {
+    ...body,
+    signature: {
+      alg: 'ed25519',
+      kid: principal,
+      sig: signEd25519(canonicalJson(body), principalIdentity),
+    },
+  };
 }
 
 // ===========================================================================
@@ -354,6 +478,17 @@ export function verifyWebhook(opts) {
  * @property {string[]} [verbs]       PrincipalBinding authority.verbs. Default: all 4 verbs.
  * @property {Money} [maxPerIntent]   PrincipalBinding authority cap. Default: $10,000 USDC.
  * @property {string} [revocationUrl] Where to publish revocation. Default: example.
+ * @property {PrincipalIdentity|Identity} [principalIdentity] The principal's Ed25519 key. When
+ *   present the client signs a real PrincipalBinding for every Intent. Mutually exclusive with
+ *   `principalBinding`.
+ * @property {object} [principalBinding] A PrincipalBinding signed elsewhere (offline/KMS) — the
+ *   production shape, since the Agent never needs the principal's key.
+ *
+ * With neither, Intents carry NO `principal_binding` and the handler decides
+ * whether an undelegated Agent may transact: an enforcing handler answers
+ * `delegation.required`. That is the honest outcome — the client used to ship
+ * a self-signed placeholder (`kid: 'self'`, `sig: 'deadbeef'`) that looked
+ * like a delegation and proved nothing.
  */
 
 export class ICPClient {
@@ -366,13 +501,37 @@ export class ICPClient {
     if (!opts.handlerUrl) throw new ICPError('format.missing_field', 'handlerUrl required');
     if (!opts.principal) throw new ICPError('format.missing_field', 'principal required');
     const identity = opts.identity ?? generateIdentity();
+    if (opts.principalBinding && opts.principalIdentity) {
+      throw new ICPError(
+        'format.bad_field',
+        'pass principalIdentity (sign here) or principalBinding (signed elsewhere), not both',
+      );
+    }
+    if (opts.principalBinding) {
+      // Catch the mis-wiring locally instead of shipping an Intent the handler
+      // will answer with delegation.scope_mismatch.
+      if (opts.principalBinding.agent !== identity.aid) {
+        throw new ICPError(
+          'format.bad_field',
+          `principalBinding delegates ${opts.principalBinding.agent}, not this agent ${identity.aid}`,
+        );
+      }
+      if (opts.principalBinding.principal !== opts.principal) {
+        throw new ICPError(
+          'format.bad_field',
+          `principalBinding names principal ${opts.principalBinding.principal}, not ${opts.principal}`,
+        );
+      }
+    }
     return new ICPClient({
       handlerUrl: opts.handlerUrl,
       principal: opts.principal,
       identity,
-      verbs: opts.verbs ?? ['purchase.create', 'subscription.create', 'purchase.return', 'inventory.query'],
-      maxPerIntent: opts.maxPerIntent ?? { amount: '10000', currency: 'USDC' },
+      verbs: opts.verbs ?? DEFAULT_VERBS,
+      maxPerIntent: opts.maxPerIntent ?? DEFAULT_MAX_PER_INTENT,
       revocationUrl: opts.revocationUrl ?? `https://example.com/icp-revocation/${identity.aid}`,
+      principalIdentity: opts.principalIdentity ?? null,
+      principalBinding: opts.principalBinding ?? null,
     });
   }
 
@@ -389,6 +548,8 @@ export class ICPClient {
     this.verbs = cfg.verbs;
     this.maxPerIntent = cfg.maxPerIntent;
     this.revocationUrl = cfg.revocationUrl;
+    this.principalIdentity = cfg.principalIdentity ?? null;
+    this.principalBinding = cfg.principalBinding ?? null;
     this._merchantPubCache = null;
   }
 
@@ -675,7 +836,7 @@ export class ICPClient {
   _baseIntent(verb, opts) {
     const now = new Date();
     const exp = new Date(now.getTime() + 300 * 1000);
-    return {
+    const intent = {
       v: 'icp-1.0',
       verb,
       intent_id: this._newId('icp_int'),
@@ -683,22 +844,36 @@ export class ICPClient {
       merchant: opts.merchant,
       settler: opts.settler,
       expiry: exp.toISOString(),
-      principal_binding: this._principalBinding(),
       nonce: randomBytes(16).toString('hex'),
       iat: now.toISOString(),
       exp: exp.toISOString(),
     };
+    const binding = this._principalBinding();
+    // Absent, not `undefined`: canonicalJson would emit the literal
+    // `undefined` for a present-but-undefined key, and the Intent signature
+    // would then cover bytes that are not JSON.
+    if (binding) intent.principal_binding = binding;
+    return intent;
   }
 
+  /**
+   * The PrincipalBinding to carry, or `null` when this Agent holds no
+   * delegation. A pre-signed binding is sent verbatim; a principal identity
+   * signs a fresh one (so `expiry` is always live).
+   */
   _principalBinding() {
-    return {
-      principal: this.principal,
-      agent: this.identity.aid,
-      authority: { max_per_intent: this.maxPerIntent, verbs: this.verbs },
-      expiry: new Date(Date.now() + 86400 * 1000).toISOString(),
-      revocation: this.revocationUrl,
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' }, // demo: principal is self-binding
-    };
+    if (this.principalBinding) return this.principalBinding;
+    if (!this.principalIdentity) return null;
+    return signPrincipalBinding(
+      {
+        principal: this.principal,
+        agent: this.identity.aid,
+        verbs: this.verbs,
+        maxPerIntent: this.maxPerIntent,
+        revocation: this.revocationUrl,
+      },
+      this.principalIdentity,
+    );
   }
 
   async _submit(intent) {
