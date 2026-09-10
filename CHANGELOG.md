@@ -6,8 +6,6 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
-## [1.35.0] - 2026-09-10
-
 ### Added
 
 - Node binding: every money `f64` method argument (`credit.checkCredit`,
@@ -20,6 +18,15 @@ This project follows Keep a Changelog and Semantic Versioning.
 - `icp-handler/test/error-codes.test.mjs` fails when the handler emits a code the
   spec's error-code table does not register; the table gains the `internal.*`,
   `inventory.*` and `quote` namespaces and every previously unregistered code.
+- Rust `stateset-icp-client` and `icp-mcp` sign real principal bindings
+  (`sign_principal_binding`, byte-identical to the shared cross-language vector) and
+  omit the binding entirely when no principal identity is configured; the
+  `kid: "self"` / `sig: "deadbeef"` placeholders are gone. `icp-mcp` takes
+  `ICP_MCP_PRINCIPAL` + `ICP_MCP_PRINCIPAL_SEED_HEX` and fails fast when half-configured.
+- The ICP error-code registry's HTTP status mapping is machine-checked against the
+  reference handler (`settlement.*`, `policy.settler.not_allowed`, `replay.intent_seen`,
+  `channel.durable_delivery_unavailable` corrected); `format.invalid_money` is removed in
+  favour of `format.bad_money`.
 
 ### Changed (behaviour, needs a release note)
 
@@ -30,6 +37,14 @@ This project follows Keep a Changelog and Semantic Versioning.
   mode with committed, clearly labelled test-vector keys.
 - Every handler test and the compose integration test send real principal bindings
   signed by the reference client; no placeholder bindings remain in tests.
+- Breaking (Rust `stateset-icp-client`): `with_verbs`, `with_max_per_intent`,
+  `with_max_per_payout` and `with_revocation_url` return `Result<Self, Error>` and reject
+  a pre-signed principal binding instead of silently ignoring it. `payout.request` no
+  longer self-stamps `max_per_payout`; absence means uncapped.
+- `ICP_TRUST_MODE=permissive` is accepted as an explicit alias of unset (in-memory only,
+  still refused under `NODE_ENV=production`); the Docker handler binds to loopback only.
+
+## [1.35.0] - 2026-09-10
 
 ### Added
 
