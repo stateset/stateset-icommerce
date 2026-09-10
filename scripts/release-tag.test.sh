@@ -31,6 +31,8 @@ case "$1" in
     exit 0
     ;;
   fetch)
+    [[ "${FAKE_FETCH_FAILS:-0}" == "1" ]] && { echo " ! [rejected] v0.2.0 -> v0.2.0 (would clobber existing tag)" >&2; exit 1; }
+    case " $* " in *" --force "*) ;; *) echo "fetch without --force" >&2; exit 1 ;; esac
     exit 0
     ;;
   rev-parse)
@@ -142,6 +144,7 @@ reset_state() {
   export FAKE_PROTECTION_READABLE=1
   export FAKE_REQUIRED_CONTEXTS='Formatting,CLI Tests,Code Coverage'
   export FAKE_PUSH_FAILS=0
+  export FAKE_FETCH_FAILS=0
   export RELEASE_TAG_HYGIENE_SCRIPT="${WORK_DIR}/hygiene-pass.sh"
   export RELEASE_REPO="stateset/stateset-icommerce"
   export RELEASE_REMOTE=origin
@@ -199,6 +202,13 @@ FAKE_DIRTY=1
 run_release_tag "1.34.0" --dry-run
 assert_status 1 "a dirty tree must abort the release"
 assert_output_contains "working tree is dirty" "the dirty-tree error must be explicit"
+
+echo "==> a failing fetch aborts loudly"
+reset_state
+FAKE_FETCH_FAILS=1
+run_release_tag "1.34.0" --dry-run
+assert_status 1 "a failed fetch must abort the release"
+assert_output_contains "fetching origin failed" "the fetch error must be explicit, not silent"
 
 echo "==> rejects HEAD that is not origin/master"
 reset_state
