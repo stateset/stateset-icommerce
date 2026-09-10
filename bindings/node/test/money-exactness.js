@@ -76,6 +76,28 @@ function declaredInterfaces() {
   return interfaces;
 }
 
+// The census tests are only as good as the regexes above: if `rustFloatFields`
+// silently matched nothing — a rustfmt change to field indentation would do it —
+// every "is this classified?" loop would pass vacuously. This is the floor the
+// parser has to clear. It is a floor, not an equality, so adding an output float
+// is not gated on editing this number; removing the parser's ability to see them
+// is.
+const MINIMUM_OUTPUT_FLOAT_FIELDS = 185;
+
+test('money census: the source parser actually sees the float fields', () => {
+  const rust = rustFloatFields();
+  const seen = Object.entries(rust)
+    .filter(([struct]) => struct.endsWith('Output'))
+    .reduce((total, [, fields]) => total + Object.keys(fields).length, 0);
+  assert.ok(
+    seen >= MINIMUM_OUTPUT_FLOAT_FIELDS,
+    `only ${seen} f64 fields found on *Output structs in src/lib.rs, expected at least ` +
+      `${MINIMUM_OUTPUT_FLOAT_FIELDS} — rustFloatFields() has probably stopped matching, ` +
+      'which would make every other census assertion below pass vacuously',
+  );
+  assert.ok(Object.keys(declaredInterfaces()).length > 100, 'index.d.ts parser found no interfaces');
+});
+
 test('money census: every float money output field has an exact twin', () => {
   const rust = rustFloatFields();
   const dts = declaredInterfaces();
@@ -247,6 +269,71 @@ test('cart money carries the exact twin through to checkout totals', async () =>
   });
   assert.strictEqual(shipped.shippingAmountExact, '4.07');
   assert.strictEqual(shipped.grandTotalExact, '5.06');
+});
+
+test('a malformed exact money string is rejected as VALIDATION', async (t) => {
+  const commerce = new Commerce(':memory:');
+  const customer = await commerce.customers.create({
+    email: `malformed-${Date.now()}@example.com`,
+    firstName: 'Malformed',
+    lastName: 'Money',
+  });
+
+  // Anything the exact parser cannot read is the caller's mistake, so it must
+  // land as VALIDATION — never as a silent fallback to the float half, which
+  // would quietly charge a different price than the one that was sent.
+  for (const bad of ['nineteen ninety nine', '19,99', '', '19.99USD', 'NaN', '1e5']) {
+    await t.test(`rejects ${JSON.stringify(bad)}`, async () => {
+      let thrown;
+      try {
+        await commerce.orders.create({
+          customerId: customer.id,
+          items: [
+            { sku: 'BAD', name: 'Bad', quantity: 1, unitPrice: 1, unitPriceExact: bad },
+          ],
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      assert.ok(thrown, `${JSON.stringify(bad)} must be rejected, not silently accepted`);
+      assert.strictEqual(thrown.code, 'VALIDATION');
+      assert.match(thrown.message, /order item unit price/);
+    });
+  }
+});
+
+test('carts.setTax takes an exact tax amount', async (t) => {
+  const commerce = new Commerce(':memory:');
+
+  await t.test('the exact string wins over the float', async () => {
+    const cart = await commerce.carts.create({});
+    await commerce.carts.addItem(cart.id, {
+      sku: 'TAXED',
+      name: 'Taxed',
+      quantity: 1,
+      unitPrice: 0,
+      unitPriceExact: '100.00',
+    });
+
+    const taxed = await commerce.carts.setTax(cart.id, 0, '8.25');
+    assert.strictEqual(taxed.taxAmountExact, '8.25');
+    assert.strictEqual(taxed.grandTotalExact, '108.25');
+  });
+
+  await t.test('omitting it leaves the float argument working', async () => {
+    const cart = await commerce.carts.create({});
+    const taxed = await commerce.carts.setTax(cart.id, 1.5);
+    assert.strictEqual(taxed.taxAmount, 1.5);
+    assert.strictEqual(taxed.taxAmountExact, '1.5');
+  });
+
+  await t.test('a malformed exact tax amount is VALIDATION', async () => {
+    const cart = await commerce.carts.create({});
+    await assert.rejects(
+      () => commerce.carts.setTax(cart.id, 0, 'eight point two five'),
+      (error) => error.code === 'VALIDATION' && /cart tax amount/.test(error.message),
+    );
+  });
 });
 
 test('an unrepresentable money value throws INTERNAL instead of returning NaN', async (t) => {

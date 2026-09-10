@@ -168,6 +168,11 @@ boundary twice:
 Read the `*Exact` field for anything you will store, compare, total or show a
 customer. Read the `number` only where an approximation is genuinely fine.
 
+The string carries the engine's scale, not a currency's display format: `2 ×
+12.50` renders as `"25.0"`, not `"25.00"`. It is exact either way, so compare two
+amounts numerically (parse them, or use a decimal library) rather than by string
+equality — `"25.0" !== "25.00"` even though the amounts are the same.
+
 ```typescript
 const order = await commerce.orders.get(id);
 

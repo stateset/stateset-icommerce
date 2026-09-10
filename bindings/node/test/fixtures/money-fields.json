@@ -131,7 +131,9 @@
       "discountAmount"
     ],
     "TaxRateOutput": [
-      "fixedAmount"
+      "fixedAmount",
+      "thresholdMax",
+      "thresholdMin"
     ],
     "TaxBreakdownOutput": [
       "taxAmount",
@@ -197,9 +199,6 @@
     "CreditCheckOutput": [
       "availableCredit"
     ],
-    "BackorderSummaryOutput": [
-      "totalValue"
-    ],
     "GlAccountOutput": [
       "balance"
     ],
@@ -250,9 +249,7 @@
       "percentageOff"
     ],
     "TaxRateOutput": [
-      "rate",
-      "thresholdMax",
-      "thresholdMin"
+      "rate"
     ],
     "TaxBreakdownOutput": [
       "rate"
@@ -316,6 +313,9 @@
       "quantityFulfilled",
       "quantityOrdered",
       "quantityRemaining"
+    ],
+    "BackorderSummaryOutput": [
+      "totalValue"
     ],
     "VectorSearchResultOutput": [
       "distance",

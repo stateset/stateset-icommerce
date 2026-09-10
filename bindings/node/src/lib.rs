@@ -43,13 +43,43 @@ where
     T: TryInto<f64>,
     <T as TryInto<f64>>::Error: std::fmt::Display,
 {
-    let converted: f64 = value.try_into().map_err(|err| {
-        coded(ErrCode::Internal, format!("{field} is not representable as f64: {err}"))
-    })?;
+    narrow_to_f64(value, "", field)
+}
+
+/// [`to_f64_checked`] for a currency amount, which says so in the failure.
+///
+/// Split from the plain form because the same narrowing serves hours,
+/// percentages, scores and quantities, and calling one of those a "money value"
+/// in an error a human reads would be wrong.
+fn money_to_f64<T>(value: T, field: &str) -> Result<f64>
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    narrow_to_f64(value, "money value ", field)
+}
+
+/// The shared body. `prefix` and `field` are only ever formatted on the failure
+/// path, so the ~111 money fields this runs for on a busy read cost no
+/// allocation.
+fn narrow_to_f64<T>(value: T, prefix: &str, field: &str) -> Result<f64>
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    let converted: f64 = match value.try_into() {
+        Ok(converted) => converted,
+        Err(err) => {
+            return Err(coded(
+                ErrCode::Internal,
+                format!("{prefix}{field} is not representable as f64: {err}"),
+            ));
+        }
+    };
     if converted.is_finite() {
         Ok(converted)
     } else {
-        Err(coded(ErrCode::Internal, format!("{field} is not representable as f64")))
+        Err(coded(ErrCode::Internal, format!("{prefix}{field} is not representable as f64")))
     }
 }
 
@@ -72,7 +102,7 @@ where
 /// the `0.30000000000000004` a float sum would show.
 fn money_pair(value: Decimal, field: &str) -> Result<(f64, String)> {
     let exact = value.to_string();
-    let approx = to_f64_checked(value, &format!("money value {field}"))?;
+    let approx = money_to_f64(value, field)?;
     Ok((approx, exact))
 }
 
@@ -5577,16 +5607,27 @@ impl Carts {
         convert_output(cart)
     }
 
-    /// Set tax amount
+    /// Set tax amount.
+    ///
+    /// `tax_amount_exact` is the exact base-10 form and wins when present; the
+    /// `f64` is what callers sent before it existed and still works alone.
     #[napi]
-    pub async fn set_tax(&self, id: String, tax_amount: f64) -> Result<CartOutput> {
+    pub async fn set_tax(
+        &self,
+        id: String,
+        tax_amount: f64,
+        tax_amount_exact: Option<String>,
+    ) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
-            .set_tax(uuid.into(), decimal_from_f64(tax_amount, "tax amount")?)
+            .set_tax(
+                uuid.into(),
+                money_input(tax_amount_exact.as_deref(), tax_amount, "cart tax amount")?,
+            )
             .map_err(|e| wrap(ErrCode::Internal, "Failed to set tax", e))?;
 
         convert_output(cart)
@@ -8919,8 +8960,14 @@ pub struct TaxRateOutput {
     pub description: Option<String>,
     pub is_compound: bool,
     pub priority: i32,
+    /// @deprecated Use the `thresholdMinExact` twin; float money will be removed in 2.0.
     pub threshold_min: Option<f64>,
+    /// Exact base-10 minimum amount at which the rate starts to apply.
+    pub threshold_min_exact: Option<String>,
+    /// @deprecated Use the `thresholdMaxExact` twin; float money will be removed in 2.0.
     pub threshold_max: Option<f64>,
+    /// Exact base-10 cap on the amount this rate is charged against.
+    pub threshold_max_exact: Option<String>,
     /// @deprecated Use the `fixedAmountExact` twin; float money will be removed in 2.0.
     pub fixed_amount: Option<f64>,
     /// Exact base-10 fixed amount, straight from the engine's `Decimal`. Prefer this field for money.
@@ -8936,6 +8983,10 @@ impl TryFrom<stateset_core::TaxRate> for TaxRateOutput {
     type Error = Error;
 
     fn try_from(r: stateset_core::TaxRate) -> Result<Self> {
+        let (threshold_min, threshold_min_exact) =
+            optional_money_pair(r.threshold_min, "tax rate threshold min")?;
+        let (threshold_max, threshold_max_exact) =
+            optional_money_pair(r.threshold_max, "tax rate threshold max")?;
         let (fixed_amount, fixed_amount_exact) =
             optional_money_pair(r.fixed_amount, "tax rate fixed amount")?;
         Ok(Self {
@@ -8948,8 +8999,10 @@ impl TryFrom<stateset_core::TaxRate> for TaxRateOutput {
             description: r.description,
             is_compound: r.is_compound,
             priority: r.priority,
-            threshold_min: optional_to_f64_checked(r.threshold_min, "tax threshold min")?,
-            threshold_max: optional_to_f64_checked(r.threshold_max, "tax threshold max")?,
+            threshold_min,
+            threshold_min_exact,
+            threshold_max,
+            threshold_max_exact,
             fixed_amount,
             fixed_amount_exact,
             effective_from: r.effective_from.to_string(),
@@ -12575,24 +12628,21 @@ pub struct BackorderSummaryOutput {
     pub total_backorders: i32,
     pub critical_count: i32,
     pub overdue_count: i32,
-    /// @deprecated Use the `totalValueExact` twin; float money will be removed in 2.0.
+    /// Total units on backorder, not a currency amount: this wraps
+    /// `BackorderSummary::total_quantity`. The name is a historical misnomer
+    /// kept for compatibility, which is why it carries no exact-money twin.
     pub total_value: f64,
-    /// Exact base-10 total value, straight from the engine's `Decimal`. Prefer this field for money.
-    pub total_value_exact: String,
 }
 
 impl TryFrom<stateset_core::BackorderSummary> for BackorderSummaryOutput {
     type Error = Error;
 
     fn try_from(s: stateset_core::BackorderSummary) -> Result<Self> {
-        let (total_value, total_value_exact) =
-            money_pair(s.total_quantity, "backorder total value")?;
         Ok(Self {
             total_backorders: s.total_backorders,
             critical_count: s.critical_count,
             overdue_count: s.overdue_count,
-            total_value,
-            total_value_exact,
+            total_value: to_f64_checked(s.total_quantity, "backorder total quantity")?,
         })
     }
 }
@@ -26582,7 +26632,7 @@ pub async fn test_panic_async_unguarded() -> Result<()> {
 #[cfg(feature = "test-panic")]
 #[napi(js_name = "__testMoneyNotRepresentable")]
 pub fn test_money_not_representable(field: String) -> Result<f64> {
-    guard(|| to_f64_checked(f64::NAN, &format!("money value {field}")))
+    guard(|| money_to_f64(f64::NAN, &field))
 }
 
 #[cfg(test)]

@@ -1595,8 +1595,14 @@ export interface TaxRateOutput {
   description?: string
   isCompound: boolean
   priority: number
+  /** @deprecated Use the `thresholdMinExact` twin; float money will be removed in 2.0. */
   thresholdMin?: number
+  /** Exact base-10 minimum amount at which the rate starts to apply. */
+  thresholdMinExact?: string
+  /** @deprecated Use the `thresholdMaxExact` twin; float money will be removed in 2.0. */
   thresholdMax?: number
+  /** Exact base-10 cap on the amount this rate is charged against. */
+  thresholdMaxExact?: string
   /** @deprecated Use the `fixedAmountExact` twin; float money will be removed in 2.0. */
   fixedAmount?: number
   /** Exact base-10 fixed amount, straight from the engine's `Decimal`. Prefer this field for money. */
@@ -2153,10 +2159,12 @@ export interface BackorderSummaryOutput {
   totalBackorders: number
   criticalCount: number
   overdueCount: number
-  /** @deprecated Use the `totalValueExact` twin; float money will be removed in 2.0. */
+  /**
+   * Total units on backorder, not a currency amount: this wraps
+   * `BackorderSummary::total_quantity`. The name is a historical misnomer
+   * kept for compatibility, which is why it carries no exact-money twin.
+   */
   totalValue: number
-  /** Exact base-10 total value, straight from the engine's `Decimal`. Prefer this field for money. */
-  totalValueExact: string
 }
 export interface CreateGlAccountInput {
   accountNumber: string
@@ -5412,8 +5420,13 @@ export declare class Carts {
   releaseInventory(id: string): Promise<CartOutput>
   /** Recalculate cart totals */
   recalculate(id: string): Promise<CartOutput>
-  /** Set tax amount */
-  setTax(id: string, taxAmount: number): Promise<CartOutput>
+  /**
+   * Set tax amount.
+   *
+   * `tax_amount_exact` is the exact base-10 form and wins when present; the
+   * `f64` is what callers sent before it existed and still works alone.
+   */
+  setTax(id: string, taxAmount: number, taxAmountExact?: string | undefined | null): Promise<CartOutput>
   /** Get abandoned carts */
   getAbandoned(): Promise<Array<CartOutput>>
   /** Get expired carts */
