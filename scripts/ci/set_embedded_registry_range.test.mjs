@@ -28,7 +28,7 @@ function makeFixture(specifier = 'file:../bindings/node') {
     `${JSON.stringify(
       {
         name: '@stateset/cli-fixture',
-        version: '1.34.0',
+        version: '1.35.0',
         private: false,
         dependencies: {
           '@stateset/embedded': specifier,
@@ -52,10 +52,10 @@ function run(args, options = {}) {
 test('rewrites the workspace link to the registry range', () => {
   const { root, manifest } = makeFixture();
   try {
-    const result = run(['--manifest', manifest, '--version', '1.34.0']);
+    const result = run(['--manifest', manifest, '--version', '1.35.0']);
     assert.equal(result.status, 0, result.stderr);
     const written = JSON.parse(readFileSync(manifest, 'utf8'));
-    assert.equal(written.dependencies['@stateset/embedded'], '^1.34.0');
+    assert.equal(written.dependencies['@stateset/embedded'], '^1.35.0');
     assert.equal(written.dependencies.chalk, '^5.3.0', 'other dependencies must be untouched');
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -65,11 +65,11 @@ test('rewrites the workspace link to the registry range', () => {
 test('accepts a v-prefixed version', () => {
   const { root, manifest } = makeFixture();
   try {
-    const result = run(['--manifest', manifest, '--version', 'v1.34.0']);
+    const result = run(['--manifest', manifest, '--version', 'v1.35.0']);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(
       JSON.parse(readFileSync(manifest, 'utf8')).dependencies['@stateset/embedded'],
-      '^1.34.0',
+      '^1.35.0',
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -93,7 +93,7 @@ test('refuses a version that is not SemVer', () => {
 });
 
 test('--to-link restores the workspace link for local development', () => {
-  const { root, manifest } = makeFixture('^1.34.0');
+  const { root, manifest } = makeFixture('^1.35.0');
   try {
     const result = run(['--manifest', manifest, '--to-link']);
     assert.equal(result.status, 0, result.stderr);
@@ -111,9 +111,9 @@ test('--to-link restores the workspace link for local development', () => {
 test('is idempotent', () => {
   const { root, manifest } = makeFixture();
   try {
-    run(['--manifest', manifest, '--version', '1.34.0']);
+    run(['--manifest', manifest, '--version', '1.35.0']);
     const first = readFileSync(manifest, 'utf8');
-    const result = run(['--manifest', manifest, '--version', '1.34.0']);
+    const result = run(['--manifest', manifest, '--version', '1.35.0']);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(manifest, 'utf8'), first);
   } finally {
@@ -124,7 +124,7 @@ test('is idempotent', () => {
 test('--check fails when the manifest still holds the workspace link', () => {
   const { root, manifest } = makeFixture();
   try {
-    const result = run(['--manifest', manifest, '--version', '1.34.0', '--check']);
+    const result = run(['--manifest', manifest, '--version', '1.35.0', '--check']);
     assert.notEqual(result.status, 0);
     assert.equal(
       JSON.parse(readFileSync(manifest, 'utf8')).dependencies['@stateset/embedded'],
@@ -140,7 +140,7 @@ test('the published tarball carries the registry range, not the workspace link',
   const { root, manifest } = makeFixture();
   const packageDir = path.dirname(manifest);
   try {
-    const rewrite = run(['--manifest', manifest, '--version', '1.34.0']);
+    const rewrite = run(['--manifest', manifest, '--version', '1.35.0']);
     assert.equal(rewrite.status, 0, rewrite.stderr);
 
     const packed = spawnSync('npm', ['pack', '--json', '--pack-destination', root], {
@@ -162,7 +162,7 @@ test('the published tarball carries the registry range, not the workspace link',
     );
     assert.equal(
       publishedManifest.dependencies['@stateset/embedded'],
-      '^1.34.0',
+      '^1.35.0',
       'a consumer installing the tarball must resolve @stateset/embedded from the registry',
     );
     assert.ok(
