@@ -1528,8 +1528,14 @@ export interface CreateTaxRateInput {
   isCompound?: boolean
   priority?: number
   thresholdMin?: number
+  /** Exact base-10 minimum amount. Takes precedence over `threshold_min` when present. */
+  thresholdMinExact?: string
   thresholdMax?: number
+  /** Exact base-10 maximum amount. Takes precedence over `threshold_max` when present. */
+  thresholdMaxExact?: string
   fixedAmount?: number
+  /** Exact base-10 fixed amount. Takes precedence over `fixed_amount` when present. */
+  fixedAmountExact?: string
   effectiveFrom: string
   effectiveTo?: string
 }
@@ -5495,8 +5501,15 @@ export declare class CurrencyOperations {
   getBaseCurrency(): Promise<string>
   /** Get all enabled currencies */
   getEnabledCurrencies(): Promise<Array<string>>
-  /** Format an amount with currency symbol */
-  format(amount: number, currencyCode: string): Promise<string>
+  /**
+   * Format an amount with currency symbol.
+   *
+   * `amount_exact` is the exact base-10 form and wins when present. It is
+   * the only one of the two that can carry scale: `25.00` sent as a `f64`
+   * arrives as `25` and formats as `$25`, while `"25.00"` formats as
+   * `$25.00`.
+   */
+  format(amount: number, currencyCode: string, amountExact?: string | undefined | null): Promise<string>
 }
 export declare class Subscriptions {
   /** Create a new subscription plan */
@@ -5572,14 +5585,24 @@ export declare class Promotions {
   validateCoupon(code: string): Promise<CouponOutput | null>
   /** Apply promotions to cart/order items */
   apply(input: ApplyPromotionsInput): Promise<ApplyPromotionsOutput>
-  /** Record promotion usage (after order completion) */
-  recordUsage(promotionId: string, couponId: string | undefined | null, customerId: string | undefined | null, orderId: string | undefined | null, cartId: string | undefined | null, discountAmount: number, currency: string): Promise<PromotionUsageOutput>
+  /**
+   * Record promotion usage (after order completion).
+   *
+   * `discount_amount_exact` is the exact base-10 form and wins when present;
+   * it trails `currency` so existing positional callers keep working.
+   */
+  recordUsage(promotionId: string, couponId: string | undefined | null, customerId: string | undefined | null, orderId: string | undefined | null, cartId: string | undefined | null, discountAmount: number, currency: string, discountAmountExact?: string | undefined | null): Promise<PromotionUsageOutput>
 }
 export declare class Tax {
   /** Calculate tax for a transaction */
   calculate(input: TaxCalculationInput): Promise<TaxCalculationOutput>
-  /** Calculate tax for a single item */
-  calculateForItem(unitPrice: number, quantity: number, category: string | undefined | null, shippingAddress: TaxAddressInput): Promise<number>
+  /**
+   * Calculate tax for a single item.
+   *
+   * `unit_price_exact` is the exact base-10 form and wins when present; it
+   * trails `shipping_address` so existing positional callers keep working.
+   */
+  calculateForItem(unitPrice: number, quantity: number, category: string | undefined | null, shippingAddress: TaxAddressInput, unitPriceExact?: string | undefined | null): Promise<number>
   /** Get the effective tax rate for an address and category */
   getEffectiveRate(address: TaxAddressInput, category?: string | undefined | null): Promise<number>
   /** Get a jurisdiction by ID */
@@ -5836,7 +5859,7 @@ export declare class CostAccounting {
   /** List all item costs */
   listItemCosts(): Promise<Array<ItemCostOutput>>
   /** Update average cost */
-  updateAverageCost(sku: string, quantity: number, unitCost: number): Promise<ItemCostOutput>
+  updateAverageCost(sku: string, quantity: number, unitCost: number, unitCostExact?: string | undefined | null): Promise<ItemCostOutput>
   /** Get total inventory value */
   getTotalInventoryValue(): Promise<number>
 }
@@ -5849,10 +5872,23 @@ export declare class Credit {
   getCreditAccountByCustomer(customerId: string): Promise<CreditAccountOutput | null>
   /** List credit accounts */
   listCreditAccounts(): Promise<Array<CreditAccountOutput>>
-  /** Check credit */
-  checkCredit(customerId: string, orderAmount: number): Promise<CreditCheckOutput>
-  /** Adjust credit limit */
-  adjustCreditLimit(customerId: string, newLimit: number, reason: string): Promise<CreditAccountOutput>
+  /**
+   * Check credit.
+   *
+   * `order_amount_exact` is the exact base-10 form and wins when present; the
+   * `f64` is what callers sent before it existed and still works alone. The
+   * approval compares the amount against the available credit, so an order
+   * the float rounds down is an order that gets approved on the wrong number.
+   */
+  checkCredit(customerId: string, orderAmount: number, orderAmountExact?: string | undefined | null): Promise<CreditCheckOutput>
+  /**
+   * Adjust credit limit.
+   *
+   * `new_limit_exact` is the exact base-10 form and wins when present. It
+   * trails `reason` rather than sitting beside the float it overrides, so
+   * that callers written against the three-argument form keep working.
+   */
+  adjustCreditLimit(customerId: string, newLimit: number, reason: string, newLimitExact?: string | undefined | null): Promise<CreditAccountOutput>
   /** Suspend credit account */
   suspendCreditAccount(customerId: string, reason: string): Promise<CreditAccountOutput>
   /** Reactivate credit account */

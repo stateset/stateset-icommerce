@@ -6892,13 +6892,23 @@ impl CurrencyOperations {
         Ok(currencies.iter().map(|c| c.code().to_string()).collect())
     }
 
-    /// Format an amount with currency symbol
+    /// Format an amount with currency symbol.
+    ///
+    /// `amount_exact` is the exact base-10 form and wins when present. It is
+    /// the only one of the two that can carry scale: `25.00` sent as a `f64`
+    /// arrives as `25` and formats as `$25`, while `"25.00"` formats as
+    /// `$25.00`.
     #[napi]
-    pub async fn format(&self, amount: f64, currency_code: String) -> Result<String> {
+    pub async fn format(
+        &self,
+        amount: f64,
+        currency_code: String,
+        amount_exact: Option<String>,
+    ) -> Result<String> {
         let commerce = self.commerce.lock().await;
         let currency = parse_currency(&currency_code)?;
-        let amount_decimal = Decimal::try_from(amount)
-            .map_err(|e| wrap(ErrCode::Validation, "Invalid amount", e))?;
+        let amount_decimal =
+            money_input(amount_exact.as_deref(), amount, "currency format amount")?;
 
         Ok(commerce.currency().format(amount_decimal, currency))
     }
@@ -8749,7 +8759,10 @@ impl Promotions {
         convert_output(result)
     }
 
-    /// Record promotion usage (after order completion)
+    /// Record promotion usage (after order completion).
+    ///
+    /// `discount_amount_exact` is the exact base-10 form and wins when present;
+    /// it trails `currency` so existing positional callers keep working.
     #[napi]
     #[allow(clippy::too_many_arguments)]
     pub async fn record_usage(
@@ -8761,6 +8774,7 @@ impl Promotions {
         cart_id: Option<String>,
         discount_amount: f64,
         currency: String,
+        discount_amount_exact: Option<String>,
     ) -> Result<PromotionUsageOutput> {
         let commerce = self.commerce.lock().await;
         let promotion_uuid = uuid::Uuid::parse_str(&promotion_id)
@@ -8774,7 +8788,11 @@ impl Promotions {
                 customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(CustomerId::from),
                 order_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(OrderId::from),
                 cart_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(CartId::from),
-                decimal_from_f64(discount_amount, "promotion discount amount")?,
+                money_input(
+                    discount_amount_exact.as_deref(),
+                    discount_amount,
+                    "promotion discount amount",
+                )?,
                 &currency,
             )
             .map_err(|e| wrap(ErrCode::Internal, "Failed to record usage", e))?;
@@ -8853,8 +8871,14 @@ pub struct CreateTaxRateInput {
     pub is_compound: Option<bool>,
     pub priority: Option<i32>,
     pub threshold_min: Option<f64>,
+    /// Exact base-10 minimum amount. Takes precedence over `threshold_min` when present.
+    pub threshold_min_exact: Option<String>,
     pub threshold_max: Option<f64>,
+    /// Exact base-10 maximum amount. Takes precedence over `threshold_max` when present.
+    pub threshold_max_exact: Option<String>,
     pub fixed_amount: Option<f64>,
+    /// Exact base-10 fixed amount. Takes precedence over `fixed_amount` when present.
+    pub fixed_amount_exact: Option<String>,
     pub effective_from: String,
     pub effective_to: Option<String>,
 }
@@ -9584,7 +9608,10 @@ impl Tax {
         convert_output(result)
     }
 
-    /// Calculate tax for a single item
+    /// Calculate tax for a single item.
+    ///
+    /// `unit_price_exact` is the exact base-10 form and wins when present; it
+    /// trails `shipping_address` so existing positional callers keep working.
     #[napi]
     pub async fn calculate_for_item(
         &self,
@@ -9592,6 +9619,7 @@ impl Tax {
         quantity: f64,
         category: Option<String>,
         shipping_address: TaxAddressInput,
+        unit_price_exact: Option<String>,
     ) -> Result<f64> {
         let commerce = self.commerce.lock().await;
 
@@ -9607,7 +9635,7 @@ impl Tax {
         let tax = commerce
             .tax()
             .calculate_for_item(
-                decimal_from_f64(unit_price, "tax unit price")?,
+                money_input(unit_price_exact.as_deref(), unit_price, "tax unit price")?,
                 decimal_from_f64(quantity, "tax quantity")?,
                 category.map(|s| parse_product_tax_category(&s)).unwrap_or_default(),
                 &address,
@@ -9804,9 +9832,21 @@ impl Tax {
             description: input.description,
             is_compound: input.is_compound.unwrap_or(false),
             priority: input.priority.unwrap_or(0),
-            threshold_min: optional_decimal_from_f64(input.threshold_min, "tax threshold min")?,
-            threshold_max: optional_decimal_from_f64(input.threshold_max, "tax threshold max")?,
-            fixed_amount: optional_decimal_from_f64(input.fixed_amount, "tax fixed amount")?,
+            threshold_min: optional_money_input(
+                input.threshold_min_exact.as_deref(),
+                input.threshold_min,
+                "tax threshold min",
+            )?,
+            threshold_max: optional_money_input(
+                input.threshold_max_exact.as_deref(),
+                input.threshold_max,
+                "tax threshold max",
+            )?,
+            fixed_amount: optional_money_input(
+                input.fixed_amount_exact.as_deref(),
+                input.fixed_amount,
+                "tax fixed amount",
+            )?,
             effective_from,
             effective_to: input
                 .effective_to
@@ -12309,6 +12349,7 @@ impl CostAccounting {
         sku: String,
         quantity: f64,
         unit_cost: f64,
+        unit_cost_exact: Option<String>,
     ) -> Result<ItemCostOutput> {
         let commerce = self.commerce.lock().await;
         let cost = commerce
@@ -12316,7 +12357,7 @@ impl CostAccounting {
             .update_average_cost(
                 &sku,
                 decimal_from_f64(quantity, "average cost quantity")?,
-                decimal_from_f64(unit_cost, "average cost unit cost")?,
+                money_input(unit_cost_exact.as_deref(), unit_cost, "average cost unit cost")?,
             )
             .map_err(|e| wrap(ErrCode::Internal, "Failed to update cost", e))?;
         convert_output(cost)
@@ -12489,35 +12530,53 @@ impl Credit {
         convert_outputs(accounts)
     }
 
-    /// Check credit
+    /// Check credit.
+    ///
+    /// `order_amount_exact` is the exact base-10 form and wins when present; the
+    /// `f64` is what callers sent before it existed and still works alone. The
+    /// approval compares the amount against the available credit, so an order
+    /// the float rounds down is an order that gets approved on the wrong number.
     #[napi]
     pub async fn check_credit(
         &self,
         customer_id: String,
         order_amount: f64,
+        order_amount_exact: Option<String>,
     ) -> Result<CreditCheckOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let result = commerce
             .credit()
-            .check_credit(uuid, decimal_from_f64(order_amount, "order amount")?)
+            .check_credit(
+                uuid,
+                money_input(order_amount_exact.as_deref(), order_amount, "order amount")?,
+            )
             .map_err(|e| wrap(ErrCode::Internal, "Failed to check credit", e))?;
         convert_output(result)
     }
 
-    /// Adjust credit limit
+    /// Adjust credit limit.
+    ///
+    /// `new_limit_exact` is the exact base-10 form and wins when present. It
+    /// trails `reason` rather than sitting beside the float it overrides, so
+    /// that callers written against the three-argument form keep working.
     #[napi]
     pub async fn adjust_credit_limit(
         &self,
         customer_id: String,
         new_limit: f64,
         reason: String,
+        new_limit_exact: Option<String>,
     ) -> Result<CreditAccountOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let account = commerce
             .credit()
-            .adjust_credit_limit(uuid, decimal_from_f64(new_limit, "new credit limit")?, &reason)
+            .adjust_credit_limit(
+                uuid,
+                money_input(new_limit_exact.as_deref(), new_limit, "new credit limit")?,
+                &reason,
+            )
             .map_err(|e| wrap(ErrCode::Internal, "Failed to adjust limit", e))?;
         convert_output(account)
     }
