@@ -221,7 +221,7 @@
     "better-sqlite3": "^11.7.0",
     "botbuilder": "^4.23.0",
     "discord.js": "^14.14.0",
-    "googleapis": "^130.0.0",
+    "googleapis": "^178.0.0",
     "grammy": "^1.21.0",
     "matrix-js-sdk": "^34.0.0",
     "qrcode-terminal": "^0.12.0",
