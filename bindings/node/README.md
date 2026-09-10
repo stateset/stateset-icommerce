@@ -151,6 +151,60 @@ That gives you both OpenAI-compatible tool definitions and a framework-neutral
 binding also ships `@stateset/embedded/langchain` and
 `@stateset/embedded/vercel-ai` helper subpaths for those JS hosts.
 
+## Money: use the `*Exact` fields
+
+A JavaScript `number` is a double, and a double cannot hold `19.99`. By the time
+a price reaches this binding as a `number` it is already `19.989999999999998`;
+JavaScript prints it as `19.99` because it prints the shortest string that
+round-trips, not because the value is right. So every money value crosses this
+boundary twice:
+
+- `total`, `unitPrice`, `subtotal`, … — the `number`, kept for compatibility and
+  marked `@deprecated`. Float money will be removed in 2.0.
+- `totalExact`, `unitPriceExact`, `subtotalExact`, … — a **string** carrying the
+  engine's exact base-10 `Decimal`, with no float anywhere in the path. `0.10`
+  plus `0.20` is `"0.30"` here, never `0.30000000000000004`.
+
+Read the `*Exact` field for anything you will store, compare, total or show a
+customer. Read the `number` only where an approximation is genuinely fine.
+
+The string carries the engine's scale, not a currency's display format: `2 ×
+12.50` renders as `"25.0"`, not `"25.00"`. It is exact either way, so compare two
+amounts numerically (parse them, or use a decimal library) rather than by string
+equality — `"25.0" !== "25.00"` even though the amounts are the same.
+
+```typescript
+const order = await commerce.orders.get(id);
+
+order.totalAmount;                     // prints 59.97 …
+order.totalAmount.toPrecision(17);     // … but the value is 59.969999999999999
+order.totalAmountExact;                // "59.97" — the actual amount
+```
+
+Inputs work the same way, in reverse. Money inputs take an optional
+`<field>Exact` string alongside the `number`, and the string wins when both are
+sent:
+
+```typescript
+await commerce.orders.create({
+  customerId,
+  items: [
+    { sku: 'WIDGET', name: 'Widget', quantity: 3, unitPrice: 0, unitPriceExact: '19.99' },
+  ],
+});
+// -> items[0].totalExact === "59.97"
+```
+
+`orders.createExact`, `payments.createExact`, `payments.createRefundExact` and
+`carts.addItemExact` are the fully string-typed variants, for callers that would
+rather not carry the float half at all.
+
+A money value the engine cannot narrow to a `number` no longer becomes `NaN`: it
+throws with `err.code === 'INTERNAL'` and a message naming the field.
+`test/fixtures/money-fields.json` is the census of which fields are money, and
+`test/money-exactness.js` fails if a new float money field is added without a
+twin.
+
 ## API Reference
 
 ### Commerce

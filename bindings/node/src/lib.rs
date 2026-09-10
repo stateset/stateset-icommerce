@@ -16,42 +16,108 @@ mod errors;
 
 use errors::{ErrCode, coded, from_cause, guard, guard_async, wrap};
 
-fn to_f64_or_nan<T>(value: T) -> f64
+/// Narrows a value to the lossy `f64` view without ever inventing a number.
+///
+/// The predecessor of this function, `to_f64_or_nan`, swallowed a failed
+/// conversion and handed JavaScript `NaN`. `NaN` then flowed into revenue,
+/// average order value and inventory valuation with nothing on the wire to say
+/// the number was fabricated: `NaN` compares false against every threshold, so
+/// a report reading it silently showed a blank or a zero rather than an error.
+/// This returns a coded `INTERNAL` failure naming the field instead.
+///
+/// Two things can go wrong, and both are covered:
+///
+/// 1. **The conversion refuses.** For `rust_decimal::Decimal` this arm is an
+///    invariant guard rather than a live branch: `Decimal::to_f64` — which is
+///    what `TryFrom<Decimal> for f64` delegates to — has no reachable `None`
+///    arm. A scale of zero goes through `to_i128`, which is total for a 96-bit
+///    mantissa, and every other scale returns `Some`. `Decimal::MAX` included.
+///    `tests::decimal_max_is_representable` pins that. The arm is live for the
+///    non-`Decimal` `TryInto<f64>` inputs this helper also serves.
+/// 2. **The conversion succeeds but produces a non-finite `f64`.** Reachable
+///    whenever the source is already an `f64` (a growth percentage divided by a
+///    zero baseline, say). That is the `NaN` this function exists to stop, so it
+///    is rejected here rather than passed through.
+fn to_f64_checked<T>(value: T, field: &str) -> Result<f64>
 where
     T: TryInto<f64>,
     <T as TryInto<f64>>::Error: std::fmt::Display,
 {
-    match value.try_into() {
+    narrow_to_f64(value, "", field)
+}
+
+/// [`to_f64_checked`] for a currency amount, which says so in the failure.
+///
+/// Split from the plain form because the same narrowing serves hours,
+/// percentages, scores and quantities, and calling one of those a "money value"
+/// in an error a human reads would be wrong.
+fn money_to_f64<T>(value: T, field: &str) -> Result<f64>
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    narrow_to_f64(value, "money value ", field)
+}
+
+/// The shared body. `prefix` and `field` are only ever formatted on the failure
+/// path, so the ~111 money fields this runs for on a busy read cost no
+/// allocation.
+fn narrow_to_f64<T>(value: T, prefix: &str, field: &str) -> Result<f64>
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    let converted: f64 = match value.try_into() {
         Ok(converted) => converted,
         Err(err) => {
-            // Semantics unchanged (still NaN), but the diagnostic goes out as the
-            // same coded envelope the thrown errors use, on stderr's warning
-            // channel rather than as a bare sentence.
-            eprintln!(
-                "stateset-embedded: {}",
-                coded(ErrCode::Internal, format!("Failed to convert to f64: {err}")).reason
-            );
-            f64::NAN
+            return Err(coded(
+                ErrCode::Internal,
+                format!("{prefix}{field} is not representable as f64: {err}"),
+            ));
         }
+    };
+    if converted.is_finite() {
+        Ok(converted)
+    } else {
+        Err(coded(ErrCode::Internal, format!("{prefix}{field} is not representable as f64")))
     }
 }
 
-fn to_f64_result<T>(value: T, field: &str) -> Result<f64>
+fn optional_to_f64_checked<T>(value: Option<T>, field: &str) -> Result<Option<f64>>
 where
     T: TryInto<f64>,
     <T as TryInto<f64>>::Error: std::fmt::Display,
 {
-    value
-        .try_into()
-        .map_err(|err| coded(ErrCode::Internal, format!("Failed to convert {field} to f64: {err}")))
+    value.map(|inner| to_f64_checked(inner, field)).transpose()
 }
 
-fn optional_to_f64_result<T>(value: Option<T>, field: &str) -> Result<Option<f64>>
-where
-    T: TryInto<f64>,
-    <T as TryInto<f64>>::Error: std::fmt::Display,
-{
-    value.map(|inner| to_f64_result(inner, field)).transpose()
+/// The two views of one money value: the lossy `f64` the binding has always
+/// returned, and the exact base-10 rendering that never touched a float.
+///
+/// Every money field on an output struct is a pair — `total` and
+/// `total_exact` — and both halves come out of this one call on one `Decimal`,
+/// so a struct literal cannot accidentally pair one amount's `f64` with another
+/// amount's exact string. `Decimal::to_string` is the exact base-10 form, scale
+/// and all: `Decimal::new(30, 2).to_string()` is `"0.30"`, not `"0.3"` and not
+/// the `0.30000000000000004` a float sum would show.
+fn money_pair(value: Decimal, field: &str) -> Result<(f64, String)> {
+    let exact = value.to_string();
+    let approx = money_to_f64(value, field)?;
+    Ok((approx, exact))
+}
+
+/// [`money_pair`] for an optional amount: absent stays absent on both halves.
+fn optional_money_pair(
+    value: Option<Decimal>,
+    field: &str,
+) -> Result<(Option<f64>, Option<String>)> {
+    match value {
+        Some(value) => {
+            let (approx, exact) = money_pair(value, field)?;
+            Ok((Some(approx), Some(exact)))
+        }
+        None => Ok((None, None)),
+    }
 }
 
 fn convert_output<T, U>(value: T) -> Result<U>
@@ -81,6 +147,34 @@ fn decimal_from_f64(value: f64, field: &str) -> Result<Decimal> {
 
 fn optional_decimal_from_f64(value: Option<f64>, field: &str) -> Result<Option<Decimal>> {
     value.map(|value| decimal_from_f64(value, field)).transpose()
+}
+
+/// Resolves a money input that accepts either an exact base-10 string or an
+/// `f64`, preferring the string.
+///
+/// The string wins when both arrive, for two reasons: it is what a caller who
+/// bothered to send one meant, and it is the only one of the two that can carry
+/// a value an `f64` cannot hold exactly. `19.99` typed as a JavaScript number
+/// is already `19.989999999999998` before the binding sees it; typed as
+/// `"19.99"` it survives.
+fn money_input(exact: Option<&str>, value: f64, field: &str) -> Result<Decimal> {
+    match exact {
+        Some(text) => parse_decimal_str(text, field),
+        None => decimal_from_f64(value, field),
+    }
+}
+
+/// [`money_input`] where the `f64` half is itself optional. The exact string
+/// still wins; absent on both halves stays absent.
+fn optional_money_input(
+    exact: Option<&str>,
+    value: Option<f64>,
+    field: &str,
+) -> Result<Option<Decimal>> {
+    match exact {
+        Some(text) => parse_decimal_str(text, field).map(Some),
+        None => optional_decimal_from_f64(value, field),
+    }
 }
 
 /// JavaScript-friendly Commerce instance
@@ -1144,6 +1238,8 @@ pub struct CreateOrderItemInput {
     pub name: String,
     pub quantity: i32,
     pub unit_price: f64,
+    /// Exact base-10 unit price. Takes precedence over `unit_price` when present.
+    pub unit_price_exact: Option<String>,
     pub product_id: Option<String>,
     pub variant_id: Option<String>,
 }
@@ -1236,9 +1332,11 @@ pub struct OrderItemOutput {
     pub sku: String,
     pub name: String,
     pub quantity: i32,
+    /// @deprecated Use the `unitPriceExact` twin; float money will be removed in 2.0.
     pub unit_price: f64,
     /// Exact base-10 unit price. Prefer this field for calculations.
     pub unit_price_exact: String,
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
     /// Exact base-10 line total. Prefer this field for calculations.
     pub total_exact: String,
@@ -1275,6 +1373,7 @@ pub struct OrderOutput {
     pub order_number: String,
     pub customer_id: String,
     pub status: String,
+    /// @deprecated Use the `totalAmountExact` twin; float money will be removed in 2.0.
     pub total_amount: f64,
     /// Exact base-10 order total. Prefer this field for calculations.
     pub total_amount_exact: String,
@@ -1296,13 +1395,13 @@ impl TryFrom<stateset_core::Order> for OrderOutput {
     type Error = Error;
 
     fn try_from(o: stateset_core::Order) -> Result<Self> {
-        let total_amount_exact = o.total_amount.to_string();
+        let (total_amount, total_amount_exact) = money_pair(o.total_amount, "order total amount")?;
         Ok(Self {
             id: o.id.to_string(),
             order_number: o.order_number,
             customer_id: o.customer_id.to_string(),
             status: format!("{}", o.status),
-            total_amount: to_f64_result(o.total_amount, "order total amount")?,
+            total_amount,
             total_amount_exact,
             currency: o.currency.to_string(),
             payment_status: format!("{}", o.payment_status),
@@ -1316,16 +1415,17 @@ impl TryFrom<stateset_core::Order> for OrderOutput {
                 .items
                 .into_iter()
                 .map(|i| {
-                    let unit_price_exact = i.unit_price.to_string();
-                    let total_exact = i.total.to_string();
+                    let (unit_price, unit_price_exact) =
+                        money_pair(i.unit_price, "order item unit price")?;
+                    let (total, total_exact) = money_pair(i.total, "order item total")?;
                     Ok(OrderItemOutput {
                         id: i.id.to_string(),
                         sku: i.sku,
                         name: i.name,
                         quantity: i.quantity,
-                        unit_price: to_f64_result(i.unit_price, "order item unit price")?,
+                        unit_price,
                         unit_price_exact,
-                        total: to_f64_result(i.total, "order item total")?,
+                        total,
                         total_exact,
                     })
                 })
@@ -1369,7 +1469,11 @@ impl Orders {
                     sku: i.sku,
                     name: i.name,
                     quantity: i.quantity,
-                    unit_price: decimal_from_f64(i.unit_price, "order item unit price")?,
+                    unit_price: money_input(
+                        i.unit_price_exact.as_deref(),
+                        i.unit_price,
+                        "order item unit price",
+                    )?,
                     ..Default::default()
                 })
             })
@@ -1553,7 +1657,11 @@ pub struct CreateProductVariantInput {
     pub sku: String,
     pub name: Option<String>,
     pub price: f64,
+    /// Exact base-10 price. Takes precedence over `price` when present.
+    pub price_exact: Option<String>,
     pub compare_at_price: Option<f64>,
+    /// Exact base-10 comparison price. Takes precedence over `compare_at_price` when present.
+    pub compare_at_price_exact: Option<String>,
     pub is_default: Option<bool>,
 }
 
@@ -1607,9 +1715,11 @@ pub struct ProductVariantOutput {
     pub product_id: String,
     pub sku: String,
     pub name: String,
+    /// @deprecated Use the `priceExact` twin; float money will be removed in 2.0.
     pub price: f64,
     /// Exact base-10 price. Prefer this field for calculations.
     pub price_exact: String,
+    /// @deprecated Use the `compareAtPriceExact` twin; float money will be removed in 2.0.
     pub compare_at_price: Option<f64>,
     /// Exact base-10 comparison price.
     pub compare_at_price_exact: Option<String>,
@@ -1620,19 +1730,17 @@ impl TryFrom<stateset_core::ProductVariant> for ProductVariantOutput {
     type Error = Error;
 
     fn try_from(v: stateset_core::ProductVariant) -> Result<Self> {
-        let price_exact = v.price.to_string();
-        let compare_at_price_exact = v.compare_at_price.map(|value| value.to_string());
+        let (price, price_exact) = money_pair(v.price, "variant price")?;
+        let (compare_at_price, compare_at_price_exact) =
+            optional_money_pair(v.compare_at_price, "variant compare-at price")?;
         Ok(Self {
             id: v.id.to_string(),
             product_id: v.product_id.to_string(),
             sku: v.sku,
             name: v.name,
-            price: to_f64_result(v.price, "product variant price")?,
+            price,
             price_exact,
-            compare_at_price: optional_to_f64_result(
-                v.compare_at_price,
-                "product variant compare at price",
-            )?,
+            compare_at_price,
             compare_at_price_exact,
             is_default: v.is_default,
         })
@@ -1654,8 +1762,9 @@ fn create_variant_from_input(
     Ok(stateset_core::CreateProductVariant {
         sku: v.sku,
         name: v.name,
-        price: decimal_from_f64(v.price, "variant price")?,
-        compare_at_price: optional_decimal_from_f64(
+        price: money_input(v.price_exact.as_deref(), v.price, "variant price")?,
+        compare_at_price: optional_money_input(
+            v.compare_at_price_exact.as_deref(),
             v.compare_at_price,
             "variant compare at price",
         )?,
@@ -1683,8 +1792,9 @@ impl Products {
                         Ok(stateset_core::CreateProductVariant {
                             sku: v.sku,
                             name: v.name,
-                            price: decimal_from_f64(v.price, "variant price")?,
-                            compare_at_price: optional_decimal_from_f64(
+                            price: money_input(v.price_exact.as_deref(), v.price, "variant price")?,
+                            compare_at_price: optional_money_input(
+                                v.compare_at_price_exact.as_deref(),
                                 v.compare_at_price,
                                 "variant compare at price",
                             )?,
@@ -2796,6 +2906,8 @@ pub struct CreatePaymentInput {
     pub customer_id: Option<String>,
     pub idempotency_key: Option<String>,
     pub amount: f64,
+    /// Exact base-10 amount. Takes precedence over `amount` when present.
+    pub amount_exact: Option<String>,
     pub currency: Option<String>,
     pub payment_method: Option<String>,
 }
@@ -2822,6 +2934,7 @@ pub struct PaymentOutput {
     pub invoice_id: Option<String>,
     pub customer_id: Option<String>,
     pub idempotency_key: Option<String>,
+    /// @deprecated Use the `amountExact` twin; float money will be removed in 2.0.
     pub amount: f64,
     /// Exact base-10 amount. Prefer this field for all calculations.
     pub amount_exact: String,
@@ -2836,7 +2949,7 @@ impl TryFrom<stateset_core::Payment> for PaymentOutput {
     type Error = Error;
 
     fn try_from(p: stateset_core::Payment) -> Result<Self> {
-        let amount_exact = p.amount.to_string();
+        let (amount, amount_exact) = money_pair(p.amount, "payment amount")?;
         Ok(Self {
             id: p.id.to_string(),
             payment_number: p.payment_number,
@@ -2844,7 +2957,7 @@ impl TryFrom<stateset_core::Payment> for PaymentOutput {
             invoice_id: p.invoice_id.map(|id| id.to_string()),
             customer_id: p.customer_id.map(|id| id.to_string()),
             idempotency_key: p.idempotency_key,
-            amount: to_f64_result(p.amount, "payment amount")?,
+            amount,
             amount_exact,
             currency: p.currency.to_string(),
             status: format!("{}", p.status),
@@ -2860,6 +2973,8 @@ impl TryFrom<stateset_core::Payment> for PaymentOutput {
 pub struct CreateRefundInput {
     pub payment_id: String,
     pub amount: f64,
+    /// Exact base-10 amount. Takes precedence over `amount` when present.
+    pub amount_exact: Option<String>,
     pub reason: Option<String>,
     pub idempotency_key: Option<String>,
 }
@@ -2880,6 +2995,7 @@ pub struct RefundOutput {
     pub id: String,
     pub refund_number: String,
     pub payment_id: String,
+    /// @deprecated Use the `amountExact` twin; float money will be removed in 2.0.
     pub amount: f64,
     /// Exact base-10 amount. Prefer this field for all calculations.
     pub amount_exact: String,
@@ -2893,12 +3009,12 @@ impl TryFrom<stateset_core::Refund> for RefundOutput {
     type Error = Error;
 
     fn try_from(r: stateset_core::Refund) -> Result<Self> {
-        let amount_exact = r.amount.to_string();
+        let (amount, amount_exact) = money_pair(r.amount, "refund amount")?;
         Ok(Self {
             id: r.id.to_string(),
             refund_number: r.refund_number,
             payment_id: r.payment_id.to_string(),
-            amount: to_f64_result(r.amount, "refund amount")?,
+            amount,
             amount_exact,
             status: format!("{}", r.status),
             reason: r.reason,
@@ -2960,7 +3076,7 @@ impl Payments {
                 invoice_id,
                 customer_id,
                 idempotency_key: input.idempotency_key,
-                amount: decimal_from_f64(input.amount, "payment amount")?,
+                amount: money_input(input.amount_exact.as_deref(), input.amount, "payment amount")?,
                 currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
                 payment_method,
                 ..Default::default()
@@ -3104,7 +3220,11 @@ impl Payments {
             .payments()
             .create_refund(stateset_core::CreateRefund {
                 payment_id,
-                amount: Some(decimal_from_f64(input.amount, "refund amount")?),
+                amount: Some(money_input(
+                    input.amount_exact.as_deref(),
+                    input.amount,
+                    "refund amount",
+                )?),
                 reason: input.reason,
                 idempotency_key: input.idempotency_key,
                 ..Default::default()
@@ -3659,8 +3779,14 @@ pub struct PurchaseOrderOutput {
     pub po_number: String,
     pub supplier_id: String,
     pub status: String,
+    /// @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0.
     pub subtotal: f64,
+    /// Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money.
+    pub subtotal_exact: String,
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
+    /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_exact: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -3669,13 +3795,17 @@ impl TryFrom<stateset_core::PurchaseOrder> for PurchaseOrderOutput {
     type Error = Error;
 
     fn try_from(po: stateset_core::PurchaseOrder) -> Result<Self> {
+        let (subtotal, subtotal_exact) = money_pair(po.subtotal, "purchase order subtotal")?;
+        let (total, total_exact) = money_pair(po.total, "purchase order total")?;
         Ok(Self {
             id: po.id.to_string(),
             po_number: po.po_number,
             supplier_id: po.supplier_id.to_string(),
             status: format!("{}", po.status),
-            subtotal: to_f64_result(po.subtotal, "purchase order subtotal")?,
-            total: to_f64_result(po.total, "purchase order total")?,
+            subtotal,
+            subtotal_exact,
+            total,
+            total_exact,
             created_at: po.created_at.to_rfc3339(),
             updated_at: po.updated_at.to_rfc3339(),
         })
@@ -3878,6 +4008,8 @@ pub struct CreateInvoiceItemInput {
     pub description: String,
     pub quantity: f64,
     pub unit_price: f64,
+    /// Exact base-10 unit price. Takes precedence over `unit_price` when present.
+    pub unit_price_exact: Option<String>,
     pub sku: Option<String>,
 }
 
@@ -3900,10 +4032,22 @@ pub struct InvoiceOutput {
     pub customer_id: String,
     pub order_id: Option<String>,
     pub status: String,
+    /// @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0.
     pub subtotal: f64,
+    /// Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money.
+    pub subtotal_exact: String,
+    /// @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0.
     pub tax_amount: f64,
+    /// Exact base-10 tax amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub tax_amount_exact: String,
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
+    /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_exact: String,
+    /// @deprecated Use the `amountPaidExact` twin; float money will be removed in 2.0.
     pub amount_paid: f64,
+    /// Exact base-10 amount paid, straight from the engine's `Decimal`. Prefer this field for money.
+    pub amount_paid_exact: String,
     pub due_date: String,
     pub created_at: String,
     pub updated_at: String,
@@ -3913,16 +4057,24 @@ impl TryFrom<stateset_core::Invoice> for InvoiceOutput {
     type Error = Error;
 
     fn try_from(inv: stateset_core::Invoice) -> Result<Self> {
+        let (subtotal, subtotal_exact) = money_pair(inv.subtotal, "invoice subtotal")?;
+        let (tax_amount, tax_amount_exact) = money_pair(inv.tax_amount, "invoice tax amount")?;
+        let (total, total_exact) = money_pair(inv.total, "invoice total")?;
+        let (amount_paid, amount_paid_exact) = money_pair(inv.amount_paid, "invoice amount paid")?;
         Ok(Self {
             id: inv.id.to_string(),
             invoice_number: inv.invoice_number,
             customer_id: inv.customer_id.to_string(),
             order_id: inv.order_id.map(|id| id.to_string()),
             status: format!("{}", inv.status),
-            subtotal: to_f64_result(inv.subtotal, "invoice subtotal")?,
-            tax_amount: to_f64_result(inv.tax_amount, "invoice tax amount")?,
-            total: to_f64_result(inv.total, "invoice total")?,
-            amount_paid: to_f64_result(inv.amount_paid, "invoice amount paid")?,
+            subtotal,
+            subtotal_exact,
+            tax_amount,
+            tax_amount_exact,
+            total,
+            total_exact,
+            amount_paid,
+            amount_paid_exact,
             due_date: inv.due_date.to_rfc3339(),
             created_at: inv.created_at.to_rfc3339(),
             updated_at: inv.updated_at.to_rfc3339(),
@@ -3934,6 +4086,8 @@ impl TryFrom<stateset_core::Invoice> for InvoiceOutput {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct RecordPaymentInput {
     pub amount: f64,
+    /// Exact base-10 amount. Takes precedence over `amount` when present.
+    pub amount_exact: Option<String>,
     pub payment_method: Option<String>,
     pub reference: Option<String>,
 }
@@ -3967,7 +4121,11 @@ impl Invoices {
                 Ok(stateset_core::CreateInvoiceItem {
                     description: i.description,
                     quantity: decimal_from_f64(i.quantity, "invoice item quantity")?,
-                    unit_price: decimal_from_f64(i.unit_price, "invoice item unit price")?,
+                    unit_price: money_input(
+                        i.unit_price_exact.as_deref(),
+                        i.unit_price,
+                        "invoice item unit price",
+                    )?,
                     sku: i.sku,
                     ..Default::default()
                 })
@@ -4058,7 +4216,11 @@ impl Invoices {
             .record_payment(
                 uuid,
                 stateset_core::RecordInvoicePayment {
-                    amount: decimal_from_f64(input.amount, "invoice payment amount")?,
+                    amount: money_input(
+                        input.amount_exact.as_deref(),
+                        input.amount,
+                        "invoice payment amount",
+                    )?,
                     payment_method: input.payment_method,
                     reference: input.reference,
                     ..Default::default()
@@ -4162,7 +4324,7 @@ impl TryFrom<stateset_core::BomComponent> for BomComponentOutput {
             bom_id: c.bom_id.to_string(),
             component_sku: c.component_sku,
             name: c.name,
-            quantity: to_f64_result(c.quantity, "bom component quantity")?,
+            quantity: to_f64_checked(c.quantity, "bom component quantity")?,
             unit_of_measure: c.unit_of_measure,
         })
     }
@@ -4329,8 +4491,11 @@ impl TryFrom<stateset_core::WorkOrder> for WorkOrderOutput {
             bom_id: wo.bom_id.map(|id| id.to_string()),
             status: format!("{}", wo.status),
             priority: format!("{}", wo.priority),
-            quantity_to_build: to_f64_result(wo.quantity_to_build, "work order quantity to build")?,
-            quantity_completed: to_f64_result(
+            quantity_to_build: to_f64_checked(
+                wo.quantity_to_build,
+                "work order quantity to build",
+            )?,
+            quantity_completed: to_f64_checked(
                 wo.quantity_completed,
                 "work order quantity completed",
             )?,
@@ -4503,7 +4668,11 @@ pub struct AddCartItemInput {
     pub image_url: Option<String>,
     pub quantity: i32,
     pub unit_price: f64,
+    /// Exact base-10 unit price. Takes precedence over `unit_price` when present.
+    pub unit_price_exact: Option<String>,
     pub original_price: Option<f64>,
+    /// Exact base-10 original price. Takes precedence over `original_price` when present.
+    pub original_price_exact: Option<String>,
     pub weight: Option<f64>,
     pub requires_shipping: Option<bool>,
 }
@@ -4554,6 +4723,8 @@ pub struct UpdateCartInput {
 pub struct UpdateCartItemInput {
     pub quantity: Option<i32>,
     pub unit_price: Option<f64>,
+    /// Exact base-10 unit price. Takes precedence over `unit_price` when present.
+    pub unit_price_exact: Option<String>,
 }
 
 #[napi(object)]
@@ -4570,6 +4741,8 @@ pub struct SetCartShippingInput {
     pub shipping_method: Option<String>,
     pub shipping_carrier: Option<String>,
     pub shipping_amount: Option<f64>,
+    /// Exact base-10 shipping amount. Takes precedence over `shipping_amount` when present.
+    pub shipping_amount_exact: Option<String>,
 }
 
 #[napi(object)]
@@ -4584,14 +4757,19 @@ pub struct CartItemOutput {
     pub description: Option<String>,
     pub image_url: Option<String>,
     pub quantity: i32,
+    /// @deprecated Use the `unitPriceExact` twin; float money will be removed in 2.0.
     pub unit_price: f64,
     pub unit_price_exact: String,
+    /// @deprecated Use the `originalPriceExact` twin; float money will be removed in 2.0.
     pub original_price: Option<f64>,
     pub original_price_exact: Option<String>,
+    /// @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0.
     pub discount_amount: f64,
     pub discount_amount_exact: String,
+    /// @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0.
     pub tax_amount: f64,
     pub tax_amount_exact: String,
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
     pub total_exact: String,
     pub requires_shipping: bool,
@@ -4603,11 +4781,13 @@ impl TryFrom<stateset_core::CartItem> for CartItemOutput {
     type Error = Error;
 
     fn try_from(item: stateset_core::CartItem) -> Result<Self> {
-        let unit_price_exact = item.unit_price.to_string();
-        let original_price_exact = item.original_price.map(|value| value.to_string());
-        let discount_amount_exact = item.discount_amount.to_string();
-        let tax_amount_exact = item.tax_amount.to_string();
-        let total_exact = item.total.to_string();
+        let (unit_price, unit_price_exact) = money_pair(item.unit_price, "cart item unit price")?;
+        let (original_price, original_price_exact) =
+            optional_money_pair(item.original_price, "cart item original price")?;
+        let (discount_amount, discount_amount_exact) =
+            money_pair(item.discount_amount, "cart item discount amount")?;
+        let (tax_amount, tax_amount_exact) = money_pair(item.tax_amount, "cart item tax amount")?;
+        let (total, total_exact) = money_pair(item.total, "cart item total")?;
         Ok(Self {
             id: item.id.to_string(),
             cart_id: item.cart_id.to_string(),
@@ -4618,18 +4798,15 @@ impl TryFrom<stateset_core::CartItem> for CartItemOutput {
             description: item.description,
             image_url: item.image_url,
             quantity: item.quantity,
-            unit_price: to_f64_result(item.unit_price, "cart item unit price")?,
+            unit_price,
             unit_price_exact,
-            original_price: optional_to_f64_result(
-                item.original_price,
-                "cart item original price",
-            )?,
+            original_price,
             original_price_exact,
-            discount_amount: to_f64_result(item.discount_amount, "cart item discount amount")?,
+            discount_amount,
             discount_amount_exact,
-            tax_amount: to_f64_result(item.tax_amount, "cart item tax amount")?,
+            tax_amount,
             tax_amount_exact,
-            total: to_f64_result(item.total, "cart item total")?,
+            total,
             total_exact,
             requires_shipping: item.requires_shipping,
             created_at: item.created_at.to_rfc3339(),
@@ -4680,14 +4857,19 @@ pub struct CartOutput {
     pub customer_id: Option<String>,
     pub status: String,
     pub currency: String,
+    /// @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0.
     pub subtotal: f64,
     pub subtotal_exact: String,
+    /// @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0.
     pub tax_amount: f64,
     pub tax_amount_exact: String,
+    /// @deprecated Use the `shippingAmountExact` twin; float money will be removed in 2.0.
     pub shipping_amount: f64,
     pub shipping_amount_exact: String,
+    /// @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0.
     pub discount_amount: f64,
     pub discount_amount_exact: String,
+    /// @deprecated Use the `grandTotalExact` twin; float money will be removed in 2.0.
     pub grand_total: f64,
     pub grand_total_exact: String,
     pub customer_email: Option<String>,
@@ -4716,26 +4898,28 @@ impl TryFrom<stateset_core::Cart> for CartOutput {
     fn try_from(cart: stateset_core::Cart) -> Result<Self> {
         // Compute item_count first before any fields are moved
         let item_count = cart.item_count();
-        let subtotal_exact = cart.subtotal.to_string();
-        let tax_amount_exact = cart.tax_amount.to_string();
-        let shipping_amount_exact = cart.shipping_amount.to_string();
-        let discount_amount_exact = cart.discount_amount.to_string();
-        let grand_total_exact = cart.grand_total.to_string();
+        let (subtotal, subtotal_exact) = money_pair(cart.subtotal, "cart subtotal")?;
+        let (tax_amount, tax_amount_exact) = money_pair(cart.tax_amount, "cart tax amount")?;
+        let (shipping_amount, shipping_amount_exact) =
+            money_pair(cart.shipping_amount, "cart shipping amount")?;
+        let (discount_amount, discount_amount_exact) =
+            money_pair(cart.discount_amount, "cart discount amount")?;
+        let (grand_total, grand_total_exact) = money_pair(cart.grand_total, "cart grand total")?;
         Ok(Self {
             id: cart.id.to_string(),
             cart_number: cart.cart_number,
             customer_id: cart.customer_id.map(|id| id.to_string()),
             status: format!("{}", cart.status),
             currency: cart.currency.to_string(),
-            subtotal: to_f64_result(cart.subtotal, "cart subtotal")?,
+            subtotal,
             subtotal_exact,
-            tax_amount: to_f64_result(cart.tax_amount, "cart tax amount")?,
+            tax_amount,
             tax_amount_exact,
-            shipping_amount: to_f64_result(cart.shipping_amount, "cart shipping amount")?,
+            shipping_amount,
             shipping_amount_exact,
-            discount_amount: to_f64_result(cart.discount_amount, "cart discount amount")?,
+            discount_amount,
             discount_amount_exact,
-            grand_total: to_f64_result(cart.grand_total, "cart grand total")?,
+            grand_total,
             grand_total_exact,
             customer_email: cart.customer_email,
             customer_phone: cart.customer_phone,
@@ -4766,6 +4950,7 @@ pub struct CheckoutResultOutput {
     pub order_id: String,
     pub order_number: String,
     pub payment_id: Option<String>,
+    /// @deprecated Use the `totalChargedExact` twin; float money will be removed in 2.0.
     pub total_charged: f64,
     pub total_charged_exact: String,
     pub currency: String,
@@ -4775,13 +4960,14 @@ impl TryFrom<stateset_core::CheckoutResult> for CheckoutResultOutput {
     type Error = Error;
 
     fn try_from(result: stateset_core::CheckoutResult) -> Result<Self> {
-        let total_charged_exact = result.total_charged.to_string();
+        let (total_charged, total_charged_exact) =
+            money_pair(result.total_charged, "checkout total charged")?;
         Ok(Self {
             cart_id: result.cart_id.to_string(),
             order_id: result.order_id.to_string(),
             order_number: result.order_number,
             payment_id: result.payment_id.map(|id| id.to_string()),
-            total_charged: to_f64_result(result.total_charged, "checkout total charged")?,
+            total_charged,
             total_charged_exact,
             currency: result.currency.to_string(),
         })
@@ -4795,7 +4981,10 @@ pub struct ShippingRateOutput {
     pub carrier: String,
     pub service: String,
     pub description: Option<String>,
+    /// @deprecated Use the `priceExact` twin; float money will be removed in 2.0.
     pub price: f64,
+    /// Exact base-10 price, straight from the engine's `Decimal`. Prefer this field for money.
+    pub price_exact: String,
     pub currency: String,
     pub estimated_days: Option<i32>,
 }
@@ -4804,12 +4993,14 @@ impl TryFrom<stateset_core::ShippingRate> for ShippingRateOutput {
     type Error = Error;
 
     fn try_from(rate: stateset_core::ShippingRate) -> Result<Self> {
+        let (price, price_exact) = money_pair(rate.price, "shipping rate price")?;
         Ok(Self {
             id: rate.id,
             carrier: rate.carrier,
             service: rate.service,
             description: rate.description,
-            price: to_f64_result(rate.price, "shipping rate price")?,
+            price,
+            price_exact,
             currency: rate.currency.to_string(),
             estimated_days: rate.estimated_days,
         })
@@ -4999,8 +5190,13 @@ impl Carts {
                     description: item.description,
                     image_url: item.image_url,
                     quantity: item.quantity,
-                    unit_price: decimal_from_f64(item.unit_price, "cart item unit price")?,
-                    original_price: optional_decimal_from_f64(
+                    unit_price: money_input(
+                        item.unit_price_exact.as_deref(),
+                        item.unit_price,
+                        "cart item unit price",
+                    )?,
+                    original_price: optional_money_input(
+                        item.original_price_exact.as_deref(),
                         item.original_price,
                         "cart item original price",
                     )?,
@@ -5081,7 +5277,8 @@ impl Carts {
                 uuid,
                 stateset_core::UpdateCartItem {
                     quantity: input.quantity,
-                    unit_price: optional_decimal_from_f64(
+                    unit_price: optional_money_input(
+                        input.unit_price_exact.as_deref(),
                         input.unit_price,
                         "cart item unit price",
                     )?,
@@ -5167,13 +5364,11 @@ impl Carts {
         let uuid: uuid::Uuid =
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
-        let shipping_amount = match input.shipping_amount {
-            Some(amount) => Some(
-                Decimal::from_f64(amount)
-                    .ok_or_else(|| coded(ErrCode::Validation, "Invalid shipping amount"))?,
-            ),
-            None => None,
-        };
+        let shipping_amount = optional_money_input(
+            input.shipping_amount_exact.as_deref(),
+            input.shipping_amount,
+            "cart shipping amount",
+        )?;
 
         let cart = commerce
             .carts()
@@ -5412,16 +5607,27 @@ impl Carts {
         convert_output(cart)
     }
 
-    /// Set tax amount
+    /// Set tax amount.
+    ///
+    /// `tax_amount_exact` is the exact base-10 form and wins when present; the
+    /// `f64` is what callers sent before it existed and still works alone.
     #[napi]
-    pub async fn set_tax(&self, id: String, tax_amount: f64) -> Result<CartOutput> {
+    pub async fn set_tax(
+        &self,
+        id: String,
+        tax_amount: f64,
+        tax_amount_exact: Option<String>,
+    ) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
         let uuid: uuid::Uuid =
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
         let cart = commerce
             .carts()
-            .set_tax(uuid.into(), decimal_from_f64(tax_amount, "tax amount")?)
+            .set_tax(
+                uuid.into(),
+                money_input(tax_amount_exact.as_deref(), tax_amount, "cart tax amount")?,
+            )
             .map_err(|e| wrap(ErrCode::Internal, "Failed to set tax", e))?;
 
         convert_output(cart)
@@ -5483,9 +5689,15 @@ pub struct AnalyticsQueryInput {
 #[napi(object)]
 #[derive(Serialize, Clone)]
 pub struct SalesSummaryOutput {
+    /// @deprecated Use the `totalRevenueExact` twin; float money will be removed in 2.0.
     pub total_revenue: f64,
+    /// Exact base-10 total revenue, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_revenue_exact: String,
     pub order_count: u32,
+    /// @deprecated Use the `averageOrderValueExact` twin; float money will be removed in 2.0.
     pub average_order_value: f64,
+    /// Exact base-10 average order value, straight from the engine's `Decimal`. Prefer this field for money.
+    pub average_order_value_exact: String,
     pub items_sold: u32,
     pub unique_customers: u32,
 }
@@ -5494,7 +5706,10 @@ pub struct SalesSummaryOutput {
 #[derive(Serialize, Clone)]
 pub struct RevenueByPeriodOutput {
     pub period: String,
+    /// @deprecated Use the `revenueExact` twin; float money will be removed in 2.0.
     pub revenue: f64,
+    /// Exact base-10 revenue, straight from the engine's `Decimal`. Prefer this field for money.
+    pub revenue_exact: String,
     pub order_count: u32,
     pub period_start: String,
 }
@@ -5506,7 +5721,10 @@ pub struct TopProductOutput {
     pub sku: String,
     pub name: String,
     pub units_sold: u32,
+    /// @deprecated Use the `revenueExact` twin; float money will be removed in 2.0.
     pub revenue: f64,
+    /// Exact base-10 revenue, straight from the engine's `Decimal`. Prefer this field for money.
+    pub revenue_exact: String,
     pub order_count: u32,
 }
 
@@ -5517,9 +5735,15 @@ pub struct ProductPerformanceOutput {
     pub sku: String,
     pub name: String,
     pub units_sold: u32,
+    /// @deprecated Use the `revenueExact` twin; float money will be removed in 2.0.
     pub revenue: f64,
+    /// Exact base-10 revenue, straight from the engine's `Decimal`. Prefer this field for money.
+    pub revenue_exact: String,
     pub previous_units_sold: u32,
+    /// @deprecated Use the `previousRevenueExact` twin; float money will be removed in 2.0.
     pub previous_revenue: f64,
+    /// Exact base-10 previous revenue, straight from the engine's `Decimal`. Prefer this field for money.
+    pub previous_revenue_exact: String,
     pub units_growth_percent: f64,
     pub revenue_growth_percent: f64,
 }
@@ -5530,7 +5754,10 @@ pub struct CustomerMetricsOutput {
     pub total_customers: u32,
     pub new_customers: u32,
     pub returning_customers: u32,
+    /// @deprecated Use the `averageLifetimeValueExact` twin; float money will be removed in 2.0.
     pub average_lifetime_value: f64,
+    /// Exact base-10 average lifetime value, straight from the engine's `Decimal`. Prefer this field for money.
+    pub average_lifetime_value_exact: String,
     pub average_orders_per_customer: f64,
 }
 
@@ -5541,8 +5768,14 @@ pub struct TopCustomerOutput {
     pub name: String,
     pub email: String,
     pub order_count: u32,
+    /// @deprecated Use the `totalSpentExact` twin; float money will be removed in 2.0.
     pub total_spent: f64,
+    /// Exact base-10 total spent, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_spent_exact: String,
+    /// @deprecated Use the `averageOrderValueExact` twin; float money will be removed in 2.0.
     pub average_order_value: f64,
+    /// Exact base-10 average order value, straight from the engine's `Decimal`. Prefer this field for money.
+    pub average_order_value_exact: String,
 }
 
 #[napi(object)]
@@ -5552,7 +5785,10 @@ pub struct InventoryHealthOutput {
     pub in_stock_skus: u32,
     pub low_stock_skus: u32,
     pub out_of_stock_skus: u32,
+    /// @deprecated Use the `totalValueExact` twin; float money will be removed in 2.0.
     pub total_value: f64,
+    /// Exact base-10 total value, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_value_exact: String,
 }
 
 #[napi(object)]
@@ -5598,9 +5834,18 @@ pub struct DemandForecastOutput {
 #[derive(Serialize, Clone)]
 pub struct RevenueForecastOutput {
     pub period: String,
+    /// @deprecated Use the `forecastedRevenueExact` twin; float money will be removed in 2.0.
     pub forecasted_revenue: f64,
+    /// Exact base-10 forecasted revenue, straight from the engine's `Decimal`. Prefer this field for money.
+    pub forecasted_revenue_exact: String,
+    /// @deprecated Use the `lowerBoundExact` twin; float money will be removed in 2.0.
     pub lower_bound: f64,
+    /// Exact base-10 lower bound, straight from the engine's `Decimal`. Prefer this field for money.
+    pub lower_bound_exact: String,
+    /// @deprecated Use the `upperBoundExact` twin; float money will be removed in 2.0.
     pub upper_bound: f64,
+    /// Exact base-10 upper bound, straight from the engine's `Decimal`. Prefer this field for money.
+    pub upper_bound_exact: String,
     pub confidence_level: f64,
     pub based_on_periods: u32,
 }
@@ -5633,7 +5878,10 @@ pub struct FulfillmentMetricsOutput {
 pub struct ReturnMetricsOutput {
     pub total_returns: u32,
     pub return_rate_percent: f64,
+    /// @deprecated Use the `totalRefundedExact` twin; float money will be removed in 2.0.
     pub total_refunded: f64,
+    /// Exact base-10 total refunded, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_refunded_exact: String,
 }
 
 /// Analytics and forecasting API
@@ -5696,10 +5944,16 @@ impl Analytics {
             .sales_summary(q)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get sales summary", e))?;
 
+        let (total_revenue, total_revenue_exact) =
+            money_pair(summary.total_revenue, "sales total revenue")?;
+        let (average_order_value, average_order_value_exact) =
+            money_pair(summary.average_order_value, "sales average order value")?;
         Ok(SalesSummaryOutput {
-            total_revenue: to_f64_or_nan(summary.total_revenue),
+            total_revenue,
+            total_revenue_exact,
             order_count: summary.order_count as u32,
-            average_order_value: to_f64_or_nan(summary.average_order_value),
+            average_order_value,
+            average_order_value_exact,
             items_sold: summary.items_sold as u32,
             unique_customers: summary.unique_customers as u32,
         })
@@ -5728,15 +5982,19 @@ impl Analytics {
             .revenue_by_period(q)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get revenue", e))?;
 
-        Ok(revenue
+        revenue
             .into_iter()
-            .map(|r| RevenueByPeriodOutput {
-                period: r.period,
-                revenue: to_f64_or_nan(r.revenue),
-                order_count: r.order_count as u32,
-                period_start: r.period_start.to_rfc3339(),
+            .map(|r| {
+                let (revenue, revenue_exact) = money_pair(r.revenue, "period revenue")?;
+                Ok(RevenueByPeriodOutput {
+                    period: r.period,
+                    revenue,
+                    revenue_exact,
+                    order_count: r.order_count as u32,
+                    period_start: r.period_start.to_rfc3339(),
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// Get top selling products
@@ -5762,17 +6020,21 @@ impl Analytics {
             .top_products(q)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get top products", e))?;
 
-        Ok(products
+        products
             .into_iter()
-            .map(|p| TopProductOutput {
-                product_id: p.product_id.map(|id| id.to_string()),
-                sku: p.sku,
-                name: p.name,
-                units_sold: p.units_sold as u32,
-                revenue: to_f64_or_nan(p.revenue),
-                order_count: p.order_count as u32,
+            .map(|p| {
+                let (revenue, revenue_exact) = money_pair(p.revenue, "top product revenue")?;
+                Ok(TopProductOutput {
+                    product_id: p.product_id.map(|id| id.to_string()),
+                    sku: p.sku,
+                    name: p.name,
+                    units_sold: p.units_sold as u32,
+                    revenue,
+                    revenue_exact,
+                    order_count: p.order_count as u32,
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// Get product performance with period comparison
@@ -5798,20 +6060,32 @@ impl Analytics {
             .product_performance(q)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get product performance", e))?;
 
-        Ok(perf
-            .into_iter()
-            .map(|p| ProductPerformanceOutput {
-                product_id: p.product_id.to_string(),
-                sku: p.sku,
-                name: p.name,
-                units_sold: p.units_sold as u32,
-                revenue: to_f64_or_nan(p.revenue),
-                previous_units_sold: p.previous_units_sold as u32,
-                previous_revenue: to_f64_or_nan(p.previous_revenue),
-                units_growth_percent: to_f64_or_nan(p.units_growth_percent),
-                revenue_growth_percent: to_f64_or_nan(p.revenue_growth_percent),
+        perf.into_iter()
+            .map(|p| {
+                let (revenue, revenue_exact) = money_pair(p.revenue, "product revenue")?;
+                let (previous_revenue, previous_revenue_exact) =
+                    money_pair(p.previous_revenue, "product previous revenue")?;
+                Ok(ProductPerformanceOutput {
+                    product_id: p.product_id.to_string(),
+                    sku: p.sku,
+                    name: p.name,
+                    units_sold: p.units_sold as u32,
+                    revenue,
+                    revenue_exact,
+                    previous_units_sold: p.previous_units_sold as u32,
+                    previous_revenue,
+                    previous_revenue_exact,
+                    units_growth_percent: to_f64_checked(
+                        p.units_growth_percent,
+                        "product units growth percent",
+                    )?,
+                    revenue_growth_percent: to_f64_checked(
+                        p.revenue_growth_percent,
+                        "product revenue growth percent",
+                    )?,
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// Get customer metrics
@@ -5834,12 +6108,18 @@ impl Analytics {
             .customer_metrics(q)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get customer metrics", e))?;
 
+        let (average_lifetime_value, average_lifetime_value_exact) =
+            money_pair(metrics.average_lifetime_value, "average customer lifetime value")?;
         Ok(CustomerMetricsOutput {
             total_customers: metrics.total_customers as u32,
             new_customers: metrics.new_customers as u32,
             returning_customers: metrics.returning_customers as u32,
-            average_lifetime_value: to_f64_or_nan(metrics.average_lifetime_value),
-            average_orders_per_customer: to_f64_or_nan(metrics.average_orders_per_customer),
+            average_lifetime_value,
+            average_lifetime_value_exact,
+            average_orders_per_customer: to_f64_checked(
+                metrics.average_orders_per_customer,
+                "average orders per customer",
+            )?,
         })
     }
 
@@ -5866,17 +6146,25 @@ impl Analytics {
             .top_customers(q)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get top customers", e))?;
 
-        Ok(customers
+        customers
             .into_iter()
-            .map(|c| TopCustomerOutput {
-                customer_id: c.customer_id.to_string(),
-                name: c.name,
-                email: c.email,
-                order_count: c.order_count as u32,
-                total_spent: to_f64_or_nan(c.total_spent),
-                average_order_value: to_f64_or_nan(c.average_order_value),
+            .map(|c| {
+                let (total_spent, total_spent_exact) =
+                    money_pair(c.total_spent, "customer total spent")?;
+                let (average_order_value, average_order_value_exact) =
+                    money_pair(c.average_order_value, "customer average order value")?;
+                Ok(TopCustomerOutput {
+                    customer_id: c.customer_id.to_string(),
+                    name: c.name,
+                    email: c.email,
+                    order_count: c.order_count as u32,
+                    total_spent,
+                    total_spent_exact,
+                    average_order_value,
+                    average_order_value_exact,
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// Get inventory health summary
@@ -5889,12 +6177,15 @@ impl Analytics {
             .inventory_health()
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get inventory health", e))?;
 
+        let (total_value, total_value_exact) =
+            money_pair(health.total_value, "inventory total value")?;
         Ok(InventoryHealthOutput {
             total_skus: health.total_skus as u32,
             in_stock_skus: health.in_stock_skus as u32,
             low_stock_skus: health.low_stock_skus as u32,
             out_of_stock_skus: health.out_of_stock_skus as u32,
-            total_value: to_f64_or_nan(health.total_value),
+            total_value,
+            total_value_exact,
         })
     }
 
@@ -5910,19 +6201,30 @@ impl Analytics {
             .low_stock_items(threshold_dec)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get low stock items", e))?;
 
-        Ok(items
+        items
             .into_iter()
-            .map(|i| LowStockItemOutput {
-                sku: i.sku,
-                name: i.name,
-                on_hand: to_f64_or_nan(i.on_hand),
-                allocated: to_f64_or_nan(i.allocated),
-                available: to_f64_or_nan(i.available),
-                reorder_point: i.reorder_point.map(to_f64_or_nan),
-                average_daily_sales: i.average_daily_sales.map(to_f64_or_nan),
-                days_of_stock: i.days_of_stock.map(to_f64_or_nan),
+            .map(|i| {
+                Ok(LowStockItemOutput {
+                    sku: i.sku,
+                    name: i.name,
+                    on_hand: to_f64_checked(i.on_hand, "low stock on hand")?,
+                    allocated: to_f64_checked(i.allocated, "low stock allocated")?,
+                    available: to_f64_checked(i.available, "low stock available")?,
+                    reorder_point: optional_to_f64_checked(
+                        i.reorder_point,
+                        "low stock reorder point",
+                    )?,
+                    average_daily_sales: optional_to_f64_checked(
+                        i.average_daily_sales,
+                        "low stock average daily sales",
+                    )?,
+                    days_of_stock: optional_to_f64_checked(
+                        i.days_of_stock,
+                        "low stock days of stock",
+                    )?,
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// Get inventory movement summary
@@ -5973,20 +6275,28 @@ impl Analytics {
             .demand_forecast(skus, days_ahead.unwrap_or(30))
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get demand forecast", e))?;
 
-        Ok(forecasts
+        forecasts
             .into_iter()
-            .map(|f| DemandForecastOutput {
-                sku: f.sku,
-                name: f.name,
-                average_daily_demand: to_f64_or_nan(f.average_daily_demand),
-                forecasted_demand: to_f64_or_nan(f.forecasted_demand),
-                confidence: to_f64_or_nan(f.confidence),
-                current_stock: to_f64_or_nan(f.current_stock),
-                days_until_stockout: f.days_until_stockout,
-                recommended_reorder_qty: f.recommended_reorder_qty.map(to_f64_or_nan),
-                trend: format!("{:?}", f.trend),
+            .map(|f| {
+                Ok(DemandForecastOutput {
+                    sku: f.sku,
+                    name: f.name,
+                    average_daily_demand: to_f64_checked(
+                        f.average_daily_demand,
+                        "average daily demand",
+                    )?,
+                    forecasted_demand: to_f64_checked(f.forecasted_demand, "forecasted demand")?,
+                    confidence: to_f64_checked(f.confidence, "demand forecast confidence")?,
+                    current_stock: to_f64_checked(f.current_stock, "current stock")?,
+                    days_until_stockout: f.days_until_stockout,
+                    recommended_reorder_qty: optional_to_f64_checked(
+                        f.recommended_reorder_qty,
+                        "recommended reorder quantity",
+                    )?,
+                    trend: format!("{:?}", f.trend),
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// Get revenue forecast
@@ -6007,17 +6317,31 @@ impl Analytics {
             .revenue_forecast(periods_ahead.unwrap_or(3), gran)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get revenue forecast", e))?;
 
-        Ok(forecasts
+        forecasts
             .into_iter()
-            .map(|f| RevenueForecastOutput {
-                period: f.period,
-                forecasted_revenue: to_f64_or_nan(f.forecasted_revenue),
-                lower_bound: to_f64_or_nan(f.lower_bound),
-                upper_bound: to_f64_or_nan(f.upper_bound),
-                confidence_level: to_f64_or_nan(f.confidence_level),
-                based_on_periods: f.based_on_periods,
+            .map(|f| {
+                let (forecasted_revenue, forecasted_revenue_exact) =
+                    money_pair(f.forecasted_revenue, "forecasted revenue")?;
+                let (lower_bound, lower_bound_exact) =
+                    money_pair(f.lower_bound, "revenue forecast lower bound")?;
+                let (upper_bound, upper_bound_exact) =
+                    money_pair(f.upper_bound, "revenue forecast upper bound")?;
+                Ok(RevenueForecastOutput {
+                    period: f.period,
+                    forecasted_revenue,
+                    forecasted_revenue_exact,
+                    lower_bound,
+                    lower_bound_exact,
+                    upper_bound,
+                    upper_bound_exact,
+                    confidence_level: to_f64_checked(
+                        f.confidence_level,
+                        "revenue forecast confidence level",
+                    )?,
+                    based_on_periods: f.based_on_periods,
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// Get order status breakdown
@@ -6072,10 +6396,22 @@ impl Analytics {
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get fulfillment metrics", e))?;
 
         Ok(FulfillmentMetricsOutput {
-            avg_time_to_ship_hours: metrics.avg_time_to_ship_hours.map(to_f64_or_nan),
-            avg_time_to_deliver_hours: metrics.avg_time_to_deliver_hours.map(to_f64_or_nan),
-            on_time_shipping_percent: metrics.on_time_shipping_percent.map(to_f64_or_nan),
-            on_time_delivery_percent: metrics.on_time_delivery_percent.map(to_f64_or_nan),
+            avg_time_to_ship_hours: optional_to_f64_checked(
+                metrics.avg_time_to_ship_hours,
+                "average time to ship hours",
+            )?,
+            avg_time_to_deliver_hours: optional_to_f64_checked(
+                metrics.avg_time_to_deliver_hours,
+                "average time to deliver hours",
+            )?,
+            on_time_shipping_percent: optional_to_f64_checked(
+                metrics.on_time_shipping_percent,
+                "on-time shipping percent",
+            )?,
+            on_time_delivery_percent: optional_to_f64_checked(
+                metrics.on_time_delivery_percent,
+                "on-time delivery percent",
+            )?,
             shipped_today: metrics.shipped_today as u32,
             awaiting_shipment: metrics.awaiting_shipment as u32,
         })
@@ -6101,10 +6437,16 @@ impl Analytics {
             .return_metrics(q)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get return metrics", e))?;
 
+        let (total_refunded, total_refunded_exact) =
+            money_pair(metrics.total_refunded, "total refunded")?;
         Ok(ReturnMetricsOutput {
             total_returns: metrics.total_returns as u32,
-            return_rate_percent: to_f64_or_nan(metrics.return_rate_percent),
-            total_refunded: to_f64_or_nan(metrics.total_refunded),
+            return_rate_percent: to_f64_checked(
+                metrics.return_rate_percent,
+                "return rate percent",
+            )?,
+            total_refunded,
+            total_refunded_exact,
         })
     }
 }
@@ -6162,9 +6504,15 @@ pub struct ExchangeRateOutput {
 #[napi(object)]
 #[derive(Serialize, Clone)]
 pub struct ConversionResultOutput {
+    /// @deprecated Use the `originalAmountExact` twin; float money will be removed in 2.0.
     pub original_amount: f64,
+    /// Exact base-10 original amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub original_amount_exact: String,
     pub original_currency: String,
+    /// @deprecated Use the `convertedAmountExact` twin; float money will be removed in 2.0.
     pub converted_amount: f64,
+    /// Exact base-10 converted amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub converted_amount_exact: String,
     pub target_currency: String,
     pub rate: f64,
     pub inverse_rate: f64,
@@ -6220,17 +6568,17 @@ fn rounding_mode_to_string(mode: &stateset_embedded::RoundingMode) -> String {
     }
 }
 
-fn exchange_rate_to_output(rate: stateset_embedded::ExchangeRate) -> ExchangeRateOutput {
-    ExchangeRateOutput {
+fn exchange_rate_to_output(rate: stateset_embedded::ExchangeRate) -> Result<ExchangeRateOutput> {
+    Ok(ExchangeRateOutput {
         id: rate.id.to_string(),
         base_currency: rate.base_currency.code().to_string(),
         quote_currency: rate.quote_currency.code().to_string(),
-        rate: to_f64_or_nan(rate.rate),
+        rate: to_f64_checked(rate.rate, "exchange rate")?,
         source: rate.source,
         rate_at: rate.rate_at.to_rfc3339(),
         created_at: rate.created_at.to_rfc3339(),
         updated_at: rate.updated_at.to_rfc3339(),
-    }
+    })
 }
 
 /// Currency and exchange rate operations API
@@ -6253,7 +6601,7 @@ impl CurrencyOperations {
             .get_rate(from_currency, to_currency)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get rate", e))?;
 
-        Ok(rate.map(exchange_rate_to_output))
+        rate.map(exchange_rate_to_output).transpose()
     }
 
     /// Get all exchange rates for a base currency
@@ -6267,7 +6615,7 @@ impl CurrencyOperations {
             .get_rates_for(currency)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get rates", e))?;
 
-        Ok(rates.into_iter().map(exchange_rate_to_output).collect())
+        rates.into_iter().map(exchange_rate_to_output).collect()
     }
 
     /// List exchange rates with optional filtering
@@ -6293,7 +6641,7 @@ impl CurrencyOperations {
             .list_rates(f)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to list rates", e))?;
 
-        Ok(rates.into_iter().map(exchange_rate_to_output).collect())
+        rates.into_iter().map(exchange_rate_to_output).collect()
     }
 
     /// Set an exchange rate
@@ -6312,7 +6660,7 @@ impl CurrencyOperations {
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to set rate", e))?;
 
-        Ok(exchange_rate_to_output(rate))
+        exchange_rate_to_output(rate)
     }
 
     /// Set multiple exchange rates at once
@@ -6339,7 +6687,7 @@ impl CurrencyOperations {
             .set_rates(rates)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to set rates", e))?;
 
-        Ok(results.into_iter().map(exchange_rate_to_output).collect())
+        results.into_iter().map(exchange_rate_to_output).collect()
     }
 
     /// Delete an exchange rate by ID
@@ -6372,13 +6720,19 @@ impl CurrencyOperations {
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to convert currency", e))?;
 
+        let (original_amount, original_amount_exact) =
+            money_pair(result.original_amount, "conversion original amount")?;
+        let (converted_amount, converted_amount_exact) =
+            money_pair(result.converted_amount, "conversion converted amount")?;
         Ok(ConversionResultOutput {
-            original_amount: to_f64_or_nan(result.original_amount),
+            original_amount,
+            original_amount_exact,
             original_currency: result.original_currency.code().to_string(),
-            converted_amount: to_f64_or_nan(result.converted_amount),
+            converted_amount,
+            converted_amount_exact,
             target_currency: result.target_currency.code().to_string(),
-            rate: to_f64_or_nan(result.rate),
-            inverse_rate: to_f64_or_nan(result.inverse_rate),
+            rate: to_f64_checked(result.rate, "conversion rate")?,
+            inverse_rate: to_f64_checked(result.inverse_rate, "conversion inverse rate")?,
             rate_at: result.rate_at.to_rfc3339(),
         })
     }
@@ -6608,15 +6962,24 @@ pub struct SubscriptionPlanOutput {
     pub status: String,
     pub billing_interval: String,
     pub custom_interval_days: Option<i32>,
+    /// @deprecated Use the `priceExact` twin; float money will be removed in 2.0.
     pub price: f64,
+    /// Exact base-10 price, straight from the engine's `Decimal`. Prefer this field for money.
+    pub price_exact: String,
+    /// @deprecated Use the `setupFeeExact` twin; float money will be removed in 2.0.
     pub setup_fee: Option<f64>,
+    /// Exact base-10 setup fee, straight from the engine's `Decimal`. Prefer this field for money.
+    pub setup_fee_exact: Option<String>,
     pub currency: String,
     pub trial_days: i32,
     pub trial_requires_payment_method: bool,
     pub min_cycles: Option<i32>,
     pub max_cycles: Option<i32>,
     pub discount_percent: Option<f64>,
+    /// @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0.
     pub discount_amount: Option<f64>,
+    /// Exact base-10 discount amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub discount_amount_exact: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -6625,6 +6988,11 @@ impl TryFrom<stateset_core::SubscriptionPlan> for SubscriptionPlanOutput {
     type Error = Error;
 
     fn try_from(p: stateset_core::SubscriptionPlan) -> Result<Self> {
+        let (price, price_exact) = money_pair(p.price, "subscription plan price")?;
+        let (setup_fee, setup_fee_exact) =
+            optional_money_pair(p.setup_fee, "subscription plan setup fee")?;
+        let (discount_amount, discount_amount_exact) =
+            optional_money_pair(p.discount_amount, "subscription plan discount amount")?;
         Ok(Self {
             id: p.id.to_string(),
             code: p.code,
@@ -6633,21 +7001,21 @@ impl TryFrom<stateset_core::SubscriptionPlan> for SubscriptionPlanOutput {
             status: format!("{:?}", p.status).to_lowercase(),
             billing_interval: format!("{}", p.billing_interval),
             custom_interval_days: p.custom_interval_days,
-            price: to_f64_result(p.price, "subscription plan price")?,
-            setup_fee: optional_to_f64_result(p.setup_fee, "subscription plan setup fee")?,
+            price,
+            price_exact,
+            setup_fee,
+            setup_fee_exact,
             currency: p.currency.to_string(),
             trial_days: p.trial_days,
             trial_requires_payment_method: p.trial_requires_payment_method,
             min_cycles: p.min_cycles,
             max_cycles: p.max_cycles,
-            discount_percent: optional_to_f64_result(
+            discount_percent: optional_to_f64_checked(
                 p.discount_percent,
                 "subscription plan discount percent",
             )?,
-            discount_amount: optional_to_f64_result(
-                p.discount_amount,
-                "subscription plan discount amount",
-            )?,
+            discount_amount,
+            discount_amount_exact,
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
         })
@@ -6702,7 +7070,10 @@ pub struct SubscriptionOutput {
     pub status: String,
     pub billing_interval: String,
     pub custom_interval_days: Option<i32>,
+    /// @deprecated Use the `priceExact` twin; float money will be removed in 2.0.
     pub price: f64,
+    /// Exact base-10 price, straight from the engine's `Decimal`. Prefer this field for money.
+    pub price_exact: String,
     pub currency: String,
     pub payment_method_id: Option<String>,
     pub started_at: String,
@@ -6717,7 +7088,10 @@ pub struct SubscriptionOutput {
     pub billing_cycle_count: i32,
     pub failed_payment_attempts: i32,
     pub discount_percent: Option<f64>,
+    /// @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0.
     pub discount_amount: Option<f64>,
+    /// Exact base-10 discount amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub discount_amount_exact: Option<String>,
     pub coupon_code: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -6727,6 +7101,9 @@ impl TryFrom<stateset_core::Subscription> for SubscriptionOutput {
     type Error = Error;
 
     fn try_from(s: stateset_core::Subscription) -> Result<Self> {
+        let (price, price_exact) = money_pair(s.price, "subscription price")?;
+        let (discount_amount, discount_amount_exact) =
+            optional_money_pair(s.discount_amount, "subscription discount amount")?;
         Ok(Self {
             id: s.id.to_string(),
             subscription_number: s.subscription_number,
@@ -6736,7 +7113,8 @@ impl TryFrom<stateset_core::Subscription> for SubscriptionOutput {
             status: format!("{}", s.status),
             billing_interval: format!("{}", s.billing_interval),
             custom_interval_days: s.custom_interval_days,
-            price: to_f64_result(s.price, "subscription price")?,
+            price,
+            price_exact,
             currency: s.currency.to_string(),
             payment_method_id: s.payment_method_id,
             started_at: s.started_at.to_rfc3339(),
@@ -6750,14 +7128,12 @@ impl TryFrom<stateset_core::Subscription> for SubscriptionOutput {
             ends_at: s.ends_at.map(|d| d.to_rfc3339()),
             billing_cycle_count: s.billing_cycle_count,
             failed_payment_attempts: s.failed_payment_attempts,
-            discount_percent: optional_to_f64_result(
+            discount_percent: optional_to_f64_checked(
                 s.discount_percent,
                 "subscription discount percent",
             )?,
-            discount_amount: optional_to_f64_result(
-                s.discount_amount,
-                "subscription discount amount",
-            )?,
+            discount_amount,
+            discount_amount_exact,
             coupon_code: s.coupon_code,
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
@@ -6806,10 +7182,22 @@ pub struct BillingCycleOutput {
     pub status: String,
     pub period_start: String,
     pub period_end: String,
+    /// @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0.
     pub subtotal: f64,
+    /// Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money.
+    pub subtotal_exact: String,
+    /// @deprecated Use the `discountExact` twin; float money will be removed in 2.0.
     pub discount: f64,
+    /// Exact base-10 discount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub discount_exact: String,
+    /// @deprecated Use the `taxExact` twin; float money will be removed in 2.0.
     pub tax: f64,
+    /// Exact base-10 tax, straight from the engine's `Decimal`. Prefer this field for money.
+    pub tax_exact: String,
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
+    /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_exact: String,
     pub currency: String,
     pub payment_id: Option<String>,
     pub billed_at: Option<String>,
@@ -6819,19 +7207,29 @@ pub struct BillingCycleOutput {
     pub updated_at: String,
 }
 
-impl From<stateset_core::BillingCycle> for BillingCycleOutput {
-    fn from(b: stateset_core::BillingCycle) -> Self {
-        Self {
+impl TryFrom<stateset_core::BillingCycle> for BillingCycleOutput {
+    type Error = Error;
+
+    fn try_from(b: stateset_core::BillingCycle) -> Result<Self> {
+        let (subtotal, subtotal_exact) = money_pair(b.subtotal, "billing cycle subtotal")?;
+        let (discount, discount_exact) = money_pair(b.discount, "billing cycle discount")?;
+        let (tax, tax_exact) = money_pair(b.tax, "billing cycle tax")?;
+        let (total, total_exact) = money_pair(b.total, "billing cycle total")?;
+        Ok(Self {
             id: b.id.to_string(),
             subscription_id: b.subscription_id.to_string(),
             cycle_number: b.cycle_number,
             status: format!("{:?}", b.status).to_lowercase(),
             period_start: b.period_start.to_rfc3339(),
             period_end: b.period_end.to_rfc3339(),
-            subtotal: to_f64_or_nan(b.subtotal),
-            discount: to_f64_or_nan(b.discount),
-            tax: to_f64_or_nan(b.tax),
-            total: to_f64_or_nan(b.total),
+            subtotal,
+            subtotal_exact,
+            discount,
+            discount_exact,
+            tax,
+            tax_exact,
+            total,
+            total_exact,
             currency: b.currency.to_string(),
             payment_id: b.payment_id,
             billed_at: b.billed_at.map(|d| d.to_rfc3339()),
@@ -6839,7 +7237,7 @@ impl From<stateset_core::BillingCycle> for BillingCycleOutput {
             retry_count: b.retry_count,
             created_at: b.created_at.to_rfc3339(),
             updated_at: b.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -7372,7 +7770,7 @@ impl Subscriptions {
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to list billing cycles", e))?;
 
-        Ok(cycles.into_iter().map(|c| c.into()).collect())
+        convert_outputs(cycles)
     }
 
     /// Get a billing cycle by ID
@@ -7387,7 +7785,7 @@ impl Subscriptions {
             .get_billing_cycle(uuid)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get billing cycle", e))?;
 
-        Ok(cycle.map(|c| c.into()))
+        convert_optional_output(cycle)
     }
 
     // ========================================================================
@@ -7553,8 +7951,14 @@ pub struct PromotionOutput {
     pub stacking: String,
     pub status: String,
     pub percentage_off: Option<f64>,
+    /// @deprecated Use the `fixedAmountOffExact` twin; float money will be removed in 2.0.
     pub fixed_amount_off: Option<f64>,
+    /// Exact base-10 fixed amount off, straight from the engine's `Decimal`. Prefer this field for money.
+    pub fixed_amount_off_exact: Option<String>,
+    /// @deprecated Use the `maxDiscountAmountExact` twin; float money will be removed in 2.0.
     pub max_discount_amount: Option<f64>,
+    /// Exact base-10 max discount amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub max_discount_amount_exact: Option<String>,
     pub buy_quantity: Option<i32>,
     pub get_quantity: Option<i32>,
     pub get_discount_percent: Option<f64>,
@@ -7574,6 +7978,10 @@ impl TryFrom<stateset_core::Promotion> for PromotionOutput {
     type Error = Error;
 
     fn try_from(p: stateset_core::Promotion) -> Result<Self> {
+        let (fixed_amount_off, fixed_amount_off_exact) =
+            optional_money_pair(p.fixed_amount_off, "promotion fixed amount off")?;
+        let (max_discount_amount, max_discount_amount_exact) =
+            optional_money_pair(p.max_discount_amount, "promotion max discount amount")?;
         Ok(Self {
             id: p.id.to_string(),
             code: p.code,
@@ -7585,18 +7993,14 @@ impl TryFrom<stateset_core::Promotion> for PromotionOutput {
             target: format!("{:?}", p.target).to_lowercase(),
             stacking: format!("{:?}", p.stacking).to_lowercase(),
             status: format!("{:?}", p.status).to_lowercase(),
-            percentage_off: optional_to_f64_result(p.percentage_off, "promotion percentage off")?,
-            fixed_amount_off: optional_to_f64_result(
-                p.fixed_amount_off,
-                "promotion fixed amount off",
-            )?,
-            max_discount_amount: optional_to_f64_result(
-                p.max_discount_amount,
-                "promotion max discount amount",
-            )?,
+            percentage_off: optional_to_f64_checked(p.percentage_off, "promotion percentage off")?,
+            fixed_amount_off,
+            fixed_amount_off_exact,
+            max_discount_amount,
+            max_discount_amount_exact,
             buy_quantity: p.buy_quantity,
             get_quantity: p.get_quantity,
-            get_discount_percent: optional_to_f64_result(
+            get_discount_percent: optional_to_f64_checked(
                 p.get_discount_percent,
                 "promotion get discount percent",
             )?,
@@ -7710,13 +8114,34 @@ pub struct PromotionLineItemInput {
 /// Result of applying promotions
 #[napi(object)]
 pub struct ApplyPromotionsOutput {
+    /// @deprecated Use the `originalSubtotalExact` twin; float money will be removed in 2.0.
     pub original_subtotal: f64,
+    /// Exact base-10 original subtotal, straight from the engine's `Decimal`. Prefer this field for money.
+    pub original_subtotal_exact: String,
+    /// @deprecated Use the `totalDiscountExact` twin; float money will be removed in 2.0.
     pub total_discount: f64,
+    /// Exact base-10 total discount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_discount_exact: String,
+    /// @deprecated Use the `discountedSubtotalExact` twin; float money will be removed in 2.0.
     pub discounted_subtotal: f64,
+    /// Exact base-10 discounted subtotal, straight from the engine's `Decimal`. Prefer this field for money.
+    pub discounted_subtotal_exact: String,
+    /// @deprecated Use the `originalShippingExact` twin; float money will be removed in 2.0.
     pub original_shipping: f64,
+    /// Exact base-10 original shipping, straight from the engine's `Decimal`. Prefer this field for money.
+    pub original_shipping_exact: String,
+    /// @deprecated Use the `shippingDiscountExact` twin; float money will be removed in 2.0.
     pub shipping_discount: f64,
+    /// Exact base-10 shipping discount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub shipping_discount_exact: String,
+    /// @deprecated Use the `finalShippingExact` twin; float money will be removed in 2.0.
     pub final_shipping: f64,
+    /// Exact base-10 final shipping, straight from the engine's `Decimal`. Prefer this field for money.
+    pub final_shipping_exact: String,
+    /// @deprecated Use the `grandTotalExact` twin; float money will be removed in 2.0.
     pub grand_total: f64,
+    /// Exact base-10 grand total, straight from the engine's `Decimal`. Prefer this field for money.
+    pub grand_total_exact: String,
     pub applied_promotions: Vec<AppliedPromotionOutput>,
 }
 
@@ -7726,7 +8151,10 @@ pub struct AppliedPromotionOutput {
     pub promotion_id: String,
     pub promotion_name: String,
     pub coupon_code: Option<String>,
+    /// @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0.
     pub discount_amount: f64,
+    /// Exact base-10 discount amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub discount_amount_exact: String,
     pub discount_type: String,
 }
 
@@ -7734,11 +8162,14 @@ impl TryFrom<stateset_core::AppliedPromotion> for AppliedPromotionOutput {
     type Error = Error;
 
     fn try_from(a: stateset_core::AppliedPromotion) -> Result<Self> {
+        let (discount_amount, discount_amount_exact) =
+            money_pair(a.discount_amount, "applied promotion discount amount")?;
         Ok(Self {
             promotion_id: a.promotion_id.to_string(),
             promotion_name: a.promotion_name,
             coupon_code: a.coupon_code,
-            discount_amount: to_f64_result(a.discount_amount, "applied promotion discount amount")?,
+            discount_amount,
+            discount_amount_exact,
             discount_type: format!("{:?}", a.discount_type).to_lowercase(),
         })
     }
@@ -7748,17 +8179,34 @@ impl TryFrom<stateset_core::ApplyPromotionsResult> for ApplyPromotionsOutput {
     type Error = Error;
 
     fn try_from(r: stateset_core::ApplyPromotionsResult) -> Result<Self> {
+        let (original_subtotal, original_subtotal_exact) =
+            money_pair(r.original_subtotal, "original subtotal")?;
+        let (total_discount, total_discount_exact) =
+            money_pair(r.total_discount, "total discount")?;
+        let (discounted_subtotal, discounted_subtotal_exact) =
+            money_pair(r.discounted_subtotal, "discounted subtotal")?;
+        let (original_shipping, original_shipping_exact) =
+            money_pair(r.original_shipping, "original shipping")?;
+        let (shipping_discount, shipping_discount_exact) =
+            money_pair(r.shipping_discount, "shipping discount")?;
+        let (final_shipping, final_shipping_exact) =
+            money_pair(r.final_shipping, "final shipping")?;
+        let (grand_total, grand_total_exact) = money_pair(r.grand_total, "promotions grand total")?;
         Ok(Self {
-            original_subtotal: to_f64_result(r.original_subtotal, "promotion original subtotal")?,
-            total_discount: to_f64_result(r.total_discount, "promotion total discount")?,
-            discounted_subtotal: to_f64_result(
-                r.discounted_subtotal,
-                "promotion discounted subtotal",
-            )?,
-            original_shipping: to_f64_result(r.original_shipping, "promotion original shipping")?,
-            shipping_discount: to_f64_result(r.shipping_discount, "promotion shipping discount")?,
-            final_shipping: to_f64_result(r.final_shipping, "promotion final shipping")?,
-            grand_total: to_f64_result(r.grand_total, "promotion grand total")?,
+            original_subtotal,
+            original_subtotal_exact,
+            total_discount,
+            total_discount_exact,
+            discounted_subtotal,
+            discounted_subtotal_exact,
+            original_shipping,
+            original_shipping_exact,
+            shipping_discount,
+            shipping_discount_exact,
+            final_shipping,
+            final_shipping_exact,
+            grand_total,
+            grand_total_exact,
             applied_promotions: convert_outputs(r.applied_promotions)?,
         })
     }
@@ -7773,7 +8221,10 @@ pub struct PromotionUsageOutput {
     pub customer_id: Option<String>,
     pub order_id: Option<String>,
     pub cart_id: Option<String>,
+    /// @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0.
     pub discount_amount: f64,
+    /// Exact base-10 discount amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub discount_amount_exact: String,
     pub currency: String,
     pub used_at: String,
 }
@@ -7782,6 +8233,8 @@ impl TryFrom<stateset_core::PromotionUsage> for PromotionUsageOutput {
     type Error = Error;
 
     fn try_from(u: stateset_core::PromotionUsage) -> Result<Self> {
+        let (discount_amount, discount_amount_exact) =
+            money_pair(u.discount_amount, "promotion usage discount amount")?;
         Ok(Self {
             id: u.id.to_string(),
             promotion_id: u.promotion_id.to_string(),
@@ -7789,7 +8242,8 @@ impl TryFrom<stateset_core::PromotionUsage> for PromotionUsageOutput {
             customer_id: u.customer_id.map(|id| id.to_string()),
             order_id: u.order_id.map(|id| id.to_string()),
             cart_id: u.cart_id.map(|id| id.to_string()),
-            discount_amount: to_f64_result(u.discount_amount, "promotion usage discount amount")?,
+            discount_amount,
+            discount_amount_exact,
             currency: u.currency.to_string(),
             used_at: u.used_at.to_rfc3339(),
         })
@@ -8506,9 +8960,18 @@ pub struct TaxRateOutput {
     pub description: Option<String>,
     pub is_compound: bool,
     pub priority: i32,
+    /// @deprecated Use the `thresholdMinExact` twin; float money will be removed in 2.0.
     pub threshold_min: Option<f64>,
+    /// Exact base-10 minimum amount at which the rate starts to apply.
+    pub threshold_min_exact: Option<String>,
+    /// @deprecated Use the `thresholdMaxExact` twin; float money will be removed in 2.0.
     pub threshold_max: Option<f64>,
+    /// Exact base-10 cap on the amount this rate is charged against.
+    pub threshold_max_exact: Option<String>,
+    /// @deprecated Use the `fixedAmountExact` twin; float money will be removed in 2.0.
     pub fixed_amount: Option<f64>,
+    /// Exact base-10 fixed amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub fixed_amount_exact: Option<String>,
     pub effective_from: String,
     pub effective_to: Option<String>,
     pub active: bool,
@@ -8520,19 +8983,28 @@ impl TryFrom<stateset_core::TaxRate> for TaxRateOutput {
     type Error = Error;
 
     fn try_from(r: stateset_core::TaxRate) -> Result<Self> {
+        let (threshold_min, threshold_min_exact) =
+            optional_money_pair(r.threshold_min, "tax rate threshold min")?;
+        let (threshold_max, threshold_max_exact) =
+            optional_money_pair(r.threshold_max, "tax rate threshold max")?;
+        let (fixed_amount, fixed_amount_exact) =
+            optional_money_pair(r.fixed_amount, "tax rate fixed amount")?;
         Ok(Self {
             id: r.id.to_string(),
             jurisdiction_id: r.jurisdiction_id.to_string(),
             tax_type: r.tax_type.as_str().to_string(),
             product_category: r.product_category.as_str().to_string(),
-            rate: to_f64_result(r.rate, "tax rate")?,
+            rate: to_f64_checked(r.rate, "tax rate")?,
             name: r.name,
             description: r.description,
             is_compound: r.is_compound,
             priority: r.priority,
-            threshold_min: optional_to_f64_result(r.threshold_min, "tax threshold min")?,
-            threshold_max: optional_to_f64_result(r.threshold_max, "tax threshold max")?,
-            fixed_amount: optional_to_f64_result(r.fixed_amount, "tax fixed amount")?,
+            threshold_min,
+            threshold_min_exact,
+            threshold_max,
+            threshold_max_exact,
+            fixed_amount,
+            fixed_amount_exact,
             effective_from: r.effective_from.to_string(),
             effective_to: r.effective_to.map(|d| d.to_string()),
             active: r.active,
@@ -8592,8 +9064,14 @@ pub struct TaxBreakdownOutput {
     pub tax_type: String,
     pub rate_name: String,
     pub rate: f64,
+    /// @deprecated Use the `taxableAmountExact` twin; float money will be removed in 2.0.
     pub taxable_amount: f64,
+    /// Exact base-10 taxable amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub taxable_amount_exact: String,
+    /// @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0.
     pub tax_amount: f64,
+    /// Exact base-10 tax amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub tax_amount_exact: String,
     pub is_compound: bool,
 }
 
@@ -8601,14 +9079,19 @@ impl TryFrom<stateset_core::TaxBreakdown> for TaxBreakdownOutput {
     type Error = Error;
 
     fn try_from(b: stateset_core::TaxBreakdown) -> Result<Self> {
+        let (taxable_amount, taxable_amount_exact) =
+            money_pair(b.taxable_amount, "tax breakdown taxable amount")?;
+        let (tax_amount, tax_amount_exact) = money_pair(b.tax_amount, "tax breakdown tax amount")?;
         Ok(Self {
             jurisdiction_id: b.jurisdiction_id.to_string(),
             jurisdiction_name: b.jurisdiction_name,
             tax_type: b.tax_type.as_str().to_string(),
             rate_name: b.rate_name,
-            rate: to_f64_result(b.rate, "tax breakdown rate")?,
-            taxable_amount: to_f64_result(b.taxable_amount, "tax breakdown taxable amount")?,
-            tax_amount: to_f64_result(b.tax_amount, "tax breakdown tax amount")?,
+            rate: to_f64_checked(b.rate, "tax breakdown rate")?,
+            taxable_amount,
+            taxable_amount_exact,
+            tax_amount,
+            tax_amount_exact,
             is_compound: b.is_compound,
         })
     }
@@ -8620,18 +9103,23 @@ pub struct TaxDetailOutput {
     pub tax_type: String,
     pub jurisdiction_name: String,
     pub rate: f64,
+    /// @deprecated Use the `amountExact` twin; float money will be removed in 2.0.
     pub amount: f64,
+    /// Exact base-10 amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub amount_exact: String,
 }
 
 impl TryFrom<stateset_core::TaxDetail> for TaxDetailOutput {
     type Error = Error;
 
     fn try_from(d: stateset_core::TaxDetail) -> Result<Self> {
+        let (amount, amount_exact) = money_pair(d.amount, "tax detail amount")?;
         Ok(Self {
             tax_type: d.tax_type.as_str().to_string(),
             jurisdiction_name: d.jurisdiction_name,
-            rate: to_f64_result(d.rate, "tax detail rate")?,
-            amount: to_f64_result(d.amount, "tax detail amount")?,
+            rate: to_f64_checked(d.rate, "tax detail rate")?,
+            amount,
+            amount_exact,
         })
     }
 }
@@ -8640,8 +9128,14 @@ impl TryFrom<stateset_core::TaxDetail> for TaxDetailOutput {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct LineItemTaxOutput {
     pub line_item_id: String,
+    /// @deprecated Use the `taxableAmountExact` twin; float money will be removed in 2.0.
     pub taxable_amount: f64,
+    /// Exact base-10 taxable amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub taxable_amount_exact: String,
+    /// @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0.
     pub tax_amount: f64,
+    /// Exact base-10 tax amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub tax_amount_exact: String,
     pub effective_rate: f64,
     pub is_exempt: bool,
     pub exemption_reason: Option<String>,
@@ -8652,11 +9146,16 @@ impl TryFrom<stateset_core::LineItemTax> for LineItemTaxOutput {
     type Error = Error;
 
     fn try_from(t: stateset_core::LineItemTax) -> Result<Self> {
+        let (taxable_amount, taxable_amount_exact) =
+            money_pair(t.taxable_amount, "line item taxable amount")?;
+        let (tax_amount, tax_amount_exact) = money_pair(t.tax_amount, "line item tax amount")?;
         Ok(Self {
             line_item_id: t.line_item_id,
-            taxable_amount: to_f64_result(t.taxable_amount, "line item tax taxable amount")?,
-            tax_amount: to_f64_result(t.tax_amount, "line item tax amount")?,
-            effective_rate: to_f64_result(t.effective_rate, "line item effective tax rate")?,
+            taxable_amount,
+            taxable_amount_exact,
+            tax_amount,
+            tax_amount_exact,
+            effective_rate: to_f64_checked(t.effective_rate, "line item effective tax rate")?,
             is_exempt: t.is_exempt,
             exemption_reason: t.exemption_reason,
             tax_details: convert_outputs(t.tax_details)?,
@@ -8670,20 +9169,30 @@ pub struct ExemptionDetailsOutput {
     pub exemption_id: String,
     pub exemption_type: String,
     pub certificate_number: Option<String>,
+    /// @deprecated Use the `amountExemptExact` twin; float money will be removed in 2.0.
     pub amount_exempt: f64,
+    /// Exact base-10 amount exempt, straight from the engine's `Decimal`. Prefer this field for money.
+    pub amount_exempt_exact: String,
+    /// @deprecated Use the `taxSavedExact` twin; float money will be removed in 2.0.
     pub tax_saved: f64,
+    /// Exact base-10 tax saved, straight from the engine's `Decimal`. Prefer this field for money.
+    pub tax_saved_exact: String,
 }
 
 impl TryFrom<stateset_core::ExemptionDetails> for ExemptionDetailsOutput {
     type Error = Error;
 
     fn try_from(e: stateset_core::ExemptionDetails) -> Result<Self> {
+        let (amount_exempt, amount_exempt_exact) = money_pair(e.amount_exempt, "amount exempt")?;
+        let (tax_saved, tax_saved_exact) = money_pair(e.tax_saved, "tax saved")?;
         Ok(Self {
             exemption_id: e.exemption_id.to_string(),
             exemption_type: format!("{:?}", e.exemption_type).to_lowercase(),
             certificate_number: e.certificate_number,
-            amount_exempt: to_f64_result(e.amount_exempt, "tax exemption amount exempt")?,
-            tax_saved: to_f64_result(e.tax_saved, "tax exemption tax saved")?,
+            amount_exempt,
+            amount_exempt_exact,
+            tax_saved,
+            tax_saved_exact,
         })
     }
 }
@@ -8696,20 +9205,25 @@ pub struct JurisdictionSummaryOutput {
     pub code: String,
     pub level: String,
     pub total_rate: f64,
+    /// @deprecated Use the `totalTaxExact` twin; float money will be removed in 2.0.
     pub total_tax: f64,
+    /// Exact base-10 total tax, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_tax_exact: String,
 }
 
 impl TryFrom<stateset_core::JurisdictionSummary> for JurisdictionSummaryOutput {
     type Error = Error;
 
     fn try_from(s: stateset_core::JurisdictionSummary) -> Result<Self> {
+        let (total_tax, total_tax_exact) = money_pair(s.total_tax, "jurisdiction total tax")?;
         Ok(Self {
             id: s.id.to_string(),
             name: s.name,
             code: s.code,
             level: format!("{:?}", s.level).to_lowercase(),
-            total_rate: to_f64_result(s.total_rate, "jurisdiction total rate")?,
-            total_tax: to_f64_result(s.total_tax, "jurisdiction total tax")?,
+            total_rate: to_f64_checked(s.total_rate, "jurisdiction total rate")?,
+            total_tax,
+            total_tax_exact,
         })
     }
 }
@@ -8718,10 +9232,22 @@ impl TryFrom<stateset_core::JurisdictionSummary> for JurisdictionSummaryOutput {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TaxCalculationOutput {
     pub id: String,
+    /// @deprecated Use the `totalTaxExact` twin; float money will be removed in 2.0.
     pub total_tax: f64,
+    /// Exact base-10 total tax, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_tax_exact: String,
+    /// @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0.
     pub subtotal: f64,
+    /// Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money.
+    pub subtotal_exact: String,
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
+    /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_exact: String,
+    /// @deprecated Use the `shippingTaxExact` twin; float money will be removed in 2.0.
     pub shipping_tax: f64,
+    /// Exact base-10 shipping tax, straight from the engine's `Decimal`. Prefer this field for money.
+    pub shipping_tax_exact: String,
     pub tax_breakdown: Vec<TaxBreakdownOutput>,
     pub line_item_taxes: Vec<LineItemTaxOutput>,
     pub exemptions_applied: bool,
@@ -8735,12 +9261,20 @@ impl TryFrom<stateset_core::TaxCalculationResult> for TaxCalculationOutput {
     type Error = Error;
 
     fn try_from(r: stateset_core::TaxCalculationResult) -> Result<Self> {
+        let (total_tax, total_tax_exact) = money_pair(r.total_tax, "total tax")?;
+        let (subtotal, subtotal_exact) = money_pair(r.subtotal, "tax calculation subtotal")?;
+        let (total, total_exact) = money_pair(r.total, "tax calculation total")?;
+        let (shipping_tax, shipping_tax_exact) = money_pair(r.shipping_tax, "shipping tax")?;
         Ok(Self {
             id: r.id.to_string(),
-            total_tax: to_f64_result(r.total_tax, "tax calculation total tax")?,
-            subtotal: to_f64_result(r.subtotal, "tax calculation subtotal")?,
-            total: to_f64_result(r.total, "tax calculation total")?,
-            shipping_tax: to_f64_result(r.shipping_tax, "tax calculation shipping tax")?,
+            total_tax,
+            total_tax_exact,
+            subtotal,
+            subtotal_exact,
+            total,
+            total_exact,
+            shipping_tax,
+            shipping_tax_exact,
             tax_breakdown: convert_outputs(r.tax_breakdown)?,
             line_item_taxes: convert_outputs(r.line_item_taxes)?,
             exemptions_applied: r.exemptions_applied,
@@ -8813,7 +9347,7 @@ impl TryFrom<stateset_core::UsStateTaxInfo> for UsStateTaxInfoOutput {
         Ok(Self {
             state_code: i.state_code,
             state_name: i.state_name,
-            state_rate: to_f64_result(i.state_rate, "US state tax rate")?,
+            state_rate: to_f64_checked(i.state_rate, "US state tax rate")?,
             has_local_taxes: i.has_local_taxes,
             origin_based: i.origin_based,
             tax_shipping: i.tax_shipping,
@@ -8842,13 +9376,13 @@ impl TryFrom<stateset_core::EuVatInfo> for EuVatInfoOutput {
         Ok(Self {
             country_code: i.country_code,
             country_name: i.country_name,
-            standard_rate: to_f64_result(i.standard_rate, "EU VAT standard rate")?,
-            reduced_rate: optional_to_f64_result(i.reduced_rate, "EU VAT reduced rate")?,
-            super_reduced_rate: optional_to_f64_result(
+            standard_rate: to_f64_checked(i.standard_rate, "EU VAT standard rate")?,
+            reduced_rate: optional_to_f64_checked(i.reduced_rate, "EU VAT reduced rate")?,
+            super_reduced_rate: optional_to_f64_checked(
                 i.super_reduced_rate,
                 "EU VAT super reduced rate",
             )?,
-            parking_rate: optional_to_f64_result(i.parking_rate, "EU VAT parking rate")?,
+            parking_rate: optional_to_f64_checked(i.parking_rate, "EU VAT parking rate")?,
         })
     }
 }
@@ -8872,11 +9406,11 @@ impl TryFrom<stateset_core::CanadianTaxInfo> for CanadianTaxInfoOutput {
         Ok(Self {
             province_code: i.province_code,
             province_name: i.province_name,
-            gst_rate: to_f64_result(i.gst_rate, "Canadian tax GST rate")?,
-            pst_rate: optional_to_f64_result(i.pst_rate, "Canadian tax PST rate")?,
-            hst_rate: optional_to_f64_result(i.hst_rate, "Canadian tax HST rate")?,
-            qst_rate: optional_to_f64_result(i.qst_rate, "Canadian tax QST rate")?,
-            total_rate: to_f64_result(i.total_rate, "Canadian tax total rate")?,
+            gst_rate: to_f64_checked(i.gst_rate, "Canadian tax GST rate")?,
+            pst_rate: optional_to_f64_checked(i.pst_rate, "Canadian tax PST rate")?,
+            hst_rate: optional_to_f64_checked(i.hst_rate, "Canadian tax HST rate")?,
+            qst_rate: optional_to_f64_checked(i.qst_rate, "Canadian tax QST rate")?,
+            total_rate: to_f64_checked(i.total_rate, "Canadian tax total rate")?,
         })
     }
 }
@@ -9080,7 +9614,7 @@ impl Tax {
             )
             .map_err(|e| wrap(ErrCode::Internal, "Failed to calculate tax", e))?;
 
-        to_f64_result(tax, "tax amount")
+        to_f64_checked(tax, "tax amount")
     }
 
     /// Get the effective tax rate for an address and category
@@ -9109,7 +9643,7 @@ impl Tax {
             )
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get rate", e))?;
 
-        to_f64_result(rate, "tax rate")
+        to_f64_checked(rate, "tax rate")
     }
 
     // ========================================================================
@@ -9588,7 +10122,7 @@ impl TryFrom<stateset_core::NonConformance> for NcrOutput {
             source: format!("{:?}", n.source),
             severity: format!("{:?}", n.severity),
             sku: n.sku,
-            quantity_affected: to_f64_result(n.quantity_affected, "ncr quantity affected")?,
+            quantity_affected: to_f64_checked(n.quantity_affected, "ncr quantity affected")?,
             status: format!("{:?}", n.status),
             description: n.description,
             created_at: n.created_at.to_rfc3339(),
@@ -9629,7 +10163,7 @@ impl TryFrom<stateset_core::QualityHold> for QualityHoldOutput {
             id: h.id.to_string(),
             sku: h.sku,
             lot_number: h.lot_number,
-            quantity_held: to_f64_result(h.quantity_held, "quality hold quantity held")?,
+            quantity_held: to_f64_checked(h.quantity_held, "quality hold quantity held")?,
             reason: h.reason,
             hold_type: format!("{:?}", h.hold_type),
             status: if h.released_at.is_some() {
@@ -9973,9 +10507,9 @@ impl TryFrom<stateset_core::Lot> for LotOutput {
             id: l.id.to_string(),
             lot_number: l.lot_number,
             sku: l.sku,
-            quantity_produced: to_f64_result(l.quantity_produced, "lot quantity produced")?,
-            quantity_available: to_f64_result(qty_available, "lot quantity available")?,
-            quantity_reserved: to_f64_result(l.quantity_reserved, "lot quantity reserved")?,
+            quantity_produced: to_f64_checked(l.quantity_produced, "lot quantity produced")?,
+            quantity_available: to_f64_checked(qty_available, "lot quantity available")?,
+            quantity_reserved: to_f64_checked(l.quantity_reserved, "lot quantity reserved")?,
             status: format!("{:?}", l.status),
             production_date: Some(l.production_date.to_rfc3339()),
             expiration_date: l.expiration_date.map(|d| d.to_rfc3339()),
@@ -10553,7 +11087,7 @@ impl Warehouse {
             .warehouse()
             .get_total_available(warehouse_id, &sku)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get total", e))?;
-        to_f64_result(total, "warehouse total available")
+        to_f64_checked(total, "warehouse total available")
     }
 
     /// Count warehouses
@@ -10815,8 +11349,8 @@ impl TryFrom<stateset_core::PickTask> for PickTaskOutput {
             wave_id: p.wave_id.map(|id| id.to_string()),
             order_id: p.order_id.to_string(),
             sku: p.sku,
-            quantity_requested: to_f64_result(p.quantity_requested, "pick quantity requested")?,
-            quantity_picked: to_f64_result(p.quantity_picked, "pick quantity picked")?,
+            quantity_requested: to_f64_checked(p.quantity_requested, "pick quantity requested")?,
+            quantity_picked: to_f64_checked(p.quantity_picked, "pick quantity picked")?,
             status: format!("{:?}", p.status),
             source_location_id: p.source_location_id,
         })
@@ -11036,9 +11570,18 @@ pub struct BillOutput {
     pub bill_number: String,
     pub supplier_id: String,
     pub status: String,
+    /// @deprecated Use the `totalAmountExact` twin; float money will be removed in 2.0.
     pub total_amount: f64,
+    /// Exact base-10 total amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_amount_exact: String,
+    /// @deprecated Use the `amountPaidExact` twin; float money will be removed in 2.0.
     pub amount_paid: f64,
+    /// Exact base-10 amount paid, straight from the engine's `Decimal`. Prefer this field for money.
+    pub amount_paid_exact: String,
+    /// @deprecated Use the `amountDueExact` twin; float money will be removed in 2.0.
     pub amount_due: f64,
+    /// Exact base-10 amount due, straight from the engine's `Decimal`. Prefer this field for money.
+    pub amount_due_exact: String,
     pub due_date: String,
     pub created_at: String,
 }
@@ -11047,14 +11590,20 @@ impl TryFrom<stateset_core::Bill> for BillOutput {
     type Error = Error;
 
     fn try_from(b: stateset_core::Bill) -> Result<Self> {
+        let (total_amount, total_amount_exact) = money_pair(b.total_amount, "bill total amount")?;
+        let (amount_paid, amount_paid_exact) = money_pair(b.amount_paid, "bill amount paid")?;
+        let (amount_due, amount_due_exact) = money_pair(b.amount_due, "bill amount due")?;
         Ok(Self {
             id: b.id.to_string(),
             bill_number: b.bill_number,
             supplier_id: b.supplier_id.to_string(),
             status: format!("{:?}", b.status),
-            total_amount: to_f64_result(b.total_amount, "bill total amount")?,
-            amount_paid: to_f64_result(b.amount_paid, "bill amount paid")?,
-            amount_due: to_f64_result(b.amount_due, "bill amount due")?,
+            total_amount,
+            total_amount_exact,
+            amount_paid,
+            amount_paid_exact,
+            amount_due,
+            amount_due_exact,
             due_date: b.due_date.to_rfc3339(),
             created_at: b.created_at.to_rfc3339(),
         })
@@ -11064,25 +11613,56 @@ impl TryFrom<stateset_core::Bill> for BillOutput {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ApAgingSummaryOutput {
+    /// @deprecated Use the `currentExact` twin; float money will be removed in 2.0.
     pub current: f64,
+    /// Exact base-10 current, straight from the engine's `Decimal`. Prefer this field for money.
+    pub current_exact: String,
+    /// @deprecated Use the `days130Exact` twin; float money will be removed in 2.0.
     pub days_1_30: f64,
+    /// Exact base-10 days 1 30, straight from the engine's `Decimal`. Prefer this field for money.
+    pub days_1_30_exact: String,
+    /// @deprecated Use the `days3160Exact` twin; float money will be removed in 2.0.
     pub days_31_60: f64,
+    /// Exact base-10 days 31 60, straight from the engine's `Decimal`. Prefer this field for money.
+    pub days_31_60_exact: String,
+    /// @deprecated Use the `days6190Exact` twin; float money will be removed in 2.0.
     pub days_61_90: f64,
+    /// Exact base-10 days 61 90, straight from the engine's `Decimal`. Prefer this field for money.
+    pub days_61_90_exact: String,
+    /// @deprecated Use the `daysOver90Exact` twin; float money will be removed in 2.0.
     pub days_over_90: f64,
+    /// Exact base-10 days over 90, straight from the engine's `Decimal`. Prefer this field for money.
+    pub days_over_90_exact: String,
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
+    /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_exact: String,
 }
 
 impl TryFrom<stateset_core::ApAgingSummary> for ApAgingSummaryOutput {
     type Error = Error;
 
     fn try_from(a: stateset_core::ApAgingSummary) -> Result<Self> {
+        let (current, current_exact) = money_pair(a.current, "AP aging current")?;
+        let (days_1_30, days_1_30_exact) = money_pair(a.days_1_30, "AP aging 1-30 days")?;
+        let (days_31_60, days_31_60_exact) = money_pair(a.days_31_60, "AP aging 31-60 days")?;
+        let (days_61_90, days_61_90_exact) = money_pair(a.days_61_90, "AP aging 61-90 days")?;
+        let (days_over_90, days_over_90_exact) =
+            money_pair(a.days_over_90, "AP aging over 90 days")?;
+        let (total, total_exact) = money_pair(a.total, "AP aging total")?;
         Ok(Self {
-            current: to_f64_result(a.current, "accounts payable aging current")?,
-            days_1_30: to_f64_result(a.days_1_30, "accounts payable aging 1-30 days")?,
-            days_31_60: to_f64_result(a.days_31_60, "accounts payable aging 31-60 days")?,
-            days_61_90: to_f64_result(a.days_61_90, "accounts payable aging 61-90 days")?,
-            days_over_90: to_f64_result(a.days_over_90, "accounts payable aging over 90 days")?,
-            total: to_f64_result(a.total, "accounts payable aging total")?,
+            current,
+            current_exact,
+            days_1_30,
+            days_1_30_exact,
+            days_31_60,
+            days_31_60_exact,
+            days_61_90,
+            days_61_90_exact,
+            days_over_90,
+            days_over_90_exact,
+            total,
+            total_exact,
         })
     }
 }
@@ -11300,7 +11880,7 @@ impl AccountsPayable {
             .accounts_payable()
             .get_total_outstanding()
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get total", e))?;
-        to_f64_result(total, "accounts payable total outstanding")
+        to_f64_checked(total, "accounts payable total outstanding")
     }
 
     /// Count bills
@@ -11348,25 +11928,56 @@ impl AccountsPayable {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ArAgingSummaryOutput {
+    /// @deprecated Use the `currentExact` twin; float money will be removed in 2.0.
     pub current: f64,
+    /// Exact base-10 current, straight from the engine's `Decimal`. Prefer this field for money.
+    pub current_exact: String,
+    /// @deprecated Use the `days130Exact` twin; float money will be removed in 2.0.
     pub days_1_30: f64,
+    /// Exact base-10 days 1 30, straight from the engine's `Decimal`. Prefer this field for money.
+    pub days_1_30_exact: String,
+    /// @deprecated Use the `days3160Exact` twin; float money will be removed in 2.0.
     pub days_31_60: f64,
+    /// Exact base-10 days 31 60, straight from the engine's `Decimal`. Prefer this field for money.
+    pub days_31_60_exact: String,
+    /// @deprecated Use the `days6190Exact` twin; float money will be removed in 2.0.
     pub days_61_90: f64,
+    /// Exact base-10 days 61 90, straight from the engine's `Decimal`. Prefer this field for money.
+    pub days_61_90_exact: String,
+    /// @deprecated Use the `daysOver90Exact` twin; float money will be removed in 2.0.
     pub days_over_90: f64,
+    /// Exact base-10 days over 90, straight from the engine's `Decimal`. Prefer this field for money.
+    pub days_over_90_exact: String,
+    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
     pub total: f64,
+    /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_exact: String,
 }
 
 impl TryFrom<stateset_core::ArAgingSummary> for ArAgingSummaryOutput {
     type Error = Error;
 
     fn try_from(a: stateset_core::ArAgingSummary) -> Result<Self> {
+        let (current, current_exact) = money_pair(a.current, "AR aging current")?;
+        let (days_1_30, days_1_30_exact) = money_pair(a.days_1_30, "AR aging 1-30 days")?;
+        let (days_31_60, days_31_60_exact) = money_pair(a.days_31_60, "AR aging 31-60 days")?;
+        let (days_61_90, days_61_90_exact) = money_pair(a.days_61_90, "AR aging 61-90 days")?;
+        let (days_over_90, days_over_90_exact) =
+            money_pair(a.days_over_90, "AR aging over 90 days")?;
+        let (total, total_exact) = money_pair(a.total, "AR aging total")?;
         Ok(Self {
-            current: to_f64_result(a.current, "accounts receivable aging current")?,
-            days_1_30: to_f64_result(a.days_1_30, "accounts receivable aging 1-30 days")?,
-            days_31_60: to_f64_result(a.days_31_60, "accounts receivable aging 31-60 days")?,
-            days_61_90: to_f64_result(a.days_61_90, "accounts receivable aging 61-90 days")?,
-            days_over_90: to_f64_result(a.days_over_90, "accounts receivable aging over 90 days")?,
-            total: to_f64_result(a.total, "accounts receivable aging total")?,
+            current,
+            current_exact,
+            days_1_30,
+            days_1_30_exact,
+            days_31_60,
+            days_31_60_exact,
+            days_61_90,
+            days_61_90_exact,
+            days_over_90,
+            days_over_90_exact,
+            total,
+            total_exact,
         })
     }
 }
@@ -11387,7 +11998,10 @@ pub struct CreditMemoOutput {
     pub id: String,
     pub credit_memo_number: String,
     pub customer_id: String,
+    /// @deprecated Use the `amountExact` twin; float money will be removed in 2.0.
     pub amount: f64,
+    /// Exact base-10 amount, straight from the engine's `Decimal`. Prefer this field for money.
+    pub amount_exact: String,
     pub status: String,
     pub reason: String,
     pub created_at: String,
@@ -11397,11 +12011,13 @@ impl TryFrom<stateset_core::CreditMemo> for CreditMemoOutput {
     type Error = Error;
 
     fn try_from(c: stateset_core::CreditMemo) -> Result<Self> {
+        let (amount, amount_exact) = money_pair(c.amount, "credit memo amount")?;
         Ok(Self {
             id: c.id.to_string(),
             credit_memo_number: c.credit_memo_number,
             customer_id: c.customer_id.to_string(),
-            amount: to_f64_result(c.amount, "credit memo amount")?,
+            amount,
+            amount_exact,
             status: format!("{:?}", c.status),
             reason: format!("{:?}", c.reason),
             created_at: c.created_at.to_rfc3339(),
@@ -11451,7 +12067,7 @@ impl AccountsReceivable {
             .accounts_receivable()
             .get_total_outstanding()
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get total", e))?;
-        to_f64_result(total, "accounts receivable total outstanding")
+        to_f64_checked(total, "accounts receivable total outstanding")
     }
 
     /// Get Days Sales Outstanding (DSO)
@@ -11462,7 +12078,7 @@ impl AccountsReceivable {
             .accounts_receivable()
             .get_dso(days)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get DSO", e))?;
-        to_f64_result(dso, "days sales outstanding")
+        to_f64_checked(dso, "days sales outstanding")
     }
 
     /// Create a credit memo
@@ -11563,28 +12179,58 @@ pub struct ItemCostOutput {
     pub id: String,
     pub sku: String,
     pub cost_method: String,
+    /// @deprecated Use the `standardCostExact` twin; float money will be removed in 2.0.
     pub standard_cost: f64,
+    /// Exact base-10 standard cost, straight from the engine's `Decimal`. Prefer this field for money.
+    pub standard_cost_exact: String,
+    /// @deprecated Use the `averageCostExact` twin; float money will be removed in 2.0.
     pub average_cost: f64,
+    /// Exact base-10 average cost, straight from the engine's `Decimal`. Prefer this field for money.
+    pub average_cost_exact: String,
+    /// @deprecated Use the `lastCostExact` twin; float money will be removed in 2.0.
     pub last_cost: f64,
+    /// Exact base-10 last cost, straight from the engine's `Decimal`. Prefer this field for money.
+    pub last_cost_exact: String,
+    /// @deprecated Use the `materialCostExact` twin; float money will be removed in 2.0.
     pub material_cost: f64,
+    /// Exact base-10 material cost, straight from the engine's `Decimal`. Prefer this field for money.
+    pub material_cost_exact: String,
+    /// @deprecated Use the `laborCostExact` twin; float money will be removed in 2.0.
     pub labor_cost: f64,
+    /// Exact base-10 labor cost, straight from the engine's `Decimal`. Prefer this field for money.
+    pub labor_cost_exact: String,
+    /// @deprecated Use the `overheadCostExact` twin; float money will be removed in 2.0.
     pub overhead_cost: f64,
+    /// Exact base-10 overhead cost, straight from the engine's `Decimal`. Prefer this field for money.
+    pub overhead_cost_exact: String,
 }
 
 impl TryFrom<stateset_core::ItemCost> for ItemCostOutput {
     type Error = Error;
 
     fn try_from(c: stateset_core::ItemCost) -> Result<Self> {
+        let (standard_cost, standard_cost_exact) = money_pair(c.standard_cost, "standard cost")?;
+        let (average_cost, average_cost_exact) = money_pair(c.average_cost, "average cost")?;
+        let (last_cost, last_cost_exact) = money_pair(c.last_cost, "last cost")?;
+        let (material_cost, material_cost_exact) = money_pair(c.material_cost, "material cost")?;
+        let (labor_cost, labor_cost_exact) = money_pair(c.labor_cost, "labor cost")?;
+        let (overhead_cost, overhead_cost_exact) = money_pair(c.overhead_cost, "overhead cost")?;
         Ok(Self {
             id: c.id.to_string(),
             sku: c.sku,
             cost_method: format!("{:?}", c.cost_method),
-            standard_cost: to_f64_result(c.standard_cost, "standard cost")?,
-            average_cost: to_f64_result(c.average_cost, "average cost")?,
-            last_cost: to_f64_result(c.last_cost, "last cost")?,
-            material_cost: to_f64_result(c.material_cost, "material cost")?,
-            labor_cost: to_f64_result(c.labor_cost, "labor cost")?,
-            overhead_cost: to_f64_result(c.overhead_cost, "overhead cost")?,
+            standard_cost,
+            standard_cost_exact,
+            average_cost,
+            average_cost_exact,
+            last_cost,
+            last_cost_exact,
+            material_cost,
+            material_cost_exact,
+            labor_cost,
+            labor_cost_exact,
+            overhead_cost,
+            overhead_cost_exact,
         })
     }
 }
@@ -11684,7 +12330,7 @@ impl CostAccounting {
             .cost_accounting()
             .get_total_inventory_value()
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get value", e))?;
-        to_f64_result(total, "inventory value")
+        to_f64_checked(total, "inventory value")
     }
 }
 
@@ -11706,9 +12352,18 @@ pub struct CreateCreditAccountInput {
 pub struct CreditAccountOutput {
     pub id: String,
     pub customer_id: String,
+    /// @deprecated Use the `creditLimitExact` twin; float money will be removed in 2.0.
     pub credit_limit: f64,
+    /// Exact base-10 credit limit, straight from the engine's `Decimal`. Prefer this field for money.
+    pub credit_limit_exact: String,
+    /// @deprecated Use the `creditUsedExact` twin; float money will be removed in 2.0.
     pub credit_used: f64,
+    /// Exact base-10 credit used, straight from the engine's `Decimal`. Prefer this field for money.
+    pub credit_used_exact: String,
+    /// @deprecated Use the `creditAvailableExact` twin; float money will be removed in 2.0.
     pub credit_available: f64,
+    /// Exact base-10 credit available, straight from the engine's `Decimal`. Prefer this field for money.
+    pub credit_available_exact: String,
     pub status: String,
     pub payment_terms: Option<String>,
 }
@@ -11717,12 +12372,19 @@ impl TryFrom<stateset_core::CreditAccount> for CreditAccountOutput {
     type Error = Error;
 
     fn try_from(c: stateset_core::CreditAccount) -> Result<Self> {
+        let (credit_limit, credit_limit_exact) = money_pair(c.credit_limit, "credit limit")?;
+        let (credit_used, credit_used_exact) = money_pair(c.current_balance, "credit used")?;
+        let (credit_available, credit_available_exact) =
+            money_pair(c.available_credit, "credit available")?;
         Ok(Self {
             id: c.id.to_string(),
             customer_id: c.customer_id.to_string(),
-            credit_limit: to_f64_result(c.credit_limit, "credit limit")?,
-            credit_used: to_f64_result(c.current_balance, "credit used")?,
-            credit_available: to_f64_result(c.available_credit, "credit available")?,
+            credit_limit,
+            credit_limit_exact,
+            credit_used,
+            credit_used_exact,
+            credit_available,
+            credit_available_exact,
             status: format!("{:?}", c.status),
             payment_terms: c.payment_terms,
         })
@@ -11734,7 +12396,10 @@ impl TryFrom<stateset_core::CreditAccount> for CreditAccountOutput {
 pub struct CreditCheckOutput {
     pub approved: bool,
     pub reason: Option<String>,
+    /// @deprecated Use the `availableCreditExact` twin; float money will be removed in 2.0.
     pub available_credit: f64,
+    /// Exact base-10 available credit, straight from the engine's `Decimal`. Prefer this field for money.
+    pub available_credit_exact: String,
     pub requires_approval: bool,
 }
 
@@ -11742,10 +12407,13 @@ impl TryFrom<stateset_core::CreditCheckResult> for CreditCheckOutput {
     type Error = Error;
 
     fn try_from(c: stateset_core::CreditCheckResult) -> Result<Self> {
+        let (available_credit, available_credit_exact) =
+            money_pair(c.available_credit, "available credit")?;
         Ok(Self {
             approved: c.approved,
             reason: c.reason,
-            available_credit: to_f64_result(c.available_credit, "available credit")?,
+            available_credit,
+            available_credit_exact,
             requires_approval: c.requires_approval,
         })
     }
@@ -11938,12 +12606,12 @@ impl TryFrom<stateset_core::Backorder> for BackorderOutput {
             order_id: b.order_id.to_string(),
             customer_id: b.customer_id.to_string(),
             sku: b.sku,
-            quantity_ordered: to_f64_result(b.quantity_ordered, "backorder quantity ordered")?,
-            quantity_fulfilled: to_f64_result(
+            quantity_ordered: to_f64_checked(b.quantity_ordered, "backorder quantity ordered")?,
+            quantity_fulfilled: to_f64_checked(
                 b.quantity_fulfilled,
                 "backorder quantity fulfilled",
             )?,
-            quantity_remaining: to_f64_result(
+            quantity_remaining: to_f64_checked(
                 b.quantity_remaining,
                 "backorder quantity remaining",
             )?,
@@ -11960,6 +12628,9 @@ pub struct BackorderSummaryOutput {
     pub total_backorders: i32,
     pub critical_count: i32,
     pub overdue_count: i32,
+    /// Total units on backorder, not a currency amount: this wraps
+    /// `BackorderSummary::total_quantity`. The name is a historical misnomer
+    /// kept for compatibility, which is why it carries no exact-money twin.
     pub total_value: f64,
 }
 
@@ -11971,7 +12642,7 @@ impl TryFrom<stateset_core::BackorderSummary> for BackorderSummaryOutput {
             total_backorders: s.total_backorders,
             critical_count: s.critical_count,
             overdue_count: s.overdue_count,
-            total_value: to_f64_result(s.total_quantity, "backorder total quantity")?,
+            total_value: to_f64_checked(s.total_quantity, "backorder total quantity")?,
         })
     }
 }
@@ -12147,7 +12818,10 @@ pub struct GlAccountOutput {
     pub account_number: String,
     pub name: String,
     pub account_type: String,
+    /// @deprecated Use the `balanceExact` twin; float money will be removed in 2.0.
     pub balance: f64,
+    /// Exact base-10 balance, straight from the engine's `Decimal`. Prefer this field for money.
+    pub balance_exact: String,
     pub status: String,
     pub description: Option<String>,
 }
@@ -12156,12 +12830,14 @@ impl TryFrom<stateset_core::GlAccount> for GlAccountOutput {
     type Error = Error;
 
     fn try_from(a: stateset_core::GlAccount) -> Result<Self> {
+        let (balance, balance_exact) = money_pair(a.current_balance, "GL account balance")?;
         Ok(Self {
             id: a.id.to_string(),
             account_number: a.account_number,
             name: a.name,
             account_type: format!("{:?}", a.account_type),
-            balance: to_f64_result(a.current_balance, "account balance")?,
+            balance,
+            balance_exact,
             status: format!("{:?}", a.status),
             description: a.description,
         })
@@ -12196,8 +12872,14 @@ impl From<stateset_core::JournalEntry> for JournalEntryOutput {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TrialBalanceOutput {
     pub as_of_date: String,
+    /// @deprecated Use the `totalDebitsExact` twin; float money will be removed in 2.0.
     pub total_debits: f64,
+    /// Exact base-10 total debits, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_debits_exact: String,
+    /// @deprecated Use the `totalCreditsExact` twin; float money will be removed in 2.0.
     pub total_credits: f64,
+    /// Exact base-10 total credits, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_credits_exact: String,
     pub is_balanced: bool,
 }
 
@@ -12205,10 +12887,16 @@ impl TryFrom<stateset_core::TrialBalance> for TrialBalanceOutput {
     type Error = Error;
 
     fn try_from(t: stateset_core::TrialBalance) -> Result<Self> {
+        let (total_debits, total_debits_exact) =
+            money_pair(t.total_debits, "trial balance total debits")?;
+        let (total_credits, total_credits_exact) =
+            money_pair(t.total_credits, "trial balance total credits")?;
         Ok(Self {
             as_of_date: t.as_of_date.to_string(),
-            total_debits: to_f64_result(t.total_debits, "trial balance total debits")?,
-            total_credits: to_f64_result(t.total_credits, "trial balance total credits")?,
+            total_debits,
+            total_debits_exact,
+            total_credits,
+            total_credits_exact,
             is_balanced: t.is_balanced,
         })
     }
@@ -12218,23 +12906,36 @@ impl TryFrom<stateset_core::TrialBalance> for TrialBalanceOutput {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct BalanceSheetOutput {
     pub as_of_date: String,
+    /// @deprecated Use the `totalAssetsExact` twin; float money will be removed in 2.0.
     pub total_assets: f64,
+    /// Exact base-10 total assets, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_assets_exact: String,
+    /// @deprecated Use the `totalLiabilitiesExact` twin; float money will be removed in 2.0.
     pub total_liabilities: f64,
+    /// Exact base-10 total liabilities, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_liabilities_exact: String,
+    /// @deprecated Use the `totalEquityExact` twin; float money will be removed in 2.0.
     pub total_equity: f64,
+    /// Exact base-10 total equity, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_equity_exact: String,
 }
 
 impl TryFrom<stateset_core::BalanceSheet> for BalanceSheetOutput {
     type Error = Error;
 
     fn try_from(b: stateset_core::BalanceSheet) -> Result<Self> {
+        let (total_assets, total_assets_exact) = money_pair(b.total_assets, "total assets")?;
+        let (total_liabilities, total_liabilities_exact) =
+            money_pair(b.total_liabilities, "total liabilities")?;
+        let (total_equity, total_equity_exact) = money_pair(b.total_equity, "total equity")?;
         Ok(Self {
             as_of_date: b.as_of_date.to_string(),
-            total_assets: to_f64_result(b.total_assets, "balance sheet total assets")?,
-            total_liabilities: to_f64_result(
-                b.total_liabilities,
-                "balance sheet total liabilities",
-            )?,
-            total_equity: to_f64_result(b.total_equity, "balance sheet total equity")?,
+            total_assets,
+            total_assets_exact,
+            total_liabilities,
+            total_liabilities_exact,
+            total_equity,
+            total_equity_exact,
         })
     }
 }
@@ -12244,21 +12945,38 @@ impl TryFrom<stateset_core::BalanceSheet> for BalanceSheetOutput {
 pub struct IncomeStatementOutput {
     pub period_start: String,
     pub period_end: String,
+    /// @deprecated Use the `totalRevenueExact` twin; float money will be removed in 2.0.
     pub total_revenue: f64,
+    /// Exact base-10 total revenue, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_revenue_exact: String,
+    /// @deprecated Use the `totalExpensesExact` twin; float money will be removed in 2.0.
     pub total_expenses: f64,
+    /// Exact base-10 total expenses, straight from the engine's `Decimal`. Prefer this field for money.
+    pub total_expenses_exact: String,
+    /// @deprecated Use the `netIncomeExact` twin; float money will be removed in 2.0.
     pub net_income: f64,
+    /// Exact base-10 net income, straight from the engine's `Decimal`. Prefer this field for money.
+    pub net_income_exact: String,
 }
 
 impl TryFrom<stateset_core::IncomeStatement> for IncomeStatementOutput {
     type Error = Error;
 
     fn try_from(i: stateset_core::IncomeStatement) -> Result<Self> {
+        let (total_revenue, total_revenue_exact) =
+            money_pair(i.total_revenue, "income statement total revenue")?;
+        let (total_expenses, total_expenses_exact) =
+            money_pair(i.total_expenses, "total expenses")?;
+        let (net_income, net_income_exact) = money_pair(i.net_income, "net income")?;
         Ok(Self {
             period_start: i.period_start.to_string(),
             period_end: i.period_end.to_string(),
-            total_revenue: to_f64_result(i.total_revenue, "income statement total revenue")?,
-            total_expenses: to_f64_result(i.total_expenses, "income statement total expenses")?,
-            net_income: to_f64_result(i.net_income, "income statement net income")?,
+            total_revenue,
+            total_revenue_exact,
+            total_expenses,
+            total_expenses_exact,
+            net_income,
+            net_income_exact,
         })
     }
 }
@@ -12534,7 +13252,7 @@ impl GeneralLedger {
             .general_ledger()
             .get_account_balance(uuid, date)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get balance", e))?;
-        optional_to_f64_result(balance, "account balance")?
+        optional_to_f64_checked(balance, "account balance")?
             .ok_or_else(|| coded(ErrCode::NotFound, "Account balance unavailable"))
     }
 
@@ -12892,7 +13610,10 @@ pub struct X402IntentOutput {
     pub payer_address: String,
     pub payee_address: String,
     pub amount: i64,
+    /// @deprecated Use the `amountDecimalExact` twin; float money will be removed in 2.0.
     pub amount_decimal: f64,
+    /// Exact base-10 amount decimal, straight from the engine's `Decimal`. Prefer this field for money.
+    pub amount_decimal_exact: String,
     pub asset: String,
     pub network: String,
     pub chain_id: i64,
@@ -12927,16 +13648,21 @@ pub struct X402IntentOutput {
     pub updated_at: String,
 }
 
-impl From<stateset_core::X402PaymentIntent> for X402IntentOutput {
-    fn from(intent: stateset_core::X402PaymentIntent) -> Self {
-        Self {
+impl TryFrom<stateset_core::X402PaymentIntent> for X402IntentOutput {
+    type Error = Error;
+
+    fn try_from(intent: stateset_core::X402PaymentIntent) -> Result<Self> {
+        let (amount_decimal, amount_decimal_exact) =
+            money_pair(intent.amount_decimal, "x402 intent amount")?;
+        Ok(Self {
             id: intent.id.to_string(),
             version: intent.version,
             status: intent.status.to_string(),
             payer_address: intent.payer_address,
             payee_address: intent.payee_address,
             amount: intent.amount as i64,
-            amount_decimal: to_f64_or_nan(intent.amount_decimal),
+            amount_decimal,
+            amount_decimal_exact,
             asset: intent.asset.to_string().to_lowercase(),
             network: intent.network.to_string(),
             chain_id: intent.chain_id as i64,
@@ -12977,7 +13703,7 @@ impl From<stateset_core::X402PaymentIntent> for X402IntentOutput {
             metadata: intent.metadata,
             created_at: intent.created_at.to_rfc3339(),
             updated_at: intent.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -13338,7 +14064,7 @@ impl X402 {
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to create x402 intent", e))?;
 
-        Ok(intent.into())
+        convert_output(intent)
     }
 
     #[napi]
@@ -13376,7 +14102,7 @@ impl X402 {
             )
             .map_err(|e| wrap(ErrCode::Internal, "Failed to sign x402 intent", e))?;
 
-        Ok(signed.into())
+        convert_output(signed)
     }
 
     #[napi]
@@ -13388,7 +14114,7 @@ impl X402 {
             .x402()
             .get_intent(uuid)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get x402 intent", e))?;
-        Ok(intent.map(|i| i.into()))
+        convert_optional_output(intent)
     }
 
     #[napi]
@@ -13422,7 +14148,7 @@ impl X402 {
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to list x402 intents", e))?;
 
-        Ok(intents.into_iter().map(|i| i.into()).collect())
+        convert_outputs(intents)
     }
 
     #[napi]
@@ -13439,7 +14165,7 @@ impl X402 {
             .x402()
             .mark_settled(uuid, &tx_hash, block_number)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to mark settled", e))?;
-        Ok(intent.into())
+        convert_output(intent)
     }
 
     #[napi]
@@ -25892,4 +26618,106 @@ pub async fn test_panic_async(message: Option<String>) -> Result<()> {
 pub async fn test_panic_async_unguarded() -> Result<()> {
     tokio::task::yield_now().await;
     panic!("unguarded async panic")
+}
+
+/// Feed a value the `f64` narrowing cannot represent through
+/// [`to_f64_checked`], so `test/money-exactness.js` can assert the failure
+/// reaches JavaScript as `code: 'INTERNAL'` naming the field, rather than as a
+/// silent `NaN`.
+///
+/// A non-finite `f64` is the only input that actually reaches the failure arm
+/// today — `Decimal::to_f64` is total, `Decimal::MAX` included — so that is what
+/// this probe sends. The field label is the caller's, to prove the message
+/// carries it.
+#[cfg(feature = "test-panic")]
+#[napi(js_name = "__testMoneyNotRepresentable")]
+pub fn test_money_not_representable(field: String) -> Result<f64> {
+    guard(|| money_to_f64(f64::NAN, &field))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{money_input, money_pair, optional_money_input, to_f64_checked};
+    use rust_decimal::Decimal;
+
+    /// `Decimal::to_f64` — which `TryFrom<Decimal> for f64` delegates to — has
+    /// no reachable `None` arm, so the conversion cannot fail for any money the
+    /// engine can hold. This pins that at the extreme, and pins the reason the
+    /// `_exact` twin exists: at `Decimal::MAX` the `f64` half has thrown away
+    /// eleven significant digits while the exact half still has all 29.
+    #[test]
+    fn decimal_max_is_representable() {
+        let (approx, exact) = money_pair(Decimal::MAX, "test value").expect("MAX converts");
+        assert!(approx.is_finite(), "Decimal::MAX must narrow to a finite f64, got {approx}");
+        assert_eq!(exact, "79228162514264337593543950335");
+        assert_ne!(
+            exact,
+            format!("{approx:.0}"),
+            "the f64 half is expected to be lossy here — that is the point of the twin"
+        );
+    }
+
+    #[test]
+    fn decimal_min_is_representable() {
+        let (approx, exact) = money_pair(Decimal::MIN, "test value").expect("MIN converts");
+        assert!(approx.is_finite());
+        assert_eq!(exact, "-79228162514264337593543950335");
+    }
+
+    /// The reachable failure: a value that is already `NaN` or infinite when it
+    /// arrives must not be handed to JavaScript as a number.
+    #[test]
+    fn non_finite_is_rejected_with_the_field_name() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let err = to_f64_checked(bad, "sales total revenue").expect_err("must reject");
+            assert!(
+                err.reason.contains("sales total revenue"),
+                "the error must name the field, got {}",
+                err.reason
+            );
+            assert!(err.reason.contains("INTERNAL"), "coded INTERNAL, got {}", err.reason);
+        }
+    }
+
+    /// The exact half keeps the engine's scale, which is what makes it exact:
+    /// `0.30` stays two decimal places rather than collapsing to `0.3`, and a
+    /// sum that a float would render as `0.30000000000000004` renders as
+    /// `"0.30"`.
+    #[test]
+    fn money_pair_renders_the_exact_scale() {
+        let sum = Decimal::new(10, 2) + Decimal::new(20, 2);
+        let (approx, exact) = money_pair(sum, "test value").expect("converts");
+        assert_eq!(exact, "0.30");
+        assert!((approx - 0.3).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn money_input_prefers_the_exact_string() {
+        // 19.99 is not representable in binary floating point; the string is.
+        let from_float = money_input(None, 19.99, "unit price").expect("float parses");
+        let from_exact = money_input(Some("19.99"), 0.0, "unit price").expect("string parses");
+        assert_eq!(from_exact.to_string(), "19.99");
+        // The exact string beats the float even when both are supplied.
+        let both = money_input(Some("19.99"), 1.0, "unit price").expect("string wins");
+        assert_eq!(both, from_exact);
+        assert_eq!(both.to_string(), "19.99");
+        assert_eq!(from_float.to_string(), "19.99", "sanity: from_f64 rounds to the same value");
+    }
+
+    #[test]
+    fn money_input_carries_precision_no_f64_can_hold() {
+        // 28 significant digits: `Decimal::from_f64` cannot produce this.
+        let exact = "1234567890123456789012.3456";
+        let parsed = money_input(Some(exact), 0.0, "unit price").expect("parses");
+        assert_eq!(parsed.to_string(), exact);
+    }
+
+    #[test]
+    fn optional_money_input_keeps_absence() {
+        assert_eq!(optional_money_input(None, None, "unit price").expect("ok"), None);
+        assert_eq!(
+            optional_money_input(Some("2.50"), None, "unit price").expect("ok"),
+            Some(Decimal::new(250, 2))
+        );
+    }
 }

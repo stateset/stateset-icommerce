@@ -93,6 +93,8 @@ export interface CreateOrderItemInput {
   name: string
   quantity: number
   unitPrice: number
+  /** Exact base-10 unit price. Takes precedence over `unit_price` when present. */
+  unitPriceExact?: string
   productId?: string
   variantId?: string
 }
@@ -142,9 +144,11 @@ export interface OrderItemOutput {
   sku: string
   name: string
   quantity: number
+  /** @deprecated Use the `unitPriceExact` twin; float money will be removed in 2.0. */
   unitPrice: number
   /** Exact base-10 unit price. Prefer this field for calculations. */
   unitPriceExact: string
+  /** @deprecated Use the `totalExact` twin; float money will be removed in 2.0. */
   total: number
   /** Exact base-10 line total. Prefer this field for calculations. */
   totalExact: string
@@ -162,6 +166,7 @@ export interface OrderOutput {
   orderNumber: string
   customerId: string
   status: string
+  /** @deprecated Use the `totalAmountExact` twin; float money will be removed in 2.0. */
   totalAmount: number
   /** Exact base-10 order total. Prefer this field for calculations. */
   totalAmountExact: string
@@ -182,7 +187,11 @@ export interface CreateProductVariantInput {
   sku: string
   name?: string
   price: number
+  /** Exact base-10 price. Takes precedence over `price` when present. */
+  priceExact?: string
   compareAtPrice?: number
+  /** Exact base-10 comparison price. Takes precedence over `compare_at_price` when present. */
+  compareAtPriceExact?: string
   isDefault?: boolean
 }
 export interface CreateProductInput {
@@ -207,9 +216,11 @@ export interface ProductVariantOutput {
   productId: string
   sku: string
   name: string
+  /** @deprecated Use the `priceExact` twin; float money will be removed in 2.0. */
   price: number
   /** Exact base-10 price. Prefer this field for calculations. */
   priceExact: string
+  /** @deprecated Use the `compareAtPriceExact` twin; float money will be removed in 2.0. */
   compareAtPrice?: number
   /** Exact base-10 comparison price. */
   compareAtPriceExact?: string
@@ -350,6 +361,8 @@ export interface CreatePaymentInput {
   customerId?: string
   idempotencyKey?: string
   amount: number
+  /** Exact base-10 amount. Takes precedence over `amount` when present. */
+  amountExact?: string
   currency?: string
   paymentMethod?: string
 }
@@ -370,6 +383,7 @@ export interface PaymentOutput {
   invoiceId?: string
   customerId?: string
   idempotencyKey?: string
+  /** @deprecated Use the `amountExact` twin; float money will be removed in 2.0. */
   amount: number
   /** Exact base-10 amount. Prefer this field for all calculations. */
   amountExact: string
@@ -382,6 +396,8 @@ export interface PaymentOutput {
 export interface CreateRefundInput {
   paymentId: string
   amount: number
+  /** Exact base-10 amount. Takes precedence over `amount` when present. */
+  amountExact?: string
   reason?: string
   idempotencyKey?: string
 }
@@ -396,6 +412,7 @@ export interface RefundOutput {
   id: string
   refundNumber: string
   paymentId: string
+  /** @deprecated Use the `amountExact` twin; float money will be removed in 2.0. */
   amount: number
   /** Exact base-10 amount. Prefer this field for all calculations. */
   amountExact: string
@@ -495,8 +512,14 @@ export interface PurchaseOrderOutput {
   poNumber: string
   supplierId: string
   status: string
+  /** @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0. */
   subtotal: number
+  /** Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money. */
+  subtotalExact: string
+  /** @deprecated Use the `totalExact` twin; float money will be removed in 2.0. */
   total: number
+  /** Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalExact: string
   createdAt: string
   updatedAt: string
 }
@@ -504,6 +527,8 @@ export interface CreateInvoiceItemInput {
   description: string
   quantity: number
   unitPrice: number
+  /** Exact base-10 unit price. Takes precedence over `unit_price` when present. */
+  unitPriceExact?: string
   sku?: string
 }
 export interface CreateInvoiceInput {
@@ -520,16 +545,30 @@ export interface InvoiceOutput {
   customerId: string
   orderId?: string
   status: string
+  /** @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0. */
   subtotal: number
+  /** Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money. */
+  subtotalExact: string
+  /** @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0. */
   taxAmount: number
+  /** Exact base-10 tax amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  taxAmountExact: string
+  /** @deprecated Use the `totalExact` twin; float money will be removed in 2.0. */
   total: number
+  /** Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalExact: string
+  /** @deprecated Use the `amountPaidExact` twin; float money will be removed in 2.0. */
   amountPaid: number
+  /** Exact base-10 amount paid, straight from the engine's `Decimal`. Prefer this field for money. */
+  amountPaidExact: string
   dueDate: string
   createdAt: string
   updatedAt: string
 }
 export interface RecordPaymentInput {
   amount: number
+  /** Exact base-10 amount. Takes precedence over `amount` when present. */
+  amountExact?: string
   paymentMethod?: string
   reference?: string
 }
@@ -605,7 +644,11 @@ export interface AddCartItemInput {
   imageUrl?: string
   quantity: number
   unitPrice: number
+  /** Exact base-10 unit price. Takes precedence over `unit_price` when present. */
+  unitPriceExact?: string
   originalPrice?: number
+  /** Exact base-10 original price. Takes precedence over `original_price` when present. */
+  originalPriceExact?: string
   weight?: number
   requiresShipping?: boolean
 }
@@ -644,6 +687,8 @@ export interface UpdateCartInput {
 export interface UpdateCartItemInput {
   quantity?: number
   unitPrice?: number
+  /** Exact base-10 unit price. Takes precedence over `unit_price` when present. */
+  unitPriceExact?: string
 }
 export interface SetCartPaymentInput {
   paymentMethod: string
@@ -654,6 +699,8 @@ export interface SetCartShippingInput {
   shippingMethod?: string
   shippingCarrier?: string
   shippingAmount?: number
+  /** Exact base-10 shipping amount. Takes precedence over `shipping_amount` when present. */
+  shippingAmountExact?: string
 }
 export interface CartItemOutput {
   id: string
@@ -665,14 +712,19 @@ export interface CartItemOutput {
   description?: string
   imageUrl?: string
   quantity: number
+  /** @deprecated Use the `unitPriceExact` twin; float money will be removed in 2.0. */
   unitPrice: number
   unitPriceExact: string
+  /** @deprecated Use the `originalPriceExact` twin; float money will be removed in 2.0. */
   originalPrice?: number
   originalPriceExact?: string
+  /** @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0. */
   discountAmount: number
   discountAmountExact: string
+  /** @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0. */
   taxAmount: number
   taxAmountExact: string
+  /** @deprecated Use the `totalExact` twin; float money will be removed in 2.0. */
   total: number
   totalExact: string
   requiresShipping: boolean
@@ -698,14 +750,19 @@ export interface CartOutput {
   customerId?: string
   status: string
   currency: string
+  /** @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0. */
   subtotal: number
   subtotalExact: string
+  /** @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0. */
   taxAmount: number
   taxAmountExact: string
+  /** @deprecated Use the `shippingAmountExact` twin; float money will be removed in 2.0. */
   shippingAmount: number
   shippingAmountExact: string
+  /** @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0. */
   discountAmount: number
   discountAmountExact: string
+  /** @deprecated Use the `grandTotalExact` twin; float money will be removed in 2.0. */
   grandTotal: number
   grandTotalExact: string
   customerEmail?: string
@@ -732,6 +789,7 @@ export interface CheckoutResultOutput {
   orderId: string
   orderNumber: string
   paymentId?: string
+  /** @deprecated Use the `totalChargedExact` twin; float money will be removed in 2.0. */
   totalCharged: number
   totalChargedExact: string
   currency: string
@@ -741,7 +799,10 @@ export interface ShippingRateOutput {
   carrier: string
   service: string
   description?: string
+  /** @deprecated Use the `priceExact` twin; float money will be removed in 2.0. */
   price: number
+  /** Exact base-10 price, straight from the engine's `Decimal`. Prefer this field for money. */
+  priceExact: string
   currency: string
   estimatedDays?: number
 }
@@ -757,15 +818,24 @@ export interface AnalyticsQueryInput {
   limit?: number
 }
 export interface SalesSummaryOutput {
+  /** @deprecated Use the `totalRevenueExact` twin; float money will be removed in 2.0. */
   totalRevenue: number
+  /** Exact base-10 total revenue, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalRevenueExact: string
   orderCount: number
+  /** @deprecated Use the `averageOrderValueExact` twin; float money will be removed in 2.0. */
   averageOrderValue: number
+  /** Exact base-10 average order value, straight from the engine's `Decimal`. Prefer this field for money. */
+  averageOrderValueExact: string
   itemsSold: number
   uniqueCustomers: number
 }
 export interface RevenueByPeriodOutput {
   period: string
+  /** @deprecated Use the `revenueExact` twin; float money will be removed in 2.0. */
   revenue: number
+  /** Exact base-10 revenue, straight from the engine's `Decimal`. Prefer this field for money. */
+  revenueExact: string
   orderCount: number
   periodStart: string
 }
@@ -774,7 +844,10 @@ export interface TopProductOutput {
   sku: string
   name: string
   unitsSold: number
+  /** @deprecated Use the `revenueExact` twin; float money will be removed in 2.0. */
   revenue: number
+  /** Exact base-10 revenue, straight from the engine's `Decimal`. Prefer this field for money. */
+  revenueExact: string
   orderCount: number
 }
 export interface ProductPerformanceOutput {
@@ -782,9 +855,15 @@ export interface ProductPerformanceOutput {
   sku: string
   name: string
   unitsSold: number
+  /** @deprecated Use the `revenueExact` twin; float money will be removed in 2.0. */
   revenue: number
+  /** Exact base-10 revenue, straight from the engine's `Decimal`. Prefer this field for money. */
+  revenueExact: string
   previousUnitsSold: number
+  /** @deprecated Use the `previousRevenueExact` twin; float money will be removed in 2.0. */
   previousRevenue: number
+  /** Exact base-10 previous revenue, straight from the engine's `Decimal`. Prefer this field for money. */
+  previousRevenueExact: string
   unitsGrowthPercent: number
   revenueGrowthPercent: number
 }
@@ -792,7 +871,10 @@ export interface CustomerMetricsOutput {
   totalCustomers: number
   newCustomers: number
   returningCustomers: number
+  /** @deprecated Use the `averageLifetimeValueExact` twin; float money will be removed in 2.0. */
   averageLifetimeValue: number
+  /** Exact base-10 average lifetime value, straight from the engine's `Decimal`. Prefer this field for money. */
+  averageLifetimeValueExact: string
   averageOrdersPerCustomer: number
 }
 export interface TopCustomerOutput {
@@ -800,15 +882,24 @@ export interface TopCustomerOutput {
   name: string
   email: string
   orderCount: number
+  /** @deprecated Use the `totalSpentExact` twin; float money will be removed in 2.0. */
   totalSpent: number
+  /** Exact base-10 total spent, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalSpentExact: string
+  /** @deprecated Use the `averageOrderValueExact` twin; float money will be removed in 2.0. */
   averageOrderValue: number
+  /** Exact base-10 average order value, straight from the engine's `Decimal`. Prefer this field for money. */
+  averageOrderValueExact: string
 }
 export interface InventoryHealthOutput {
   totalSkus: number
   inStockSkus: number
   lowStockSkus: number
   outOfStockSkus: number
+  /** @deprecated Use the `totalValueExact` twin; float money will be removed in 2.0. */
   totalValue: number
+  /** Exact base-10 total value, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalValueExact: string
 }
 export interface LowStockItemOutput {
   sku: string
@@ -842,9 +933,18 @@ export interface DemandForecastOutput {
 }
 export interface RevenueForecastOutput {
   period: string
+  /** @deprecated Use the `forecastedRevenueExact` twin; float money will be removed in 2.0. */
   forecastedRevenue: number
+  /** Exact base-10 forecasted revenue, straight from the engine's `Decimal`. Prefer this field for money. */
+  forecastedRevenueExact: string
+  /** @deprecated Use the `lowerBoundExact` twin; float money will be removed in 2.0. */
   lowerBound: number
+  /** Exact base-10 lower bound, straight from the engine's `Decimal`. Prefer this field for money. */
+  lowerBoundExact: string
+  /** @deprecated Use the `upperBoundExact` twin; float money will be removed in 2.0. */
   upperBound: number
+  /** Exact base-10 upper bound, straight from the engine's `Decimal`. Prefer this field for money. */
+  upperBoundExact: string
   confidenceLevel: number
   basedOnPeriods: number
 }
@@ -868,7 +968,10 @@ export interface FulfillmentMetricsOutput {
 export interface ReturnMetricsOutput {
   totalReturns: number
   returnRatePercent: number
+  /** @deprecated Use the `totalRefundedExact` twin; float money will be removed in 2.0. */
   totalRefunded: number
+  /** Exact base-10 total refunded, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalRefundedExact: string
 }
 export interface SetExchangeRateInput {
   /** Base currency code (e.g., "USD") */
@@ -905,9 +1008,15 @@ export interface ExchangeRateOutput {
   updatedAt: string
 }
 export interface ConversionResultOutput {
+  /** @deprecated Use the `originalAmountExact` twin; float money will be removed in 2.0. */
   originalAmount: number
+  /** Exact base-10 original amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  originalAmountExact: string
   originalCurrency: string
+  /** @deprecated Use the `convertedAmountExact` twin; float money will be removed in 2.0. */
   convertedAmount: number
+  /** Exact base-10 converted amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  convertedAmountExact: string
   targetCurrency: string
   rate: number
   inverseRate: number
@@ -972,15 +1081,24 @@ export interface SubscriptionPlanOutput {
   status: string
   billingInterval: string
   customIntervalDays?: number
+  /** @deprecated Use the `priceExact` twin; float money will be removed in 2.0. */
   price: number
+  /** Exact base-10 price, straight from the engine's `Decimal`. Prefer this field for money. */
+  priceExact: string
+  /** @deprecated Use the `setupFeeExact` twin; float money will be removed in 2.0. */
   setupFee?: number
+  /** Exact base-10 setup fee, straight from the engine's `Decimal`. Prefer this field for money. */
+  setupFeeExact?: string
   currency: string
   trialDays: number
   trialRequiresPaymentMethod: boolean
   minCycles?: number
   maxCycles?: number
   discountPercent?: number
+  /** @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0. */
   discountAmount?: number
+  /** Exact base-10 discount amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  discountAmountExact?: string
   createdAt: string
   updatedAt: string
 }
@@ -1021,7 +1139,10 @@ export interface SubscriptionOutput {
   status: string
   billingInterval: string
   customIntervalDays?: number
+  /** @deprecated Use the `priceExact` twin; float money will be removed in 2.0. */
   price: number
+  /** Exact base-10 price, straight from the engine's `Decimal`. Prefer this field for money. */
+  priceExact: string
   currency: string
   paymentMethodId?: string
   startedAt: string
@@ -1036,7 +1157,10 @@ export interface SubscriptionOutput {
   billingCycleCount: number
   failedPaymentAttempts: number
   discountPercent?: number
+  /** @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0. */
   discountAmount?: number
+  /** Exact base-10 discount amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  discountAmountExact?: string
   couponCode?: string
   createdAt: string
   updatedAt: string
@@ -1068,10 +1192,22 @@ export interface BillingCycleOutput {
   status: string
   periodStart: string
   periodEnd: string
+  /** @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0. */
   subtotal: number
+  /** Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money. */
+  subtotalExact: string
+  /** @deprecated Use the `discountExact` twin; float money will be removed in 2.0. */
   discount: number
+  /** Exact base-10 discount, straight from the engine's `Decimal`. Prefer this field for money. */
+  discountExact: string
+  /** @deprecated Use the `taxExact` twin; float money will be removed in 2.0. */
   tax: number
+  /** Exact base-10 tax, straight from the engine's `Decimal`. Prefer this field for money. */
+  taxExact: string
+  /** @deprecated Use the `totalExact` twin; float money will be removed in 2.0. */
   total: number
+  /** Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalExact: string
   currency: string
   paymentId?: string
   billedAt?: string
@@ -1199,8 +1335,14 @@ export interface PromotionOutput {
   stacking: string
   status: string
   percentageOff?: number
+  /** @deprecated Use the `fixedAmountOffExact` twin; float money will be removed in 2.0. */
   fixedAmountOff?: number
+  /** Exact base-10 fixed amount off, straight from the engine's `Decimal`. Prefer this field for money. */
+  fixedAmountOffExact?: string
+  /** @deprecated Use the `maxDiscountAmountExact` twin; float money will be removed in 2.0. */
   maxDiscountAmount?: number
+  /** Exact base-10 max discount amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  maxDiscountAmountExact?: string
   buyQuantity?: number
   getQuantity?: number
   getDiscountPercent?: number
@@ -1280,13 +1422,34 @@ export interface PromotionLineItemInput {
 }
 /** Result of applying promotions */
 export interface ApplyPromotionsOutput {
+  /** @deprecated Use the `originalSubtotalExact` twin; float money will be removed in 2.0. */
   originalSubtotal: number
+  /** Exact base-10 original subtotal, straight from the engine's `Decimal`. Prefer this field for money. */
+  originalSubtotalExact: string
+  /** @deprecated Use the `totalDiscountExact` twin; float money will be removed in 2.0. */
   totalDiscount: number
+  /** Exact base-10 total discount, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalDiscountExact: string
+  /** @deprecated Use the `discountedSubtotalExact` twin; float money will be removed in 2.0. */
   discountedSubtotal: number
+  /** Exact base-10 discounted subtotal, straight from the engine's `Decimal`. Prefer this field for money. */
+  discountedSubtotalExact: string
+  /** @deprecated Use the `originalShippingExact` twin; float money will be removed in 2.0. */
   originalShipping: number
+  /** Exact base-10 original shipping, straight from the engine's `Decimal`. Prefer this field for money. */
+  originalShippingExact: string
+  /** @deprecated Use the `shippingDiscountExact` twin; float money will be removed in 2.0. */
   shippingDiscount: number
+  /** Exact base-10 shipping discount, straight from the engine's `Decimal`. Prefer this field for money. */
+  shippingDiscountExact: string
+  /** @deprecated Use the `finalShippingExact` twin; float money will be removed in 2.0. */
   finalShipping: number
+  /** Exact base-10 final shipping, straight from the engine's `Decimal`. Prefer this field for money. */
+  finalShippingExact: string
+  /** @deprecated Use the `grandTotalExact` twin; float money will be removed in 2.0. */
   grandTotal: number
+  /** Exact base-10 grand total, straight from the engine's `Decimal`. Prefer this field for money. */
+  grandTotalExact: string
   appliedPromotions: Array<AppliedPromotionOutput>
 }
 /** An applied promotion */
@@ -1294,7 +1457,10 @@ export interface AppliedPromotionOutput {
   promotionId: string
   promotionName: string
   couponCode?: string
+  /** @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0. */
   discountAmount: number
+  /** Exact base-10 discount amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  discountAmountExact: string
   discountType: string
 }
 /** Promotion usage record output */
@@ -1305,7 +1471,10 @@ export interface PromotionUsageOutput {
   customerId?: string
   orderId?: string
   cartId?: string
+  /** @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0. */
   discountAmount: number
+  /** Exact base-10 discount amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  discountAmountExact: string
   currency: string
   usedAt: string
 }
@@ -1426,9 +1595,18 @@ export interface TaxRateOutput {
   description?: string
   isCompound: boolean
   priority: number
+  /** @deprecated Use the `thresholdMinExact` twin; float money will be removed in 2.0. */
   thresholdMin?: number
+  /** Exact base-10 minimum amount at which the rate starts to apply. */
+  thresholdMinExact?: string
+  /** @deprecated Use the `thresholdMaxExact` twin; float money will be removed in 2.0. */
   thresholdMax?: number
+  /** Exact base-10 cap on the amount this rate is charged against. */
+  thresholdMaxExact?: string
+  /** @deprecated Use the `fixedAmountExact` twin; float money will be removed in 2.0. */
   fixedAmount?: number
+  /** Exact base-10 fixed amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  fixedAmountExact?: string
   effectiveFrom: string
   effectiveTo?: string
   active: boolean
@@ -1458,20 +1636,35 @@ export interface TaxBreakdownOutput {
   taxType: string
   rateName: string
   rate: number
+  /** @deprecated Use the `taxableAmountExact` twin; float money will be removed in 2.0. */
   taxableAmount: number
+  /** Exact base-10 taxable amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  taxableAmountExact: string
+  /** @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0. */
   taxAmount: number
+  /** Exact base-10 tax amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  taxAmountExact: string
   isCompound: boolean
 }
 export interface TaxDetailOutput {
   taxType: string
   jurisdictionName: string
   rate: number
+  /** @deprecated Use the `amountExact` twin; float money will be removed in 2.0. */
   amount: number
+  /** Exact base-10 amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  amountExact: string
 }
 export interface LineItemTaxOutput {
   lineItemId: string
+  /** @deprecated Use the `taxableAmountExact` twin; float money will be removed in 2.0. */
   taxableAmount: number
+  /** Exact base-10 taxable amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  taxableAmountExact: string
+  /** @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0. */
   taxAmount: number
+  /** Exact base-10 tax amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  taxAmountExact: string
   effectiveRate: number
   isExempt: boolean
   exemptionReason?: string
@@ -1481,8 +1674,14 @@ export interface ExemptionDetailsOutput {
   exemptionId: string
   exemptionType: string
   certificateNumber?: string
+  /** @deprecated Use the `amountExemptExact` twin; float money will be removed in 2.0. */
   amountExempt: number
+  /** Exact base-10 amount exempt, straight from the engine's `Decimal`. Prefer this field for money. */
+  amountExemptExact: string
+  /** @deprecated Use the `taxSavedExact` twin; float money will be removed in 2.0. */
   taxSaved: number
+  /** Exact base-10 tax saved, straight from the engine's `Decimal`. Prefer this field for money. */
+  taxSavedExact: string
 }
 export interface JurisdictionSummaryOutput {
   id: string
@@ -1490,14 +1689,29 @@ export interface JurisdictionSummaryOutput {
   code: string
   level: string
   totalRate: number
+  /** @deprecated Use the `totalTaxExact` twin; float money will be removed in 2.0. */
   totalTax: number
+  /** Exact base-10 total tax, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalTaxExact: string
 }
 export interface TaxCalculationOutput {
   id: string
+  /** @deprecated Use the `totalTaxExact` twin; float money will be removed in 2.0. */
   totalTax: number
+  /** Exact base-10 total tax, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalTaxExact: string
+  /** @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0. */
   subtotal: number
+  /** Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money. */
+  subtotalExact: string
+  /** @deprecated Use the `totalExact` twin; float money will be removed in 2.0. */
   total: number
+  /** Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalExact: string
+  /** @deprecated Use the `shippingTaxExact` twin; float money will be removed in 2.0. */
   shippingTax: number
+  /** Exact base-10 shipping tax, straight from the engine's `Decimal`. Prefer this field for money. */
+  shippingTaxExact: string
   taxBreakdown: Array<TaxBreakdownOutput>
   lineItemTaxes: Array<LineItemTaxOutput>
   exemptionsApplied: boolean
@@ -1734,19 +1948,46 @@ export interface BillOutput {
   billNumber: string
   supplierId: string
   status: string
+  /** @deprecated Use the `totalAmountExact` twin; float money will be removed in 2.0. */
   totalAmount: number
+  /** Exact base-10 total amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalAmountExact: string
+  /** @deprecated Use the `amountPaidExact` twin; float money will be removed in 2.0. */
   amountPaid: number
+  /** Exact base-10 amount paid, straight from the engine's `Decimal`. Prefer this field for money. */
+  amountPaidExact: string
+  /** @deprecated Use the `amountDueExact` twin; float money will be removed in 2.0. */
   amountDue: number
+  /** Exact base-10 amount due, straight from the engine's `Decimal`. Prefer this field for money. */
+  amountDueExact: string
   dueDate: string
   createdAt: string
 }
 export interface ApAgingSummaryOutput {
+  /** @deprecated Use the `currentExact` twin; float money will be removed in 2.0. */
   current: number
+  /** Exact base-10 current, straight from the engine's `Decimal`. Prefer this field for money. */
+  currentExact: string
+  /** @deprecated Use the `days130Exact` twin; float money will be removed in 2.0. */
   days130: number
+  /** Exact base-10 days 1 30, straight from the engine's `Decimal`. Prefer this field for money. */
+  days130Exact: string
+  /** @deprecated Use the `days3160Exact` twin; float money will be removed in 2.0. */
   days3160: number
+  /** Exact base-10 days 31 60, straight from the engine's `Decimal`. Prefer this field for money. */
+  days3160Exact: string
+  /** @deprecated Use the `days6190Exact` twin; float money will be removed in 2.0. */
   days6190: number
+  /** Exact base-10 days 61 90, straight from the engine's `Decimal`. Prefer this field for money. */
+  days6190Exact: string
+  /** @deprecated Use the `daysOver90Exact` twin; float money will be removed in 2.0. */
   daysOver90: number
+  /** Exact base-10 days over 90, straight from the engine's `Decimal`. Prefer this field for money. */
+  daysOver90Exact: string
+  /** @deprecated Use the `totalExact` twin; float money will be removed in 2.0. */
   total: number
+  /** Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalExact: string
 }
 export interface ThreeWayMatchLineOutput {
   poLineId?: string
@@ -1779,12 +2020,30 @@ export interface ThreeWayMatchOutput {
   lines: Array<ThreeWayMatchLineOutput>
 }
 export interface ArAgingSummaryOutput {
+  /** @deprecated Use the `currentExact` twin; float money will be removed in 2.0. */
   current: number
+  /** Exact base-10 current, straight from the engine's `Decimal`. Prefer this field for money. */
+  currentExact: string
+  /** @deprecated Use the `days130Exact` twin; float money will be removed in 2.0. */
   days130: number
+  /** Exact base-10 days 1 30, straight from the engine's `Decimal`. Prefer this field for money. */
+  days130Exact: string
+  /** @deprecated Use the `days3160Exact` twin; float money will be removed in 2.0. */
   days3160: number
+  /** Exact base-10 days 31 60, straight from the engine's `Decimal`. Prefer this field for money. */
+  days3160Exact: string
+  /** @deprecated Use the `days6190Exact` twin; float money will be removed in 2.0. */
   days6190: number
+  /** Exact base-10 days 61 90, straight from the engine's `Decimal`. Prefer this field for money. */
+  days6190Exact: string
+  /** @deprecated Use the `daysOver90Exact` twin; float money will be removed in 2.0. */
   daysOver90: number
+  /** Exact base-10 days over 90, straight from the engine's `Decimal`. Prefer this field for money. */
+  daysOver90Exact: string
+  /** @deprecated Use the `totalExact` twin; float money will be removed in 2.0. */
   total: number
+  /** Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalExact: string
 }
 export interface CreateCreditMemoInput {
   customerId: string
@@ -1797,7 +2056,10 @@ export interface CreditMemoOutput {
   id: string
   creditMemoNumber: string
   customerId: string
+  /** @deprecated Use the `amountExact` twin; float money will be removed in 2.0. */
   amount: number
+  /** Exact base-10 amount, straight from the engine's `Decimal`. Prefer this field for money. */
+  amountExact: string
   status: string
   reason: string
   createdAt: string
@@ -1814,12 +2076,30 @@ export interface ItemCostOutput {
   id: string
   sku: string
   costMethod: string
+  /** @deprecated Use the `standardCostExact` twin; float money will be removed in 2.0. */
   standardCost: number
+  /** Exact base-10 standard cost, straight from the engine's `Decimal`. Prefer this field for money. */
+  standardCostExact: string
+  /** @deprecated Use the `averageCostExact` twin; float money will be removed in 2.0. */
   averageCost: number
+  /** Exact base-10 average cost, straight from the engine's `Decimal`. Prefer this field for money. */
+  averageCostExact: string
+  /** @deprecated Use the `lastCostExact` twin; float money will be removed in 2.0. */
   lastCost: number
+  /** Exact base-10 last cost, straight from the engine's `Decimal`. Prefer this field for money. */
+  lastCostExact: string
+  /** @deprecated Use the `materialCostExact` twin; float money will be removed in 2.0. */
   materialCost: number
+  /** Exact base-10 material cost, straight from the engine's `Decimal`. Prefer this field for money. */
+  materialCostExact: string
+  /** @deprecated Use the `laborCostExact` twin; float money will be removed in 2.0. */
   laborCost: number
+  /** Exact base-10 labor cost, straight from the engine's `Decimal`. Prefer this field for money. */
+  laborCostExact: string
+  /** @deprecated Use the `overheadCostExact` twin; float money will be removed in 2.0. */
   overheadCost: number
+  /** Exact base-10 overhead cost, straight from the engine's `Decimal`. Prefer this field for money. */
+  overheadCostExact: string
 }
 export interface CreateCreditAccountInput {
   customerId: string
@@ -1830,16 +2110,28 @@ export interface CreateCreditAccountInput {
 export interface CreditAccountOutput {
   id: string
   customerId: string
+  /** @deprecated Use the `creditLimitExact` twin; float money will be removed in 2.0. */
   creditLimit: number
+  /** Exact base-10 credit limit, straight from the engine's `Decimal`. Prefer this field for money. */
+  creditLimitExact: string
+  /** @deprecated Use the `creditUsedExact` twin; float money will be removed in 2.0. */
   creditUsed: number
+  /** Exact base-10 credit used, straight from the engine's `Decimal`. Prefer this field for money. */
+  creditUsedExact: string
+  /** @deprecated Use the `creditAvailableExact` twin; float money will be removed in 2.0. */
   creditAvailable: number
+  /** Exact base-10 credit available, straight from the engine's `Decimal`. Prefer this field for money. */
+  creditAvailableExact: string
   status: string
   paymentTerms?: string
 }
 export interface CreditCheckOutput {
   approved: boolean
   reason?: string
+  /** @deprecated Use the `availableCreditExact` twin; float money will be removed in 2.0. */
   availableCredit: number
+  /** Exact base-10 available credit, straight from the engine's `Decimal`. Prefer this field for money. */
+  availableCreditExact: string
   requiresApproval: boolean
 }
 export interface CreateBackorderInput {
@@ -1867,6 +2159,11 @@ export interface BackorderSummaryOutput {
   totalBackorders: number
   criticalCount: number
   overdueCount: number
+  /**
+   * Total units on backorder, not a currency amount: this wraps
+   * `BackorderSummary::total_quantity`. The name is a historical misnomer
+   * kept for compatibility, which is why it carries no exact-money twin.
+   */
   totalValue: number
 }
 export interface CreateGlAccountInput {
@@ -1881,7 +2178,10 @@ export interface GlAccountOutput {
   accountNumber: string
   name: string
   accountType: string
+  /** @deprecated Use the `balanceExact` twin; float money will be removed in 2.0. */
   balance: number
+  /** Exact base-10 balance, straight from the engine's `Decimal`. Prefer this field for money. */
+  balanceExact: string
   status: string
   description?: string
 }
@@ -1895,22 +2195,46 @@ export interface JournalEntryOutput {
 }
 export interface TrialBalanceOutput {
   asOfDate: string
+  /** @deprecated Use the `totalDebitsExact` twin; float money will be removed in 2.0. */
   totalDebits: number
+  /** Exact base-10 total debits, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalDebitsExact: string
+  /** @deprecated Use the `totalCreditsExact` twin; float money will be removed in 2.0. */
   totalCredits: number
+  /** Exact base-10 total credits, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalCreditsExact: string
   isBalanced: boolean
 }
 export interface BalanceSheetOutput {
   asOfDate: string
+  /** @deprecated Use the `totalAssetsExact` twin; float money will be removed in 2.0. */
   totalAssets: number
+  /** Exact base-10 total assets, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalAssetsExact: string
+  /** @deprecated Use the `totalLiabilitiesExact` twin; float money will be removed in 2.0. */
   totalLiabilities: number
+  /** Exact base-10 total liabilities, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalLiabilitiesExact: string
+  /** @deprecated Use the `totalEquityExact` twin; float money will be removed in 2.0. */
   totalEquity: number
+  /** Exact base-10 total equity, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalEquityExact: string
 }
 export interface IncomeStatementOutput {
   periodStart: string
   periodEnd: string
+  /** @deprecated Use the `totalRevenueExact` twin; float money will be removed in 2.0. */
   totalRevenue: number
+  /** Exact base-10 total revenue, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalRevenueExact: string
+  /** @deprecated Use the `totalExpensesExact` twin; float money will be removed in 2.0. */
   totalExpenses: number
+  /** Exact base-10 total expenses, straight from the engine's `Decimal`. Prefer this field for money. */
+  totalExpensesExact: string
+  /** @deprecated Use the `netIncomeExact` twin; float money will be removed in 2.0. */
   netIncome: number
+  /** Exact base-10 net income, straight from the engine's `Decimal`. Prefer this field for money. */
+  netIncomeExact: string
 }
 export interface RevaluationLineOutput {
   accountId: string
@@ -2086,7 +2410,10 @@ export interface X402IntentOutput {
   payerAddress: string
   payeeAddress: string
   amount: number
+  /** @deprecated Use the `amountDecimalExact` twin; float money will be removed in 2.0. */
   amountDecimal: number
+  /** Exact base-10 amount decimal, straight from the engine's `Decimal`. Prefer this field for money. */
+  amountDecimalExact: string
   asset: string
   network: string
   chainId: number
@@ -5093,8 +5420,13 @@ export declare class Carts {
   releaseInventory(id: string): Promise<CartOutput>
   /** Recalculate cart totals */
   recalculate(id: string): Promise<CartOutput>
-  /** Set tax amount */
-  setTax(id: string, taxAmount: number): Promise<CartOutput>
+  /**
+   * Set tax amount.
+   *
+   * `tax_amount_exact` is the exact base-10 form and wins when present; the
+   * `f64` is what callers sent before it existed and still works alone.
+   */
+  setTax(id: string, taxAmount: number, taxAmountExact?: string | undefined | null): Promise<CartOutput>
   /** Get abandoned carts */
   getAbandoned(): Promise<Array<CartOutput>>
   /** Get expired carts */

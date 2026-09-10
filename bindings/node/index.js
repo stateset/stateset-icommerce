@@ -21,8 +21,9 @@
  * '@stateset/embedded'` only works while they stay that way.
  * `test/error-codes.js` fails if this list drifts from the native binding.
  *
- * `__testPanic*` are compiled only with the `test-panic` cargo feature (which
- * `npm run build:debug` turns on); in any published build they are `undefined`.
+ * `__testPanic*` and `__testMoneyNotRepresentable` are compiled only with the
+ * `test-panic` cargo feature (which `npm run build:debug` turns on); in any
+ * published build they are `undefined`.
  */
 
 const { wrapNativeExports } = require('./errors.js')
@@ -129,3 +130,4 @@ module.exports.Maintenance = nativeBinding.Maintenance
 module.exports.__testPanic = nativeBinding.__testPanic
 module.exports.__testPanicAsync = nativeBinding.__testPanicAsync
 module.exports.__testPanicAsyncUnguarded = nativeBinding.__testPanicAsyncUnguarded
+module.exports.__testMoneyNotRepresentable = nativeBinding.__testMoneyNotRepresentable

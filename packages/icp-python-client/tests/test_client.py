@@ -22,8 +22,25 @@ from icp_client import (  # noqa: E402
     ICPError,
     canonical_json,
     generate_identity,
+    generate_principal_identity,
+    principal_identity_from_seed,
     sign_ed25519,
+    sign_principal_binding,
+    verify_ed25519,
 )
+from icp_client.codec import DEFAULT_VERBS  # noqa: E402
+
+# The cross-language PrincipalBinding vector lives with the JavaScript SDK and
+# is read by BOTH suites: same params + same seed MUST give the same canonical
+# bytes and the same signature in every SDK.
+VECTOR_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "icp-client"
+    / "test"
+    / "fixtures"
+    / "principal-binding-vector.json"
+)
+CLIENT_SOURCE = Path(__file__).resolve().parents[1] / "icp_client" / "client.py"
 
 
 HANDLER_SCRIPT = (
@@ -37,10 +54,10 @@ HANDLER_SCRIPT = (
 class HandlerProc:
     """Spawn the icp-handler and capture its listening port."""
 
-    def __init__(self) -> None:
+    def __init__(self, env: dict = None) -> None:
         self.proc = subprocess.Popen(
             ["node", str(HANDLER_SCRIPT)],
-            env={**os.environ, "PORT": "0"},
+            env={**os.environ, "PORT": "0", **(env or {})},
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -316,6 +333,312 @@ class TestICPClient(unittest.TestCase):
         with self.assertRaises(ICPError) as ctx:
             self.client.fetch_channel_events("icp_ch_does_not_exist", 0)
         self.assertEqual(ctx.exception.code, "channel.not_found")
+
+
+class TestPrincipalBinding(unittest.TestCase):
+    """The binding the SDK signs must satisfy the handler in ENFORCE mode.
+
+    The Python client used to ship `sig: "deadbeef"` with `kid: "self"` — a
+    self-signed placeholder that looks like a delegation and proves nothing.
+    These tests pin the canonical bytes (the binding minus `signature`) and
+    drive a real handler that verifies against an operator-registered key.
+    """
+
+    PRINCIPAL = "did:web:py-binding-test.example"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.principal_identity = generate_principal_identity()
+        # The agent AID must be registered before the handler starts: an
+        # operator-keyed handler admits no caller-minted signers.
+        cls.identity = generate_identity()
+        cls.handler = HandlerProc(
+            {
+                "ICP_TRUST_MODE": "enforce",
+                "ICP_MERCHANT_AID": "aid:v1:zPyBindingTestMerchant",
+                "ICP_PRINCIPAL_KEYS_JSON": json.dumps(
+                    {cls.PRINCIPAL: cls.principal_identity.ed25519_pubkey.hex()}
+                ),
+                "ICP_AGENT_KEYS_JSON": json.dumps(
+                    {cls.identity.aid: cls.identity.ed25519_pubkey.hex()}
+                ),
+            }
+        )
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.handler.close()
+
+    def _client(self, **overrides) -> ICPClient:
+        opts = dict(
+            handler_url=self.handler.base_url,
+            principal=self.PRINCIPAL,
+            identity=self.identity,
+            principal_identity=self.principal_identity,
+            verbs=["purchase.create"],
+        )
+        opts.update(overrides)
+        return ICPClient.create(**opts)
+
+    def _purchase(self, client: ICPClient) -> dict:
+        return client.purchase(
+            merchant="aid:v1:zPyBindingTestMerchant",
+            settler="settler:stateset.usdc.base-sepolia",
+            items=[
+                {
+                    "sku": "WIDGET-001",
+                    "quantity": 1,
+                    "unit_price": {"amount": "10.00", "currency": "USDC"},
+                }
+            ],
+            max_total={"amount": "20.00", "currency": "USDC"},
+        )
+
+    def test_binding_shape_and_canonical_bytes(self) -> None:
+        binding = sign_principal_binding(
+            principal=self.PRINCIPAL,
+            agent="aid:v1:zAgent",
+            principal_identity=self.principal_identity,
+            verbs=["purchase.create"],
+            max_per_intent={"amount": "500", "currency": "USDC"},
+            revocation="https://py-binding-test.example/revoke",
+        )
+        self.assertEqual(
+            sorted(binding),
+            ["agent", "authority", "expiry", "principal", "revocation", "signature"],
+        )
+        self.assertEqual(binding["signature"]["alg"], "ed25519")
+        # The principal signs, so the key id names the principal, never "self".
+        self.assertEqual(binding["signature"]["kid"], self.PRINCIPAL)
+        self.assertNotEqual(binding["signature"]["sig"], "deadbeef")
+        unsigned = {k: v for k, v in binding.items() if k != "signature"}
+        self.assertTrue(
+            verify_ed25519(
+                canonical_json(unsigned),
+                binding["signature"]["sig"],
+                self.principal_identity.ed25519_pubkey,
+            )
+        )
+        unsigned["authority"]["verbs"] = ["payout.request"]
+        self.assertFalse(
+            verify_ed25519(
+                canonical_json(unsigned),
+                binding["signature"]["sig"],
+                self.principal_identity.ed25519_pubkey,
+            )
+        )
+
+    def test_principal_identity_round_trips_through_its_seed(self) -> None:
+        restored = principal_identity_from_seed(self.principal_identity.ed25519_seed)
+        self.assertEqual(restored.ed25519_pubkey, self.principal_identity.ed25519_pubkey)
+
+    def test_sign_principal_binding_rejects_unusable_input(self) -> None:
+        # codec-level helpers raise ValueError, as identity_from_seeds does;
+        # the client-level checks raise the typed ICPError.
+        for bad in [
+            {"principal": "", "agent": "aid:v1:zAgent"},
+            {"principal": self.PRINCIPAL, "agent": ""},
+            {"principal": self.PRINCIPAL, "agent": "aid:v1:zAgent", "verbs": []},
+            {"principal": self.PRINCIPAL, "agent": "aid:v1:zAgent", "expires_at": "nope"},
+        ]:
+            with self.assertRaises(ValueError):
+                sign_principal_binding(
+                    principal_identity=self.principal_identity, **bad
+                )
+
+    def test_signed_binding_is_accepted_in_enforce_mode(self) -> None:
+        result = self._purchase(self._client())
+        self.assertTrue(result["quote"]["quote_id"])
+
+    def test_tampered_binding_is_rejected(self) -> None:
+        binding = sign_principal_binding(
+            principal=self.PRINCIPAL,
+            agent=self.identity.aid,
+            principal_identity=self.principal_identity,
+            verbs=["purchase.create"],
+        )
+        # Widen the authority after signing — the classic escalation attempt.
+        binding["authority"]["max_per_intent"] = {"amount": "1000000", "currency": "USDC"}
+        client = self._client(principal_identity=None, principal_binding=binding)
+        with self.assertRaises(ICPError) as ctx:
+            self._purchase(client)
+        self.assertEqual(ctx.exception.code, "delegation.signature_invalid")
+
+    def test_client_without_a_principal_identity_sends_no_binding(self) -> None:
+        client = self._client(principal_identity=None)
+        intent = client._base_intent(
+            "purchase.create", "aid:v1:zPyBindingTestMerchant", "settler:x"
+        )
+        self.assertNotIn("principal_binding", intent)
+        with self.assertRaises(ICPError) as ctx:
+            self._purchase(client)
+        self.assertEqual(ctx.exception.code, "delegation.required")
+
+    def test_binding_that_does_not_cover_the_verb_is_scope_mismatch(self) -> None:
+        client = self._client(verbs=["inventory.query"])
+        with self.assertRaises(ICPError) as ctx:
+            self._purchase(client)
+        self.assertEqual(ctx.exception.code, "delegation.scope_mismatch")
+
+    def test_pre_signed_binding_for_another_agent_is_refused_locally(self) -> None:
+        binding = sign_principal_binding(
+            principal=self.PRINCIPAL,
+            agent=generate_identity().aid,
+            principal_identity=self.principal_identity,
+        )
+        with self.assertRaises(ICPError) as ctx:
+            self._client(principal_identity=None, principal_binding=binding)
+        self.assertEqual(ctx.exception.code, "format.bad_field")
+
+    def test_default_binding_authorizes_every_verb_this_client_emits(self) -> None:
+        # A default delegation that omits a verb the SDK sends hands the caller
+        # delegation.scope_mismatch from the client's own method; one that
+        # includes a verb the SDK cannot send is over-delegation. Read the
+        # verbs out of the source rather than trusting a hand-kept list.
+        emitted = set(
+            re.findall(r'_base_intent\(\s*"([a-z.]+)"', CLIENT_SOURCE.read_text())
+        )
+        self.assertGreaterEqual(len(emitted), 8, f"expected the verb methods, found {emitted}")
+        self.assertEqual(sorted(DEFAULT_VERBS), sorted(emitted))
+        client = ICPClient.create(handler_url=self.handler.base_url, principal=self.PRINCIPAL)
+        self.assertEqual(sorted(client.verbs), sorted(emitted))
+
+    def test_every_client_method_transacts_under_the_default_binding(self) -> None:
+        # The handler is the judge of scope, and this is the only place the
+        # scope check actually runs: a permissive handler never reaches it.
+        agent = self._client(verbs=None)
+        merchant = "aid:v1:zPyBindingTestMerchant"
+        settler = "settler:stateset.usdc.base-sepolia"
+        import datetime
+
+        agent.inventory(merchant=merchant, settler=settler)
+        bought = self._purchase(agent)
+        self.assertTrue(bought["quote"]["quote_id"])
+        agent.subscribe(
+            merchant=merchant,
+            settler=settler,
+            service_id="premium-monthly",
+            cadence="30d",
+            max_total_per_period={"amount": "29.99", "currency": "USDC"},
+            first_charge_at=(
+                datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
+            )
+            .isoformat()
+            .replace("+00:00", "Z"),
+        )
+        agent.cancel(
+            merchant=merchant,
+            settler=settler,
+            subscription_id="icp_sub_DEFAULTBINDINGTEST000001",
+            effective="immediate",
+        )
+        agent.return_(
+            merchant=merchant,
+            settler=settler,
+            original_settlement_id="icp_set_DEFAULTBINDINGTEST000001",
+            items=[{"sku": "WIDGET-001", "quantity": 1, "reason": "defective"}],
+            desired_outcome="refund",
+        )
+        agent.request_quote(
+            merchant=merchant,
+            settler=settler,
+            items=[{"sku": "WIDGET-001", "quantity": 500}],
+            purchase_window="30d",
+        )
+        self._payout(agent)
+        channel = agent.register_webhook(
+            merchant=merchant,
+            settler=settler,
+            url="https://agent.example.com/icp/events",
+            event_filters=["settlement.released"],
+        )
+        self.assertTrue(channel["channel"]["channel_id"].startswith("icp_ch_"))
+
+    def _payout(self, client: ICPClient) -> dict:
+        return client.payout(
+            platform="aid:v1:zPyBindingTestMerchant",
+            settler="settler:stateset.usdc.base-sepolia",
+            amount={"amount": "100.00", "currency": "USDC"},
+            destination={
+                "type": "wallet",
+                "wallet_address": "0x1111111111111111111111111111111111111111",
+            },
+        )
+
+    def test_payout_is_delegable_under_the_default_binding(self) -> None:
+        """`payout.request` is inverted-direction: this Agent is the SELLER, so
+        the Intent carries `seller`/`platform` where every other verb carries
+        `buyer`/`merchant`. The handler's checkDelegation used to read
+        `intent.buyer` unconditionally, so `binding.agent` never matched and no
+        binding — however correctly signed — could authorize a payout with
+        trust enforced. Fixed in icp-handler/src/server.mjs (`actingAgent`).
+        """
+        result = self._payout(self._client(verbs=None))
+        self.assertEqual(result["authorization"]["type"], "payout.authorization")
+        self.assertEqual(result["authorization"]["seller"], self.identity.aid)
+
+    def test_payout_binding_for_a_different_agent_is_scope_mismatch(self) -> None:
+        # The acting-party fix widened WHICH field is compared, not whether it
+        # is compared: a binding delegating somebody else still fails closed.
+        binding = sign_principal_binding(
+            principal=self.PRINCIPAL,
+            agent=generate_identity().aid,
+            principal_identity=self.principal_identity,
+            verbs=["payout.request"],
+        )
+        # The client refuses a binding for another agent locally, so post the
+        # mis-delegated binding the way a hand-rolled client would.
+        client = self._client(verbs=None)
+        client.principal_identity = None
+        client.principal_binding = binding
+        with self.assertRaises(ICPError) as ctx:
+            self._payout(client)
+        self.assertEqual(ctx.exception.code, "delegation.scope_mismatch")
+
+    def test_cross_language_vector_reproduces_byte_for_byte(self) -> None:
+        # What makes the "byte-identical across SDKs" claim in both READMEs
+        # checkable rather than aspirational — including the expiry
+        # normalisation (RFC 3339 in, JS toISOString() millisecond form out).
+        vector = json.loads(VECTOR_PATH.read_text())
+        principal_identity = principal_identity_from_seed(
+            bytes.fromhex(vector["principal_seed_hex"])
+        )
+        self.assertEqual(
+            principal_identity.ed25519_pubkey.hex(),
+            vector["expected_principal_pubkey_hex"],
+        )
+        params = vector["params"]
+        binding = sign_principal_binding(
+            principal=params["principal"],
+            agent=params["agent"],
+            principal_identity=principal_identity,
+            expires_at=params["expires_at"],
+            verbs=params["verbs"],
+            max_per_intent=params["max_per_intent"],
+            revocation=params["revocation"],
+        )
+        self.assertEqual(binding, vector["expected_binding"])
+        unsigned = {k: v for k, v in binding.items() if k != "signature"}
+        self.assertEqual(canonical_json(unsigned), vector["expected_canonical"])
+        self.assertEqual(binding["signature"]["sig"], vector["expected_signature_hex"])
+
+    def test_a_caller_supplied_signature_is_never_signed_over(self) -> None:
+        binding = sign_principal_binding(
+            principal=self.PRINCIPAL,
+            agent="aid:v1:zAgent",
+            principal_identity=self.principal_identity,
+            signature={"alg": "ed25519", "kid": "self", "sig": "deadbeef"},
+        )
+        self.assertNotEqual(binding["signature"]["sig"], "deadbeef")
+        unsigned = {k: v for k, v in binding.items() if k != "signature"}
+        self.assertNotIn("signature", unsigned)
+        self.assertTrue(
+            verify_ed25519(
+                canonical_json(unsigned),
+                binding["signature"]["sig"],
+                self.principal_identity.ed25519_pubkey,
+            )
+        )
 
 
 if __name__ == "__main__":
