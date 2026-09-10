@@ -2,7 +2,11 @@
 
 use crate::identity::verify_ed25519;
 use crate::intents::{build_intent_envelope, intent_base};
-use crate::{Error, Identity, LineItem, Money, Signature, canonical_json};
+use crate::principal::default_max_per_intent;
+use crate::{
+    Error, Identity, LineItem, Money, PrincipalBinding, PrincipalBindingParams, PrincipalIdentity,
+    Signature, canonical_json,
+};
 use serde_json::{Value, json};
 use std::sync::RwLock;
 use std::time::Duration;
@@ -39,6 +43,15 @@ pub struct Client {
     /// `well_known()` and used to verify the merchant signature on
     /// every response payload.
     merchant_pubkey_cache: RwLock<Option<String>>,
+    /// Delegation configuration. With none of it set, Intents carry no
+    /// `principal_binding` at all — see [`Client::with_principal_identity`].
+    principal: Option<String>,
+    principal_identity: Option<PrincipalIdentity>,
+    principal_binding: Option<PrincipalBinding>,
+    verbs: Option<Vec<String>>,
+    max_per_intent: Money,
+    max_per_payout: Option<Money>,
+    revocation_url: Option<String>,
 }
 
 impl std::fmt::Debug for Client {
@@ -46,6 +59,11 @@ impl std::fmt::Debug for Client {
         f.debug_struct("Client")
             .field("handler_url", &self.handler_url)
             .field("aid", &self.identity.aid())
+            .field("principal", &self.principal)
+            .field(
+                "delegated",
+                &(self.principal_identity.is_some() || self.principal_binding.is_some()),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -62,7 +80,132 @@ impl Client {
             identity,
             agent,
             merchant_pubkey_cache: RwLock::new(None),
+            principal: None,
+            principal_identity: None,
+            principal_binding: None,
+            verbs: None,
+            max_per_intent: default_max_per_intent(),
+            max_per_payout: None,
+            revocation_url: None,
         }
+    }
+
+    /// Sign a fresh `PrincipalBinding` for every Intent with the principal's
+    /// own key.
+    ///
+    /// Convenient for tests and single-tenant services. In production the
+    /// Agent should never hold the principal's key at all — sign offline (or
+    /// in a KMS) and pass the finished binding to
+    /// [`Client::with_principal_binding`].
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] if `principal` is empty or a binding was
+    /// already supplied: signing here and signing elsewhere are alternatives,
+    /// and accepting both would silently pick one.
+    pub fn with_principal_identity(
+        mut self,
+        principal: impl Into<String>,
+        principal_identity: PrincipalIdentity,
+    ) -> Result<Self, Error> {
+        if self.principal_binding.is_some() {
+            return Err(Error::InvalidInput(
+                "pass a principal identity (sign here) or a principal binding (signed elsewhere), not both"
+                    .to_string(),
+            ));
+        }
+        let principal = principal.into();
+        if principal.is_empty() {
+            return Err(Error::InvalidInput("principal is required".to_string()));
+        }
+        self.principal = Some(principal);
+        self.principal_identity = Some(principal_identity);
+        Ok(self)
+    }
+
+    /// Carry a `PrincipalBinding` that was signed elsewhere — the production
+    /// shape, since the Agent never needs the principal's key.
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] if the binding delegates a different Agent, or
+    /// if a principal identity was already configured. Catching the miswiring
+    /// here beats shipping an Intent the handler answers with
+    /// `delegation.scope_mismatch`.
+    pub fn with_principal_binding(mut self, binding: PrincipalBinding) -> Result<Self, Error> {
+        if self.principal_identity.is_some() {
+            return Err(Error::InvalidInput(
+                "pass a principal identity (sign here) or a principal binding (signed elsewhere), not both"
+                    .to_string(),
+            ));
+        }
+        if binding.agent != self.identity.aid() {
+            return Err(Error::InvalidInput(format!(
+                "principal binding delegates {}, not this agent {}",
+                binding.agent,
+                self.identity.aid()
+            )));
+        }
+        self.principal = Some(binding.principal.clone());
+        self.principal_binding = Some(binding);
+        Ok(self)
+    }
+
+    /// Narrow the verbs a self-signed binding authorizes. Default:
+    /// [`crate::DEFAULT_VERBS`] — every verb this client can emit.
+    #[must_use]
+    pub fn with_verbs<I, S>(mut self, verbs: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.verbs = Some(verbs.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Set the per-Intent ceiling a self-signed binding carries.
+    /// Default: 10000 USDC.
+    #[must_use]
+    pub fn with_max_per_intent(mut self, max_per_intent: Money) -> Self {
+        self.max_per_intent = max_per_intent;
+        self
+    }
+
+    /// Set the per-payout ceiling a self-signed binding carries (ICPIP-0004).
+    /// Omitted by default, which the handler reads as uncapped.
+    #[must_use]
+    pub fn with_max_per_payout(mut self, max_per_payout: Money) -> Self {
+        self.max_per_payout = Some(max_per_payout);
+        self
+    }
+
+    /// Set the revocation URL a self-signed binding publishes.
+    #[must_use]
+    pub fn with_revocation_url(mut self, revocation_url: impl Into<String>) -> Self {
+        self.revocation_url = Some(revocation_url.into());
+        self
+    }
+
+    /// The `PrincipalBinding` to carry, or `None` when this Agent holds no
+    /// delegation. A binding signed elsewhere is sent verbatim; a principal
+    /// key signs a fresh one per Intent, so `expiry` is always live.
+    fn principal_binding_for(&self) -> Result<Option<PrincipalBinding>, Error> {
+        if let Some(binding) = &self.principal_binding {
+            return Ok(Some(binding.clone()));
+        }
+        let (Some(principal), Some(key)) = (&self.principal, &self.principal_identity) else {
+            return Ok(None);
+        };
+        let mut params = PrincipalBindingParams::new(principal.clone(), self.identity.aid())
+            .max_per_intent(self.max_per_intent.clone());
+        if let Some(verbs) = &self.verbs {
+            params = params.verbs(verbs.clone());
+        }
+        if let Some(cap) = &self.max_per_payout {
+            params = params.max_per_payout(cap.clone());
+        }
+        if let Some(url) = &self.revocation_url {
+            params = params.revocation(url.clone());
+        }
+        params.sign(key).map(Some)
     }
 
     /// Returns the Agent's AID.
@@ -124,10 +267,6 @@ impl Client {
         parse_value(&text)
     }
 
-    fn zero_money() -> Money {
-        Money { amount: "0".to_string(), currency: "USDC".to_string() }
-    }
-
     /// `inventory.query` — read prices and availability for the given SKUs.
     /// SKUs are wrapped per the JS SDK shape (`{sku: "..."}`).
     pub fn inventory(
@@ -141,9 +280,7 @@ impl Client {
             "inventory.query",
             merchant,
             settler,
-            Self::zero_money(),
-            vec!["inventory.query".to_string()],
-            None,
+            self.principal_binding_for()?,
         );
         let mut intent = serde_json::to_value(base)?;
         let skus_json: Vec<Value> = skus.iter().map(|s| json!({ "sku": s })).collect();
@@ -165,9 +302,7 @@ impl Client {
             "purchase.create",
             merchant,
             settler,
-            max_total.clone(),
-            vec!["purchase.create".to_string()],
-            None,
+            self.principal_binding_for()?,
         );
         let mut intent = serde_json::to_value(base)?;
         let obj = intent.as_object_mut().expect("object");
@@ -196,9 +331,7 @@ impl Client {
             "subscription.create",
             merchant,
             settler,
-            max_total_per_period.clone(),
-            vec!["subscription.create".to_string()],
-            None,
+            self.principal_binding_for()?,
         );
         let mut intent = serde_json::to_value(base)?;
         let obj = intent.as_object_mut().expect("object");
@@ -231,9 +364,7 @@ impl Client {
             "subscription.cancel",
             merchant,
             settler,
-            Self::zero_money(),
-            vec!["subscription.cancel".to_string()],
-            None,
+            self.principal_binding_for()?,
         );
         let mut intent = serde_json::to_value(base)?;
         let obj = intent.as_object_mut().expect("object");
@@ -263,9 +394,7 @@ impl Client {
             "purchase.return",
             merchant,
             settler,
-            Self::zero_money(),
-            vec!["purchase.return".to_string()],
-            None,
+            self.principal_binding_for()?,
         );
         let mut intent = serde_json::to_value(base)?;
         let obj = intent.as_object_mut().expect("object");
@@ -293,9 +422,7 @@ impl Client {
             "quote.request",
             merchant,
             settler,
-            Self::zero_money(),
-            vec!["quote.request".to_string()],
-            None,
+            self.principal_binding_for()?,
         );
         let mut intent = serde_json::to_value(base)?;
         let obj = intent.as_object_mut().expect("object");
@@ -320,9 +447,7 @@ impl Client {
             "payout.request",
             merchant,
             settler,
-            amount.clone(),
-            vec!["payout.request".to_string()],
-            Some(amount.clone()),
+            self.principal_binding_for()?,
         );
         let mut intent = serde_json::to_value(base)?;
         let obj = intent.as_object_mut().expect("object");
@@ -357,9 +482,7 @@ impl Client {
             "channel.register",
             merchant,
             settler,
-            Self::zero_money(),
-            vec!["channel.register".to_string()],
-            None,
+            self.principal_binding_for()?,
         );
         let mut intent = serde_json::to_value(base)?;
         let obj = intent.as_object_mut().expect("object");
