@@ -6,7 +6,11 @@
 //! can talk to any ICP-1.0 handler in any language.
 //!
 //! Skipped automatically (test marked ignored) if `node` is not on
-//! PATH or the handler's `package.json` is missing.
+//! PATH or the handler's `package.json` is missing. Set
+//! `ICP_HANDLER_REQUIRED=1` to turn a missing handler into a hard
+//! failure instead of a silent skip (used in CI so the Rust client's
+//! roundtrip job actually exercises the handler rather than going
+//! green for the wrong reason).
 
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -97,6 +101,12 @@ fn maybe_spawn_handler() -> Option<Handler> {
 #[test]
 fn rust_sdk_roundtrips_against_js_handler() {
     let Some(handler) = maybe_spawn_handler() else {
+        assert!(
+            std::env::var("ICP_HANDLER_REQUIRED").as_deref() != Ok("1"),
+            "ICP_HANDLER_REQUIRED=1 but the JS handler could not be spawned \
+             (node missing or icp-handler/package.json not found) — this must \
+             be a hard failure, not a silent skip"
+        );
         eprintln!("skipping: handler unavailable");
         return;
     };
