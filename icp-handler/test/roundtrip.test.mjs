@@ -17,7 +17,7 @@ import {
   newNonceHex,
   base58btcEncode,
 } from '../src/codec.mjs';
-import { server } from '../src/server.mjs';
+import { assertEnforcing, enforceTrust } from './helpers/trust.mjs';
 import { createHash } from 'node:crypto';
 
 let baseUrl;
@@ -32,6 +32,42 @@ const buyerAid = (() => {
   return `aid:v1:z${base58btcEncode(digest)}`;
 })();
 
+/** A fresh Agent identity in the handler's AID shape (§4.2). */
+function mintAgent() {
+  const kp = generateKeyPairSync('ed25519');
+  const xkp = generateKeyPairSync('x25519');
+  const edPubRaw = publicKeyToRaw(kp.publicKey);
+  const xPubRaw = publicKeyToRaw(xkp.publicKey);
+  const aid = `aid:v1:z${base58btcEncode(
+    createHash('sha256')
+      .update(Buffer.concat([edPubRaw, Buffer.from([0x00]), xPubRaw]))
+      .digest(),
+  )}`;
+  return { kp, edPubRaw, xPubRaw, aid };
+}
+
+// The two payout rejection tests each need their own seller, so one test's
+// balance and cap cannot decide the other's outcome. They are minted here
+// rather than inside the tests because an operator-keyed handler admits only
+// the signer AIDs it was configured with, and it reads that configuration once
+// — at startup, below.
+const lowBalanceSeller = mintAgent();
+const cappedSeller = mintAgent();
+
+// Trust is ENFORCED for this suite: every binding below is signed by a
+// principal key registered here, and the handler verifies it. The old suite
+// posted `sig: 'deadbeef'` at a permissive handler, so it would have kept
+// passing with the delegation check deleted.
+const trust = enforceTrust({
+  principals: ['did:web:test.example', 'did:web:seller-corp.example'],
+  agents: [
+    { aid: buyerAid, edHex: buyerEdPubRaw.toString('hex') },
+    { aid: lowBalanceSeller.aid, edHex: lowBalanceSeller.edPubRaw.toString('hex') },
+    { aid: cappedSeller.aid, edHex: cappedSeller.edPubRaw.toString('hex') },
+  ],
+});
+const { server } = await import('../src/server.mjs');
+
 before(async () => {
   await new Promise((resolve) => {
     if (server.listening) return resolve();
@@ -39,6 +75,8 @@ before(async () => {
   });
   const addr = server.address();
   baseUrl = `http://127.0.0.1:${addr.port}`;
+  // The suite's bindings are only meaningful if the handler verifies them.
+  assertEnforcing(await (await fetch(`${baseUrl}/icp/v1/.well-known/icp`)).json());
 });
 
 after(() => server.close());
@@ -56,14 +94,12 @@ function buildSignedIntent() {
     items: [{ sku: 'WIDGET-001', quantity: 2, unit_price: { amount: '29.99', currency: 'USDC' } }],
     max_total: { amount: '70.00', currency: 'USDC' },
     expiry: exp.toISOString(),
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: buyerAid,
-      authority: { max_per_intent: { amount: '500', currency: 'USDC' }, verbs: ['purchase.create'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['purchase.create'],
+      maxPerIntent: { amount: '500', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),
@@ -238,17 +274,12 @@ test('subscription.create Intent → signed SubscriptionAuthorization', async ()
     max_total_per_period: { amount: '29.99', currency: 'USDC' },
     max_occurrences: 12,
     first_charge_at: firstCharge.toISOString(),
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: buyerAid,
-      authority: {
-        max_per_intent: { amount: '500', currency: 'USDC' },
-        verbs: ['purchase.create', 'subscription.create'],
-      },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['purchase.create', 'subscription.create'],
+      maxPerIntent: { amount: '500', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),
@@ -302,17 +333,12 @@ test('subscription with per-period cap above demo policy is rejected', async () 
     max_total_per_period: { amount: '5000.00', currency: 'USDC' }, // > $1000 cap
     max_occurrences: null,
     first_charge_at: new Date(now.getTime() + 86400 * 1000).toISOString(),
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: buyerAid,
-      authority: {
-        max_per_intent: { amount: '100000', currency: 'USDC' },
-        verbs: ['subscription.create'],
-      },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['subscription.create'],
+      maxPerIntent: { amount: '100000', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),
@@ -349,14 +375,12 @@ test('purchase.return Intent → signed ReturnAuthorization', async () => {
     desired_outcome: 'refund',
     max_refund: { amount: '60.00', currency: 'USDC' },
     narrative: 'Both widgets arrived broken',
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: buyerAid,
-      authority: { max_per_intent: { amount: '500', currency: 'USDC' }, verbs: ['purchase.return'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['purchase.return'],
+      maxPerIntent: { amount: '500', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),
@@ -414,14 +438,12 @@ test('purchase.return: large no-fault return rejected per demo policy', async ()
     })),
     desired_outcome: 'refund',
     max_refund: { amount: '1000.00', currency: 'USDC' },
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: buyerAid,
-      authority: { max_per_intent: { amount: '5000', currency: 'USDC' }, verbs: ['purchase.return'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['purchase.return'],
+      maxPerIntent: { amount: '5000', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),
@@ -453,14 +475,12 @@ test('inventory.query → signed InventorySnapshot with 5 SKUs', async () => {
     buyer: buyerAid,
     merchant: 'aid:v1:zMerchantInv',
     settler: 'settler:stateset.usdc.base-sepolia',
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: buyerAid,
-      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['inventory.query'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['inventory.query'],
+      maxPerIntent: { amount: '0', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),
@@ -504,14 +524,12 @@ test('inventory.query with in_stock_only filter excludes out-of-stock SKUs', asy
     merchant: 'aid:v1:zMerchantInv',
     settler: 'settler:stateset.usdc.base-sepolia',
     filters: { in_stock_only: true },
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: buyerAid,
-      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['inventory.query'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['inventory.query'],
+      maxPerIntent: { amount: '0', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),
@@ -546,14 +564,12 @@ test('subscription.cancel (immediate) → CancellationAuthorization with pro-rat
     subscription_id: 'icp_sub_01HXYZTESTSUBSCRIPTION0001',
     effective: 'immediate',
     reason: 'no-longer-needed',
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: buyerAid,
-      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['subscription.cancel'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['subscription.cancel'],
+      maxPerIntent: { amount: '0', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),
@@ -597,14 +613,12 @@ test('subscription.cancel on ANNUAL subscription downgrades to end-of-period', a
     settler: 'settler:stateset.usdc.base-sepolia',
     subscription_id: 'icp_sub_01HXYZTESTSUB000000000ANNUAL',
     effective: 'immediate',
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: buyerAid,
-      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['subscription.cancel'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['subscription.cancel'],
+      maxPerIntent: { amount: '0', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),
@@ -640,14 +654,12 @@ test('quote.request → signed PriceProposal with volume tier discount', async (
     settler: 'settler:stateset.usdc.base-sepolia',
     items: [{ sku: 'WIDGET-001', quantity: 500 }],
     purchase_window: '30d',
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: buyerAid,
-      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['quote.request'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['quote.request'],
+      maxPerIntent: { amount: '0', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),
@@ -684,14 +696,12 @@ test('purchase.create with from_proposal_id honors proposal prices', async () =>
     merchant: 'aid:v1:zMerchantRfq',
     settler: 'settler:stateset.usdc.base-sepolia',
     items: [{ sku: 'WIDGET-001', quantity: 100 }],
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: buyerAid,
-      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['quote.request', 'purchase.create'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['quote.request', 'purchase.create'],
+      maxPerIntent: { amount: '0', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: new Date(now.getTime() + 300 * 1000).toISOString(),
@@ -757,14 +767,12 @@ test('purchase.create with unknown from_proposal_id is rejected', async () => {
     max_total: { amount: '2', currency: 'USDC' },
     from_proposal_id: 'icp_pp_DOESNOTEXIST00000000000001',
     expiry: new Date(now.getTime() + 300 * 1000).toISOString(),
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: buyerAid,
-      authority: { max_per_intent: { amount: '100', currency: 'USDC' }, verbs: ['purchase.create'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['purchase.create'],
+      maxPerIntent: { amount: '100', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: new Date(now.getTime() + 300 * 1000).toISOString(),
@@ -797,18 +805,14 @@ test('payout.request → signed PayoutAuthorization with itemized fees', async (
     amount: { amount: '1000.00', currency: 'USDC' },
     destination: { type: 'wallet', wallet_address: '0x1111111111111111111111111111111111111111' },
     expedited: false,
-    principal_binding: {
+    principal_binding: trust.binding({
       principal: 'did:web:seller-corp.example',
       agent: buyerAid,
-      authority: {
-        max_per_intent: { amount: '0', currency: 'USDC' },
-        max_per_payout: { amount: '2000', currency: 'USDC' },
-        verbs: ['payout.request'],
-      },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['payout.request'],
+      maxPerIntent: { amount: '0', currency: 'USDC' },
+      authority: { max_per_payout: { amount: '2000', currency: 'USDC' } },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: exp.toISOString(),
@@ -855,13 +859,8 @@ test('payout.request → signed PayoutAuthorization with itemized fees', async (
 });
 
 test('payout.request: insufficient balance is rejected', async () => {
-  const freshKp = generateKeyPairSync('ed25519');
-  const freshXkp = generateKeyPairSync('x25519');
-  const freshEdPubRaw = publicKeyToRaw(freshKp.publicKey);
-  const freshXPubRaw = publicKeyToRaw(freshXkp.publicKey);
-  const freshAid = `aid:v1:z${base58btcEncode(
-    createHash('sha256').update(Buffer.concat([freshEdPubRaw, Buffer.from([0x00]), freshXPubRaw])).digest()
-  )}`;
+  const { kp: freshKp, edPubRaw: freshEdPubRaw, xPubRaw: freshXPubRaw, aid: freshAid } =
+    lowBalanceSeller;
 
   const now = new Date();
   const intent = {
@@ -873,14 +872,12 @@ test('payout.request: insufficient balance is rejected', async () => {
     settler: 'settler:stateset.usdc.base-sepolia',
     amount: { amount: '10000.00', currency: 'USDC' },
     destination: { type: 'wallet', wallet_address: '0x2222222222222222222222222222222222222222' },
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: freshAid,
-      authority: { max_per_intent: { amount: '0', currency: 'USDC' }, verbs: ['payout.request'] },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['payout.request'],
+      maxPerIntent: { amount: '0', currency: 'USDC' },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: new Date(now.getTime() + 300 * 1000).toISOString(),
@@ -901,13 +898,8 @@ test('payout.request: insufficient balance is rejected', async () => {
 });
 
 test('payout.request: exceeds max_per_payout is rejected', async () => {
-  const freshKp = generateKeyPairSync('ed25519');
-  const freshXkp = generateKeyPairSync('x25519');
-  const freshEdPubRaw = publicKeyToRaw(freshKp.publicKey);
-  const freshXPubRaw = publicKeyToRaw(freshXkp.publicKey);
-  const freshAid = `aid:v1:z${base58btcEncode(
-    createHash('sha256').update(Buffer.concat([freshEdPubRaw, Buffer.from([0x00]), freshXPubRaw])).digest()
-  )}`;
+  const { kp: freshKp, edPubRaw: freshEdPubRaw, xPubRaw: freshXPubRaw, aid: freshAid } =
+    cappedSeller;
 
   const now = new Date();
   const intent = {
@@ -919,18 +911,13 @@ test('payout.request: exceeds max_per_payout is rejected', async () => {
     settler: 'settler:stateset.usdc.base-sepolia',
     amount: { amount: '4000.00', currency: 'USDC' },
     destination: { type: 'wallet', wallet_address: '0x3333333333333333333333333333333333333333' },
-    principal_binding: {
-      principal: 'did:web:test.example',
+    principal_binding: trust.binding({
       agent: freshAid,
-      authority: {
-        max_per_intent: { amount: '0', currency: 'USDC' },
-        max_per_payout: { amount: '500', currency: 'USDC' },
-        verbs: ['payout.request'],
-      },
-      expiry: new Date(now.getTime() + 86400 * 1000).toISOString(),
-      revocation: 'https://test.example/revoke',
-      signature: { alg: 'ed25519', kid: 'self', sig: 'deadbeef' },
-    },
+      verbs: ['payout.request'],
+      maxPerIntent: { amount: '0', currency: 'USDC' },
+      authority: { max_per_payout: { amount: '500', currency: 'USDC' } },
+      expiresAt: new Date(now.getTime() + 86400 * 1000),
+    }),
     nonce: newNonceHex(),
     iat: now.toISOString(),
     exp: new Date(now.getTime() + 300 * 1000).toISOString(),

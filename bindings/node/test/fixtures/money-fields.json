@@ -9,9 +9,69 @@
     "So a new float money field without a twin fails, and any new float output",
     "field fails until someone decides which it is.",
     "`notMoney` holds rates, percentages, scores, quantities, distances and",
-    "durations: values that are not currency amounts and need no exact twin."
+    "durations: values that are not currency amounts and need no exact twin.",
+    "`methodArgs` is the same census for bare f64 METHOD ARGUMENTS, which are",
+    "not fields on any struct and so are invisible to the checks above."
   ],
   "twinSuffix": "Exact",
+  "methodArgs": {
+    "$comment": [
+      "Money that arrives as a bare f64 argument rather than as a struct field.",
+      "test/money-exactness.js parses every `#[napi]` fn signature in src/lib.rs,",
+      "requires each f64 argument to be listed here, and fails when one listed",
+      "under `money` has no `<arg>_exact: Option<String>` sibling argument in the",
+      "same signature. Keys are `<owner>.<method>`: the owner is the enclosing",
+      "inherent `impl` block (`(module)` for a free `#[napi] pub fn`), and the",
+      "method is the name JavaScript calls \u2014 the attribute's `js_name` when it",
+      "sets one, otherwise the camelCased Rust fn name.",
+      "The sibling must be the LAST parameter of the signature, not merely",
+      "present: that is what keeps callers written before the exact half existed",
+      "working unchanged, and the test asserts the position."
+    ],
+    "money": {
+      "Carts.setTax": [
+        "taxAmount"
+      ],
+      "CostAccounting.updateAverageCost": [
+        "unitCost"
+      ],
+      "Credit.adjustCreditLimit": [
+        "newLimit"
+      ],
+      "Credit.checkCredit": [
+        "orderAmount"
+      ],
+      "CurrencyOperations.format": [
+        "amount"
+      ],
+      "Promotions.recordUsage": [
+        "discountAmount"
+      ],
+      "Tax.calculateForItem": [
+        "unitPrice"
+      ]
+    },
+    "notMoney": {
+      "Analytics.lowStockItems": [
+        "threshold"
+      ],
+      "CostAccounting.updateAverageCost": [
+        "quantity"
+      ],
+      "Inventory.adjust": [
+        "quantity"
+      ],
+      "Inventory.reserve": [
+        "quantity"
+      ],
+      "Tax.calculateForItem": [
+        "quantity"
+      ],
+      "WorkOrders.complete": [
+        "quantityCompleted"
+      ]
+    }
+  },
   "money": {
     "OrderItemOutput": [
       "total",

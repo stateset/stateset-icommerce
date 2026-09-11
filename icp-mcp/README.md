@@ -5,7 +5,7 @@ stdio so an LLM agent (Claude Desktop, Cursor, Windsurf, custom Anthropic
 or OpenAI agent) can transact commerce via ICP-1.0 by calling tools — no
 HTTP, no protocol details to memorize.
 
-**Zero dependencies.** Pure Node.js, ~600 LOC.
+**Zero external dependencies.** Pure Node.js.
 
 ## Why this exists
 
@@ -47,21 +47,67 @@ node src/server.mjs
 
 The server speaks JSON-RPC 2.0 on stdin/stdout. Logs go to stderr.
 
+## Delegation — configuring a principal
+
+Every Intent this server builds may carry a **PrincipalBinding**: the
+principal's signed statement that this Agent may act for it, over these
+verbs, up to this ceiling, until this expiry. A handler running with
+`ICP_TRUST_MODE=enforce` verifies it against the principal key its operator
+registered in `ICP_PRINCIPAL_KEYS_JSON`, and refuses everything else.
+
+| Env var | Meaning |
+|---|---|
+| `ICP_MCP_PRINCIPAL` | Principal identifier, e.g. `did:web:my-store.example` |
+| `ICP_MCP_PRINCIPAL_SEED_HEX` | Its 32-byte Ed25519 seed, hex — keep it in a secret store, never in the MCP client config file |
+
+```json
+{
+  "mcpServers": {
+    "icp": {
+      "command": "node",
+      "args": ["/absolute/path/to/icp-mcp/src/server.mjs"],
+      "env": {
+        "ICP_MCP_PRINCIPAL": "did:web:my-store.example",
+        "ICP_MCP_PRINCIPAL_SEED_HEX": "…"
+      }
+    }
+  }
+}
+```
+
+Hand the merchant the *public* half — `icp_capabilities` reports it as
+`principal_pubkey_hex` — for their `ICP_PRINCIPAL_KEYS_JSON`.
+
+Set **neither** and Intents carry no `principal_binding` at all: the key is
+absent, and the handler decides whether an undelegated Agent may transact
+(an enforcing one answers `delegation.required`). That is the honest
+outcome — this server used to stamp every Intent with `kid: "self"`,
+`sig: "deadbeef"` under an invented principal, which looked like a
+delegation and proved nothing. Set only **one** and the server refuses to
+start, rather than quietly transacting undelegated.
+
+The binding is signed by `signPrincipalBinding` from
+`packages/icp-client`, so its canonical bytes are identical to the ones the
+JavaScript, Python, and Rust SDKs produce.
+
 ## Test
 
 ```sh
-node --test test/mcp.test.mjs
+npm test          # or: node --test test/
 ```
 
-The test suite drives the server as Claude Desktop would: spawns it as a
-subprocess, performs the initialize handshake, walks the full ICP lifecycle
-via tool calls. **6/6 PASS** including negative cases.
+`test/mcp.test.mjs` drives the server as Claude Desktop would: spawns it as
+a subprocess, performs the initialize handshake, walks the full ICP
+lifecycle via tool calls, including negative cases.
+`test/principal-binding.test.mjs` submits an Intent this server signed to a
+real `icp-handler` running in **enforce** mode, and pins each way of getting
+the delegation wrong.
 
 ## Tool surface
 
 | Tool | Purpose |
 |---|---|
-| `icp_capabilities` | Discover server: spec version, allowlisted Settlers, merchant identity |
+| `icp_capabilities` | Discover server: spec version, allowlisted Settlers, merchant identity, configured principal |
 | `icp_keypair_generate` | Fresh Ed25519 + X25519 keypair + derived AID (testing) |
 | `icp_intent_build_and_sign` | Build + sign a `purchase.create` Intent |
 | `icp_intent_submit` | Submit Intent → signed Quote |
@@ -90,6 +136,7 @@ with an ICP error code (e.g. `signature.invalid`, `policy.settler.not_allowed`,
       max_total
    })
    ← {intent, signature, _pubkey_hex}
+     (intent.principal_binding present only when a principal is configured)
 
 4. agent → icp_intent_submit({intent, signature, _pubkey_hex})
    ← {quote, signature} or {error: {code: "policy.quote.exceeds_max_total"}}

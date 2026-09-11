@@ -47,7 +47,7 @@ test('payout validation cannot credit balances or bypass an authority cap', () =
   for (const value of [-1, 0.1, '-1', 'NaN', 'Infinity', '1e2', '', '0']) {
     assert.equal(
       stubPayoutRequest(payout(seller, value), privateKey).error.code,
-      'format.invalid_money',
+      'format.bad_money',
     );
   }
   assert.equal(stubPayoutRequest(payout(seller, '1', 'USD'), privateKey).ok, false);
@@ -58,7 +58,7 @@ test('payout validation cannot credit balances or bypass an authority cap', () =
     'policy.payout.exceeds_max_per_payout',
   );
   intent.principal_binding.authority.max_per_payout.currency = 'USD';
-  assert.equal(stubPayoutRequest(intent, privateKey).error.code, 'format.invalid_money');
+  assert.equal(stubPayoutRequest(intent, privateKey).error.code, 'format.bad_money');
   assert.equal(
     stubPayoutRequest(payout(seller, '10'), privateKey).authorization.available_balance.amount,
     '10.00',

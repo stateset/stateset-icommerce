@@ -77,8 +77,14 @@ pub struct IntentBase {
     pub settler: String,
     /// Convenience copy of `exp` (RFC 3339).
     pub expiry: String,
-    /// Principal-Agent binding.
-    pub principal_binding: PrincipalBinding,
+    /// Principal-Agent binding, when this Agent holds a delegation.
+    ///
+    /// Absent — the key omitted, not `null` — when it does not. The handler
+    /// then decides whether an undelegated Agent may transact: an enforcing
+    /// one answers `delegation.required`. That is the honest outcome; a
+    /// placeholder binding would look like a delegation and prove nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub principal_binding: Option<PrincipalBinding>,
     /// 16-byte random nonce as hex (32 hex chars).
     pub nonce: String,
     /// Issuance timestamp (RFC 3339).

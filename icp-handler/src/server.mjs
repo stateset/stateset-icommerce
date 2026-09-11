@@ -119,46 +119,77 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// Trust mode.
+// Trust mode. Two states, no third.
 //
 // `enforce` is the posture of any real deployment: every Intent MUST carry a
 // principal binding, the principal's key is resolved from operator
 // configuration ONLY, and only registered or previously pinned signer AIDs are
-// admitted. A durable, operator-keyed handler enforces by default.
+// admitted. A durable, operator-keyed handler always enforces; an in-memory one
+// enforces with ICP_TRUST_MODE=enforce.
 //
-// `demo` keeps the historical permissive path for walkthroughs whose client
-// self-signs its own delegation. Selecting it requires the explicit, unambiguous
-// ICP_TRUST_MODE=demo and NOTHING else — in particular no CLI flag, since a flag
-// like the reference launcher's `--demo` means "simulated economic rails", which
-// is a completely different claim from "do not check who authorized this agent".
-// Demo trust is logged loudly at startup and once per principal, and it is NEVER
-// a production mode.
+// `permissive` is what is left: an in-memory handler with ICP_TRUST_MODE unset
+// or set to `permissive`. It checks nothing about who authorized the agent — a
+// binding naming a principal the operator never registered is waved through.
+// That is a localhost walkthrough posture and nothing else, so it announces
+// itself loudly at startup and refuses to run under NODE_ENV=production.
+//
+// `permissive` is accepted because it is the state name the banner, the
+// startup line and `.well-known/icp` all report: a value an operator reads out
+// of the handler's own output should be a value they can set. It buys nothing
+// that unset does not — same checks, same production refusal — and a durable
+// handler still enforces regardless, exactly as when it is unset.
+//
+// There used to be a third value, ICP_TRUST_MODE=demo, which selected the
+// permissive path *explicitly* — and, being explicit, was allowed in
+// production, which is exactly what icp-docker/docker-compose.yml did.
+// "Deliberate" is not "safe": the only thing that value bought was permission
+// to publish a handler that accepts unverified delegations to the internet.
+// It is now a startup error naming its two replacements. A CLI flag never
+// selected it and never could: the reference launcher's `--demo` means
+// "simulated economic rails", a completely different claim from "do not check
+// who authorized this agent".
 // ---------------------------------------------------------------------------
 const TRUST_MODE = process.env.ICP_TRUST_MODE ?? '';
-if (TRUST_MODE && TRUST_MODE !== 'enforce' && TRUST_MODE !== 'demo') {
-  throw new Error('ICP_TRUST_MODE must be "enforce" or "demo"');
-}
-const DEMO_TRUST = TRUST_MODE === 'demo';
-const ENFORCE_TRUST = TRUST_MODE === 'enforce' || (state.isDurable() && !DEMO_TRUST);
-
-// Implicit demo trust in production is a configuration accident, not a
-// decision. An in-memory handler with no ICP_TRUST_MODE enforces nothing: it
-// accepts every `principal_binding` without checking who authorized the agent.
-// That is fine for a walkthrough on localhost and indefensible for something
-// started with NODE_ENV=production and a published port — which is exactly what
-// icp-docker/docker-compose.yml did. Demo trust must be asked for by name.
-if (!ENFORCE_TRUST && !DEMO_TRUST && process.env.NODE_ENV === 'production') {
+if (TRUST_MODE === 'demo') {
   throw new Error(
-    'icp-handler: refusing to start — NODE_ENV=production with neither durable state nor an ' +
-      'explicit ICP_TRUST_MODE, so delegations would be accepted unverified. Set ' +
-      'ICP_TRUST_MODE=enforce (with ICP_PRINCIPAL_KEYS_JSON and ICP_AGENT_KEYS_JSON) for a real ' +
-      'deployment, or ICP_TRUST_MODE=demo to accept unverified delegations deliberately.',
+    'icp-handler: ICP_TRUST_MODE=demo is no longer accepted — it started a handler that ' +
+      'accepted principal bindings WITHOUT verification, including on a published port. ' +
+      'Unset ICP_TRUST_MODE for a permissive in-memory walkthrough (localhost only; it will ' +
+      'not start under NODE_ENV=production), or set ICP_TRUST_MODE=enforce with ' +
+      'ICP_PRINCIPAL_KEYS_JSON and ICP_AGENT_KEYS_JSON for anything real. The reference ' +
+      'clients sign real bindings: see packages/icp-client signPrincipalBinding().',
   );
 }
-if (DEMO_TRUST && process.env.NODE_ENV === 'production') {
+if (TRUST_MODE && TRUST_MODE !== 'enforce' && TRUST_MODE !== 'permissive') {
+  throw new Error(
+    'ICP_TRUST_MODE must be "enforce", or "permissive"/unset for an in-memory walkthrough',
+  );
+}
+const ENFORCE_TRUST = TRUST_MODE === 'enforce' || state.isDurable();
+
+// Permissive trust in production is a configuration accident, not a decision.
+// An in-memory handler with no ICP_TRUST_MODE enforces nothing: it accepts a
+// `principal_binding` for an unregistered principal without checking who
+// authorized the agent. That is fine for a walkthrough on localhost and
+// indefensible for something started with NODE_ENV=production and a published
+// port — which is exactly what icp-docker/docker-compose.yml did.
+if (!ENFORCE_TRUST && process.env.NODE_ENV === 'production') {
+  throw new Error(
+    'icp-handler: refusing to start — NODE_ENV=production with neither durable state nor ' +
+      'ICP_TRUST_MODE=enforce, so delegations would be accepted unverified (ICP_TRUST_MODE=permissive ' +
+      'is the same posture spelled out loud, and is refused here too). Set ' +
+      'ICP_TRUST_MODE=enforce (with ICP_PRINCIPAL_KEYS_JSON and ICP_AGENT_KEYS_JSON) for a real ' +
+      'deployment. There is no env var that makes an unverifying handler acceptable here.',
+  );
+}
+// Printed at module evaluation rather than from the `listen` callback: an
+// operator must see this even when the port is already taken.
+if (!ENFORCE_TRUST) {
   console.error(
-    'icp-handler: DEMO TRUST MODE under NODE_ENV=production — principal bindings are accepted ' +
-      'WITHOUT verification. This is a walkthrough posture, never a production one.',
+    'icp-handler: PERMISSIVE TRUST — in-memory handler with ICP_TRUST_MODE unset or permissive. Principal ' +
+      'bindings naming a principal this operator never registered are accepted WITHOUT ' +
+      'verification, and any caller may mint a signer AID. Walkthrough posture only. Set ' +
+      'ICP_TRUST_MODE=enforce with ICP_PRINCIPAL_KEYS_JSON and ICP_AGENT_KEYS_JSON for anything real.',
   );
 }
 
@@ -189,7 +220,7 @@ const TRUSTED_AGENT_KEYS = keyRegistry('ICP_AGENT_KEYS_JSON');
 if (ENFORCE_TRUST && TRUSTED_PRINCIPAL_KEYS.size === 0) {
   console.error(
     'icp-handler: enforcing trust with an empty ICP_PRINCIPAL_KEYS_JSON — every Intent will be rejected. ' +
-      'Set ICP_PRINCIPAL_KEYS_JSON (and ICP_AGENT_KEYS_JSON), or ICP_TRUST_MODE=demo for a walkthrough.',
+      'Set ICP_PRINCIPAL_KEYS_JSON (and ICP_AGENT_KEYS_JSON), or unset ICP_TRUST_MODE for an in-memory walkthrough.',
   );
 }
 const permissiveWarned = new Set();
@@ -197,7 +228,7 @@ function warnPermissiveDelegation(principal) {
   if (permissiveWarned.size > 1_000 || permissiveWarned.has(principal)) return;
   permissiveWarned.add(principal);
   console.error(
-    `icp-handler: DEMO TRUST MODE — principal_binding for ${principal} accepted WITHOUT verification ` +
+    `icp-handler: PERMISSIVE TRUST — principal_binding for ${principal} accepted WITHOUT verification ` +
       '(no operator-configured key). Set ICP_PRINCIPAL_KEYS_JSON and ICP_TRUST_MODE=enforce for any real deployment.',
   );
 }
@@ -362,12 +393,7 @@ server.listen(PORT, state.isDurable() ? '127.0.0.1' : undefined, () => {
   console.error(`  merchant_aid: ${merchantAid}`);
   console.error(`  merchant_pubkey_hex: ${merchantPubRaw.toString('hex')}`);
   console.error(`  allowed_settlers: ${[...ALLOWED_SETTLERS].join(', ')}`);
-  console.error(`  trust_mode: ${ENFORCE_TRUST ? 'enforce' : 'demo'}`);
-  if (!ENFORCE_TRUST) {
-    console.error(
-      '  WARNING: DEMO TRUST MODE — principal delegations without an operator-configured key are accepted unverified, and any caller may mint a signer AID. Not a production posture.',
-    );
-  }
+  console.error(`  trust_mode: ${ENFORCE_TRUST ? 'enforce' : 'permissive'}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -388,7 +414,7 @@ function handleWellKnown(req, res) {
     spec: 'icp-1.0',
     handler: 'stateset-icp-handler-stub',
     handler_version: '0.1.0',
-    trust_mode: ENFORCE_TRUST ? 'enforce' : 'demo',
+    trust_mode: ENFORCE_TRUST ? 'enforce' : 'permissive',
     merchant_aid: merchantAid,
     merchant_pubkey: {
       alg: 'ed25519',

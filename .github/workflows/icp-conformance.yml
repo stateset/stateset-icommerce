@@ -12,6 +12,7 @@ on:
       - 'crates/stateset-icp-iut/**'
       - 'crates/stateset-icp-iut-go/**'
       - 'crates/stateset-icp-iut-py/**'
+      - 'crates/stateset-icp-client/**'
       - 'icp-docker/**'
       - 'packages/icp-client/**'
       - '.github/workflows/icp-conformance.yml'
@@ -26,6 +27,7 @@ on:
       - 'crates/stateset-icp-iut/**'
       - 'crates/stateset-icp-iut-go/**'
       - 'crates/stateset-icp-iut-py/**'
+      - 'crates/stateset-icp-client/**'
       - 'icp-docker/**'
       - 'packages/icp-client/**'
       - '.github/workflows/icp-conformance.yml'
@@ -425,8 +427,12 @@ jobs:
         with:
           node-version: '20'
       - name: Run MCP test suite
+        # The whole directory, not one file: `test/principal-binding.test.mjs`
+        # is the only place the MCP server's real bindings are checked against
+        # an enforcing handler, and pinning the job to `test/mcp.test.mjs`
+        # meant CI never ran it. Matches icp-mcp/package.json's `test` script.
         working-directory: icp-mcp
-        run: node --test test/mcp.test.mjs
+        run: node --test test/
 
   sdk:
     name: '@stateset/icp-client SDK roundtrip'
@@ -440,6 +446,29 @@ jobs:
       - name: Run SDK test suite
         working-directory: packages/icp-client
         run: node --test test/client.test.mjs
+
+  rust-sdk:
+    name: '@stateset/icp-client Rust SDK roundtrip'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: '1.85'
+      - uses: Swatinem/rust-cache@v2
+      - name: Run Rust SDK test suite
+        # The whole crate, not just the handler roundtrip: `principal_binding_vector`
+        # asserts the Rust SDK signs the same canonical bytes and the same
+        # signature hex as the JS and Python SDKs, off one committed vector.
+        # That cross-language byte-identity contract is only a contract if CI
+        # breaks when it breaks.
+        env:
+          ICP_HANDLER_REQUIRED: '1'
+        run: cargo test -p stateset-icp-client -- --nocapture
 
   flagship-demo:
     name: End-to-end flagship demo

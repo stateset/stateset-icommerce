@@ -34,16 +34,36 @@ services:
     environment:
       PORT: "8787"
       NODE_ENV: "production"
-      # This stack runs the handler in memory mode with the self-signed
-      # delegation the integration test uses, i.e. demo trust. Say so: without
-      # it the handler got demo trust *implicitly* from "not durable, no mode
-      # set", on a published port under NODE_ENV=production — and it now
-      # refuses to start in that configuration rather than quietly accepting
-      # unverified delegations. A real deployment sets ICP_TRUST_MODE=enforce
-      # with ICP_PRINCIPAL_KEYS_JSON / ICP_AGENT_KEYS_JSON.
-      ICP_TRUST_MODE: "demo"
+      # This stack used to publish port 8787 under NODE_ENV=production with
+      # ICP_TRUST_MODE=demo, i.e. accepting every principal binding without
+      # checking who authorized the agent. That value no longer exists; the
+      # handler refuses to start with it. The stack runs the posture it
+      # advertises instead: trust ENFORCED, with the principal and agent keys
+      # registered here, before the handler starts, by the operator.
+      #
+      # The two keys below are the PUBLIC halves of development seeds derived
+      # in icp-docker/integration-test.mjs from a fixed label — published test
+      # vectors, worthless anywhere else, present so the walkthrough can
+      # demonstrate the real trust path end to end. A real deployment
+      # registers its own principal DIDs and agent AIDs here and holds the
+      # private halves in a KMS. If you change the seeds there, change these.
+      #
+      # Which means: anyone with this repo can re-derive the PRIVATE half of
+      # the principal seed and mint a binding this stack verifies. The stack's
+      # delegations are forgeable by design — it demonstrates the enforcing
+      # code path, it does not demonstrate a trustworthy deployment — which is
+      # why the port below is bound to the loopback interface only.
+      ICP_TRUST_MODE: "enforce"
+      ICP_PRINCIPAL_KEYS_JSON: >-
+        {"did:web:docker-test.example":
+        "d3001e71cbaf34ed686be3dfab91d035bef884c869dfa899543ae97aff86bf12"}
+      ICP_AGENT_KEYS_JSON: >-
+        {"aid:v1:zA47tC41UVGrADbhKM4RYXfUHkqHuahudk93CQw14wS9N":
+        "265415637dd5d1681457861cd2fffcf093f87e20ea9a825930bea20dc84f1964"}
     ports:
-      - "8787:8787"
+      # Loopback only. The published seed above means an exposed 8787 is an
+      # open handler: anyone who can reach it can sign a binding it accepts.
+      - "127.0.0.1:8787:8787"
     healthcheck:
       test: ["CMD", "node", "/app/healthcheck.mjs"]
       interval: 10s

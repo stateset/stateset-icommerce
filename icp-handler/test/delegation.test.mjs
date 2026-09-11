@@ -10,7 +10,8 @@
 // A durable / operator-keyed handler therefore REQUIRES a principal binding,
 // resolves the principal's key from operator configuration only, and admits
 // only registered (or previously pinned) signer AIDs. The zero-config
-// walkthrough keeps its permissive path behind `--demo` / ICP_TRUST_MODE=demo.
+// walkthrough keeps its permissive path — an in-memory handler with
+// ICP_TRUST_MODE unset — and cannot be run that way under NODE_ENV=production.
 //
 // Run: PORT=0 node --test test/delegation.test.mjs
 

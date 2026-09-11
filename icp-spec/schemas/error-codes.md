@@ -41,9 +41,11 @@ humans).
 | `signature` | Cryptographic signature validation errors             |
 | `replay`    | Nonce reuse and timestamp window violations           |
 | `policy`    | Counterparty's policy rejection (allowlist, ceilings) |
+| `quote`     | PriceProposal referencing errors (`from_proposal_id`, ICPIP-0006); the codes are listed with `policy` below |
 | `format`    | Wire format / schema validation errors                |
 | `version`   | Spec version incompatibility                          |
 | `escrow`    | Escrow state machine errors                           |
+| `inventory` | Merchant stock availability at reservation time       |
 | `settlement`| Settlement / rail errors                              |
 | `dispute`   | Dispute and arbitration errors                        |
 | `rate`      | Rate-limit and quota errors                           |
@@ -53,6 +55,7 @@ humans).
 | `channel`   | Push-channel registration / delivery errors (ICPIP-0005) |
 | `idempotency` | `purchase.create` idempotency-key conflicts (ICPIP-0006) |
 | `pagination` | `inventory.query` cursor pagination errors (ICPIP-0006) |
+| `internal`  | Counterparty-side failure with no protocol cause; the request was well-formed and authorized |
 
 ## Codes (ICP-1.0 normative)
 
@@ -118,6 +121,7 @@ signing yields `delegation.signature_invalid`.
 | Code                       | When emitted                                              |
 |----------------------------|-----------------------------------------------------------|
 | `replay.nonce_seen`        | Nonce already used within the protocol window            |
+| `replay.intent_seen`       | `intent_id` already carries state from an earlier submission; Intent identity is immutable, so a fresh nonce cannot rebind it (409) |
 | `replay.expired`           | `exp` is in the past                                     |
 | `replay.window_too_long`   | `exp - iat` exceeds the spec maximum (600s for Intents, 86400s otherwise) |
 | `replay.iat_in_future`     | `iat` is more than allowed clock skew in the future      |
@@ -177,7 +181,9 @@ signing yields `delegation.signature_invalid`.
 | `format.bad_timestamp`        | Timestamp not RFC 3339                               |
 | `format.bad_aid`              | AID does not match `aid:v1:z…` regex or fails Base58btc decode |
 | `format.bad_settler_id`       | SettlerID does not match `settler:<rail>.<asset>.<network>` |
-| `format.bad_money`            | `Money.amount` is not a valid decimal string         |
+| `format.bad_money`            | `Money.amount` is not a valid decimal string — including money the backend cannot price exactly, which it detects while quoting (422 there, since the request itself was well-formed) |
+| `format.bad_query_param`      | Query-string value is not of the required type or range (e.g. `?since=` is not a non-negative integer) |
+| `format.unknown_channel_type` | `channel.type` is neither `webhook` nor `sse` (422 — the merchant understood the value and refused it, rather than failing to route the request) |
 | `format.bad_currency`         | Unknown currency / not ISO 4217 + canonical tickers |
 | `format.bad_schema`           | Value does not match its JSON Schema                 |
 
@@ -214,6 +220,24 @@ signing yields `delegation.signature_invalid`.
 | `settlement.already_settled` | Escrow already settled under a different `settlement_id` — one escrow settles once |
 | `settlement.not_final`     | Receipt's `final_state` is not a terminal state, so it cannot be co-signed |
 
+### inventory
+
+| Code                       | When emitted                                              |
+|----------------------------|-----------------------------------------------------------|
+| `inventory.insufficient`   | Quoted stock is no longer available at reservation time — the Quote was valid when issued and someone else took the units first (409) |
+
+### internal
+
+Emitted when the counterparty failed for a reason the protocol does not model:
+the request was well-formed, authenticated and authorized, and the failure is
+the counterparty's own. It carries no diagnostic detail on purpose. A caller
+SHOULD retry with the same identity and the same Intent, which is safe because
+`intent_id` is idempotent.
+
+| Code                          | When emitted                                            |
+|-------------------------------|---------------------------------------------------------|
+| `internal.transaction_failed` | A state transition failed or was rolled back; nothing was committed (500) |
+
 ### dispute
 
 | Code                       | When emitted                                              |
@@ -247,6 +271,8 @@ signing yields `delegation.signature_invalid`.
 | `settler.paused`           | Settler in compliance-pause state                        |
 | `settler.por_stale`        | Settler proof-of-reserves older than allowed             |
 | `settler.por_failed`       | POR arithmetic check failed (reserves < open escrows)    |
+| `settler.key_unavailable`  | Counterparty holds no operator-configured key for the named Settler and so cannot co-sign; the key is never read from the receipt being authorized (503) |
+| `settler.key_invalid`      | Operator-configured Settler key is present but unusable (wrong length, or not Ed25519) |
 
 ### conformance
 
@@ -267,6 +293,7 @@ signing yields `delegation.signature_invalid`.
 | `channel.token_expired`           | SSE subscription token TTL elapsed                        |
 | `channel.event_type_unsupported`  | Filter requested an unknown event type                    |
 | `channel.url_unverified`          | Webhook URL failed verification challenge                 |
+| `channel.durable_delivery_unavailable` | Handler is running durable state with no durable delivery backend, so it refuses a channel it could not replay (503) |
 
 ### idempotency (ICPIP-0006)
 
@@ -283,26 +310,37 @@ signing yields `delegation.signature_invalid`.
 
 ## HTTP status mapping
 
-For HTTP transports, error codes map to status codes as follows:
+For HTTP transports, error codes map to status codes as follows.
+
+The table is machine-checked against the reference handler
+(`icp-handler/test/error-codes.test.mjs` derives the status each code is
+actually returned with and requires this table to allow it), so it is written
+in a grammar a parser can read: a cell is a list of clauses separated by `;`,
+a clause naming one or more codes in backticks (a trailing `*` globs) applies
+only to those codes, and a clause naming none is the namespace default. Every
+three-digit number in a clause is one of its allowed statuses.
 
 | Code prefix    | HTTP status |
 |----------------|-------------|
-| `auth.*`       | 401 / 403 (503 for `auth.signer_capacity`) |
-| `delegation.*` | 401 (signature) / 403 (missing, unknown, scope, expiry) / 400 (`untrusted_key_material`) |
+| `auth.*`       | 401 / 403; 503 for `auth.signer_capacity` — capacity, not authorization |
+| `delegation.*` | 401 when the binding does not verify / 403 when it is missing, unknown, out of scope or expired; 400 for `delegation.untrusted_key_material` |
 | `signature.*`  | 401         |
-| `replay.*`     | 400 (or 410 for `replay.expired`) |
-| `policy.*`     | 422 (semantic policy reject) or 403 (authorization) |
-| `format.*`     | 400 (or 404 for `format.unknown_*`) |
+| `replay.*`     | 400; 409 for `replay.intent_seen` — the identity is already bound, which is a conflict, not a malformed request; 410 for `replay.expired` when the resource it names is gone (an expired Quote) |
+| `policy.*`     | 422 (semantic policy reject) or 403 (authorization); 400 for `policy.settler.not_allowed`, which the reference handler rejects while validating the Intent's shape |
+| `quote.*`      | 422         |
+| `format.*`     | 400; 404 for `format.unknown_intent`, `format.unknown_quote`, `format.unknown_escrow`, `format.unknown_settlement`, `format.unknown_route`; 422 for `format.bad_money` raised while pricing and for `format.unknown_channel_type` — the merchant understood the value and refused it |
 | `version.*`    | 400         |
 | `escrow.*`     | 409 (state conflict) or 404 |
-| `settlement.*` | 404 / 500   |
+| `inventory.*`  | 409 (another buyer took the units) |
+| `settlement.*` | 404 / 409 when the receipt conflicts with the escrow it names / 500; 401 for `settlement.settler_signature_invalid` |
 | `dispute.*`    | 409 / 403   |
 | `arbiter.*`    | 403         |
 | `rate.*`       | 429         |
 | `settler.*`    | 503         |
-| `channel.*`    | 401 / 404 / 409 / 410 / 422 (see per-code table) |
+| `channel.*`    | 401 / 404 / 409 / 410 / 422 (see per-code table); 503 for `channel.durable_delivery_unavailable` — the handler cannot honour a channel it could not replay |
 | `idempotency.*` | 409 |
-| `pagination.*` | 400 (or 410 for `pagination.cursor_expired`) |
+| `pagination.*` | 400; 410 for `pagination.cursor_expired` |
+| `internal.*`   | 500         |
 
 ## Stability
 

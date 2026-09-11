@@ -33,7 +33,42 @@ icp-handler listening on http://127.0.0.1:8787
   merchant_aid: aid:v1:zMerchantHandlerInstance...
   merchant_pubkey_hex: ...
   allowed_settlers: settler:stateset.usdc.base-sepolia, settler:circle.usdc.base
+  trust_mode: permissive
 ```
+
+## Trust mode
+
+The handler has two states, and `trust_mode` in the startup banner and in
+`GET /icp/v1/.well-known/icp` says which one you are running.
+
+**`enforce`** — every Intent MUST carry a `principal_binding`; the principal's
+public key is resolved from operator configuration ONLY, never from the request
+body; and only registered (or previously pinned) signer AIDs are admitted. A
+durable handler always enforces. An in-memory one enforces on request:
+
+```sh
+ICP_TRUST_MODE=enforce \
+ICP_PRINCIPAL_KEYS_JSON='{"did:web:acme.example":"<32-byte ed25519 pubkey hex>"}' \
+ICP_AGENT_KEYS_JSON='{"aid:v1:z…":"<32-byte ed25519 pubkey hex>"}' \
+node src/server.mjs
+```
+
+The matching signed binding comes from the reference clients:
+`signPrincipalBinding()` in `@stateset/icp-client`, `sign_principal_binding()`
+in `icp-python-client`. Sign it wherever the principal's key lives — the Agent
+never needs that key — and hand the Agent the finished binding.
+
+**`permissive`** — an in-memory handler with `ICP_TRUST_MODE` unset. It checks
+nothing about who authorized the Agent: a binding naming a principal you never
+registered is accepted without verification, and any caller may mint a signer
+AID. That is fine for a walkthrough on localhost and nothing else, so it prints
+a banner saying so and refuses to start under `NODE_ENV=production`.
+
+There is no third state. `ICP_TRUST_MODE=demo` used to select the permissive
+path explicitly — and, being explicit, was permitted in production, which is
+how `icp-docker/docker-compose.yml` came to publish a port under
+`NODE_ENV=production` that accepted unverified delegations. It is now a startup
+error: unset `ICP_TRUST_MODE` for the walkthrough, or set it to `enforce`.
 
 ## Test it
 
@@ -193,7 +228,8 @@ verb (ICPIP-0005). Tracks the spec.
 The MUST-level security boundary is enforced: signature verification, AID→pubkey
 binding (§4.2), nonce-replay rejection (§5.3, bounded LRU+TTL guard, keyed on
 `(signer AID, nonce)`), replay-window enforcement, the Settler allowlist gate,
-and the `max_total` ceiling. The replay guard is per-process and in-memory —
+the `max_total` ceiling, and — in `enforce` mode — principal delegation (§4.4)
+against operator-configured keys. The replay guard is per-process and in-memory —
 correct for a single instance; a horizontally-scaled deployment needs a shared
 store (see the production checklist).
 
