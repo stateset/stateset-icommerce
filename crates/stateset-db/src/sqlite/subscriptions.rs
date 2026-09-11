@@ -626,6 +626,35 @@ impl SqliteSubscriptionRepository {
                 )?;
             }
 
+            // Seed the initial billing cycle (cycle 1) for the subscription's
+            // current period, in THIS transaction, on the row this
+            // transaction just inserted.
+            //
+            // Seeding it afterwards, through the public billing path, made
+            // creating a subscription defeasible: a back-dated subscription
+            // is due the instant it commits, so a concurrent
+            // `claim_due_for_billing` could lease it in the gap and the seed
+            // — an unclaimed caller — was refused by the billing-lease
+            // guard. The create then failed with `Conflict` and left a
+            // committed subscription with no billing cycle behind. Nothing
+            // can hold a lease on a row that has never been visible, so the
+            // guard has nothing to say here; it stays on
+            // [`Self::create_billing_cycle`], the billing mutation it was
+            // written to protect. (Mirrors the Postgres backend.)
+            let seeded = self
+                .get_subscription_with_conn(&tx, id)?
+                .ok_or(stateset_core::CommerceError::NotFound)?;
+            Self::insert_billing_cycle_with_conn(
+                &tx,
+                Uuid::new_v4(),
+                &seeded,
+                1,
+                now,
+                current_period_end,
+                Utc::now(),
+            )
+            .map_err(map_db_error)?;
+
             tx.commit().map_err(|e| {
                 stateset_core::CommerceError::DatabaseError(format!("Commit error: {e}"))
             })?;
@@ -637,15 +666,6 @@ impl SqliteSubscriptionRepository {
             stateset_core::CommerceError::Conflict(
                 "unable to allocate unique subscription number after retries".to_string(),
             )
-        })?;
-
-        // Create the initial billing cycle for the subscription
-        self.create_billing_cycle(CreateBillingCycle {
-            subscription_id: id,
-            cycle_number: 1,
-            period_start: now,
-            period_end: current_period_end,
-            claimed_by: None,
         })?;
 
         self.get_subscription(id)?.ok_or_else(|| {
@@ -1462,35 +1482,15 @@ impl SqliteSubscriptionRepository {
                 .ok_or_else(|| Self::tx_err(stateset_core::CommerceError::NotFound))?;
             Self::refuse_foreign_billing_lease(&sub, claimed_by.as_deref(), now)
                 .map_err(Self::tx_err)?;
-            let (subtotal, discount, total) = sub.billing_cycle_amounts();
-            let currency = sub.currency;
 
-            tx.execute(
-                "INSERT INTO billing_cycles (
-                    id, subscription_id, cycle_number, status,
-                    period_start, period_end,
-                    subtotal, discount, tax, total, currency,
-                    cycle_key, created_at, updated_at
-                ) VALUES (
-                    ?1, ?2, ?3, 'scheduled',
-                    ?4, ?5,
-                    ?6, ?7, '0', ?8, ?9,
-                    ?10, ?11, ?12
-                )",
-                rusqlite::params![
-                    id.to_string(),
-                    subscription_id.to_string(),
-                    cycle_number,
-                    period_start.to_rfc3339(),
-                    period_end.to_rfc3339(),
-                    subtotal.to_string(),
-                    discount.to_string(),
-                    total.to_string(),
-                    currency,
-                    Self::cycle_key(subscription_id, cycle_number),
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                ],
+            Self::insert_billing_cycle_with_conn(
+                tx,
+                id,
+                &sub,
+                cycle_number,
+                period_start,
+                period_end,
+                now,
             )?;
 
             self.activate_if_trial_elapsed_with_tx(tx, subscription_id, period_start, now)
@@ -1509,6 +1509,55 @@ impl SqliteSubscriptionRepository {
                 "Failed to retrieve created billing cycle".into(),
             )
         })
+    }
+
+    /// Insert one `scheduled` billing cycle for `sub` on `tx`, priced off the
+    /// subscription row the caller already holds under the write lock.
+    ///
+    /// The billing-lease guard is deliberately NOT here: it belongs to
+    /// [`Self::create_billing_cycle`], the billing mutation, and must not
+    /// reach the create path's own seed of cycle 1 (see
+    /// [`Self::create_subscription`]).
+    fn insert_billing_cycle_with_conn(
+        tx: &rusqlite::Connection,
+        id: Uuid,
+        sub: &Subscription,
+        cycle_number: i32,
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> rusqlite::Result<()> {
+        let (subtotal, discount, total) = sub.billing_cycle_amounts();
+
+        tx.execute(
+            "INSERT INTO billing_cycles (
+                id, subscription_id, cycle_number, status,
+                period_start, period_end,
+                subtotal, discount, tax, total, currency,
+                cycle_key, created_at, updated_at
+            ) VALUES (
+                ?1, ?2, ?3, 'scheduled',
+                ?4, ?5,
+                ?6, ?7, '0', ?8, ?9,
+                ?10, ?11, ?12
+            )",
+            rusqlite::params![
+                id.to_string(),
+                sub.id.to_string(),
+                cycle_number,
+                period_start.to_rfc3339(),
+                period_end.to_rfc3339(),
+                subtotal.to_string(),
+                discount.to_string(),
+                total.to_string(),
+                sub.currency,
+                Self::cycle_key(sub.id, cycle_number),
+                now.to_rfc3339(),
+                now.to_rfc3339(),
+            ],
+        )?;
+
+        Ok(())
     }
 
     /// Refuse to bill a subscription whose LIVE billing lease is held by a
