@@ -23,7 +23,7 @@ rust_decimal_macros = { workspace = true }
 thiserror = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
-hmac = "0.12"
+hmac = "0.13"
 
 [dev-dependencies]
 serde_json = { workspace = true }
