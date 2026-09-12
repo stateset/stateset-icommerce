@@ -203,6 +203,66 @@ CREATE TABLE IF NOT EXISTS _ves_pulled_events (
     CHECK(payload_kind IN (0, 1))
 );
 
+-- VES v1.0 Quarantined Events (events that failed verification on receive)
+CREATE TABLE IF NOT EXISTS _ves_quarantined_events (
+    event_id TEXT PRIMARY KEY,
+    sequence_number INTEGER NOT NULL,
+    command_id TEXT,
+    tenant_id TEXT NOT NULL,
+    store_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+
+    ves_version INTEGER NOT NULL DEFAULT 1,
+    payload TEXT NOT NULL,
+    payload_kind INTEGER NOT NULL DEFAULT 0,
+    payload_encrypted TEXT,
+    payload_plain_hash TEXT NOT NULL,
+    payload_cipher_hash TEXT NOT NULL,
+
+    agent_key_id INTEGER NOT NULL,
+    agent_signature TEXT NOT NULL,
+    agent_signature_scheme INTEGER NOT NULL DEFAULT 0,
+    agent_signature_bundle TEXT,
+
+    base_version INTEGER,
+    created_at TEXT NOT NULL,
+    sequenced_at TEXT NOT NULL,
+    source_agent TEXT NOT NULL,
+
+    reason TEXT NOT NULL,
+    quarantined_at TEXT NOT NULL DEFAULT (datetime('now')),
+
+    CHECK(json_valid(payload))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ves_quarantined_source
+    ON _ves_quarantined_events (source_agent, reason);
+
+-- VES v1.0 Peer Key cache (signing keys fetched from other agents' key directories)
+CREATE TABLE IF NOT EXISTS _ves_peer_keys (
+    agent_id TEXT NOT NULL,
+    key_id INTEGER NOT NULL,
+    algorithm TEXT NOT NULL,
+    public_key TEXT NOT NULL,
+    public_key_bundle TEXT,
+    valid_from TEXT,
+    valid_to TEXT,
+    revoked_at TEXT,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, key_id)
+);
+
+-- VES v1.0 Peer Key pins (trust-on-first-use pinning)
+CREATE TABLE IF NOT EXISTS _ves_peer_key_pins (
+    agent_id TEXT NOT NULL,
+    key_id INTEGER NOT NULL,
+    public_key TEXT NOT NULL,
+    pinned_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (agent_id, key_id)
+);
+
 -- Initialize default sync state
 INSERT OR IGNORE INTO _ves_sync_state (key, value, updated_at) VALUES
     ('last_pushed_sequence', '0', datetime('now')),
@@ -1294,6 +1354,196 @@ export class Outbox {
     });
 
     transaction();
+  }
+
+  /**
+   * Store events that failed verification. These are never returned by
+   * getPulledEvents, so application reads cannot see unverified state.
+   * @param {Array<Object>} events
+   * @param {'signature_invalid'|'key_unresolved'|'key_outside_validity_window'|'key_revoked'|'peer_key_conflict'} reason
+   */
+  storeQuarantinedEvents(events, reason) {
+    this.initialize();
+
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO _ves_quarantined_events (
+        event_id, sequence_number, command_id, tenant_id, store_id,
+        entity_type, entity_id, event_type,
+        ves_version, payload, payload_kind, payload_encrypted,
+        payload_plain_hash, payload_cipher_hash,
+        agent_key_id, agent_signature, agent_signature_scheme, agent_signature_bundle,
+        base_version, created_at, sequenced_at, source_agent, reason
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const transaction = this.db.transaction(() => {
+      for (const event of events) {
+        stmt.run(
+          event.eventId,
+          event.sequenceNumber,
+          event.commandId || null,
+          event.tenantId,
+          event.storeId,
+          event.entityType,
+          event.entityId,
+          event.eventType,
+          event.vesVersion || 1,
+          JSON.stringify(event.payload),
+          event.payloadKind || 0,
+          event.payloadEncrypted ? JSON.stringify(event.payloadEncrypted) : null,
+          event.payloadPlainHash,
+          event.payloadCipherHash,
+          event.agentKeyId,
+          event.agentSignature,
+          event.agentSignatureScheme || 0,
+          event.agentSignatureBundle ? JSON.stringify(event.agentSignatureBundle) : null,
+          event.baseVersion ?? null,
+          event.createdAt,
+          event.sequencedAt,
+          event.sourceAgent,
+          reason,
+        );
+      }
+    });
+
+    transaction();
+  }
+
+  /**
+   * Get quarantined events. These must never be returned by getPulledEvents.
+   * @param {number} [limit]
+   * @returns {Array<Object>}
+   */
+  getQuarantinedEvents(limit = 1000) {
+    this.initialize();
+    return this.db
+      .prepare(
+        `SELECT * FROM _ves_quarantined_events
+         ORDER BY sequence_number ASC LIMIT ?`,
+      )
+      .all(limit)
+      .map((row) => ({
+        eventId: row.event_id,
+        sequenceNumber: row.sequence_number,
+        commandId: row.command_id,
+        tenantId: row.tenant_id,
+        storeId: row.store_id,
+        entityType: row.entity_type,
+        entityId: row.entity_id,
+        eventType: row.event_type,
+        vesVersion: row.ves_version,
+        payload: JSON.parse(row.payload),
+        payloadKind: row.payload_kind,
+        payloadEncrypted: row.payload_encrypted ? JSON.parse(row.payload_encrypted) : null,
+        payloadPlainHash: row.payload_plain_hash,
+        payloadCipherHash: row.payload_cipher_hash,
+        agentKeyId: row.agent_key_id,
+        agentSignature: row.agent_signature,
+        agentSignatureScheme: row.agent_signature_scheme,
+        agentSignatureBundle: row.agent_signature_bundle
+          ? JSON.parse(row.agent_signature_bundle)
+          : null,
+        baseVersion: row.base_version,
+        createdAt: row.created_at,
+        sequencedAt: row.sequenced_at,
+        sourceAgent: row.source_agent,
+        reason: row.reason,
+        quarantinedAt: row.quarantined_at,
+      }));
+  }
+
+  /**
+   * Remove a quarantined event, typically after it has been promoted or discarded.
+   * @param {string} eventId
+   */
+  deleteQuarantinedEvent(eventId) {
+    this.initialize();
+    this.db.prepare('DELETE FROM _ves_quarantined_events WHERE event_id = ?').run(eventId);
+  }
+
+  /**
+   * Get cached signing keys for a peer agent.
+   * @param {string} agentId
+   * @returns {Array<Object>}
+   */
+  getPeerKeys(agentId) {
+    this.initialize();
+    return this.db
+      .prepare('SELECT * FROM _ves_peer_keys WHERE agent_id = ? ORDER BY key_id ASC')
+      .all(agentId)
+      .map((row) => ({
+        keyId: row.key_id,
+        algorithm: row.algorithm,
+        publicKey: row.public_key,
+        publicKeyBundle: row.public_key_bundle ? JSON.parse(row.public_key_bundle) : null,
+        validFrom: row.valid_from,
+        validTo: row.valid_to,
+        revokedAt: row.revoked_at,
+        fetchedAt: row.fetched_at,
+      }));
+  }
+
+  /**
+   * Upsert cached signing keys for a peer agent.
+   * @param {string} agentId
+   * @param {Array<Object>} keys
+   * @param {string} fetchedAt - ISO timestamp
+   */
+  upsertPeerKeys(agentId, keys, fetchedAt) {
+    this.initialize();
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO _ves_peer_keys (
+        agent_id, key_id, algorithm, public_key, public_key_bundle,
+        valid_from, valid_to, revoked_at, fetched_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const transaction = this.db.transaction(() => {
+      for (const key of keys) {
+        stmt.run(
+          agentId,
+          key.keyId,
+          key.algorithm,
+          key.publicKey,
+          key.publicKeyBundle ? JSON.stringify(key.publicKeyBundle) : null,
+          key.validFrom || null,
+          key.validTo || null,
+          key.revokedAt || null,
+          fetchedAt,
+        );
+      }
+    });
+    transaction();
+  }
+
+  /**
+   * Get a trust-on-first-use pin for a peer agent's key.
+   * @param {string} agentId
+   * @param {number} keyId
+   * @returns {{publicKey: string, pinnedAt: string}|null}
+   */
+  getPeerKeyPin(agentId, keyId) {
+    this.initialize();
+    const row = this.db
+      .prepare(
+        'SELECT public_key, pinned_at FROM _ves_peer_key_pins WHERE agent_id = ? AND key_id = ?',
+      )
+      .get(agentId, keyId);
+    return row ? { publicKey: row.public_key, pinnedAt: row.pinned_at } : null;
+  }
+
+  /**
+   * Pin a peer agent's key (trust-on-first-use). No-op if already pinned.
+   * @param {string} agentId
+   * @param {number} keyId
+   * @param {string} publicKey
+   */
+  pinPeerKey(agentId, keyId, publicKey) {
+    this.initialize();
+    this.db
+      .prepare(
+        'INSERT OR IGNORE INTO _ves_peer_key_pins (agent_id, key_id, public_key) VALUES (?, ?, ?)',
+      )
+      .run(agentId, keyId, publicKey);
   }
 
   /**
