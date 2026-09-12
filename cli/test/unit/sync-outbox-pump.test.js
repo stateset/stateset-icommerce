@@ -8,10 +8,15 @@
  *
  *  - identity is derived deterministically from the committed row, so a
  *    crash between commit and sign re-derives a byte-identical envelope;
- *  - a failure leaves the row drainable, so no event is lost;
- *  - an unmapped event_type fails loudly rather than being invented;
+ *  - a failure leaves the row drainable and paced, so a transient fault is
+ *    never converted into permanent loss;
+ *  - an unmapped event_type is parked, never invented and never
+ *    dead-lettered, because the fix is a mapping and not a retry;
+ *  - only the recorded tier is drained; governed rows belong to the kernel's
+ *    own publication path;
  *  - a duplicate event_id (the replay case) is absorbed by the pump, while
- *    any OTHER error is still a failure.
+ *    any OTHER error is still a failure;
+ *  - every settle is scoped to the lease this worker holds.
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
@@ -165,7 +170,13 @@ describe('OutboxPump', () => {
     assert.equal(event.eventId, expectedUuidV5(VES_OUTBOX_NAMESPACE, ROW_ID));
   });
 
-  it('derives event_id deterministically from the kernel_outbox row', async () => {
+  // NOTE ON WHAT THIS PROVES. The second drain never rewrites the envelope —
+  // it absorbs the duplicate — so both reads are of one untouched row. What
+  // this pins is that a replay produces NO SECOND EVENT and leaves the row
+  // settled. Byte-identity of the re-derivation is pinned instead by the two
+  // tests above ('carries the committed row timestamp verbatim' and 'derives
+  // event_id as uuidv5'), which are the inputs the signature is a function of.
+  it('a replayed row yields no second event and settles again', async () => {
     await pump.drain();
     const [first] = outbox.getPending(10);
 
@@ -216,6 +227,7 @@ describe('OutboxPump', () => {
   });
 
   it('releases the lease on failure so the row is drainable again', async () => {
+    pump = createOutboxPump(db, outbox, { identity: IDENTITY, retryDelaySeconds: 0 });
     outbox.append = async () => {
       throw new Error('transient');
     };
@@ -229,8 +241,47 @@ describe('OutboxPump', () => {
     assert.equal(second.leased, 1, 'a failed row must be re-leasable');
   });
 
+  it('paces a retry so a transient fault cannot burn every attempt at once', async () => {
+    // Default retryDelaySeconds. A key manager that is briefly unavailable
+    // must not be turned into permanent loss by a tight drain loop.
+    outbox.append = async () => {
+      throw new Error('key manager unavailable');
+    };
+
+    for (let i = 0; i < 10; i += 1) {
+      await pump.drain();
+    }
+
+    const row = db
+      .prepare('SELECT attempts, next_attempt_at, dead_lettered_at FROM kernel_outbox')
+      .get();
+    assert.equal(row.attempts, 1, 'ten rapid drains must cost exactly one attempt');
+    assert.notEqual(row.next_attempt_at, null, 'the retry must be scheduled');
+    assert.equal(row.dead_lettered_at, null, 'a transient fault must not dead-letter');
+  });
+
+  it('clears next_attempt_at when it dead-letters', async () => {
+    pump = createOutboxPump(db, outbox, {
+      identity: IDENTITY,
+      maxAttempts: 1,
+      retryDelaySeconds: 60,
+    });
+    outbox.append = async () => {
+      throw new Error('permanently broken');
+    };
+    await pump.drain();
+
+    const row = db.prepare('SELECT next_attempt_at, dead_lettered_at FROM kernel_outbox').get();
+    assert.equal(row.next_attempt_at, null, 'a dead row must not carry a pending retry');
+    assert.notEqual(row.dead_lettered_at, null);
+  });
+
   it('dead-letters a row that exhausts its attempts', async () => {
-    pump = createOutboxPump(db, outbox, { identity: IDENTITY, maxAttempts: 2 });
+    pump = createOutboxPump(db, outbox, {
+      identity: IDENTITY,
+      maxAttempts: 2,
+      retryDelaySeconds: 0,
+    });
     outbox.append = async () => {
       throw new Error('permanently broken');
     };
@@ -262,6 +313,113 @@ describe('OutboxPump', () => {
     const row = db.prepare('SELECT last_error FROM kernel_outbox').get();
     assert.match(row.last_error, /unmapped/i);
     assert.equal(outbox.getPending(10).length, 0, 'no event may be invented for an unmapped type');
+  });
+
+  it('parks an unmapped row instead of burning it down to a dead letter', async () => {
+    // The fix for a missing mapping is a code change, not a retry. Spending
+    // attempts on it would dead-letter the row and erase a committed event
+    // from the replicated log — the exact loss this phase exists to prevent.
+    pump = createOutboxPump(db, outbox, {
+      identity: IDENTITY,
+      maxAttempts: 1,
+      retryDelaySeconds: 0,
+    });
+    db.prepare('UPDATE kernel_outbox SET event_type = ?').run('subscription.brand_new_variant');
+
+    for (let i = 0; i < 5; i += 1) {
+      await pump.drain();
+    }
+
+    const row = db
+      .prepare('SELECT attempts, dead_lettered_at, published_at FROM kernel_outbox')
+      .get();
+    assert.equal(row.attempts, 0, 'a classification gap must not consume attempts');
+    assert.equal(row.dead_lettered_at, null, 'an unmapped row must never be dead-lettered');
+    assert.equal(row.published_at, null);
+  });
+
+  it('drains a parked row once its mapping exists', async () => {
+    pump = createOutboxPump(db, outbox, { identity: IDENTITY, retryDelaySeconds: 0 });
+    db.prepare('UPDATE kernel_outbox SET event_type = ?').run('not.in.the.map');
+    assert.equal((await pump.drain()).failed, 1);
+
+    // Standing in for "the mapping landed": the row is now a mapped type.
+    db.prepare('UPDATE kernel_outbox SET event_type = ?').run('subscription.renewed');
+    const result = await pump.drain();
+
+    assert.equal(result.appended, 1, 'a parked row must still be publishable');
+    assert.equal(outbox.getPending(10)[0].eventType, 'subscription.renewed');
+  });
+
+  it('maps every subscription.* name the recorded tier can write', async () => {
+    // crates/stateset-db/src/sqlite/subscriptions.rs builds these with
+    // format!("subscription.{event_type}") over SubscriptionEventType, so no
+    // grep for string literals can see them.
+    const suffixes = [
+      'created',
+      'activated',
+      'trial_started',
+      'trial_ended',
+      'renewed',
+      'payment_failed',
+      'payment_retry_succeeded',
+      'paused',
+      'resumed',
+      'skipped',
+      'cancelled',
+      'expired',
+      'plan_changed',
+      'items_modified',
+      'quantity_changed',
+      'address_updated',
+      'payment_method_updated',
+      'discount_applied',
+      'discount_removed',
+      'refunded',
+    ];
+
+    db.prepare('DELETE FROM kernel_outbox').run();
+    suffixes.forEach((suffix, index) => {
+      seedKernelOutbox(db, {
+        id: `88888888-8888-8888-8888-${String(index).padStart(12, '0')}`,
+        eventType: `subscription.${suffix}`,
+        aggregateType: 'subscription',
+        aggregateId: `SUB-${index}`,
+        createdAt: `2026-09-12T00:00:${String(index).padStart(2, '0')}.000Z`,
+      });
+    });
+
+    const result = await pump.drain();
+    assert.equal(result.failed, 0, 'no subscription event may be left unmapped');
+    assert.equal(result.appended, suffixes.length);
+  });
+
+  it('maps every statically emitted recorded fact', async () => {
+    // One per RecordedFact { … } site in crates/stateset-db/src/.
+    const names = [
+      'bill.item_added',
+      'invoice.status_changed',
+      'customer.created',
+      'cart.checked_out',
+      'billing_cycle.scheduled',
+      'billing_cycle.status_changed',
+      'credit_reservation.released',
+      'credit_account.transaction_recorded',
+      'credit_account.created',
+    ];
+
+    db.prepare('DELETE FROM kernel_outbox').run();
+    names.forEach((name, index) => {
+      seedKernelOutbox(db, {
+        id: `99999999-9999-9999-9999-${String(index).padStart(12, '0')}`,
+        eventType: name,
+        createdAt: `2026-09-12T00:00:${String(index).padStart(2, '0')}.000Z`,
+      });
+    });
+
+    const result = await pump.drain();
+    assert.equal(result.failed, 0);
+    assert.equal(result.appended, names.length);
   });
 
   it('does not block the queue behind an unmapped row', async () => {
@@ -338,6 +496,59 @@ describe('OutboxPump', () => {
     assert.equal(db.prepare('SELECT published_at FROM kernel_outbox').get().published_at, null);
   });
 
+  it('fails loudly when the stored envelope differs ONLY in payload', async () => {
+    // Isolated from every other field, so the field loop cannot short-circuit
+    // before the payload-hash comparison is reached.
+    await outbox.append({
+      tenantId: IDENTITY.tenantId,
+      storeId: IDENTITY.storeId,
+      entityType: 'order',
+      entityId: 'ORD-1',
+      eventType: 'order.created',
+      payload: { total: 2 },
+      sourceAgent: IDENTITY.agentId,
+      eventId: expectedUuidV5(VES_OUTBOX_NAMESPACE, ROW_ID),
+      createdAt: '2026-09-12T00:00:00.000Z',
+    });
+
+    const result = await pump.drain();
+    assert.equal(result.duplicates, 0);
+    assert.equal(result.failed, 1);
+    assert.match(
+      db.prepare('SELECT last_error FROM kernel_outbox').get().last_error,
+      /payload hash/i,
+    );
+    assert.equal(db.prepare('SELECT published_at FROM kernel_outbox').get().published_at, null);
+  });
+
+  it('fails loudly when the stored envelope differs ONLY in createdAt encoding', async () => {
+    // Same instant, different string. Equal as Dates — but a different signing
+    // preimage, so the stored signature is NOT the one we would produce. An
+    // instant-based comparison would wave this through.
+    await outbox.append({
+      tenantId: IDENTITY.tenantId,
+      storeId: IDENTITY.storeId,
+      entityType: 'order',
+      entityId: 'ORD-1',
+      eventType: 'order.created',
+      payload: { total: 1 },
+      sourceAgent: IDENTITY.agentId,
+      eventId: expectedUuidV5(VES_OUTBOX_NAMESPACE, ROW_ID),
+      createdAt: '2026-09-12T00:00:00.000+00:00',
+    });
+    assert.equal(
+      new Date('2026-09-12T00:00:00.000+00:00').getTime(),
+      new Date('2026-09-12T00:00:00.000Z').getTime(),
+      'precondition: the two encodings are the same instant',
+    );
+
+    const result = await pump.drain();
+    assert.equal(result.duplicates, 0, 'a different signing preimage is not a replay');
+    assert.equal(result.failed, 1);
+    assert.match(db.prepare('SELECT last_error FROM kernel_outbox').get().last_error, /createdAt/);
+    assert.equal(db.prepare('SELECT published_at FROM kernel_outbox').get().published_at, null);
+  });
+
   it('fails loudly when the stored envelope does not match the committed row', async () => {
     // Same derived event_id, different content: a genuine collision, never a
     // replay. Publishing it would leave the wrong event in the log.
@@ -410,11 +621,64 @@ describe('OutboxPump', () => {
     assert.equal(result.appended, 1);
   });
 
-  it('drains governed rows as well as recorded ones', async () => {
+  it('leaves governed rows alone for the kernel to publish', async () => {
+    // The governed tier has its own versioned *.v1 vocabulary, its own sealed
+    // receipt chain, and its own claim/ack protocol in
+    // crates/stateset-db/src/sqlite/kernel_outbox.rs. Draining it here would
+    // mean inventing VES names and racing that consumer.
     db.prepare('DELETE FROM kernel_outbox').run();
-    seedKernelOutbox(db, { tier: 'governed' });
+    seedKernelOutbox(db, { tier: 'governed', eventType: 'orders.updated.v1' });
+
     const result = await pump.drain();
-    assert.equal(result.appended, 1);
+    assert.equal(result.leased, 0);
+    assert.equal(result.failed, 0, 'a governed row must not be failed by this pump');
+
+    const row = db
+      .prepare('SELECT published_at, attempts, dead_lettered_at, lease_owner FROM kernel_outbox')
+      .get();
+    assert.equal(row.published_at, null, 'it must stay available to its real consumer');
+    assert.equal(row.attempts, 0);
+    assert.equal(row.dead_lettered_at, null);
+    assert.equal(row.lease_owner, null, 'the pump must not even lease it');
+  });
+
+  // ---------------------------------------------------------------------
+  // Lease ownership on settle. Two drainers must not trample each other.
+  // ---------------------------------------------------------------------
+
+  it('does not publish a row whose lease another worker has taken', async () => {
+    const realAppend = outbox.append.bind(outbox);
+    outbox.append = async (event) => {
+      const seq = await realAppend(event);
+      // The lease overran and another worker claimed the row mid-append.
+      db.prepare('UPDATE kernel_outbox SET lease_owner = ?').run('other-worker');
+      return seq;
+    };
+
+    const result = await pump.drain();
+    assert.equal(result.appended, 1, 'the envelope was genuinely written');
+
+    const row = db.prepare('SELECT published_at, lease_owner FROM kernel_outbox').get();
+    assert.equal(row.published_at, null, 'settling is the lease holder’s to do');
+    assert.equal(row.lease_owner, 'other-worker', 'the other worker’s lease must survive');
+  });
+
+  it('does not fail a row whose lease another worker has taken', async () => {
+    // Without the ownership guard this clears a fresh lease and increments
+    // attempts on a row the other worker is busy publishing — which can
+    // dead-letter a row that was about to succeed.
+    outbox.append = async () => {
+      db.prepare('UPDATE kernel_outbox SET lease_owner = ?').run('other-worker');
+      throw new Error('our attempt failed');
+    };
+
+    const result = await pump.drain();
+    assert.equal(result.failed, 1);
+
+    const row = db.prepare('SELECT attempts, lease_owner, last_error FROM kernel_outbox').get();
+    assert.equal(row.attempts, 0, 'we may not spend an attempt we no longer own');
+    assert.equal(row.lease_owner, 'other-worker');
+    assert.equal(row.last_error, null);
   });
 
   it('returns zeros when there is nothing to drain', async () => {
