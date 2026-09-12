@@ -29,10 +29,10 @@
 //!   time this lint was written, but this is a real limitation, not a
 //!   theoretical one, and any future nested `fn` should be checked by hand.
 //! - `mutates()` is a substring match on `"INSERT INTO"` / `"UPDATE "` /
-//!   `"DELETE FROM"`. A doc comment or a string literal containing one of
-//!   these phrases would false-positive as a mutation. None were observed in
-//!   this crate's `src/sqlite/*.rs`, where SQL lives in real statements, not
-//!   comments, but the check is textual and does not know the difference.
+//!   `"DELETE FROM"` against comment-filtered code. A string literal
+//!   containing one of these phrases would still false-positive as a
+//!   mutation — the filter only removes `//`-prefixed lines, not embedded
+//!   string contents. None were observed in this crate's `src/sqlite/*.rs`.
 //! - `emits()` only checks for the two known emitter call names anywhere in
 //!   the method body — it does not verify the call happens inside the same
 //!   transaction as the mutating statement (a `with_immediate_transaction`
@@ -42,6 +42,14 @@
 //!   Verifying that requires understanding transaction boundaries, which is
 //!   out of scope for a text lint; later tasks that wire emission into the
 //!   transactional helpers close this gap structurally instead.
+//! - `strip_test_module()` assumes a file's only column-0 `#[cfg(test)]` is
+//!   its single, trailing test module (see that function's doc comment for
+//!   the two counterexamples found and fixed in fix round 1).
+//! - The `(file, method)` backlog key is not unique — the same method name
+//!   recurs across `impl` blocks or trait impls in one file — and
+//!   `SAFE_EXCEPTIONS` still lists `migrations.rs`, which is dead: the
+//!   `sqlite_sources()` scan only reads `src/sqlite/*.rs`, and migrations
+//!   live elsewhere. Both are deferred, tracked findings, not fixed here.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -164,13 +172,13 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("carts.rs", "expire"),
     ("carts.rs", "reserve_inventory"),
     ("carts.rs", "release_inventory"),
-    ("carts.rs", "recalculate"),
     ("carts.rs", "set_tax"),
     ("carts.rs", "get_expired"),
     ("carts.rs", "create_batch_atomic"),
     ("carts.rs", "update_batch_atomic"),
     ("carts.rs", "delete_batch_atomic"),
     ("carts.rs", "add_item_internal"),
+    ("carts.rs", "complete_checkout_with_policy_in_tx"),
     ("channels.rs", "create"),
     ("channels.rs", "update"),
     ("channels.rs", "delete"),
@@ -242,13 +250,11 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("fraud.rs", "create_rule"),
     ("fraud.rs", "update_rule"),
     ("fraud.rs", "delete_rule"),
-    ("fulfillment.rs", "smuggle"),
     ("fulfillment.rs", "insert_pick_tx"),
     ("fulfillment.rs", "create_wave"),
     ("fulfillment.rs", "release_wave"),
     ("fulfillment.rs", "complete_wave"),
     ("fulfillment.rs", "cancel_wave"),
-    ("fulfillment.rs", "list_picks"),
     ("fulfillment.rs", "assign_pick"),
     ("fulfillment.rs", "start_pick"),
     ("fulfillment.rs", "complete_pick"),
@@ -308,7 +314,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("inventory.rs", "record_transaction"),
     ("inventory.rs", "create_item_batch_atomic"),
     ("inventory.rs", "adjust_batch_atomic"),
-    ("invoices.rs", "status_with_conn"),
     ("invoices.rs", "guarded_status_change"),
     ("invoices.rs", "recalculate_with_conn"),
     ("invoices.rs", "create"),
@@ -358,9 +363,7 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("payment_obligations.rs", "record_payment"),
     ("payment_obligations.rs", "set_status"),
     ("payment_obligations.rs", "link_bill"),
-    ("payments.rs", "payment_transition_allowed"),
     ("payments.rs", "void_in_flight_payments_for_order_conn"),
-    ("payments.rs", "get_by_external_id"),
     ("payments.rs", "update"),
     ("payments.rs", "mark_completed"),
     ("payments.rs", "mark_failed"),
@@ -411,7 +414,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("promotions.rs", "record_usage_in_tx"),
     ("promotions.rs", "consume_cart_coupon_in_tx"),
     ("promotions.rs", "set_coupon_status"),
-    ("purchase_orders.rs", "is_receivable"),
     ("purchase_orders.rs", "transition"),
     ("purchase_orders.rs", "recalculate_totals_with_conn"),
     ("purchase_orders.rs", "create_supplier"),
@@ -444,7 +446,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("quality.rs", "release_hold"),
     ("quality.rs", "create_defect_code"),
     ("quality.rs", "deactivate_defect_code"),
-    ("receiving.rs", "receipt_guard_error"),
     ("receiving.rs", "update_receipt_totals_tx"),
     ("receiving.rs", "create_receipt"),
     ("receiving.rs", "update_receipt"),
@@ -454,7 +455,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("receiving.rs", "complete_receiving"),
     ("receiving.rs", "cancel_receipt"),
     ("receiving.rs", "create_put_away"),
-    ("receiving.rs", "list_put_aways"),
     ("receiving.rs", "assign_put_away"),
     ("receiving.rs", "start_put_away"),
     ("receiving.rs", "complete_put_away"),
@@ -583,8 +583,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("warehouse.rs", "create_cycle_count"),
     ("warehouse.rs", "record_cycle_counts"),
     ("warehouse.rs", "complete_cycle_count"),
-    ("warranties.rs", "load_claim_tx"),
-    ("warranties.rs", "ensure_claim_can_complete"),
     ("warranties.rs", "create"),
     ("warranties.rs", "update"),
     ("warranties.rs", "transfer"),
@@ -619,8 +617,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("work_orders.rs", "delete_batch_atomic"),
     ("x402_credits.rs", "insert_account_if_missing"),
     ("x402_credits.rs", "adjust_balance"),
-    ("x402_payment_intents.rs", "get_in_tx"),
-    ("x402_payment_intents.rs", "load_for_transition"),
     ("x402_payment_intents.rs", "insert_new_intent"),
     ("x402_payment_intents.rs", "sign"),
     ("x402_payment_intents.rs", "mark_sequenced"),
@@ -634,24 +630,31 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("zone_shipping_methods.rs", "delete"),
 ];
 
-/// Drop everything from the first `#[cfg(test)]` line onward.
+/// Drop everything from the trailing `#[cfg(test)]` module onward.
 ///
 /// Every `src/sqlite/*.rs` file in this crate puts its `#[cfg(test)] mod
-/// tests { ... }` block as a single trailing module (verified across the
-/// whole directory when this lint was written). Without this cut, the
-/// `fn`-boundary splitter below treats test helpers (`seed_inventory`,
-/// `seed_customer`, ...) and `#[test]` functions that build fixtures with
-/// raw `INSERT INTO` calls as if they were production write paths, which
-/// would flood the backlog with fixture code that was never meant to emit
-/// an outbox fact. If a file ever grows a second, non-trailing
-/// `#[cfg(test)]` module, this truncates too much and silently drops real
-/// production code from the scan — there is no structural guard against
-/// that here, only the convention.
+/// tests { ... }` block as a single trailing module at column 0. Without
+/// this cut, the `fn`-boundary splitter below treats test helpers
+/// (`seed_inventory`, `seed_customer`, ...) and `#[test]` functions that
+/// build fixtures with raw `INSERT INTO` calls as if they were production
+/// write paths, which would flood the backlog with fixture code that was
+/// never meant to emit an outbox fact.
+///
+/// The split is anchored to `"\n#[cfg(test)]"` (column 0), matching
+/// `backend_transaction_parity.rs`'s `methods()`, precisely so an
+/// *indented* `#[cfg(test)]` on a test-only helper that lives ahead of the
+/// real trailing module — e.g. `carts.rs`'s `checkout_money_in_tx` at
+/// column >0 — does not truncate early. An unanchored `source.find(...)`
+/// match here previously discarded 759 lines of production code in
+/// `carts.rs` (14 methods, including `complete_checkout_with_policy_in_tx`,
+/// which mutates `orders`/`carts` without emitting) and 427 lines in
+/// `mod.rs` (a mid-file `mod unique_constraint_mapping_tests`). If a file
+/// ever grows a second, non-trailing, column-0 `#[cfg(test)]` module, this
+/// truncates too much and silently drops real production code from the
+/// scan — there is no structural guard against that here, only the
+/// convention that trailing test modules are the only column-0 occurrence.
 fn strip_test_module(source: &str) -> &str {
-    match source.find("#[cfg(test)]") {
-        Some(idx) => &source[..idx],
-        None => source,
-    }
+    source.split_once("\n#[cfg(test)]").map_or(source, |(head, _)| head)
 }
 
 fn sqlite_sources() -> Vec<(String, String)> {
@@ -671,32 +674,56 @@ fn sqlite_sources() -> Vec<(String, String)> {
     out
 }
 
-/// Split a source file into `(method_name, body)` pairs at `fn` boundaries.
+/// The function name declared on this line, if it declares one.
+///
+/// Strips any combination of visibility/qualifier prefixes before `fn `,
+/// the same generic approach `backend_transaction_parity.rs::declared_fn`
+/// uses — not a fixed list of 5 forms. A fixed list
+/// (`pub fn `/`fn `/`pub(crate) fn `/`pub async fn `/`async fn `) misses
+/// `pub const fn`, `pub(crate) const fn`, `const fn` and `pub(super) fn`,
+/// all of which occur in `src/sqlite/*.rs`; a method declared with one of
+/// those forms would never open a new method here, so its body — and any
+/// mutation or emission in it — silently merges into whichever method
+/// happened to precede it in the file.
+fn declared_fn(line: &str) -> Option<&str> {
+    let mut rest = line.trim_start();
+    loop {
+        let stripped = ["pub(crate) ", "pub(super) ", "pub ", "async ", "const ", "unsafe "]
+            .iter()
+            .find_map(|prefix| rest.strip_prefix(prefix));
+        match stripped {
+            Some(next) => rest = next,
+            None => break,
+        }
+    }
+    let rest = rest.strip_prefix("fn ")?;
+    let end = rest.find(|c: char| !c.is_ascii_alphanumeric() && c != '_')?;
+    (end > 0).then(|| &rest[..end])
+}
+
+/// Split a source file into `(method_name, code)` pairs at `fn` boundaries.
+///
+/// `code` excludes lines whose trimmed start is `//`, matching
+/// `backend_transaction_parity.rs::methods()`'s comment filter. Without it,
+/// `methods()` runs each method's body to the line *before* the next `fn`,
+/// which includes the next method's leading doc comment; `mutates()` then
+/// matches English prose like "the UPDATE is additionally guarded" as if it
+/// were a SQL statement.
 fn methods(source: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut current: Option<(String, String)> = None;
 
     for line in source.lines() {
-        let trimmed = line.trim_start();
-        if let Some(rest) = trimmed
-            .strip_prefix("pub fn ")
-            .or_else(|| trimmed.strip_prefix("fn "))
-            .or_else(|| trimmed.strip_prefix("pub(crate) fn "))
-            .or_else(|| trimmed.strip_prefix("pub async fn "))
-            .or_else(|| trimmed.strip_prefix("async fn "))
-        {
+        if let Some(name) = declared_fn(line) {
             if let Some(finished) = current.take() {
                 out.push(finished);
             }
-            let name = rest
-                .split(|c: char| c == '(' || c == '<' || c.is_whitespace())
-                .next()
-                .unwrap_or("")
-                .to_string();
-            current = Some((name, String::new()));
-        } else if let Some((_, body)) = current.as_mut() {
-            body.push_str(line);
-            body.push('\n');
+            current = Some((name.to_string(), String::new()));
+        } else if let Some((_, code)) = current.as_mut() {
+            if !line.trim_start().starts_with("//") {
+                code.push_str(line);
+                code.push('\n');
+            }
         }
     }
     if let Some(finished) = current {
