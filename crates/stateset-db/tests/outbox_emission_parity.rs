@@ -178,7 +178,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("carts.rs", "update_batch_atomic"),
     ("carts.rs", "delete_batch_atomic"),
     ("carts.rs", "add_item_internal"),
-    ("carts.rs", "complete_checkout_with_policy_in_tx"),
     ("channels.rs", "create"),
     ("channels.rs", "update"),
     ("channels.rs", "delete"),

@@ -2441,6 +2441,26 @@ impl SqliteCartRepository {
             )?;
         }
 
+        // The checkout is the cart's terminal fact: a peer that sees it knows
+        // the cart is spent and which order carries it forward. It is emitted
+        // in the checkout's own transaction, so a cart can never commit as
+        // completed with no fact behind it.
+        super::kernel_outbox::record_outbox_fact(
+            tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "cart.checked_out",
+                aggregate_type: "cart",
+                aggregate_id: &cart_id.to_string(),
+                payload: serde_json::json!({
+                    "cart_id": cart_id,
+                    "order_id": order.id,
+                    "order_number": order.order_number,
+                    "total_charged": cart.grand_total.to_string(),
+                    "currency": cart.currency,
+                }),
+            },
+        )?;
+
         Ok(CheckoutResult {
             cart_id,
             order_id: order.id,
