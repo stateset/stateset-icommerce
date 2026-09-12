@@ -685,6 +685,7 @@ export class Outbox {
    * @param {string} [event.eventId] - Optional, generated if not provided
    * @param {string} [event.commandId] - Optional idempotency key
    * @param {number} [event.baseVersion] - Optional version for OCC
+   * @param {string} [event.createdAt] - Optional ISO 8601 timestamp, used verbatim; generated if not provided
    * @param {Object} [options] - VES v1.0 options
    * @param {boolean} [options.encrypt=false] - Whether to encrypt payload
    * @param {Buffer} [options.recipientPublicKey] - X25519 public key for encryption
@@ -698,7 +699,10 @@ export class Outbox {
 
     const vesVersion = options.vesVersion || 1;
     const eventId = event.eventId || this.generateEventId();
-    const createdAt = new Date().toISOString();
+    // A caller that derives events from a durable record (e.g. a
+    // kernel_outbox row) supplies its own timestamp, used verbatim, so a
+    // replay reproduces the same signing preimage and signature.
+    const createdAt = event.createdAt || new Date().toISOString();
 
     // Get signing key for agent
     const signingKey = await this.keyManager.getCurrentSigningKey(event.sourceAgent);
@@ -826,6 +830,7 @@ export class Outbox {
   /**
    * Append multiple events atomically with VES v1.0 signing
    * @param {Array<Object>} events
+   * @param {string} [events[].createdAt] - Optional ISO 8601 timestamp, used verbatim; generated per-event if not provided
    * @param {Object} [options] - VES v1.0 options (applied to all events)
    * @param {boolean} [options.encrypt=false] - Whether to encrypt payloads
    * @param {Buffer} [options.recipientPublicKey] - X25519 public key for encryption
@@ -838,7 +843,9 @@ export class Outbox {
     this.initialize();
 
     const vesVersion = options.vesVersion || 1;
-    const createdAt = new Date().toISOString();
+    // Default timestamp shared across events that don't supply their own,
+    // matching the existing single-batch-clock behaviour.
+    const defaultCreatedAt = new Date().toISOString();
 
     // Pre-fetch signing keys for all unique agents
     const agentIds = [...new Set(events.map((e) => e.sourceAgent))];
@@ -874,6 +881,9 @@ export class Outbox {
     const transaction = this.db.transaction(() => {
       for (const event of events) {
         const eventId = event.eventId || this.generateEventId();
+        // A caller-supplied createdAt is used verbatim so a replay
+        // reproduces the same signing preimage and signature.
+        const createdAt = event.createdAt || defaultCreatedAt;
         const signingKey = signingKeys.get(event.sourceAgent);
 
         // Compute plaintext hash
