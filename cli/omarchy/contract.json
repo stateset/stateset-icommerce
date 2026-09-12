@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "controllerVersion": "1.30.0",
+  "capabilities": [
+    "status",
+    "dashboard",
+    "agent",
+    "attention",
+    "remediate",
+    "backup",
+    "doctor",
+    "agent-config",
+    "mcp-service"
+  ],
+  "snapshot": {
+    "version": 1,
+    "maxAgeMs": 86400000,
+    "maxBytes": 8192
+  }
+}
