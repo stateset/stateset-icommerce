@@ -535,6 +535,10 @@ impl PostgresDatabase {
             "102_kernel_economic_budgets",
             include_str!("migrations/102_kernel_economic_budgets.sql"),
         ));
+        migrations.push((
+            "103_kernel_outbox_tier",
+            include_str!("migrations/103_kernel_outbox_tier.sql"),
+        ));
 
         migrations
     }
