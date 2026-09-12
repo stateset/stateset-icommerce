@@ -3,7 +3,7 @@
  */
 
 import { loadSyncConfig, SyncConfig, isSyncConfigured } from '../sync/config.js';
-import { createOutbox } from '../sync/outbox.js';
+import { createOutbox, isQuarantineReasonDowngrade } from '../sync/outbox.js';
 import { createSyncEngine } from '../sync/engine.js';
 import { createSequencerClient } from '../sync/client.js';
 import { getPayloadWrapScheme } from '../sync/pqc.js';
@@ -841,14 +841,6 @@ export async function syncDoctor({
 }
 
 /**
- * Reasons that describe a failure to OBTAIN a key rather than a finding about
- * the event. Nothing is learned about the event itself when resolution fails
- * this way: the sequencer was unreachable, or this agent is not configured to
- * verify a directory at all.
- */
-const KEY_ACQUISITION_REASONS = new Set(['key_unresolved', 'sequencer_key_not_configured']);
-
-/**
  * Record a new diagnosis for a still-quarantined event - but never a weaker one.
  *
  * While the sequencer is unreachable, `keyDirectory.resolve()` returns
@@ -860,10 +852,9 @@ const KEY_ACQUISITION_REASONS = new Set(['key_unresolved', 'sequencer_key_not_co
  * `--promote` to clear a backlog, the two composed into forgery evidence being
  * erased by the recommended recovery procedure.
  *
- * So a key-acquisition failure never overwrites a finding about the event. It
- * may still replace another key-acquisition failure (learning that the reason
- * a key cannot be obtained is a missing local config line is worth recording),
- * and any real finding may still replace anything.
+ * The rule itself lives in {@link isQuarantineReasonDowngrade} because
+ * `SyncEngine._persistQuarantined` needs the same one on the pull path; stating
+ * it twice is how the two would drift.
  *
  * @param {import('../sync/outbox.js').Outbox} outbox
  * @param {{eventId: string, reason: string}} event
@@ -872,9 +863,7 @@ const KEY_ACQUISITION_REASONS = new Set(['key_unresolved', 'sequencer_key_not_co
  */
 function rediagnose(outbox, event, reason) {
   if (event.reason === reason) return 0;
-  if (KEY_ACQUISITION_REASONS.has(reason) && !KEY_ACQUISITION_REASONS.has(event.reason)) {
-    return 0;
-  }
+  if (isQuarantineReasonDowngrade(event.reason, reason)) return 0;
   try {
     outbox.updateQuarantineReason(event.eventId, reason);
     return 1;

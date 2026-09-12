@@ -138,6 +138,14 @@ into the pulled-event store; events that still do not are left quarantined with
 their reason **updated** to the current diagnosis, so a `key_unresolved` that is
 really a forgery reads as `signature_invalid` afterwards.
 
+A reason is only ever sharpened, never weakened. A directory outage resolves
+every event as `key_unresolved`, so both the `--promote` sweep and the ordinary
+pull path refuse to overwrite a finding about the event (`signature_invalid`,
+`directory_untrusted`, `peer_key_conflict`, `key_revoked`,
+`key_outside_validity_window`) with a failure to *obtain* a key. Running
+`doctor --promote` while the sequencer is down is therefore safe: it cannot
+erase evidence, it simply promotes nothing.
+
 ### Known limitations
 
 - **The gRPC receive path is unsupported.** `pull()` refuses to run on a gRPC

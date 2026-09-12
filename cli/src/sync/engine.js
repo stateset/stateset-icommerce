@@ -6,7 +6,7 @@
  */
 
 import { EventEmitter } from 'events';
-import { createOutbox } from './outbox.js';
+import { createOutbox, isQuarantineReasonDowngrade } from './outbox.js';
 import { createUnifiedClient } from './unified-client.js';
 import { SyncConfig, loadSyncConfig } from './config.js';
 import { createConflictResolver } from './conflict.js';
@@ -605,10 +605,13 @@ export class SyncEngine extends EventEmitter {
       }
 
       // storeQuarantinedEvents takes one reason per call, so group first.
-      // Re-quarantining an event_id overwrites the previous reason on purpose:
-      // the stored reason is the current diagnosis, and the newest one is the
-      // one an operator must act on (a key_unresolved that later becomes
-      // signature_invalid is a forgery, not a directory outage).
+      // Re-quarantining an event_id updates the previous reason on purpose:
+      // the stored reason is the current diagnosis, and the newest one is
+      // usually the one an operator must act on (a key_unresolved that later
+      // becomes signature_invalid is a forgery, not a directory outage). Only
+      // usually: `_persistQuarantined` refuses the reverse, because a
+      // directory outage resolves EVERY event as key_unresolved and would
+      // otherwise erase every finding on the background sync timer.
       let quarantinedCount = 0;
       const reasons = new Set(quarantinedRecords.map((entry) => entry.reason));
       for (const reason of reasons) {
@@ -728,10 +731,19 @@ export class SyncEngine extends EventEmitter {
   }
 
   /**
-   * Write failed records to the quarantine table under one reason, with the
-   * same per-record isolation and the same reason: the quarantine table has the
-   * same NOT NULL columns, so a malformed envelope must not take the batch, or
-   * the cursor, down with it.
+   * Write failed records to the quarantine table, with per-record isolation:
+   * the quarantine table has the same NOT NULL columns as the pulled-event
+   * table, so a malformed envelope must not take the batch, or the cursor,
+   * down with it.
+   *
+   * `reason` is what we just diagnosed, not necessarily what gets stored. A
+   * record already carrying a finding about the event keeps it rather than
+   * being overwritten by a key-acquisition failure — see
+   * {@link isQuarantineReasonDowngrade}, the same rule `sync doctor --promote`
+   * applies, shared so the two paths cannot drift. Without it a directory
+   * outage, which resolves every event as `key_unresolved`, erased every
+   * `signature_invalid` / `directory_untrusted` / `peer_key_conflict` /
+   * `key_revoked` on the background sync timer.
    *
    * @private
    * @param {Array<Object>} records
@@ -741,6 +753,44 @@ export class SyncEngine extends EventEmitter {
   _persistQuarantined(records, reason) {
     if (!records.length) return 0;
 
+    // Group by the reason that will actually be stored; storeQuarantinedEvents
+    // takes one reason per call.
+    const byStoredReason = new Map();
+    for (const record of records) {
+      const stored = this._storedQuarantineReason(record, reason);
+      if (!byStoredReason.has(stored)) byStoredReason.set(stored, []);
+      byStoredReason.get(stored).push(record);
+    }
+
+    let written = 0;
+    for (const [stored, group] of byStoredReason) {
+      written += this._writeQuarantined(group, stored);
+    }
+    return written;
+  }
+
+  /**
+   * The reason `record` should be stored under, given the one just diagnosed.
+   * @private
+   */
+  _storedQuarantineReason(record, reason) {
+    let existing = null;
+    try {
+      existing = this.outbox.getQuarantineReason(record.eventId);
+    } catch {
+      // Never seen, or unreadable: nothing to preserve.
+      return reason;
+    }
+    return isQuarantineReasonDowngrade(existing, reason) ? existing : reason;
+  }
+
+  /**
+   * Write one group of records under one reason, batch first and per record on
+   * failure so a single malformed envelope loses only itself.
+   * @private
+   * @returns {number} how many records were actually written
+   */
+  _writeQuarantined(records, reason) {
     try {
       this.outbox.storeQuarantinedEvents(records, reason);
       return records.length;

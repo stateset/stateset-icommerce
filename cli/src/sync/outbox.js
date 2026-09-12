@@ -39,6 +39,49 @@ import {
 import { getRotationPolicyManager } from './rotation-policy.js';
 
 /**
+ * Reasons that describe a failure to OBTAIN a key rather than a finding about
+ * the event. Nothing is learned about the event itself when resolution fails
+ * this way: the sequencer was unreachable, or this agent is not configured to
+ * verify a directory at all.
+ *
+ * @type {ReadonlyArray<string>}
+ */
+export const KEY_ACQUISITION_REASONS = Object.freeze([
+  'key_unresolved',
+  'sequencer_key_not_configured',
+]);
+
+/**
+ * Would replacing `existingReason` with `nextReason` throw away what we know?
+ *
+ * Both quarantine writers go through this, so the two paths cannot drift. The
+ * rule: a key-acquisition failure never overwrites a finding about the event.
+ * While the sequencer is unreachable EVERY event resolves as `key_unresolved`,
+ * so without this an outage rewrites `signature_invalid`,
+ * `directory_untrusted`, `peer_key_conflict` and `key_revoked` down to the
+ * benign-outage reason — erasing the security signal the quarantine table
+ * exists to preserve, on the background sync timer as well as on
+ * `sync doctor --promote`.
+ *
+ * Deliberately still allowed: any real finding may replace anything (including
+ * `directory_untrusted`, which is a live attack signal, replacing
+ * `signature_invalid`), and one acquisition failure may replace another —
+ * learning that a key cannot be obtained because of a missing local config
+ * line is worth recording.
+ *
+ * @param {string|null|undefined} existingReason - the stored reason, if any
+ * @param {string} nextReason - the reason about to be written
+ * @returns {boolean}
+ */
+export function isQuarantineReasonDowngrade(existingReason, nextReason) {
+  if (!existingReason || existingReason === nextReason) return false;
+  return (
+    KEY_ACQUISITION_REASONS.includes(nextReason) &&
+    !KEY_ACQUISITION_REASONS.includes(existingReason)
+  );
+}
+
+/**
  * Every reason a pulled event can be quarantined under. This is the whole list:
  * `sync doctor` renders it, the docs table explains it, and nothing else may
  * appear in `_ves_quarantined_events.reason`.
@@ -1550,6 +1593,23 @@ export class Outbox {
         reason: row.reason,
         quarantinedAt: row.quarantined_at,
       }));
+  }
+
+  /**
+   * The reason one event is currently quarantined under, or null if it is not.
+   *
+   * Read before re-quarantining so an outage cannot overwrite a finding — see
+   * {@link isQuarantineReasonDowngrade}.
+   *
+   * @param {string} eventId
+   * @returns {string|null}
+   */
+  getQuarantineReason(eventId) {
+    this.initialize();
+    const row = this.db
+      .prepare('SELECT reason FROM _ves_quarantined_events WHERE event_id = ?')
+      .get(eventId);
+    return row ? row.reason : null;
   }
 
   /**

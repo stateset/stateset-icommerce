@@ -133,6 +133,86 @@ describe('pull verification', () => {
     assert.equal(outbox.getQuarantinedEvents()[0].reason, 'key_unresolved');
   });
 
+  /**
+   * The same erasure the doctor path was fixed for, on the path that runs
+   * unattended. A directory outage resolves EVERY event as `key_unresolved`,
+   * and `pull()` re-quarantines through `INSERT OR REPLACE`, so without a guard
+   * the background sync timer walked every finding down to the benign-outage
+   * reason every `syncIntervalMs`.
+   */
+  describe('re-quarantine never erases a finding', () => {
+    it('keeps signature_invalid when a later pull cannot resolve the key', async () => {
+      const forged = buildEngine(db, { verifies: false });
+      await forged.engine.pull();
+      assert.equal(forged.outbox.getQuarantinedEvents()[0].reason, 'signature_invalid');
+
+      // Same event, pulled again while the sequencer is unreachable.
+      const outage = buildEngine(db, { resolves: false });
+      const result = await outage.engine.pull();
+
+      assert.equal(result.quarantined, 1);
+      assert.equal(
+        outage.outbox.getQuarantinedEvents()[0].reason,
+        'signature_invalid',
+        'an outage teaches nothing about the event and must not erase the forgery',
+      );
+      assert.equal(outage.outbox.getPulledEvents().length, 0);
+    });
+
+    it('keeps every finding, not just signature_invalid', async () => {
+      for (const finding of [
+        'directory_untrusted',
+        'peer_key_conflict',
+        'key_revoked',
+        'key_outside_validity_window',
+      ]) {
+        const seeded = buildEngine(db, { resolves: () => ({ error: finding }) });
+        await seeded.engine.pull();
+        assert.equal(seeded.outbox.getQuarantinedEvents()[0].reason, finding);
+
+        const outage = buildEngine(db, { resolves: false });
+        await outage.engine.pull();
+        assert.equal(
+          outage.outbox.getQuarantinedEvents()[0].reason,
+          finding,
+          `${finding} must survive a pull during a directory outage`,
+        );
+
+        outage.outbox.deleteQuarantinedEvent(pulledEvent().envelope.eventId);
+      }
+    });
+
+    it('still sharpens one acquisition failure into another', async () => {
+      const outage = buildEngine(db, { resolves: false });
+      await outage.engine.pull();
+      assert.equal(outage.outbox.getQuarantinedEvents()[0].reason, 'key_unresolved');
+
+      const misconfigured = buildEngine(db, {
+        resolves: () => ({ error: 'sequencer_key_not_configured' }),
+      });
+      await misconfigured.engine.pull();
+      assert.equal(
+        misconfigured.outbox.getQuarantinedEvents()[0].reason,
+        'sequencer_key_not_configured',
+        'learning WHY a key cannot be obtained is still worth recording',
+      );
+    });
+
+    it('still lets a finding replace an outage reason', async () => {
+      const outage = buildEngine(db, { resolves: false });
+      await outage.engine.pull();
+      assert.equal(outage.outbox.getQuarantinedEvents()[0].reason, 'key_unresolved');
+
+      const forged = buildEngine(db, { verifies: false });
+      await forged.engine.pull();
+      assert.equal(
+        forged.outbox.getQuarantinedEvents()[0].reason,
+        'signature_invalid',
+        'the upgrade direction is the whole point of re-diagnosing',
+      );
+    });
+  });
+
   it('advances the cursor even when every event quarantines', async () => {
     const { engine, outbox } = buildEngine(db, { verifies: false });
     await engine.pull();
