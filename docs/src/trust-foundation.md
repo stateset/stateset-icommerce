@@ -25,12 +25,12 @@ This workspace is the application-layer repo in a larger documented stack:
 
 ## Current posture
 
-- Current workspace release: `1.35.0`
+- Current workspace release: `1.35.1`
 - Current release status: stable `v1.x`; the `v1.0.0` compatibility contract remains active
 
-The current workspace release line is `1.35.0`.
+The current workspace release line is `1.35.1`.
 
-### Source release 1.35.0 purchase hardening
+### Source release 1.35.1 purchase hardening
 
 The [durable Node purchase runtime](durable-purchases.md) adds local
 SQLite coordination, exact shared asset-budget holds, idempotent adapter steps,
@@ -89,7 +89,7 @@ Do not collapse those into a single "post-quantum" claim.
 
 ## Compatibility Contract
 
-The current workspace release line is `1.35.0`, so the published artifacts are
+The current workspace release line is `1.35.1`, so the published artifacts are
 on the first stable `v1.x` compatibility line.
 
 The `v1.0.0` compatibility contract is frozen and remains active:
@@ -104,8 +104,8 @@ The `v1.0.0` compatibility contract is frozen and remains active:
   supported for at least two minor releases and 90 days before removal in the
   next major;
 - `v1.0.x` is the initial stabilization/LTS line: critical regressions and
-  security fixes are eligible for backport there until `v1.35.0` ships;
-- after `v1.35.0`, the latest `v1.y` and previous `v1.(y-1)` lines receive
+  security fixes are eligible for backport there until `v1.35.1` ships;
+- after `v1.35.1`, the latest `v1.y` and previous `v1.(y-1)` lines receive
   security and release-blocking bug backports.
 
 ## Evidence Matrix

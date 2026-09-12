@@ -7,7 +7,7 @@
 //
 // In the repository, cli/package.json depends on `file:../bindings/node` (as
 // admin/package.json already did). That is the only form that survives a
-// release: a `^1.35.0` range plus a lockfile that links the workspace copy
+// release: a `^1.35.1` range plus a lockfile that links the workspace copy
 // makes `npm ci` fail on every branch from the moment the version is bumped
 // until a lockfile-sync PR lands, which is what broke master after 1.31, 1.32
 // and 1.33.

@@ -7,7 +7,7 @@ pre-signed payer authorization; the full path is not yet interoperable.
 
 The Node binding's `@stateset/embedded/purchase-runtime` entrypoint coordinates
 a purchase across inventory, payment and order systems. It imports neither the
-CLI nor a model SDK. This API is included in source release 1.35.0; registry
+CLI nor a model SDK. This API is included in source release 1.35.1; registry
 availability depends on the separate Node package release pipeline. The caller
 supplies a `better-sqlite3`-compatible database.
 
