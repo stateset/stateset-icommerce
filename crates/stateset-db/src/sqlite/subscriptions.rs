@@ -2033,6 +2033,7 @@ impl SqliteSubscriptionRepository {
                     "event_id": id,
                     "event_type": event_type.to_string(),
                     "description": description,
+                    "data": data,
                 }),
             },
         )

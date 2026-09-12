@@ -89,13 +89,6 @@ const SAFE_EXCEPTIONS: &[(&str, &str, &str)] = &[
          the payment that moved, which their own write paths emit",
     ),
     (
-        "accounts_receivable.rs",
-        "recalculate_invoice_with_conn",
-        "invoice amount_paid/balance_due/status are derived by summing payment \
-         and credit-memo applications; the facts are the application, write-off \
-         or credit memo that moved, not the footing",
-    ),
-    (
         "invoices.rs",
         "recalculate_with_conn",
         "invoice subtotal/total/balance_due are derived by summing \
@@ -113,8 +106,11 @@ const SAFE_EXCEPTIONS: &[(&str, &str, &str)] = &[
         "credit.rs",
         "recalculate_available_credit_with_conn",
         "`available_credit` is a derived column (limit - balance - holds), not \
-         an independent fact: every caller has just emitted the fact for the \
-         limit, balance or hold move that made this recompute necessary",
+         an independent fact: each caller emits (or, once the backlog drains, \
+         will emit) the fact for the limit, balance or hold move that made \
+         this recompute necessary. Two of its five current callers, \
+         `update_credit_account` and `reserve_credit`, are still backlog \
+         entries and do not emit yet",
     ),
     (
         "credit.rs",
@@ -130,6 +126,42 @@ const SAFE_EXCEPTIONS: &[(&str, &str, &str)] = &[
         "the fact is `subscription.renewed`, emitted by `record_event_with_conn` \
          in this same transaction and carrying the cycle number and the new \
          billing date; moving the clock is the subscription's own bookkeeping",
+    ),
+    (
+        "subscriptions.rs",
+        "create_subscription",
+        "emits via `record_event_with_conn` (`subscription.created`) in the \
+         same transaction; a second emission here would duplicate it",
+    ),
+    (
+        "subscriptions.rs",
+        "pause_subscription",
+        "emits via `record_event_with_conn` (`subscription.paused`) in the \
+         same transaction; a second emission here would duplicate it",
+    ),
+    (
+        "subscriptions.rs",
+        "resume_subscription",
+        "emits via `record_event_with_conn` (`subscription.resumed`) in the \
+         same transaction; a second emission here would duplicate it",
+    ),
+    (
+        "subscriptions.rs",
+        "cancel_subscription",
+        "emits via `record_event_with_conn` (`subscription.cancelled`) in the \
+         same transaction; a second emission here would duplicate it",
+    ),
+    (
+        "subscriptions.rs",
+        "skip_billing_cycle",
+        "emits via `record_event_with_conn` (`subscription.skipped`) in the \
+         same transaction; a second emission here would duplicate it",
+    ),
+    (
+        "subscriptions.rs",
+        "create_billing_cycle",
+        "emits via `insert_billing_cycle_with_conn` (`billing_cycle.scheduled`) \
+         in the same transaction; a second emission here would duplicate it",
     ),
 ];
 
@@ -577,14 +609,9 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("store_credits.rs", "apply"),
     ("subscriptions.rs", "create_plan"),
     ("subscriptions.rs", "update_plan"),
-    ("subscriptions.rs", "create_subscription"),
     ("subscriptions.rs", "claim_due_for_billing"),
     ("subscriptions.rs", "release_billing_claim"),
     ("subscriptions.rs", "update_subscription"),
-    ("subscriptions.rs", "pause_subscription"),
-    ("subscriptions.rs", "resume_subscription"),
-    ("subscriptions.rs", "cancel_subscription"),
-    ("subscriptions.rs", "skip_billing_cycle"),
     ("supplier_skus.rs", "create"),
     ("supplier_skus.rs", "update"),
     ("supplier_skus.rs", "delete"),

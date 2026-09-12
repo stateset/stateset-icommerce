@@ -391,6 +391,7 @@ impl SqliteCreditRepository {
                     "running_balance": running_balance.to_string(),
                     "reference_type": input.reference_type,
                     "reference_id": input.reference_id,
+                    "notes": input.notes,
                 }),
             },
         )?;

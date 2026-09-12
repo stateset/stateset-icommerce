@@ -225,7 +225,7 @@ impl SqliteAccountsReceivableRepository {
     }
 
     fn recalculate_invoice_with_conn(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         invoice_id: InvoiceId,
     ) -> Result<()> {
         // Sum applications exactly in Rust: `SUM()` over a TEXT decimal column
@@ -300,6 +300,32 @@ impl SqliteAccountsReceivableRepository {
             ],
         )
         .map_err(map_db_error)?;
+
+        // The footing itself (amount_paid/balance_due) is derived noise every
+        // caller already has a fact for. But a status flip to/from `paid` is
+        // the lifecycle transition that starts or stops dunning and
+        // collections — a peer cannot derive "this invoice is now paid" from
+        // the application/write-off/credit-memo facts alone without also
+        // holding the invoice total and every prior application. Emit only
+        // on an actual change, so the noisy common case (status unchanged)
+        // stays silent.
+        if status != current_status {
+            super::kernel_outbox::record_outbox_fact(
+                conn,
+                crate::kernel_outbox::RecordedFact {
+                    event_type: "invoice.status_changed",
+                    aggregate_type: "invoice",
+                    aggregate_id: &invoice_id.to_string(),
+                    payload: serde_json::json!({
+                        "invoice_id": invoice_id,
+                        "previous_status": current_status,
+                        "status": status,
+                        "balance_due": balance_due.to_string(),
+                    }),
+                },
+            )
+            .map_err(map_db_error)?;
+        }
 
         Ok(())
     }
