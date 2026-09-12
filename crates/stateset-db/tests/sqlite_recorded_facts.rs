@@ -11,10 +11,11 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::{
-    AddCartItem, BillingCycleFilter, BillingCycleStatus, BillingInterval, CartAddress,
-    CartRepository, CreateCart, CreateCreditAccount, CreateCustomer, CreateSubscription,
-    CreateSubscriptionPlan, CreditRepository, CreditTransactionType, CurrencyCode, CustomerId,
-    CustomerRepository, OrderId, ProductId, RecordCreditTransaction, SetCartPayment,
+    AccountsPayableRepository, AddCartItem, BillingCycleFilter, BillingCycleStatus,
+    BillingInterval, CartAddress, CartRepository, CreateBill, CreateBillItem, CreateCart,
+    CreateCreditAccount, CreateCustomer, CreateSubscription, CreateSubscriptionPlan,
+    CreditRepository, CreditTransactionType, CurrencyCode, CustomerId, CustomerRepository, OrderId,
+    ProductId, RecordCreditTransaction, SetCartPayment,
 };
 use stateset_db::SqliteDatabase;
 
@@ -339,4 +340,43 @@ fn a_rejected_credit_charge_leaves_no_outbox_fact() {
         )
         .expect("reservation row");
     assert_eq!(status, "active", "the rejected charge must not have consumed the reservation");
+}
+
+// ============================================================================
+// accounts_payable.rs — insert_bill_item_with_conn
+// ============================================================================
+
+#[test]
+fn adding_a_bill_item_emits_a_fact_naming_the_bill() {
+    let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+    let ap = db.accounts_payable();
+    let bill = ap
+        .create_bill(CreateBill {
+            supplier_id: uuid::Uuid::new_v4(),
+            due_date: "2026-10-10T00:00:00Z".parse().expect("due date"),
+            items: vec![],
+            ..Default::default()
+        })
+        .expect("create bill");
+
+    let item = ap
+        .add_bill_item(
+            bill.id,
+            CreateBillItem {
+                description: "Consulting".into(),
+                account_code: None,
+                quantity: dec!(2),
+                unit_price: dec!(150),
+                tax_rate: None,
+                ..Default::default()
+            },
+        )
+        .expect("add bill item");
+
+    let (aggregate_type, payload, tier) = fact(&db, "bill.item_added", &bill.id.to_string())
+        .expect("adding a bill line must emit a fact");
+    assert_eq!(aggregate_type, "bill", "the fact must locate the bill, not the line");
+    assert_eq!(tier, "recorded");
+    assert_eq!(payload["item_id"].as_str(), Some(item.id.to_string().as_str()));
+    assert_eq!(payload["amount"].as_str(), Some("300"), "2 x 150, as stored");
 }

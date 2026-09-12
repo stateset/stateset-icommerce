@@ -82,6 +82,34 @@ const SAFE_EXCEPTIONS: &[(&str, &str, &str)] = &[
          the UPDATE; emitting again would duplicate it",
     ),
     (
+        "accounts_payable.rs",
+        "recalculate_bill_with_conn",
+        "bill subtotal/tax/total/amount_paid/amount_due are derived by summing \
+         `ap_bill_items` and unvoided allocations; the facts are the line and \
+         the payment that moved, which their own write paths emit",
+    ),
+    (
+        "accounts_receivable.rs",
+        "recalculate_invoice_with_conn",
+        "invoice amount_paid/balance_due/status are derived by summing payment \
+         and credit-memo applications; the facts are the application, write-off \
+         or credit memo that moved, not the footing",
+    ),
+    (
+        "invoices.rs",
+        "recalculate_with_conn",
+        "invoice subtotal/total/balance_due are derived by summing \
+         `invoice_items` against the stored discount, tax, shipping and \
+         amount_paid; the fact is whichever line or payment changed",
+    ),
+    (
+        "general_ledger.rs",
+        "update_account_balance_with_conn",
+        "an account balance is derived from its postings: the fact is the \
+         journal entry that posted, and a balance event per posted line would \
+         restate it without adding anything a peer can act on",
+    ),
+    (
         "credit.rs",
         "recalculate_available_credit_with_conn",
         "`available_credit` is a derived column (limit - balance - holds), not \
@@ -119,8 +147,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("a2a_messaging.rs", "send_message"),
     ("a2a_messaging.rs", "acknowledge_message"),
     ("a2a_messaging.rs", "fail_message"),
-    ("accounts_payable.rs", "insert_bill_item_with_conn"),
-    ("accounts_payable.rs", "recalculate_bill_with_conn"),
     ("accounts_payable.rs", "create_bill"),
     ("accounts_payable.rs", "update_bill"),
     ("accounts_payable.rs", "delete_bill"),
@@ -135,7 +161,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("accounts_payable.rs", "approve_payment_run"),
     ("accounts_payable.rs", "process_payment_run"),
     ("accounts_payable.rs", "cancel_payment_run"),
-    ("accounts_receivable.rs", "recalculate_invoice_with_conn"),
     ("accounts_receivable.rs", "log_collection_activity"),
     ("accounts_receivable.rs", "update_collection_status"),
     ("accounts_receivable.rs", "send_dunning_letter"),
@@ -309,7 +334,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("fulfillment.rs", "print_label"),
     ("fulfillment.rs", "complete_ship"),
     ("fulfillment.rs", "cancel_ship"),
-    ("general_ledger.rs", "update_account_balance_with_conn"),
     ("general_ledger.rs", "create_account"),
     ("general_ledger.rs", "update_account"),
     ("general_ledger.rs", "delete_account"),
@@ -351,7 +375,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("inventory.rs", "create_item_batch_atomic"),
     ("inventory.rs", "adjust_batch_atomic"),
     ("invoices.rs", "guarded_status_change"),
-    ("invoices.rs", "recalculate_with_conn"),
     ("invoices.rs", "create"),
     ("invoices.rs", "update"),
     ("invoices.rs", "delete"),

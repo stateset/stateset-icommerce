@@ -36,10 +36,11 @@ impl SqliteAccountsPayableRepository {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    /// Insert one bill line (next line number, rounded amounts) on the given
-    /// connection/transaction. Status guards are the caller's responsibility.
+    /// Insert one bill line (next line number, rounded amounts) on the
+    /// caller's transaction, and emit the fact for it there. Status guards are
+    /// the caller's responsibility.
     fn insert_bill_item_with_conn(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         item_id: Uuid,
         bill_id: Uuid,
         item: &CreateBillItem,
@@ -71,6 +72,25 @@ impl SqliteAccountsPayableRepository {
                 item.po_line_id.map(|id| id.to_string()),
                 now,
             ],
+        )?;
+
+        // A bill line changes what is owed, so it is a fact a peer acts on.
+        // It names the BILL, not the line: that is the aggregate a peer can
+        // locate and re-read.
+        super::kernel_outbox::record_outbox_fact(
+            conn,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "bill.item_added",
+                aggregate_type: "bill",
+                aggregate_id: &bill_id.to_string(),
+                payload: serde_json::json!({
+                    "bill_id": bill_id,
+                    "item_id": item_id,
+                    "line_number": line_number,
+                    "amount": round_ap(amount, 4),
+                    "tax_amount": round_ap(tax_amount, 4),
+                }),
+            },
         )?;
         Ok(())
     }
