@@ -419,23 +419,26 @@ export class UnifiedSequencerClient extends EventEmitter {
   }
 
   /**
-   * Get agent's registered keys
+   * Get an agent's signed key directory.
    * @param {string} agentId
-   * @returns {Promise<Array>}
+   * @returns {Promise<{agentId: string, tenantId: string, keys: Array<Object>, signedAt: string}>}
    */
-  async getAgentKeys(agentId) {
+  async getAgentSigningKeys(agentId) {
     if (this._transport === 'grpc') {
       const result = await this._client.getAgentKeys(agentId);
-      return result.keys.map((k) => ({
-        keyId: k.keyId,
-        publicKey: k.publicKey.toString('hex'),
-        status: k.status === 1 ? 'active' : k.status === 2 ? 'revoked' : 'expired',
-        createdAt: k.createdAt?.toISOString(),
-        validFrom: k.validFrom?.toISOString(),
-        validTo: k.validTo?.toISOString(),
-      }));
+      return {
+        agentId,
+        keys: result.keys.map((k) => ({
+          keyId: k.keyId,
+          publicKey: k.publicKey.toString('hex'),
+          status: k.status === 1 ? 'active' : k.status === 2 ? 'revoked' : 'expired',
+          createdAt: k.createdAt?.toISOString(),
+          validFrom: k.validFrom?.toISOString(),
+          validTo: k.validTo?.toISOString(),
+        })),
+      };
     }
-    return this._client.getAgentKeys(agentId);
+    return this._client.getAgentSigningKeys(agentId);
   }
 
   // ===========================================================================

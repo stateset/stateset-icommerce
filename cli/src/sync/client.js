@@ -5,7 +5,9 @@
  * Supports VES v1.0 signed events and encrypted payloads.
  */
 
+import { createHash } from 'node:crypto';
 import {
+  canonicalizeJson,
   computeEventSigningHash,
   verifyEventSignature,
   verifyEventSignatureHybrid,
@@ -13,6 +15,7 @@ import {
   computeLeafHash,
   computeNodeHash,
   hexToBuffer,
+  DOMAIN,
 } from './crypto.js';
 import {
   KEY_WRAP_SCHEME_X25519_HKDF_SHA256,
@@ -149,19 +152,6 @@ function toSnakeCasePublicKeyBundle(bundle) {
     ml_dsa_65_public_key: bundle.mlDsa65PublicKey ?? bundle.ml_dsa_65_public_key ?? null,
     x25519_public_key: bundle.x25519PublicKey ?? bundle.x25519_public_key ?? null,
     ml_kem_768_public_key: bundle.mlKem768PublicKey ?? bundle.ml_kem_768_public_key ?? null,
-  };
-}
-
-function fromSnakeCasePublicKeyBundle(bundle) {
-  if (!bundle) {
-    return null;
-  }
-
-  return {
-    ed25519PublicKey: bundle.ed25519_public_key ?? bundle.ed25519PublicKey ?? null,
-    mlDsa65PublicKey: bundle.ml_dsa_65_public_key ?? bundle.mlDsa65PublicKey ?? null,
-    x25519PublicKey: bundle.x25519_public_key ?? bundle.x25519PublicKey ?? null,
-    mlKem768PublicKey: bundle.ml_kem_768_public_key ?? bundle.mlKem768PublicKey ?? null,
   };
 }
 
@@ -972,29 +962,58 @@ export class SequencerClient {
   }
 
   /**
-   * Get agent's registered public keys
-   * @param {string} agentId - Agent UUID
-   * @returns {Promise<Array<{keyId: number, publicKey: string, status: string, createdAt: string}>>}
+   * Fetch an agent's signed key directory.
+   *
+   * The response carries a sequencer signature over the whole body. An invalid
+   * signature is a hard refusal — that is a MITM, not a bad key. A validly
+   * signed but stale directory is also refused: signatures don't expire on
+   * their own, so a captured response could otherwise be replayed forever to
+   * hide a key revocation.
+   *
+   * @param {string} agentId
+   * @returns {Promise<{agentId: string, tenantId: string, keys: Array<Object>, signedAt: string}>}
    */
-  async getAgentKeys(agentId) {
-    const params = new URLSearchParams({
-      tenant_id: this.config.tenantId,
-      agent_id: agentId,
-    });
+  async getAgentSigningKeys(agentId) {
+    const params = new URLSearchParams({ tenant_id: this.config.tenantId });
+    const response = await this._request('GET', `/api/v1/agents/${agentId}/signing-keys?${params}`);
 
-    const response = await this._request('GET', `/api/v1/agents/keys?${params}`);
+    const sequencerPublicKey = this.config.sequencerPublicKey ?? this.config.sequencer?.publicKey;
+    if (!sequencerPublicKey) {
+      throw new Error('sequencerPublicKey is required to verify the key directory signature');
+    }
 
-    return (response.keys || []).map((k) => ({
-      keyId: k.key_id,
-      keyType: k.key_type,
-      keyAlgorithm: k.key_algorithm,
-      publicKey: k.public_key,
-      publicKeyBundle: fromSnakeCasePublicKeyBundle(k.public_key_bundle),
-      status: k.status,
-      createdAt: k.created_at,
-      validFrom: k.valid_from,
-      validTo: k.valid_to,
-    }));
+    const { directorySignature, ...body } = response;
+    if (!directorySignature) {
+      throw new Error('Key directory signature invalid: response is unsigned');
+    }
+
+    const preimage = Buffer.concat([DOMAIN.KEYDIR, Buffer.from(canonicalizeJson(body))]);
+    const hash = createHash('sha256').update(preimage).digest();
+    const valid = verifyEventSignature(
+      hash,
+      hexToBuffer(directorySignature),
+      normalizeVerificationPublicKeyBundle(sequencerPublicKey)?.ed25519PublicKey ??
+        sequencerPublicKey,
+    );
+    if (!valid) {
+      throw new Error('Key directory signature invalid');
+    }
+
+    const maxStaleSeconds = this.config.peerKeyMaxStaleSeconds ?? 86400;
+    const clockSkewToleranceSeconds = 300;
+    const signedAtMs = Date.parse(body.signedAt);
+    if (Number.isNaN(signedAtMs)) {
+      throw new Error('Key directory too old: signedAt is missing or invalid');
+    }
+    const ageSeconds = (Date.now() - signedAtMs) / 1000;
+    if (ageSeconds > maxStaleSeconds) {
+      throw new Error('Key directory too old');
+    }
+    if (ageSeconds < -clockSkewToleranceSeconds) {
+      throw new Error('Key directory too old: signedAt is in the future');
+    }
+
+    return body;
   }
 }
 
