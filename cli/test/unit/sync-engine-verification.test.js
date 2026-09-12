@@ -7,9 +7,18 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 
+import crypto from 'node:crypto';
+
 import { createOutbox } from '../../src/sync/outbox.js';
 import { SyncEngine } from '../../src/sync/engine.js';
 import { SyncConfig } from '../../src/sync/config.js';
+import { SequencerClient } from '../../src/sync/client.js';
+import {
+  canonicalizeJson,
+  computeEventSigningHash,
+  computePayloadPlainHash,
+  hexToBuffer,
+} from '../../src/sync/crypto.js';
 
 const TENANT = '22222222-2222-2222-2222-222222222222';
 const STORE = '33333333-3333-3333-3333-333333333333';
@@ -207,7 +216,13 @@ describe('pull verification', () => {
     assert.equal(result.verified, 1);
     assert.equal(result.stored, 1);
     assert.equal(result.quarantined, 3);
-    assert.equal(outbox.getPulledEvents().length, 1);
+    const stored = outbox.getPulledEvents();
+    assert.equal(stored.length, 1);
+    assert.equal(
+      stored[0].eventId,
+      '11111111-1111-1111-1111-111111111111',
+      'the surviving row must be the one that verified, not merely one row',
+    );
     assert.deepEqual(
       outbox.getQuarantinedEvents().map((event) => event.reason),
       ['key_revoked', 'key_unresolved', 'signature_invalid'],
@@ -262,6 +277,24 @@ describe('pull verification', () => {
     assert.equal(quarantined[0].reason, 'signature_invalid');
   });
 
+  it('promotes a previously quarantined event and clears its quarantine row', async () => {
+    // The directory was unreachable, so the event quarantined unresolved.
+    const first = buildEngine(db, { resolves: false });
+    await first.engine.pull();
+    assert.equal(first.outbox.getQuarantinedEvents().length, 1);
+
+    // The user re-pulls the same sequence; the key now resolves and verifies.
+    const second = buildEngine(db);
+    await second.engine.pull({ fromSequence: 0 });
+
+    assert.equal(second.outbox.getPulledEvents().length, 1);
+    assert.equal(
+      second.outbox.getQuarantinedEvents().length,
+      0,
+      'an event must never read as both readable and quarantined',
+    );
+  });
+
   it('reports honest zeroes when the sequencer returns no events', async () => {
     const { engine } = buildEngine(db, { events: [], nextSequence: 1 });
     const result = await engine.pull();
@@ -271,7 +304,11 @@ describe('pull verification', () => {
     assert.equal(result.verified, 0);
     assert.equal(result.quarantined, 0);
     assert.equal(result.stored, 0);
-    assert.equal(result.conflicts, 0);
+    assert.equal(
+      result.conflicts,
+      null,
+      'conflicts was not computed on this branch; 0 would be a claim it did not make',
+    );
     assert.equal('applied' in result, false);
   });
 
@@ -290,6 +327,7 @@ describe('pull verification', () => {
     assert.equal(result.verified, 0);
     assert.equal(result.quarantined, 0);
     assert.equal(result.stored, 0);
+    assert.equal(result.conflicts, null);
     assert.equal(result.error, 'sequencer unreachable');
   });
 
@@ -301,6 +339,321 @@ describe('pull verification', () => {
     assert.equal(outbox.getQuarantinedEvents().length, 0);
     assert.equal(result.pulled, 1);
     assert.equal(result.stored, 0);
+    assert.equal(result.conflicts, null);
     assert.equal('applied' in result, false);
+  });
+
+  it('a malformed envelope cannot wedge the cursor or take the batch down', async () => {
+    // entityId is NOT NULL in both the pulled and quarantined tables, and the
+    // whole envelope is attacker-controlled: a peer can sign this.
+    const good = pulledEvent();
+    const malformed = pulledEvent({
+      eventId: '88888888-1111-1111-1111-111111111111',
+      entityId: null,
+    });
+    malformed.sequenceNumber = 2;
+
+    const { engine, outbox } = buildEngine(db, {
+      events: [good, malformed],
+      nextSequence: 3,
+    });
+    const storeFailures = [];
+    engine.on('receive-store-failed', (payload) => storeFailures.push(payload));
+
+    const result = await engine.pull();
+
+    assert.equal(result.success, true, 'a malformed envelope must not fail the whole pull');
+    assert.equal(result.verified, 2, 'both signatures were accepted by the stubbed verifier');
+    assert.equal(result.stored, 1, 'stored counts what the local schema actually accepted');
+    assert.equal(outbox.getPulledEvents().length, 1);
+    assert.equal(storeFailures.length, 1);
+    assert.equal(storeFailures[0].eventId, '88888888-1111-1111-1111-111111111111');
+    assert.equal(
+      outbox.getSyncState().lastPulledSequence,
+      3,
+      'one malformed event must not wedge this agent’s sync',
+    );
+  });
+
+  it('a malformed envelope that fails verification cannot wedge the cursor either', async () => {
+    const malformed = pulledEvent({
+      eventId: '88888888-1111-1111-1111-111111111111',
+      entityId: null,
+    });
+
+    const { engine, outbox } = buildEngine(db, {
+      events: [malformed],
+      nextSequence: 2,
+      verifies: false,
+    });
+    const quarantineFailures = [];
+    engine.on('receive-quarantine-failed', (payload) => quarantineFailures.push(payload));
+
+    const result = await engine.pull();
+
+    assert.equal(result.success, true);
+    assert.equal(result.quarantined, 0, 'quarantined counts rows actually written');
+    assert.equal(quarantineFailures.length, 1);
+    assert.equal(quarantineFailures[0].reason, 'signature_invalid');
+    assert.equal(outbox.getSyncState().lastPulledSequence, 2);
+  });
+});
+
+describe('streamed events are not a second writer', () => {
+  let db;
+  let originalWarn;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    // The refusal warns once per engine; keep it out of the test output.
+    originalWarn = console.warn;
+    console.warn = () => {};
+  });
+
+  afterEach(() => {
+    console.warn = originalWarn;
+    db.close();
+  });
+
+  /** A gRPC streamed event: flat, no envelope, no usable signature material. */
+  function streamedEvent() {
+    return {
+      sequenceNumber: 7,
+      eventId: '77777777-1111-1111-1111-111111111111',
+      tenantId: TENANT,
+      storeId: STORE,
+      entityType: 'order',
+      entityId: 'ORD-7',
+      eventType: 'order.created',
+      payload: { total: 1 },
+      createdAt: '2026-09-12T00:00:00.000Z',
+      sequencedAt: '2026-09-12T00:00:01.000Z',
+      sourceAgent: AGENT,
+    };
+  }
+
+  it('refuses to store a streamed event and does not advance the cursor', async () => {
+    const { engine, outbox } = buildEngine(db);
+    outbox.initialize();
+    const before = outbox.getSyncState().lastPulledSequence;
+
+    const refusals = [];
+    engine.on('stream-store-refused', (payload) => refusals.push(payload));
+
+    engine._handleStreamedEvent(streamedEvent());
+
+    assert.equal(
+      outbox.getPulledEvents().length,
+      0,
+      'the stream must never write into _ves_pulled_events: it verifies nothing',
+    );
+    assert.equal(outbox.getQuarantinedEvents().length, 0);
+    assert.equal(
+      outbox.getSyncState().lastPulledSequence,
+      before,
+      'advancing the cursor from the stream would skip these events on the verified path',
+    );
+
+    assert.equal(refusals.length, 1, 'the refusal must be loud, not a silent drop');
+    assert.equal(refusals[0].reason, 'stream_unverified');
+    assert.equal(refusals[0].sequenceNumber, 7);
+    assert.ok(refusals[0].error instanceof Error);
+  });
+
+  it('still surfaces streamed events to real-time consumers', async () => {
+    const { engine } = buildEngine(db);
+    const seen = [];
+    engine.on('event', (event) => seen.push(event));
+    engine.on('stream-store-refused', () => {});
+
+    engine._handleStreamedEvent(streamedEvent());
+
+    assert.equal(seen.length, 1, 'the stream stays a notification channel');
+    assert.equal(engine.getRecentEvents().length, 1);
+  });
+});
+
+// =============================================================================
+// Seam test — real client, real directory, real signature, only _request stubbed
+// =============================================================================
+
+/**
+ * The tests above stub `engine.client`, `engine.keyDirectory` and
+ * `engine.resolver`, so the fakes define their own contracts. That style proves
+ * the orchestration but cannot catch a broken seam: a method the real client
+ * does not have, argument-order or return-shape drift in
+ * `PeerKeyDirectory.resolve`, the REST envelope mapping, or the signing-hash
+ * plumbing.
+ *
+ * This test stubs exactly one thing — `SequencerClient._request`, the HTTP
+ * boundary — and drives everything else for real: a genuinely signed event, a
+ * genuinely signed key directory, the real `UnifiedSequencerClient`, the real
+ * `PeerKeyDirectory`, the real outbox, and the real conflict resolver.
+ */
+describe('pull verification — end to end through the real client and directory', () => {
+  let db;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+  });
+
+  afterEach(() => db.close());
+
+  const SEQ_URL = 'https://sequencer.example.com';
+
+  function rawEd25519PublicKey(keyPair) {
+    return keyPair.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
+  }
+
+  function signKeyDirectory(body, sequencerKey) {
+    const preimage = Buffer.concat([
+      Buffer.from('VES_KEYDIR_V1'),
+      Buffer.from(canonicalizeJson(body)),
+    ]);
+    const hash = crypto.createHash('sha256').update(preimage).digest();
+    return crypto.sign(null, hash, sequencerKey.privateKey);
+  }
+
+  /**
+   * Build one genuinely signed event plus the snake_case wire row the sequencer
+   * would return for it.
+   */
+  function signedWireEvent(agentKey, { tamper = false } = {}) {
+    const payload = { total: 99.99 };
+    const payloadPlainHash = computePayloadPlainHash(payload).toString('hex');
+    const payloadCipherHash = '0'.repeat(64);
+
+    const envelope = {
+      vesVersion: 1,
+      tenantId: TENANT,
+      storeId: STORE,
+      eventId: '11111111-1111-1111-1111-111111111111',
+      sourceAgentId: AGENT,
+      agentKeyId: 1,
+      entityType: 'order',
+      entityId: 'ORD-1',
+      eventType: 'order.created',
+      payloadKind: 0,
+      createdAt: '2026-09-12T00:00:00.000Z',
+      payloadPlainHash: hexToBuffer(payloadPlainHash),
+      payloadCipherHash: hexToBuffer(payloadCipherHash),
+    };
+
+    const signingHash = computeEventSigningHash(envelope);
+    const signature = crypto.sign(null, signingHash, agentKey.privateKey);
+
+    return {
+      envelope: {
+        sequence_number: 1,
+        event_id: envelope.eventId,
+        command_id: null,
+        tenant_id: TENANT,
+        store_id: STORE,
+        // Tampering changes a field the signing hash binds, so the signature
+        // that was genuinely produced above no longer covers this envelope.
+        entity_type: tamper ? 'invoice' : 'order',
+        entity_id: 'ORD-1',
+        event_type: 'order.created',
+        payload,
+        ves_version: 1,
+        payload_kind: 0,
+        payload_plain_hash: payloadPlainHash,
+        payload_cipher_hash: payloadCipherHash,
+        agent_key_id: 1,
+        agent_signature: signature.toString('hex'),
+        agent_signature_scheme: 0,
+        base_version: null,
+        created_at: envelope.createdAt,
+        source_agent: AGENT,
+      },
+      sequenced_at: '2026-09-12T00:00:01.000Z',
+    };
+  }
+
+  /** Wire the engine's own client to a real SequencerClient over a stubbed _request. */
+  function buildRealEngine({ tamper = false } = {}) {
+    const agentKey = crypto.generateKeyPairSync('ed25519');
+    const sequencerKey = crypto.generateKeyPairSync('ed25519');
+
+    const config = new SyncConfig({
+      sequencer: { url: SEQ_URL },
+      identity: { tenantId: TENANT, storeId: STORE, agentId: SELF },
+      sequencerPublicKey: rawEd25519PublicKey(sequencerKey).toString('hex'),
+    });
+
+    const directoryBody = {
+      agentId: AGENT,
+      tenantId: TENANT,
+      keys: [
+        {
+          keyId: 1,
+          algorithm: 'ed25519',
+          publicKey: `0x${rawEd25519PublicKey(agentKey).toString('hex')}`,
+          publicKeyBundle: null,
+          validFrom: null,
+          validTo: null,
+          revokedAt: null,
+        },
+      ],
+      signedAt: new Date().toISOString(),
+    };
+    const directorySignature = signKeyDirectory(directoryBody, sequencerKey);
+
+    const requests = [];
+    const rest = new SequencerClient(config);
+    rest._request = async (method, path) => {
+      requests.push(`${method} ${path.split('?')[0]}`);
+      if (path.startsWith('/api/v1/events')) {
+        return { events: [signedWireEvent(agentKey, { tamper })], head_sequence: 1 };
+      }
+      if (path.startsWith('/api/v1/agents/')) {
+        return { ...directoryBody, directorySignature: `0x${directorySignature.toString('hex')}` };
+      }
+      throw new Error(`unexpected request: ${method} ${path}`);
+    };
+
+    const engine = new SyncEngine({ db, config });
+    // The ONLY substitution: hand the engine's own UnifiedSequencerClient a
+    // connected REST client whose HTTP boundary is stubbed. Its outbox,
+    // key directory, conflict resolver and every client method stay real.
+    engine.client._client = rest;
+    engine.client._transport = 'rest';
+
+    return { engine, requests };
+  }
+
+  it('stores a genuinely signed event pulled through the real client stack', async () => {
+    const { engine, requests } = buildRealEngine();
+
+    const result = await engine.pull();
+
+    assert.equal(result.success, true);
+    assert.equal(result.pulled, 1);
+    assert.equal(result.verified, 1, 'a real signature must verify through the real client');
+    assert.equal(result.quarantined, 0);
+    assert.equal(result.stored, 1);
+
+    const stored = engine.outbox.getPulledEvents();
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].eventId, '11111111-1111-1111-1111-111111111111');
+    assert.equal(engine.outbox.getQuarantinedEvents().length, 0);
+
+    // The directory really was fetched and pinned through PeerKeyDirectory.
+    assert.ok(
+      requests.includes(`GET /api/v1/agents/${AGENT}/signing-keys`),
+      'the key directory must be fetched over the real client',
+    );
+    assert.ok(engine.outbox.getPeerKeyPin(AGENT, 1), 'the resolved key must be pinned');
+  });
+
+  it('quarantines a tampered event pulled through the real client stack', async () => {
+    const { engine } = buildRealEngine({ tamper: true });
+
+    const result = await engine.pull();
+
+    assert.equal(result.verified, 0);
+    assert.equal(result.quarantined, 1);
+    assert.equal(engine.outbox.getPulledEvents().length, 0);
+    assert.equal(engine.outbox.getQuarantinedEvents()[0].reason, 'signature_invalid');
   });
 });
