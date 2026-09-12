@@ -790,10 +790,12 @@ export async function syncDoctor({
           resolution = { error: 'key_unresolved', detail: error?.message };
         }
 
-        // Whatever we learn replaces the stored diagnosis, the way `pull()`
-        // re-quarantines. Leaving the old reason meant a provably forged event
-        // still read as `key_unresolved` - the benign-outage diagnosis - in
-        // the very report built to surface forgeries.
+        // What we learn replaces the stored diagnosis, the way `pull()`
+        // re-quarantines - but only ever upwards. Leaving the old reason meant
+        // a provably forged event still read as `key_unresolved` - the
+        // benign-outage diagnosis - in the very report built to surface
+        // forgeries; overwriting it with `key_unresolved` erases the forgery
+        // instead. See `rediagnose`.
         if (resolution.error) {
           rediagnosed += rediagnose(outbox, event, resolution.error);
           skipped += 1;
@@ -839,7 +841,30 @@ export async function syncDoctor({
 }
 
 /**
- * Record a new diagnosis for a still-quarantined event.
+ * Reasons that describe a failure to OBTAIN a key rather than a finding about
+ * the event. Nothing is learned about the event itself when resolution fails
+ * this way: the sequencer was unreachable, or this agent is not configured to
+ * verify a directory at all.
+ */
+const KEY_ACQUISITION_REASONS = new Set(['key_unresolved', 'sequencer_key_not_configured']);
+
+/**
+ * Record a new diagnosis for a still-quarantined event - but never a weaker one.
+ *
+ * While the sequencer is unreachable, `keyDirectory.resolve()` returns
+ * `key_unresolved` for EVERY event. Writing that back unconditionally walked
+ * every stricter diagnosis - `signature_invalid`, `directory_untrusted`,
+ * `peer_key_conflict`, `key_revoked` - down to the benign-outage reason, and
+ * silenced doctor's red hint block with it. Since `doctor` is meant to run
+ * during exactly that outage, and the documentation tells operators to run
+ * `--promote` to clear a backlog, the two composed into forgery evidence being
+ * erased by the recommended recovery procedure.
+ *
+ * So a key-acquisition failure never overwrites a finding about the event. It
+ * may still replace another key-acquisition failure (learning that the reason
+ * a key cannot be obtained is a missing local config line is worth recording),
+ * and any real finding may still replace anything.
+ *
  * @param {import('../sync/outbox.js').Outbox} outbox
  * @param {{eventId: string, reason: string}} event
  * @param {string} reason
@@ -847,6 +872,9 @@ export async function syncDoctor({
  */
 function rediagnose(outbox, event, reason) {
   if (event.reason === reason) return 0;
+  if (KEY_ACQUISITION_REASONS.has(reason) && !KEY_ACQUISITION_REASONS.has(event.reason)) {
+    return 0;
+  }
   try {
     outbox.updateQuarantineReason(event.eventId, reason);
     return 1;

@@ -258,6 +258,98 @@ describe('syncDoctor', () => {
       assert.deepEqual(report.quarantined, [{ reason: 'sequencer_key_not_configured', count: 1 }]);
     });
 
+    /**
+     * The direction the first round of these tests missed. While the sequencer
+     * is unreachable `resolve()` reports `key_unresolved` for every event, so
+     * an unconditional rewrite walked every stricter diagnosis down to the
+     * benign-outage reason — erasing forgery evidence through the very
+     * recovery procedure the docs recommend (`doctor --promote` during an
+     * outage, which is when doctor is most likely to be run).
+     */
+    it('never downgrades a finding about the event to an outage reason', async () => {
+      const findings = [
+        'signature_invalid',
+        'directory_untrusted',
+        'peer_key_conflict',
+        'key_revoked',
+        'key_outside_validity_window',
+      ];
+      findings.forEach((reason, index) => {
+        outbox.storeQuarantinedEvents([sampleEvent(index + 1)], reason);
+      });
+
+      const report = await syncDoctor({
+        outbox,
+        client: { verifyEventSignature: () => true },
+        keyDirectory: {
+          // The sequencer is unreachable: nothing is learned about any event.
+          async resolve() {
+            return { error: 'key_unresolved', detail: 'ECONNREFUSED' };
+          },
+        },
+        promote: true,
+      });
+
+      assert.equal(report.promoted, 0);
+      assert.equal(report.rediagnosed, 0, 'an outage teaches nothing about an event');
+
+      const stored = new Map(
+        outbox.getQuarantinedEvents().map((event) => [event.eventId, event.reason]),
+      );
+      findings.forEach((reason, index) => {
+        assert.equal(
+          stored.get(sampleEvent(index + 1).eventId),
+          reason,
+          `${reason} must survive an outage-time doctor --promote`,
+        );
+      });
+      assert.deepEqual(
+        report.quarantined.map((entry) => entry.reason).sort(),
+        [...findings].sort(),
+        'the report must still show what it showed before the sweep',
+      );
+    });
+
+    it('does not downgrade a finding to sequencer_key_not_configured either', async () => {
+      outbox.storeQuarantinedEvents([sampleEvent()], 'signature_invalid');
+
+      const report = await syncDoctor({
+        outbox,
+        client: { verifyEventSignature: () => true },
+        keyDirectory: {
+          async resolve() {
+            return { error: 'sequencer_key_not_configured' };
+          },
+        },
+        promote: true,
+      });
+
+      assert.equal(report.rediagnosed, 0);
+      assert.equal(outbox.getQuarantinedEvents()[0].reason, 'signature_invalid');
+    });
+
+    it('still records why a key cannot be obtained when that is all we knew', async () => {
+      outbox.storeQuarantinedEvents([sampleEvent()], 'key_unresolved');
+
+      const report = await syncDoctor({
+        outbox,
+        client: { verifyEventSignature: () => true },
+        keyDirectory: {
+          async resolve() {
+            return { error: 'sequencer_key_not_configured' };
+          },
+        },
+        promote: true,
+      });
+
+      assert.equal(report.rediagnosed, 1);
+      assert.equal(
+        outbox.getQuarantinedEvents()[0].reason,
+        'sequencer_key_not_configured',
+        'one acquisition failure may still sharpen another',
+      );
+    });
+
     it('does not count a reason that has not changed', async () => {
       outbox.storeQuarantinedEvents([sampleEvent()], 'signature_invalid');
 
