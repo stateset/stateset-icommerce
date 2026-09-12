@@ -742,66 +742,117 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
  * This function is read-only unless `promote` is true: without it, it only
  * reports, and calls no outbox write methods.
  *
+ * The sweep pages rather than taking the default 1,000-row page, and the
+ * counts come from SQL rather than from the length of that page: a report that
+ * says `key_unresolved: 1000` when 50,000 are quarantined, and a `--promote`
+ * that silently stops after the first 1,000, are exactly the fabricated
+ * numbers this work set out to delete.
+ *
  * @param {Object} params
  * @param {import('../sync/outbox.js').Outbox} params.outbox
  * @param {Object} params.client
  * @param {Object} params.keyDirectory
  * @param {boolean} [params.promote] - re-verify and promote what now passes
- * @returns {Promise<{quarantined: Array<{reason: string, count: number}>, pins: Array<Object>, promoted: number}>}
+ * @param {number} [params.pageSize=500] - rows per promotion page
+ * @returns {Promise<{quarantined: Array<{reason: string, count: number}>, total: number, pins: Array<Object>, promoted: number, rediagnosed: number}>}
  */
-export async function syncDoctor({ outbox, client, keyDirectory, promote = false }) {
+export async function syncDoctor({
+  outbox,
+  client,
+  keyDirectory,
+  promote = false,
+  pageSize = 500,
+}) {
   let promoted = 0;
+  let rediagnosed = 0;
 
   if (promote) {
-    const events = outbox.getQuarantinedEvents();
+    // Promotion deletes the rows it promotes, so the remaining rows shift down
+    // by exactly the number left behind. Skipping that many is therefore a
+    // correct cursor, and the loop terminates because every row examined is
+    // either promoted (deleted) or skipped (counted).
+    let skipped = 0;
+    for (;;) {
+      const events = outbox.getQuarantinedEvents(pageSize, skipped);
+      if (events.length === 0) break;
 
-    for (const event of events) {
-      // A throw out of key resolution is a failure to resolve, not a reason
-      // to promote - mirrors _persistVerified's fail-closed handling.
-      let resolution;
-      try {
-        resolution = await keyDirectory.resolve(
-          event.sourceAgent,
-          event.agentKeyId,
-          event.createdAt,
-        );
-      } catch {
-        resolution = { error: 'key_unresolved' };
-      }
-      if (resolution.error) continue;
+      for (const event of events) {
+        // A throw out of key resolution is a failure to resolve, not a reason
+        // to promote - mirrors _persistVerified's fail-closed handling.
+        let resolution;
+        try {
+          resolution = await keyDirectory.resolve(
+            event.sourceAgent,
+            event.agentKeyId,
+            event.createdAt,
+          );
+        } catch (error) {
+          resolution = { error: 'key_unresolved', detail: error?.message };
+        }
 
-      let valid = false;
-      try {
-        valid = client.verifyEventSignature(
-          event,
-          resolution.publicKeyBundle ?? resolution.publicKey,
-        );
-      } catch {
-        valid = false;
-      }
-      if (!valid) continue;
+        // Whatever we learn replaces the stored diagnosis, the way `pull()`
+        // re-quarantines. Leaving the old reason meant a provably forged event
+        // still read as `key_unresolved` - the benign-outage diagnosis - in
+        // the very report built to surface forgeries.
+        if (resolution.error) {
+          rediagnosed += rediagnose(outbox, event, resolution.error);
+          skipped += 1;
+          continue;
+        }
 
-      try {
-        outbox.storePulledEvents([event]);
-        outbox.deleteQuarantinedEvent(event.eventId);
-        promoted += 1;
-      } catch {
-        // Leave this event quarantined; other events still get a chance.
+        let valid = false;
+        try {
+          valid = client.verifyEventSignature(
+            event,
+            resolution.publicKeyBundle ?? resolution.publicKey,
+          );
+        } catch {
+          valid = false;
+        }
+        if (!valid) {
+          rediagnosed += rediagnose(outbox, event, 'signature_invalid');
+          skipped += 1;
+          continue;
+        }
+
+        try {
+          outbox.storePulledEvents([event]);
+          outbox.deleteQuarantinedEvent(event.eventId);
+          promoted += 1;
+        } catch {
+          // Leave this event quarantined; other events still get a chance.
+          skipped += 1;
+        }
       }
     }
   }
 
-  const remaining = outbox.getQuarantinedEvents();
-  const byReason = new Map();
-  for (const event of remaining) {
-    byReason.set(event.reason, (byReason.get(event.reason) || 0) + 1);
-  }
+  const quarantined = outbox.getQuarantinedCountsByReason();
 
   return {
-    quarantined: [...byReason.entries()].map(([reason, count]) => ({ reason, count })),
+    quarantined,
+    total: quarantined.reduce((sum, entry) => sum + entry.count, 0),
     pins: outbox.getPeerKeyPins(),
     promoted,
+    rediagnosed,
   };
+}
+
+/**
+ * Record a new diagnosis for a still-quarantined event.
+ * @param {import('../sync/outbox.js').Outbox} outbox
+ * @param {{eventId: string, reason: string}} event
+ * @param {string} reason
+ * @returns {number} 1 if the stored reason changed, else 0
+ */
+function rediagnose(outbox, event, reason) {
+  if (event.reason === reason) return 0;
+  try {
+    outbox.updateQuarantineReason(event.eventId, reason);
+    return 1;
+  } catch {
+    return 0;
+  }
 }
 
 function formatSyncRows(rows, { output, jsonOutput, empty }) {

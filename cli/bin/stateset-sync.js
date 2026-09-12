@@ -2126,12 +2126,32 @@ program
       }
 
       console.log();
-      console.log(chalk.bold('Quarantined events'));
+      console.log(chalk.bold(`Quarantined events (${report.total} total)`));
       if (report.quarantined.length === 0) {
         console.log(chalk.dim('  none'));
       } else {
         for (const { reason, count } of report.quarantined) {
           console.log(`  ${chalk.yellow(reason)}: ${count}`);
+        }
+        if (report.quarantined.some((entry) => entry.reason === 'sequencer_key_not_configured')) {
+          console.log();
+          console.log(
+            chalk.yellow(
+              'sequencerPublicKey is not set: no peer key directory can be verified, so\n' +
+                'nothing can be stored. Set it with:\n' +
+                '  stateset-sync config set sequencer-public-key <hex>',
+            ),
+          );
+        }
+        if (report.quarantined.some((entry) => entry.reason === 'directory_untrusted')) {
+          console.log();
+          console.log(
+            chalk.red(
+              'directory_untrusted: a key directory response was refused as forged, misdirected,\n' +
+                'replayed or unattested. This is not a benign outage — check the sequencer and\n' +
+                'the transport (the gRPC receive path is unsupported; use https://).',
+            ),
+          );
         }
       }
 
@@ -2148,6 +2168,14 @@ program
       console.log();
       if (options.promote) {
         console.log(chalk.bold(`Promoted ${report.promoted} event(s) out of quarantine`));
+        if (report.rediagnosed > 0) {
+          console.log(
+            chalk.bold(
+              `Re-diagnosed ${report.rediagnosed} event(s) that still do not verify — ` +
+                'the reasons above are current',
+            ),
+          );
+        }
       } else {
         console.log(chalk.dim('Run with --promote to re-verify and promote quarantined events'));
       }

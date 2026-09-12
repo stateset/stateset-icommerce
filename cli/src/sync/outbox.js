@@ -1444,18 +1444,59 @@ export class Outbox {
   }
 
   /**
+   * Count quarantined events per reason.
+   *
+   * This is the honest count: `getQuarantinedEvents()` returns at most `limit`
+   * rows, so counting its result saturates silently — 50,000 quarantined
+   * events reported as exactly 1,000, which is the kind of fabricated number
+   * this receive path exists to stop producing.
+   *
+   * @returns {Array<{reason: string, count: number}>}
+   */
+  getQuarantinedCountsByReason() {
+    this.initialize();
+    return this.db
+      .prepare(
+        `SELECT reason, COUNT(*) AS count FROM _ves_quarantined_events
+         GROUP BY reason ORDER BY reason ASC`,
+      )
+      .all()
+      .map((row) => ({ reason: row.reason, count: row.count }));
+  }
+
+  /**
+   * Replace the stored reason for a quarantined event.
+   *
+   * The stored reason is the CURRENT diagnosis, and the newest one is what an
+   * operator must act on: a `key_unresolved` that later re-verifies as
+   * `signature_invalid` is a forgery, not a directory outage. `pull()` gets
+   * this for free from `INSERT OR REPLACE`; anything that re-verifies in place
+   * has to say so explicitly.
+   *
+   * @param {string} eventId
+   * @param {string} reason - one of {@link QUARANTINE_REASONS}
+   */
+  updateQuarantineReason(eventId, reason) {
+    this.initialize();
+    this.db
+      .prepare('UPDATE _ves_quarantined_events SET reason = ? WHERE event_id = ?')
+      .run(reason, eventId);
+  }
+
+  /**
    * Get quarantined events. These must never be returned by getPulledEvents.
    * @param {number} [limit]
+   * @param {number} [offset] - rows to skip, for paging through more than `limit`
    * @returns {Array<Object>}
    */
-  getQuarantinedEvents(limit = 1000) {
+  getQuarantinedEvents(limit = 1000, offset = 0) {
     this.initialize();
     return this.db
       .prepare(
         `SELECT * FROM _ves_quarantined_events
-         ORDER BY sequence_number ASC LIMIT ?`,
+         ORDER BY sequence_number ASC LIMIT ? OFFSET ?`,
       )
-      .all(limit)
+      .all(limit, offset)
       .map((row) => ({
         eventId: row.event_id,
         sequenceNumber: row.sequence_number,
