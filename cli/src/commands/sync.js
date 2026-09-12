@@ -725,6 +725,85 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
   }
 }
 
+/**
+ * Inspect the receive path: what is quarantined, what keys are pinned, and
+ * (when `promote` is true) which quarantined events now verify.
+ *
+ * The common benign case is an agent that pushed events before its signing
+ * key reached the directory: they quarantine as `key_unresolved`, and once
+ * the key is registered they should verify and become readable without a
+ * full re-pull. Promotion here follows the exact resolve -> verify -> store
+ * -> delete sequence `SyncEngine#_persistVerified` uses in `engine.js` (the
+ * pull-path promotion), so the two never diverge on what counts as
+ * "verified" - only `_persistVerified`'s batch/per-record retry fallback is
+ * not needed here, since doctor already operates one quarantined event at a
+ * time and a failed store or delete for one event must not affect another.
+ *
+ * This function is read-only unless `promote` is true: without it, it only
+ * reports, and calls no outbox write methods.
+ *
+ * @param {Object} params
+ * @param {import('../sync/outbox.js').Outbox} params.outbox
+ * @param {Object} params.client
+ * @param {Object} params.keyDirectory
+ * @param {boolean} [params.promote] - re-verify and promote what now passes
+ * @returns {Promise<{quarantined: Array<{reason: string, count: number}>, pins: Array<Object>, promoted: number}>}
+ */
+export async function syncDoctor({ outbox, client, keyDirectory, promote = false }) {
+  let promoted = 0;
+
+  if (promote) {
+    const events = outbox.getQuarantinedEvents();
+
+    for (const event of events) {
+      // A throw out of key resolution is a failure to resolve, not a reason
+      // to promote - mirrors _persistVerified's fail-closed handling.
+      let resolution;
+      try {
+        resolution = await keyDirectory.resolve(
+          event.sourceAgent,
+          event.agentKeyId,
+          event.createdAt,
+        );
+      } catch {
+        resolution = { error: 'key_unresolved' };
+      }
+      if (resolution.error) continue;
+
+      let valid = false;
+      try {
+        valid = client.verifyEventSignature(
+          event,
+          resolution.publicKeyBundle ?? resolution.publicKey,
+        );
+      } catch {
+        valid = false;
+      }
+      if (!valid) continue;
+
+      try {
+        outbox.storePulledEvents([event]);
+        outbox.deleteQuarantinedEvent(event.eventId);
+        promoted += 1;
+      } catch {
+        // Leave this event quarantined; other events still get a chance.
+      }
+    }
+  }
+
+  const remaining = outbox.getQuarantinedEvents();
+  const byReason = new Map();
+  for (const event of remaining) {
+    byReason.set(event.reason, (byReason.get(event.reason) || 0) + 1);
+  }
+
+  return {
+    quarantined: [...byReason.entries()].map(([reason, count]) => ({ reason, count })),
+    pins: outbox.getPeerKeyPins(),
+    promoted,
+  };
+}
+
 function formatSyncRows(rows, { output, jsonOutput, empty }) {
   if (jsonOutput) return rows;
   if (!rows || rows.length === 0) return { formatted: empty };

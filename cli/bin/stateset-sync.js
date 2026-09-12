@@ -37,6 +37,7 @@ import {
 } from '../src/sync/config.js';
 import { createSyncEngine } from '../src/sync/engine.js';
 import { createOutbox } from '../src/sync/outbox.js';
+import { syncDoctor } from '../src/commands/sync.js';
 import { createSequencerClient } from '../src/sync/client.js';
 import { getKeyManager } from '../src/sync/keys.js';
 import { getRotationPolicyManager } from '../src/sync/rotation-policy.js';
@@ -1919,6 +1920,80 @@ program
       }
     } catch (error) {
       console.error(chalk.red(`Failed to list groups: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+// ============================================================================
+// doctor command
+// ============================================================================
+program
+  .command('doctor')
+  .description('Inspect quarantined events and peer key pins; optionally re-verify and promote')
+  .option('--promote', 'Re-verify quarantined events and promote what now passes')
+  .option('--db <path>', 'Database path', './store.db')
+  .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
+  .action(async (options) => {
+    const jsonOutput = wantsJsonOutput(options);
+    const config = loadSyncConfig();
+    if (!config) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    const db = new Database(options.db || config.local.dbPath);
+
+    try {
+      const engine = createSyncEngine({ db, config });
+      await engine.initialize();
+
+      const report = await syncDoctor({
+        outbox: engine.outbox,
+        client: engine.client,
+        keyDirectory: engine.keyDirectory,
+        promote: Boolean(options.promote),
+      });
+
+      await engine.shutdown();
+
+      if (jsonOutput) {
+        writeJsonOutput(options, report);
+        db.close();
+        return;
+      }
+
+      console.log();
+      console.log(chalk.bold('Quarantined events'));
+      if (report.quarantined.length === 0) {
+        console.log(chalk.dim('  none'));
+      } else {
+        for (const { reason, count } of report.quarantined) {
+          console.log(`  ${chalk.yellow(reason)}: ${count}`);
+        }
+      }
+
+      console.log();
+      console.log(chalk.bold('Pinned peer keys'));
+      if (report.pins.length === 0) {
+        console.log(chalk.dim('  none'));
+      } else {
+        for (const pin of report.pins) {
+          console.log(`  ${pin.agentId} / key ${pin.keyId} — pinned ${pin.pinnedAt}`);
+        }
+      }
+
+      console.log();
+      if (options.promote) {
+        console.log(chalk.bold(`Promoted ${report.promoted} event(s) out of quarantine`));
+      } else {
+        console.log(chalk.dim('Run with --promote to re-verify and promote quarantined events'));
+      }
+
+      db.close();
+    } catch (error) {
+      console.error(chalk.red(`Doctor failed: ${error.message}`));
+      db.close();
       process.exit(1);
     }
   });

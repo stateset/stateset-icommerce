@@ -1547,6 +1547,25 @@ export class Outbox {
   }
 
   /**
+   * List every pinned peer key (trust-on-first-use).
+   * @returns {Array<{agentId: string, keyId: number, publicKey: string, pinnedAt: string}>}
+   */
+  getPeerKeyPins() {
+    this.initialize();
+    return this.db
+      .prepare(
+        'SELECT agent_id, key_id, public_key, pinned_at FROM _ves_peer_key_pins ORDER BY agent_id, key_id',
+      )
+      .all()
+      .map((row) => ({
+        agentId: row.agent_id,
+        keyId: row.key_id,
+        publicKey: row.public_key,
+        pinnedAt: row.pinned_at,
+      }));
+  }
+
+  /**
    * Get entity version for optimistic concurrency
    * @param {string} tenantId
    * @param {string} storeId
