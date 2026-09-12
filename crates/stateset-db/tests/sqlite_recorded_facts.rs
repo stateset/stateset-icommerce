@@ -11,8 +11,9 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::{
-    AddCartItem, CartAddress, CartRepository, CreateCart, CreateCustomer, CustomerRepository,
-    ProductId, SetCartPayment,
+    AddCartItem, BillingCycleFilter, BillingCycleStatus, BillingInterval, CartAddress,
+    CartRepository, CreateCart, CreateCustomer, CreateSubscription, CreateSubscriptionPlan,
+    CurrencyCode, CustomerRepository, ProductId, SetCartPayment,
 };
 use stateset_db::SqliteDatabase;
 
@@ -115,4 +116,109 @@ fn checkout_emits_a_fact_naming_the_cart_and_its_order() {
         Some(checkout.order_id.to_string().as_str()),
         "the fact must name the order the checkout minted"
     );
+}
+
+// ============================================================================
+// subscriptions.rs — record_event_with_conn, insert_billing_cycle_with_conn,
+//                    apply_billing_cycle_status_with_tx
+// ============================================================================
+
+fn seeded_subscription(db: &SqliteDatabase, email: &str) -> (uuid::Uuid, uuid::Uuid) {
+    let customer = db
+        .customers()
+        .create(CreateCustomer {
+            email: email.into(),
+            first_name: "Sub".into(),
+            last_name: "Fact".into(),
+            ..Default::default()
+        })
+        .expect("create customer");
+    let subscriptions = db.subscriptions();
+    let plan = subscriptions
+        .create_plan(CreateSubscriptionPlan {
+            code: None,
+            name: "Fact Monthly".into(),
+            description: None,
+            billing_interval: BillingInterval::Monthly,
+            custom_interval_days: None,
+            price: dec!(29.99),
+            setup_fee: None,
+            currency: Some(CurrencyCode::USD),
+            trial_days: Some(0),
+            trial_requires_payment_method: Some(true),
+            min_cycles: None,
+            max_cycles: None,
+            items: None,
+            discount_percent: None,
+            discount_amount: None,
+            metadata: None,
+        })
+        .expect("create plan");
+    subscriptions.activate_plan(plan.id).expect("activate plan");
+    let subscription = subscriptions
+        .create_subscription(CreateSubscription {
+            customer_id: customer.id,
+            plan_id: plan.id,
+            payment_method_id: Some("pm_fact".into()),
+            skip_trial: Some(true),
+            ..Default::default()
+        })
+        .expect("create subscription");
+    let cycle = subscriptions
+        .list_billing_cycles(BillingCycleFilter {
+            subscription_id: Some(subscription.id),
+            ..Default::default()
+        })
+        .expect("list billing cycles")
+        .into_iter()
+        .next()
+        .expect("initial billing cycle");
+    (subscription.id.into(), cycle.id)
+}
+
+#[test]
+fn subscription_lifecycle_events_emit_recorded_facts() {
+    let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+    let (subscription_id, _) = seeded_subscription(&db, "subscription-fact@example.com");
+
+    let (aggregate_type, payload, tier) =
+        fact(&db, "subscription.created", &subscription_id.to_string())
+            .expect("creating a subscription must emit a lifecycle fact");
+    assert_eq!(aggregate_type, "subscription");
+    assert_eq!(tier, "recorded");
+    assert_eq!(payload["event_type"].as_str(), Some("created"));
+
+    assert!(
+        fact(&db, "subscription.activated", &subscription_id.to_string()).is_some(),
+        "a subscription created without a trial is activated, and that is a fact too"
+    );
+}
+
+#[test]
+fn seeding_a_billing_cycle_emits_a_fact_naming_the_cycle() {
+    let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+    let (subscription_id, cycle_id) = seeded_subscription(&db, "cycle-fact@example.com");
+
+    let (aggregate_type, payload, _) = fact(&db, "billing_cycle.scheduled", &cycle_id.to_string())
+        .expect("seeding cycle 1 must emit a fact");
+    assert_eq!(aggregate_type, "billing_cycle");
+    assert_eq!(payload["subscription_id"].as_str(), Some(subscription_id.to_string().as_str()));
+    assert_eq!(payload["cycle_number"].as_i64(), Some(1));
+}
+
+#[test]
+fn a_billing_cycle_status_change_emits_a_fact() {
+    let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+    let (_, cycle_id) = seeded_subscription(&db, "cycle-status-fact@example.com");
+
+    db.subscriptions()
+        .update_billing_cycle_status(cycle_id, BillingCycleStatus::Processing, None, None)
+        .expect("move the cycle to processing");
+
+    let (aggregate_type, payload, _) =
+        fact(&db, "billing_cycle.status_changed", &cycle_id.to_string())
+            .expect("a cycle status change must emit a fact");
+    assert_eq!(aggregate_type, "billing_cycle");
+    assert_eq!(payload["from"].as_str(), Some("scheduled"));
+    assert_eq!(payload["to"].as_str(), Some("processing"));
 }

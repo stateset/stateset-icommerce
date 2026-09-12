@@ -60,6 +60,34 @@ use std::path::Path;
 const SAFE_EXCEPTIONS: &[(&str, &str, &str)] = &[
     ("kernel_outbox.rs", "*", "the outbox itself: emitting would recurse"),
     ("migrations.rs", "*", "schema changes are not domain events"),
+    (
+        "subscriptions.rs",
+        "create_plan_item_with_conn",
+        "a plan line is part of the plan's definition, not a fact of its own: \
+         the only caller is `create_plan`, in its transaction, and one event \
+         per line would multiply one domain action into N",
+    ),
+    (
+        "subscriptions.rs",
+        "create_subscription_item_with_conn",
+        "the domain fact is `subscription.created`, which `create_subscription` \
+         emits through `record_event_with_conn` in the same transaction; the \
+         items are that subscription's lines",
+    ),
+    (
+        "subscriptions.rs",
+        "activate_if_trial_elapsed_with_tx",
+        "the activation fact is `subscription.activated`, emitted by \
+         `record_event_with_conn` in this same transaction three lines below \
+         the UPDATE; emitting again would duplicate it",
+    ),
+    (
+        "subscriptions.rs",
+        "advance_subscription_after_paid_cycle_with_tx",
+        "the fact is `subscription.renewed`, emitted by `record_event_with_conn` \
+         in this same transaction and carrying the cycle number and the new \
+         billing date; moving the clock is the subscription's own bookkeeping",
+    ),
 ];
 
 /// Mutating write paths that do not yet emit. **This is the Phase B work
@@ -516,7 +544,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("store_credits.rs", "apply"),
     ("subscriptions.rs", "create_plan"),
     ("subscriptions.rs", "update_plan"),
-    ("subscriptions.rs", "create_plan_item_with_conn"),
     ("subscriptions.rs", "create_subscription"),
     ("subscriptions.rs", "claim_due_for_billing"),
     ("subscriptions.rs", "release_billing_claim"),
@@ -525,12 +552,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("subscriptions.rs", "resume_subscription"),
     ("subscriptions.rs", "cancel_subscription"),
     ("subscriptions.rs", "skip_billing_cycle"),
-    ("subscriptions.rs", "create_subscription_item_with_conn"),
-    ("subscriptions.rs", "insert_billing_cycle_with_conn"),
-    ("subscriptions.rs", "activate_if_trial_elapsed_with_tx"),
-    ("subscriptions.rs", "apply_billing_cycle_status_with_tx"),
-    ("subscriptions.rs", "advance_subscription_after_paid_cycle_with_tx"),
-    ("subscriptions.rs", "record_event_with_conn"),
     ("supplier_skus.rs", "create"),
     ("supplier_skus.rs", "update"),
     ("supplier_skus.rs", "delete"),
