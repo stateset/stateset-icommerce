@@ -3,7 +3,7 @@
 #
 #   scripts/ci/check_required_checks.sh [options] <commit-sha>
 #
-# v1.35.0 shipped from a commit whose required checks were red because nothing
+# v1.35.1 shipped from a commit whose required checks were red because nothing
 # between "the tag exists" and "the publish workflow runs" ever looked at the
 # check state. This is that missing look-up, shared by the local release
 # command (scripts/release-tag.sh) and the publish-workflow guards

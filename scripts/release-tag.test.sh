@@ -199,55 +199,55 @@ assert_output_contains "plain SemVer" "the version error must name the expected 
 echo "==> rejects a dirty working tree"
 reset_state
 FAKE_DIRTY=1
-run_release_tag "1.35.0" --dry-run
+run_release_tag "1.35.1" --dry-run
 assert_status 1 "a dirty tree must abort the release"
 assert_output_contains "working tree is dirty" "the dirty-tree error must be explicit"
 
 echo "==> a failing fetch aborts loudly"
 reset_state
 FAKE_FETCH_FAILS=1
-run_release_tag "1.35.0" --dry-run
+run_release_tag "1.35.1" --dry-run
 assert_status 1 "a failed fetch must abort the release"
 assert_output_contains "fetching origin failed" "the fetch error must be explicit, not silent"
 
 echo "==> rejects HEAD that is not origin/master"
 reset_state
 FAKE_REMOTE_SHA="$OTHER_SHA"
-run_release_tag "1.35.0" --dry-run
-assert_status 1 "tagging off the protected branch must abort (the v1.35.0 failure)"
+run_release_tag "1.35.1" --dry-run
+assert_status 1 "tagging off the protected branch must abort (the v1.35.1 failure)"
 assert_output_contains "is not origin/master" "the branch error must name the remote branch"
 
 echo "==> rejects a failing release-hygiene gate"
 reset_state
 RELEASE_TAG_HYGIENE_SCRIPT="${WORK_DIR}/hygiene-fail.sh"
-run_release_tag "1.35.0" --dry-run
+run_release_tag "1.35.1" --dry-run
 assert_status 1 "a failing hygiene gate must abort the release"
 
 echo "==> rejects a red required check"
 reset_state
 printf 'Formatting\tcompleted\tfailure\t2026-09-08T11:00:00Z\n' >>"$FAKE_CHECK_RUNS_FILE"
-run_release_tag "1.35.0" --dry-run
-assert_status 1 "a red required check must abort the release (the v1.35.0 failure)"
+run_release_tag "1.35.1" --dry-run
+assert_status 1 "a red required check must abort the release (the v1.35.1 failure)"
 assert_output_contains "required check not green: Formatting" "the red check must be named"
 
 echo "==> rejects a required check that never reported"
 reset_state
 printf 'Formatting\tcompleted\tsuccess\t2026-09-08T10:00:00Z\n' >"$FAKE_CHECK_RUNS_FILE"
 printf 'CLI Tests\tcompleted\tsuccess\t2026-09-08T10:00:00Z\n' >>"$FAKE_CHECK_RUNS_FILE"
-run_release_tag "1.35.0" --dry-run
+run_release_tag "1.35.1" --dry-run
 assert_status 1 "a required check with no run must abort the release"
 assert_output_contains "missing required check: Code Coverage" "the missing check must be named"
 
 echo "==> honours the newest run of a re-run check"
 reset_state
 printf 'Formatting\tcompleted\tfailure\t2026-09-08T09:00:00Z\n' >>"$FAKE_CHECK_RUNS_FILE"
-run_release_tag "1.35.0" --dry-run
+run_release_tag "1.35.1" --dry-run
 assert_status 0 "an older failed attempt must not mask the newer green re-run"
 
 echo "==> --allow-red waives a named context, loudly"
 reset_state
 printf 'Formatting\tcompleted\tfailure\t2026-09-08T11:00:00Z\n' >>"$FAKE_CHECK_RUNS_FILE"
-run_release_tag "1.35.0" --dry-run --allow-red "Formatting"
+run_release_tag "1.35.1" --dry-run --allow-red "Formatting"
 assert_status 0 "an explicitly waived context must not block the release"
 assert_output_contains "RED CHECKS WAIVED" "a waiver must be logged loudly"
 assert_output_contains "Formatting (failure)" "the waiver must name the context and its conclusion"
@@ -255,12 +255,12 @@ assert_output_contains "Formatting (failure)" "the waiver must name the context 
 echo "==> --allow-red does not waive every other context"
 reset_state
 printf 'CLI Tests\tcompleted\tfailure\t2026-09-08T11:00:00Z\n' >>"$FAKE_CHECK_RUNS_FILE"
-run_release_tag "1.35.0" --dry-run --allow-red "Formatting"
+run_release_tag "1.35.1" --dry-run --allow-red "Formatting"
 assert_status 1 "a waiver must apply only to the named context"
 
 echo "==> a dry run creates and pushes nothing"
 reset_state
-run_release_tag "1.35.0" --dry-run
+run_release_tag "1.35.1" --dry-run
 assert_status 0 "the happy path must pass every precondition"
 assert_output_contains "DRY RUN" "a dry run must say so"
 assert_log_missing "git tag -a" "a dry run must not create tags"
@@ -268,12 +268,12 @@ assert_log_missing "git push" "a dry run must not push"
 
 echo "==> a real run pushes all three tags in one push"
 reset_state
-run_release_tag "1.35.0"
+run_release_tag "1.35.1"
 assert_status 0 "the happy path must succeed"
-assert_log_contains "git tag -a v1.35.0 -m" "the v tag must be annotated"
-assert_log_contains "git tag -a cli-v1.35.0 -m" "the cli-v tag must be annotated"
-assert_log_contains "git tag -a py-v1.35.0 -m" "the py-v tag must be annotated"
-assert_log_contains "git push --atomic origin refs/tags/v1.35.0 refs/tags/cli-v1.35.0 refs/tags/py-v1.35.0" \
+assert_log_contains "git tag -a v1.35.1 -m" "the v tag must be annotated"
+assert_log_contains "git tag -a cli-v1.35.1 -m" "the cli-v tag must be annotated"
+assert_log_contains "git tag -a py-v1.35.1 -m" "the py-v tag must be annotated"
+assert_log_contains "git push --atomic origin refs/tags/v1.35.1 refs/tags/cli-v1.35.1 refs/tags/py-v1.35.1" \
   "all three tags must go out in a single push (the v1.31/v1.32 failure)"
 push_count="$(grep -c '^git push' "$STUB_LOG" || true)"
 if [[ "$push_count" != "1" ]]; then
@@ -282,25 +282,25 @@ fi
 
 echo "==> refuses a sibling tag that points somewhere else"
 reset_state
-printf 'cli-v1.35.0 %s\n' "$OTHER_SHA" >"$FAKE_TAGS_FILE"
-run_release_tag "1.35.0" --dry-run
+printf 'cli-v1.35.1 %s\n' "$OTHER_SHA" >"$FAKE_TAGS_FILE"
+run_release_tag "1.35.1" --dry-run
 assert_status 1 "an existing tag on another commit must abort the release"
 assert_output_contains "already exists and points at" "the conflicting tag must be explained"
 
 echo "==> resumes a partially pushed release"
 reset_state
-printf 'v1.35.0 %s\n' "$HEAD_SHA" >"$FAKE_TAGS_FILE"
-run_release_tag "1.35.0"
+printf 'v1.35.1 %s\n' "$HEAD_SHA" >"$FAKE_TAGS_FILE"
+run_release_tag "1.35.1"
 assert_status 0 "a tag already on HEAD must be re-pushed rather than block the release"
-assert_log_missing "git tag -a v1.35.0" "the existing tag must not be recreated"
-assert_log_contains "git tag -a cli-v1.35.0 -m" "the missing sibling tags must still be created"
-assert_log_contains "git push --atomic origin refs/tags/v1.35.0 refs/tags/cli-v1.35.0 refs/tags/py-v1.35.0" \
+assert_log_missing "git tag -a v1.35.1" "the existing tag must not be recreated"
+assert_log_contains "git tag -a cli-v1.35.1 -m" "the missing sibling tags must still be created"
+assert_log_contains "git push --atomic origin refs/tags/v1.35.1 refs/tags/cli-v1.35.1 refs/tags/py-v1.35.1" \
   "the resumed release must still push all three tags together"
 
 echo "==> a failed push leaves no dangling local tags"
 reset_state
 FAKE_PUSH_FAILS=1
-run_release_tag "1.35.0"
+run_release_tag "1.35.1"
 assert_status 1 "a failed push must fail the command"
 assert_log_contains "git tag -d" "locally created tags must be rolled back after a failed push"
 
@@ -308,7 +308,7 @@ echo "==> the check gate falls back when branch protection is unreadable"
 reset_state
 FAKE_PROTECTION_READABLE=0
 printf 'CI Success\tcompleted\tsuccess\t2026-09-08T10:00:00Z\n' >>"$FAKE_CHECK_RUNS_FILE"
-run_release_tag "1.35.0" --dry-run
+run_release_tag "1.35.1" --dry-run
 assert_status 0 "an unreadable protection API must fall back to the aggregate context"
 assert_output_contains "falling back to required contexts" "the fallback must be announced"
 
@@ -316,7 +316,7 @@ echo "==> the fallback still fails when the aggregate check is red"
 reset_state
 FAKE_PROTECTION_READABLE=0
 printf 'CI Success\tcompleted\tfailure\t2026-09-08T10:00:00Z\n' >>"$FAKE_CHECK_RUNS_FILE"
-run_release_tag "1.35.0" --dry-run
+run_release_tag "1.35.1" --dry-run
 assert_status 1 "the fallback context must still gate the release"
 
 if ((failures > 0)); then
