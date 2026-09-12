@@ -2,15 +2,15 @@
 # Publish-workflow guard: refuse to publish anything from a commit that is not
 # a released state of the protected branch.
 #
-#   scripts/ci/check_release_guard.sh [--version 1.35.0] [--sha <sha>]
+#   scripts/ci/check_release_guard.sh [--version 1.35.1] [--sha <sha>]
 #
 # Every publish workflow (crates.io, npm, PyPI, sigstore signing) runs this
 # first. It fails unless all four hold:
 #
-#   1. the tagged commit is an ancestor of origin/master (v1.35.0 was published
+#   1. the tagged commit is an ancestor of origin/master (v1.35.1 was published
 #      from a branch commit that never landed);
 #   2. every branch-protection required check is green on that commit
-#      (v1.35.0's required check was red);
+#      (v1.35.1's required check was red);
 #   3. the three sibling tags v/cli-v/py-v all exist (v1.31.0 and v1.32.0
 #      shipped with only `v*`, leaving npm and PyPI a release behind);
 #   4. all three point at that same commit.
@@ -35,7 +35,7 @@ its required checks are green, and the three sibling release tags all exist on
 it.
 
 Options:
-  --version VERSION   Release version (1.35.0, v1.35.0, cli-v1.35.0, py-v1.35.0).
+  --version VERSION   Release version (1.35.1, v1.35.1, cli-v1.35.1, py-v1.35.1).
                       Defaults to RELEASE_VERSION, then the pushed tag ref.
   --sha SHA           Commit under test. Defaults to GITHUB_SHA, then HEAD.
   -h, --help          Show this help message.

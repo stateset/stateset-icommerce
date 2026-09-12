@@ -104,9 +104,9 @@ reset_state() {
   FAKE_CHECK_RUNS_FILE="${WORK_DIR}/check-runs.tsv"
   : >"$STUB_LOG"
   {
-    printf 'v1.35.0 %s\n' "$TAG_SHA"
-    printf 'cli-v1.35.0 %s\n' "$TAG_SHA"
-    printf 'py-v1.35.0 %s\n' "$TAG_SHA"
+    printf 'v1.35.1 %s\n' "$TAG_SHA"
+    printf 'cli-v1.35.1 %s\n' "$TAG_SHA"
+    printf 'py-v1.35.1 %s\n' "$TAG_SHA"
   } >"$FAKE_TAGS_FILE"
   printf 'CI Success\tcompleted\tsuccess\t2026-09-08T10:00:00Z\n' >"$FAKE_CHECK_RUNS_FILE"
   export STUB_LOG FAKE_TAGS_FILE FAKE_CHECK_RUNS_FILE
@@ -115,7 +115,7 @@ reset_state() {
   export FAKE_FETCH_BRANCH_FAILS=0
   export FAKE_REQUIRED_CONTEXTS='CI Success'
   export GITHUB_SHA="$TAG_SHA"
-  export GITHUB_REF="refs/tags/cli-v1.35.0"
+  export GITHUB_REF="refs/tags/cli-v1.35.1"
   unset RELEASE_VERSION RELEASE_GUARD_SKIP
 }
 
@@ -146,11 +146,11 @@ echo "==> passes when the tag is on master, green, and has both siblings"
 reset_state
 run_guard
 assert_status 0 "a well-formed release must pass the guard"
-assert_output_contains "Release guard passed for 1.35.0" "the guard must report the resolved version"
+assert_output_contains "Release guard passed for 1.35.1" "the guard must report the resolved version"
 
 echo "==> derives the version from any of the three tag refs"
 reset_state
-GITHUB_REF="refs/tags/py-v1.35.0"
+GITHUB_REF="refs/tags/py-v1.35.1"
 run_guard
 assert_status 0 "a py-v tag must resolve to the same release version"
 
@@ -158,21 +158,21 @@ echo "==> rejects a commit that is not on master"
 reset_state
 FAKE_IS_ANCESTOR=0
 run_guard
-assert_status 1 "publishing from a commit that never landed must fail (the v1.35.0 failure)"
+assert_status 1 "publishing from a commit that never landed must fail (the v1.35.1 failure)"
 assert_output_contains "is not an ancestor of origin/master" "the ancestry failure must be explicit"
 
 echo "==> rejects a release whose sibling tags are missing"
 reset_state
-printf 'v1.35.0 %s\n' "$TAG_SHA" >"$FAKE_TAGS_FILE"
+printf 'v1.35.1 %s\n' "$TAG_SHA" >"$FAKE_TAGS_FILE"
 run_guard
 assert_status 1 "a v-only release must fail (the v1.31/v1.32 failure)"
-assert_output_contains "tag cli-v1.35.0 does not exist" "the missing cli tag must be named"
-assert_output_contains "tag py-v1.35.0 does not exist" "the missing py tag must be named"
+assert_output_contains "tag cli-v1.35.1 does not exist" "the missing cli tag must be named"
+assert_output_contains "tag py-v1.35.1 does not exist" "the missing py tag must be named"
 
 echo "==> rejects sibling tags that point at different commits"
 reset_state
-printf 'py-v1.35.0 %s\n' "$OTHER_SHA" >>"$FAKE_TAGS_FILE"
-sed -i '/^py-v1.35.0 1111/d' "$FAKE_TAGS_FILE"
+printf 'py-v1.35.1 %s\n' "$OTHER_SHA" >>"$FAKE_TAGS_FILE"
+sed -i '/^py-v1.35.1 1111/d' "$FAKE_TAGS_FILE"
 run_guard
 assert_status 1 "tags spread across commits must fail the guard"
 assert_output_contains "points at ${OTHER_SHA}" "the divergent tag must be named"
@@ -181,13 +181,13 @@ echo "==> rejects a red required check"
 reset_state
 printf 'CI Success\tcompleted\tfailure\t2026-09-08T10:00:00Z\n' >"$FAKE_CHECK_RUNS_FILE"
 run_guard
-assert_status 1 "a red required check must block the publish (the v1.35.0 failure)"
+assert_status 1 "a red required check must block the publish (the v1.35.1 failure)"
 assert_output_contains "required checks are not green" "the check failure must be summarised"
 
 echo "==> reports every problem at once"
 reset_state
 FAKE_IS_ANCESTOR=0
-printf 'v1.35.0 %s\n' "$TAG_SHA" >"$FAKE_TAGS_FILE"
+printf 'v1.35.1 %s\n' "$TAG_SHA" >"$FAKE_TAGS_FILE"
 printf 'CI Success\tcompleted\tfailure\t2026-09-08T10:00:00Z\n' >"$FAKE_CHECK_RUNS_FILE"
 run_guard
 assert_status 1 "a broken release must fail"

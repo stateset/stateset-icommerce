@@ -88,13 +88,13 @@ transport boundary, or `--strict-protocol` to refuse pre-2026-07-28 clients.
 | Channel | Command |
 | ------- | ------- |
 | **crates.io** | `cargo add stateset-sdk --features full` |
-| **npm** | `npm install @stateset/embedded@1.35.0` |
-| **PyPI** | `pip install stateset-embedded==1.35.0` |
-| **CLI + MCP servers** | `npm install -g @stateset/cli@1.35.0` |
+| **npm** | `npm install @stateset/embedded@1.35.1` |
+| **PyPI** | `pip install stateset-embedded==1.35.1` |
+| **CLI + MCP servers** | `npm install -g @stateset/cli@1.35.1` |
 
 The Ruby and WASM bindings have published packages that are not kept current:
 RubyGems `stateset_embedded` is at 0.1.9 and npm `@stateset/embedded-wasm` at
-0.7.22, both far behind 1.35.0. PHP, Java, Kotlin, Swift, .NET, and Go have no
+0.7.22, both far behind 1.35.1. PHP, Java, Kotlin, Swift, .NET, and Go have no
 published package at all — build those from source, and see
 [`docs/src/api/`](docs/src/api/) for each binding's API and install snippet.
 
@@ -203,7 +203,7 @@ JSON-schema tools rather than stdio MCP, use the embedded toolkit:
 | `stateset_embedded.openai` / `.langchain` / `.crewai` / `.autogen` | Python equivalents |
 
 Install the Python framework extras in one step with
-`pip install "stateset-embedded[agents]==1.35.0"`.
+`pip install "stateset-embedded[agents]==1.35.1"`.
 
 The toolkit also exposes payment-aware helpers (`getPayableToolCatalog()`,
 `executePaidTool()`, `discoverRemotePaymentService()`) and contract/replay

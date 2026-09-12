@@ -6,6 +6,25 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.35.1] - 2026-09-12
+
+### Fixed
+
+- Creating a subscription no longer fails with `Conflict("Subscription <id> is
+  leased for billing by another worker until <ts>")`. The create path seeded
+  billing cycle 1 in its own transaction, after the subscription row had already
+  committed, and went through the lease-guarded public billing mutation. A
+  subscription with a back-dated start date is due the instant it commits, so a
+  concurrent billing worker could lease the brand-new row in that gap and the
+  unclaimed seed was refused — the create returned `Conflict` and left a
+  committed subscription with no billing cycle behind. Both backends now seed
+  cycle 1 in the same transaction as the insert, priced off the row that
+  transaction just inserted, so nothing can hold a lease on a row that has never
+  been visible. The create is atomic as well: a failed seed previously returned
+  an error but kept the subscription. The lease guard itself is unchanged on
+  `create_billing_cycle` / `create_billing_cycle_async`, which still refuse a
+  foreign worker and an unclaimed caller.
+
 ## [1.35.0] - 2026-09-10
 
 ### Added
