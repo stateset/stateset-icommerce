@@ -3132,3 +3132,65 @@ fn kernel_outbox_rows_default_to_the_governed_tier() {
         "pre-existing rows are governed by definition, so the default must backfill them"
     );
 }
+
+#[test]
+fn recorded_facts_land_in_the_recorded_tier() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+
+    let customer = db
+        .customers()
+        .create(CreateCustomer {
+            email: "recorded-tier@example.com".into(),
+            first_name: "Kernel".into(),
+            last_name: "Recorded".into(),
+            phone: None,
+            accepts_marketing: None,
+            tags: None,
+            metadata: None,
+        })
+        .expect("create customer");
+
+    let conn = db.pool().get().expect("connection");
+    let (tier, aggregate_id): (String, String) = conn
+        .query_row(
+            "SELECT tier, aggregate_id FROM kernel_outbox
+             WHERE aggregate_type = 'customer' ORDER BY created_at DESC LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("creating a customer must emit an outbox fact");
+
+    assert_eq!(tier, "recorded");
+    assert_eq!(aggregate_id, customer.id.to_string());
+}
+
+#[test]
+fn a_failed_mutation_leaves_no_outbox_fact() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+
+    // A create that violates the unique-email constraint must roll the fact
+    // back with it.
+    let dup = CreateCustomer {
+        email: "rollback@example.com".into(),
+        first_name: "Kernel".into(),
+        last_name: "Rollback".into(),
+        phone: None,
+        accepts_marketing: None,
+        tags: None,
+        metadata: None,
+    };
+    db.customers().create(dup.clone()).expect("first create succeeds");
+    let conn = db.pool().get().expect("connection");
+    let before: i64 =
+        conn.query_row("SELECT COUNT(*) FROM kernel_outbox", [], |row| row.get(0)).expect("count");
+
+    let _ = db.customers().create(dup);
+
+    let after: i64 =
+        conn.query_row("SELECT COUNT(*) FROM kernel_outbox", [], |row| row.get(0)).expect("count");
+
+    assert_eq!(
+        before, after,
+        "the fact is written in the mutation's transaction, so a rollback must take it too"
+    );
+}

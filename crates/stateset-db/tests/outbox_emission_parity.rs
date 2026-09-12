@@ -228,7 +228,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("custom_objects.rs", "create_object"),
     ("custom_objects.rs", "update_object"),
     ("custom_objects.rs", "delete_object"),
-    ("customers.rs", "insert_customer_tx"),
     ("customers.rs", "update_customer_tx"),
     ("customers.rs", "delete_customer_tx"),
     ("customers.rs", "sync_default_flags"),

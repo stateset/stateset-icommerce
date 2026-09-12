@@ -1993,7 +1993,7 @@ impl SqliteCartRepository {
     /// two different customers. Delegating keeps guest checkout on exactly the
     /// same normalised identity as every other way a customer is created.
     fn resolve_customer_id_with_conn(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         cart: &Cart,
     ) -> Result<CustomerId> {
         if let Some(customer_id) = cart.customer_id {
