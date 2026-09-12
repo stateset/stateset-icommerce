@@ -39,6 +39,40 @@ import {
 import { getRotationPolicyManager } from './rotation-policy.js';
 
 /**
+ * Every reason a pulled event can be quarantined under. This is the whole list:
+ * `sync doctor` renders it, the docs table explains it, and nothing else may
+ * appear in `_ves_quarantined_events.reason`.
+ *
+ * - `signature_invalid` — the author signature did not verify under the key the
+ *   directory names. A forgery or a corrupted envelope.
+ * - `key_unresolved` — the key could not be obtained: the sequencer was
+ *   unreachable past `peerKeyMaxStaleSeconds`, or the agent's directory has no
+ *   such `key_id` (commonly: the peer pushed before registering its key).
+ * - `key_outside_validity_window` — the key exists but was not valid at the
+ *   event's `createdAt`.
+ * - `key_revoked` — the key was revoked at or before the event's `createdAt`.
+ * - `peer_key_conflict` — the directory presented a different public key for an
+ *   already-pinned `(agent_id, key_id)`. A sequencer swapping key material.
+ * - `sequencer_key_not_configured` — `sequencerPublicKey` is not set locally, so
+ *   no directory can be verified and nothing can be stored. A local
+ *   misconfiguration, not a peer or sequencer fault.
+ * - `directory_untrusted` — the key directory response was refused: unsigned,
+ *   bad signature, for a different agent or tenant, too stale, or (gRPC) never
+ *   cryptographically attested at all.
+ *
+ * @type {ReadonlyArray<string>}
+ */
+export const QUARANTINE_REASONS = Object.freeze([
+  'signature_invalid',
+  'key_unresolved',
+  'key_outside_validity_window',
+  'key_revoked',
+  'peer_key_conflict',
+  'sequencer_key_not_configured',
+  'directory_untrusted',
+]);
+
+/**
  * @typedef {Object} OutboxEvent
  * @property {number} localSeq - Local sequence number
  * @property {string} eventId - UUID of the event
@@ -1360,7 +1394,7 @@ export class Outbox {
    * Store events that failed verification. These are never returned by
    * getPulledEvents, so application reads cannot see unverified state.
    * @param {Array<Object>} events
-   * @param {'signature_invalid'|'key_unresolved'|'key_outside_validity_window'|'key_revoked'|'peer_key_conflict'} reason
+   * @param {'signature_invalid'|'key_unresolved'|'key_outside_validity_window'|'key_revoked'|'peer_key_conflict'|'sequencer_key_not_configured'|'directory_untrusted'} reason - one of {@link QUARANTINE_REASONS}
    */
   storeQuarantinedEvents(events, reason) {
     this.initialize();

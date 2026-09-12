@@ -1323,7 +1323,10 @@ describe('getAgentSigningKeys', () => {
       allowInsecureTransport: true,
       securityProfile: 'legacy',
     });
-    client._request = async () => ({ ...body, directorySignature: `0x${signature.toString('hex')}` });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
 
     const result = await client.getAgentSigningKeys(body.agentId);
     assert.equal(result.keys.length, 1);
@@ -1408,12 +1411,12 @@ describe('getAgentSigningKeys', () => {
       allowInsecureTransport: true,
       securityProfile: 'legacy',
     });
-    client._request = async () => ({ ...body, directorySignature: `0x${signature.toString('hex')}` });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
 
-    await assert.rejects(
-      () => client.getAgentSigningKeys(body.agentId),
-      /Key directory too old/,
-    );
+    await assert.rejects(() => client.getAgentSigningKeys(body.agentId), /Key directory too old/);
   });
 
   it('rejects a directory timestamped implausibly far in the future', async () => {
@@ -1449,12 +1452,12 @@ describe('getAgentSigningKeys', () => {
       allowInsecureTransport: true,
       securityProfile: 'legacy',
     });
-    client._request = async () => ({ ...body, directorySignature: `0x${signature.toString('hex')}` });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
 
-    await assert.rejects(
-      () => client.getAgentSigningKeys(body.agentId),
-      /Key directory too old/,
-    );
+    await assert.rejects(() => client.getAgentSigningKeys(body.agentId), /Key directory too old/);
   });
 
   it('rejects a directory older than a custom (tighter) peerKeyMaxStaleSeconds', async () => {
@@ -1494,19 +1497,17 @@ describe('getAgentSigningKeys', () => {
       securityProfile: 'legacy',
       peerKeyMaxStaleSeconds: 1,
     });
-    client._request = async () => ({ ...body, directorySignature: `0x${signature.toString('hex')}` });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
 
-    await assert.rejects(
-      () => client.getAgentSigningKeys(body.agentId),
-      /Key directory too old/,
-    );
+    await assert.rejects(() => client.getAgentSigningKeys(body.agentId), /Key directory too old/);
   });
 
   it('accepts a hex-string sequencerPublicKey (the shape config files actually carry)', async () => {
     const signingKey = crypto.generateKeyPairSync('ed25519');
-    const rawPublicKey = signingKey.publicKey
-      .export({ type: 'spki', format: 'der' })
-      .subarray(-32);
+    const rawPublicKey = signingKey.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
     const sequencerPublicKey = `0x${rawPublicKey.toString('hex')}`;
 
     const body = {
@@ -1535,7 +1536,10 @@ describe('getAgentSigningKeys', () => {
       allowInsecureTransport: true,
       securityProfile: 'legacy',
     });
-    client._request = async () => ({ ...body, directorySignature: `0x${signature.toString('hex')}` });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
 
     const result = await client.getAgentSigningKeys(body.agentId);
     assert.equal(result.keys.length, 1);
@@ -1544,9 +1548,7 @@ describe('getAgentSigningKeys', () => {
 
   it('threads sequencerPublicKey through createSyncConfig/SyncConfig the way production constructs the client', async () => {
     const signingKey = crypto.generateKeyPairSync('ed25519');
-    const rawPublicKey = signingKey.publicKey
-      .export({ type: 'spki', format: 'der' })
-      .subarray(-32);
+    const rawPublicKey = signingKey.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
     const sequencerPublicKey = `0x${rawPublicKey.toString('hex')}`;
 
     const tenantId = '22222222-2222-2222-2222-222222222222';
@@ -1571,7 +1573,7 @@ describe('getAgentSigningKeys', () => {
 
       assert.equal(rawConfig.sequencerPublicKey, sequencerPublicKey);
       assert.equal(rawConfig.peerKeyMaxStaleSeconds, 1);
-      assert.equal(rawConfig.peerKeyTtlSeconds, 3600);
+      assert.equal(rawConfig.peerKeyTtlSeconds, 300);
 
       const config = new SyncConfig(rawConfig);
       assert.equal(config.sequencerPublicKey, sequencerPublicKey);
@@ -1615,13 +1617,30 @@ describe('getAgentSigningKeys', () => {
         ...staleBody,
         directorySignature: `0x${staleSignature.toString('hex')}`,
       });
-      await assert.rejects(
-        () => client.getAgentSigningKeys(agentId),
-        /Key directory too old/,
-      );
+      await assert.rejects(() => client.getAgentSigningKeys(agentId), /Key directory too old/);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it('tags the missing-config failure with its own code', async () => {
+    const client = createSequencerClient({
+      sequencerUrl: 'http://localhost:8080',
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      apiKey: 'test',
+      allowInsecureTransport: true,
+      securityProfile: 'legacy',
+    });
+    client._request = async () => ({ agentId: 'x', keys: [] });
+
+    await assert.rejects(
+      () => client.getAgentSigningKeys('44444444-4444-4444-4444-444444444444'),
+      (error) => {
+        assert.equal(error.code, 'sequencer_key_not_configured');
+        assert.match(error.message, /stateset-sync config set sequencer-public-key/);
+        return true;
+      },
+    );
   });
 });
 

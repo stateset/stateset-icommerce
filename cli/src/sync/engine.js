@@ -492,14 +492,29 @@ export class SyncEngine extends EventEmitter {
             envelope.agentKeyId,
             envelope.createdAt,
           );
-        } catch {
-          resolution = { error: 'key_unresolved' };
+        } catch (error) {
+          resolution = { error: 'key_unresolved', detail: error?.message };
         }
 
         if (resolution.error) {
-          quarantinedRecords.push({ record, reason: resolution.error });
+          quarantinedRecords.push({
+            record,
+            reason: resolution.error,
+            detail: resolution.detail,
+          });
           continue;
         }
+
+        // NOTE (deliberate, tracked): the receive path does NOT call
+        // `assertEventMatchesSecurityProfile`, which the push path does call
+        // (client.js `push`, grpc-client.js `pushEvents`). An event declaring
+        // `agentSignatureScheme: 0` is therefore accepted by an agent
+        // configured `hybrid` or `pqc-strict`, and `verifyEventSignature`
+        // below falls back to the classical Ed25519 component. Enforcing the
+        // profile here would quarantine every legacy peer on upgrade, so the
+        // asymmetry stands until peers have migrated. No forgery becomes
+        // possible in the meantime: the attacker still needs the peer's
+        // Ed25519 private key. See docs/src/guides/sync.md.
 
         // Anything thrown here (malformed hex, a bad key bundle) is a failure
         // to verify, not a reason to accept the event.
@@ -522,6 +537,24 @@ export class SyncEngine extends EventEmitter {
 
       const storedRecords = this._persistVerified(verifiedRecords);
 
+      // A verified event the local schema refuses is dropped permanently: it
+      // is not quarantined (it verified) and the cursor moves past it. The
+      // per-record `receive-store-failed` events name the offenders, but they
+      // need a listener; this does not.
+      if (storedRecords.length !== verifiedRecords.length) {
+        const dropped = verifiedRecords.length - storedRecords.length;
+        this.emit('receive-store-dropped', {
+          dropped,
+          verified: verifiedRecords.length,
+          stored: storedRecords.length,
+        });
+        console.warn(
+          `[sync-engine] ${dropped} verified event(s) could not be stored and were DROPPED, ` +
+            'not quarantined; the pull cursor has moved past them. ' +
+            'Listen for "receive-store-failed" for the individual event ids.',
+        );
+      }
+
       // storeQuarantinedEvents takes one reason per call, so group first.
       // Re-quarantining an event_id overwrites the previous reason on purpose:
       // the stored reason is the current diagnosis, and the newest one is the
@@ -531,11 +564,22 @@ export class SyncEngine extends EventEmitter {
       const reasons = new Set(quarantinedRecords.map((entry) => entry.reason));
       for (const reason of reasons) {
         const forReason = quarantinedRecords.filter((entry) => entry.reason === reason);
+        const detail = forReason.find((entry) => entry.detail)?.detail;
         quarantinedCount += this._persistQuarantined(
           forReason.map((entry) => entry.record),
           reason,
         );
-        this.emit('receive-verification-failed', { reason, count: forReason.length });
+        this.emit('receive-verification-failed', { reason, count: forReason.length, detail });
+
+        // A local misconfiguration and an untrustworthy directory are not
+        // routine quarantine traffic: the first halts the entire receive path
+        // on a stock deployment, the second is a live attack signal. Neither
+        // may depend on someone having attached an event listener.
+        if (reason === 'sequencer_key_not_configured' || reason === 'directory_untrusted') {
+          console.warn(
+            `[sync-engine] ${forReason.length} pulled event(s) quarantined as ${reason}: ${detail}`,
+          );
+        }
       }
 
       // The cursor advances regardless of what quarantined: one bad event from

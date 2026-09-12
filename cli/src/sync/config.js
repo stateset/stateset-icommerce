@@ -85,14 +85,21 @@ const DEFAULT_CONFIG = {
   },
   // The sequencer's Ed25519 public key, used to verify signed responses such
   // as the agent key directory (GET /api/v1/agents/:agent_id/signing-keys).
+  //
+  // REQUIRED for the receive path. Left null, every pulled event quarantines
+  // as `sequencer_key_not_configured` and nothing is stored. Encoding: the raw
+  // 32-byte Ed25519 public key as hex, `0x` prefix optional (a Buffer or a
+  // {ed25519PublicKey, mlDsa65PublicKey} bundle are also accepted in-process).
   sequencerPublicKey: null,
   // How old a signed key directory may be before it is refused as stale.
   // Signatures don't expire on their own, so this bounds how long a captured
   // response can be replayed to hide a key revocation.
   peerKeyMaxStaleSeconds: 86400,
   // How long a locally cached/pinned peer key directory may be reused before
-  // it must be re-fetched. Consumed by the peer-key cache (Task 6).
-  peerKeyTtlSeconds: 3600,
+  // it must be re-fetched. This is also the worst-case window in which a
+  // revoked peer key still verifies events, which is why it is 5 minutes and
+  // not an hour. Mirrored by `DEFAULT_TTL_SECONDS` in sync/key-directory.js.
+  peerKeyTtlSeconds: 300,
   identity: {
     tenantId: null,
     storeId: null,
@@ -123,6 +130,40 @@ const DEFAULT_CONFIG = {
     encryptPayloads: false,
   },
 };
+
+/**
+ * Normalize a sequencer public key to the one form the config file can hold.
+ *
+ * Accepted input: a raw 32-byte Ed25519 public key as a hex string (`0x` prefix
+ * optional) or as a Buffer/Uint8Array. Anything else throws, because a config
+ * file that silently holds `{"type":"Buffer","data":[...]}` or a truncated hex
+ * string fails much later, on the receive path, as an unverifiable directory.
+ *
+ * @param {string|Buffer|Uint8Array|null|undefined} value
+ * @returns {string|null} `0x`-prefixed lowercase hex, or null
+ */
+export function normalizeSequencerPublicKey(value) {
+  if (value === null || value === undefined || value === '') return null;
+
+  let hex;
+  if (typeof value === 'string') {
+    hex = value.trim().toLowerCase().replace(/^0x/, '');
+  } else if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
+    hex = Buffer.from(value).toString('hex');
+  } else {
+    throw new Error(
+      'sequencerPublicKey must be a hex string or a Buffer holding the raw 32-byte Ed25519 key',
+    );
+  }
+
+  if (!/^[0-9a-f]{64}$/.test(hex)) {
+    throw new Error(
+      'sequencerPublicKey must be the raw 32-byte Ed25519 public key as 64 hex characters ' +
+        `(0x prefix optional); got ${hex.length} hex characters`,
+    );
+  }
+  return `0x${hex}`;
+}
 
 const ALLOWED_SEQUENCER_PROTOCOLS = new Set(['grpc:', 'grpcs:', 'http:', 'https:']);
 
@@ -258,9 +299,9 @@ export function saveSyncConfig(config, cwd = process.cwd()) {
  * @param {boolean} [options.encryptPayloads=false] - Enable payload encryption
  * @param {'legacy' | 'hybrid' | 'pqc-strict'} [options.securityProfile='hybrid'] - PQ migration profile
  * @param {boolean} [options.allowInsecureTransport=false] - Allow insecure legacy transport explicitly
- * @param {string|Buffer} [options.sequencerPublicKey] - Sequencer's Ed25519 public key, for verifying signed responses (e.g. the agent key directory)
+ * @param {string|Buffer} [options.sequencerPublicKey] - Sequencer's Ed25519 public key (raw 32 bytes as hex, `0x` prefix optional), for verifying signed responses (e.g. the agent key directory). Required for the receive path.
  * @param {number} [options.peerKeyMaxStaleSeconds=86400] - Max age of a signed key directory before it is refused as stale
- * @param {number} [options.peerKeyTtlSeconds=3600] - How long a cached/pinned peer key directory may be reused before re-fetching
+ * @param {number} [options.peerKeyTtlSeconds=300] - How long a cached/pinned peer key directory may be reused before re-fetching
  * @param {string} [cwd] - Current working directory
  * @returns {SyncConfig}
  */
@@ -292,7 +333,7 @@ export function createSyncConfig(options, cwd = process.cwd()) {
       tls: isSecure,
       insecure: !isSecure,
     },
-    sequencerPublicKey: options.sequencerPublicKey ?? null,
+    sequencerPublicKey: normalizeSequencerPublicKey(options.sequencerPublicKey),
     peerKeyMaxStaleSeconds: options.peerKeyMaxStaleSeconds ?? DEFAULT_CONFIG.peerKeyMaxStaleSeconds,
     peerKeyTtlSeconds: options.peerKeyTtlSeconds ?? DEFAULT_CONFIG.peerKeyTtlSeconds,
     identity: {
@@ -345,7 +386,9 @@ export function updateSyncConfig(updates, cwd = process.cwd()) {
 
   const updated = {
     sequencer: { ...current.sequencer, ...updates.sequencer },
-    sequencerPublicKey: updates.sequencerPublicKey ?? current.sequencerPublicKey ?? null,
+    sequencerPublicKey: normalizeSequencerPublicKey(
+      updates.sequencerPublicKey ?? current.sequencerPublicKey ?? null,
+    ),
     peerKeyMaxStaleSeconds:
       updates.peerKeyMaxStaleSeconds ??
       current.peerKeyMaxStaleSeconds ??
@@ -487,6 +530,16 @@ export function validateSyncConfig(config) {
 
   if (config.identity?.storeId && !uuidRegex.test(config.identity.storeId)) {
     errors.push('Store ID must be a valid UUID');
+  }
+
+  // Not an error when unset — an agent that only pushes never needs it — but a
+  // malformed value is, because it fails invisibly on the receive path.
+  if (config.sequencerPublicKey) {
+    try {
+      normalizeSequencerPublicKey(config.sequencerPublicKey);
+    } catch (error) {
+      errors.push(error.message);
+    }
   }
 
   return {

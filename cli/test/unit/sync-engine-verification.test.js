@@ -571,14 +571,19 @@ describe('pull verification — end to end through the real client and directory
   }
 
   /** Wire the engine's own client to a real SequencerClient over a stubbed _request. */
-  function buildRealEngine({ tamper = false } = {}) {
+  function buildRealEngine({
+    tamper = false,
+    configureSequencerKey = true,
+  } = {}) {
     const agentKey = crypto.generateKeyPairSync('ed25519');
     const sequencerKey = crypto.generateKeyPairSync('ed25519');
 
     const config = new SyncConfig({
       sequencer: { url: SEQ_URL },
       identity: { tenantId: TENANT, storeId: STORE, agentId: SELF },
-      sequencerPublicKey: rawEd25519PublicKey(sequencerKey).toString('hex'),
+      sequencerPublicKey: configureSequencerKey
+        ? rawEd25519PublicKey(sequencerKey).toString('hex')
+        : null,
     });
 
     const directoryBody = {
@@ -656,4 +661,67 @@ describe('pull verification — end to end through the real client and directory
     assert.equal(engine.outbox.getPulledEvents().length, 0);
     assert.equal(engine.outbox.getQuarantinedEvents()[0].reason, 'signature_invalid');
   });
+
+  /**
+   * The path EVERY deployment took before `sequencerPublicKey` was
+   * configurable: a correct sequencer, a correct peer, a genuinely signed
+   * event — and nothing stored, because the local config has no key to verify
+   * the directory with. This is not an edge case, so it is pinned by name: the
+   * reason must point the operator at their own config, not at the peer's key
+   * registry.
+   */
+  it('names the missing sequencer public key instead of blaming the key registry', async () => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (message) => warnings.push(String(message));
+
+    let result;
+    let engine;
+    try {
+      ({ engine } = buildRealEngine({ configureSequencerKey: false }));
+      result = await engine.pull();
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.equal(result.success, true);
+    assert.equal(result.pulled, 1);
+    assert.equal(result.verified, 0);
+    assert.equal(result.quarantined, 1);
+    assert.equal(result.stored, 0);
+    assert.equal(engine.outbox.getPulledEvents().length, 0);
+
+    const quarantined = engine.outbox.getQuarantinedEvents();
+    assert.equal(quarantined.length, 1);
+    assert.equal(
+      quarantined[0].reason,
+      'sequencer_key_not_configured',
+      'a missing local config line must not read as key_unresolved',
+    );
+
+    // And it is loud without anyone attaching a listener.
+    assert.ok(
+      warnings.some((line) => line.includes('sequencer_key_not_configured')),
+      `expected a warning naming the cause, got ${JSON.stringify(warnings)}`,
+    );
+  });
+
+  it('emits the underlying cause as `detail` on receive-verification-failed', async () => {
+    const { engine } = buildRealEngine({ configureSequencerKey: false });
+    const failures = [];
+    engine.on('receive-verification-failed', (event) => failures.push(event));
+
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try {
+      await engine.pull();
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0].reason, 'sequencer_key_not_configured');
+    assert.match(failures[0].detail, /sequencerPublicKey is not configured/);
+  });
+
 });

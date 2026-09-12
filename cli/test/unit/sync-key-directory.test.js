@@ -6,7 +6,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 
-import { createOutbox } from '../../src/sync/outbox.js';
+import { createOutbox, QUARANTINE_REASONS } from '../../src/sync/outbox.js';
 import { createPeerKeyDirectory } from '../../src/sync/key-directory.js';
 
 const AGENT = '44444444-4444-4444-4444-444444444444';
@@ -92,7 +92,9 @@ describe('PeerKeyDirectory', () => {
   it('rejects an event created outside the key validity window', async () => {
     const dir = createPeerKeyDirectory(
       outbox,
-      stubClient([key({ validFrom: '2026-09-01T00:00:00.000Z', validTo: '2026-09-10T00:00:00.000Z' })]),
+      stubClient([
+        key({ validFrom: '2026-09-01T00:00:00.000Z', validTo: '2026-09-10T00:00:00.000Z' }),
+      ]),
       {},
     );
     const resolved = await dir.resolve(AGENT, 1, '2026-09-12T00:00:00.000Z');
@@ -121,7 +123,11 @@ describe('PeerKeyDirectory', () => {
 
     const failing = createPeerKeyDirectory(
       outbox,
-      { async getAgentSigningKeys() { throw new Error('unreachable'); } },
+      {
+        async getAgentSigningKeys() {
+          throw new Error('unreachable');
+        },
+      },
       { peerKeyTtlSeconds: 0, peerKeyMaxStaleSeconds: 86400 },
     );
     const stillOk = await failing.resolve(AGENT, 1, '2026-09-12T00:00:00.000Z');
@@ -129,9 +135,95 @@ describe('PeerKeyDirectory', () => {
 
     const tooStale = createPeerKeyDirectory(
       outbox,
-      { async getAgentSigningKeys() { throw new Error('unreachable'); } },
+      {
+        async getAgentSigningKeys() {
+          throw new Error('unreachable');
+        },
+      },
       { peerKeyTtlSeconds: 0, peerKeyMaxStaleSeconds: 0 },
     );
-    assert.equal((await tooStale.resolve(AGENT, 1, '2026-09-12T00:00:00.000Z')).error, 'key_unresolved');
+    assert.equal(
+      (await tooStale.resolve(AGENT, 1, '2026-09-12T00:00:00.000Z')).error,
+      'key_unresolved',
+    );
   });
+
+  it('defaults the TTL to the 300s the spec specifies', () => {
+    const dir = createPeerKeyDirectory(outbox, stubClient([key()]), {});
+    assert.equal(dir.ttlSeconds, 300);
+    assert.equal(dir.maxStaleSeconds, 86400);
+  });
+
+  describe('failure reasons', () => {
+    function throwingClient(message, code) {
+      return {
+        async getAgentSigningKeys() {
+          const error = new Error(message);
+          if (code) error.code = code;
+          throw error;
+        },
+      };
+    }
+
+    it('names a missing local sequencerPublicKey rather than blaming the registry', async () => {
+      const dir = createPeerKeyDirectory(
+        outbox,
+        throwingClient('sequencerPublicKey is not configured', 'sequencer_key_not_configured'),
+        {},
+      );
+      const resolved = await dir.resolve(AGENT, 1, '2026-09-12T00:00:00.000Z');
+      assert.equal(resolved.error, 'sequencer_key_not_configured');
+      assert.match(resolved.detail, /not configured/);
+    });
+
+    it('names an untrustworthy directory rather than blaming the registry', async () => {
+      const dir = createPeerKeyDirectory(
+        outbox,
+        throwingClient('Key directory signature invalid', 'directory_untrusted'),
+        {},
+      );
+      const resolved = await dir.resolve(AGENT, 1, '2026-09-12T00:00:00.000Z');
+      assert.equal(resolved.error, 'directory_untrusted');
+    });
+
+    it('keeps key_unresolved for an unreachable sequencer', async () => {
+      const dir = createPeerKeyDirectory(outbox, throwingClient('ECONNREFUSED'), {});
+      const resolved = await dir.resolve(AGENT, 1, '2026-09-12T00:00:00.000Z');
+      assert.equal(resolved.error, 'key_unresolved');
+    });
+
+    it('does not serve a hard refusal from the stale cache', async () => {
+      const seeded = createPeerKeyDirectory(outbox, stubClient([key()]), { peerKeyTtlSeconds: 0 });
+      await seeded.resolve(AGENT, 1, '2026-09-12T00:00:00.000Z');
+
+      // An outage falls back to the cache (asserted above). A forged or
+      // misdirected directory must NOT: it is an attack signal, and papering
+      // over it with cached keys hides the signal for a day.
+      const attacked = createPeerKeyDirectory(
+        outbox,
+        throwingClient('Key directory signature invalid', 'directory_untrusted'),
+        { peerKeyTtlSeconds: 0, peerKeyMaxStaleSeconds: 86400 },
+      );
+      const resolved = await attacked.resolve(AGENT, 1, '2026-09-12T00:00:00.000Z');
+      assert.equal(resolved.error, 'directory_untrusted');
+    });
+
+    it('every reason it can return is a known quarantine reason', async () => {
+      const produced = [
+        'key_unresolved',
+        'peer_key_conflict',
+        'key_revoked',
+        'key_outside_validity_window',
+        'sequencer_key_not_configured',
+        'directory_untrusted',
+      ];
+      for (const reason of produced) {
+        assert.ok(
+          QUARANTINE_REASONS.includes(reason),
+          `${reason} is missing from QUARANTINE_REASONS`,
+        );
+      }
+    });
+  });
+
 });
