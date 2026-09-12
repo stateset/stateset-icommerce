@@ -6,6 +6,53 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **Verifiable receive path.** Every event returned by `stateset-sync pull` is now
+  verified against its author's signing key, resolved through the sequencer's
+  signed key directory and pinned on first use. What fails verification is
+  quarantined in `_ves_quarantined_events` and is never returned by application
+  reads. Verification is unconditional; there is no flag that disables it.
+- `stateset-sync init --sequencer-public-key <hex>` (plus
+  `--peer-key-ttl-seconds` and `--peer-key-max-stale-seconds`), and a new
+  `stateset-sync config show` / `stateset-sync config set <key> <value>`.
+- `stateset-sync doctor` — quarantine counts by reason and current peer key pins;
+  `--promote` re-verifies quarantined events and promotes what now passes.
+
+### Changed
+
+- **UPGRADE NOTE — configure `sequencerPublicKey` before upgrading, or the
+  receive path stops.** An agent without it can still push, but cannot verify
+  any key directory: every pulled event quarantines as
+  `sequencer_key_not_configured` and nothing is stored. Set it with
+  `stateset-sync config set sequencer-public-key <hex>` (the raw 32-byte Ed25519
+  key as hex, `0x` optional), then run `stateset-sync doctor --promote` to take
+  the backlog out of quarantine. The sequencer must also be serving
+  `GET /api/v1/agents/:agent_id/signing-keys`.
+- **UPGRADE NOTE — the gRPC receive path is unsupported.** `pull()` now refuses
+  on a gRPC transport with an explanation instead of storing nothing quietly,
+  and streamed events are never written to local state. gRPC deployments that
+  receive events must move to an `https://` sequencer URL; pushing over gRPC is
+  unaffected.
+- The `pull` result drops `applied` (nothing is applied to local entity state)
+  and reports `pulled`, `verified`, `quarantined`, `stored` and `conflicts`, each
+  computed from what happened. `conflicts` is `null`, never `0`, where it is not
+  computed.
+- `peerKeyTtlSeconds` defaults to 300 seconds (was 3600), matching the design:
+  it bounds how long a revoked peer key keeps verifying events.
+- `securityProfile` is deliberately **not** enforced on the receive path, so
+  agents on `hybrid`/`pqc-strict` still accept legacy Ed25519 peers. Tracked.
+
+### Fixed
+
+- Conflict rows are keyed by the conflict's identity instead of a fresh UUID per
+  detection, so repeated detection — now on the background sync timer — no longer
+  grows `_ves_conflicts`, the `sync conflicts` listing and the `sync_conflicts`
+  MCP count without bound.
+- `sync doctor` counts quarantined events with SQL rather than by measuring a
+  1,000-row page, and `--promote` pages through the whole table instead of
+  sweeping only the first 1,000.
+
 ## [1.35.1] - 2026-09-12
 
 ### Fixed

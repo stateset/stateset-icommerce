@@ -39,6 +39,83 @@ import {
 import { getRotationPolicyManager } from './rotation-policy.js';
 
 /**
+ * Reasons that describe a failure to OBTAIN a key rather than a finding about
+ * the event. Nothing is learned about the event itself when resolution fails
+ * this way: the sequencer was unreachable, or this agent is not configured to
+ * verify a directory at all.
+ *
+ * @type {ReadonlyArray<string>}
+ */
+export const KEY_ACQUISITION_REASONS = Object.freeze([
+  'key_unresolved',
+  'sequencer_key_not_configured',
+]);
+
+/**
+ * Would replacing `existingReason` with `nextReason` throw away what we know?
+ *
+ * Both quarantine writers go through this, so the two paths cannot drift. The
+ * rule: a key-acquisition failure never overwrites a finding about the event.
+ * While the sequencer is unreachable EVERY event resolves as `key_unresolved`,
+ * so without this an outage rewrites `signature_invalid`,
+ * `directory_untrusted`, `peer_key_conflict` and `key_revoked` down to the
+ * benign-outage reason — erasing the security signal the quarantine table
+ * exists to preserve, on the background sync timer as well as on
+ * `sync doctor --promote`.
+ *
+ * Deliberately still allowed: any real finding may replace anything (including
+ * `directory_untrusted`, which is a live attack signal, replacing
+ * `signature_invalid`), and one acquisition failure may replace another —
+ * learning that a key cannot be obtained because of a missing local config
+ * line is worth recording.
+ *
+ * @param {string|null|undefined} existingReason - the stored reason, if any
+ * @param {string} nextReason - the reason about to be written
+ * @returns {boolean}
+ */
+export function isQuarantineReasonDowngrade(existingReason, nextReason) {
+  if (!existingReason || existingReason === nextReason) return false;
+  return (
+    KEY_ACQUISITION_REASONS.includes(nextReason) &&
+    !KEY_ACQUISITION_REASONS.includes(existingReason)
+  );
+}
+
+/**
+ * Every reason a pulled event can be quarantined under. This is the whole list:
+ * `sync doctor` renders it, the docs table explains it, and nothing else may
+ * appear in `_ves_quarantined_events.reason`.
+ *
+ * - `signature_invalid` — the author signature did not verify under the key the
+ *   directory names. A forgery or a corrupted envelope.
+ * - `key_unresolved` — the key could not be obtained: the sequencer was
+ *   unreachable past `peerKeyMaxStaleSeconds`, or the agent's directory has no
+ *   such `key_id` (commonly: the peer pushed before registering its key).
+ * - `key_outside_validity_window` — the key exists but was not valid at the
+ *   event's `createdAt`.
+ * - `key_revoked` — the key was revoked at or before the event's `createdAt`.
+ * - `peer_key_conflict` — the directory presented a different public key for an
+ *   already-pinned `(agent_id, key_id)`. A sequencer swapping key material.
+ * - `sequencer_key_not_configured` — `sequencerPublicKey` is not set locally, so
+ *   no directory can be verified and nothing can be stored. A local
+ *   misconfiguration, not a peer or sequencer fault.
+ * - `directory_untrusted` — the key directory response was refused: unsigned,
+ *   bad signature, for a different agent or tenant, too stale, or (gRPC) never
+ *   cryptographically attested at all.
+ *
+ * @type {ReadonlyArray<string>}
+ */
+export const QUARANTINE_REASONS = Object.freeze([
+  'signature_invalid',
+  'key_unresolved',
+  'key_outside_validity_window',
+  'key_revoked',
+  'peer_key_conflict',
+  'sequencer_key_not_configured',
+  'directory_untrusted',
+]);
+
+/**
  * @typedef {Object} OutboxEvent
  * @property {number} localSeq - Local sequence number
  * @property {string} eventId - UUID of the event
@@ -201,6 +278,66 @@ CREATE TABLE IF NOT EXISTS _ves_pulled_events (
 
     CHECK(json_valid(payload)),
     CHECK(payload_kind IN (0, 1))
+);
+
+-- VES v1.0 Quarantined Events (events that failed verification on receive)
+CREATE TABLE IF NOT EXISTS _ves_quarantined_events (
+    event_id TEXT PRIMARY KEY,
+    sequence_number INTEGER NOT NULL,
+    command_id TEXT,
+    tenant_id TEXT NOT NULL,
+    store_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+
+    ves_version INTEGER NOT NULL DEFAULT 1,
+    payload TEXT NOT NULL,
+    payload_kind INTEGER NOT NULL DEFAULT 0,
+    payload_encrypted TEXT,
+    payload_plain_hash TEXT NOT NULL,
+    payload_cipher_hash TEXT NOT NULL,
+
+    agent_key_id INTEGER NOT NULL,
+    agent_signature TEXT NOT NULL,
+    agent_signature_scheme INTEGER NOT NULL DEFAULT 0,
+    agent_signature_bundle TEXT,
+
+    base_version INTEGER,
+    created_at TEXT NOT NULL,
+    sequenced_at TEXT NOT NULL,
+    source_agent TEXT NOT NULL,
+
+    reason TEXT NOT NULL,
+    quarantined_at TEXT NOT NULL DEFAULT (datetime('now')),
+
+    CHECK(json_valid(payload))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ves_quarantined_source
+    ON _ves_quarantined_events (source_agent, reason);
+
+-- VES v1.0 Peer Key cache (signing keys fetched from other agents' key directories)
+CREATE TABLE IF NOT EXISTS _ves_peer_keys (
+    agent_id TEXT NOT NULL,
+    key_id INTEGER NOT NULL,
+    algorithm TEXT NOT NULL,
+    public_key TEXT NOT NULL,
+    public_key_bundle TEXT,
+    valid_from TEXT,
+    valid_to TEXT,
+    revoked_at TEXT,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, key_id)
+);
+
+-- VES v1.0 Peer Key pins (trust-on-first-use pinning)
+CREATE TABLE IF NOT EXISTS _ves_peer_key_pins (
+    agent_id TEXT NOT NULL,
+    key_id INTEGER NOT NULL,
+    public_key TEXT NOT NULL,
+    pinned_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (agent_id, key_id)
 );
 
 -- Initialize default sync state
@@ -1201,8 +1338,22 @@ export class Outbox {
   }
 
   /**
-   * Store a pulled event from remote (VES v1.0)
-   * @param {Object} event - Sequenced event from remote
+   * Store a pulled event from remote (VES v1.0).
+   *
+   * CALLERS MUST VERIFY THE AUTHOR SIGNATURE FIRST — see
+   * `SyncEngine._persistVerified` in `sync/engine.js`, which resolves the
+   * author's key through `PeerKeyDirectory` and calls
+   * `client.verifyEventSignature` before it gets here. This method performs no
+   * verification of any kind. The property the receive path exists to hold is
+   * that nothing unverified reaches `_ves_pulled_events`, and it is enforced at
+   * the call sites, not here; an unverified write through this method breaks it
+   * silently, for every reader, with no trace. Unverified events belong in
+   * `storeQuarantinedEvents`.
+   *
+   * (No callers in `src`/`bin` — `storePulledEvents` is the batch path the
+   * engine uses. Kept for single-record use, under the same obligation.)
+   *
+   * @param {Object} event - Sequenced event from remote, already verified
    */
   storePulledEvent(event) {
     this.initialize();
@@ -1246,8 +1397,19 @@ export class Outbox {
   }
 
   /**
-   * Store multiple pulled events (VES v1.0)
-   * @param {Array<Object>} events
+   * Store multiple pulled events (VES v1.0).
+   *
+   * CALLERS MUST VERIFY THE AUTHOR SIGNATURE FIRST — see
+   * `SyncEngine._persistVerified` in `sync/engine.js`, which resolves the
+   * author's key through `PeerKeyDirectory` and calls
+   * `client.verifyEventSignature` before it gets here. This method performs no
+   * verification of any kind. The property the receive path exists to hold is
+   * that nothing unverified reaches `_ves_pulled_events`, and it is enforced at
+   * the call sites, not here; an unverified write through this method breaks it
+   * silently, for every reader, with no trace. Unverified events belong in
+   * `storeQuarantinedEvents`.
+   *
+   * @param {Array<Object>} events - Sequenced events from remote, already verified
    */
   storePulledEvents(events) {
     this.initialize();
@@ -1294,6 +1456,273 @@ export class Outbox {
     });
 
     transaction();
+  }
+
+  /**
+   * Store events that failed verification. These are never returned by
+   * getPulledEvents, so application reads cannot see unverified state.
+   * @param {Array<Object>} events
+   * @param {'signature_invalid'|'key_unresolved'|'key_outside_validity_window'|'key_revoked'|'peer_key_conflict'|'sequencer_key_not_configured'|'directory_untrusted'} reason - one of {@link QUARANTINE_REASONS}
+   */
+  storeQuarantinedEvents(events, reason) {
+    this.initialize();
+
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO _ves_quarantined_events (
+        event_id, sequence_number, command_id, tenant_id, store_id,
+        entity_type, entity_id, event_type,
+        ves_version, payload, payload_kind, payload_encrypted,
+        payload_plain_hash, payload_cipher_hash,
+        agent_key_id, agent_signature, agent_signature_scheme, agent_signature_bundle,
+        base_version, created_at, sequenced_at, source_agent, reason
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const transaction = this.db.transaction(() => {
+      for (const event of events) {
+        stmt.run(
+          event.eventId,
+          event.sequenceNumber,
+          event.commandId || null,
+          event.tenantId,
+          event.storeId,
+          event.entityType,
+          event.entityId,
+          event.eventType,
+          event.vesVersion || 1,
+          JSON.stringify(event.payload),
+          event.payloadKind || 0,
+          event.payloadEncrypted ? JSON.stringify(event.payloadEncrypted) : null,
+          event.payloadPlainHash,
+          event.payloadCipherHash,
+          event.agentKeyId,
+          event.agentSignature,
+          event.agentSignatureScheme || 0,
+          event.agentSignatureBundle ? JSON.stringify(event.agentSignatureBundle) : null,
+          event.baseVersion ?? null,
+          event.createdAt,
+          event.sequencedAt,
+          event.sourceAgent,
+          reason,
+        );
+      }
+    });
+
+    transaction();
+  }
+
+  /**
+   * Count quarantined events per reason.
+   *
+   * This is the honest count: `getQuarantinedEvents()` returns at most `limit`
+   * rows, so counting its result saturates silently — 50,000 quarantined
+   * events reported as exactly 1,000, which is the kind of fabricated number
+   * this receive path exists to stop producing.
+   *
+   * @returns {Array<{reason: string, count: number}>}
+   */
+  getQuarantinedCountsByReason() {
+    this.initialize();
+    return this.db
+      .prepare(
+        `SELECT reason, COUNT(*) AS count FROM _ves_quarantined_events
+         GROUP BY reason ORDER BY reason ASC`,
+      )
+      .all()
+      .map((row) => ({ reason: row.reason, count: row.count }));
+  }
+
+  /**
+   * Replace the stored reason for a quarantined event.
+   *
+   * The stored reason is the CURRENT diagnosis, and the newest one is what an
+   * operator must act on: a `key_unresolved` that later re-verifies as
+   * `signature_invalid` is a forgery, not a directory outage. `pull()` gets
+   * this for free from `INSERT OR REPLACE`; anything that re-verifies in place
+   * has to say so explicitly.
+   *
+   * @param {string} eventId
+   * @param {string} reason - one of {@link QUARANTINE_REASONS}
+   */
+  updateQuarantineReason(eventId, reason) {
+    this.initialize();
+    this.db
+      .prepare('UPDATE _ves_quarantined_events SET reason = ? WHERE event_id = ?')
+      .run(reason, eventId);
+  }
+
+  /**
+   * Get quarantined events. These must never be returned by getPulledEvents.
+   * @param {number} [limit]
+   * @param {number} [offset] - rows to skip, for paging through more than `limit`
+   * @returns {Array<Object>}
+   */
+  getQuarantinedEvents(limit = 1000, offset = 0) {
+    this.initialize();
+    return this.db
+      .prepare(
+        `SELECT * FROM _ves_quarantined_events
+         ORDER BY sequence_number ASC LIMIT ? OFFSET ?`,
+      )
+      .all(limit, offset)
+      .map((row) => ({
+        eventId: row.event_id,
+        sequenceNumber: row.sequence_number,
+        commandId: row.command_id,
+        tenantId: row.tenant_id,
+        storeId: row.store_id,
+        entityType: row.entity_type,
+        entityId: row.entity_id,
+        eventType: row.event_type,
+        vesVersion: row.ves_version,
+        payload: JSON.parse(row.payload),
+        payloadKind: row.payload_kind,
+        payloadEncrypted: row.payload_encrypted ? JSON.parse(row.payload_encrypted) : null,
+        payloadPlainHash: row.payload_plain_hash,
+        payloadCipherHash: row.payload_cipher_hash,
+        agentKeyId: row.agent_key_id,
+        agentSignature: row.agent_signature,
+        agentSignatureScheme: row.agent_signature_scheme,
+        agentSignatureBundle: row.agent_signature_bundle
+          ? JSON.parse(row.agent_signature_bundle)
+          : null,
+        baseVersion: row.base_version,
+        createdAt: row.created_at,
+        sequencedAt: row.sequenced_at,
+        sourceAgent: row.source_agent,
+        reason: row.reason,
+        quarantinedAt: row.quarantined_at,
+      }));
+  }
+
+  /**
+   * The reason one event is currently quarantined under, or null if it is not.
+   *
+   * Read before re-quarantining so an outage cannot overwrite a finding — see
+   * {@link isQuarantineReasonDowngrade}.
+   *
+   * @param {string} eventId
+   * @returns {string|null}
+   */
+  getQuarantineReason(eventId) {
+    this.initialize();
+    const row = this.db
+      .prepare('SELECT reason FROM _ves_quarantined_events WHERE event_id = ?')
+      .get(eventId);
+    return row ? row.reason : null;
+  }
+
+  /**
+   * Remove a quarantined event, typically after it has been promoted or discarded.
+   * @param {string} eventId
+   */
+  deleteQuarantinedEvent(eventId) {
+    this.initialize();
+    this.db.prepare('DELETE FROM _ves_quarantined_events WHERE event_id = ?').run(eventId);
+  }
+
+  /**
+   * Get cached signing keys for a peer agent.
+   * @param {string} agentId
+   * @returns {Array<Object>}
+   */
+  getPeerKeys(agentId) {
+    this.initialize();
+    return this.db
+      .prepare('SELECT * FROM _ves_peer_keys WHERE agent_id = ? ORDER BY key_id ASC')
+      .all(agentId)
+      .map((row) => ({
+        keyId: row.key_id,
+        algorithm: row.algorithm,
+        publicKey: row.public_key,
+        publicKeyBundle: row.public_key_bundle ? JSON.parse(row.public_key_bundle) : null,
+        validFrom: row.valid_from,
+        validTo: row.valid_to,
+        revokedAt: row.revoked_at,
+        fetchedAt: row.fetched_at,
+      }));
+  }
+
+  /**
+   * Upsert cached signing keys for a peer agent.
+   * @param {string} agentId
+   * @param {Array<Object>} keys
+   * @param {string} fetchedAt - ISO timestamp
+   */
+  upsertPeerKeys(agentId, keys, fetchedAt) {
+    this.initialize();
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO _ves_peer_keys (
+        agent_id, key_id, algorithm, public_key, public_key_bundle,
+        valid_from, valid_to, revoked_at, fetched_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const transaction = this.db.transaction(() => {
+      for (const key of keys) {
+        stmt.run(
+          agentId,
+          key.keyId,
+          key.algorithm,
+          key.publicKey,
+          key.publicKeyBundle ? JSON.stringify(key.publicKeyBundle) : null,
+          key.validFrom || null,
+          key.validTo || null,
+          key.revokedAt || null,
+          fetchedAt,
+        );
+      }
+    });
+    transaction();
+  }
+
+  /**
+   * Get a trust-on-first-use pin for a peer agent's key.
+   * @param {string} agentId
+   * @param {number} keyId
+   * @returns {{publicKey: string, pinnedAt: string}|null}
+   */
+  getPeerKeyPin(agentId, keyId) {
+    this.initialize();
+    const row = this.db
+      .prepare(
+        'SELECT public_key, pinned_at FROM _ves_peer_key_pins WHERE agent_id = ? AND key_id = ?',
+      )
+      .get(agentId, keyId);
+    return row ? { publicKey: row.public_key, pinnedAt: row.pinned_at } : null;
+  }
+
+  /**
+   * Pin a peer agent's key (trust-on-first-use). No-op if already pinned.
+   * @param {string} agentId
+   * @param {number} keyId
+   * @param {string} publicKey
+   */
+  pinPeerKey(agentId, keyId, publicKey) {
+    this.initialize();
+    this.db
+      .prepare(
+        'INSERT OR IGNORE INTO _ves_peer_key_pins (agent_id, key_id, public_key) VALUES (?, ?, ?)',
+      )
+      .run(agentId, keyId, publicKey);
+  }
+
+  /**
+   * List every pinned peer key (trust-on-first-use).
+   * @returns {Array<{agentId: string, keyId: number, publicKey: string, pinnedAt: string}>}
+   */
+  getPeerKeyPins() {
+    this.initialize();
+    return this.db
+      .prepare(
+        'SELECT agent_id, key_id, public_key, pinned_at FROM _ves_peer_key_pins ORDER BY agent_id, key_id',
+      )
+      .all()
+      .map((row) => ({
+        agentId: row.agent_id,
+        keyId: row.key_id,
+        publicKey: row.public_key,
+        pinnedAt: row.pinned_at,
+      }));
   }
 
   /**

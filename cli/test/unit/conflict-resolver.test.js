@@ -5,8 +5,10 @@
  * merge logic, conflict CRUD, resolveAll, skipConflict.
  */
 
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+
+import Database from 'better-sqlite3';
 
 import { ConflictResolver, createConflictResolver } from '../../src/sync/conflict.js';
 
@@ -326,5 +328,96 @@ describe('ConflictResolver', () => {
       const cr = createConflictResolver(outbox, { defaultStrategy: 'local-wins' });
       assert.equal(cr.defaultStrategy, 'local-wins');
     });
+  });
+});
+
+/**
+ * `detectConflicts()` writes, and `pull()` now calls it — which puts it on the
+ * `syncIntervalMs` background loop. A conflict id that was a fresh UUID per
+ * detection therefore grew `_ves_conflicts` without bound off a single
+ * unresolved conflict, inflating the `sync conflicts` listing and the
+ * `sync_conflicts` MCP count. These assertions run against real SQLite,
+ * because the defect was in what `INSERT OR REPLACE` did to real rows.
+ */
+describe('conflict persistence is idempotent', () => {
+  let db;
+  let resolver;
+
+  /** Minimal outbox: a real database plus the one accessor detection reads. */
+  function realishOutbox(database, currentVersion = 5) {
+    return { db: database, getEntityVersion: () => currentVersion };
+  }
+
+  const local = () => ({
+    localSeq: 7,
+    eventId: 'evt-1',
+    tenantId: 't1',
+    storeId: 's1',
+    entityType: 'order',
+    entityId: 'ord-1',
+    eventType: 'OrderUpdated',
+    sourceAgent: 'agent-aaa',
+    baseVersion: 1,
+    createdAt: new Date('2026-09-12T00:00:00.000Z'),
+  });
+
+  const remote = () => ({
+    sequence_number: 42,
+    entity_type: 'order',
+    entity_id: 'ord-1',
+    source_agent: 'agent-bbb',
+    sequenced_at: '2026-09-12T00:00:00.000Z',
+  });
+
+  function rowCount() {
+    return db.prepare('SELECT COUNT(*) AS count FROM _ves_conflicts').get().count;
+  }
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    resolver = new ConflictResolver(realishOutbox(db));
+  });
+
+  afterEach(() => db.close());
+
+  it('detecting the same conflict repeatedly yields exactly one row', () => {
+    for (let i = 0; i < 3; i++) {
+      const conflicts = resolver.detectConflicts([local()], [remote()]);
+      assert.equal(conflicts.length, 1, 'the same conflict is still reported each time');
+    }
+
+    assert.equal(rowCount(), 1, 'three detections of one conflict must not be three rows');
+    assert.equal(resolver.getConflictCount(), 1);
+  });
+
+  it('gives the same conflict the same id every time', () => {
+    const first = resolver.detectConflicts([local()], [remote()])[0];
+    const second = resolver.detectConflicts([local()], [remote()])[0];
+    assert.equal(first.id, second.id);
+    assert.equal(first.id, 'version:7:order:ord-1');
+  });
+
+  it('still distinguishes conflicts on different entities and local events', () => {
+    resolver.detectConflicts([local()], [remote()]);
+    resolver.detectConflicts([{ ...local(), localSeq: 8 }], [remote()]);
+    resolver.detectConflicts(
+      [{ ...local(), entityId: 'ord-2' }],
+      [{ ...remote(), entity_id: 'ord-2' }],
+    );
+    assert.equal(rowCount(), 3);
+  });
+
+  it('does not resurrect a conflict an operator already resolved', () => {
+    const conflict = resolver.detectConflicts([local()], [remote()])[0];
+    db.prepare("UPDATE _ves_conflicts SET status = 'resolved' WHERE id = ?").run(conflict.id);
+
+    resolver.detectConflicts([local()], [remote()]);
+
+    assert.equal(rowCount(), 1);
+    assert.equal(
+      db.prepare('SELECT status FROM _ves_conflicts WHERE id = ?').get(conflict.id).status,
+      'resolved',
+    );
+    assert.equal(resolver.getConflictCount(), 0);
   });
 });

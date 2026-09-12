@@ -381,6 +381,24 @@ export class UnifiedSequencerClient extends EventEmitter {
   }
 
   /**
+   * Verify an event's author signature against that agent's public key.
+   *
+   * Verification is client-side only and identical for both transports, so the
+   * REST client's implementation is used when the active transport is gRPC.
+   *
+   * @param {Object} envelope - The event envelope.
+   * @param {Buffer|string|Object} publicKey - Agent Ed25519 key or hybrid public-key bundle.
+   * @returns {boolean}
+   */
+  verifyEventSignature(envelope, publicKey) {
+    if (this._client?.verifyEventSignature) {
+      return this._client.verifyEventSignature(envelope, publicKey);
+    }
+    const restClient = new SequencerClient(this.config);
+    return restClient.verifyEventSignature(envelope, publicKey);
+  }
+
+  /**
    * Verify a receipt signature against a known sequencer public key.
    * @param {Object} receipt - Receipt or sequenced event with receipt fields.
    * @param {Buffer|string|Object} sequencerPublicKey - Sequencer public key or bundle.
@@ -419,23 +437,39 @@ export class UnifiedSequencerClient extends EventEmitter {
   }
 
   /**
-   * Get agent's registered keys
+   * Get an agent's signed key directory.
+   *
+   * IMPORTANT — the two transports are NOT equivalent here. Over REST, the
+   * response's `directorySignature` is cryptographically verified before any
+   * keys are returned (a bad signature throws, it never returns unverified
+   * keys); the result carries `verified: true`. Over gRPC there is no
+   * directory-signature check at all — the keys are trusted only because the
+   * gRPC channel itself is trusted (mTLS/channel security), not because they
+   * were attested; the result carries `verified: false` so a caller can tell
+   * the two apart and must not treat a gRPC result as cryptographically
+   * attested.
+   *
    * @param {string} agentId
-   * @returns {Promise<Array>}
+   * @returns {Promise<{agentId: string, tenantId?: string, keys: Array<Object>, signedAt?: string, verified: boolean}>}
    */
-  async getAgentKeys(agentId) {
+  async getAgentSigningKeys(agentId) {
     if (this._transport === 'grpc') {
       const result = await this._client.getAgentKeys(agentId);
-      return result.keys.map((k) => ({
-        keyId: k.keyId,
-        publicKey: k.publicKey.toString('hex'),
-        status: k.status === 1 ? 'active' : k.status === 2 ? 'revoked' : 'expired',
-        createdAt: k.createdAt?.toISOString(),
-        validFrom: k.validFrom?.toISOString(),
-        validTo: k.validTo?.toISOString(),
-      }));
+      return {
+        agentId,
+        verified: false,
+        keys: result.keys.map((k) => ({
+          keyId: k.keyId,
+          publicKey: k.publicKey.toString('hex'),
+          status: k.status === 1 ? 'active' : k.status === 2 ? 'revoked' : 'expired',
+          createdAt: k.createdAt?.toISOString(),
+          validFrom: k.validFrom?.toISOString(),
+          validTo: k.validTo?.toISOString(),
+        })),
+      };
     }
-    return this._client.getAgentKeys(agentId);
+    const result = await this._client.getAgentSigningKeys(agentId);
+    return { ...result, verified: true };
   }
 
   // ===========================================================================
