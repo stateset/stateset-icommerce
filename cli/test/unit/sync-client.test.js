@@ -1623,6 +1623,118 @@ describe('getAgentSigningKeys', () => {
     }
   });
 
+  /**
+   * A signature says who wrote the body, not which request it answers. Without
+   * the binding below, a validly signed directory for agent B — replayed by a
+   * lying sequencer in answer to a request for agent A — caches B's keys under
+   * A, after which events claiming to be from A and signed by B verify.
+   */
+  it('refuses a validly signed directory issued for a different agent', async () => {
+    const signingKey = crypto.generateKeyPairSync('ed25519');
+    const sequencerPublicKey = signingKey.publicKey
+      .export({ type: 'spki', format: 'der' })
+      .subarray(-32);
+
+    const body = {
+      agentId: '55555555-5555-5555-5555-555555555555',
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      keys: [{ keyId: 1, algorithm: 'ed25519', publicKey: '0xaa' }],
+      signedAt: new Date().toISOString(),
+    };
+    const signature = signDirectory(body, signingKey);
+
+    const client = createSequencerClient({
+      sequencerUrl: 'http://localhost:8080',
+      tenantId: body.tenantId,
+      apiKey: 'test',
+      sequencerPublicKey,
+      allowInsecureTransport: true,
+      securityProfile: 'legacy',
+    });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
+
+    await assert.rejects(
+      () => client.getAgentSigningKeys('44444444-4444-4444-4444-444444444444'),
+      (error) => {
+        assert.match(error.message, /not the requested 44444444/);
+        assert.equal(error.code, 'directory_untrusted');
+        return true;
+      },
+    );
+  });
+
+  it('refuses a validly signed directory issued for a different tenant', async () => {
+    const signingKey = crypto.generateKeyPairSync('ed25519');
+    const sequencerPublicKey = signingKey.publicKey
+      .export({ type: 'spki', format: 'der' })
+      .subarray(-32);
+
+    const body = {
+      agentId: '44444444-4444-4444-4444-444444444444',
+      tenantId: '99999999-9999-9999-9999-999999999999',
+      keys: [{ keyId: 1, algorithm: 'ed25519', publicKey: '0xaa' }],
+      signedAt: new Date().toISOString(),
+    };
+    const signature = signDirectory(body, signingKey);
+
+    const client = createSequencerClient({
+      sequencerUrl: 'http://localhost:8080',
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      apiKey: 'test',
+      sequencerPublicKey,
+      allowInsecureTransport: true,
+      securityProfile: 'legacy',
+    });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
+
+    await assert.rejects(
+      () => client.getAgentSigningKeys(body.agentId),
+      (error) => {
+        assert.match(error.message, /not the configured 22222222/);
+        assert.equal(error.code, 'directory_untrusted');
+        return true;
+      },
+    );
+  });
+
+  it('refuses an unbound directory that names no agent at all', async () => {
+    const signingKey = crypto.generateKeyPairSync('ed25519');
+    const sequencerPublicKey = signingKey.publicKey
+      .export({ type: 'spki', format: 'der' })
+      .subarray(-32);
+
+    const body = {
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      keys: [{ keyId: 1, algorithm: 'ed25519', publicKey: '0xaa' }],
+      signedAt: new Date().toISOString(),
+    };
+    const signature = signDirectory(body, signingKey);
+
+    const client = createSequencerClient({
+      sequencerUrl: 'http://localhost:8080',
+      tenantId: body.tenantId,
+      apiKey: 'test',
+      sequencerPublicKey,
+      allowInsecureTransport: true,
+      securityProfile: 'legacy',
+    });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
+
+    await assert.rejects(
+      () => client.getAgentSigningKeys('44444444-4444-4444-4444-444444444444'),
+      /is for agent \(unset\)/,
+    );
+  });
+
   it('tags the missing-config failure with its own code', async () => {
     const client = createSequencerClient({
       sequencerUrl: 'http://localhost:8080',

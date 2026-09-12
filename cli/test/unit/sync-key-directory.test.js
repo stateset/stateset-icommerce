@@ -226,4 +226,32 @@ describe('PeerKeyDirectory', () => {
     });
   });
 
+  describe('unattested directories', () => {
+    it('refuses to cache a directory the transport did not verify', async () => {
+      const grpcLike = {
+        async getAgentSigningKeys() {
+          // The exact shape UnifiedSequencerClient returns over gRPC.
+          return { agentId: AGENT, verified: false, keys: [key()] };
+        },
+      };
+      const dir = createPeerKeyDirectory(outbox, grpcLike, {});
+
+      await assert.rejects(() => dir.refresh(AGENT), /not cryptographically attested/);
+      assert.equal(outbox.getPeerKeys(AGENT).length, 0, 'nothing unattested may be cached');
+
+      const resolved = await dir.resolve(AGENT, 1, '2026-09-12T00:00:00.000Z');
+      assert.equal(resolved.error, 'directory_untrusted');
+    });
+
+    it('caches a directory the transport did verify', async () => {
+      const restLike = {
+        async getAgentSigningKeys() {
+          return { agentId: AGENT, verified: true, keys: [key()] };
+        },
+      };
+      const dir = createPeerKeyDirectory(outbox, restLike, {});
+      const resolved = await dir.resolve(AGENT, 1, '2026-09-12T00:00:00.000Z');
+      assert.equal(resolved.publicKey, '0xaa');
+    });
+  });
 });

@@ -574,6 +574,8 @@ describe('pull verification — end to end through the real client and directory
   function buildRealEngine({
     tamper = false,
     configureSequencerKey = true,
+    directoryAgentId = AGENT,
+    directoryTenantId = TENANT,
   } = {}) {
     const agentKey = crypto.generateKeyPairSync('ed25519');
     const sequencerKey = crypto.generateKeyPairSync('ed25519');
@@ -587,8 +589,8 @@ describe('pull verification — end to end through the real client and directory
     });
 
     const directoryBody = {
-      agentId: AGENT,
-      tenantId: TENANT,
+      agentId: directoryAgentId,
+      tenantId: directoryTenantId,
       keys: [
         {
           keyId: 1,
@@ -724,4 +726,41 @@ describe('pull verification — end to end through the real client and directory
     assert.match(failures[0].detail, /sequencerPublicKey is not configured/);
   });
 
+  it('refuses a validly signed directory issued for a different agent', async () => {
+    const { engine } = buildRealEngine({
+      directoryAgentId: '99999999-9999-9999-9999-999999999999',
+    });
+
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    let result;
+    try {
+      result = await engine.pull();
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.equal(result.stored, 0);
+    assert.equal(engine.outbox.getQuarantinedEvents()[0].reason, 'directory_untrusted');
+    assert.equal(engine.outbox.getPeerKeys(AGENT).length, 0, 'no foreign key may be cached');
+  });
+
+  it('refuses a validly signed directory issued for a different tenant', async () => {
+    const { engine } = buildRealEngine({
+      directoryTenantId: '99999999-9999-9999-9999-999999999999',
+    });
+
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    let result;
+    try {
+      result = await engine.pull();
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.equal(result.stored, 0);
+    assert.equal(engine.outbox.getQuarantinedEvents()[0].reason, 'directory_untrusted');
+    assert.equal(engine.outbox.getPeerKeys(AGENT).length, 0, 'no foreign key may be cached');
+  });
 });

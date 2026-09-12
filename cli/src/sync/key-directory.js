@@ -124,11 +124,28 @@ export class PeerKeyDirectory {
   /**
    * Fetch and cache the directory for one agent.
    *
+   * A directory that was not cryptographically attested is refused before it
+   * can be cached. `UnifiedSequencerClient#getAgentSigningKeys` returns
+   * `verified: false` over gRPC, where there is no directory-signature check
+   * at all and the keys are trusted only because the channel is — caching
+   * those would make an unattested response the anchor for every subsequent
+   * event verification, which is exactly the trust the REST path refuses to
+   * grant without a signature.
+   *
    * @param {string} agentId
    * @returns {Promise<Array<Object>>}
    */
   async refresh(agentId) {
     const directory = await this.client.getAgentSigningKeys(agentId);
+    if (directory?.verified === false) {
+      const error = new Error(
+        'Key directory is not cryptographically attested (the transport did not verify a ' +
+          'directorySignature); refusing to cache peer keys. The gRPC receive path is ' +
+          'unsupported — use an https:// sequencer URL.',
+      );
+      error.code = 'directory_untrusted';
+      throw error;
+    }
     const keys = directory.keys || [];
     this.outbox.upsertPeerKeys(agentId, keys, new Date().toISOString());
     return this.outbox.getPeerKeys(agentId);

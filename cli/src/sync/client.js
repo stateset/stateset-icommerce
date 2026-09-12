@@ -988,6 +988,10 @@ export class SequencerClient {
    * signature is a hard refusal — that is a MITM, not a bad key. A validly
    * signed but stale directory is also refused: signatures don't expire on
    * their own, so a captured response could otherwise be replayed forever to
+   * hide a key revocation. So is a validly signed directory for a different
+   * agent or tenant: a signature says who wrote the body, not which request it
+   * answers.
+   *
    * Failures carry a `code` (`sequencer_key_not_configured` or
    * `directory_untrusted`) that `PeerKeyDirectory` maps to a quarantine reason.
    *
@@ -1029,6 +1033,27 @@ export class SequencerClient {
     );
     if (!valid) {
       throw keyDirectoryError('Key directory signature invalid', 'directory_untrusted');
+    }
+
+    // A signature proves the sequencer wrote this body; it does not prove the
+    // body answers THIS request. A validly signed directory for agent B,
+    // replayed in response to a request for agent A, would otherwise bind B's
+    // keys under A — after which events claiming to be from A but signed by B
+    // verify. The threat model includes a lying sequencer, so the response is
+    // bound to the agent and tenant it was requested for. A response that omits
+    // either field is refused for the same reason: an unbound directory is
+    // replayable against every agent.
+    if (body.agentId !== agentId) {
+      throw keyDirectoryError(
+        `Key directory is for agent ${body.agentId ?? '(unset)'}, not the requested ${agentId}`,
+        'directory_untrusted',
+      );
+    }
+    if (body.tenantId !== this.config.tenantId) {
+      throw keyDirectoryError(
+        `Key directory is for tenant ${body.tenantId ?? '(unset)'}, not the configured ${this.config.tenantId}`,
+        'directory_untrusted',
+      );
     }
 
     const maxStaleSeconds = this.config.peerKeyMaxStaleSeconds ?? 86400;
