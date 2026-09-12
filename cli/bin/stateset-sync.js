@@ -2108,6 +2108,17 @@ program
 
     try {
       const engine = createSyncEngine({ db, config });
+      // `initialize()` emits 'error' rather than throwing when the sequencer is
+      // unreachable, and an unlistened 'error' on an EventEmitter throws — which
+      // killed doctor during exactly the outage it exists to diagnose. The
+      // quarantine report is built from local state and is still worth printing.
+      engine.on('error', (error) => {
+        if (!jsonOutput) {
+          console.warn(
+            chalk.yellow(`Sequencer unreachable (${error.message}); reporting local state only.`),
+          );
+        }
+      });
       await engine.initialize();
 
       const report = await syncDoctor({
