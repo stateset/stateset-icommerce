@@ -490,6 +490,96 @@ describe('streamed events are not a second writer', () => {
  * genuinely signed key directory, the real `UnifiedSequencerClient`, the real
  * `PeerKeyDirectory`, the real outbox, and the real conflict resolver.
  */
+/**
+ * Before this branch a gRPC deployment stored UNVERIFIED streamed events. It
+ * now stores nothing at all — streamed events are refused, the gRPC envelope
+ * mapping cannot satisfy `verifyEventSignature`, and the gRPC key directory is
+ * never attested. That regression is deliberate, and must be loud rather than
+ * presenting as an endlessly empty pull.
+ */
+describe('the gRPC receive path is refused, not silently empty', () => {
+  let db;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+  });
+
+  afterEach(() => db.close());
+
+  function grpcEngine() {
+    const config = new SyncConfig({
+      sequencer: { url: 'grpcs://sequencer.example.com' },
+      identity: { tenantId: TENANT, storeId: STORE, agentId: SELF },
+    });
+    const engine = new SyncEngine({ db, config });
+    engine.outbox = createOutbox(db, {});
+
+    let pullCalls = 0;
+    engine.client = {
+      transport: 'grpc',
+      async pull() {
+        pullCalls += 1;
+        return { events: [], nextSequence: 1, headSequence: 0 };
+      },
+    };
+    return { engine, pullCalls: () => pullCalls };
+  }
+
+  it('fails the pull with an explanation instead of reporting an empty success', async () => {
+    const { engine, pullCalls } = grpcEngine();
+
+    const errors = [];
+    const originalError = console.error;
+    console.error = (message) => errors.push(String(message));
+    let result;
+    try {
+      result = await engine.pull();
+    } finally {
+      console.error = originalError;
+    }
+
+    assert.equal(result.success, false);
+    assert.match(result.error, /gRPC receive path is unsupported/);
+    assert.match(result.error, /https:\/\/ sequencer URL/);
+    assert.equal(result.stored, 0);
+    assert.equal(result.conflicts, null, 'a refused pull claims nothing about conflicts');
+    assert.equal(pullCalls(), 0, 'it must not even ask the gRPC transport for events');
+    assert.ok(
+      errors.some((line) => /gRPC receive path is unsupported/.test(line)),
+      'the refusal must not depend on anyone reading the return value',
+    );
+  });
+
+  it('still pulls normally over REST', async () => {
+    const { engine } = grpcEngine();
+    engine.client.transport = 'rest';
+
+    const result = await engine.pull();
+    assert.equal(result.success, true);
+  });
+
+  it('says the same thing on the streaming path', () => {
+    const { engine } = grpcEngine();
+    const refusals = [];
+    engine.on('stream-store-refused', (event) => refusals.push(event));
+
+    const originalWarn = console.warn;
+    const warnings = [];
+    console.warn = (message) => warnings.push(String(message));
+    try {
+      engine._handleStreamedEvent({ sequenceNumber: 1, eventId: 'evt-1' });
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.equal(refusals.length, 1);
+    assert.equal(refusals[0].reason, 'stream_unverified');
+    assert.match(refusals[0].error.message, /gRPC receive path is unsupported/);
+    assert.equal(engine.outbox.getPulledEvents().length, 0);
+    assert.ok(warnings.some((line) => /gRPC receive path is unsupported/.test(line)));
+  });
+});
+
 describe('pull verification — end to end through the real client and directory', () => {
   let db;
 

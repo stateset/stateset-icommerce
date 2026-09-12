@@ -215,10 +215,16 @@ export class SyncEngine extends EventEmitter {
    * carries no `payloadCipherHash` (this code fabricated a zero hash), and
    * defaults `agentSignature` to the empty string — so the signing preimage
    * cannot be reconstructed. Verifying it would reject legitimate events;
-   * skipping verification would reopen the hole. Until the streamed envelope
-   * carries the fields the signing hash binds, `pull()` stays the only durable
-   * writer, and the cursor it did not advance means the next `pull()` fetches
-   * these same events and stores them verified.
+   * skipping verification would reopen the hole.
+   *
+   * There is no "the next pull() picks these up" mitigation, and an earlier
+   * version of this comment claiming one was wrong. Streaming exists only on
+   * gRPC, and the gRPC receive path stores nothing at all: `pull()` refuses to
+   * run on that transport (see `pull()`), the gRPC envelope mapping cannot
+   * satisfy `verifyEventSignature`, and the gRPC key directory is never
+   * cryptographically attested. A gRPC deployment that needs the receive path
+   * must move to an https:// sequencer URL. Repairing the gRPC envelope
+   * mapping is separate, tracked work.
    *
    * @private
    */
@@ -236,7 +242,8 @@ export class SyncEngine extends EventEmitter {
 
     const error = new Error(
       'Refusing to store a streamed event: streamed events carry no verifiable signature, ' +
-        'so they are not written to local state. Run pull() to fetch them over the verified path.',
+        'so they are not written to local state. Streaming is gRPC-only and the gRPC receive ' +
+        'path is unsupported — point the agent at an https:// sequencer URL and use pull().',
     );
     this.emit('stream-store-refused', {
       reason: 'stream_unverified',
@@ -379,6 +386,34 @@ export class SyncEngine extends EventEmitter {
   }
 
   /**
+   * Why this transport cannot be used to receive, or null if it can.
+   *
+   * The gRPC receive path stores nothing, and says so rather than quietly
+   * pulling zero events forever. It is not a repairable-in-passing gap:
+   * streamed events are refused (they carry no verifiable signature), the gRPC
+   * `pull()` mapping throws on `envelope.eventId`, and the gRPC key directory
+   * carries no `algorithm` and no directory signature, so it can neither be
+   * cached nor trusted. Mapping those fields without the attestation guard in
+   * `PeerKeyDirectory.refresh()` would make unattested keys the verification
+   * anchor, which is worse than failing. Fixing the gRPC receive path is
+   * separate, tracked work; until then REST is the supported receive path.
+   *
+   * Push over gRPC is unaffected.
+   *
+   * @private
+   * @returns {string|null}
+   */
+  _unsupportedReceiveTransport() {
+    if (this.getTransport() !== 'grpc') return null;
+    return (
+      'The gRPC receive path is unsupported: streamed events carry no verifiable signature, ' +
+      'the gRPC envelope mapping omits fields the signing hash binds, and the gRPC key ' +
+      'directory is never cryptographically attested. Use an https:// sequencer URL to pull. ' +
+      'Push over gRPC is unaffected.'
+    );
+  }
+
+  /**
    * Pull events from sequencer
    * @param {Object} [options]
    * @param {number} [options.fromSequence] - Start sequence
@@ -387,6 +422,20 @@ export class SyncEngine extends EventEmitter {
    * @returns {Promise<PullResult>}
    */
   async pull(options = {}) {
+    const unsupported = this._unsupportedReceiveTransport();
+    if (unsupported) {
+      console.error(`[sync-engine] ${unsupported}`);
+      return {
+        success: false,
+        pulled: 0,
+        verified: 0,
+        quarantined: 0,
+        stored: 0,
+        conflicts: null,
+        error: unsupported,
+      };
+    }
+
     try {
       const state = this.outbox.getSyncState();
       const fromSequence = options.fromSequence ?? state.lastPulledSequence;
