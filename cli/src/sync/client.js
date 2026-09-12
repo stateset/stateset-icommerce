@@ -989,11 +989,13 @@ export class SequencerClient {
 
     const preimage = Buffer.concat([DOMAIN.KEYDIR, Buffer.from(canonicalizeJson(body))]);
     const hash = createHash('sha256').update(preimage).digest();
+    const ed25519Pk =
+      normalizeVerificationPublicKeyBundle(sequencerPublicKey)?.ed25519PublicKey ??
+      sequencerPublicKey;
     const valid = verifyEventSignature(
       hash,
       hexToBuffer(directorySignature),
-      normalizeVerificationPublicKeyBundle(sequencerPublicKey)?.ed25519PublicKey ??
-        sequencerPublicKey,
+      typeof ed25519Pk === 'string' ? hexToBuffer(ed25519Pk) : ed25519Pk,
     );
     if (!valid) {
       throw new Error('Key directory signature invalid');

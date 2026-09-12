@@ -420,14 +420,26 @@ export class UnifiedSequencerClient extends EventEmitter {
 
   /**
    * Get an agent's signed key directory.
+   *
+   * IMPORTANT — the two transports are NOT equivalent here. Over REST, the
+   * response's `directorySignature` is cryptographically verified before any
+   * keys are returned (a bad signature throws, it never returns unverified
+   * keys); the result carries `verified: true`. Over gRPC there is no
+   * directory-signature check at all — the keys are trusted only because the
+   * gRPC channel itself is trusted (mTLS/channel security), not because they
+   * were attested; the result carries `verified: false` so a caller can tell
+   * the two apart and must not treat a gRPC result as cryptographically
+   * attested.
+   *
    * @param {string} agentId
-   * @returns {Promise<{agentId: string, tenantId: string, keys: Array<Object>, signedAt: string}>}
+   * @returns {Promise<{agentId: string, tenantId?: string, keys: Array<Object>, signedAt?: string, verified: boolean}>}
    */
   async getAgentSigningKeys(agentId) {
     if (this._transport === 'grpc') {
       const result = await this._client.getAgentKeys(agentId);
       return {
         agentId,
+        verified: false,
         keys: result.keys.map((k) => ({
           keyId: k.keyId,
           publicKey: k.publicKey.toString('hex'),
@@ -438,7 +450,8 @@ export class UnifiedSequencerClient extends EventEmitter {
         })),
       };
     }
-    return this._client.getAgentSigningKeys(agentId);
+    const result = await this._client.getAgentSigningKeys(agentId);
+    return { ...result, verified: true };
   }
 
   // ===========================================================================

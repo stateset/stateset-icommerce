@@ -83,6 +83,16 @@ const DEFAULT_CONFIG = {
     tls: true,
     insecure: false,
   },
+  // The sequencer's Ed25519 public key, used to verify signed responses such
+  // as the agent key directory (GET /api/v1/agents/:agent_id/signing-keys).
+  sequencerPublicKey: null,
+  // How old a signed key directory may be before it is refused as stale.
+  // Signatures don't expire on their own, so this bounds how long a captured
+  // response can be replayed to hide a key revocation.
+  peerKeyMaxStaleSeconds: 86400,
+  // How long a locally cached/pinned peer key directory may be reused before
+  // it must be re-fetched. Consumed by the peer-key cache (Task 6).
+  peerKeyTtlSeconds: 3600,
   identity: {
     tenantId: null,
     storeId: null,
@@ -187,6 +197,10 @@ export function loadSyncConfig(cwd = process.cwd()) {
     // Merge with defaults
     return {
       sequencer: { ...DEFAULT_CONFIG.sequencer, ...config.sequencer },
+      sequencerPublicKey: config.sequencerPublicKey ?? DEFAULT_CONFIG.sequencerPublicKey,
+      peerKeyMaxStaleSeconds:
+        config.peerKeyMaxStaleSeconds ?? DEFAULT_CONFIG.peerKeyMaxStaleSeconds,
+      peerKeyTtlSeconds: config.peerKeyTtlSeconds ?? DEFAULT_CONFIG.peerKeyTtlSeconds,
       identity: { ...DEFAULT_CONFIG.identity, ...config.identity },
       auth: { ...DEFAULT_CONFIG.auth, ...config.auth },
       sync: {
@@ -244,6 +258,9 @@ export function saveSyncConfig(config, cwd = process.cwd()) {
  * @param {boolean} [options.encryptPayloads=false] - Enable payload encryption
  * @param {'legacy' | 'hybrid' | 'pqc-strict'} [options.securityProfile='hybrid'] - PQ migration profile
  * @param {boolean} [options.allowInsecureTransport=false] - Allow insecure legacy transport explicitly
+ * @param {string|Buffer} [options.sequencerPublicKey] - Sequencer's Ed25519 public key, for verifying signed responses (e.g. the agent key directory)
+ * @param {number} [options.peerKeyMaxStaleSeconds=86400] - Max age of a signed key directory before it is refused as stale
+ * @param {number} [options.peerKeyTtlSeconds=3600] - How long a cached/pinned peer key directory may be reused before re-fetching
  * @param {string} [cwd] - Current working directory
  * @returns {SyncConfig}
  */
@@ -275,6 +292,9 @@ export function createSyncConfig(options, cwd = process.cwd()) {
       tls: isSecure,
       insecure: !isSecure,
     },
+    sequencerPublicKey: options.sequencerPublicKey ?? null,
+    peerKeyMaxStaleSeconds: options.peerKeyMaxStaleSeconds ?? DEFAULT_CONFIG.peerKeyMaxStaleSeconds,
+    peerKeyTtlSeconds: options.peerKeyTtlSeconds ?? DEFAULT_CONFIG.peerKeyTtlSeconds,
     identity: {
       tenantId: options.tenantId,
       storeId: options.storeId,
@@ -325,6 +345,13 @@ export function updateSyncConfig(updates, cwd = process.cwd()) {
 
   const updated = {
     sequencer: { ...current.sequencer, ...updates.sequencer },
+    sequencerPublicKey: updates.sequencerPublicKey ?? current.sequencerPublicKey ?? null,
+    peerKeyMaxStaleSeconds:
+      updates.peerKeyMaxStaleSeconds ??
+      current.peerKeyMaxStaleSeconds ??
+      DEFAULT_CONFIG.peerKeyMaxStaleSeconds,
+    peerKeyTtlSeconds:
+      updates.peerKeyTtlSeconds ?? current.peerKeyTtlSeconds ?? DEFAULT_CONFIG.peerKeyTtlSeconds,
     identity: { ...current.identity, ...updates.identity },
     auth: { ...current.auth, ...updates.auth },
     sync: {
@@ -474,6 +501,10 @@ export function validateSyncConfig(config) {
 export class SyncConfig {
   constructor(config) {
     this.sequencer = config.sequencer;
+    this.sequencerPublicKey = config.sequencerPublicKey ?? DEFAULT_CONFIG.sequencerPublicKey;
+    this.peerKeyMaxStaleSeconds =
+      config.peerKeyMaxStaleSeconds ?? DEFAULT_CONFIG.peerKeyMaxStaleSeconds;
+    this.peerKeyTtlSeconds = config.peerKeyTtlSeconds ?? DEFAULT_CONFIG.peerKeyTtlSeconds;
     this.identity = config.identity;
     this.auth = config.auth;
     this.sync = {
