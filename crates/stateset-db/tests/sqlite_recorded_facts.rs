@@ -12,8 +12,9 @@
 use rust_decimal_macros::dec;
 use stateset_core::{
     AddCartItem, BillingCycleFilter, BillingCycleStatus, BillingInterval, CartAddress,
-    CartRepository, CreateCart, CreateCustomer, CreateSubscription, CreateSubscriptionPlan,
-    CurrencyCode, CustomerRepository, ProductId, SetCartPayment,
+    CartRepository, CreateCart, CreateCreditAccount, CreateCustomer, CreateSubscription,
+    CreateSubscriptionPlan, CreditRepository, CreditTransactionType, CurrencyCode, CustomerId,
+    CustomerRepository, OrderId, ProductId, RecordCreditTransaction, SetCartPayment,
 };
 use stateset_db::SqliteDatabase;
 
@@ -40,6 +41,11 @@ fn fact(
         },
     )
     .ok()
+}
+
+fn outbox_count(db: &SqliteDatabase) -> i64 {
+    let conn = db.pool().get().expect("connection");
+    conn.query_row("SELECT COUNT(*) FROM kernel_outbox", [], |row| row.get(0)).expect("count")
 }
 
 fn test_address() -> CartAddress {
@@ -221,4 +227,116 @@ fn a_billing_cycle_status_change_emits_a_fact() {
     assert_eq!(aggregate_type, "billing_cycle");
     assert_eq!(payload["from"].as_str(), Some("scheduled"));
     assert_eq!(payload["to"].as_str(), Some("processing"));
+}
+
+// ============================================================================
+// credit.rs — create_credit_account_with_conn, insert_transaction_with_conn,
+//             release_reservation_with_conn
+// ============================================================================
+
+fn credit_account(db: &SqliteDatabase, limit: rust_decimal::Decimal) -> CustomerId {
+    let customer_id = CustomerId::new();
+    db.credit()
+        .create_credit_account(CreateCreditAccount {
+            customer_id,
+            credit_limit: limit,
+            ..Default::default()
+        })
+        .expect("create credit account");
+    customer_id
+}
+
+#[test]
+fn creating_a_credit_account_emits_a_fact_naming_the_customer() {
+    let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+    let customer_id = credit_account(&db, dec!(1000));
+
+    let (aggregate_type, payload, tier) =
+        fact(&db, "credit_account.created", &customer_id.to_string())
+            .expect("creating a credit account must emit a fact");
+    assert_eq!(aggregate_type, "credit_account");
+    assert_eq!(tier, "recorded");
+    assert_eq!(payload["credit_limit"].as_str(), Some("1000"));
+}
+
+#[test]
+fn a_credit_transaction_emits_a_fact_carrying_the_running_balance() {
+    let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+    let customer_id = credit_account(&db, dec!(1000));
+
+    db.credit()
+        .record_transaction(RecordCreditTransaction {
+            customer_id,
+            transaction_type: CreditTransactionType::Payment,
+            amount: dec!(25),
+            reference_type: None,
+            reference_id: None,
+            notes: None,
+        })
+        .expect("record transaction");
+
+    let (aggregate_type, payload, _) =
+        fact(&db, "credit_account.transaction_recorded", &customer_id.to_string())
+            .expect("a credit ledger append must emit a fact");
+    assert_eq!(aggregate_type, "credit_account");
+    assert_eq!(payload["transaction_type"].as_str(), Some("payment"));
+    assert_eq!(payload["amount"].as_str(), Some("25"));
+    assert_eq!(payload["running_balance"].as_str(), Some("-25"));
+}
+
+#[test]
+fn releasing_a_credit_reservation_emits_a_fact_naming_the_reservation() {
+    let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+    let customer_id = credit_account(&db, dec!(1000));
+    let order_id = OrderId::new();
+    db.credit().reserve_credit(customer_id, order_id, dec!(100)).expect("reserve");
+
+    db.credit().release_credit_reservation(customer_id, order_id).expect("release");
+
+    let conn = db.pool().get().expect("connection");
+    let reservation_id: String = conn
+        .query_row(
+            "SELECT id FROM credit_reservations WHERE customer_id = ?1 AND order_id = ?2",
+            rusqlite::params![customer_id.to_string(), order_id.to_string()],
+            |row| row.get(0),
+        )
+        .expect("reservation row");
+    drop(conn);
+
+    let (aggregate_type, payload, _) = fact(&db, "credit_reservation.released", &reservation_id)
+        .expect("releasing a reservation must emit a fact");
+    assert_eq!(aggregate_type, "credit_reservation");
+    assert_eq!(payload["order_id"].as_str(), Some(order_id.to_string().as_str()));
+    assert_eq!(payload["amount"].as_str(), Some("100"));
+}
+
+#[test]
+fn a_rejected_credit_charge_leaves_no_outbox_fact() {
+    // `charge_credit` releases this order's reservation (emitting its fact)
+    // BEFORE testing the credit line. A charge that busts the line must roll
+    // the release — and its fact — back with everything else.
+    let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+    let customer_id = credit_account(&db, dec!(100));
+    let order_id = OrderId::new();
+    db.credit().reserve_credit(customer_id, order_id, dec!(50)).expect("reserve");
+
+    let before = outbox_count(&db);
+    db.credit()
+        .charge_credit(customer_id, order_id, dec!(200))
+        .expect_err("a charge past the credit line must be refused");
+    let after = outbox_count(&db);
+
+    assert_eq!(
+        before, after,
+        "the fact is written in the mutation's transaction, so a rollback must take it too"
+    );
+    let conn = db.pool().get().expect("connection");
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM credit_reservations WHERE customer_id = ?1 AND order_id = ?2",
+            rusqlite::params![customer_id.to_string(), order_id.to_string()],
+            |row| row.get(0),
+        )
+        .expect("reservation row");
+    assert_eq!(status, "active", "the rejected charge must not have consumed the reservation");
 }

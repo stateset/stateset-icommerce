@@ -82,6 +82,21 @@ const SAFE_EXCEPTIONS: &[(&str, &str, &str)] = &[
          the UPDATE; emitting again would duplicate it",
     ),
     (
+        "credit.rs",
+        "recalculate_available_credit_with_conn",
+        "`available_credit` is a derived column (limit - balance - holds), not \
+         an independent fact: every caller has just emitted the fact for the \
+         limit, balance or hold move that made this recompute necessary",
+    ),
+    (
+        "credit.rs",
+        "adjust_credit_limit_with_conn",
+        "the limit move is already recorded as a `credit_account.transaction_recorded` \
+         ledger row (transaction_type `limit_change`, amount = the delta, notes \
+         = the reason) by `insert_transaction_with_conn` in this same \
+         transaction",
+    ),
+    (
         "subscriptions.rs",
         "advance_subscription_after_paid_cycle_with_tx",
         "the fact is `subscription.renewed`, emitted by `record_event_with_conn` \
@@ -228,11 +243,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("cost_accounting.rs", "apply_adjustment"),
     ("cost_accounting.rs", "reject_adjustment"),
     ("cost_accounting.rs", "calculate_rollup"),
-    ("credit.rs", "recalculate_available_credit_with_conn"),
-    ("credit.rs", "release_reservation_with_conn"),
-    ("credit.rs", "insert_transaction_with_conn"),
-    ("credit.rs", "create_credit_account_with_conn"),
-    ("credit.rs", "adjust_credit_limit_with_conn"),
     ("credit.rs", "update_credit_account"),
     ("credit.rs", "suspend_credit_account"),
     ("credit.rs", "reactivate_credit_account"),
