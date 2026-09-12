@@ -176,7 +176,7 @@ rust_decimal_macros = "1.36"
 thiserror = "2.0"
 base64 = "0.22"
 hex = "0.4"
-serde_jcs = "0.1"
+serde_jcs = "0.2"
 sha2 = "0.10"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 once_cell = "1.19"
