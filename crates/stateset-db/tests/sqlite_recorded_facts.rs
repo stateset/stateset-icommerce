@@ -11,11 +11,13 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::{
-    AccountsPayableRepository, AddCartItem, BillingCycleFilter, BillingCycleStatus,
-    BillingInterval, CartAddress, CartRepository, CreateBill, CreateBillItem, CreateCart,
-    CreateCreditAccount, CreateCustomer, CreateSubscription, CreateSubscriptionPlan,
-    CreditRepository, CreditTransactionType, CurrencyCode, CustomerId, CustomerRepository, OrderId,
-    ProductId, RecordCreditTransaction, SetCartPayment,
+    AccountsPayableRepository, AccountsReceivableRepository, AddCartItem, ApplyPaymentToInvoices,
+    BillingCycleFilter, BillingCycleStatus, BillingInterval, CartAddress, CartRepository,
+    CreateBill, CreateBillItem, CreateCart, CreateCreditAccount, CreateCustomer, CreateInvoice,
+    CreateInvoiceItem, CreatePayment, CreateSubscription, CreateSubscriptionPlan, CreditRepository,
+    CreditTransactionType, CurrencyCode, CustomerId, CustomerRepository, InvoiceRepository,
+    OrderId, PaymentApplicationLine, PaymentMethodType, PaymentRepository, ProductId,
+    RecordCreditTransaction, SetCartPayment,
 };
 use stateset_db::SqliteDatabase;
 
@@ -379,4 +381,173 @@ fn adding_a_bill_item_emits_a_fact_naming_the_bill() {
     assert_eq!(tier, "recorded");
     assert_eq!(payload["item_id"].as_str(), Some(item.id.to_string().as_str()));
     assert_eq!(payload["amount"].as_str(), Some("300"), "2 x 150, as stored");
+}
+
+// ============================================================================
+// accounts_receivable.rs — recalculate_invoice_with_conn
+// ============================================================================
+
+fn ar_test_customer(db: &SqliteDatabase, email: &str) -> CustomerId {
+    db.customers()
+        .create(CreateCustomer {
+            email: email.into(),
+            first_name: "AR".into(),
+            last_name: "Fact".into(),
+            ..Default::default()
+        })
+        .expect("create customer")
+        .id
+}
+
+fn ar_test_invoice(
+    db: &SqliteDatabase,
+    customer_id: CustomerId,
+    total: rust_decimal::Decimal,
+) -> uuid::Uuid {
+    let invoice = db
+        .invoices()
+        .create(CreateInvoice {
+            customer_id,
+            items: vec![CreateInvoiceItem {
+                description: "AR fact line".into(),
+                quantity: dec!(1),
+                unit_price: total,
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .expect("create invoice");
+    invoice.id.into()
+}
+
+fn ar_test_payment(
+    db: &SqliteDatabase,
+    customer_id: CustomerId,
+    amount: rust_decimal::Decimal,
+) -> uuid::Uuid {
+    db.payments()
+        .create(CreatePayment {
+            order_id: None,
+            invoice_id: None,
+            customer_id: Some(customer_id),
+            payment_method: PaymentMethodType::default(),
+            amount,
+            ..Default::default()
+        })
+        .expect("create payment")
+        .id
+        .into()
+}
+
+/// A payment that pays an invoice off in full drives its status from
+/// `draft` straight to `paid` in one recalculation, so the transition must
+/// speak: this is the one thing `recalculate_invoice_with_conn` may emit,
+/// and the only test that exercises it disappeared when the function moved
+/// from a blanket `SAFE_EXCEPTIONS` entry to a conditional emission.
+#[test]
+fn paying_off_an_invoice_emits_exactly_one_status_changed_fact() {
+    let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+    let customer_id = ar_test_customer(&db, "ar-paid@example.com");
+    let invoice_id = ar_test_invoice(&db, customer_id, dec!(100));
+    let payment_id = ar_test_payment(&db, customer_id, dec!(100));
+
+    db.accounts_receivable()
+        .apply_payment_to_invoices(ApplyPaymentToInvoices {
+            payment_id,
+            applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(100) }],
+        })
+        .expect("apply payment");
+
+    let invoice =
+        db.invoices().get(invoice_id.into()).expect("get invoice").expect("invoice exists");
+    assert_eq!(invoice.status.to_string(), "paid", "sanity: the invoice really did reach paid");
+
+    let conn = db.pool().get().expect("connection");
+    let matches: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM kernel_outbox WHERE event_type = 'invoice.status_changed' AND aggregate_id = ?1",
+            rusqlite::params![invoice_id.to_string()],
+            |row| row.get(0),
+        )
+        .expect("count");
+    assert_eq!(matches, 1, "exactly one status-transition fact, naming the invoice");
+
+    let (aggregate_type, payload, _tier) =
+        fact(&db, "invoice.status_changed", &invoice_id.to_string())
+            .expect("the transition must emit a fact");
+    assert_eq!(aggregate_type, "invoice");
+    assert_eq!(payload["previous_status"].as_str(), Some("draft"));
+    assert_eq!(payload["status"].as_str(), Some("paid"));
+}
+
+/// A second, smaller application that leaves the invoice `partially_paid`
+/// both before and after recalculates the footing (`amount_paid`/`balance_due`)
+/// without changing the status. That must stay silent: it is exactly the
+/// noisy common case the change-detecting guard exists to suppress. The
+/// setup applies a first payment to genuinely reach `partially_paid` (not
+/// just seed the row directly), so the second call's "no change" really
+/// exercises the comparison rather than skipping the recalculation.
+#[test]
+fn a_second_partial_payment_that_does_not_change_status_emits_no_new_fact() {
+    let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+    let customer_id = ar_test_customer(&db, "ar-partial@example.com");
+    let invoice_id = ar_test_invoice(&db, customer_id, dec!(100));
+
+    // First application: draft -> partially_paid. This one DOES emit; it
+    // is not what this test is about, but running it for real (rather than
+    // seeding partially_paid directly) is what makes the second call a
+    // genuine same-status recalculation instead of a skipped one.
+    let payment_1 = ar_test_payment(&db, customer_id, dec!(50));
+    db.accounts_receivable()
+        .apply_payment_to_invoices(ApplyPaymentToInvoices {
+            payment_id: payment_1,
+            applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(50) }],
+        })
+        .expect("apply first payment");
+    let after_first =
+        db.invoices().get(invoice_id.into()).expect("get invoice").expect("invoice exists");
+    assert_eq!(
+        after_first.status.to_string(),
+        "partially_paid",
+        "sanity: first payment changed status"
+    );
+
+    let before = outbox_count(&db);
+
+    // Second application: partially_paid -> partially_paid. Same status
+    // both sides of the recalculation.
+    let payment_2 = ar_test_payment(&db, customer_id, dec!(25));
+    db.accounts_receivable()
+        .apply_payment_to_invoices(ApplyPaymentToInvoices {
+            payment_id: payment_2,
+            applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(25) }],
+        })
+        .expect("apply second payment");
+    let after_second =
+        db.invoices().get(invoice_id.into()).expect("get invoice").expect("invoice exists");
+    assert_eq!(
+        after_second.status.to_string(),
+        "partially_paid",
+        "sanity: still partially_paid, the recalculation genuinely ran with no status change"
+    );
+
+    let after = outbox_count(&db);
+    assert_eq!(
+        after,
+        before + 1,
+        "the payment application's own fact, and no invoice.status_changed on top of it"
+    );
+
+    let conn = db.pool().get().expect("connection");
+    let status_changed_facts: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM kernel_outbox WHERE event_type = 'invoice.status_changed' AND aggregate_id = ?1",
+            rusqlite::params![invoice_id.to_string()],
+            |row| row.get(0),
+        )
+        .expect("count");
+    assert_eq!(
+        status_changed_facts, 1,
+        "only the first (real) transition, none from the unchanged second recalculation"
+    );
 }
