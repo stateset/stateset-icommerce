@@ -10,6 +10,7 @@ import { createOutbox } from './outbox.js';
 import { createUnifiedClient } from './unified-client.js';
 import { SyncConfig, loadSyncConfig } from './config.js';
 import { createConflictResolver } from './conflict.js';
+import { createPeerKeyDirectory } from './key-directory.js';
 import {
   computePayloadAad,
   decryptPayload,
@@ -56,11 +57,18 @@ function collectRecipientKeyIds(payloadEncrypted) {
 /**
  * @typedef {Object} PullResult
  * @property {boolean} success
- * @property {number} pulled - Events pulled
- * @property {number} applied - Events applied locally
- * @property {number} conflicts - Conflicts detected
- * @property {number[]} [sequenceNumbers] - Pulled sequence numbers stored locally
+ * @property {number} pulled - Events returned by the sequencer
+ * @property {number} verified - Events whose author signature verified
+ * @property {number} quarantined - Events that failed verification and were quarantined
+ * @property {number} stored - Events written to the local pulled-event store
+ * @property {number} conflicts - Conflicts outstanding between local pending events
+ *   and locally stored remote events, recomputed when this pull stored events.
+ *   Zero on the branches where this pull stored nothing.
+ * @property {number[]} [sequenceNumbers] - Sequence numbers of the events stored locally
  * @property {string} [error] - Error message
+ *
+ * There is deliberately no `applied` field: pulled events are stored and made
+ * available for reads, but nothing is applied to local entity state yet.
  */
 
 /**
@@ -107,6 +115,7 @@ export class SyncEngine extends EventEmitter {
     this.resolver = createConflictResolver(this.outbox, {
       defaultStrategy: options.defaultStrategy || 'remote-wins',
     });
+    this.keyDirectory = createPeerKeyDirectory(this.outbox, this.client, this.config);
     this._backgroundInterval = null;
     this._initialized = false;
     this._streamingEnabled = false;
@@ -392,7 +401,9 @@ export class SyncEngine extends EventEmitter {
         return {
           success: true,
           pulled: 0,
-          applied: 0,
+          verified: 0,
+          quarantined: 0,
+          stored: 0,
           conflicts: 0,
           sequenceNumbers: options.includeEvents ? [] : undefined,
         };
@@ -402,37 +413,12 @@ export class SyncEngine extends EventEmitter {
         return {
           success: true,
           pulled: result.events.length,
-          applied: 0,
+          verified: 0,
+          quarantined: 0,
+          stored: 0,
           conflicts: 0,
         };
       }
-
-      // Store pulled events (VES v1.0 format)
-      const eventsToStore = result.events.map((e) => ({
-        sequenceNumber: e.sequenceNumber,
-        eventId: e.envelope.eventId,
-        commandId: e.envelope.commandId,
-        tenantId: e.envelope.tenantId,
-        storeId: e.envelope.storeId,
-        entityType: e.envelope.entityType,
-        entityId: e.envelope.entityId,
-        eventType: e.envelope.eventType,
-        payload: e.envelope.payload,
-        // VES v1.0 fields
-        vesVersion: e.envelope.vesVersion || 1,
-        payloadKind: e.envelope.payloadKind || 0,
-        payloadEncrypted: e.envelope.payloadEncrypted,
-        payloadPlainHash: e.envelope.payloadPlainHash,
-        payloadCipherHash: e.envelope.payloadCipherHash,
-        agentKeyId: e.envelope.agentKeyId,
-        agentSignature: e.envelope.agentSignature,
-        agentSignatureScheme: e.envelope.agentSignatureScheme || 0,
-        agentSignatureBundle: e.envelope.agentSignatureBundle || null,
-        baseVersion: e.envelope.baseVersion,
-        createdAt: e.envelope.createdAt,
-        sequencedAt: e.sequencedAt,
-        sourceAgent: e.envelope.sourceAgent,
-      }));
 
       // Verify receipt signatures when sequencer public key is configured
       const sequencerPublicKey =
@@ -464,28 +450,112 @@ export class SyncEngine extends EventEmitter {
         }
       }
 
-      this.outbox.storePulledEvents(eventsToStore);
+      // Verify every event against its author's signing key before it can be
+      // read. Self-authored echoes are verified too: it costs nothing and keeps
+      // a continuous check on our own signing path.
+      const verifiedRecords = [];
+      const quarantinedRecords = [];
 
-      // Update sync state
+      for (const event of result.events) {
+        const envelope = event.envelope;
+        const record = {
+          sequenceNumber: event.sequenceNumber,
+          eventId: envelope.eventId,
+          commandId: envelope.commandId,
+          tenantId: envelope.tenantId,
+          storeId: envelope.storeId,
+          entityType: envelope.entityType,
+          entityId: envelope.entityId,
+          eventType: envelope.eventType,
+          payload: envelope.payload,
+          // VES v1.0 fields
+          vesVersion: envelope.vesVersion || 1,
+          payloadKind: envelope.payloadKind || 0,
+          payloadEncrypted: envelope.payloadEncrypted,
+          payloadPlainHash: envelope.payloadPlainHash,
+          payloadCipherHash: envelope.payloadCipherHash,
+          agentKeyId: envelope.agentKeyId,
+          agentSignature: envelope.agentSignature,
+          agentSignatureScheme: envelope.agentSignatureScheme || 0,
+          agentSignatureBundle: envelope.agentSignatureBundle || null,
+          baseVersion: envelope.baseVersion,
+          createdAt: envelope.createdAt,
+          sequencedAt: event.sequencedAt,
+          sourceAgent: envelope.sourceAgent,
+        };
+
+        const resolution = await this.keyDirectory.resolve(
+          envelope.sourceAgent,
+          envelope.agentKeyId,
+          envelope.createdAt,
+        );
+
+        if (resolution.error) {
+          quarantinedRecords.push({ record, reason: resolution.error });
+          continue;
+        }
+
+        // Anything thrown here (malformed hex, a bad key bundle) is a failure
+        // to verify, not a reason to accept the event.
+        let valid = false;
+        try {
+          valid = this.client.verifyEventSignature(
+            envelope,
+            resolution.publicKeyBundle ?? resolution.publicKey,
+          );
+        } catch {
+          valid = false;
+        }
+
+        if (valid) {
+          verifiedRecords.push(record);
+        } else {
+          quarantinedRecords.push({ record, reason: 'signature_invalid' });
+        }
+      }
+
+      if (verifiedRecords.length) {
+        this.outbox.storePulledEvents(verifiedRecords);
+      }
+
+      // storeQuarantinedEvents takes one reason per call, so group first.
+      // Re-quarantining an event_id overwrites the previous reason on purpose:
+      // the stored reason is the current diagnosis, and the newest one is the
+      // one an operator must act on (a key_unresolved that later becomes
+      // signature_invalid is a forgery, not a directory outage).
+      const reasons = new Set(quarantinedRecords.map((entry) => entry.reason));
+      for (const reason of reasons) {
+        const forReason = quarantinedRecords.filter((entry) => entry.reason === reason);
+        this.outbox.storeQuarantinedEvents(
+          forReason.map((entry) => entry.record),
+          reason,
+        );
+        this.emit('receive-verification-failed', { reason, count: forReason.length });
+      }
+
+      // The cursor advances regardless of what quarantined: one bad event from
+      // one peer must not wedge this agent's sync forever.
       this.outbox.updateSyncState({
         lastPulledSequence: result.nextSequence,
         headSequence: result.headSequence,
         lastSyncAt: new Date(),
       });
 
-      this.emit('pull', {
+      const conflicts = (await this.detectConflicts()).length;
+      const summary = {
         pulled: result.events.length,
-        applied: result.events.length,
-        conflicts: 0,
-      });
+        verified: verifiedRecords.length,
+        quarantined: quarantinedRecords.length,
+        stored: verifiedRecords.length,
+        conflicts,
+      };
+      this.emit('pull', summary);
 
       return {
         success: true,
-        pulled: result.events.length,
-        applied: result.events.length,
-        conflicts: 0,
+        ...summary,
         sequenceNumbers: options.includeEvents
-          ? eventsToStore.map((event) => event.sequenceNumber)
+          ? verifiedRecords.map((event) => event.sequenceNumber)
           : undefined,
       };
     } catch (error) {
@@ -493,7 +563,9 @@ export class SyncEngine extends EventEmitter {
       return {
         success: false,
         pulled: 0,
-        applied: 0,
+        verified: 0,
+        quarantined: 0,
+        stored: 0,
         conflicts: 0,
         error: error.message,
       };

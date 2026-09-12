@@ -217,7 +217,11 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       await engine.shutdown();
       return jsonOutput
         ? { ...result, events }
-        : { result, events, formatted: `Pulled ${result.pulled} events` };
+        : {
+            result,
+            events,
+            formatted: `Pulled ${result.pulled} events: ${result.stored} stored, ${result.quarantined} quarantined`,
+          };
     }
 
     case 'outbox': {

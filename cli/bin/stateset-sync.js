@@ -278,7 +278,14 @@ program
         } else if (result.pulled === 0) {
           spinner.info('Already up to date');
         } else {
-          spinner.succeed(`Pull complete: ${result.pulled} events pulled`);
+          spinner.succeed(
+            `Pull complete: ${result.pulled} pulled, ${result.stored} stored, ${result.quarantined} quarantined`,
+          );
+          if (result.quarantined > 0) {
+            spinner.warn(
+              `${result.quarantined} event(s) failed signature verification and were quarantined; they are not readable as store state.`,
+            );
+          }
         }
       } else {
         spinner.fail(`Pull failed: ${result.error}`);

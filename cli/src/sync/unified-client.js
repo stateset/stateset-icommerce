@@ -381,6 +381,24 @@ export class UnifiedSequencerClient extends EventEmitter {
   }
 
   /**
+   * Verify an event's author signature against that agent's public key.
+   *
+   * Verification is client-side only and identical for both transports, so the
+   * REST client's implementation is used when the active transport is gRPC.
+   *
+   * @param {Object} envelope - The event envelope.
+   * @param {Buffer|string|Object} publicKey - Agent Ed25519 key or hybrid public-key bundle.
+   * @returns {boolean}
+   */
+  verifyEventSignature(envelope, publicKey) {
+    if (this._client?.verifyEventSignature) {
+      return this._client.verifyEventSignature(envelope, publicKey);
+    }
+    const restClient = new SequencerClient(this.config);
+    return restClient.verifyEventSignature(envelope, publicKey);
+  }
+
+  /**
    * Verify a receipt signature against a known sequencer public key.
    * @param {Object} receipt - Receipt or sequenced event with receipt fields.
    * @param {Buffer|string|Object} sequencerPublicKey - Sequencer public key or bundle.
