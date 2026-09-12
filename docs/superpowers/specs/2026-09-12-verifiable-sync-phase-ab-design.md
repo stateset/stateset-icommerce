@@ -169,9 +169,13 @@ In `engine.js` `pull()` (`engine.js:382-500`), each event resolves
 
 - Verified → `storePulledEvents` as today.
 - Unverified → `storeQuarantinedEvents` with a reason of `signature_invalid`,
-  `key_unresolved`, `key_outside_validity_window`, `key_revoked`, or
-  `peer_key_conflict`. Quarantined events are **never** returned by application
-  reads.
+  `key_unresolved`, `key_outside_validity_window`, `key_revoked`,
+  `peer_key_conflict`, `sequencer_key_not_configured` or `directory_untrusted`.
+  (As built: the last two were added so that a local misconfiguration and an
+  untrustworthy directory response are not both reported as `key_unresolved`,
+  which names the sequencer's key registry as the suspect. The full list lives in
+  `QUARANTINE_REASONS` in `cli/src/sync/outbox.js`.) Quarantined events are
+  **never** returned by application reads.
 - The cursor advances either way. One bad event must not wedge an agent's sync.
 - Self-authored echoes (`sourceAgent === own agentId`) are verified too. It costs
   nothing and continuously checks our own signing path.

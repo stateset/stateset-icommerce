@@ -1295,8 +1295,22 @@ export class Outbox {
   }
 
   /**
-   * Store a pulled event from remote (VES v1.0)
-   * @param {Object} event - Sequenced event from remote
+   * Store a pulled event from remote (VES v1.0).
+   *
+   * CALLERS MUST VERIFY THE AUTHOR SIGNATURE FIRST — see
+   * `SyncEngine._persistVerified` in `sync/engine.js`, which resolves the
+   * author's key through `PeerKeyDirectory` and calls
+   * `client.verifyEventSignature` before it gets here. This method performs no
+   * verification of any kind. The property the receive path exists to hold is
+   * that nothing unverified reaches `_ves_pulled_events`, and it is enforced at
+   * the call sites, not here; an unverified write through this method breaks it
+   * silently, for every reader, with no trace. Unverified events belong in
+   * `storeQuarantinedEvents`.
+   *
+   * (No callers in `src`/`bin` — `storePulledEvents` is the batch path the
+   * engine uses. Kept for single-record use, under the same obligation.)
+   *
+   * @param {Object} event - Sequenced event from remote, already verified
    */
   storePulledEvent(event) {
     this.initialize();
@@ -1340,8 +1354,19 @@ export class Outbox {
   }
 
   /**
-   * Store multiple pulled events (VES v1.0)
-   * @param {Array<Object>} events
+   * Store multiple pulled events (VES v1.0).
+   *
+   * CALLERS MUST VERIFY THE AUTHOR SIGNATURE FIRST — see
+   * `SyncEngine._persistVerified` in `sync/engine.js`, which resolves the
+   * author's key through `PeerKeyDirectory` and calls
+   * `client.verifyEventSignature` before it gets here. This method performs no
+   * verification of any kind. The property the receive path exists to hold is
+   * that nothing unverified reaches `_ves_pulled_events`, and it is enforced at
+   * the call sites, not here; an unverified write through this method breaks it
+   * silently, for every reader, with no trace. Unverified events belong in
+   * `storeQuarantinedEvents`.
+   *
+   * @param {Array<Object>} events - Sequenced events from remote, already verified
    */
   storePulledEvents(events) {
     this.initialize();
