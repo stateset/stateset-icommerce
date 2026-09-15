@@ -1433,13 +1433,37 @@ impl PgCartRepository {
     }
 
     pub async fn begin_checkout_async(&self, id: Uuid) -> Result<Cart> {
-        sqlx::query("UPDATE carts SET status = 'payment_pending', updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let row = Self::lock_cart_in_tx(&mut tx, id).await?;
+        let cart = row.into_cart(vec![])?;
+        if cart.status == CartStatus::PaymentPending {
+            tx.commit().await.map_err(map_db_error)?;
+            return self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound);
+        }
+        if !cart.is_checkoutable_status() {
+            return Err(CommerceError::Conflict(format!(
+                "Cart cannot begin checkout in status: {}",
+                cart.status
+            )));
+        }
+        if cart.is_expired() {
+            return Err(CommerceError::ValidationError("Cart is expired".to_string()));
+        }
+        let updated = sqlx::query(
+            "UPDATE carts SET status = 'payment_pending', updated_at = $1
+             WHERE id = $2 AND status IN ('active', 'ready_for_payment', 'payment_pending')",
+        )
+        .bind(Utc::now())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Cart is no longer in a state that can begin checkout".to_string(),
+            ));
+        }
+        tx.commit().await.map_err(map_db_error)?;
         self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -1775,35 +1799,104 @@ impl PgCartRepository {
     }
 
     pub async fn cancel_async(&self, id: Uuid) -> Result<Cart> {
-        sqlx::query("UPDATE carts SET status = 'cancelled', updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let row = Self::lock_cart_in_tx(&mut tx, id).await?;
+        let cart = row.into_cart(vec![])?;
+        if cart.status == CartStatus::Cancelled {
+            tx.commit().await.map_err(map_db_error)?;
+            return self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound);
+        }
+        if !cart.can_cancel() {
+            return Err(CommerceError::Conflict(format!(
+                "Cart cannot be cancelled in status: {}",
+                cart.status
+            )));
+        }
+        let updated = sqlx::query(
+            "UPDATE carts SET status = 'cancelled', updated_at = $1
+             WHERE id = $2 AND status IN ('active', 'ready_for_payment', 'payment_pending')",
+        )
+        .bind(Utc::now())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Cart is no longer in a state that can be cancelled".to_string(),
+            ));
+        }
+        tx.commit().await.map_err(map_db_error)?;
         self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn abandon_async(&self, id: Uuid) -> Result<Cart> {
-        sqlx::query("UPDATE carts SET status = 'abandoned', updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let row = Self::lock_cart_in_tx(&mut tx, id).await?;
+        let cart = row.into_cart(vec![])?;
+        if cart.status == CartStatus::Abandoned {
+            tx.commit().await.map_err(map_db_error)?;
+            return self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound);
+        }
+        if !matches!(
+            cart.status,
+            CartStatus::Active | CartStatus::ReadyForPayment | CartStatus::PaymentPending
+        ) {
+            return Err(CommerceError::Conflict(format!(
+                "Cart cannot be abandoned in status: {}",
+                cart.status
+            )));
+        }
+        let updated = sqlx::query(
+            "UPDATE carts SET status = 'abandoned', updated_at = $1
+             WHERE id = $2 AND status IN ('active', 'ready_for_payment', 'payment_pending')",
+        )
+        .bind(Utc::now())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Cart is no longer in a state that can be abandoned".to_string(),
+            ));
+        }
+        tx.commit().await.map_err(map_db_error)?;
         self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn expire_async(&self, id: Uuid) -> Result<Cart> {
-        sqlx::query("UPDATE carts SET status = 'expired', updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let row = Self::lock_cart_in_tx(&mut tx, id).await?;
+        let cart = row.into_cart(vec![])?;
+        if cart.status == CartStatus::Expired {
+            tx.commit().await.map_err(map_db_error)?;
+            return self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound);
+        }
+        if !matches!(
+            cart.status,
+            CartStatus::Active | CartStatus::ReadyForPayment | CartStatus::PaymentPending
+        ) {
+            return Err(CommerceError::Conflict(format!(
+                "Cart cannot be expired in status: {}",
+                cart.status
+            )));
+        }
+        let updated = sqlx::query(
+            "UPDATE carts SET status = 'expired', updated_at = $1
+             WHERE id = $2 AND status IN ('active', 'ready_for_payment', 'payment_pending')",
+        )
+        .bind(Utc::now())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Cart is no longer in a state that can be expired".to_string(),
+            ));
+        }
+        tx.commit().await.map_err(map_db_error)?;
         self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 

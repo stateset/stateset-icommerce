@@ -656,11 +656,25 @@ impl Cart {
 }
 
 impl CartItem {
-    /// Calculate a line item's money total, rounded to the currency minor unit
-    /// (2 dp) so the stored/returned line total is a real money amount rather
-    /// than a sub-cent value like `9.999`. This matches the Postgres
-    /// `cart_items.total DECIMAL(12,2)` column (which coerces to 2 dp) and the
-    /// order pipeline's `OrderItem::calculate_total`.
+    /// Calculate a line item's money total in `currency`, rounded to its
+    /// minor unit so the stored total is a real money amount rather than a
+    /// sub-minor-unit value like `9.999` (USD) or `100.5` (JPY).
+    #[must_use]
+    pub fn calculate_total_for_currency(
+        quantity: i32,
+        unit_price: Decimal,
+        discount: Decimal,
+        tax: Decimal,
+        currency: CurrencyCode,
+    ) -> Decimal {
+        let subtotal = unit_price * Decimal::from(quantity);
+        (subtotal - discount + tax).round_dp(u32::from(currency.decimal_places()))
+    }
+
+    /// Calculate a line item's money total with the legacy USD 2-dp fallback.
+    ///
+    /// Prefer [`Self::calculate_total_for_currency`] when the cart currency
+    /// is known.
     #[must_use]
     pub fn calculate_total(
         quantity: i32,
@@ -668,8 +682,13 @@ impl CartItem {
         discount: Decimal,
         tax: Decimal,
     ) -> Decimal {
-        let subtotal = unit_price * Decimal::from(quantity);
-        (subtotal - discount + tax).round_dp(2)
+        Self::calculate_total_for_currency(
+            quantity,
+            unit_price,
+            discount,
+            tax,
+            CurrencyCode::default(),
+        )
     }
 
     /// Recalculate this item's total
@@ -724,6 +743,30 @@ mod tests {
     fn test_cart_item_total_calculation() {
         let total = CartItem::calculate_total(2, dec!(10.00), dec!(0), dec!(1.60));
         assert_eq!(total, dec!(21.60));
+    }
+
+    #[test]
+    fn cart_line_total_rounds_to_cart_currency() {
+        assert_eq!(
+            CartItem::calculate_total_for_currency(
+                1,
+                dec!(100),
+                dec!(0),
+                dec!(0.6),
+                CurrencyCode::JPY
+            ),
+            dec!(101)
+        );
+        assert_eq!(
+            CartItem::calculate_total_for_currency(
+                1,
+                dec!(10.006),
+                dec!(0),
+                dec!(0),
+                CurrencyCode::USD
+            ),
+            dec!(10.01)
+        );
     }
 
     #[test]

@@ -1350,6 +1350,26 @@ impl PgGeneralLedgerRepository {
             .await?;
         }
 
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "ledger.journal_entry_voided.v1",
+                "journal_entry",
+                id.to_string(),
+                serde_json::json!({
+                    "journal_entry_id": id.to_string(),
+                    "entry_number": entry.entry_number,
+                    "source": entry.source.to_string(),
+                    "total_debits": entry.total_debits.to_string(),
+                    "total_credits": entry.total_credits.to_string(),
+                    "line_count": entry.lines.len(),
+                    "status": JournalEntryStatus::Voided.to_string(),
+                }),
+                None,
+            ),
+        )
+        .await?;
+
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_journal_entry_async(id).await?.ok_or(CommerceError::NotFound)

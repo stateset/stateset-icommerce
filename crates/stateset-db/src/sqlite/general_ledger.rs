@@ -1375,6 +1375,25 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 )));
             }
 
+            append_kernel_event_tx(
+                tx,
+                &KernelOutboxEvent::domain(
+                    "ledger.journal_entry_voided.v1",
+                    "journal_entry",
+                    id.to_string(),
+                    serde_json::json!({
+                        "journal_entry_id": id.to_string(),
+                        "entry_number": entry.entry_number,
+                        "source": entry.source.to_string(),
+                        "total_debits": entry.total_debits.to_string(),
+                        "total_credits": entry.total_credits.to_string(),
+                        "line_count": entry.lines.len(),
+                        "status": JournalEntryStatus::Voided.to_string(),
+                    }),
+                    None,
+                ),
+            )?;
+
             Ok(())
         })?;
 
@@ -3097,8 +3116,20 @@ mod tests {
         let entry = make_balanced_entry(&repo, &cash, &revenue, dec!(25));
 
         repo.post_journal_entry(entry.id, "tester").expect("post");
-        repo.void_journal_entry(entry.id).expect("first void");
+        let voided = repo.void_journal_entry(entry.id).expect("first void");
+        assert_eq!(voided.status, JournalEntryStatus::Voided);
         assert_eq!(account_balance(&repo, cash.id), dec!(0));
+        let conn = repo.pool.get().expect("connection");
+        let payload: String = conn
+            .query_row(
+                "SELECT payload FROM kernel_outbox WHERE aggregate_id = ? AND event_type = ?",
+                params![entry.id.to_string(), "ledger.journal_entry_voided.v1"],
+                |row| row.get(0),
+            )
+            .expect("void event");
+        let payload: serde_json::Value = serde_json::from_str(&payload).expect("valid payload");
+        assert_eq!(payload["total_debits"], "25");
+        assert_eq!(payload["total_credits"], "25");
 
         let err = repo.void_journal_entry(entry.id).expect_err("second void must fail");
         assert!(
