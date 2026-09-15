@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.35.0",
+    "version": "1.35.2",
     "memberCount": 30,
     "defaultMemberCount": 19,
     "rustCrateCount": 22,
@@ -583,7 +583,7 @@
       },
       {
         "name": "sync",
-        "count": 18
+        "count": 20
       },
       {
         "name": "utils",
