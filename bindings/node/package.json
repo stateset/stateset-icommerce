@@ -21,6 +21,10 @@
       "types": "./agent-toolkit.d.ts",
       "default": "./agent-toolkit.mjs"
     },
+    "./native-toolkit": {
+      "types": "./native-toolkit.d.ts",
+      "default": "./native-toolkit.mjs"
+    },
     "./openai": {
       "types": "./openai.d.ts",
       "default": "./openai.mjs"
@@ -95,8 +99,11 @@
     "prepublishOnly": "npm run check:package && echo 'Ready to publish @stateset/embedded'",
     "artifacts": "napi artifacts",
     "build": "napi build --platform --profile release-node --js native-binding.js",
+    "postbuild": "node scripts/postbuild.mjs",
     "build:debug": "napi build --platform --js native-binding.js --features test-panic",
+    "postbuild:debug": "node scripts/postbuild.mjs",
     "build:debug:shipping": "napi build --platform --js native-binding.js",
+    "postbuild:debug:shipping": "node scripts/postbuild.mjs",
     "test": "node --test test/*.js",
     "test:coverage": "node --test --experimental-test-coverage test/*.js",
     "universal": "napi universal",
@@ -119,7 +126,10 @@
     "native-binding.js",
     "errors.js",
     "*.mjs",
-    "*.d.ts"
+    "*.d.ts",
+    "tool-descriptors.json",
+    "native-toolkit.mjs",
+    "native-toolkit.d.ts"
   ],
   "publishConfig": {
     "access": "public"

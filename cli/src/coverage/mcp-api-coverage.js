@@ -74,6 +74,8 @@ export const COMMERCE_GETTER_TO_MODULE = Object.freeze({
   costAccounting: 'cost-accounting',
   credit: 'credit',
   backorder: 'backorders',
+  // Plural alias of `backorder` on the binding; same tool module.
+  backorders: 'backorders',
   generalLedger: 'general-ledger',
   cycleCounts: 'cycle-counts',
   fixedAssets: 'fixed-assets',
@@ -690,6 +692,8 @@ export function buildMcpApiCoverage() {
 
   getterNames.delete('customStates');
   getterNames.delete('events');
+  // A value getter (whether `close()` has run), not a sub-API.
+  getterNames.delete('isClosed');
 
   const getters = [...getterNames].sort().map((getter) => {
     const moduleName = COMMERCE_GETTER_TO_MODULE[getter] ?? null;

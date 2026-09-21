@@ -8,6 +8,33 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Added
 
+- **`@stateset/embedded` lifecycle.** `Commerce.open(path, { maxConnections })`
+  runs migrations on a worker thread and resolves to the ready instance (the
+  constructor still does the same work synchronously). `commerce.close()`,
+  `commerce.isClosed` and `Symbol.asyncDispose` release the connection pool;
+  later calls reject with `err.code === 'PRECONDITION_FAILED'`. Sub-API getters
+  return the same object on every access.
+- **`@stateset/embedded` typed surface.** `index.d.ts` now declares 198
+  literal-union types for every status, kind, method and policy field (no
+  `status: string` remains), typed kernel commands, policies, receipts, budgets
+  and checkout snapshots (no `any` on the governed-write path), and optional
+  filter objects with `limit`/`offset` on every `list()` that used to return
+  an unbounded array.
+- **`@stateset/embedded` standalone agent adapters.** The `/openai`,
+  `/generic`, `/langchain` and `/vercel-ai` entrypoints and the new
+  `/native-toolkit` work with nothing but the binding installed, from a shipped
+  `tool-descriptors.json` (727 tools). Writes preview unless `allowApply` is
+  set. `@stateset/cli` is still preferred when it is installed.
+- **Generated Node.js API reference** at `docs/api/node-reference.md`,
+  regenerated on every build and guarded by a staleness test.
+- New binding test suites for promotions, subscriptions, credit, lots,
+  serials, fulfillment, receiving, backorders, cost accounting and accounts
+  receivable (600 tests in total; 22 marked todo document engine defects).
+- **`@stateset/embedded` event streams.** A subscription is async-iterable
+  (`for await (const event of subscription)`), and has `close()`, `isClosed`,
+  `ref()` and `unref()`. A pending `recv()` holds the process open only while
+  it is awaited; `close()`, leaving the loop, or closing the `Commerce` ends the
+  stream and lets the process exit.
 - **Verifiable receive path.** Every event returned by `stateset-sync pull` is now
   verified against its author's signing key, resolved through the sequencer's
   signed key directory and pinned on first use. What fails verification is
@@ -21,6 +48,31 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Changed
 
+- **UPGRADE NOTE — `@stateset/embedded` inputs are strict.** A malformed input
+  that used to be coerced is now refused with `err.code === 'VALIDATION'`: an
+  unknown currency code (was: the store default), a non-UUID `productId`,
+  `variantId`, `customerId`, `cartId`, `couponId` or similar (was: dropped, or
+  the nil UUID), one bad id in an id list (was: skipped), a malformed
+  RFC 3339 timestamp or `YYYY-MM-DD` date on a create or a list filter (was:
+  ignored, so a filter typo listed everything), malformed JSON in `tiers` /
+  `metadata`, an unknown `paymentMethod` (was: credit card), and an unknown
+  currency on `tax.calculate` (was: USD). Callers that relied on the coercion
+  must send valid values.
+- **UPGRADE NOTE — `@stateset/embedded` enum inputs are strict.** Every
+  enumerated input (`promotionType`, `accountType`, `receiptType`,
+  `costMethod`, `priority`, `carrier`, `shippingMethod`, `warehouseType`,
+  `locationType`, tax types and categories, analytics `period`/`granularity`,
+  status filters, …) now refuses an unknown spelling with
+  `err.code === 'VALIDATION'` and a message listing the accepted values,
+  instead of silently using a default. Accepted spellings are unchanged and
+  still case-insensitive; the literal unions in `index.d.ts` list them.
+- **`@stateset/embedded` float money is optional.** `unitPrice`, `price`,
+  `amount` and `taxAmount` inputs accept the exact `*Exact` string alone;
+  sending neither form is a `VALIDATION` error naming the field. The float
+  fields are now typed `number | undefined` in `index.d.ts`.
+- **`@stateset/embedded` runs calls concurrently.** The binding no longer holds
+  one lock around the engine for the duration of every call; the engine's own
+  connection pool serialises what needs serialising.
 - **UPGRADE NOTE — configure `sequencerPublicKey` before upgrading, or the
   receive path stops.** An agent without it can still push, but cannot verify
   any key directory: every pulled event quarantines as

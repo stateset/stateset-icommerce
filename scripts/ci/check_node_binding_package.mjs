@@ -37,6 +37,9 @@ const REQUIRED_PACKED_FILES = [
   'vercel-ai.mjs',
   'vercel-ai.d.ts',
   'toolkit-helpers.mjs',
+  'native-toolkit.mjs',
+  'native-toolkit.d.ts',
+  'tool-descriptors.json',
   'purchase-runtime.mjs',
   'purchase-runtime.d.ts',
   'set-payment.mjs',
@@ -216,6 +219,32 @@ async function verifyPackedImports(packageDir) {
   assert.equal(langchainTools[0].name, 'list_customers');
   const vercelTools = vercelAi.createVercelAITools(fakeToolkit);
   assert.ok(vercelTools.list_customers);
+
+  // Without @stateset/cli the adapters must still work end to end on the
+  // native toolkit shipped in the tarball (tool-descriptors.json +
+  // native-toolkit.mjs), previewing writes and executing reads.
+  const helpers = await import(pathToFileURL(path.join(packageDir, 'toolkit-helpers.mjs')).href);
+  assert.equal(helpers.isCliToolkitAvailable(), false, 'Packed tarball must not resolve the CLI toolkit.');
+  assert.equal(helpers.getDefaultToolkitBackend(), 'native');
+  const nativeTools = openai.createOpenAITools(commerce, { filter: ['customers.list', 'orders.create'] });
+  assert.deepEqual(
+    nativeTools.map((tool) => tool.function.name),
+    ['customers__list', 'orders__create'],
+    'Packed OpenAI helper should fall back to the native toolkit when the CLI peer is absent.',
+  );
+  const nativeRead = await openai.executeOpenAIToolCall(commerce, {
+    call_id: 'native_1',
+    function: { name: 'customers__list', arguments: '{}' },
+  });
+  assert.deepEqual(nativeRead.result, [], 'Native read tool should execute against the packed engine.');
+  const nativeWrite = await openai.executeOpenAIToolCall(commerce, {
+    call_id: 'native_2',
+    function: { name: 'customers__create', arguments: '{"input":{"email":"a@example.com","firstName":"A","lastName":"B"}}' },
+  });
+  assert.equal(nativeWrite.result.preview, true, 'Native write tool must preview without allowApply.');
+  const nativeToolkit = await import(pathToFileURL(path.join(packageDir, 'native-toolkit.mjs')).href);
+  assert.equal(typeof nativeToolkit.createNativeToolkit, 'function');
+  assert.ok(nativeToolkit.loadToolDescriptors().tools.length > 500, 'tool-descriptors.json should ship the full catalog.');
 
   try {
     await import(pathToFileURL(path.join(packageDir, 'agent-toolkit.mjs')).href);

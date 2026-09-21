@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCommerce } from '@/lib/commerce';
 import { verifyWalletRequest } from '@/lib/wallet-auth';
+import { walletMatches } from '@/lib/customer-metadata';
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -21,7 +22,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (wallet && order.customerId) {
       try {
         const customer = await commerce.customers.get(order.customerId);
-        if (customer && customer.metadata?.walletAddress?.toLowerCase() !== wallet.toLowerCase()) {
+        if (customer && !walletMatches(customer.metadata, wallet)) {
           return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
         }
       } catch {}

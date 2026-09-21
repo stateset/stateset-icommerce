@@ -40,7 +40,7 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 
 # Crypto (for NAPI wrappers)
 sha2 = "0.10"
