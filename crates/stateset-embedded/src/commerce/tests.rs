@@ -684,6 +684,126 @@ fn test_promotions_coupon_codes() {
     assert!(invalid.is_none());
 }
 
+/// `validate_coupon` must agree with `apply`: a coupon whose promotion is not
+/// redeemable (draft / paused / outside its window) validates as `None`,
+/// because `apply` would never discount it. Before this, the coupon row alone
+/// was checked, so a storefront could accept a code at entry that then
+/// silently produced no discount at checkout.
+#[test]
+#[cfg(feature = "sqlite")]
+fn validate_coupon_mirrors_apply_promotion_eligibility() {
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        ApplyPromotionsRequest, CreateCouponCode, CreatePromotion, PromotionLineItem,
+        PromotionTarget, PromotionTrigger, PromotionType, StackingBehavior, UpdatePromotion,
+    };
+
+    let (commerce, _db_file) = commerce_with_temp_db();
+
+    let promo = commerce
+        .promotions()
+        .create(CreatePromotion {
+            code: None,
+            name: "Gated".into(),
+            description: None,
+            internal_notes: None,
+            promotion_type: PromotionType::PercentageOff,
+            trigger: PromotionTrigger::CouponCode,
+            target: PromotionTarget::Order,
+            stacking: StackingBehavior::Stackable,
+            percentage_off: Some(dec!(0.10)),
+            fixed_amount_off: None,
+            max_discount_amount: None,
+            buy_quantity: None,
+            get_quantity: None,
+            get_discount_percent: None,
+            tiers: None,
+            bundle_product_ids: None,
+            bundle_discount: None,
+            starts_at: None,
+            ends_at: None,
+            total_usage_limit: None,
+            per_customer_limit: None,
+            priority: Some(1),
+            conditions: None,
+            applicable_product_ids: None,
+            applicable_category_ids: None,
+            applicable_skus: None,
+            excluded_product_ids: None,
+            excluded_category_ids: None,
+            eligible_customer_ids: None,
+            eligible_customer_groups: None,
+            currency: None,
+            metadata: None,
+        })
+        .unwrap();
+    commerce
+        .promotions()
+        .create_coupon(CreateCouponCode {
+            promotion_id: promo.id,
+            code: "GATED10".into(),
+            usage_limit: None,
+            per_customer_limit: None,
+            starts_at: None,
+            ends_at: None,
+            metadata: None,
+        })
+        .unwrap();
+
+    let apply_discounts = || {
+        commerce
+            .promotions()
+            .apply(ApplyPromotionsRequest {
+                subtotal: dec!(100.00),
+                coupon_codes: vec!["GATED10".into()],
+                line_items: vec![PromotionLineItem {
+                    id: "item-1".into(),
+                    product_id: None,
+                    variant_id: None,
+                    sku: None,
+                    category_ids: vec![],
+                    quantity: 1,
+                    unit_price: dec!(100.00),
+                    line_total: dec!(100.00),
+                }],
+                ..Default::default()
+            })
+            .unwrap()
+            .total_discount
+            > dec!(0)
+    };
+    let validates = || commerce.promotions().validate_coupon("GATED10").unwrap().is_some();
+
+    // Draft promotion: apply grants nothing, so validate must say no.
+    assert!(!apply_discounts(), "a draft promotion must not discount");
+    assert!(!validates(), "a coupon on a draft promotion must not validate");
+
+    // Active: both agree it is redeemable.
+    commerce.promotions().activate(promo.id).unwrap();
+    assert!(apply_discounts());
+    assert!(validates());
+
+    // Paused: both agree it is not.
+    commerce.promotions().deactivate(promo.id).unwrap();
+    assert!(!apply_discounts());
+    assert!(!validates(), "a coupon on a paused promotion must not validate");
+
+    // Active but expired: both agree it is not.
+    commerce.promotions().activate(promo.id).unwrap();
+    commerce
+        .promotions()
+        .update(
+            promo.id,
+            UpdatePromotion {
+                ends_at: Some(chrono::Utc::now() - chrono::Duration::days(1)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(!apply_discounts());
+    assert!(!validates(), "a coupon on an expired promotion must not validate");
+}
+
 #[test]
 #[cfg(feature = "sqlite")]
 fn test_promotions_fixed_amount() {

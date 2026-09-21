@@ -379,10 +379,22 @@ impl SqliteBackorderRepository {
     }
 }
 
+/// A backorder is a promise to ship `quantity` units later; zero or negative
+/// promises are meaningless and would subtract from the summary totals.
+fn validate_create_backorder(input: &CreateBackorder) -> Result<()> {
+    if input.quantity <= Decimal::ZERO {
+        return Err(CommerceError::ValidationError(
+            "Backorder quantity must be greater than zero".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn create_backorder_in_tx(
     tx: &rusqlite::Transaction<'_>,
     input: &CreateBackorder,
 ) -> std::result::Result<Backorder, rusqlite::Error> {
+    validate_create_backorder(input).map_err(to_sql_err)?;
     let id = Uuid::new_v4();
     let now = Utc::now();
     let backorder_number = generate_backorder_number();
@@ -549,6 +561,7 @@ impl SqliteBackorderRepository {
 
 impl BackorderRepository for SqliteBackorderRepository {
     fn create_backorder(&self, input: CreateBackorder) -> Result<Backorder> {
+        validate_create_backorder(&input)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let backorder_number = generate_backorder_number();
@@ -1116,11 +1129,13 @@ impl BackorderRepository for SqliteBackorderRepository {
 
         let (total, pending, allocated, critical): (i32, i32, i32, i32) = conn
             .query_row(
+                // `SUM` over zero rows is NULL, not 0: an empty store must
+                // still answer with zeros rather than a decode error.
                 "SELECT
                     COUNT(*),
-                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN status = 'allocated' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN priority = 'critical' THEN 1 ELSE 0 END)
+                    COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN status = 'allocated' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN priority = 'critical' THEN 1 ELSE 0 END), 0)
                  FROM backorders WHERE status NOT IN ('fulfilled', 'cancelled')",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
@@ -1233,5 +1248,79 @@ impl BackorderRepository for SqliteBackorderRepository {
             })
             .map_err(map_db_error)?;
         Ok(count as u64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SqliteDatabase;
+    use rust_decimal_macros::dec;
+
+    fn fresh_repo() -> SqliteBackorderRepository {
+        SqliteDatabase::in_memory().expect("in-memory").backorder()
+    }
+
+    fn input(sku: &str, quantity: Decimal) -> CreateBackorder {
+        CreateBackorder {
+            order_id: Uuid::new_v4(),
+            order_line_id: None,
+            customer_id: Uuid::new_v4(),
+            sku: sku.into(),
+            quantity,
+            priority: None,
+            expected_date: None,
+            promised_date: None,
+            source_location_id: None,
+            notes: None,
+        }
+    }
+
+    fn assert_all_zero(summary: &BackorderSummary) {
+        assert_eq!(summary.total_backorders, 0, "{summary:?}");
+        assert_eq!(summary.total_quantity, Decimal::ZERO, "{summary:?}");
+        assert_eq!(summary.pending_count, 0, "{summary:?}");
+        assert_eq!(summary.allocated_count, 0, "{summary:?}");
+        assert_eq!(summary.critical_count, 0, "{summary:?}");
+        assert_eq!(summary.overdue_count, 0, "{summary:?}");
+    }
+
+    #[test]
+    fn binding_get_summary_on_empty_store_is_all_zero() {
+        // Regression: `SUM(CASE ...)` over zero rows is NULL and was read as
+        // `i32`, so an empty store answered with a DATABASE error.
+        let repo = fresh_repo();
+        let summary = repo.get_summary().expect("summary on an empty store");
+        assert_all_zero(&summary);
+    }
+
+    #[test]
+    fn binding_get_summary_after_only_backorder_cancelled_is_all_zero() {
+        let repo = fresh_repo();
+        let bo = repo.create_backorder(input("SKU-SUM", dec!(3))).expect("create");
+        let open = repo.get_summary().expect("summary with one open backorder");
+        assert_eq!(open.total_backorders, 1);
+        assert_eq!(open.pending_count, 1);
+        assert_eq!(open.total_quantity, dec!(3));
+
+        repo.cancel_backorder(bo.id).expect("cancel");
+        let summary = repo.get_summary().expect("summary after the only backorder is cancelled");
+        assert_all_zero(&summary);
+    }
+
+    #[test]
+    fn binding_create_backorder_rejects_non_positive_quantity() {
+        let repo = fresh_repo();
+        for qty in [dec!(0), dec!(-1)] {
+            let err = repo
+                .create_backorder(input("SKU-NEG", qty))
+                .expect_err("quantity {qty} must be refused");
+            assert!(matches!(err, CommerceError::ValidationError(_)), "qty {qty}: got {err:?}");
+        }
+        assert!(
+            repo.list_backorders(BackorderFilter::default()).expect("list").is_empty(),
+            "a refused backorder must not be written"
+        );
+        assert_all_zero(&repo.get_summary().expect("summary"));
     }
 }

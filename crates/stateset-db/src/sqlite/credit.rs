@@ -398,6 +398,18 @@ impl SqliteCreditRepository {
         Ok(())
     }
 
+    /// A credit line is a non-negative ceiling: a negative limit opens an
+    /// account with negative available credit that is "over limit" with nothing
+    /// ever charged. Zero (a fully restricted line) is legitimate.
+    fn validate_credit_limit(limit: Decimal) -> Result<()> {
+        if limit < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(format!(
+                "Credit limit cannot be negative (got {limit})"
+            )));
+        }
+        Ok(())
+    }
+
     /// Insert a credit account on the caller's transaction.
     fn create_credit_account_with_conn(
         conn: &rusqlite::Transaction<'_>,
@@ -530,6 +542,7 @@ impl SqliteCreditRepository {
 
 impl CreditRepository for SqliteCreditRepository {
     fn create_credit_account(&self, input: CreateCreditAccount) -> Result<CreditAccount> {
+        Self::validate_credit_limit(input.credit_limit)?;
         let id = CreditId::new();
         let now = Utc::now();
 
@@ -593,6 +606,9 @@ impl CreditRepository for SqliteCreditRepository {
         // committing one without the other leaves `check_credit` approving
         // orders against a stale line.
         let now = Utc::now().to_rfc3339();
+        if let Some(limit) = input.credit_limit {
+            Self::validate_credit_limit(limit)?;
+        }
         let account = self.get_credit_account(id)?.ok_or(CommerceError::NotFound)?;
         let customer_id = account.customer_id;
 
@@ -706,6 +722,7 @@ impl CreditRepository for SqliteCreditRepository {
         // The limit write, its `limit_change` ledger row and the available-credit
         // recompute are ONE IMMEDIATE transaction: a limit that moved without an
         // audit row (or vice versa) is unreconcilable.
+        Self::validate_credit_limit(new_limit)?;
         let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
             Self::adjust_credit_limit_with_conn(tx, customer_id, new_limit, reason, &now)
@@ -1870,6 +1887,76 @@ mod tests {
 
         let acct = repo.get_credit_account_by_customer(cust).expect("get").expect("found");
         assert_eq!(acct.current_balance, dec!(50), "rejected payment must not change the balance");
+    }
+
+    #[test]
+    fn create_credit_account_rejects_negative_limit_and_writes_nothing() {
+        // A negative line opened an Active account with negative available
+        // credit, which then surfaced in `get_over_limit_customers` with nothing
+        // ever charged. Zero is a legitimate (fully restricted) line.
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        let err = repo
+            .create_credit_account(CreateCreditAccount {
+                customer_id: cust,
+                credit_limit: dec!(-100),
+                currency: None,
+                payment_terms: None,
+                risk_rating: None,
+                notes: None,
+            })
+            .expect_err("negative limit must be rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        assert!(
+            repo.get_credit_account_by_customer(cust).expect("ok").is_none(),
+            "nothing may be written for a rejected account"
+        );
+        assert!(repo.get_over_limit_customers().expect("ok").is_empty());
+
+        let zero = make_account(&repo, CustomerId::new(), Decimal::ZERO);
+        assert_eq!(zero.credit_limit, Decimal::ZERO);
+        assert_eq!(zero.available_credit, Decimal::ZERO);
+    }
+
+    #[test]
+    fn adjust_credit_limit_rejects_negative_limit_and_writes_nothing() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(500));
+
+        let err = repo
+            .adjust_credit_limit(cust, dec!(-1), "bad review")
+            .expect_err("negative limit must be rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+        let acct = repo.get_credit_account_by_customer(cust).expect("ok").expect("found");
+        assert_eq!(acct.credit_limit, dec!(500), "limit must be unchanged");
+        assert_eq!(acct.available_credit, dec!(500));
+        let ledger = repo
+            .list_transactions(CreditTransactionFilter {
+                customer_id: Some(cust),
+                transaction_type: Some(CreditTransactionType::LimitChange),
+                ..Default::default()
+            })
+            .expect("list");
+        assert!(ledger.is_empty(), "a rejected change must not leave a limit_change row");
+
+        // The blind update path has the same ceiling.
+        let err = repo
+            .update_credit_account(
+                acct.id,
+                UpdateCreditAccount { credit_limit: Some(dec!(-5)), ..Default::default() },
+            )
+            .expect_err("negative limit must be rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        assert_eq!(
+            repo.get_credit_account_by_customer(cust).expect("ok").expect("found").credit_limit,
+            dec!(500)
+        );
+
+        // Zero remains a legitimate target (freeze the line).
+        let frozen = repo.adjust_credit_limit(cust, Decimal::ZERO, "freeze").expect("zero ok");
+        assert_eq!(frozen.credit_limit, Decimal::ZERO);
     }
 
     #[test]

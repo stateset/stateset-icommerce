@@ -43,6 +43,41 @@ pub struct SqliteCostAccountingRepository {
 }
 
 impl SqliteCostAccountingRepository {
+    /// Reject a blank SKU (a record keyed on "" is reachable by no real item)
+    /// and any negative cost component: a negative standard cost seeds
+    /// average/last cost, so inventory valuation would go negative. Zero is a
+    /// legitimate cost.
+    fn validate_item_cost_input(input: &SetItemCost) -> Result<()> {
+        Self::validate_sku(&input.sku)?;
+        for (field, value) in [
+            ("standard_cost", input.standard_cost),
+            ("material_cost", input.material_cost),
+            ("labor_cost", input.labor_cost),
+            ("overhead_cost", input.overhead_cost),
+        ] {
+            if let Some(cost) = value {
+                Self::validate_cost(field, cost)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_sku(sku: &str) -> Result<()> {
+        if sku.trim().is_empty() {
+            return Err(CommerceError::ValidationError("Item cost sku cannot be blank".into()));
+        }
+        Ok(())
+    }
+
+    fn validate_cost(field: &str, cost: Decimal) -> Result<()> {
+        if cost < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(format!(
+                "Item cost {field} cannot be negative (got {cost})"
+            )));
+        }
+        Ok(())
+    }
+
     /// Insert-or-update an item cost on the caller's connection/transaction.
     ///
     /// Shared by `set_item_cost` (which wraps it in an IMMEDIATE transaction)
@@ -53,6 +88,8 @@ impl SqliteCostAccountingRepository {
         input: SetItemCost,
         now: DateTime<Utc>,
     ) -> rusqlite::Result<()> {
+        Self::validate_item_cost_input(&input)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let SetItemCost {
             sku,
             cost_method,
@@ -500,6 +537,8 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         quantity: Decimal,
         unit_cost: Decimal,
     ) -> Result<ItemCost> {
+        Self::validate_sku(sku)?;
+        Self::validate_cost("unit_cost", unit_cost)?;
         let now = Utc::now();
 
         // Ensure item cost exists
@@ -565,6 +604,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn update_last_cost(&self, sku: &str, unit_cost: Decimal) -> Result<ItemCost> {
+        Self::validate_cost("unit_cost", unit_cost)?;
         let now = Utc::now();
 
         {
@@ -1759,6 +1799,94 @@ mod tests {
         let by_sku = repo.get_item_cost("WIDGET-1").expect("ok").expect("found");
         assert_eq!(by_sku.sku, "WIDGET-1");
         assert!(repo.get_item_cost("MISSING").expect("ok").is_none());
+    }
+
+    #[test]
+    fn set_item_cost_rejects_negative_costs_and_blank_sku() {
+        // A negative standard cost was stored and seeded average/last cost, so
+        // inventory valuation could go negative; an empty SKU created a record
+        // keyed on "". Zero remains a legitimate cost.
+        let repo = fresh_repo();
+        for input in [
+            SetItemCost {
+                sku: "NEG-STD".into(),
+                standard_cost: Some(dec!(-1)),
+                ..Default::default()
+            },
+            SetItemCost {
+                sku: "NEG-MAT".into(),
+                material_cost: Some(dec!(-0.01)),
+                ..Default::default()
+            },
+            SetItemCost { sku: "NEG-LAB".into(), labor_cost: Some(dec!(-5)), ..Default::default() },
+            SetItemCost {
+                sku: "NEG-OVH".into(),
+                overhead_cost: Some(dec!(-5)),
+                ..Default::default()
+            },
+            SetItemCost { sku: String::new(), standard_cost: Some(dec!(1)), ..Default::default() },
+            SetItemCost { sku: "   ".into(), standard_cost: Some(dec!(1)), ..Default::default() },
+        ] {
+            let sku = input.sku.clone();
+            let err = repo.set_item_cost(input).expect_err("must be rejected");
+            assert!(matches!(err, CommerceError::ValidationError(_)), "sku {sku:?}: got {err:?}");
+            assert!(
+                repo.get_item_cost(&sku).expect("ok").is_none(),
+                "sku {sku:?}: nothing written"
+            );
+        }
+        assert!(repo.list_item_costs(ItemCostFilter::default()).expect("list").is_empty());
+
+        // A negative on an EXISTING sku must not clobber a good cost either.
+        repo.set_item_cost(SetItemCost {
+            sku: "GOOD".into(),
+            standard_cost: Some(dec!(10)),
+            ..Default::default()
+        })
+        .expect("good");
+        let err = repo
+            .set_item_cost(SetItemCost {
+                sku: "GOOD".into(),
+                standard_cost: Some(dec!(-10)),
+                ..Default::default()
+            })
+            .expect_err("rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        assert_eq!(repo.get_item_cost("GOOD").expect("ok").expect("found").standard_cost, dec!(10));
+
+        let free = repo
+            .set_item_cost(SetItemCost {
+                sku: "FREE".into(),
+                standard_cost: Some(Decimal::ZERO),
+                ..Default::default()
+            })
+            .expect("zero is a legitimate cost");
+        assert_eq!(free.standard_cost, Decimal::ZERO);
+    }
+
+    #[test]
+    fn update_average_cost_rejects_negative_unit_cost() {
+        let repo = fresh_repo();
+        // Unknown sku: the seed path must not create a record from a negative cost.
+        let err = repo.update_average_cost("AVG-NEW", dec!(10), dec!(-2)).expect_err("rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        assert!(repo.get_item_cost("AVG-NEW").expect("ok").is_none(), "nothing written");
+
+        // Existing sku: average and last cost must stay put.
+        repo.set_item_cost(SetItemCost {
+            sku: "AVG-1".into(),
+            standard_cost: Some(dec!(4)),
+            ..Default::default()
+        })
+        .expect("seed");
+        let err = repo.update_average_cost("AVG-1", dec!(10), dec!(-2)).expect_err("rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        let cost = repo.get_item_cost("AVG-1").expect("ok").expect("found");
+        assert_eq!(cost.average_cost, dec!(4));
+        assert_eq!(cost.last_cost, dec!(4));
+
+        let err = repo.update_average_cost("  ", dec!(10), dec!(2)).expect_err("blank sku");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
     }
 
     #[test]

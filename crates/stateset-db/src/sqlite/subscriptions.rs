@@ -1241,6 +1241,21 @@ impl SqliteSubscriptionRepository {
         self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
+    /// Skip the subscription's next billing cycle.
+    ///
+    /// The cycle that was due — the `scheduled` cycle whose `period_end` is
+    /// the current `next_billing_date`, i.e. the one seeded for the current
+    /// period on subscribe or by the last paid cycle — is settled as
+    /// `skipped`, and the subscription's clock moves on exactly as it does
+    /// after a paid cycle: the current period becomes the next interval and
+    /// a fresh `scheduled` cycle is seeded for it, so the one-scheduled-
+    /// cycle-per-current-period invariant that [`Self::create_subscription`]
+    /// establishes still holds. `billing_cycle_count` is untouched: nothing
+    /// settled a charge. Mirrors the Postgres backend.
+    ///
+    /// Before this, only the dates moved and the skipped period's cycle
+    /// stayed `scheduled`, so a billing worker charged it anyway — one
+    /// interval late.
     pub fn skip_billing_cycle(
         &self,
         id: SubscriptionId,
@@ -1263,14 +1278,15 @@ impl SqliteSubscriptionRepository {
                 )));
             }
 
-            // Skip exactly one interval with the same calendar arithmetic the
-            // paid path uses (`advance`), so a monthly subscription skipped in
-            // February stays on its day of month instead of drifting by the
-            // 30-day approximation of `days()`.
-            let new_billing_date = sub.billing_interval.advance(
-                sub.next_billing_date.unwrap_or(sub.current_period_end),
-                sub.custom_interval_days,
-            );
+            // The skipped period ends where the next charge was due; the new
+            // period runs from there for exactly one interval, with the same
+            // calendar arithmetic the paid path uses (`advance`), so a
+            // monthly subscription skipped in February stays on its day of
+            // month instead of drifting by the 30-day approximation of
+            // `days()`.
+            let skipped_period_end = sub.next_billing_date.unwrap_or(sub.current_period_end);
+            let new_billing_date =
+                sub.billing_interval.advance(skipped_period_end, sub.custom_interval_days);
 
             let now = Utc::now();
 
@@ -1280,12 +1296,13 @@ impl SqliteSubscriptionRepository {
             let updated = tx.execute(
                 "UPDATE subscriptions SET
                     next_billing_date = ?1,
-                    current_period_end = ?2,
+                    current_period_start = ?2,
+                    current_period_end = ?1,
                     updated_at = ?3
                  WHERE id = ?4 AND next_billing_date IS ?5",
                 rusqlite::params![
                     new_billing_date.to_rfc3339(),
-                    new_billing_date.to_rfc3339(),
+                    skipped_period_end.to_rfc3339(),
                     now.to_rfc3339(),
                     id.to_string(),
                     sub.next_billing_date.as_ref().map(chrono::DateTime::to_rfc3339),
@@ -1297,6 +1314,52 @@ impl SqliteSubscriptionRepository {
                     "Subscription billing schedule changed concurrently; retry the skip".into(),
                 )));
             }
+
+            // Settle the cycle that was due as `skipped`. Only a `scheduled`
+            // cycle can be skipped (`BillingCycleStatus::can_transition_to`);
+            // a cycle already paid / failed / voided for that period is left
+            // alone. Dates are compared as parsed instants, not as the
+            // strings a caller happened to store them in.
+            let due_cycles: Vec<(String, String)> = tx
+                .prepare(
+                    "SELECT id, period_end FROM billing_cycles
+                     WHERE subscription_id = ?1 AND status = 'scheduled'",
+                )?
+                .query_map(rusqlite::params![id.to_string()], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            for (cycle_id, period_end_raw) in due_cycles {
+                let period_end =
+                    parse_datetime_row(&period_end_raw, "billing_cycle", "period_end")?;
+                if period_end != skipped_period_end {
+                    continue;
+                }
+                tx.execute(
+                    "UPDATE billing_cycles SET
+                        status = 'skipped',
+                        failure_reason = ?1,
+                        updated_at = ?2
+                     WHERE id = ?3 AND status = 'scheduled'",
+                    rusqlite::params![reason, now.to_rfc3339(), cycle_id],
+                )?;
+            }
+
+            // Seed the scheduled cycle for the new current period, the way
+            // `create_subscription` seeds cycle 1 for the first one.
+            let next_cycle_number: i32 = tx.query_row(
+                "SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM billing_cycles
+                 WHERE subscription_id = ?1",
+                rusqlite::params![id.to_string()],
+                |row| row.get(0),
+            )?;
+            Self::insert_billing_cycle_with_conn(
+                tx,
+                Uuid::new_v4(),
+                &sub,
+                next_cycle_number,
+                skipped_period_end,
+                new_billing_date,
+                now,
+            )?;
 
             self.record_event_with_conn(
                 tx,
@@ -2815,6 +2878,63 @@ mod tests {
             ..create_subscription_input(customer, plan_id)
         })
         .expect("create subscription")
+    }
+
+    /// Skipping a billing cycle settles the cycle that was due (the one
+    /// seeded for the current period on subscribe) as `skipped` and seeds the
+    /// next scheduled cycle for the new period — the same invariant
+    /// `create_subscription` establishes: one scheduled cycle whose period is
+    /// the subscription's current period. Before this, the skipped period's
+    /// cycle stayed `scheduled` and a billing worker charged it anyway, one
+    /// interval late.
+    #[test]
+    fn skip_billing_cycle_marks_the_due_cycle_skipped_and_seeds_the_next_period() {
+        use stateset_core::{BillingCycleStatus, SkipBillingCycle};
+
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.subscriptions();
+        let plan = active_plan(&repo, Some(0));
+        let start = Utc::now() - Duration::days(20);
+        let sub = subscribe_started_at(&repo, plan, start);
+        let due_at = sub.next_billing_date.expect("active subscription has a billing date");
+        assert_eq!(due_at, sub.current_period_end);
+
+        let skipped = repo
+            .skip_billing_cycle(sub.id, SkipBillingCycle { reason: Some("Traveling".into()) })
+            .expect("skip");
+        let new_due_at = skipped.next_billing_date.expect("still scheduled");
+        assert!(new_due_at > due_at);
+        assert_eq!(skipped.current_period_end, new_due_at);
+        assert_eq!(
+            skipped.current_period_start, due_at,
+            "the current period moves on exactly as it does after a paid cycle"
+        );
+        assert_eq!(skipped.billing_cycle_count, 0, "a skipped cycle did not settle a charge");
+
+        let mut cycles = repo
+            .list_billing_cycles(BillingCycleFilter {
+                subscription_id: Some(sub.id),
+                ..Default::default()
+            })
+            .expect("list cycles");
+        cycles.sort_by_key(|c| c.cycle_number);
+        assert_eq!(cycles.len(), 2, "{cycles:?}");
+
+        assert_eq!(cycles[0].cycle_number, 1);
+        assert_eq!(cycles[0].status, BillingCycleStatus::Skipped);
+        assert_eq!(cycles[0].period_end, due_at);
+        assert_eq!(cycles[0].failure_reason.as_deref(), Some("Traveling"));
+
+        assert_eq!(cycles[1].cycle_number, 2);
+        assert_eq!(cycles[1].status, BillingCycleStatus::Scheduled);
+        assert_eq!(cycles[1].period_start, due_at);
+        assert_eq!(cycles[1].period_end, new_due_at);
+
+        // A skipped cycle cannot be resurrected into a charge.
+        let err = repo
+            .update_billing_cycle_status(cycles[0].id, BillingCycleStatus::Paid, None, None)
+            .expect_err("paying a skipped cycle must be refused");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
     }
 
     #[test]
