@@ -6,6 +6,8 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.35.2] - 2026-09-21
+
 ### Fixed
 
 - **Engine guards surfaced by the Node binding's new test suites** (SQLite and
