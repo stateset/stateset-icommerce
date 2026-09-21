@@ -74,6 +74,11 @@ test('toolkit-helpers: filterByToolName filters by extracted name', async () => 
   // A filter keeps only the named items, preserving input order.
   assert.deepEqual(filterByToolName(items, ['c', 'a'], getName), [{ id: 'a' }, { id: 'c' }])
   assert.deepEqual(filterByToolName(items, ['missing'], getName), [])
+
+  // Wire-safe and canonical spellings of a native tool name are equivalent.
+  const wire = [{ id: 'orders__create' }, { id: 'orders__get' }]
+  assert.deepEqual(filterByToolName(wire, ['orders.create'], getName), [{ id: 'orders__create' }])
+  assert.deepEqual(filterByToolName([{ id: 'orders.get' }], ['orders__get'], getName), [{ id: 'orders.get' }])
 })
 
 test('toolkit-helpers: resolveToolkit passes toolkit-like objects through', async () => {
@@ -88,20 +93,40 @@ test('toolkit-helpers: resolveToolkit passes toolkit-like objects through', asyn
 })
 
 test('toolkit-helpers: resolveToolkit builds a toolkit from a Commerce instance', async (t) => {
-  const { resolveToolkit } = await import('../toolkit-helpers.mjs')
+  const { resolveToolkit, getDefaultToolkitBackend } = await import('../toolkit-helpers.mjs')
   const { skipReason } = await loadToolkitModule()
 
   const commerce = new Commerce(':memory:')
-  if (skipReason) {
-    // Without the optional @stateset/cli stack the helper must surface the
-    // module-load failure instead of silently degrading.
-    assert.throws(() => resolveToolkit(commerce), (error) => error.code === 'ERR_MODULE_NOT_FOUND')
-    t.diagnostic(`construction path asserted unavailable: ${skipReason}`)
-    return
-  }
   const toolkit = resolveToolkit(commerce, { allowApply: false })
   assert.equal(typeof toolkit.getTools, 'function')
   assert.equal(typeof toolkit.executeTool, 'function')
+
+  if (skipReason) {
+    // Without the optional @stateset/cli stack the helper degrades to the
+    // native toolkit shipped in this package instead of throwing.
+    assert.equal(getDefaultToolkitBackend(), 'native')
+    assert.equal(toolkit.backend, 'native')
+    t.diagnostic(`native fallback active: ${skipReason}`)
+    return
+  }
+  assert.equal(getDefaultToolkitBackend(), 'cli')
+  assert.equal(toolkit.backend, 'cli')
+})
+
+test('toolkit-helpers: resolveToolkit honours an explicit backend', async () => {
+  const { resolveToolkit, isCliToolkitAvailable } = await import('../toolkit-helpers.mjs')
+  const commerce = new Commerce(':memory:')
+
+  const native = resolveToolkit(commerce, { backend: 'native' })
+  assert.equal(native.backend, 'native')
+  assert.ok(native.getTools({ format: 'openai' }).some((tool) => tool.function.name === 'customers__list'))
+
+  if (isCliToolkitAvailable()) {
+    assert.equal(resolveToolkit(commerce, { backend: 'cli' }).backend, 'cli')
+  } else {
+    assert.throws(() => resolveToolkit(commerce, { backend: 'cli' }), (error) => error.code === 'ERR_MODULE_NOT_FOUND')
+  }
+  assert.throws(() => resolveToolkit(commerce, { backend: 'bogus' }), /Unknown toolkit backend/)
 })
 
 test('openai adapter delegates to the toolkit', async () => {

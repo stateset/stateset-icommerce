@@ -9,7 +9,7 @@
  *    field on an output struct therefore carries a sibling `<field>Exact`
  *    string, rendered from the engine's `Decimal` without a float in the path.
  *    `test/fixtures/money-fields.json` is the census of which fields those are;
- *    the structural test below keeps it honest against `src/lib.rs` and the
+ *    the structural test below keeps it honest against `src/lib.rs` + `src/domains/*.rs` and the
  *    generated `index.d.ts`, so a new float money field cannot be added without
  *    either a twin or a deliberate "this is not money" entry.
  *
@@ -44,7 +44,16 @@ function camel(snake) {
 
 /** `{ StructName: { fieldName: 'f64' | 'Option<f64>' } }` read out of the Rust source. */
 function rustFloatFields() {
-  const src = fs.readFileSync(path.join(ROOT, 'src', 'lib.rs'), 'utf8');
+  // The binding is one crate root plus one file per domain under src/domains/.
+  const srcDir = path.join(ROOT, 'src');
+  const files = [path.join(srcDir, 'lib.rs')].concat(
+    fs
+      .readdirSync(path.join(srcDir, 'domains'))
+      .filter((name) => name.endsWith('.rs'))
+      .sort()
+      .map((name) => path.join(srcDir, 'domains', name)),
+  );
+  const src = files.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   const structs = {};
   const structRe = /^pub struct (\w+) \{\n([\s\S]*?)\n\}$/gm;
   for (let m = structRe.exec(src); m !== null; m = structRe.exec(src)) {

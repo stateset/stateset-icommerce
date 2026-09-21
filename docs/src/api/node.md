@@ -22,10 +22,10 @@ glibc 2.33+ or musl, macOS x64/arm64, Windows x64/arm64).
 import { Commerce } from '@stateset/embedded';
 
 // Initialize with SQLite database
-const commerce = new Commerce('commerce.db');
+const commerce = await Commerce.open('commerce.db');
 
 // Or use in-memory database for testing
-const commerce = new Commerce(':memory:');
+const commerce = await Commerce.open(':memory:');
 
 // Create a customer
 const customer = commerce.customers.create({
@@ -63,6 +63,23 @@ const order = commerce.orders.create({
 const shipped = commerce.orders.ship(order.id);
 console.log(`Order ${shipped.orderNumber} shipped!`);
 ```
+
+## Lifecycle
+
+`Commerce.open(path, { maxConnections })` runs migrations on a worker thread
+and resolves to the ready instance; `new Commerce(path)` does the same work
+synchronously. `await commerce.close()` releases the connection pool; later
+calls reject with `err.code === 'PRECONDITION_FAILED'`. Sub-API handles are
+stable (`commerce.orders === commerce.orders`), and calls run concurrently
+against the engine's own connection pool.
+
+Inputs are strict: an unknown currency, a non-UUID id, a malformed date or one
+bad id in a list is refused with `err.code === 'VALIDATION'`, never silently
+coerced. Money inputs take `<field>Exact` strings; the float twin is optional.
+
+Event subscriptions are async-iterable (`for await (const event of
+subscription)`), expose `recv()` / `close()`, and never keep the process alive
+unless you call `subscription.ref()`.
 
 ## TypeScript Support
 
@@ -239,6 +256,13 @@ try {
 
 ## Available APIs
 
+The complete, generated reference — every sub-API, method signature, free function,
+interface and type alias in `index.d.ts` — is at
+[Node.js API Reference](node-reference.md). It is regenerated on every build
+(`node scripts/generate-api-reference.mjs` in `bindings/node`) and a test fails
+when it drifts from the declarations. The table below is an orientation map; the
+reference is authoritative.
+
 | API | Description |
 |-----|-------------|
 | `customers` | Customer management |
@@ -277,6 +301,7 @@ try {
 
 - Entry point: `Commerce`
 - Types: `bindings/node/index.d.ts`
+- Generated reference: [`node-reference.md`](node-reference.md) (from `bindings/node/scripts/generate-api-reference.mjs`)
 - Runtime: `bindings/node/index.js`
 
 ## Examples

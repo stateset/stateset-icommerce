@@ -4,6 +4,7 @@ export function createVercelAITools(
   commerceOrToolkit,
   {
     tool,
+    jsonSchema = null,
     filter = null,
     allowApply = false,
     toolkitOptions = {},
@@ -13,6 +14,7 @@ export function createVercelAITools(
   const toolkit = resolveToolkit(commerceOrToolkit, { allowApply, toolkitOptions });
   return toolkit.createVercelAITools({
     tool,
+    ...(jsonSchema ? { jsonSchema } : {}),
     filter,
     executionOptions,
   });
