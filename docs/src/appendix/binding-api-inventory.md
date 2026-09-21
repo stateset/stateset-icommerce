@@ -38,7 +38,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | Go | Go modules | `github.com/stateset/stateset-icommerce/bindings/go/stateset` | — | `detailed` | 81 API methods |
 | Java | Maven | `com.stateset:embedded` | `1.35.2` | `package-manifest` | manifest coverage |
 | Kotlin | Maven | `com.stateset:embedded-kotlin` | `1.35.2` | `package-manifest` | manifest coverage |
-| Node.js | npm | `@stateset/embedded` | `1.35.2` | `detailed` | 8 export entrypoints |
+| Node.js | npm | `@stateset/embedded` | `1.35.2` | `detailed` | 9 export entrypoints |
 | PHP | Composer | `stateset/embedded` | `1.35.2` | `package-manifest` | manifest coverage |
 | Python | PyPI | `stateset-embedded` | `1.35.2` | `detailed` | 244 public symbols |
 | Ruby | RubyGems | `stateset_embedded` | `1.35.2` | `package-manifest` | manifest coverage |
@@ -54,6 +54,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `./canonical-json` | `./canonical-json.mjs` | `./canonical-json.d.ts` |
 | `./generic` | `./generic.mjs` | `./generic.d.ts` |
 | `./langchain` | `./langchain.mjs` | `./langchain.d.ts` |
+| `./native-toolkit` | `./native-toolkit.mjs` | `./native-toolkit.d.ts` |
 | `./openai` | `./openai.mjs` | `./openai.d.ts` |
 | `./purchase-runtime` | `./purchase-runtime.mjs` | `./purchase-runtime.d.ts` |
 | `./vercel-ai` | `./vercel-ai.mjs` | `./vercel-ai.d.ts` |
