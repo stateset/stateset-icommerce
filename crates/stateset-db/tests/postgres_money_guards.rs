@@ -479,3 +479,203 @@ async fn postgres_promotion_evaluation_gates() {
     assert_eq!(result.applied_promotions.len(), 1, "{result:?}");
     assert_eq!(result.total_discount, dec!(4.00), "scoped to widgets: {result:?}");
 }
+
+/// Negative credit limits are rejected on both the open and adjust paths,
+/// nothing is written, and zero stays a legitimate (fully restricted) line.
+#[tokio::test]
+async fn postgres_credit_limit_guards() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let repo = db.credit();
+    let customer_id = create_customer(&db).await;
+    let cust = customer_id.into_uuid();
+    let account = |limit: Decimal| stateset_core::CreateCreditAccount {
+        customer_id,
+        credit_limit: limit,
+        currency: None,
+        payment_terms: None,
+        risk_rating: None,
+        notes: None,
+    };
+
+    assert_validation(repo.create_credit_account_async(account(dec!(-100))).await.unwrap_err());
+    assert!(
+        repo.get_credit_account_by_customer_async(cust).await.expect("get").is_none(),
+        "nothing may be written for a rejected account"
+    );
+    assert!(
+        !repo
+            .get_over_limit_customers_async()
+            .await
+            .expect("over limit")
+            .iter()
+            .any(|a| a.customer_id == customer_id),
+        "a rejected account cannot be over limit"
+    );
+
+    let zero = repo.create_credit_account_async(account(Decimal::ZERO)).await.expect("zero limit");
+    assert_eq!(zero.credit_limit, Decimal::ZERO);
+
+    repo.adjust_credit_limit_async(cust, dec!(500), "approved").await.expect("raise");
+    assert_validation(repo.adjust_credit_limit_async(cust, dec!(-1), "bad").await.unwrap_err());
+    let acct = repo.get_credit_account_by_customer_async(cust).await.expect("get").expect("found");
+    assert_eq!(acct.credit_limit, dec!(500), "limit must be unchanged");
+    assert_validation(
+        repo.update_credit_account_async(
+            acct.id.into_uuid(),
+            stateset_core::UpdateCreditAccount {
+                credit_limit: Some(dec!(-5)),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err(),
+    );
+    let ledger = repo
+        .list_transactions_async(stateset_core::CreditTransactionFilter {
+            customer_id: Some(customer_id),
+            transaction_type: Some(stateset_core::CreditTransactionType::LimitChange),
+            ..Default::default()
+        })
+        .await
+        .expect("ledger");
+    assert_eq!(ledger.len(), 1, "only the approved raise may leave a limit_change row");
+}
+
+/// Negative cost fields and blank SKUs are rejected by `set_item_cost` and
+/// `update_average_cost`; a rejected write leaves existing costs untouched.
+#[tokio::test]
+async fn postgres_item_cost_guards() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let repo = db.cost_accounting();
+    let uniq = uuid::Uuid::new_v4().simple().to_string();
+    let sku = |tag: &str| format!("{tag}-{}", &uniq[..8]);
+
+    for input in [
+        stateset_core::SetItemCost {
+            sku: sku("NEG-STD"),
+            standard_cost: Some(dec!(-1)),
+            ..Default::default()
+        },
+        stateset_core::SetItemCost {
+            sku: sku("NEG-MAT"),
+            material_cost: Some(dec!(-0.01)),
+            ..Default::default()
+        },
+        stateset_core::SetItemCost {
+            sku: sku("NEG-LAB"),
+            labor_cost: Some(dec!(-5)),
+            ..Default::default()
+        },
+        stateset_core::SetItemCost {
+            sku: sku("NEG-OVH"),
+            overhead_cost: Some(dec!(-5)),
+            ..Default::default()
+        },
+        stateset_core::SetItemCost {
+            sku: String::new(),
+            standard_cost: Some(dec!(1)),
+            ..Default::default()
+        },
+        stateset_core::SetItemCost {
+            sku: "   ".into(),
+            standard_cost: Some(dec!(1)),
+            ..Default::default()
+        },
+    ] {
+        let s = input.sku.clone();
+        assert_validation(repo.set_item_cost_async(input).await.unwrap_err());
+        assert!(repo.get_item_cost_async(&s).await.expect("get").is_none(), "sku {s:?} written");
+    }
+
+    let good = sku("GOOD");
+    repo.set_item_cost_async(stateset_core::SetItemCost {
+        sku: good.clone(),
+        standard_cost: Some(dec!(10)),
+        ..Default::default()
+    })
+    .await
+    .expect("good");
+    assert_validation(
+        repo.set_item_cost_async(stateset_core::SetItemCost {
+            sku: good.clone(),
+            standard_cost: Some(dec!(-10)),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err(),
+    );
+    let kept = repo.get_item_cost_async(&good).await.expect("get").expect("found");
+    assert_eq!(kept.standard_cost, dec!(10));
+
+    let free = repo
+        .set_item_cost_async(stateset_core::SetItemCost {
+            sku: sku("FREE"),
+            standard_cost: Some(Decimal::ZERO),
+            ..Default::default()
+        })
+        .await
+        .expect("zero is a legitimate cost");
+    assert_eq!(free.standard_cost, Decimal::ZERO);
+
+    // update_average_cost: the seed path must not create a record from a
+    // negative cost, and an existing average/last cost must stay put.
+    let fresh = sku("AVG-NEW");
+    assert_validation(
+        repo.update_average_cost_async(&fresh, dec!(10), dec!(-2)).await.unwrap_err(),
+    );
+    assert!(repo.get_item_cost_async(&fresh).await.expect("get").is_none());
+    assert_validation(repo.update_average_cost_async(&good, dec!(10), dec!(-2)).await.unwrap_err());
+    let kept = repo.get_item_cost_async(&good).await.expect("get").expect("found");
+    assert_eq!(kept.average_cost, dec!(10));
+    assert_eq!(kept.last_cost, dec!(10));
+}
+
+/// A credit memo needs a real customer, and a voided memo is no longer
+/// applicable credit.
+#[tokio::test]
+async fn postgres_credit_memo_guards() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let repo = db.accounts_receivable();
+    let memo = |customer_id: uuid::Uuid, amount: Decimal| stateset_core::CreateCreditMemo {
+        customer_id,
+        original_invoice_id: None,
+        reason: stateset_core::CreditMemoReason::ReturnedGoods,
+        amount,
+        notes: None,
+    };
+
+    let ghost = uuid::Uuid::new_v4();
+    let err = repo.create_credit_memo_async(memo(ghost, dec!(25))).await.unwrap_err();
+    assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
+    let listed = repo
+        .list_credit_memos_async(stateset_core::CreditMemoFilter {
+            customer_id: Some(ghost),
+            ..Default::default()
+        })
+        .await
+        .expect("list");
+    assert!(listed.is_empty(), "nothing may be written for a rejected memo");
+
+    let cust = create_customer(&db).await.into_uuid();
+    let voided = repo.create_credit_memo_async(memo(cust, dec!(30))).await.expect("memo");
+    let open = repo.create_credit_memo_async(memo(cust, dec!(70))).await.expect("memo");
+    repo.void_credit_memo_async(voided.id).await.expect("void");
+
+    let unapplied = repo.get_unapplied_credits_async(cust).await.expect("unapplied");
+    assert_eq!(
+        unapplied.iter().map(|m| m.id).collect::<Vec<_>>(),
+        vec![open.id],
+        "a voided memo is not applicable credit"
+    );
+    let fetched = repo.get_credit_memo_async(voided.id).await.expect("get").expect("found");
+    assert!(!fetched.can_apply());
+}

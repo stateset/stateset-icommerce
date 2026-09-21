@@ -10,7 +10,7 @@ use crate::sqlite::{
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
@@ -1166,6 +1166,18 @@ impl ReceivingRepository for SqliteReceivingRepository {
     fn create_receipt_from_po(&self, po_id: Uuid, warehouse_id: i32) -> Result<Receipt> {
         let conn = self.conn()?;
 
+        // The PO must exist: an unknown id is `NotFound`, not an empty receipt.
+        let supplier_id_raw: Option<String> = conn
+            .query_row(
+                "SELECT supplier_id FROM purchase_orders WHERE id = ?1",
+                params![po_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        let supplier_id = parse_uuid_opt(supplier_id_raw, "purchase_order", "supplier_id")?;
+
         // Get PO items
         let mut stmt = conn
             .prepare("SELECT sku, name, quantity_ordered, unit_cost FROM purchase_order_items WHERE purchase_order_id = ?1")
@@ -1195,16 +1207,6 @@ impl ReceivingRepository for SqliteReceivingRepository {
                 notes: None,
             });
         }
-
-        // Get supplier ID from PO
-        let supplier_id_raw: Option<String> = conn
-            .query_row(
-                "SELECT supplier_id FROM purchase_orders WHERE id = ?1",
-                params![po_id.to_string()],
-                |row| row.get(0),
-            )
-            .ok();
-        let supplier_id = parse_uuid_opt(supplier_id_raw, "purchase_order", "supplier_id")?;
 
         self.create_receipt(CreateReceipt {
             receipt_number: None,
@@ -1452,6 +1454,23 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].sku, "SKU-PO");
         assert_eq!(items[0].expected_quantity, dec!(7));
+    }
+
+    #[test]
+    fn binding_create_receipt_from_po_rejects_unknown_po() {
+        // Regression: the supplier lookup's `.ok()` swallowed the miss, so an
+        // unknown PO id produced an empty Expected receipt.
+        use stateset_core::ReceiptFilter;
+        let (db, _) = fresh_db_with_location();
+        let err = db
+            .receiving()
+            .create_receipt_from_po(Uuid::new_v4(), 1)
+            .expect_err("unknown PO must be refused");
+        assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
+        assert!(
+            db.receiving().list_receipts(ReceiptFilter::default()).expect("list").is_empty(),
+            "no receipt may be written for an unknown PO"
+        );
     }
 
     #[test]

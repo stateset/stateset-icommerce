@@ -1651,6 +1651,16 @@ impl PgSubscriptionRepository {
         self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Skip the subscription's next billing cycle.
+    ///
+    /// The cycle that was due — the `scheduled` cycle whose `period_end` is
+    /// the current `next_billing_date` — is settled as `skipped`, and the
+    /// subscription's clock moves on exactly as it does after a paid cycle:
+    /// the current period becomes the next interval and a fresh `scheduled`
+    /// cycle is seeded for it, so the one-scheduled-cycle-per-current-period
+    /// invariant that `create_subscription_async` establishes still holds.
+    /// `billing_cycle_count` is untouched: nothing settled a charge. Mirrors
+    /// the SQLite backend.
     pub async fn skip_billing_cycle_async(
         &self,
         id: SubscriptionId,
@@ -1675,22 +1685,24 @@ impl PgSubscriptionRepository {
         }
 
         let now = Utc::now();
-        // Skip exactly one interval with the same calendar arithmetic the paid
-        // path uses (`advance`) — mirrors SQLite.
-        let new_billing_date = sub.billing_interval.advance(
-            sub.next_billing_date.unwrap_or(sub.current_period_end),
-            sub.custom_interval_days,
-        );
+        // The skipped period ends where the next charge was due; the new
+        // period runs from there for exactly one interval, with the same
+        // calendar arithmetic the paid path uses (`advance`) — mirrors SQLite.
+        let skipped_period_end = sub.next_billing_date.unwrap_or(sub.current_period_end);
+        let new_billing_date =
+            sub.billing_interval.advance(skipped_period_end, sub.custom_interval_days);
 
         // `AND next_billing_date IS NOT DISTINCT FROM $5` pins the read the new
         // date was derived from, so a racing skip that already moved the date
         // cannot be applied twice.
         let updated = sqlx::query(
-            "UPDATE subscriptions SET next_billing_date = $1, current_period_end = $2, updated_at = $3
+            "UPDATE subscriptions
+             SET next_billing_date = $1, current_period_start = $2, current_period_end = $1,
+                 updated_at = $3
              WHERE id = $4 AND next_billing_date IS NOT DISTINCT FROM $5",
         )
         .bind(new_billing_date)
-        .bind(new_billing_date)
+        .bind(skipped_period_end)
         .bind(now)
         .bind(id.into_uuid())
         .bind(sub.next_billing_date)
@@ -1703,6 +1715,41 @@ impl PgSubscriptionRepository {
                 "Subscription billing schedule changed concurrently; retry the skip".into(),
             ));
         }
+
+        // Settle the cycle that was due as `skipped`. Only a `scheduled`
+        // cycle can be skipped (`BillingCycleStatus::can_transition_to`); a
+        // cycle already paid / failed / voided for that period is left alone.
+        sqlx::query(
+            "UPDATE billing_cycles SET status = 'skipped', failure_reason = $1, updated_at = $2
+             WHERE subscription_id = $3 AND status = 'scheduled' AND period_end = $4",
+        )
+        .bind(&reason)
+        .bind(now)
+        .bind(id.into_uuid())
+        .bind(skipped_period_end)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        // Seed the scheduled cycle for the new current period, the way
+        // `create_subscription_async` seeds cycle 1 for the first one.
+        let next_cycle_number: i32 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM billing_cycles
+             WHERE subscription_id = $1",
+        )
+        .bind(id.into_uuid())
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        Self::insert_billing_cycle_tx(
+            &mut tx,
+            &sub,
+            next_cycle_number,
+            skipped_period_end,
+            new_billing_date,
+            now,
+        )
+        .await?;
 
         self.record_event_tx(&mut tx, id, SubscriptionEventType::Skipped, &reason, None, None)
             .await?;

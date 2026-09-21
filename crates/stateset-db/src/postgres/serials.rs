@@ -13,6 +13,34 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+/// Resolve the lot a serial belongs to.
+///
+/// `lot_id` wins when given. Otherwise a `lot_number` is looked up (lot
+/// numbers are globally unique) so the serial is keyed to the lot row and
+/// follows it through the lot-level cascades (quarantine, release); an
+/// unknown number is `NotFound` rather than an orphan text label.
+async fn resolve_lot_id<'e, E>(
+    executor: E,
+    lot_id: Option<Uuid>,
+    lot_number: Option<&str>,
+) -> Result<Option<Uuid>>
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
+    match (lot_id, lot_number) {
+        (Some(id), _) => Ok(Some(id)),
+        (None, Some(number)) => {
+            let id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM lots WHERE lot_number = $1")
+                .bind(number)
+                .fetch_optional(executor)
+                .await
+                .map_err(map_db_error)?;
+            id.map(Some).ok_or(CommerceError::NotFound)
+        }
+        (None, None) => Ok(None),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PgSerialRepository {
     pool: PgPool,
@@ -310,6 +338,7 @@ impl PgSerialRepository {
         let now = Utc::now();
         let serial = input.serial.unwrap_or_else(|| Self::generate_serial(None));
         let attributes = input.attributes.unwrap_or(serde_json::Value::Null);
+        let lot_id = resolve_lot_id(&self.pool, input.lot_id, input.lot_number.as_deref()).await?;
 
         sqlx::query(
             r#"
@@ -323,7 +352,7 @@ impl PgSerialRepository {
         .bind(&serial)
         .bind(&input.sku)
         .bind(SerialStatus::Available.to_string())
-        .bind(input.lot_id)
+        .bind(lot_id)
         .bind(&input.lot_number)
         .bind(input.location_id)
         .bind(input.manufactured_at)
@@ -344,6 +373,7 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut serials = Vec::with_capacity(input.quantity as usize);
         let now = Utc::now();
+        let lot_id = resolve_lot_id(tx.as_mut(), input.lot_id, input.lot_number.as_deref()).await?;
 
         for i in 0..input.quantity {
             let id = Uuid::new_v4();
@@ -364,7 +394,7 @@ impl PgSerialRepository {
             .bind(&serial_number)
             .bind(&input.sku)
             .bind(SerialStatus::Available.to_string())
-            .bind(input.lot_id)
+            .bind(lot_id)
             .bind(&input.lot_number)
             .bind(input.location_id)
             .bind(input.manufactured_at)
@@ -378,7 +408,7 @@ impl PgSerialRepository {
                 serial: serial_number,
                 sku: input.sku.clone(),
                 status: SerialStatus::Available,
-                lot_id: input.lot_id,
+                lot_id,
                 lot_number: input.lot_number.clone(),
                 current_location_id: input.location_id,
                 current_owner_id: None,

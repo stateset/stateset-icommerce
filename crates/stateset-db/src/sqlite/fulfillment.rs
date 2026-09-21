@@ -565,6 +565,24 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         // them on a bare connection let a mid-loop failure leave a wave whose
         // `order_count` does not match the orders actually attached to it.
         with_immediate_transaction(&self.pool, |tx| {
+            // Every order on the wave must exist; `wave_orders` has no FK to
+            // `orders`, so an unknown id would otherwise be accepted and
+            // counted. Checked before the header write so nothing lands.
+            for order_id in &input.order_ids {
+                let exists: Option<i32> = tx
+                    .query_row(
+                        "SELECT 1 FROM orders WHERE id = ?1",
+                        params![order_id.to_string()],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if exists.is_none() {
+                    return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                        CommerceError::OrderNotFound(order_id.into_uuid()),
+                    )));
+                }
+            }
+
             tx.execute(
                 "INSERT INTO waves (id, wave_number, warehouse_id, status, order_count, priority, notes, created_by, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
@@ -1859,6 +1877,13 @@ mod tests {
     /// Returns (fulfillment repo, warehouse id, location id).
     /// Pick tasks FK both warehouses(id) and locations(id) per migration 018.
     fn fresh_setup() -> (SqliteFulfillmentRepository, i32, i32) {
+        let (db, wh_id, loc_id) = fresh_setup_db();
+        (db.fulfillment(), wh_id, loc_id)
+    }
+
+    /// Like [`fresh_setup`] but hands back the database itself, for tests
+    /// that also need orders (waves refuse order ids that do not exist).
+    fn fresh_setup_db() -> (SqliteDatabase, i32, i32) {
         let db = SqliteDatabase::in_memory().expect("in-memory");
         let wh = db
             .warehouse()
@@ -1889,7 +1914,40 @@ mod tests {
                 ..Default::default()
             })
             .expect("create location");
-        (db.fulfillment(), wh.id, loc.id)
+        (db, wh.id, loc.id)
+    }
+
+    /// A real order row (with its customer), since `wave_orders` only accepts
+    /// orders that exist.
+    fn seed_order(db: &SqliteDatabase) -> OrderId {
+        use stateset_core::{
+            CreateCustomer, CreateOrder, CreateOrderItem, CustomerRepository, OrderRepository,
+            ProductId,
+        };
+        let customer = db
+            .customers()
+            .create(CreateCustomer {
+                email: format!("wave-{}@example.com", Uuid::new_v4().simple()),
+                first_name: "Wave".into(),
+                last_name: "Order".into(),
+                ..Default::default()
+            })
+            .expect("create customer");
+        db.orders()
+            .create(CreateOrder {
+                customer_id: customer.id,
+                items: vec![CreateOrderItem {
+                    product_id: ProductId::new(),
+                    sku: "SKU-WAVE".into(),
+                    name: "Widget".into(),
+                    quantity: 1,
+                    unit_price: dec!(10.00),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .expect("create order")
+            .id
     }
 
     fn fresh_repo() -> SqliteFulfillmentRepository {
@@ -1984,10 +2042,42 @@ mod tests {
     }
 
     #[test]
+    fn binding_create_wave_rejects_unknown_order_and_writes_nothing() {
+        // Regression: `wave_orders` rows were inserted for any UUID, so an
+        // unknown order id was accepted and counted.
+        let (db, wh_id, _) = fresh_setup_db();
+        let repo = db.fulfillment();
+        let known = seed_order(&db);
+        let unknown = OrderId::new();
+        let err = repo
+            .create_wave(CreateWave {
+                warehouse_id: wh_id,
+                order_ids: vec![known, unknown],
+                priority: None,
+                notes: None,
+                created_by: None,
+            })
+            .expect_err("an unknown order must be refused");
+        assert!(
+            matches!(err, CommerceError::OrderNotFound(id) if id == unknown.into_uuid()),
+            "got {err:?}"
+        );
+        assert!(
+            repo.list_waves(WaveFilter::default()).expect("list").is_empty(),
+            "no wave header may be written"
+        );
+        let conn = repo.pool.get().expect("conn");
+        let rows: i64 =
+            conn.query_row("SELECT COUNT(*) FROM wave_orders", [], |r| r.get(0)).expect("count");
+        assert_eq!(rows, 0, "no wave_orders rows may be written");
+    }
+
+    #[test]
     fn create_wave_starts_in_draft_with_orders() {
-        let (repo, wh_id, _) = fresh_setup();
-        let order_a = OrderId::new();
-        let order_b = OrderId::new();
+        let (db, wh_id, _) = fresh_setup_db();
+        let repo = db.fulfillment();
+        let order_a = seed_order(&db);
+        let order_b = seed_order(&db);
         let wave = make_wave(&repo, wh_id, vec![order_a, order_b]);
         assert_eq!(wave.warehouse_id, wh_id);
         assert_eq!(wave.status, WaveStatus::Draft);
@@ -2000,8 +2090,9 @@ mod tests {
 
     #[test]
     fn get_wave_and_get_wave_by_number_round_trip() {
-        let (repo, wh_id, _) = fresh_setup();
-        let wave = make_wave(&repo, wh_id, vec![OrderId::new()]);
+        let (db, wh_id, _) = fresh_setup_db();
+        let repo = db.fulfillment();
+        let wave = make_wave(&repo, wh_id, vec![seed_order(&db)]);
         let by_id = repo.get_wave(wave.id).expect("ok").expect("found");
         assert_eq!(by_id.id, wave.id);
         let by_num = repo.get_wave_by_number(&wave.wave_number).expect("ok").expect("found");
@@ -2015,8 +2106,9 @@ mod tests {
         // wave that was never released is no longer a legal transition (only
         // Released/InProgress -> Completed), so the wave is released first;
         // `complete_wave_rejects_draft_wave` pins the new rule.
-        let (repo, wh_id, _) = fresh_setup();
-        let wave = make_wave(&repo, wh_id, vec![OrderId::new()]);
+        let (db, wh_id, _) = fresh_setup_db();
+        let repo = db.fulfillment();
+        let wave = make_wave(&repo, wh_id, vec![seed_order(&db)]);
         repo.release_wave(wave.id).expect("release");
         let done = repo.complete_wave(wave.id).expect("complete");
         assert_eq!(done.status, WaveStatus::Completed);
@@ -2024,8 +2116,9 @@ mod tests {
 
     #[test]
     fn complete_wave_rejects_draft_wave() {
-        let (repo, wh_id, _) = fresh_setup();
-        let wave = make_wave(&repo, wh_id, vec![OrderId::new()]);
+        let (db, wh_id, _) = fresh_setup_db();
+        let repo = db.fulfillment();
+        let wave = make_wave(&repo, wh_id, vec![seed_order(&db)]);
         let err = repo.complete_wave(wave.id).expect_err("a draft wave was never on the floor");
         assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
         let after = repo.get_wave(wave.id).expect("get").expect("exists");
@@ -2066,17 +2159,19 @@ mod tests {
 
     #[test]
     fn cancel_wave_transitions_status() {
-        let (repo, wh_id, _) = fresh_setup();
-        let wave = make_wave(&repo, wh_id, vec![OrderId::new()]);
+        let (db, wh_id, _) = fresh_setup_db();
+        let repo = db.fulfillment();
+        let wave = make_wave(&repo, wh_id, vec![seed_order(&db)]);
         let cancelled = repo.cancel_wave(wave.id).expect("cancel");
         assert_eq!(cancelled.status, WaveStatus::Cancelled);
     }
 
     #[test]
     fn list_waves_filters_by_warehouse() {
-        let (repo, wh_id, _) = fresh_setup();
-        make_wave(&repo, wh_id, vec![OrderId::new()]);
-        make_wave(&repo, wh_id, vec![OrderId::new()]);
+        let (db, wh_id, _) = fresh_setup_db();
+        let repo = db.fulfillment();
+        make_wave(&repo, wh_id, vec![seed_order(&db)]);
+        make_wave(&repo, wh_id, vec![seed_order(&db)]);
         let waves = repo
             .list_waves(WaveFilter { warehouse_id: Some(wh_id), ..Default::default() })
             .expect("list");
@@ -2148,9 +2243,10 @@ mod tests {
 
     #[test]
     fn get_picks_for_wave_returns_picks() {
-        let (repo, wh_id, loc_id) = fresh_setup();
-        let wave = make_wave(&repo, wh_id, vec![OrderId::new()]);
-        let order = OrderId::new();
+        let (db, wh_id, loc_id) = fresh_setup_db();
+        let repo = db.fulfillment();
+        let order = seed_order(&db);
+        let wave = make_wave(&repo, wh_id, vec![order]);
         make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "WV-1");
         make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "WV-2");
         let picks = repo.get_picks_for_wave(wave.id).expect("ok");
@@ -2185,8 +2281,9 @@ mod tests {
 
     #[test]
     fn pick_count_tracks_inserted_and_cancelled_picks() {
-        let (repo, wh_id, loc_id) = fresh_setup();
-        let order = OrderId::new();
+        let (db, wh_id, loc_id) = fresh_setup_db();
+        let repo = db.fulfillment();
+        let order = seed_order(&db);
         let wave = make_wave(&repo, wh_id, vec![order]);
         assert_eq!(wave.pick_count, 0);
 
@@ -2207,8 +2304,9 @@ mod tests {
 
     #[test]
     fn complete_wave_refuses_while_picks_are_open() {
-        let (repo, wh_id, loc_id) = fresh_setup();
-        let order = OrderId::new();
+        let (db, wh_id, loc_id) = fresh_setup_db();
+        let repo = db.fulfillment();
+        let order = seed_order(&db);
         let wave = make_wave(&repo, wh_id, vec![order]);
         seed_location_stock(&repo, wh_id, loc_id, "SKU-A", "5");
         let p1 = make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "SKU-A");
@@ -2245,8 +2343,9 @@ mod tests {
 
     #[test]
     fn complete_wave_treats_short_picks_as_finalized() {
-        let (repo, wh_id, loc_id) = fresh_setup();
-        let order = OrderId::new();
+        let (db, wh_id, loc_id) = fresh_setup_db();
+        let repo = db.fulfillment();
+        let order = seed_order(&db);
         let wave = make_wave(&repo, wh_id, vec![order]);
         let p = make_pick(&repo, wh_id, loc_id, Some(wave.id), order, "SKU-A");
         repo.release_wave(wave.id).expect("release");
@@ -2256,8 +2355,9 @@ mod tests {
 
     #[test]
     fn create_pick_rejects_completed_or_cancelled_wave() {
-        let (repo, wh_id, loc_id) = fresh_setup();
-        let order = OrderId::new();
+        let (db, wh_id, loc_id) = fresh_setup_db();
+        let repo = db.fulfillment();
+        let order = seed_order(&db);
         let wave = make_wave(&repo, wh_id, vec![order]);
         repo.release_wave(wave.id).expect("release");
         repo.complete_wave(wave.id).expect("complete empty wave");
