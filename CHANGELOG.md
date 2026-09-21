@@ -30,7 +30,7 @@ This project follows Keep a Changelog and Semantic Versioning.
     voided credit memos no longer appear among unapplied credits.
   - `promotions.create_coupon` reports a duplicate code as a conflict and an
     unknown promotion as not found rather than a database error;
-    `record_usage` refuses an unparseable currency instead of recording USD;
+    `record_usage` refuses an unparsable currency instead of recording USD;
     `validate_coupon` now applies the same promotion eligibility (active,
     inside its window, under its usage limit) that `apply` uses, so a coupon
     on a draft or expired promotion no longer validates.

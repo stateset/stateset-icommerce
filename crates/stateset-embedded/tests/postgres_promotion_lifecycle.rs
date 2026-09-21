@@ -322,10 +322,10 @@ async fn postgres_create_coupon_maps_duplicate_code_and_unknown_promotion() {
     assert!(matches!(err, stateset_embedded::CommerceError::NotFound), "{err:?}");
 }
 
-/// An unparseable currency is a `ValidationError`, never silently recorded
+/// An unparsable currency is a `ValidationError`, never silently recorded
 /// as USD.
 #[tokio::test]
-async fn postgres_record_usage_rejects_unparseable_currency() {
+async fn postgres_record_usage_rejects_unparsable_currency() {
     let Some(commerce) = connect().await else { return };
     let code = format!("CUR-{}", &Uuid::new_v4().simple().to_string()[..8]).to_uppercase();
     let (promo, _code) = coupon_promotion(
@@ -371,7 +371,7 @@ async fn postgres_record_usage_rejects_unparseable_currency() {
         .promotions()
         .record_usage(promo.id.into_uuid(), None, None, None, None, dec!(5.00), "not-a-currency")
         .await
-        .expect_err("an unparseable currency must be refused");
+        .expect_err("an unparsable currency must be refused");
     assert!(matches!(err, stateset_embedded::CommerceError::ValidationError(_)), "{err:?}");
     let refreshed =
         commerce.promotions().get(promo.id.into_uuid()).await.expect("get").expect("exists");

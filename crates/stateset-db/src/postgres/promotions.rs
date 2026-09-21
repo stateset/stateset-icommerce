@@ -1566,7 +1566,7 @@ impl PgPromotionRepository {
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {
-        // Validate the currency up front: an unparseable code is a
+        // Validate the currency up front: an unparsable code is a
         // `ValidationError`, never silently recorded as the default (USD).
         // Mirrors SQLite.
         let currency = currency.parse::<CurrencyCode>().map_err(|e| {

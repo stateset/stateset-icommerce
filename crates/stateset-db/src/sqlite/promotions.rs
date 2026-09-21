@@ -1355,7 +1355,7 @@ impl SqlitePromotionRepository {
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {
-        // Validate the currency up front: an unparseable code is a
+        // Validate the currency up front: an unparsable code is a
         // `ValidationError`, never silently recorded as the default (USD).
         let currency = parse_usage_currency(currency)?;
         let id = Uuid::new_v4();
@@ -2405,16 +2405,16 @@ mod tests {
         assert!(repo.get_coupon_by_code("GHOST").expect("ok").is_none());
     }
 
-    /// An unparseable currency is a `ValidationError`; it must not be
+    /// An unparsable currency is a `ValidationError`; it must not be
     /// silently recorded as the default currency (USD).
     #[test]
-    fn record_usage_rejects_unparseable_currency() {
+    fn record_usage_rejects_unparsable_currency() {
         let repo = fresh_repo();
         let p = make_pct_promo(&repo, "PROMO-CUR", dec!(0.10));
 
         let err = repo
             .record_usage(p.id, None, None, None, None, dec!(5.00), "not-a-currency")
-            .expect_err("an unparseable currency must be refused");
+            .expect_err("an unparsable currency must be refused");
         assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
 
         // Nothing was recorded: the usage counter is untouched.
