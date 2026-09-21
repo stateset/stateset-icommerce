@@ -1057,6 +1057,11 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn create_adjustment(&self, input: CreateCostAdjustment) -> Result<CostAdjustment> {
+        // Refused here rather than only at apply time: an adjustment carrying a
+        // negative cost is not a pending decision anyone can approve, and it
+        // would sit in the queue looking actionable.
+        Self::validate_sku(&input.sku)?;
+        Self::validate_cost("new cost", input.new_cost)?;
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -2040,6 +2045,29 @@ mod tests {
         let summary = repo.get_variance_summary(from, to).expect("ok");
         // (12-10) * 5 = 10 unfavourable
         assert_eq!(summary, dec!(10));
+    }
+
+    #[test]
+    fn create_adjustment_rejects_a_negative_cost_and_a_blank_sku() {
+        let repo = fresh_repo();
+        let bad = |sku: &str, new_cost| CreateCostAdjustment {
+            sku: sku.into(),
+            adjustment_type: CostAdjustmentType::Revaluation,
+            new_cost,
+            reason: "bad".into(),
+            created_by: None,
+        };
+        for input in [bad("ADJ-NEG", dec!(-1)), bad("   ", dec!(5))] {
+            let err = repo.create_adjustment(input).expect_err("must be refused");
+            assert!(
+                matches!(err, CommerceError::ValidationError(_)),
+                "expected ValidationError, got {err:?}"
+            );
+        }
+        assert!(
+            repo.list_adjustments(CostAdjustmentFilter::default()).expect("list").is_empty(),
+            "a refused adjustment must not be written"
+        );
     }
 
     #[test]

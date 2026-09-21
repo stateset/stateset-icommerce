@@ -1074,6 +1074,11 @@ impl PgCostAccountingRepository {
         &self,
         input: CreateCostAdjustment,
     ) -> Result<CostAdjustment> {
+        // Refused here rather than only at apply time: an adjustment carrying a
+        // negative cost is not a pending decision anyone can approve, and it
+        // would sit in the queue looking actionable.
+        Self::validate_sku(&input.sku)?;
+        Self::validate_cost("new cost", input.new_cost)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let adjustment_number = generate_cost_adjustment_number();
