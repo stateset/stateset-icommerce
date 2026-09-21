@@ -453,7 +453,15 @@ class Anchors {
 }
 
 function escapeCell(text) {
-  return text.replace(/\|/g, '\\|').replace(/\r?\n\s*\r?\n/g, ' ').replace(/\r?\n/g, ' ').trim();
+  // Backslashes first: escaping `|` into `\|` after a literal backslash would
+  // produce `\\|`, which Markdown reads as an escaped backslash followed by an
+  // unescaped cell separator, splitting the row.
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n\s*\r?\n/g, ' ')
+    .replace(/\r?\n/g, ' ')
+    .trim();
 }
 
 function identifiers(typeText) {

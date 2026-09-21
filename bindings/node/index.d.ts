@@ -7092,7 +7092,6 @@ export declare class X402 {
   listCreditTransactions(filter: X402CreditTransactionFilterInput): Promise<Array<X402CreditTransactionOutput>>
 }
 
-
 // ---- BEGIN hand-written additions (bindings/node/scripts/index-augment.d.ts) ----
 // Appended to the napi-generated declarations by scripts/postbuild-types.mjs,
 // which every `npm run build*` script runs. These describe the JavaScript-side
