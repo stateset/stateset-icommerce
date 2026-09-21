@@ -375,7 +375,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("general_ledger.rs", "lock_period"),
     ("general_ledger.rs", "reopen_period"),
     ("general_ledger.rs", "create_journal_entry"),
-    ("general_ledger.rs", "void_journal_entry"),
     ("general_ledger.rs", "reverse_journal_entry"),
     ("general_ledger.rs", "set_auto_posting_config"),
     ("gift_cards.rs", "create"),
