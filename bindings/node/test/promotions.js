@@ -305,7 +305,6 @@ test('malformed inputs are refused with VALIDATION, never coerced', async () => 
 
 test(
   'recordUsage refuses an unparseable currency instead of recording the usage in USD',
-  { todo: 'engine: recordUsage("EURO") is accepted and stored with currency USD' },
   async () => {
     const commerce = new Commerce(':memory:');
     const promotion = await activePromotion(commerce, { name: 'Two off', promotionType: 'fixed_amount_off', fixedAmountOff: 2 });
@@ -319,7 +318,6 @@ test(
 
 test(
   'a duplicate coupon code is a CONFLICT',
-  { todo: 'engine: the UNIQUE violation on coupon_codes.code surfaces as DATABASE, not CONFLICT' },
   async () => {
     const commerce = new Commerce(':memory:');
     const promotion = await activePromotion(commerce, { name: 'Two off', promotionType: 'fixed_amount_off', fixedAmountOff: 2 });
@@ -330,7 +328,6 @@ test(
 
 test(
   'a coupon for an unknown promotion is NOT_FOUND',
-  { todo: 'engine: the FOREIGN KEY violation surfaces as DATABASE, not NOT_FOUND' },
   async () => {
     const commerce = new Commerce(':memory:');
     await assert.rejects(
@@ -342,7 +339,6 @@ test(
 
 test(
   'validateCoupon returns null for a coupon whose promotion is not active',
-  { todo: 'engine: validateCoupon only inspects the coupon row; a coupon on a draft promotion validates but never discounts' },
   async () => {
     const commerce = new Commerce(':memory:');
     const draft = await commerce.promotions.create({ name: 'Draft', promotionType: 'fixed_amount_off', fixedAmountOff: 3, trigger: 'coupon_code' });

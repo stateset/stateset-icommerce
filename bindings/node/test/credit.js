@@ -148,7 +148,6 @@ test('malformed inputs are refused with VALIDATION, never coerced', async () => 
 
 test(
   'a negative credit limit is refused on create',
-  { todo: 'engine: createCreditAccount accepts creditLimit -5, opens an Active account with creditAvailableExact "-5" and lists it as over limit' },
   async () => {
     const commerce = new Commerce(':memory:');
     const buyer = await customer(commerce);
@@ -162,7 +161,6 @@ test(
 
 test(
   'a negative credit limit is refused on adjust',
-  { todo: 'engine: adjustCreditLimit accepts -1 and drives creditAvailableExact negative' },
   async () => {
     const commerce = new Commerce(':memory:');
     const buyer = await customer(commerce);

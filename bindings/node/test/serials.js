@@ -142,7 +142,6 @@ test(
 
 test(
   'a malformed manufacturedAt is refused instead of dropped',
-  { todo: 'binding: serials.create parses manufacturedAt with .ok(), so "yesterday" becomes "no date" and the serial is written without it' },
   async () => {
     const commerce = new Commerce(':memory:');
     await assert.rejects(
@@ -155,7 +154,6 @@ test(
 
 test(
   'a serial created with a lotNumber is linked to that lot',
-  { todo: 'engine: CreateSerialNumber.lot_number is stored as text only; lot_id stays NULL so lotId is absent and lot-level operations never reach the serial' },
   async () => {
     const commerce = new Commerce(':memory:');
     const lot = await commerce.lots.create({ lotNumber: 'LOT-LINK', sku: 'LAPTOP', quantityProduced: 1 });

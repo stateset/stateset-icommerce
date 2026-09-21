@@ -192,7 +192,6 @@ test('createWave with an unknown warehouse is refused with VALIDATION', async ()
 
 test(
   'createWave with an order the store does not have is refused',
-  { todo: 'engine: create_wave inserts wave_orders rows for any UUID; an unknown order id is accepted and orderCount counts it' },
   async () => {
     const commerce = new Commerce(':memory:');
     const warehouse = await commerce.warehouse.createWarehouse({ code: 'WH-X', name: 'X' });

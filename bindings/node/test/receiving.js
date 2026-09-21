@@ -198,7 +198,6 @@ test('createReceipt can reference a purchase order explicitly', async () => {
 
 test(
   'createReceiptFromPo refuses a purchase order the store does not have',
-  { todo: 'engine: create_receipt_from_po never checks the PO exists; an unknown id yields an empty Expected receipt referencing a nonexistent PO' },
   async () => {
     const commerce = new Commerce(':memory:');
     const wh = await warehouse(commerce);

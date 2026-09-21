@@ -217,7 +217,6 @@ test('cancelBackorder flips pending -> cancelled, is idempotent, and drops it fr
 
 test(
   'getSummary reports zeros when no backorder is open',
-  { todo: "engine: get_summary reads SUM(CASE ...) as i32, but SUM over zero open rows is NULL -> DATABASE 'Invalid column type Null' on an empty store or once every backorder is cancelled/fulfilled" },
   async () => {
     const commerce = new Commerce(':memory:');
     const empty = await commerce.backorder.getSummary();
@@ -266,7 +265,6 @@ test(
 
 test(
   'createBackorder refuses a non-positive quantity',
-  { todo: 'engine: create_backorder accepts quantity 0 and negative quantities; a -1 row then subtracts from getSummary().totalValue' },
   async () => {
     const commerce = new Commerce(':memory:');
     const { customer, sku } = await setup(commerce);
