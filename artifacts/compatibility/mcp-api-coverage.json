@@ -5,8 +5,8 @@
   },
   "totalDomainModules": 87,
   "totalDomainTools": 923,
-  "totalCommerceGetters": 67,
-  "mappedCommerceGetters": 67,
+  "totalCommerceGetters": 68,
+  "mappedCommerceGetters": 68,
   "uncoveredCommerceGetters": [],
   "staleGetterMappings": [],
   "getters": [
@@ -32,6 +32,11 @@
     },
     {
       "getter": "backorder",
+      "module": "backorders",
+      "toolCount": 9
+    },
+    {
+      "getter": "backorders",
       "module": "backorders",
       "toolCount": 9
     },
