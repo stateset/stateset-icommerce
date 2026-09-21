@@ -18,6 +18,17 @@ use uuid::Uuid;
 /// (same constant as the SQLite backend).
 pub(crate) const BACKORDER_RESERVATION_REFERENCE: &str = "backorder";
 
+/// A backorder is a promise to ship `quantity` units later; zero or negative
+/// promises are meaningless and would subtract from the summary totals.
+fn validate_create_backorder(input: &CreateBackorder) -> Result<()> {
+    if input.quantity <= Decimal::ZERO {
+        return Err(CommerceError::ValidationError(
+            "Backorder quantity must be greater than zero".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 const ALLOCATION_COLUMNS: &str = "id, backorder_id, sku, quantity, location_id, lot_id, status, allocated_at, expires_at, reservation_id";
 
 type PgTx<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
@@ -136,6 +147,7 @@ impl PgBackorderRepository {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         input: &CreateBackorder,
     ) -> Result<Backorder> {
+        validate_create_backorder(input)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let backorder_number = generate_backorder_number();
@@ -546,6 +558,7 @@ impl PgBackorderRepository {
     }
 
     pub async fn create_backorder_async(&self, input: CreateBackorder) -> Result<Backorder> {
+        validate_create_backorder(&input)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let backorder_number = generate_backorder_number();
@@ -1155,12 +1168,14 @@ impl PgBackorderRepository {
     pub async fn get_summary_async(&self) -> Result<BackorderSummary> {
         let now = Utc::now();
         let row = sqlx::query_as::<_, (i64, Decimal, i64, i64, i64)>(
+            // `SUM` over zero rows is NULL, not 0: an empty store must still
+            // answer with zeros rather than a decode error.
             "SELECT
                 COUNT(*),
                 COALESCE(SUM(quantity_remaining), 0),
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN status = 'allocated' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN priority = 'critical' THEN 1 ELSE 0 END)
+                COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'allocated' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN priority = 'critical' THEN 1 ELSE 0 END), 0)
              FROM backorders WHERE status NOT IN ('fulfilled', 'cancelled')",
         )
         .fetch_one(&self.pool)

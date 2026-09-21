@@ -26,11 +26,11 @@ use rust_decimal_macros::dec;
 use stateset_core::CommerceError;
 use stateset_embedded::{
     AddCarton, AddCartonItem, Commerce, CompletePick, CompletePutAway, CompleteShip,
-    CreateLocation, CreatePackTask, CreatePickTask, CreatePutAway, CreateReceipt,
-    CreateReceiptItem, CreateShipTask, CreateWarehouse, CreateWave, LocationType, OrderId,
-    OrderItemId, PackStatus, PackageType, PickStatus, PickTask, PutAway, PutAwayStatus, Receipt,
-    ReceiptItem, ReceiptStatus, ReceiveItemLine, ReceiveItems, ShipStatus, ShipTask, ShipmentId,
-    WarehouseType, Wave, WaveStatus,
+    CreateCustomer, CreateLocation, CreateOrder, CreateOrderItem, CreatePackTask, CreatePickTask,
+    CreatePutAway, CreateReceipt, CreateReceiptItem, CreateShipTask, CreateWarehouse, CreateWave,
+    LocationType, OrderId, OrderItemId, PackStatus, PackageType, PickStatus, PickTask, ProductId,
+    PutAway, PutAwayStatus, Receipt, ReceiptItem, ReceiptStatus, ReceiveItemLine, ReceiveItems,
+    ShipStatus, ShipTask, ShipmentId, WarehouseType, Wave, WaveStatus,
 };
 use uuid::Uuid;
 
@@ -106,12 +106,43 @@ fn wms() -> Wms {
 }
 
 impl Wms {
+    /// A real order row (with its customer): waves refuse order ids that do
+    /// not exist.
+    fn order(&self) -> OrderId {
+        let customer = self
+            .commerce
+            .customers()
+            .create(CreateCustomer {
+                email: format!("wms-{}@example.com", Uuid::new_v4().simple()),
+                first_name: "Wms".into(),
+                last_name: "Order".into(),
+                ..Default::default()
+            })
+            .expect("create customer");
+        self.commerce
+            .orders()
+            .create(CreateOrder {
+                customer_id: customer.id,
+                items: vec![CreateOrderItem {
+                    product_id: ProductId::new(),
+                    sku: WMS_SKU.into(),
+                    name: "Widget".into(),
+                    quantity: 1,
+                    unit_price: dec!(10.00),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .expect("create order")
+            .id
+    }
+
     fn wave(&self) -> Wave {
         self.commerce
             .fulfillment()
             .create_wave(CreateWave {
                 warehouse_id: self.warehouse_id,
-                order_ids: vec![OrderId::new()],
+                order_ids: vec![self.order()],
                 priority: Some(1),
                 notes: None,
                 created_by: None,

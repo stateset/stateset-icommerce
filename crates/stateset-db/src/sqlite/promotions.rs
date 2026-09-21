@@ -16,9 +16,20 @@ use stateset_core::{
 use uuid::Uuid;
 
 use super::{
-    parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_enum_row,
-    parse_json_opt_row, parse_uuid_row, with_immediate_transaction,
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
+    parse_enum_row, parse_json_opt_row, parse_uuid_row, with_immediate_transaction,
 };
+
+/// Parse the currency a usage is recorded in (case-insensitive ISO 4217).
+///
+/// # Errors
+///
+/// [`CommerceError::ValidationError`] when `currency` is not a valid code.
+pub(crate) fn parse_usage_currency(currency: &str) -> Result<CurrencyCode> {
+    currency.parse::<CurrencyCode>().map_err(|e| {
+        CommerceError::ValidationError(format!("Invalid currency code '{currency}': {e}"))
+    })
+}
 
 #[derive(Debug)]
 pub struct SqlitePromotionRepository {
@@ -477,10 +488,22 @@ impl SqlitePromotionRepository {
     // Coupon Codes
     // ========================================================================
 
+    /// Create a coupon code for an existing promotion.
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::NotFound`] when the promotion does not exist and
+    /// [`CommerceError::Conflict`] when the (case-insensitive) code is already
+    /// taken — the raw FOREIGN KEY / UNIQUE violations never leak out as
+    /// `DatabaseError`. Mirrors the Postgres backend.
     pub fn create_coupon(&self, input: CreateCouponCode) -> Result<CouponCode> {
         let conn = self.pool.get().map_err(|e| {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
+
+        if self.get_with_conn(&conn, input.promotion_id)?.is_none() {
+            return Err(CommerceError::NotFound);
+        }
 
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -500,7 +523,9 @@ impl SqlitePromotionRepository {
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
-        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}")))?;
+        )
+        // A raced duplicate code trips `coupon_codes.code` UNIQUE → `Conflict`.
+        .map_err(map_db_error)?;
 
         // Drop the connection before calling get_coupon to avoid nested pool checkouts
         // (important for max_connections=1).
@@ -1330,6 +1355,9 @@ impl SqlitePromotionRepository {
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {
+        // Validate the currency up front: an unparseable code is a
+        // `ValidationError`, never silently recorded as the default (USD).
+        let currency = parse_usage_currency(currency)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -1347,7 +1375,7 @@ impl SqlitePromotionRepository {
                 order_id,
                 cart_id,
                 discount_amount,
-                currency,
+                currency.as_str(),
             )
         })?;
 
@@ -1359,7 +1387,7 @@ impl SqlitePromotionRepository {
             order_id,
             cart_id,
             discount_amount,
-            currency: currency.parse::<CurrencyCode>().unwrap_or_default(),
+            currency,
             used_at: now,
         })
     }
@@ -2337,6 +2365,67 @@ mod tests {
         let by_code = repo.get_coupon_by_code("WELCOME10").expect("ok").expect("found");
         assert_eq!(by_code.id, coupon.id);
         assert!(repo.get_coupon_by_code("missing").expect("ok").is_none());
+    }
+
+    fn coupon_input(promotion_id: PromotionId, code: &str) -> CreateCouponCode {
+        CreateCouponCode {
+            promotion_id,
+            code: code.into(),
+            usage_limit: None,
+            per_customer_limit: None,
+            starts_at: None,
+            ends_at: None,
+            metadata: None,
+        }
+    }
+
+    /// A second coupon with the same (case-insensitive) code is a typed
+    /// `Conflict`, not an untyped `DatabaseError("Insert error: UNIQUE ...")`.
+    #[test]
+    fn create_coupon_duplicate_code_is_conflict() {
+        let repo = fresh_repo();
+        let p = make_pct_promo(&repo, "PROMO-DUP", dec!(0.10));
+        repo.create_coupon(coupon_input(p.id, "DUP10")).expect("first coupon");
+
+        let err = repo
+            .create_coupon(coupon_input(p.id, "dup10"))
+            .expect_err("a duplicate coupon code must be refused");
+        assert!(matches!(err, CommerceError::Conflict(_)), "{err:?}");
+    }
+
+    /// A coupon for a promotion that does not exist is `NotFound`, not the
+    /// FOREIGN KEY violation leaking out as `DatabaseError`.
+    #[test]
+    fn create_coupon_for_unknown_promotion_is_not_found() {
+        let repo = fresh_repo();
+        let err = repo
+            .create_coupon(coupon_input(PromotionId::from(Uuid::new_v4()), "GHOST"))
+            .expect_err("a coupon on a missing promotion must be refused");
+        assert!(matches!(err, CommerceError::NotFound), "{err:?}");
+        assert!(repo.get_coupon_by_code("GHOST").expect("ok").is_none());
+    }
+
+    /// An unparseable currency is a `ValidationError`; it must not be
+    /// silently recorded as the default currency (USD).
+    #[test]
+    fn record_usage_rejects_unparseable_currency() {
+        let repo = fresh_repo();
+        let p = make_pct_promo(&repo, "PROMO-CUR", dec!(0.10));
+
+        let err = repo
+            .record_usage(p.id, None, None, None, None, dec!(5.00), "not-a-currency")
+            .expect_err("an unparseable currency must be refused");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
+
+        // Nothing was recorded: the usage counter is untouched.
+        let refreshed = repo.get(p.id).expect("get").expect("exists");
+        assert_eq!(refreshed.usage_count, 0);
+
+        // A valid code in any case is accepted and normalised.
+        let usage = repo
+            .record_usage(p.id, None, None, None, None, dec!(5.00), "eur")
+            .expect("valid currency");
+        assert_eq!(usage.currency, CurrencyCode::EUR);
     }
 
     #[test]

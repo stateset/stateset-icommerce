@@ -966,7 +966,19 @@ impl PgPromotionRepository {
         .await
     }
 
+    /// Create a coupon code for an existing promotion.
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::NotFound`] when the promotion does not exist and
+    /// [`CommerceError::Conflict`] when the (case-insensitive) code is already
+    /// taken — the raw foreign-key / unique violations never leak out as
+    /// `DatabaseError`. Mirrors the SQLite backend.
     pub async fn create_coupon_async(&self, input: CreateCouponCode) -> Result<CouponCode> {
+        if self.get_async(input.promotion_id).await?.is_none() {
+            return Err(CommerceError::NotFound);
+        }
+
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -1554,6 +1566,12 @@ impl PgPromotionRepository {
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {
+        // Validate the currency up front: an unparseable code is a
+        // `ValidationError`, never silently recorded as the default (USD).
+        // Mirrors SQLite.
+        let currency = currency.parse::<CurrencyCode>().map_err(|e| {
+            CommerceError::ValidationError(format!("Invalid currency code '{currency}': {e}"))
+        })?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -1572,7 +1590,7 @@ impl PgPromotionRepository {
             order_id,
             cart_id,
             discount_amount,
-            currency,
+            currency.as_str(),
         )
         .await?;
         tx.commit().await.map_err(map_db_error)?;
@@ -1585,7 +1603,7 @@ impl PgPromotionRepository {
             order_id,
             cart_id,
             discount_amount,
-            currency: currency.parse().unwrap_or(CurrencyCode::USD),
+            currency,
             used_at: now,
         })
     }

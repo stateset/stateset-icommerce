@@ -10,6 +10,33 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Fixed
 
+- **Engine guards surfaced by the Node binding's new test suites** (SQLite and
+  Postgres in parity, each with a red-then-green test):
+  - `backorder.get_summary` no longer fails with a NULL column on an empty
+    store or once every backorder is cancelled; both backends now `COALESCE`
+    the status counts.
+  - `create_backorder`, `lots.create`, `credit.create_credit_account` /
+    `adjust_credit_limit` / `update_credit_account`, and
+    `cost_accounting.set_item_cost` / `update_average_cost` /
+    `update_last_cost` refuse non-positive quantities, negative limits,
+    negative costs and blank SKUs with a validation error instead of writing
+    them.
+  - `serials.create` / `create_bulk` resolve `lot_number` to the lot's id (an
+    unknown lot number is not found), so quarantining a lot now reaches the
+    serials created against it.
+  - `receiving.create_receipt_from_po` refuses an unknown purchase order and
+    `fulfillment.create_wave` refuses an unknown order, both before writing.
+  - `accounts_receivable.create_credit_memo` refuses an unknown customer;
+    voided credit memos no longer appear among unapplied credits.
+  - `promotions.create_coupon` reports a duplicate code as a conflict and an
+    unknown promotion as not found rather than a database error;
+    `record_usage` refuses an unparseable currency instead of recording USD;
+    `validate_coupon` now applies the same promotion eligibility (active,
+    inside its window, under its usage limit) that `apply` uses, so a coupon
+    on a draft or expired promotion no longer validates.
+  - `subscriptions.skip_billing_cycle` marks the skipped cycle `skipped` and
+    seeds the next scheduled cycle, and advances `current_period_start` the
+    way a settled cycle does.
 - Creating a subscription no longer fails with `Conflict("Subscription <id> is
   leased for billing by another worker until <ts>")`. The create path seeded
   billing cycle 1 in its own transaction, after the subscription row had already

@@ -190,6 +190,18 @@ impl Promotions {
 
     /// Validate a coupon code (check if it's valid and can be used).
     ///
+    /// Returns `None` unless BOTH the coupon and the promotion it activates
+    /// are redeemable right now — the coupon active, inside its window and
+    /// under its usage limit, and the promotion `Active`, inside its window
+    /// and under its total usage limit. These are exactly the checks
+    /// [`Self::apply`] makes when it resolves a coupon code
+    /// ([`CouponCode::redeemability_at`] and
+    /// [`Promotion::redeemability_at`]), so a code this accepts is one
+    /// `apply` will discount; a coupon on a draft, paused or expired
+    /// promotion is not valid.
+    ///
+    /// Per-customer limits need a customer and are enforced by `apply`.
+    ///
     /// # Example
     ///
     /// ```rust,ignore
@@ -204,38 +216,25 @@ impl Promotions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn validate_coupon(&self, code: &str) -> Result<Option<CouponCode>> {
-        let coupon = self.db.promotions().get_coupon_by_code(code)?;
+        let Some(coupon) = self.db.promotions().get_coupon_by_code(code)? else {
+            return Ok(None);
+        };
 
-        if let Some(c) = coupon {
-            // Check if coupon is active
-            if c.status != stateset_core::CouponStatus::Active {
-                return Ok(None);
-            }
-
-            // Check usage limits
-            if let Some(limit) = c.usage_limit {
-                if c.usage_count >= limit {
-                    return Ok(None);
-                }
-            }
-
-            // Check dates
-            let now = chrono::Utc::now();
-            if let Some(starts) = c.starts_at {
-                if now < starts {
-                    return Ok(None);
-                }
-            }
-            if let Some(ends) = c.ends_at {
-                if now > ends {
-                    return Ok(None);
-                }
-            }
-
-            Ok(Some(c))
-        } else {
-            Ok(None)
+        let now = chrono::Utc::now();
+        if coupon.redeemability_at(now).is_err() {
+            return Ok(None);
         }
+
+        // The coupon only ever discounts through its promotion; a coupon on a
+        // draft / paused / expired / exhausted promotion is not redeemable.
+        let Some(promotion) = self.db.promotions().get(coupon.promotion_id)? else {
+            return Ok(None);
+        };
+        if promotion.redeemability_at(now).is_err() {
+            return Ok(None);
+        }
+
+        Ok(Some(coupon))
     }
 
     // ========================================================================
