@@ -286,7 +286,6 @@ test('malformed inputs are refused with VALIDATION, never coerced', async () => 
 
 test(
   'skipBilling marks the skipped cycle as skipped',
-  { todo: 'engine: skip_billing_cycle advances next_billing_date but leaves billing cycle 1 scheduled over the skipped period' },
   async () => {
     const commerce = new Commerce(':memory:');
     const shopper = await customer(commerce);

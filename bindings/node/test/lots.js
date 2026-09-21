@@ -160,7 +160,6 @@ test('malformed ids are VALIDATION and unknown ids are NOT_FOUND', async () => {
 
 test(
   'a lot must be created with a positive quantity',
-  { todo: 'engine: create accepts quantityProduced 0 and -5, yielding an Active lot with quantityAvailable -5' },
   async () => {
     const commerce = new Commerce(':memory:');
     const isValidation = (err) => err.code === 'VALIDATION' && /quantity/i.test(err.message);
@@ -172,7 +171,6 @@ test(
 
 test(
   'a malformed production or expiration date is refused instead of dropped',
-  { todo: 'binding: lots.create parses dates with .ok(), so "garbage" becomes "no date" and the lot is written without it' },
   async () => {
     const commerce = new Commerce(':memory:');
     const isValidation = (err) => err.code === 'VALIDATION' && /date/i.test(err.message);
@@ -184,7 +182,6 @@ test(
 
 test(
   'quarantining a lot cascades to the serials that belong to it',
-  { todo: 'engine: a serial created with lotNumber is stored with lot_id NULL, and the cascade keys on lot_id, so the serial stays Available' },
   async () => {
     const commerce = new Commerce(':memory:');
     const lot = await commerce.lots.create({ lotNumber: 'LOT-CASCADE', sku: 'WIDGET', quantityProduced: 2 });

@@ -212,7 +212,6 @@ test('voidCreditMemo flips open -> voided once; a second void is CONFLICT', asyn
 
 test(
   'a voided credit memo is no longer an unapplied credit',
-  { todo: 'engine: void_credit_memo only flips status; unapplied_amount stays at the full amount so get_unapplied_credits still lists the voided memo' },
   async () => {
     const commerce = new Commerce(':memory:');
     const cust = await customer(commerce);
@@ -228,7 +227,6 @@ test(
 
 test(
   'createCreditMemo refuses a customer the store does not have',
-  { todo: 'engine: create_credit_memo does not check the customer exists; an unknown UUID yields an Open memo for nobody' },
   async () => {
     const commerce = new Commerce(':memory:');
     await assert.rejects(

@@ -197,7 +197,6 @@ test('getTotalInventoryValue is on-hand quantity times average cost across track
 
 test(
   'setItemCost refuses a negative cost',
-  { todo: 'engine: set_item_cost stores a negative standard cost (and seeds average/last from it), so inventory can be valued below zero' },
   async () => {
     const commerce = new Commerce(':memory:');
     await assert.rejects(
@@ -210,7 +209,6 @@ test(
 
 test(
   'setItemCost refuses an empty SKU',
-  { todo: "engine: set_item_cost accepts sku '' and creates a cost record keyed on the empty string" },
   async () => {
     const commerce = new Commerce(':memory:');
     await assert.rejects(
