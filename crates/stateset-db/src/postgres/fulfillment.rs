@@ -462,6 +462,21 @@ impl PgFulfillmentRepository {
         let wave_number = generate_wave_number();
         let order_count = input.order_ids.len() as i32;
 
+        // Every order on the wave must exist; `wave_orders` has no FK to
+        // `orders`, so an unknown id would otherwise be accepted and counted.
+        // Checked before the header write so nothing lands (the early return
+        // drops the transaction, which rolls it back).
+        for order_id in &input.order_ids {
+            let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM orders WHERE id = $1")
+                .bind(order_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            if exists.is_none() {
+                return Err(CommerceError::OrderNotFound(order_id.into_uuid()));
+            }
+        }
+
         sqlx::query(
             r#"
             INSERT INTO waves (id, wave_number, warehouse_id, status, order_count, priority, notes, created_by, created_at, updated_at)

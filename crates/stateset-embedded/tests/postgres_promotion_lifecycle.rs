@@ -250,3 +250,137 @@ async fn postgres_buy_x_get_y_grants_one_free_item_per_full_set() {
         .expect("apply");
     assert_eq!(applied(&result, &promo), None, "{result:?}");
 }
+
+/// A second coupon with the same code is a typed `Conflict`; a coupon for a
+/// promotion that does not exist is `NotFound`. Neither may leak the raw
+/// unique / foreign-key violation as `DatabaseError`.
+#[tokio::test]
+async fn postgres_create_coupon_maps_duplicate_code_and_unknown_promotion() {
+    let Some(commerce) = connect().await else { return };
+    let code = format!("DUP-{}", &Uuid::new_v4().simple().to_string()[..8]).to_uppercase();
+    let promo = commerce
+        .promotions()
+        .create(CreatePromotion {
+            code: Some(format!("{code}-PROMO")),
+            name: "Duplicate coupon guard".into(),
+            description: None,
+            internal_notes: None,
+            promotion_type: PromotionType::PercentageOff,
+            trigger: PromotionTrigger::CouponCode,
+            target: PromotionTarget::Order,
+            stacking: StackingBehavior::Stackable,
+            percentage_off: Some(dec!(0.10)),
+            fixed_amount_off: None,
+            max_discount_amount: None,
+            buy_quantity: None,
+            get_quantity: None,
+            get_discount_percent: None,
+            tiers: None,
+            bundle_product_ids: None,
+            bundle_discount: None,
+            starts_at: None,
+            ends_at: None,
+            total_usage_limit: None,
+            per_customer_limit: None,
+            conditions: None,
+            applicable_product_ids: None,
+            applicable_category_ids: None,
+            applicable_skus: None,
+            excluded_product_ids: None,
+            excluded_category_ids: None,
+            eligible_customer_ids: None,
+            eligible_customer_groups: None,
+            currency: None,
+            priority: Some(-1000),
+            metadata: None,
+        })
+        .await
+        .expect("create promotion");
+    let coupon = |promotion_id, code: &str| CreateCouponCode {
+        promotion_id,
+        code: code.into(),
+        usage_limit: None,
+        per_customer_limit: None,
+        starts_at: None,
+        ends_at: None,
+        metadata: None,
+    };
+
+    commerce.promotions().create_coupon(coupon(promo.id, &code)).await.expect("first coupon");
+    let err = commerce
+        .promotions()
+        .create_coupon(coupon(promo.id, &code.to_lowercase()))
+        .await
+        .expect_err("a duplicate coupon code must be refused");
+    assert!(matches!(err, stateset_embedded::CommerceError::Conflict(_)), "{err:?}");
+
+    let err = commerce
+        .promotions()
+        .create_coupon(coupon(stateset_core::PromotionId::from(Uuid::new_v4()), "GHOST"))
+        .await
+        .expect_err("a coupon on a missing promotion must be refused");
+    assert!(matches!(err, stateset_embedded::CommerceError::NotFound), "{err:?}");
+}
+
+/// An unparsable currency is a `ValidationError`, never silently recorded
+/// as USD.
+#[tokio::test]
+async fn postgres_record_usage_rejects_unparsable_currency() {
+    let Some(commerce) = connect().await else { return };
+    let code = format!("CUR-{}", &Uuid::new_v4().simple().to_string()[..8]).to_uppercase();
+    let (promo, _code) = coupon_promotion(
+        &commerce,
+        CreatePromotion {
+            code: Some(code),
+            name: "Currency guard".into(),
+            description: None,
+            internal_notes: None,
+            promotion_type: PromotionType::PercentageOff,
+            trigger: PromotionTrigger::CouponCode,
+            target: PromotionTarget::Order,
+            stacking: StackingBehavior::Stackable,
+            percentage_off: Some(dec!(0.10)),
+            fixed_amount_off: None,
+            max_discount_amount: None,
+            buy_quantity: None,
+            get_quantity: None,
+            get_discount_percent: None,
+            tiers: None,
+            bundle_product_ids: None,
+            bundle_discount: None,
+            starts_at: None,
+            ends_at: None,
+            total_usage_limit: None,
+            per_customer_limit: None,
+            conditions: None,
+            applicable_product_ids: None,
+            applicable_category_ids: None,
+            applicable_skus: None,
+            excluded_product_ids: None,
+            excluded_category_ids: None,
+            eligible_customer_ids: None,
+            eligible_customer_groups: None,
+            currency: None,
+            priority: Some(-1000),
+            metadata: None,
+        },
+    )
+    .await;
+
+    let err = commerce
+        .promotions()
+        .record_usage(promo.id.into_uuid(), None, None, None, None, dec!(5.00), "not-a-currency")
+        .await
+        .expect_err("an unparsable currency must be refused");
+    assert!(matches!(err, stateset_embedded::CommerceError::ValidationError(_)), "{err:?}");
+    let refreshed =
+        commerce.promotions().get(promo.id.into_uuid()).await.expect("get").expect("exists");
+    assert_eq!(refreshed.usage_count, 0, "nothing may be recorded");
+
+    let usage = commerce
+        .promotions()
+        .record_usage(promo.id.into_uuid(), None, None, None, None, dec!(5.00), "eur")
+        .await
+        .expect("a valid code in any case is accepted");
+    assert_eq!(usage.currency, CurrencyCode::EUR);
+}
