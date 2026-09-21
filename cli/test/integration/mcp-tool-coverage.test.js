@@ -68,6 +68,8 @@ describe('MCP tool coverage', () => {
       // Skip aliases or non-MCP runtime surfaces that are intentionally handled elsewhere.
       getterNames.delete('customStates');
       getterNames.delete('events');
+      // A value getter (whether `close()` has run), not a sub-API.
+      getterNames.delete('isClosed');
 
       for (const getterName of getterNames) {
         assert.ok(
