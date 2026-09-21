@@ -6,8 +6,6 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
-## [1.35.1] - 2026-09-12
-
 ### Fixed
 
 - **Engine guards surfaced by the Node binding's new test suites** (SQLite and
@@ -37,6 +35,11 @@ This project follows Keep a Changelog and Semantic Versioning.
   - `subscriptions.skip_billing_cycle` marks the skipped cycle `skipped` and
     seeds the next scheduled cycle, and advances `current_period_start` the
     way a settled cycle does.
+
+## [1.35.1] - 2026-09-12
+
+### Fixed
+
 - Creating a subscription no longer fails with `Conflict("Subscription <id> is
   leased for billing by another worker until <ts>")`. The create path seeded
   billing cycle 1 in its own transaction, after the subscription row had already
