@@ -25,9 +25,7 @@ CORPUS = Path(__file__).resolve().parents[2] / "test-vectors" / "semantics-v1.js
 
 # Categories this binding cannot assert yet, with the reason. Keep this honest:
 # it is compared against the corpus, so it cannot drift out of date.
-NOT_REACHABLE = {
-    "currency_decimals": "the binding exposes no currency-scale accessor",
-}
+NOT_REACHABLE = {}
 
 
 @pytest.fixture(scope="module")
@@ -54,6 +52,7 @@ def test_every_corpus_category_is_either_asserted_or_declared_unreachable(corpus
         "canadian_tax_rates",
         "decimal_render",
         "money_scale_enforced",
+        "currency_decimals",
     }
     declared = asserted | set(NOT_REACHABLE)
     present = set(corpus["categories"])
@@ -200,4 +199,17 @@ def test_decimal_render_multiplication_survives_the_boundary(commerce, corpus):
         assert Decimal(order.total_amount_exact) == Decimal(row["expected"]), (
             f"{row['id']}: {quantity} x {price} came back as "
             f"{order.total_amount_exact}, want {row['expected']}"
+        )
+
+
+def test_currency_decimals_match_the_corpus(commerce, corpus):
+    """Every currency's scale, read through the binding.
+
+    A binding that hardcodes two decimal places cannot answer this correctly
+    for JPY, KRW, VND, BTC or ETH.
+    """
+    for row in rows(corpus, "currency_decimals"):
+        got = commerce.currency.decimal_places(row["code"])
+        assert got == row["decimals"], (
+            f"{row['id']}: {row['code']} has {got} decimal places, corpus says {row['decimals']}"
         )
