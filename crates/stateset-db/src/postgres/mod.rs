@@ -1045,7 +1045,7 @@ fn is_local_postgres_host(host: &str) -> bool {
 /// that already honoured this setting:
 ///
 /// * no settings row at all -> [`CurrencyCode::default`] (USD),
-/// * a row holding an unparseable code -> a `DatabaseError` naming the bad
+/// * a row holding an unparsable code -> a `DatabaseError` naming the bad
 ///   code. A corrupt setting is loud; it never silently denominates money in
 ///   the default currency.
 pub(crate) async fn store_base_currency_with_executor<'e, E>(

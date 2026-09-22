@@ -1393,7 +1393,7 @@ where
 /// that already honoured this setting:
 ///
 /// * no settings row at all -> [`CurrencyCode::default`] (USD),
-/// * a row holding an unparseable code -> a `DatabaseError` naming the bad
+/// * a row holding an unparsable code -> a `DatabaseError` naming the bad
 ///   code. A corrupt setting is loud; it never silently denominates money in
 ///   the default currency.
 pub(crate) fn store_base_currency_with_conn(
@@ -1709,7 +1709,7 @@ mod store_base_currency_tests {
     }
 
     #[test]
-    fn unparseable_setting_is_loud() {
+    fn unparsable_setting_is_loud() {
         let db = SqliteDatabase::in_memory().expect("in-memory");
         set_base_currency(&db, "not-a-currency");
         let conn = db.conn().expect("conn");
