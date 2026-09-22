@@ -15,16 +15,13 @@ use std::str::FromStr;
 
 use rust_decimal::Decimal;
 use serde_json::Value;
-use stateset_embedded::get_canadian_tax_info;
 use stateset_core::CurrencyCode;
+use stateset_embedded::get_canadian_tax_info;
 
 fn corpus() -> Value {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../bindings/test-vectors/semantics-v1.json"
-    );
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("read {path}: {e}"));
+    let path =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../bindings/test-vectors/semantics-v1.json");
+    let raw = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
     serde_json::from_str(&raw).expect("semantics-v1.json is valid JSON")
 }
 
@@ -98,19 +95,15 @@ fn decimal_render_matches_exact_arithmetic() {
 fn canadian_tax_rates_match_the_published_table() {
     for row in rows("canadian_tax_rates") {
         let province = row["province"].as_str().expect("province");
-        let info = get_canadian_tax_info(province)
-            .unwrap_or_else(|| panic!("{province} is in the table"));
+        let info =
+            get_canadian_tax_info(province).unwrap_or_else(|| panic!("{province} is in the table"));
         let field = |key: &str| row[key].as_str().map(dec);
 
         assert_eq!(Some(info.gst_rate), field("gst"), "{province}: gst");
         assert_eq!(info.pst_rate, field("pst"), "{province}: pst");
         assert_eq!(info.hst_rate, field("hst"), "{province}: hst");
         assert_eq!(info.qst_rate, field("qst"), "{province}: qst");
-        assert_eq!(
-            Some(info.total_rate),
-            field("total"),
-            "{province}: total_rate"
-        );
+        assert_eq!(Some(info.total_rate), field("total"), "{province}: total_rate");
     }
 }
 
