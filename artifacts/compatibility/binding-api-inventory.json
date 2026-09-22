@@ -1893,7 +1893,7 @@
         "langchain"
       ],
       "moduleCount": 7,
-      "publicSymbolCount": 252,
+      "publicSymbolCount": 254,
       "helperModules": [
         "agent_toolkit",
         "autogen",
@@ -1949,8 +1949,10 @@
         "create_openai_tools",
         "create_tool_descriptors",
         "CreateIntegrationMappingInput",
+        "CreateInvoiceItemInput",
         "CreateOrderItemInput",
         "CreateProductVariantInput",
+        "CreatePurchaseOrderItemInput",
         "CreateReturnItemInput",
         "CurrencyOperations",
         "Customer",
