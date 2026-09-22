@@ -1841,8 +1841,12 @@ pub fn get_canadian_tax_info(province_code: &str) -> Option<CanadianTaxInfo> {
             gst_rate: gst,
             pst_rate: None,
             hst_rate: None,
-            qst_rate: Some(Decimal::new(9975, 4)), // 9.975%
-            total_rate: Decimal::new(14975, 4),
+            // Every rate in this table is a fraction, not a percentage: GST is
+            // Decimal::new(5, 2) = 0.05 and Ontario's HST is Decimal::new(13, 2)
+            // = 0.13. Quebec was the one entry written at scale 4, making QST
+            // 0.9975 and the total 1.4975 -- ten times over.
+            qst_rate: Some(Decimal::new(9975, 5)), // 9.975%
+            total_rate: Decimal::new(14975, 5),    // 5% GST + 9.975% QST
         }),
         "SK" => Some(CanadianTaxInfo {
             province_code: "SK".into(),
