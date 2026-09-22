@@ -5,7 +5,7 @@
 
 Source of truth: `cli/src/tools/domain-registry.js`.
 
-**923 tools** across **87 domains**.
+**934 tools** across **87 domains**.
 
 ## Domains
 
@@ -79,7 +79,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [accounts-receivable](#accounts-receivable) | 8 |
 | [cost-accounting](#cost-accounting) | 5 |
 | [credit](#credit) | 8 |
-| [backorders](#backorders) | 9 |
+| [backorders](#backorders) | 20 |
 | [general-ledger](#general-ledger) | 17 |
 | [agent-receipt](#agent-receipt) | 11 |
 | [fixed-assets](#fixed-assets) | 9 |
@@ -1218,6 +1218,17 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `list_backorders_for_sku` | read | List backorders for a SKU. |
 | `list_overdue_backorders` | read | List overdue backorders. |
 | `get_backorder_summary` | read | Get the backorder summary. |
+| `auto_allocate_inventory` | write | Allocate available stock to a SKU's open backorders, in priority order (critical first, then oldest first). Call after stock arrives. |
+| `allocate_backorder` | write | Reserve a specific quantity of stock against one backorder. |
+| `get_backorder_allocations` | read | List the allocations recorded against one backorder. |
+| `confirm_backorder_allocation` | write | Confirm a reserved allocation, committing the stock to the backorder. |
+| `release_backorder_allocation` | write | Release a reserved allocation, returning the stock to available. |
+| `expire_backorder_allocations` | write | Expire every allocation whose hold has lapsed, freeing the stock it held. Returns how many were swept. |
+| `fulfill_backorder` | write | Record a fulfilment against a backorder, drawing on the named source. |
+| `get_backorder_fulfillment_history` | read | The fulfilment history recorded against one backorder. |
+| `list_backorders_for_customer` | read | Every backorder raised for one customer. |
+| `get_sku_backorder_summary` | read | Open backorder totals for one SKU. |
+| `update_backorder` | write | Update a backorder's priority, dates, source location or notes. |
 | `count_pending_backorders` | read | Count pending backorders. |
 
 ## general-ledger

@@ -410,6 +410,57 @@ export interface BackorderFilterInput {
   limit?: number
   offset?: number
 }
+export interface BackorderAllocationOutput {
+  id: string
+  backorderId: string
+  sku: string
+  quantity: number
+  locationId?: number
+  lotId?: string
+  status: BackorderAllocationStatus
+  allocatedAt: string
+  expiresAt?: string
+  reservationId?: string
+}
+export interface AllocateBackorderInput {
+  backorderId: string
+  quantity: number
+  locationId?: number
+  lotId?: string
+  expiresAt?: string
+}
+export interface FulfillBackorderInput {
+  backorderId: string
+  quantity: number
+  sourceType: BackorderFulfillmentSourceInput
+  sourceId?: string
+  notes?: string
+  fulfilledBy?: string
+}
+export interface UpdateBackorderInput {
+  priority?: BackorderPriorityInput
+  expectedDate?: string
+  promisedDate?: string
+  sourceLocationId?: number
+  notes?: string
+}
+export interface BackorderFulfillmentOutput {
+  id: string
+  backorderId: string
+  quantity: number
+  sourceType: BackorderFulfillmentSource
+  sourceId?: string
+  notes?: string
+  fulfilledAt: string
+  fulfilledBy?: string
+}
+export interface SkuBackorderSummaryOutput {
+  sku: string
+  totalQuantity: number
+  backorderCount: number
+  oldestDate?: string
+  earliestExpected?: string
+}
 export interface CreateBomInput {
   name: string
   productId: string
@@ -5744,6 +5795,38 @@ export declare class Backorders {
   getSummary(): Promise<BackorderSummaryOutput>
   /** Count pending backorders */
   countPending(): Promise<number>
+  /**
+   * Allocate available inventory to this SKU's open backorders, in priority
+   * order (critical first, then oldest first), each up to what is still
+   * available at its source location.
+   *
+   * Returns the allocations created, which is empty when nothing is
+   * available or no backorder is open. Call it after stock arrives.
+   */
+  autoAllocateInventory(sku: string): Promise<Array<BackorderAllocationOutput>>
+  /** Reserve a specific quantity of stock against one backorder. */
+  allocateBackorder(input: AllocateBackorderInput): Promise<BackorderAllocationOutput>
+  /** List the allocations recorded against one backorder. */
+  getAllocations(backorderId: string): Promise<Array<BackorderAllocationOutput>>
+  /** Confirm a reserved allocation, committing the stock to the backorder. */
+  confirmAllocation(id: string): Promise<BackorderAllocationOutput>
+  /** Release a reserved allocation, returning the stock to available. */
+  releaseAllocation(id: string): Promise<BackorderAllocationOutput>
+  /**
+   * Expire every allocation whose hold has lapsed, returning how many were
+   * swept. Without this the stock a lapsed allocation holds is never freed.
+   */
+  expireAllocations(): Promise<number>
+  /** Record a fulfilment against a backorder, drawing on the named source. */
+  fulfillBackorder(input: FulfillBackorderInput): Promise<BackorderOutput>
+  /** The fulfilment history recorded against one backorder. */
+  getFulfillmentHistory(backorderId: string): Promise<Array<BackorderFulfillmentOutput>>
+  /** Every backorder raised for one customer. */
+  getBackordersForCustomer(customerId: string): Promise<Array<BackorderOutput>>
+  /** Open backorder totals for one SKU, or null when none are open. */
+  getSkuSummary(sku: string): Promise<SkuBackorderSummaryOutput | null>
+  /** Update a backorder's priority, dates, source location or notes. */
+  updateBackorder(id: string, input: UpdateBackorderInput): Promise<BackorderOutput>
 }
 export declare class Bom {
   create(input: CreateBomInput): Promise<BomOutput>
@@ -7586,6 +7669,14 @@ export type CostMethodFilter = CostMethod | 'average' | 'avg' | 'fifo' | 'lifo' 
 export type CreditAccountStatus = 'Active' | 'Suspended' | 'OnHold' | 'Closed' | 'PendingReview'
 /** Credit account status accepted by `CreditAccountFilterInput.status`: the rendered form or the engine's snake_case (strict). */
 export type CreditAccountStatusInput = CreditAccountStatus | 'active' | 'suspended' | 'on_hold' | 'onhold' | 'closed' | 'pending_review' | 'pendingreview'
+
+/** Backorder fulfilment source as rendered on `BackorderFulfillmentOutput.sourceType` (Rust `Debug` form). */
+export type BackorderFulfillmentSource = 'Inventory' | 'PurchaseOrder' | 'Transfer' | 'Production'
+/** Fulfilment source accepted by `FulfillBackorderInput.sourceType`: the rendered form or the engine's snake_case (strict). */
+export type BackorderFulfillmentSourceInput = BackorderFulfillmentSource | 'inventory' | 'purchase_order' | 'transfer' | 'production'
+
+/** Backorder allocation status as rendered on `BackorderAllocationOutput.status` (Rust `Debug` form). */
+export type BackorderAllocationStatus = 'Reserved' | 'Confirmed' | 'Released' | 'Expired' | 'Fulfilled'
 
 /** Backorder status as rendered on `BackorderOutput.status` (Rust `Debug` form). */
 export type BackorderStatus = 'Pending' | 'PartiallyFulfilled' | 'Allocated' | 'ReadyToShip' | 'Fulfilled' | 'Cancelled'
