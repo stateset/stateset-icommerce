@@ -19,7 +19,7 @@ use uuid::Uuid;
 use super::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
     parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row,
-    with_immediate_transaction,
+    resolve_currency_in_tx, with_immediate_transaction,
 };
 
 #[derive(Debug)]
@@ -88,6 +88,7 @@ impl SqliteSubscriptionRepository {
         // plan with a partial item set — silently mispriced for every
         // subscriber.
         with_immediate_transaction(&self.pool, |tx| {
+            let currency = resolve_currency_in_tx(input.currency, tx)?;
             tx.execute(
                 "INSERT INTO subscription_plans (
                     id, code, name, description, status,
@@ -114,7 +115,7 @@ impl SqliteSubscriptionRepository {
                     input.custom_interval_days,
                     input.price.to_string(),
                     input.setup_fee.map(|d| d.to_string()),
-                    input.currency.unwrap_or_default(),
+                    currency,
                     input.trial_days.unwrap_or(0),
                     i32::from(input.trial_requires_payment_method.unwrap_or(true)),
                     input.min_cycles,

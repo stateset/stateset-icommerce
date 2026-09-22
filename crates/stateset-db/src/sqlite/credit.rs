@@ -18,7 +18,7 @@ use uuid::Uuid;
 use super::{
     append_limit_offset, map_db_error, parse_datetime_opt_row, parse_datetime_row,
     parse_decimal_opt_row, parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
-    with_immediate_transaction,
+    resolve_currency_in_tx, with_immediate_transaction,
 };
 
 #[derive(Debug)]
@@ -370,7 +370,7 @@ impl SqliteCreditRepository {
         input: &CreateCreditAccount,
         now: &str,
     ) -> rusqlite::Result<()> {
-        let currency = input.currency.unwrap_or_default();
+        let currency = resolve_currency_in_tx(input.currency, conn)?;
         conn.execute(
             "INSERT INTO credit_accounts (id, customer_id, credit_limit, available_credit, current_balance,
                 hold_amount, currency, status, payment_terms, risk_rating, notes, created_at, updated_at)

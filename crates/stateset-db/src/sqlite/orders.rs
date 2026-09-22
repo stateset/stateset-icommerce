@@ -14,7 +14,7 @@ use super::{
         open_captures_for_order_conn, order_has_payments_conn,
         void_in_flight_payments_for_order_conn,
     },
-    sum_decimal_query, uuid_params, with_immediate_transaction,
+    resolve_currency_in_tx, sum_decimal_query, uuid_params, with_immediate_transaction,
 };
 use crate::KernelOutboxEvent;
 use chrono::Utc;
@@ -564,7 +564,7 @@ impl SqliteOrderRepository {
         let id = OrderId::new();
         let order_number = Self::generate_order_number();
         let now = Utc::now();
-        let currency = input.currency.unwrap_or_default();
+        let currency = resolve_currency_in_tx(input.currency, tx)?;
 
         // Pre-compute strings used multiple times to avoid repeated allocation
         let id_str = id.to_string();

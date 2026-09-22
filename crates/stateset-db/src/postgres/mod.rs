@@ -162,7 +162,7 @@ pub use zone_shipping_methods::*;
 
 use sha2::{Digest, Sha256};
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode};
-use stateset_core::CommerceError;
+use stateset_core::{CommerceError, CurrencyCode};
 
 /// Default page size applied when a list filter does not specify a limit.
 pub(crate) const DEFAULT_LIST_LIMIT: u32 = 500;
@@ -1027,6 +1027,63 @@ fn is_local_postgres_host(host: &str) -> bool {
         || normalized == "127.0.0.1"
         || normalized == "::1"
         || normalized.starts_with('/')
+}
+
+// ============================================================================
+// Store base currency
+// ============================================================================
+
+/// Read the store's configured base currency using the caller's executor.
+///
+/// `executor` is whatever handle the call site already holds — `&self.pool`
+/// when there is no transaction in flight, or `tx.as_mut()` when there is. A
+/// call site inside a transaction must pass its own transaction: checking a
+/// second connection out of the pool mid-transaction risks a deadlock under
+/// load and reads outside the transaction's snapshot.
+///
+/// Error semantics mirror the SQLite backend's `revalue`, the one code path
+/// that already honoured this setting:
+///
+/// * no settings row at all -> [`CurrencyCode::default`] (USD),
+/// * a row holding an unparseable code -> a `DatabaseError` naming the bad
+///   code. A corrupt setting is loud; it never silently denominates money in
+///   the default currency.
+pub(crate) async fn store_base_currency_with_executor<'e, E>(
+    executor: E,
+) -> stateset_core::Result<CurrencyCode>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT base_currency FROM store_currency_settings WHERE id = 'default'")
+            .fetch_optional(executor)
+            .await
+            .map_err(map_db_error)?;
+
+    match row {
+        Some((code,)) => code.parse::<CurrencyCode>().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid store base currency {code:?}: {e}"))
+        }),
+        None => Ok(CurrencyCode::default()),
+    }
+}
+
+/// Resolve the currency a new record is denominated in.
+///
+/// An explicit `supplied` currency from the caller always wins and costs no
+/// query; only when the caller omits one do we fall back to the store's
+/// configured base currency via [`store_base_currency_with_executor`].
+pub(crate) async fn resolve_currency_with_executor<'e, E>(
+    supplied: Option<CurrencyCode>,
+    executor: E,
+) -> stateset_core::Result<CurrencyCode>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    match supplied {
+        Some(currency) => Ok(currency),
+        None => store_base_currency_with_executor(executor).await,
+    }
 }
 
 /// Helper function to convert sqlx errors to `CommerceError`

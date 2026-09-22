@@ -1,6 +1,6 @@
 //! PostgreSQL revenue recognition (ASC 606) repository implementation
 
-use super::map_db_error;
+use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -181,9 +181,8 @@ impl PgRevenueRecognitionRepository {
         let now = Utc::now();
         let contract_number =
             input.contract_number.clone().unwrap_or_else(generate_revenue_contract_number);
-        let currency = input.currency.unwrap_or_default();
-
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
         sqlx::query(
             "INSERT INTO revenue_contracts (id, contract_number, customer_id, order_id, invoice_id, transaction_price, currency, status, effective_date, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', $8, $9, $9)",

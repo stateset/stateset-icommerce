@@ -2,7 +2,9 @@
 
 use crate::KernelOutboxEvent;
 use crate::sqlite::kernel_outbox::append_kernel_event_tx;
-use crate::sqlite::{map_db_error, parse_uuid, with_immediate_transaction};
+use crate::sqlite::{
+    map_db_error, parse_uuid, resolve_currency_with_conn, with_immediate_transaction,
+};
 use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -598,6 +600,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 .pool
                 .get()
                 .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            let currency = resolve_currency_with_conn(input.currency, &conn)?;
             conn.execute(
                 "INSERT INTO gl_accounts (id, account_number, name, description, account_type,
                  account_sub_type, parent_account_id, is_header, is_posting, normal_balance,
@@ -614,7 +617,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     i32::from(input.is_header.unwrap_or(false)),
                     i32::from(input.is_posting.unwrap_or(true)),
                     normal_balance.to_string(),
-                    input.currency.unwrap_or_default(),
+                    currency,
                     AccountStatus::Active.to_string(),
                     "0",
                     now.to_rfc3339(),

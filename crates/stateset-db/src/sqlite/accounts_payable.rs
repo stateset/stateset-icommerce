@@ -3,7 +3,8 @@
 use crate::sqlite::{
     map_db_error, parse_datetime, parse_datetime_opt_row, parse_datetime_row,
     parse_decimal_opt_row, parse_decimal_row, parse_decimal_strict, parse_enum_row, parse_uuid,
-    parse_uuid_opt_row, parse_uuid_row, sum_decimal_query, with_immediate_transaction,
+    parse_uuid_opt_row, parse_uuid_row, resolve_currency_in_tx, sum_decimal_query,
+    with_immediate_transaction,
 };
 use chrono::{DateTime, NaiveTime, Utc};
 use r2d2::Pool;
@@ -458,6 +459,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         // (previously each item was added in its own transaction, so a 5-line
         // bill could persist with 3 lines and an understated total).
         with_immediate_transaction(&self.pool, |tx| {
+            let currency = resolve_currency_in_tx(currency, tx)?;
             tx.execute(
                 "INSERT INTO ap_bills (id, bill_number, supplier_id, purchase_order_id, status, bill_date, due_date,
                  payment_terms, currency, reference_number, memo, created_at, updated_at)
@@ -471,7 +473,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                     ap_date_rfc3339(bill_date.unwrap_or(now)),
                     ap_date_rfc3339(due_date),
                     payment_terms,
-                    currency.unwrap_or_default(),
+                    currency,
                     reference_number,
                     memo,
                     now.to_rfc3339(),
@@ -802,6 +804,8 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             let to_rusqlite =
                 |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
 
+            let currency = resolve_currency_in_tx(input.currency, tx)?;
+
             for (bill_id, allocated_amount) in &allocation_by_bill {
                 let (supplier_id, status, amount_due): (String, String, String) = tx.query_row(
                     "SELECT supplier_id, status, amount_due FROM ap_bills WHERE id = ?1",
@@ -850,7 +854,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                     ap_date_rfc3339(input.payment_date.unwrap_or(now)),
                     input.payment_method.to_string(),
                     input.amount.to_string(),
-                    input.currency.unwrap_or_default(),
+                    currency,
                     &input.reference_number,
                     &input.bank_account,
                     &input.check_number,

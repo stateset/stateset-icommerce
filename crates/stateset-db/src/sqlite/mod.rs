@@ -171,7 +171,7 @@ use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OpenFlags;
 use rust_decimal::Decimal;
-use stateset_core::CommerceError;
+use stateset_core::{CommerceError, CurrencyCode};
 use std::panic::{self, AssertUnwindSafe};
 use std::thread;
 use std::time::Duration;
@@ -1378,6 +1378,67 @@ where
     result
 }
 
+// ============================================================================
+// Store base currency
+// ============================================================================
+
+/// Read the store's configured base currency on the caller's connection.
+///
+/// The connection may equally be a [`rusqlite::Transaction`] (which derefs to
+/// `Connection`): the caller passes whatever handle it already holds so the
+/// read joins the in-flight transaction's snapshot instead of checking a second
+/// connection out of the pool mid-transaction.
+///
+/// Error semantics mirror `GeneralLedgerRepository::revalue`, the one code path
+/// that already honoured this setting:
+///
+/// * no settings row at all -> [`CurrencyCode::default`] (USD),
+/// * a row holding an unparseable code -> a `DatabaseError` naming the bad
+///   code. A corrupt setting is loud; it never silently denominates money in
+///   the default currency.
+pub(crate) fn store_base_currency_with_conn(
+    conn: &rusqlite::Connection,
+) -> stateset_core::Result<CurrencyCode> {
+    match conn.query_row("SELECT base_currency FROM store_currency_settings LIMIT 1", [], |row| {
+        row.get::<_, String>(0)
+    }) {
+        Ok(code) => code.parse::<CurrencyCode>().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid store base currency {code:?}: {e}"))
+        }),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(CurrencyCode::default()),
+        Err(e) => Err(map_db_error(e)),
+    }
+}
+
+/// Resolve the currency a new record is denominated in.
+///
+/// An explicit `supplied` currency from the caller always wins and costs no
+/// query; only when the caller omits one do we fall back to the store's
+/// configured base currency via [`store_base_currency_with_conn`].
+pub(crate) fn resolve_currency_with_conn(
+    supplied: Option<CurrencyCode>,
+    conn: &rusqlite::Connection,
+) -> stateset_core::Result<CurrencyCode> {
+    match supplied {
+        Some(currency) => Ok(currency),
+        None => store_base_currency_with_conn(conn),
+    }
+}
+
+/// [`resolve_currency_with_conn`] for use inside a transaction closure, which
+/// must yield `rusqlite::Error`.
+///
+/// The `CommerceError` is boxed into `ToSqlConversionFailure` exactly like the
+/// other in-transaction error escapes in this backend, so [`map_db_error`]
+/// unwraps it again on the way out.
+pub(crate) fn resolve_currency_in_tx(
+    supplied: Option<CurrencyCode>,
+    conn: &rusqlite::Connection,
+) -> std::result::Result<CurrencyCode, rusqlite::Error> {
+    resolve_currency_with_conn(supplied, conn)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+}
+
 // Transaction support implementation
 use crate::DatabaseExt;
 
@@ -1601,5 +1662,198 @@ mod tests {
             sequences.len(),
             sequences[0]
         );
+    }
+}
+
+#[cfg(test)]
+mod store_base_currency_tests {
+    use super::{SqliteDatabase, store_base_currency_with_conn};
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        AccountType, CommerceError, CreateGlAccount, CreatePayment, CreatePriceLevel, CurrencyCode,
+        GeneralLedgerRepository, PaymentMethodType, PaymentRepository, PriceAdjustmentType,
+        PriceLevelRepository,
+    };
+
+    /// Point the store at a non-default trading currency.
+    fn set_base_currency(db: &SqliteDatabase, code: &str) {
+        let conn = db.conn().expect("conn");
+        let updated = conn
+            .execute("UPDATE store_currency_settings SET base_currency = ?", [code])
+            .expect("update base currency");
+        assert_eq!(updated, 1, "migration 008 seeds exactly one settings row");
+    }
+
+    fn clear_settings(db: &SqliteDatabase) {
+        let conn = db.conn().expect("conn");
+        conn.execute("DELETE FROM store_currency_settings", []).expect("clear settings");
+    }
+
+    // ------------------------------------------------------------------
+    // The helper itself
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn seeded_store_reports_usd() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let conn = db.conn().expect("conn");
+        assert_eq!(store_base_currency_with_conn(&conn).expect("base"), CurrencyCode::USD);
+    }
+
+    #[test]
+    fn missing_settings_row_falls_back_to_default() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        clear_settings(&db);
+        let conn = db.conn().expect("conn");
+        assert_eq!(store_base_currency_with_conn(&conn).expect("base"), CurrencyCode::default());
+    }
+
+    #[test]
+    fn unparseable_setting_is_loud() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        set_base_currency(&db, "not-a-currency");
+        let conn = db.conn().expect("conn");
+        let err = store_base_currency_with_conn(&conn).expect_err("corrupt code must not default");
+        match err {
+            CommerceError::DatabaseError(msg) => {
+                assert!(msg.contains("not-a-currency"), "error must name the bad code: {msg}");
+            }
+            other => panic!("expected DatabaseError, got {other:?}"),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // A payment path
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn payment_without_currency_uses_store_base_currency() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        set_base_currency(&db, "EUR");
+
+        let payment = db
+            .payments()
+            .create(CreatePayment {
+                payment_method: PaymentMethodType::CreditCard,
+                amount: dec!(42.00),
+                currency: None,
+                ..Default::default()
+            })
+            .expect("create payment");
+
+        assert_eq!(payment.currency, CurrencyCode::EUR);
+        // ...and it is what actually landed in the row, not just the return value.
+        let stored = db.payments().get(payment.id).expect("get").expect("found");
+        assert_eq!(stored.currency, CurrencyCode::EUR);
+    }
+
+    #[test]
+    fn payment_currency_from_the_caller_still_wins() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        set_base_currency(&db, "EUR");
+
+        let payment = db
+            .payments()
+            .create(CreatePayment {
+                payment_method: PaymentMethodType::CreditCard,
+                amount: dec!(42.00),
+                currency: Some(CurrencyCode::JPY),
+                ..Default::default()
+            })
+            .expect("create payment");
+
+        assert_eq!(payment.currency, CurrencyCode::JPY);
+    }
+
+    #[test]
+    fn payment_without_settings_row_still_defaults_to_usd() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        clear_settings(&db);
+
+        let payment = db
+            .payments()
+            .create(CreatePayment {
+                payment_method: PaymentMethodType::CreditCard,
+                amount: dec!(42.00),
+                currency: None,
+                ..Default::default()
+            })
+            .expect("create payment");
+
+        assert_eq!(payment.currency, CurrencyCode::USD);
+    }
+
+    // ------------------------------------------------------------------
+    // A general-ledger path
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn gl_account_without_currency_uses_store_base_currency() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        set_base_currency(&db, "EUR");
+
+        let account = db
+            .general_ledger()
+            .create_account(CreateGlAccount {
+                account_number: "1000".into(),
+                name: "Cash".into(),
+                description: None,
+                account_type: AccountType::Asset,
+                account_sub_type: None,
+                parent_account_id: None,
+                is_header: Some(false),
+                is_posting: Some(true),
+                currency: None,
+            })
+            .expect("create account");
+
+        assert_eq!(account.currency, CurrencyCode::EUR);
+    }
+
+    #[test]
+    fn gl_account_without_settings_row_still_defaults_to_usd() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        clear_settings(&db);
+
+        let account = db
+            .general_ledger()
+            .create_account(CreateGlAccount {
+                account_number: "1000".into(),
+                name: "Cash".into(),
+                description: None,
+                account_type: AccountType::Asset,
+                account_sub_type: None,
+                parent_account_id: None,
+                is_header: Some(false),
+                is_posting: Some(true),
+                currency: None,
+            })
+            .expect("create account");
+
+        assert_eq!(account.currency, CurrencyCode::USD);
+    }
+
+    // ------------------------------------------------------------------
+    // A pricing path (the `with_immediate_transaction` shape)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn price_level_without_currency_uses_store_base_currency() {
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        set_base_currency(&db, "EUR");
+
+        let level = db
+            .price_levels()
+            .create(CreatePriceLevel {
+                name: "Wholesale".into(),
+                code: "WHOLESALE".into(),
+                description: None,
+                adjustment_type: PriceAdjustmentType::PercentageDiscount,
+                adjustment_value: dec!(10),
+                currency: None,
+            })
+            .expect("create price level");
+
+        assert_eq!(level.currency, CurrencyCode::EUR);
     }
 }

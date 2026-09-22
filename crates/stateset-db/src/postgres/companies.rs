@@ -1,6 +1,6 @@
 //! PostgreSQL company (B2B account) repository implementation
 
-use super::map_db_error;
+use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -202,7 +202,7 @@ impl PgCompanyRepository {
     pub async fn create_async(&self, input: CreateCompany) -> Result<Company> {
         let id = CompanyId::new();
         let now = Utc::now();
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
+        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
         let tags = serde_json::to_value(&input.tags)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 

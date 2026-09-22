@@ -1,6 +1,6 @@
 //! PostgreSQL price schedule repository implementation
 
-use super::map_db_error;
+use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -91,7 +91,7 @@ impl PgPriceScheduleRepository {
     pub async fn create_async(&self, input: CreatePriceSchedule) -> Result<PriceSchedule> {
         let id = PriceScheduleId::new();
         let now = Utc::now();
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
+        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
 
         sqlx::query(
             "INSERT INTO price_schedules (id, name, code, currency, starts_at, ends_at, is_active, priority, created_at, updated_at)

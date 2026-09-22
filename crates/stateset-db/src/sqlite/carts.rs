@@ -4,8 +4,8 @@ use super::parse_helpers::{parse_decimal as parse_decimal_err, parse_uuid};
 use super::{
     SqliteOrderRepository, SqlitePromotionRepository, build_in_clause, map_db_error, params_refs,
     parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
-    parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
-    with_immediate_transaction,
+    parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row,
+    resolve_currency_with_conn, uuid_params, with_immediate_transaction,
 };
 use chrono::{Duration, Utc};
 use r2d2::Pool;
@@ -486,7 +486,7 @@ impl CartRepository for SqliteCartRepository {
         let id = CartId::new();
         let cart_number = Self::generate_cart_number();
         let now = Utc::now();
-        let currency = input.currency.unwrap_or_default();
+        let currency = resolve_currency_with_conn(input.currency, &tx)?;
 
         let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 
@@ -1609,7 +1609,7 @@ impl CartRepository for SqliteCartRepository {
             let id = CartId::new();
             let cart_number = Self::generate_cart_number();
             let now = Utc::now();
-            let currency = input.currency.unwrap_or_default();
+            let currency = resolve_currency_with_conn(input.currency, &tx)?;
 
             let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 
