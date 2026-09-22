@@ -1162,8 +1162,11 @@ class StockLevel:
     sku: str
     name: str
     total_on_hand: float
+    total_on_hand_exact: str
     total_allocated: float
+    total_allocated_exact: str
     total_available: float
+    total_available_exact: str
 
 class Reservation:
     """Inventory reservation."""
@@ -2060,6 +2063,7 @@ class PurchaseOrder:
     supplier_id: str
     status: str
     total_amount: float
+    total_amount_exact: str
     currency: str
     created_at: str
     updated_at: str
@@ -2110,6 +2114,14 @@ class Invoice:
     invoice_number: str
     status: str
     total_amount: float
+    subtotal: float
+    subtotal_exact: str
+    tax_amount: float
+    tax_amount_exact: str
+    total: float
+    total_exact: str
+    amount_paid: float
+    amount_paid_exact: str
     balance_due: float
     currency: str
     created_at: str
@@ -2296,6 +2308,7 @@ class ShippingRate:
     service: str
     description: Optional[str]
     price: float
+    price_exact: str
     currency: str
     estimated_days: Optional[int]
 
@@ -2406,14 +2419,17 @@ class Carts:
 
 class SalesSummary:
     total_revenue: float
+    total_revenue_exact: str
     order_count: int
     average_order_value: float
+    average_order_value_exact: str
     items_sold: int
     unique_customers: int
 
 class RevenueByPeriod:
     period: str
     revenue: float
+    revenue_exact: str
     order_count: int
     period_start: str
 
@@ -2423,6 +2439,7 @@ class TopProduct:
     name: str
     units_sold: int
     revenue: float
+    revenue_exact: str
     order_count: int
 
 class ProductPerformance:
@@ -2431,16 +2448,21 @@ class ProductPerformance:
     name: str
     units_sold: int
     revenue: float
+    revenue_exact: str
     previous_units_sold: int
     previous_revenue: float
+    previous_revenue_exact: str
     units_growth_percent: float
+    units_growth_percent_exact: str
     revenue_growth_percent: float
+    revenue_growth_percent_exact: str
 
 class CustomerMetrics:
     total_customers: int
     new_customers: int
     returning_customers: int
     average_lifetime_value: float
+    average_lifetime_value_exact: str
     average_orders_per_customer: float
 
 class TopCustomer:
@@ -2449,7 +2471,9 @@ class TopCustomer:
     email: str
     order_count: int
     total_spent: float
+    total_spent_exact: str
     average_order_value: float
+    average_order_value_exact: str
 
 class InventoryHealth:
     total_skus: int
@@ -2457,6 +2481,7 @@ class InventoryHealth:
     low_stock_skus: int
     out_of_stock_skus: int
     total_value: float
+    total_value_exact: str
 
 class LowStockItem:
     sku: str
@@ -2490,14 +2515,18 @@ class FulfillmentMetrics:
     avg_time_to_ship_hours: Optional[float]
     avg_time_to_deliver_hours: Optional[float]
     on_time_shipping_percent: Optional[float]
+    on_time_shipping_percent_exact: Optional[str]
     on_time_delivery_percent: Optional[float]
+    on_time_delivery_percent_exact: Optional[str]
     shipped_today: int
     awaiting_shipment: int
 
 class ReturnMetrics:
     total_returns: int
     return_rate_percent: float
+    return_rate_percent_exact: str
     total_refunded: float
+    total_refunded_exact: str
 
 class DemandForecast:
     sku: str
@@ -2513,6 +2542,7 @@ class DemandForecast:
 class RevenueForecast:
     period: str
     forecasted_revenue: float
+    forecasted_revenue_exact: str
     lower_bound: float
     upper_bound: float
     confidence_level: float
@@ -2556,6 +2586,7 @@ class ExchangeRate:
     base_currency: str
     quote_currency: str
     rate: float
+    rate_exact: str
     source: str
     rate_at: str
     created_at: str
@@ -2563,11 +2594,15 @@ class ExchangeRate:
 
 class ConversionResult:
     original_amount: float
+    original_amount_exact: str
     original_currency: str
     converted_amount: float
+    converted_amount_exact: str
     target_currency: str
     rate: float
+    rate_exact: str
     inverse_rate: float
+    inverse_rate_exact: str
     rate_at: str
 
 class StoreCurrencySettings:
@@ -2676,8 +2711,11 @@ class Bill:
     bill_number: str
     supplier_id: str
     total_amount: float
+    total_amount_exact: str
     amount_paid: float
+    amount_paid_exact: str
     amount_due: float
+    amount_due_exact: str
     status: str
     due_date: str
 
@@ -2688,6 +2726,7 @@ class ApAgingSummary:
     days_61_90: float
     days_over_90: float
     total: float
+    total_exact: str
 
 class ThreeWayMatchLine:
     """One line of a three-way match. Quantities/costs are decimal strings."""
@@ -2750,6 +2789,7 @@ class GlAccount:
     name: str
     account_type: str
     current_balance: float
+    current_balance_exact: str
     status: str
 
 class JournalEntry:
@@ -2761,7 +2801,9 @@ class JournalEntry:
 
 class TrialBalance:
     total_debits: float
+    total_debits_exact: str
     total_credits: float
+    total_credits_exact: str
     is_balanced: bool
 
 class GlPeriod:

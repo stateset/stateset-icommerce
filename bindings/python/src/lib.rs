@@ -2116,9 +2116,15 @@ pub struct StockLevel {
     #[pyo3(get)]
     total_on_hand: f64,
     #[pyo3(get)]
+    total_on_hand_exact: String,
+    #[pyo3(get)]
     total_allocated: f64,
     #[pyo3(get)]
+    total_allocated_exact: String,
+    #[pyo3(get)]
     total_available: f64,
+    #[pyo3(get)]
+    total_available_exact: String,
 }
 
 #[pymethods]
@@ -2132,12 +2138,18 @@ impl TryFrom<stateset_core::StockLevel> for StockLevel {
     type Error = PyErr;
 
     fn try_from(s: stateset_core::StockLevel) -> PyResult<Self> {
+        let total_on_hand_exact = s.total_on_hand.to_string();
+        let total_allocated_exact = s.total_allocated.to_string();
+        let total_available_exact = s.total_available.to_string();
         Ok(Self {
             sku: s.sku,
             name: s.name,
             total_on_hand: to_f64_result(s.total_on_hand, "stock level total on hand")?,
+            total_on_hand_exact,
             total_allocated: to_f64_result(s.total_allocated, "stock level total allocated")?,
+            total_allocated_exact,
             total_available: to_f64_result(s.total_available, "stock level total available")?,
+            total_available_exact,
         })
     }
 }
@@ -3618,6 +3630,8 @@ pub struct PurchaseOrder {
     #[pyo3(get)]
     total_amount: f64,
     #[pyo3(get)]
+    total_amount_exact: String,
+    #[pyo3(get)]
     created_at: String,
     #[pyo3(get)]
     updated_at: String,
@@ -3637,12 +3651,14 @@ impl TryFrom<stateset_core::PurchaseOrder> for PurchaseOrder {
     type Error = PyErr;
 
     fn try_from(po: stateset_core::PurchaseOrder) -> PyResult<Self> {
+        let total_amount_exact = po.total.to_string();
         Ok(Self {
             id: po.id.to_string(),
             po_number: po.po_number,
             supplier_id: po.supplier_id.to_string(),
             status: format!("{}", po.status),
             total_amount: to_f64_result(po.total, "purchase order total")?,
+            total_amount_exact,
             created_at: po.created_at.to_rfc3339(),
             updated_at: po.updated_at.to_rfc3339(),
         })
@@ -3918,11 +3934,19 @@ pub struct Invoice {
     #[pyo3(get)]
     subtotal: f64,
     #[pyo3(get)]
+    subtotal_exact: String,
+    #[pyo3(get)]
     tax_amount: f64,
+    #[pyo3(get)]
+    tax_amount_exact: String,
     #[pyo3(get)]
     total: f64,
     #[pyo3(get)]
+    total_exact: String,
+    #[pyo3(get)]
     amount_paid: f64,
+    #[pyo3(get)]
+    amount_paid_exact: String,
     #[pyo3(get)]
     due_date: String,
     #[pyo3(get)]
@@ -3948,6 +3972,10 @@ impl TryFrom<stateset_core::Invoice> for Invoice {
     type Error = PyErr;
 
     fn try_from(inv: stateset_core::Invoice) -> PyResult<Self> {
+        let subtotal_exact = inv.subtotal.to_string();
+        let tax_amount_exact = inv.tax_amount.to_string();
+        let total_exact = inv.total.to_string();
+        let amount_paid_exact = inv.amount_paid.to_string();
         Ok(Self {
             id: inv.id.to_string(),
             invoice_number: inv.invoice_number,
@@ -3955,9 +3983,13 @@ impl TryFrom<stateset_core::Invoice> for Invoice {
             order_id: inv.order_id.map(|id| id.to_string()),
             status: format!("{}", inv.status),
             subtotal: to_f64_result(inv.subtotal, "invoice subtotal")?,
+            subtotal_exact,
             tax_amount: to_f64_result(inv.tax_amount, "invoice tax amount")?,
+            tax_amount_exact,
             total: to_f64_result(inv.total, "invoice total")?,
+            total_exact,
             amount_paid: to_f64_result(inv.amount_paid, "invoice amount paid")?,
+            amount_paid_exact,
             due_date: inv.due_date.to_rfc3339(),
             created_at: inv.created_at.to_rfc3339(),
         })
@@ -4873,6 +4905,8 @@ pub struct ShippingRate {
     #[pyo3(get)]
     price: f64,
     #[pyo3(get)]
+    price_exact: String,
+    #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
     estimated_days: Option<i32>,
@@ -4894,12 +4928,14 @@ impl TryFrom<stateset_core::ShippingRate> for ShippingRate {
     type Error = PyErr;
 
     fn try_from(r: stateset_core::ShippingRate) -> PyResult<Self> {
+        let price_exact = r.price.to_string();
         Ok(Self {
             id: r.id,
             carrier: r.carrier,
             service: r.service,
             description: r.description,
             price: to_f64_result(r.price, "shipping rate price")?,
+            price_exact,
             currency: r.currency.to_string(),
             estimated_days: r.estimated_days,
             estimated_delivery: r.estimated_delivery.map(|d| d.to_rfc3339()),
@@ -6132,9 +6168,13 @@ pub struct SalesSummary {
     #[pyo3(get)]
     total_revenue: f64,
     #[pyo3(get)]
+    total_revenue_exact: String,
+    #[pyo3(get)]
     order_count: u32,
     #[pyo3(get)]
     average_order_value: f64,
+    #[pyo3(get)]
+    average_order_value_exact: String,
     #[pyo3(get)]
     items_sold: u32,
     #[pyo3(get)]
@@ -6143,10 +6183,14 @@ pub struct SalesSummary {
 
 impl From<stateset_core::SalesSummary> for SalesSummary {
     fn from(s: stateset_core::SalesSummary) -> Self {
+        let total_revenue_exact = s.total_revenue.to_string();
+        let average_order_value_exact = s.average_order_value.to_string();
         Self {
             total_revenue: dec_to_f64(&s.total_revenue),
+            total_revenue_exact,
             order_count: s.order_count as u32,
             average_order_value: dec_to_f64(&s.average_order_value),
+            average_order_value_exact,
             items_sold: s.items_sold as u32,
             unique_customers: s.unique_customers as u32,
         }
@@ -6162,6 +6206,8 @@ pub struct RevenueByPeriod {
     #[pyo3(get)]
     revenue: f64,
     #[pyo3(get)]
+    revenue_exact: String,
+    #[pyo3(get)]
     order_count: u32,
     #[pyo3(get)]
     period_start: String,
@@ -6169,9 +6215,11 @@ pub struct RevenueByPeriod {
 
 impl From<stateset_core::RevenueByPeriod> for RevenueByPeriod {
     fn from(r: stateset_core::RevenueByPeriod) -> Self {
+        let revenue_exact = r.revenue.to_string();
         Self {
             period: r.period,
             revenue: dec_to_f64(&r.revenue),
+            revenue_exact,
             order_count: r.order_count as u32,
             period_start: r.period_start.to_rfc3339(),
         }
@@ -6193,17 +6241,21 @@ pub struct TopProduct {
     #[pyo3(get)]
     revenue: f64,
     #[pyo3(get)]
+    revenue_exact: String,
+    #[pyo3(get)]
     order_count: u32,
 }
 
 impl From<stateset_core::TopProduct> for TopProduct {
     fn from(p: stateset_core::TopProduct) -> Self {
+        let revenue_exact = p.revenue.to_string();
         Self {
             product_id: p.product_id.map(|id| id.to_string()),
             sku: p.sku,
             name: p.name,
             units_sold: p.units_sold as u32,
             revenue: dec_to_f64(&p.revenue),
+            revenue_exact,
             order_count: p.order_count as u32,
         }
     }
@@ -6224,27 +6276,43 @@ pub struct ProductPerformance {
     #[pyo3(get)]
     revenue: f64,
     #[pyo3(get)]
+    revenue_exact: String,
+    #[pyo3(get)]
     previous_units_sold: u32,
     #[pyo3(get)]
     previous_revenue: f64,
     #[pyo3(get)]
+    previous_revenue_exact: String,
+    #[pyo3(get)]
     units_growth_percent: f64,
     #[pyo3(get)]
+    units_growth_percent_exact: String,
+    #[pyo3(get)]
     revenue_growth_percent: f64,
+    #[pyo3(get)]
+    revenue_growth_percent_exact: String,
 }
 
 impl From<stateset_core::ProductPerformance> for ProductPerformance {
     fn from(p: stateset_core::ProductPerformance) -> Self {
+        let revenue_exact = p.revenue.to_string();
+        let previous_revenue_exact = p.previous_revenue.to_string();
+        let units_growth_percent_exact = p.units_growth_percent.to_string();
+        let revenue_growth_percent_exact = p.revenue_growth_percent.to_string();
         Self {
             product_id: p.product_id.to_string(),
             sku: p.sku,
             name: p.name,
             units_sold: p.units_sold as u32,
             revenue: dec_to_f64(&p.revenue),
+            revenue_exact,
             previous_units_sold: p.previous_units_sold as u32,
             previous_revenue: dec_to_f64(&p.previous_revenue),
+            previous_revenue_exact,
             units_growth_percent: dec_to_f64(&p.units_growth_percent),
+            units_growth_percent_exact,
             revenue_growth_percent: dec_to_f64(&p.revenue_growth_percent),
+            revenue_growth_percent_exact,
         }
     }
 }
@@ -6262,16 +6330,20 @@ pub struct CustomerMetrics {
     #[pyo3(get)]
     average_lifetime_value: f64,
     #[pyo3(get)]
+    average_lifetime_value_exact: String,
+    #[pyo3(get)]
     average_orders_per_customer: f64,
 }
 
 impl From<stateset_core::CustomerMetrics> for CustomerMetrics {
     fn from(m: stateset_core::CustomerMetrics) -> Self {
+        let average_lifetime_value_exact = m.average_lifetime_value.to_string();
         Self {
             total_customers: m.total_customers as u32,
             new_customers: m.new_customers as u32,
             returning_customers: m.returning_customers as u32,
             average_lifetime_value: dec_to_f64(&m.average_lifetime_value),
+            average_lifetime_value_exact,
             average_orders_per_customer: dec_to_f64(&m.average_orders_per_customer),
         }
     }
@@ -6292,18 +6364,26 @@ pub struct TopCustomer {
     #[pyo3(get)]
     total_spent: f64,
     #[pyo3(get)]
+    total_spent_exact: String,
+    #[pyo3(get)]
     average_order_value: f64,
+    #[pyo3(get)]
+    average_order_value_exact: String,
 }
 
 impl From<stateset_core::TopCustomer> for TopCustomer {
     fn from(c: stateset_core::TopCustomer) -> Self {
+        let total_spent_exact = c.total_spent.to_string();
+        let average_order_value_exact = c.average_order_value.to_string();
         Self {
             customer_id: c.customer_id.to_string(),
             name: c.name,
             email: c.email,
             order_count: c.order_count as u32,
             total_spent: dec_to_f64(&c.total_spent),
+            total_spent_exact,
             average_order_value: dec_to_f64(&c.average_order_value),
+            average_order_value_exact,
         }
     }
 }
@@ -6322,16 +6402,20 @@ pub struct InventoryHealth {
     out_of_stock_skus: u32,
     #[pyo3(get)]
     total_value: f64,
+    #[pyo3(get)]
+    total_value_exact: String,
 }
 
 impl From<stateset_core::InventoryHealth> for InventoryHealth {
     fn from(h: stateset_core::InventoryHealth) -> Self {
+        let total_value_exact = h.total_value.to_string();
         Self {
             total_skus: h.total_skus as u32,
             in_stock_skus: h.in_stock_skus as u32,
             low_stock_skus: h.low_stock_skus as u32,
             out_of_stock_skus: h.out_of_stock_skus as u32,
             total_value: dec_to_f64(&h.total_value),
+            total_value_exact,
         }
     }
 }
@@ -6452,7 +6536,11 @@ pub struct FulfillmentMetrics {
     #[pyo3(get)]
     on_time_shipping_percent: Option<f64>,
     #[pyo3(get)]
+    on_time_shipping_percent_exact: Option<String>,
+    #[pyo3(get)]
     on_time_delivery_percent: Option<f64>,
+    #[pyo3(get)]
+    on_time_delivery_percent_exact: Option<String>,
     #[pyo3(get)]
     shipped_today: u32,
     #[pyo3(get)]
@@ -6461,11 +6549,17 @@ pub struct FulfillmentMetrics {
 
 impl From<stateset_core::FulfillmentMetrics> for FulfillmentMetrics {
     fn from(m: stateset_core::FulfillmentMetrics) -> Self {
+        let on_time_shipping_percent_exact =
+            m.on_time_shipping_percent.map(|value| value.to_string());
+        let on_time_delivery_percent_exact =
+            m.on_time_delivery_percent.map(|value| value.to_string());
         Self {
             avg_time_to_ship_hours: m.avg_time_to_ship_hours.as_ref().map(dec_to_f64),
             avg_time_to_deliver_hours: m.avg_time_to_deliver_hours.as_ref().map(dec_to_f64),
             on_time_shipping_percent: m.on_time_shipping_percent.as_ref().map(dec_to_f64),
+            on_time_shipping_percent_exact,
             on_time_delivery_percent: m.on_time_delivery_percent.as_ref().map(dec_to_f64),
+            on_time_delivery_percent_exact,
             shipped_today: m.shipped_today as u32,
             awaiting_shipment: m.awaiting_shipment as u32,
         }
@@ -6481,15 +6575,23 @@ pub struct ReturnMetrics {
     #[pyo3(get)]
     return_rate_percent: f64,
     #[pyo3(get)]
+    return_rate_percent_exact: String,
+    #[pyo3(get)]
     total_refunded: f64,
+    #[pyo3(get)]
+    total_refunded_exact: String,
 }
 
 impl From<stateset_core::ReturnMetrics> for ReturnMetrics {
     fn from(m: stateset_core::ReturnMetrics) -> Self {
+        let return_rate_percent_exact = m.return_rate_percent.to_string();
+        let total_refunded_exact = m.total_refunded.to_string();
         Self {
             total_returns: m.total_returns as u32,
             return_rate_percent: dec_to_f64(&m.return_rate_percent),
+            return_rate_percent_exact,
             total_refunded: dec_to_f64(&m.total_refunded),
+            total_refunded_exact,
         }
     }
 }
@@ -6552,6 +6654,8 @@ pub struct RevenueForecast {
     #[pyo3(get)]
     forecasted_revenue: f64,
     #[pyo3(get)]
+    forecasted_revenue_exact: String,
+    #[pyo3(get)]
     lower_bound: f64,
     #[pyo3(get)]
     upper_bound: f64,
@@ -6563,9 +6667,11 @@ pub struct RevenueForecast {
 
 impl From<stateset_core::RevenueForecast> for RevenueForecast {
     fn from(f: stateset_core::RevenueForecast) -> Self {
+        let forecasted_revenue_exact = f.forecasted_revenue.to_string();
         Self {
             period: f.period,
             forecasted_revenue: dec_to_f64(&f.forecasted_revenue),
+            forecasted_revenue_exact,
             lower_bound: dec_to_f64(&f.lower_bound),
             upper_bound: dec_to_f64(&f.upper_bound),
             confidence_level: dec_to_f64(&f.confidence_level),
@@ -6899,6 +7005,8 @@ pub struct ExchangeRate {
     #[pyo3(get)]
     rate: f64,
     #[pyo3(get)]
+    rate_exact: String,
+    #[pyo3(get)]
     source: String,
     #[pyo3(get)]
     rate_at: String,
@@ -6910,11 +7018,13 @@ pub struct ExchangeRate {
 
 impl From<stateset_core::ExchangeRate> for ExchangeRate {
     fn from(r: stateset_core::ExchangeRate) -> Self {
+        let rate_exact = r.rate.to_string();
         Self {
             id: r.id.to_string(),
             base_currency: r.base_currency.code().to_string(),
             quote_currency: r.quote_currency.code().to_string(),
             rate: dec_to_f64(&r.rate),
+            rate_exact,
             source: r.source,
             rate_at: r.rate_at.to_rfc3339(),
             created_at: r.created_at.to_rfc3339(),
@@ -6930,28 +7040,44 @@ pub struct ConversionResult {
     #[pyo3(get)]
     original_amount: f64,
     #[pyo3(get)]
+    original_amount_exact: String,
+    #[pyo3(get)]
     original_currency: String,
     #[pyo3(get)]
     converted_amount: f64,
+    #[pyo3(get)]
+    converted_amount_exact: String,
     #[pyo3(get)]
     target_currency: String,
     #[pyo3(get)]
     rate: f64,
     #[pyo3(get)]
+    rate_exact: String,
+    #[pyo3(get)]
     inverse_rate: f64,
+    #[pyo3(get)]
+    inverse_rate_exact: String,
     #[pyo3(get)]
     rate_at: String,
 }
 
 impl From<stateset_core::ConversionResult> for ConversionResult {
     fn from(r: stateset_core::ConversionResult) -> Self {
+        let original_amount_exact = r.original_amount.to_string();
+        let converted_amount_exact = r.converted_amount.to_string();
+        let rate_exact = r.rate.to_string();
+        let inverse_rate_exact = r.inverse_rate.to_string();
         Self {
             original_amount: dec_to_f64(&r.original_amount),
+            original_amount_exact,
             original_currency: r.original_currency.code().to_string(),
             converted_amount: dec_to_f64(&r.converted_amount),
+            converted_amount_exact,
             target_currency: r.target_currency.code().to_string(),
             rate: dec_to_f64(&r.rate),
+            rate_exact,
             inverse_rate: dec_to_f64(&r.inverse_rate),
+            inverse_rate_exact,
             rate_at: r.rate_at.to_rfc3339(),
         }
     }
@@ -7352,9 +7478,13 @@ pub struct SubscriptionPlan {
     #[pyo3(get)]
     price: f64,
     #[pyo3(get)]
+    price_exact: String,
+    #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
     setup_fee: f64,
+    #[pyo3(get)]
+    setup_fee_exact: String,
     #[pyo3(get)]
     trial_days: i32,
     #[pyo3(get)]
@@ -7369,6 +7499,8 @@ impl TryFrom<stateset_core::SubscriptionPlan> for SubscriptionPlan {
     type Error = PyErr;
 
     fn try_from(p: stateset_core::SubscriptionPlan) -> PyResult<Self> {
+        let price_exact = p.price.to_string();
+        let setup_fee_exact = p.setup_fee.unwrap_or_default().to_string();
         Ok(Self {
             id: p.id.to_string(),
             code: p.code,
@@ -7377,9 +7509,11 @@ impl TryFrom<stateset_core::SubscriptionPlan> for SubscriptionPlan {
             billing_interval: format!("{:?}", p.billing_interval).to_lowercase(),
             billing_interval_count: 1, // Default to 1 since core doesn't have this field
             price: to_f64_result(p.price, "subscription plan price")?,
+            price_exact,
             currency: p.currency.to_string(),
             setup_fee: optional_to_f64_result(p.setup_fee, "subscription plan setup fee")?
                 .unwrap_or(0.0),
+            setup_fee_exact,
             trial_days: p.trial_days,
             status: format!("{:?}", p.status).to_lowercase(),
             created_at: p.created_at.to_rfc3339(),
@@ -7415,6 +7549,8 @@ pub struct Subscription {
     #[pyo3(get)]
     price: f64,
     #[pyo3(get)]
+    price_exact: String,
+    #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
     created_at: String,
@@ -7426,6 +7562,7 @@ impl TryFrom<stateset_core::Subscription> for Subscription {
     type Error = PyErr;
 
     fn try_from(s: stateset_core::Subscription) -> PyResult<Self> {
+        let price_exact = s.price.to_string();
         Ok(Self {
             id: s.id.to_string(),
             subscription_number: s.subscription_number,
@@ -7438,6 +7575,7 @@ impl TryFrom<stateset_core::Subscription> for Subscription {
             cancelled_at: s.cancelled_at.map(|d| d.to_rfc3339()),
             ends_at: s.ends_at.map(|d| d.to_rfc3339()),
             price: to_f64_result(s.price, "subscription price")?,
+            price_exact,
             currency: s.currency.to_string(),
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
@@ -7464,6 +7602,8 @@ pub struct BillingCycle {
     #[pyo3(get)]
     total: f64,
     #[pyo3(get)]
+    total_exact: String,
+    #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
     payment_id: Option<String>,
@@ -7479,6 +7619,7 @@ impl TryFrom<stateset_core::BillingCycle> for BillingCycle {
     type Error = PyErr;
 
     fn try_from(c: stateset_core::BillingCycle) -> PyResult<Self> {
+        let total_exact = c.total.to_string();
         Ok(Self {
             id: c.id.to_string(),
             cycle_number: c.cycle_number,
@@ -7487,6 +7628,7 @@ impl TryFrom<stateset_core::BillingCycle> for BillingCycle {
             period_start: c.period_start.to_rfc3339(),
             period_end: c.period_end.to_rfc3339(),
             total: to_f64_result(c.total, "billing cycle total")?,
+            total_exact,
             currency: c.currency.to_string(),
             payment_id: c.payment_id,
             invoice_id: c.invoice_id.map(|id| id.to_string()),
@@ -8049,9 +8191,15 @@ pub struct Promotion {
     #[pyo3(get)]
     percentage_off: Option<f64>,
     #[pyo3(get)]
+    percentage_off_exact: Option<String>,
+    #[pyo3(get)]
     fixed_amount_off: Option<f64>,
     #[pyo3(get)]
+    fixed_amount_off_exact: Option<String>,
+    #[pyo3(get)]
     max_discount_amount: Option<f64>,
+    #[pyo3(get)]
+    max_discount_amount_exact: Option<String>,
     #[pyo3(get)]
     buy_quantity: Option<i32>,
     #[pyo3(get)]
@@ -8080,6 +8228,9 @@ impl TryFrom<stateset_core::Promotion> for Promotion {
     type Error = PyErr;
 
     fn try_from(p: stateset_core::Promotion) -> PyResult<Self> {
+        let percentage_off_exact = p.percentage_off.map(|value| value.to_string());
+        let fixed_amount_off_exact = p.fixed_amount_off.map(|value| value.to_string());
+        let max_discount_amount_exact = p.max_discount_amount.map(|value| value.to_string());
         Ok(Self {
             id: p.id.to_string(),
             code: p.code,
@@ -8091,14 +8242,17 @@ impl TryFrom<stateset_core::Promotion> for Promotion {
             stacking: format!("{:?}", p.stacking).to_lowercase(),
             status: format!("{:?}", p.status).to_lowercase(),
             percentage_off: optional_to_f64_result(p.percentage_off, "promotion percentage off")?,
+            percentage_off_exact,
             fixed_amount_off: optional_to_f64_result(
                 p.fixed_amount_off,
                 "promotion fixed amount off",
             )?,
+            fixed_amount_off_exact,
             max_discount_amount: optional_to_f64_result(
                 p.max_discount_amount,
                 "promotion max discount amount",
             )?,
+            max_discount_amount_exact,
             buy_quantity: p.buy_quantity,
             get_quantity: p.get_quantity,
             starts_at: p.starts_at.to_rfc3339(),
@@ -8167,17 +8321,27 @@ pub struct ApplyPromotionsResult {
     #[pyo3(get)]
     original_subtotal: f64,
     #[pyo3(get)]
+    original_subtotal_exact: String,
+    #[pyo3(get)]
     total_discount: f64,
     #[pyo3(get)]
+    total_discount_exact: String,
+    #[pyo3(get)]
     discounted_subtotal: f64,
+    #[pyo3(get)]
+    discounted_subtotal_exact: String,
     #[pyo3(get)]
     original_shipping: f64,
     #[pyo3(get)]
     shipping_discount: f64,
     #[pyo3(get)]
+    shipping_discount_exact: String,
+    #[pyo3(get)]
     final_shipping: f64,
     #[pyo3(get)]
     grand_total: f64,
+    #[pyo3(get)]
+    grand_total_exact: String,
     #[pyo3(get)]
     applied_promotions: Vec<AppliedPromotion>,
 }
@@ -8186,17 +8350,27 @@ impl TryFrom<stateset_core::ApplyPromotionsResult> for ApplyPromotionsResult {
     type Error = PyErr;
 
     fn try_from(r: stateset_core::ApplyPromotionsResult) -> PyResult<Self> {
+        let original_subtotal_exact = r.original_subtotal.to_string();
+        let total_discount_exact = r.total_discount.to_string();
+        let discounted_subtotal_exact = r.discounted_subtotal.to_string();
+        let shipping_discount_exact = r.shipping_discount.to_string();
+        let grand_total_exact = r.grand_total.to_string();
         Ok(Self {
             original_subtotal: to_f64_result(r.original_subtotal, "promotion original subtotal")?,
+            original_subtotal_exact,
             total_discount: to_f64_result(r.total_discount, "promotion total discount")?,
+            total_discount_exact,
             discounted_subtotal: to_f64_result(
                 r.discounted_subtotal,
                 "promotion discounted subtotal",
             )?,
+            discounted_subtotal_exact,
             original_shipping: to_f64_result(r.original_shipping, "promotion original shipping")?,
             shipping_discount: to_f64_result(r.shipping_discount, "promotion shipping discount")?,
+            shipping_discount_exact,
             final_shipping: to_f64_result(r.final_shipping, "promotion final shipping")?,
             grand_total: to_f64_result(r.grand_total, "promotion grand total")?,
+            grand_total_exact,
             applied_promotions: convert_outputs(r.applied_promotions)?,
         })
     }
@@ -8215,6 +8389,8 @@ pub struct AppliedPromotion {
     #[pyo3(get)]
     discount_amount: f64,
     #[pyo3(get)]
+    discount_amount_exact: String,
+    #[pyo3(get)]
     discount_type: String,
 }
 
@@ -8222,11 +8398,13 @@ impl TryFrom<stateset_core::AppliedPromotion> for AppliedPromotion {
     type Error = PyErr;
 
     fn try_from(a: stateset_core::AppliedPromotion) -> PyResult<Self> {
+        let discount_amount_exact = a.discount_amount.to_string();
         Ok(Self {
             promotion_id: a.promotion_id.to_string(),
             promotion_name: a.promotion_name,
             coupon_code: a.coupon_code,
             discount_amount: to_f64_result(a.discount_amount, "applied promotion discount amount")?,
+            discount_amount_exact,
             discount_type: format!("{:?}", a.discount_type).to_lowercase(),
         })
     }
@@ -8251,6 +8429,8 @@ pub struct PromotionUsage {
     #[pyo3(get)]
     discount_amount: f64,
     #[pyo3(get)]
+    discount_amount_exact: String,
+    #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
     used_at: String,
@@ -8260,6 +8440,7 @@ impl TryFrom<stateset_core::PromotionUsage> for PromotionUsage {
     type Error = PyErr;
 
     fn try_from(u: stateset_core::PromotionUsage) -> PyResult<Self> {
+        let discount_amount_exact = u.discount_amount.to_string();
         Ok(Self {
             id: u.id.to_string(),
             promotion_id: u.promotion_id.to_string(),
@@ -8268,6 +8449,7 @@ impl TryFrom<stateset_core::PromotionUsage> for PromotionUsage {
             order_id: u.order_id.map(|id| id.to_string()),
             cart_id: u.cart_id.map(|id| id.to_string()),
             discount_amount: to_f64_result(u.discount_amount, "promotion usage discount amount")?,
+            discount_amount_exact,
             currency: u.currency.to_string(),
             used_at: u.used_at.to_rfc3339(),
         })
@@ -8895,6 +9077,8 @@ pub struct TaxRate {
     #[pyo3(get)]
     rate: f64,
     #[pyo3(get)]
+    rate_exact: String,
+    #[pyo3(get)]
     name: String,
     #[pyo3(get)]
     description: Option<String>,
@@ -8918,12 +9102,14 @@ impl TryFrom<stateset_core::TaxRate> for TaxRate {
     type Error = PyErr;
 
     fn try_from(r: stateset_core::TaxRate) -> PyResult<Self> {
+        let rate_exact = r.rate.to_string();
         Ok(Self {
             id: r.id.to_string(),
             jurisdiction_id: r.jurisdiction_id.to_string(),
             tax_type: r.tax_type.as_str().to_string(),
             product_category: r.product_category.as_str().to_string(),
             rate: to_f64_result(r.rate, "tax rate")?,
+            rate_exact,
             name: r.name,
             description: r.description,
             is_compound: r.is_compound,
@@ -9056,11 +9242,19 @@ pub struct TaxCalculationResult {
     #[pyo3(get)]
     total_tax: f64,
     #[pyo3(get)]
+    total_tax_exact: String,
+    #[pyo3(get)]
     subtotal: f64,
+    #[pyo3(get)]
+    subtotal_exact: String,
     #[pyo3(get)]
     total: f64,
     #[pyo3(get)]
+    total_exact: String,
+    #[pyo3(get)]
     shipping_tax: f64,
+    #[pyo3(get)]
+    shipping_tax_exact: String,
     #[pyo3(get)]
     exemptions_applied: bool,
     #[pyo3(get)]
@@ -9073,12 +9267,20 @@ impl TryFrom<stateset_core::TaxCalculationResult> for TaxCalculationResult {
     type Error = PyErr;
 
     fn try_from(r: stateset_core::TaxCalculationResult) -> PyResult<Self> {
+        let total_tax_exact = r.total_tax.to_string();
+        let subtotal_exact = r.subtotal.to_string();
+        let total_exact = r.total.to_string();
+        let shipping_tax_exact = r.shipping_tax.to_string();
         Ok(Self {
             id: r.id.to_string(),
             total_tax: to_f64_result(r.total_tax, "tax calculation total tax")?,
+            total_tax_exact,
             subtotal: to_f64_result(r.subtotal, "tax calculation subtotal")?,
+            subtotal_exact,
             total: to_f64_result(r.total, "tax calculation total")?,
+            total_exact,
             shipping_tax: to_f64_result(r.shipping_tax, "tax calculation shipping tax")?,
+            shipping_tax_exact,
             exemptions_applied: r.exemptions_applied,
             calculated_at: r.calculated_at.to_rfc3339(),
             is_estimate: r.is_estimate,
@@ -9097,6 +9299,8 @@ pub struct UsStateTaxInfo {
     #[pyo3(get)]
     state_rate: f64,
     #[pyo3(get)]
+    state_rate_exact: String,
+    #[pyo3(get)]
     has_local_taxes: bool,
     #[pyo3(get)]
     origin_based: bool,
@@ -9114,10 +9318,12 @@ impl TryFrom<stateset_core::UsStateTaxInfo> for UsStateTaxInfo {
     type Error = PyErr;
 
     fn try_from(i: stateset_core::UsStateTaxInfo) -> PyResult<Self> {
+        let state_rate_exact = i.state_rate.to_string();
         Ok(Self {
             state_code: i.state_code,
             state_name: i.state_name,
             state_rate: to_f64_result(i.state_rate, "US state tax rate")?,
+            state_rate_exact,
             has_local_taxes: i.has_local_taxes,
             origin_based: i.origin_based,
             tax_shipping: i.tax_shipping,
@@ -9139,27 +9345,43 @@ pub struct EuVatInfo {
     #[pyo3(get)]
     standard_rate: f64,
     #[pyo3(get)]
+    standard_rate_exact: String,
+    #[pyo3(get)]
     reduced_rate: Option<f64>,
+    #[pyo3(get)]
+    reduced_rate_exact: Option<String>,
     #[pyo3(get)]
     super_reduced_rate: Option<f64>,
     #[pyo3(get)]
+    super_reduced_rate_exact: Option<String>,
+    #[pyo3(get)]
     parking_rate: Option<f64>,
+    #[pyo3(get)]
+    parking_rate_exact: Option<String>,
 }
 
 impl TryFrom<stateset_core::EuVatInfo> for EuVatInfo {
     type Error = PyErr;
 
     fn try_from(i: stateset_core::EuVatInfo) -> PyResult<Self> {
+        let standard_rate_exact = i.standard_rate.to_string();
+        let reduced_rate_exact = i.reduced_rate.map(|value| value.to_string());
+        let super_reduced_rate_exact = i.super_reduced_rate.map(|value| value.to_string());
+        let parking_rate_exact = i.parking_rate.map(|value| value.to_string());
         Ok(Self {
             country_code: i.country_code,
             country_name: i.country_name,
             standard_rate: to_f64_result(i.standard_rate, "EU VAT standard rate")?,
+            standard_rate_exact,
             reduced_rate: optional_to_f64_result(i.reduced_rate, "EU VAT reduced rate")?,
+            reduced_rate_exact,
             super_reduced_rate: optional_to_f64_result(
                 i.super_reduced_rate,
                 "EU VAT super reduced rate",
             )?,
+            super_reduced_rate_exact,
             parking_rate: optional_to_f64_result(i.parking_rate, "EU VAT parking rate")?,
+            parking_rate_exact,
         })
     }
 }
@@ -9175,27 +9397,47 @@ pub struct CanadianTaxInfo {
     #[pyo3(get)]
     gst_rate: f64,
     #[pyo3(get)]
+    gst_rate_exact: String,
+    #[pyo3(get)]
     pst_rate: Option<f64>,
+    #[pyo3(get)]
+    pst_rate_exact: Option<String>,
     #[pyo3(get)]
     hst_rate: Option<f64>,
     #[pyo3(get)]
+    hst_rate_exact: Option<String>,
+    #[pyo3(get)]
     qst_rate: Option<f64>,
     #[pyo3(get)]
+    qst_rate_exact: Option<String>,
+    #[pyo3(get)]
     total_rate: f64,
+    #[pyo3(get)]
+    total_rate_exact: String,
 }
 
 impl TryFrom<stateset_core::CanadianTaxInfo> for CanadianTaxInfo {
     type Error = PyErr;
 
     fn try_from(i: stateset_core::CanadianTaxInfo) -> PyResult<Self> {
+        let gst_rate_exact = i.gst_rate.to_string();
+        let pst_rate_exact = i.pst_rate.map(|value| value.to_string());
+        let hst_rate_exact = i.hst_rate.map(|value| value.to_string());
+        let qst_rate_exact = i.qst_rate.map(|value| value.to_string());
+        let total_rate_exact = i.total_rate.to_string();
         Ok(Self {
             province_code: i.province_code,
             province_name: i.province_name,
             gst_rate: to_f64_result(i.gst_rate, "Canadian tax GST rate")?,
+            gst_rate_exact,
             pst_rate: optional_to_f64_result(i.pst_rate, "Canadian tax PST rate")?,
+            pst_rate_exact,
             hst_rate: optional_to_f64_result(i.hst_rate, "Canadian tax HST rate")?,
+            hst_rate_exact,
             qst_rate: optional_to_f64_result(i.qst_rate, "Canadian tax QST rate")?,
+            qst_rate_exact,
             total_rate: to_f64_result(i.total_rate, "Canadian tax total rate")?,
+            total_rate_exact,
         })
     }
 }
@@ -10633,6 +10875,8 @@ pub struct ReceiptLine {
     #[pyo3(get)]
     unit_cost: Option<f64>,
     #[pyo3(get)]
+    unit_cost_exact: Option<String>,
+    #[pyo3(get)]
     status: String,
 }
 
@@ -10640,6 +10884,7 @@ impl TryFrom<stateset_core::ReceiptItem> for ReceiptLine {
     type Error = PyErr;
 
     fn try_from(l: stateset_core::ReceiptItem) -> PyResult<Self> {
+        let unit_cost_exact = l.unit_cost.map(|value| value.to_string());
         Ok(Self {
             id: l.id.to_string(),
             receipt_id: l.receipt_id.to_string(),
@@ -10653,6 +10898,7 @@ impl TryFrom<stateset_core::ReceiptItem> for ReceiptLine {
                 "receipt line received quantity",
             )?,
             unit_cost: optional_to_f64_result(l.unit_cost, "receipt line unit cost")?,
+            unit_cost_exact,
             status: format!("{:?}", l.status),
         })
     }
@@ -10933,9 +11179,15 @@ pub struct Bill {
     #[pyo3(get)]
     total_amount: f64,
     #[pyo3(get)]
+    total_amount_exact: String,
+    #[pyo3(get)]
     amount_paid: f64,
     #[pyo3(get)]
+    amount_paid_exact: String,
+    #[pyo3(get)]
     amount_due: f64,
+    #[pyo3(get)]
+    amount_due_exact: String,
     #[pyo3(get)]
     status: String,
     #[pyo3(get)]
@@ -10946,13 +11198,19 @@ impl TryFrom<stateset_core::Bill> for Bill {
     type Error = PyErr;
 
     fn try_from(b: stateset_core::Bill) -> PyResult<Self> {
+        let total_amount_exact = b.total_amount.to_string();
+        let amount_paid_exact = b.amount_paid.to_string();
+        let amount_due_exact = b.amount_due.to_string();
         Ok(Self {
             id: b.id.to_string(),
             bill_number: b.bill_number,
             supplier_id: b.supplier_id.to_string(),
             total_amount: to_f64_result(b.total_amount, "bill total amount")?,
+            total_amount_exact,
             amount_paid: to_f64_result(b.amount_paid, "bill amount paid")?,
+            amount_paid_exact,
             amount_due: to_f64_result(b.amount_due, "bill amount due")?,
+            amount_due_exact,
             status: format!("{:?}", b.status),
             due_date: b.due_date.to_rfc3339(),
         })
@@ -10974,12 +11232,15 @@ pub struct ApAgingSummary {
     days_over_90: f64,
     #[pyo3(get)]
     total: f64,
+    #[pyo3(get)]
+    total_exact: String,
 }
 
 impl TryFrom<stateset_core::ApAgingSummary> for ApAgingSummary {
     type Error = PyErr;
 
     fn try_from(s: stateset_core::ApAgingSummary) -> PyResult<Self> {
+        let total_exact = s.total.to_string();
         Ok(Self {
             current: to_f64_result(s.current, "accounts payable aging current")?,
             days_1_30: to_f64_result(s.days_1_30, "accounts payable aging 1-30 days")?,
@@ -10987,6 +11248,7 @@ impl TryFrom<stateset_core::ApAgingSummary> for ApAgingSummary {
             days_61_90: to_f64_result(s.days_61_90, "accounts payable aging 61-90 days")?,
             days_over_90: to_f64_result(s.days_over_90, "accounts payable aging over 90 days")?,
             total: to_f64_result(s.total, "accounts payable aging total")?,
+            total_exact,
         })
     }
 }
@@ -11170,12 +11432,15 @@ pub struct ArAgingSummary {
     days_over_90: f64,
     #[pyo3(get)]
     total: f64,
+    #[pyo3(get)]
+    total_exact: String,
 }
 
 impl TryFrom<stateset_core::ArAgingSummary> for ArAgingSummary {
     type Error = PyErr;
 
     fn try_from(s: stateset_core::ArAgingSummary) -> PyResult<Self> {
+        let total_exact = s.total.to_string();
         Ok(Self {
             current: to_f64_result(s.current, "accounts receivable aging current")?,
             days_1_30: to_f64_result(s.days_1_30, "accounts receivable aging 1-30 days")?,
@@ -11183,6 +11448,7 @@ impl TryFrom<stateset_core::ArAgingSummary> for ArAgingSummary {
             days_61_90: to_f64_result(s.days_61_90, "accounts receivable aging 61-90 days")?,
             days_over_90: to_f64_result(s.days_over_90, "accounts receivable aging over 90 days")?,
             total: to_f64_result(s.total, "accounts receivable aging total")?,
+            total_exact,
         })
     }
 }
@@ -11199,6 +11465,8 @@ pub struct CreditMemo {
     #[pyo3(get)]
     amount: f64,
     #[pyo3(get)]
+    amount_exact: String,
+    #[pyo3(get)]
     reason: String,
     #[pyo3(get)]
     status: String,
@@ -11208,11 +11476,13 @@ impl TryFrom<stateset_core::CreditMemo> for CreditMemo {
     type Error = PyErr;
 
     fn try_from(m: stateset_core::CreditMemo) -> PyResult<Self> {
+        let amount_exact = m.amount.to_string();
         Ok(Self {
             id: m.id.to_string(),
             credit_memo_number: m.credit_memo_number,
             customer_id: m.customer_id.to_string(),
             amount: to_f64_result(m.amount, "credit memo amount")?,
+            amount_exact,
             reason: format!("{:?}", m.reason),
             status: format!("{:?}", m.status),
         })
@@ -11320,29 +11590,53 @@ pub struct ItemCost {
     #[pyo3(get)]
     standard_cost: f64,
     #[pyo3(get)]
+    standard_cost_exact: String,
+    #[pyo3(get)]
     average_cost: f64,
+    #[pyo3(get)]
+    average_cost_exact: String,
     #[pyo3(get)]
     last_cost: f64,
     #[pyo3(get)]
+    last_cost_exact: String,
+    #[pyo3(get)]
     material_cost: f64,
+    #[pyo3(get)]
+    material_cost_exact: String,
     #[pyo3(get)]
     labor_cost: f64,
     #[pyo3(get)]
+    labor_cost_exact: String,
+    #[pyo3(get)]
     overhead_cost: f64,
+    #[pyo3(get)]
+    overhead_cost_exact: String,
 }
 
 impl TryFrom<stateset_core::ItemCost> for ItemCost {
     type Error = PyErr;
 
     fn try_from(c: stateset_core::ItemCost) -> PyResult<Self> {
+        let standard_cost_exact = c.standard_cost.to_string();
+        let average_cost_exact = c.average_cost.to_string();
+        let last_cost_exact = c.last_cost.to_string();
+        let material_cost_exact = c.material_cost.to_string();
+        let labor_cost_exact = c.labor_cost.to_string();
+        let overhead_cost_exact = c.overhead_cost.to_string();
         Ok(Self {
             sku: c.sku,
             standard_cost: to_f64_result(c.standard_cost, "standard cost")?,
+            standard_cost_exact,
             average_cost: to_f64_result(c.average_cost, "average cost")?,
+            average_cost_exact,
             last_cost: to_f64_result(c.last_cost, "last cost")?,
+            last_cost_exact,
             material_cost: to_f64_result(c.material_cost, "material cost")?,
+            material_cost_exact,
             labor_cost: to_f64_result(c.labor_cost, "labor cost")?,
+            labor_cost_exact,
             overhead_cost: to_f64_result(c.overhead_cost, "overhead cost")?,
+            overhead_cost_exact,
         })
     }
 }
@@ -11353,19 +11647,31 @@ pub struct InventoryValuation {
     #[pyo3(get)]
     total_value: f64,
     #[pyo3(get)]
+    total_value_exact: String,
+    #[pyo3(get)]
     total_quantity: f64,
     #[pyo3(get)]
+    total_quantity_exact: String,
+    #[pyo3(get)]
     average_unit_cost: f64,
+    #[pyo3(get)]
+    average_unit_cost_exact: String,
 }
 
 impl TryFrom<stateset_core::InventoryValuation> for InventoryValuation {
     type Error = PyErr;
 
     fn try_from(v: stateset_core::InventoryValuation) -> PyResult<Self> {
+        let total_value_exact = v.total_value.to_string();
+        let total_quantity_exact = v.total_quantity.to_string();
+        let average_unit_cost_exact = v.average_unit_cost.to_string();
         Ok(Self {
             total_value: to_f64_result(v.total_value, "total value")?,
+            total_value_exact,
             total_quantity: to_f64_result(v.total_quantity, "total quantity")?,
+            total_quantity_exact,
             average_unit_cost: to_f64_result(v.average_unit_cost, "average unit cost")?,
+            average_unit_cost_exact,
         })
     }
 }
@@ -11496,9 +11802,15 @@ pub struct CreditAccount {
     #[pyo3(get)]
     credit_limit: f64,
     #[pyo3(get)]
+    credit_limit_exact: String,
+    #[pyo3(get)]
     current_balance: f64,
     #[pyo3(get)]
+    current_balance_exact: String,
+    #[pyo3(get)]
     available_credit: f64,
+    #[pyo3(get)]
+    available_credit_exact: String,
     #[pyo3(get)]
     status: String,
     #[pyo3(get)]
@@ -11509,12 +11821,18 @@ impl TryFrom<stateset_core::CreditAccount> for CreditAccount {
     type Error = PyErr;
 
     fn try_from(a: stateset_core::CreditAccount) -> PyResult<Self> {
+        let credit_limit_exact = a.credit_limit.to_string();
+        let current_balance_exact = a.current_balance.to_string();
+        let available_credit_exact = a.available_credit.to_string();
         Ok(Self {
             id: a.id.to_string(),
             customer_id: a.customer_id.to_string(),
             credit_limit: to_f64_result(a.credit_limit, "credit limit")?,
+            credit_limit_exact,
             current_balance: to_f64_result(a.current_balance, "current balance")?,
+            current_balance_exact,
             available_credit: to_f64_result(a.available_credit, "available credit")?,
+            available_credit_exact,
             status: format!("{:?}", a.status),
             payment_terms: a.payment_terms,
         })
@@ -11531,6 +11849,8 @@ pub struct CreditCheckResult {
     #[pyo3(get)]
     available_credit: f64,
     #[pyo3(get)]
+    available_credit_exact: String,
+    #[pyo3(get)]
     requires_approval: bool,
 }
 
@@ -11538,10 +11858,12 @@ impl TryFrom<stateset_core::CreditCheckResult> for CreditCheckResult {
     type Error = PyErr;
 
     fn try_from(r: stateset_core::CreditCheckResult) -> PyResult<Self> {
+        let available_credit_exact = r.available_credit.to_string();
         Ok(Self {
             approved: r.approved,
             reason: r.reason.map(|r| format!("{:?}", r)),
             available_credit: to_f64_result(r.available_credit, "available credit")?,
+            available_credit_exact,
             requires_approval: r.requires_approval,
         })
     }
@@ -11704,6 +12026,8 @@ pub struct BackorderSummary {
     #[pyo3(get)]
     total_quantity: f64,
     #[pyo3(get)]
+    total_quantity_exact: String,
+    #[pyo3(get)]
     critical_count: i32,
     #[pyo3(get)]
     overdue_count: i32,
@@ -11713,9 +12037,11 @@ impl TryFrom<stateset_core::BackorderSummary> for BackorderSummary {
     type Error = PyErr;
 
     fn try_from(s: stateset_core::BackorderSummary) -> PyResult<Self> {
+        let total_quantity_exact = s.total_quantity.to_string();
         Ok(Self {
             total_backorders: s.total_backorders,
             total_quantity: to_f64_result(s.total_quantity, "backorder total quantity")?,
+            total_quantity_exact,
             critical_count: s.critical_count,
             overdue_count: s.overdue_count,
         })
@@ -11880,6 +12206,8 @@ pub struct GlAccount {
     #[pyo3(get)]
     current_balance: f64,
     #[pyo3(get)]
+    current_balance_exact: String,
+    #[pyo3(get)]
     status: String,
 }
 
@@ -11887,12 +12215,14 @@ impl TryFrom<stateset_core::GlAccount> for GlAccount {
     type Error = PyErr;
 
     fn try_from(a: stateset_core::GlAccount) -> PyResult<Self> {
+        let current_balance_exact = a.current_balance.to_string();
         Ok(Self {
             id: a.id.to_string(),
             account_number: a.account_number,
             name: a.name,
             account_type: format!("{:?}", a.account_type),
             current_balance: to_f64_result(a.current_balance, "account balance")?,
+            current_balance_exact,
             status: format!("{:?}", a.status),
         })
     }
@@ -11931,7 +12261,11 @@ pub struct TrialBalance {
     #[pyo3(get)]
     total_debits: f64,
     #[pyo3(get)]
+    total_debits_exact: String,
+    #[pyo3(get)]
     total_credits: f64,
+    #[pyo3(get)]
+    total_credits_exact: String,
     #[pyo3(get)]
     is_balanced: bool,
 }
@@ -11940,9 +12274,13 @@ impl TryFrom<stateset_core::TrialBalance> for TrialBalance {
     type Error = PyErr;
 
     fn try_from(t: stateset_core::TrialBalance) -> PyResult<Self> {
+        let total_debits_exact = t.total_debits.to_string();
+        let total_credits_exact = t.total_credits.to_string();
         Ok(Self {
             total_debits: to_f64_result(t.total_debits, "trial balance total debits")?,
+            total_debits_exact,
             total_credits: to_f64_result(t.total_credits, "trial balance total credits")?,
+            total_credits_exact,
             is_balanced: t.is_balanced,
         })
     }
