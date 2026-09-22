@@ -122,6 +122,89 @@ fn parse_uuid_str(value: &str, field: &str) -> PyResult<uuid::Uuid> {
     value.parse().map_err(|error| PyValueError::new_err(format!("Invalid {field} UUID: {error}")))
 }
 
+fn parse_optional_uuid(value: Option<&str>, field: &str) -> PyResult<Option<uuid::Uuid>> {
+    value.map(|value| parse_uuid_str(value, field)).transpose()
+}
+
+/// Parse a list of ids, refusing the whole list when any single entry is malformed.
+fn parse_id_list(values: &[String], field: &str) -> PyResult<Vec<uuid::Uuid>> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| parse_uuid_str(value, &format!("{field}[{index}]")))
+        .collect()
+}
+
+fn parse_currency_str(value: &str, field: &str) -> PyResult<CurrencyCode> {
+    value.parse::<CurrencyCode>().map_err(|error| {
+        PyValueError::new_err(format!("Invalid {field} currency code '{value}': {error}"))
+    })
+}
+
+fn parse_optional_currency(value: Option<&str>, field: &str) -> PyResult<Option<CurrencyCode>> {
+    value.map(|value| parse_currency_str(value, field)).transpose()
+}
+
+fn parse_datetime_str(value: &str, field: &str) -> PyResult<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|parsed| parsed.with_timezone(&chrono::Utc))
+        .map_err(|error| {
+            PyValueError::new_err(format!(
+                "Invalid {field} timestamp '{value}': expected RFC 3339 ({error})"
+            ))
+        })
+}
+
+fn parse_optional_datetime(
+    value: Option<&str>,
+    field: &str,
+) -> PyResult<Option<chrono::DateTime<chrono::Utc>>> {
+    value.map(|value| parse_datetime_str(value, field)).transpose()
+}
+
+fn parse_date_str(value: &str, field: &str) -> PyResult<chrono::NaiveDate> {
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|error| {
+        PyValueError::new_err(format!(
+            "Invalid {field} date '{value}': expected YYYY-MM-DD ({error})"
+        ))
+    })
+}
+
+fn parse_optional_date(value: Option<&str>, field: &str) -> PyResult<Option<chrono::NaiveDate>> {
+    value.map(|value| parse_date_str(value, field)).transpose()
+}
+
+/// Spellings accepted by `stateset_core::PaymentMethodType`'s `FromStr`.
+const PAYMENT_METHOD_TYPE_VALUES: &[&str] = &[
+    "credit_card",
+    "debit_card",
+    "bank_transfer",
+    "ach",
+    "paypal",
+    "apple_pay",
+    "google_pay",
+    "crypto",
+    "cryptocurrency",
+    "stablecoin",
+    "usdc",
+    "usdt",
+    "ssusd",
+    "store_credit",
+    "gift_card",
+    "cash_on_delivery",
+    "cod",
+    "invoice",
+    "other",
+];
+
+/// Build the error raised when a caller supplies a value outside a closed enum.
+fn unknown_variant(what: &str, value: &str, expected: &[&str]) -> PyErr {
+    PyValueError::new_err(format!(
+        "Invalid {what} '{value}': expected one of {}",
+        expected.join(", ")
+    ))
+}
+
 fn json_value_to_string(value: &serde_json::Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
 }
@@ -931,6 +1014,93 @@ impl TryFrom<stateset_core::Order> for Order {
     }
 }
 
+/// Input for an invoice line item.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct CreateInvoiceItemInput {
+    #[pyo3(get, set)]
+    description: String,
+    #[pyo3(get, set)]
+    quantity: f64,
+    #[pyo3(get, set)]
+    unit_price: f64,
+    #[pyo3(get, set)]
+    sku: Option<String>,
+    #[pyo3(get, set)]
+    product_id: Option<String>,
+    #[pyo3(get, set)]
+    unit_of_measure: Option<String>,
+    #[pyo3(get, set)]
+    discount_amount: Option<f64>,
+    #[pyo3(get, set)]
+    tax_amount: Option<f64>,
+}
+
+#[pymethods]
+impl CreateInvoiceItemInput {
+    #[new]
+    #[pyo3(signature = (description, quantity, unit_price, sku=None, product_id=None, unit_of_measure=None, discount_amount=None, tax_amount=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        description: String,
+        quantity: f64,
+        unit_price: f64,
+        sku: Option<String>,
+        product_id: Option<String>,
+        unit_of_measure: Option<String>,
+        discount_amount: Option<f64>,
+        tax_amount: Option<f64>,
+    ) -> Self {
+        Self {
+            description,
+            quantity,
+            unit_price,
+            sku,
+            product_id,
+            unit_of_measure,
+            discount_amount,
+            tax_amount,
+        }
+    }
+}
+
+/// Input for a purchase order line item.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct CreatePurchaseOrderItemInput {
+    #[pyo3(get, set)]
+    sku: String,
+    #[pyo3(get, set)]
+    name: String,
+    #[pyo3(get, set)]
+    quantity: f64,
+    #[pyo3(get, set)]
+    unit_cost: f64,
+    #[pyo3(get, set)]
+    product_id: Option<String>,
+    #[pyo3(get, set)]
+    supplier_sku: Option<String>,
+    #[pyo3(get, set)]
+    unit_of_measure: Option<String>,
+}
+
+#[pymethods]
+impl CreatePurchaseOrderItemInput {
+    #[new]
+    #[pyo3(signature = (sku, name, quantity, unit_cost, product_id=None, supplier_sku=None, unit_of_measure=None))]
+    fn new(
+        sku: String,
+        name: String,
+        quantity: f64,
+        unit_cost: f64,
+        product_id: Option<String>,
+        supplier_sku: Option<String>,
+        unit_of_measure: Option<String>,
+    ) -> Self {
+        Self { sku, name, quantity, unit_cost, product_id, supplier_sku, unit_of_measure }
+    }
+}
+
 /// Input for creating an order item.
 #[pyclass(from_py_object)]
 #[derive(Clone)]
@@ -1006,8 +1176,11 @@ impl Orders {
         let order_items: Vec<stateset_core::CreateOrderItem> = items
             .into_iter()
             .map(|i| {
-                let product_id = i.product_id.and_then(|s| s.parse().ok()).unwrap_or_default();
-                let variant_id = i.variant_id.and_then(|s| s.parse().ok());
+                let product_id = match parse_optional_uuid(i.product_id.as_deref(), "product_id")? {
+                    Some(parsed) => parsed.into(),
+                    None => Default::default(),
+                };
+                let variant_id = parse_optional_uuid(i.variant_id.as_deref(), "variant_id")?;
 
                 Ok(stateset_core::CreateOrderItem {
                     product_id,
@@ -1026,7 +1199,7 @@ impl Orders {
             .create(stateset_core::CreateOrder {
                 customer_id: cust_uuid,
                 items: order_items,
-                currency: currency.as_ref().and_then(|s| s.parse::<CurrencyCode>().ok()),
+                currency: parse_optional_currency(currency.as_deref(), "currency")?,
                 notes,
                 ..Default::default()
             })
@@ -2030,9 +2203,15 @@ pub struct StockLevel {
     #[pyo3(get)]
     total_on_hand: f64,
     #[pyo3(get)]
+    total_on_hand_exact: String,
+    #[pyo3(get)]
     total_allocated: f64,
     #[pyo3(get)]
+    total_allocated_exact: String,
+    #[pyo3(get)]
     total_available: f64,
+    #[pyo3(get)]
+    total_available_exact: String,
 }
 
 #[pymethods]
@@ -2046,12 +2225,18 @@ impl TryFrom<stateset_core::StockLevel> for StockLevel {
     type Error = PyErr;
 
     fn try_from(s: stateset_core::StockLevel) -> PyResult<Self> {
+        let total_on_hand_exact = s.total_on_hand.to_string();
+        let total_allocated_exact = s.total_allocated.to_string();
+        let total_available_exact = s.total_available.to_string();
         Ok(Self {
             sku: s.sku,
             name: s.name,
             total_on_hand: to_f64_result(s.total_on_hand, "stock level total on hand")?,
+            total_on_hand_exact,
             total_allocated: to_f64_result(s.total_allocated, "stock level total allocated")?,
+            total_allocated_exact,
             total_available: to_f64_result(s.total_available, "stock level total available")?,
+            total_available_exact,
         })
     }
 }
@@ -2372,20 +2557,36 @@ impl Returns {
             "changed_mind" => stateset_core::ReturnReason::ChangedMind,
             "better_price_found" => stateset_core::ReturnReason::BetterPriceFound,
             "damaged" => stateset_core::ReturnReason::Damaged,
-            _ => stateset_core::ReturnReason::Other,
+            "other" => stateset_core::ReturnReason::Other,
+            other => {
+                return Err(unknown_variant(
+                    "return reason",
+                    other,
+                    &[
+                        "defective",
+                        "not_as_described",
+                        "wrong_item",
+                        "no_longer_needed",
+                        "changed_mind",
+                        "better_price_found",
+                        "damaged",
+                        "other",
+                    ],
+                ));
+            }
         };
 
         let return_items: Vec<stateset_core::CreateReturnItem> = items
             .into_iter()
             .map(|i| {
-                let order_item_id = i.order_item_id.parse().unwrap_or_default();
-                stateset_core::CreateReturnItem {
+                let order_item_id = parse_uuid_str(&i.order_item_id, "order_item_id")?.into();
+                Ok(stateset_core::CreateReturnItem {
                     order_item_id,
                     quantity: i.quantity,
                     ..Default::default()
-                }
+                })
             })
-            .collect();
+            .collect::<PyResult<Vec<_>>>()?;
 
         let ret = commerce
             .returns()
@@ -2679,14 +2880,20 @@ impl Payments {
             .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
 
         let method = payment_method
+            .as_deref()
             .map(|m| match m.to_lowercase().as_str() {
-                "credit_card" => stateset_core::PaymentMethodType::CreditCard,
-                "debit_card" => stateset_core::PaymentMethodType::DebitCard,
-                "bank_transfer" => stateset_core::PaymentMethodType::BankTransfer,
-                "paypal" => stateset_core::PaymentMethodType::PayPal,
-                "crypto" => stateset_core::PaymentMethodType::Crypto,
-                _ => stateset_core::PaymentMethodType::CreditCard,
+                "credit_card" => Ok(stateset_core::PaymentMethodType::CreditCard),
+                "debit_card" => Ok(stateset_core::PaymentMethodType::DebitCard),
+                "bank_transfer" => Ok(stateset_core::PaymentMethodType::BankTransfer),
+                "paypal" => Ok(stateset_core::PaymentMethodType::PayPal),
+                "crypto" => Ok(stateset_core::PaymentMethodType::Crypto),
+                other => Err(unknown_variant(
+                    "payment_method",
+                    other,
+                    &["credit_card", "debit_card", "bank_transfer", "paypal", "crypto"],
+                )),
             })
+            .transpose()?
             .unwrap_or(stateset_core::PaymentMethodType::CreditCard);
 
         let payment = commerce
@@ -2696,7 +2903,7 @@ impl Payments {
                 customer_id: customer_uuid,
                 idempotency_key,
                 amount: decimal_from_f64(amount, "amount")?,
-                currency: currency.as_ref().and_then(|s| s.parse::<CurrencyCode>().ok()),
+                currency: parse_optional_currency(currency.as_deref(), "currency")?,
                 payment_method: method,
                 ..Default::default()
             })
@@ -2735,7 +2942,13 @@ impl Payments {
         let money = stateset_core::Money::from_decimal_str(&amount, currency)
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
         let method = payment_method
-            .and_then(|value| value.parse::<stateset_core::PaymentMethodType>().ok())
+            .as_deref()
+            .map(|value| {
+                value.parse::<stateset_core::PaymentMethodType>().map_err(|_| {
+                    unknown_variant("payment_method", value, PAYMENT_METHOD_TYPE_VALUES)
+                })
+            })
+            .transpose()?
             .unwrap_or_default();
         let payment = commerce
             .payments()
@@ -3002,21 +3215,36 @@ impl Shipments {
         let order_uuid =
             order_id.parse().map_err(|_| PyValueError::new_err("Invalid order UUID"))?;
 
-        let carrier_type = carrier.map(|c| match c.to_lowercase().as_str() {
-            "ups" => stateset_core::ShippingCarrier::Ups,
-            "fedex" => stateset_core::ShippingCarrier::FedEx,
-            "usps" => stateset_core::ShippingCarrier::Usps,
-            "dhl" => stateset_core::ShippingCarrier::Dhl,
-            _ => stateset_core::ShippingCarrier::Other,
-        });
+        let carrier_type = carrier
+            .as_deref()
+            .map(|c| match c.to_lowercase().as_str() {
+                "ups" => Ok(stateset_core::ShippingCarrier::Ups),
+                "fedex" => Ok(stateset_core::ShippingCarrier::FedEx),
+                "usps" => Ok(stateset_core::ShippingCarrier::Usps),
+                "dhl" => Ok(stateset_core::ShippingCarrier::Dhl),
+                "other" => Ok(stateset_core::ShippingCarrier::Other),
+                other => Err(unknown_variant(
+                    "carrier",
+                    other,
+                    &["ups", "fedex", "usps", "dhl", "other"],
+                )),
+            })
+            .transpose()?;
 
-        let method = shipping_method.map(|m| match m.to_lowercase().as_str() {
-            "standard" => stateset_core::ShippingMethod::Standard,
-            "express" => stateset_core::ShippingMethod::Express,
-            "overnight" => stateset_core::ShippingMethod::Overnight,
-            "ground" => stateset_core::ShippingMethod::Ground,
-            _ => stateset_core::ShippingMethod::Standard,
-        });
+        let method = shipping_method
+            .as_deref()
+            .map(|m| match m.to_lowercase().as_str() {
+                "standard" => Ok(stateset_core::ShippingMethod::Standard),
+                "express" => Ok(stateset_core::ShippingMethod::Express),
+                "overnight" => Ok(stateset_core::ShippingMethod::Overnight),
+                "ground" => Ok(stateset_core::ShippingMethod::Ground),
+                other => Err(unknown_variant(
+                    "shipping_method",
+                    other,
+                    &["standard", "express", "overnight", "ground"],
+                )),
+            })
+            .transpose()?;
 
         let shipment = commerce
             .shipments()
@@ -3395,7 +3623,14 @@ impl Warranties {
             "refund" => stateset_core::ClaimResolution::Refund,
             "store_credit" => stateset_core::ClaimResolution::StoreCredit,
             "denied" => stateset_core::ClaimResolution::Denied,
-            _ => stateset_core::ClaimResolution::None,
+            "none" => stateset_core::ClaimResolution::None,
+            other => {
+                return Err(unknown_variant(
+                    "resolution",
+                    other,
+                    &["repair", "replacement", "refund", "store_credit", "denied", "none"],
+                ));
+            }
         };
 
         let claim = commerce
@@ -3482,6 +3717,8 @@ pub struct PurchaseOrder {
     #[pyo3(get)]
     total_amount: f64,
     #[pyo3(get)]
+    total_amount_exact: String,
+    #[pyo3(get)]
     created_at: String,
     #[pyo3(get)]
     updated_at: String,
@@ -3501,12 +3738,14 @@ impl TryFrom<stateset_core::PurchaseOrder> for PurchaseOrder {
     type Error = PyErr;
 
     fn try_from(po: stateset_core::PurchaseOrder) -> PyResult<Self> {
+        let total_amount_exact = po.total.to_string();
         Ok(Self {
             id: po.id.to_string(),
             po_number: po.po_number,
             supplier_id: po.supplier_id.to_string(),
             status: format!("{}", po.status),
             total_amount: to_f64_result(po.total, "purchase order total")?,
+            total_amount_exact,
             created_at: po.created_at.to_rfc3339(),
             updated_at: po.updated_at.to_rfc3339(),
         })
@@ -3584,7 +3823,12 @@ impl PurchaseOrders {
     }
 
     /// Create a new purchase order.
-    fn create(&self, supplier_id: String) -> PyResult<PurchaseOrder> {
+    #[pyo3(signature = (supplier_id, items=None))]
+    fn create(
+        &self,
+        supplier_id: String,
+        items: Option<Vec<CreatePurchaseOrderItemInput>>,
+    ) -> PyResult<PurchaseOrder> {
         let commerce = self
             .commerce
             .lock()
@@ -3597,7 +3841,26 @@ impl PurchaseOrders {
             .purchase_orders()
             .create(stateset_core::CreatePurchaseOrder {
                 supplier_id: supp_uuid,
-                items: vec![],
+                items: items
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|i| {
+                        Ok(stateset_core::CreatePurchaseOrderItem {
+                            product_id: parse_optional_uuid(i.product_id.as_deref(), "product id")?
+                                .map(Into::into),
+                            sku: i.sku,
+                            name: i.name,
+                            supplier_sku: i.supplier_sku,
+                            quantity: decimal_from_f64(i.quantity, "purchase order item quantity")?,
+                            unit_of_measure: i.unit_of_measure,
+                            unit_cost: decimal_from_f64(
+                                i.unit_cost,
+                                "purchase order item unit cost",
+                            )?,
+                            ..Default::default()
+                        })
+                    })
+                    .collect::<PyResult<Vec<_>>>()?,
                 ..Default::default()
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create PO: {}", e)))?;
@@ -3782,11 +4045,19 @@ pub struct Invoice {
     #[pyo3(get)]
     subtotal: f64,
     #[pyo3(get)]
+    subtotal_exact: String,
+    #[pyo3(get)]
     tax_amount: f64,
+    #[pyo3(get)]
+    tax_amount_exact: String,
     #[pyo3(get)]
     total: f64,
     #[pyo3(get)]
+    total_exact: String,
+    #[pyo3(get)]
     amount_paid: f64,
+    #[pyo3(get)]
+    amount_paid_exact: String,
     #[pyo3(get)]
     due_date: String,
     #[pyo3(get)]
@@ -3812,6 +4083,10 @@ impl TryFrom<stateset_core::Invoice> for Invoice {
     type Error = PyErr;
 
     fn try_from(inv: stateset_core::Invoice) -> PyResult<Self> {
+        let subtotal_exact = inv.subtotal.to_string();
+        let tax_amount_exact = inv.tax_amount.to_string();
+        let total_exact = inv.total.to_string();
+        let amount_paid_exact = inv.amount_paid.to_string();
         Ok(Self {
             id: inv.id.to_string(),
             invoice_number: inv.invoice_number,
@@ -3819,9 +4094,13 @@ impl TryFrom<stateset_core::Invoice> for Invoice {
             order_id: inv.order_id.map(|id| id.to_string()),
             status: format!("{}", inv.status),
             subtotal: to_f64_result(inv.subtotal, "invoice subtotal")?,
+            subtotal_exact,
             tax_amount: to_f64_result(inv.tax_amount, "invoice tax amount")?,
+            tax_amount_exact,
             total: to_f64_result(inv.total, "invoice total")?,
+            total_exact,
             amount_paid: to_f64_result(inv.amount_paid, "invoice amount paid")?,
+            amount_paid_exact,
             due_date: inv.due_date.to_rfc3339(),
             created_at: inv.created_at.to_rfc3339(),
         })
@@ -3841,12 +4120,13 @@ pub struct Invoices {
 #[pymethods]
 impl Invoices {
     /// Create a new invoice.
-    #[pyo3(signature = (customer_id, order_id=None, billing_email=None))]
+    #[pyo3(signature = (customer_id, order_id=None, billing_email=None, items=None))]
     fn create(
         &self,
         customer_id: String,
         order_id: Option<String>,
         billing_email: Option<String>,
+        items: Option<Vec<CreateInvoiceItemInput>>,
     ) -> PyResult<Invoice> {
         let commerce = self
             .commerce
@@ -3867,7 +4147,30 @@ impl Invoices {
                 customer_id: cust_uuid,
                 order_id: order_uuid,
                 billing_email,
-                items: vec![],
+                items: items
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|i| {
+                        Ok(stateset_core::CreateInvoiceItem {
+                            product_id: parse_optional_uuid(i.product_id.as_deref(), "product id")?
+                                .map(Into::into),
+                            sku: i.sku,
+                            description: i.description,
+                            quantity: decimal_from_f64(i.quantity, "invoice item quantity")?,
+                            unit_of_measure: i.unit_of_measure,
+                            unit_price: decimal_from_f64(i.unit_price, "invoice item unit price")?,
+                            discount_amount: i
+                                .discount_amount
+                                .map(|v| decimal_from_f64(v, "invoice item discount amount"))
+                                .transpose()?,
+                            tax_amount: i
+                                .tax_amount
+                                .map(|v| decimal_from_f64(v, "invoice item tax amount"))
+                                .transpose()?,
+                            ..Default::default()
+                        })
+                    })
+                    .collect::<PyResult<Vec<_>>>()?,
                 ..Default::default()
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create invoice: {}", e)))?;
@@ -4347,13 +4650,18 @@ impl WorkOrders {
             .transpose()
             .map_err(|_| PyValueError::new_err("Invalid BOM UUID"))?;
 
-        let prio = priority.and_then(|p| match p.to_lowercase().as_str() {
-            "low" => Some(stateset_core::WorkOrderPriority::Low),
-            "normal" => Some(stateset_core::WorkOrderPriority::Normal),
-            "high" => Some(stateset_core::WorkOrderPriority::High),
-            "urgent" => Some(stateset_core::WorkOrderPriority::Urgent),
-            _ => None,
-        });
+        let prio = priority
+            .as_deref()
+            .map(|p| match p.to_lowercase().as_str() {
+                "low" => Ok(stateset_core::WorkOrderPriority::Low),
+                "normal" => Ok(stateset_core::WorkOrderPriority::Normal),
+                "high" => Ok(stateset_core::WorkOrderPriority::High),
+                "urgent" => Ok(stateset_core::WorkOrderPriority::Urgent),
+                other => {
+                    Err(unknown_variant("priority", other, &["low", "normal", "high", "urgent"]))
+                }
+            })
+            .transpose()?;
 
         let wo = commerce
             .work_orders()
@@ -4732,6 +5040,8 @@ pub struct ShippingRate {
     #[pyo3(get)]
     price: f64,
     #[pyo3(get)]
+    price_exact: String,
+    #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
     estimated_days: Option<i32>,
@@ -4753,12 +5063,14 @@ impl TryFrom<stateset_core::ShippingRate> for ShippingRate {
     type Error = PyErr;
 
     fn try_from(r: stateset_core::ShippingRate) -> PyResult<Self> {
+        let price_exact = r.price.to_string();
         Ok(Self {
             id: r.id,
             carrier: r.carrier,
             service: r.service,
             description: r.description,
             price: to_f64_result(r.price, "shipping rate price")?,
+            price_exact,
             currency: r.currency.to_string(),
             estimated_days: r.estimated_days,
             estimated_delivery: r.estimated_delivery.map(|d| d.to_rfc3339()),
@@ -5063,7 +5375,7 @@ impl Carts {
                 customer_id: cust_uuid,
                 customer_email,
                 customer_name,
-                currency: currency.as_ref().and_then(|s| s.parse::<CurrencyCode>().ok()),
+                currency: parse_optional_currency(currency.as_deref(), "currency")?,
                 expires_in_minutes,
                 ..Default::default()
             })
@@ -5894,32 +6206,75 @@ fn dec_to_f64(d: &Decimal) -> f64 {
     to_f64_or_nan(*d)
 }
 
-fn parse_time_period(period: &str) -> stateset_core::TimePeriod {
+fn parse_time_period(period: &str) -> PyResult<stateset_core::TimePeriod> {
     match period.to_lowercase().as_str() {
-        "today" => stateset_core::TimePeriod::Today,
-        "yesterday" => stateset_core::TimePeriod::Yesterday,
-        "last7days" | "last_7_days" => stateset_core::TimePeriod::Last7Days,
-        "last30days" | "last_30_days" => stateset_core::TimePeriod::Last30Days,
-        "this_month" | "thismonth" => stateset_core::TimePeriod::ThisMonth,
-        "last_month" | "lastmonth" => stateset_core::TimePeriod::LastMonth,
-        "this_quarter" | "thisquarter" => stateset_core::TimePeriod::ThisQuarter,
-        "last_quarter" | "lastquarter" => stateset_core::TimePeriod::LastQuarter,
-        "this_year" | "thisyear" => stateset_core::TimePeriod::ThisYear,
-        "last_year" | "lastyear" => stateset_core::TimePeriod::LastYear,
-        "all_time" | "alltime" | "all" => stateset_core::TimePeriod::AllTime,
-        _ => stateset_core::TimePeriod::Last30Days,
+        "today" => Ok(stateset_core::TimePeriod::Today),
+        "yesterday" => Ok(stateset_core::TimePeriod::Yesterday),
+        "last7days" | "last_7_days" => Ok(stateset_core::TimePeriod::Last7Days),
+        "last30days" | "last_30_days" => Ok(stateset_core::TimePeriod::Last30Days),
+        "this_month" | "thismonth" => Ok(stateset_core::TimePeriod::ThisMonth),
+        "last_month" | "lastmonth" => Ok(stateset_core::TimePeriod::LastMonth),
+        "this_quarter" | "thisquarter" => Ok(stateset_core::TimePeriod::ThisQuarter),
+        "last_quarter" | "lastquarter" => Ok(stateset_core::TimePeriod::LastQuarter),
+        "this_year" | "thisyear" => Ok(stateset_core::TimePeriod::ThisYear),
+        "last_year" | "lastyear" => Ok(stateset_core::TimePeriod::LastYear),
+        "all_time" | "alltime" | "all" => Ok(stateset_core::TimePeriod::AllTime),
+        other => Err(unknown_variant(
+            "period",
+            other,
+            &[
+                "today",
+                "yesterday",
+                "last7days",
+                "last_7_days",
+                "last30days",
+                "last_30_days",
+                "this_month",
+                "thismonth",
+                "last_month",
+                "lastmonth",
+                "this_quarter",
+                "thisquarter",
+                "last_quarter",
+                "lastquarter",
+                "this_year",
+                "thisyear",
+                "last_year",
+                "lastyear",
+                "all_time",
+                "alltime",
+                "all",
+            ],
+        )),
     }
 }
 
-fn parse_time_granularity(granularity: &str) -> stateset_core::TimeGranularity {
+fn parse_time_granularity(granularity: &str) -> PyResult<stateset_core::TimeGranularity> {
     match granularity.to_lowercase().as_str() {
-        "hour" | "hourly" => stateset_core::TimeGranularity::Hour,
-        "day" | "daily" => stateset_core::TimeGranularity::Day,
-        "week" | "weekly" => stateset_core::TimeGranularity::Week,
-        "month" | "monthly" => stateset_core::TimeGranularity::Month,
-        "quarter" | "quarterly" => stateset_core::TimeGranularity::Quarter,
-        "year" | "yearly" => stateset_core::TimeGranularity::Year,
-        _ => stateset_core::TimeGranularity::Day,
+        "hour" | "hourly" => Ok(stateset_core::TimeGranularity::Hour),
+        "day" | "daily" => Ok(stateset_core::TimeGranularity::Day),
+        "week" | "weekly" => Ok(stateset_core::TimeGranularity::Week),
+        "month" | "monthly" => Ok(stateset_core::TimeGranularity::Month),
+        "quarter" | "quarterly" => Ok(stateset_core::TimeGranularity::Quarter),
+        "year" | "yearly" => Ok(stateset_core::TimeGranularity::Year),
+        other => Err(unknown_variant(
+            "granularity",
+            other,
+            &[
+                "hour",
+                "hourly",
+                "day",
+                "daily",
+                "week",
+                "weekly",
+                "month",
+                "monthly",
+                "quarter",
+                "quarterly",
+                "year",
+                "yearly",
+            ],
+        )),
     }
 }
 
@@ -5927,18 +6282,18 @@ fn build_analytics_query(
     period: Option<String>,
     granularity: Option<String>,
     limit: Option<u32>,
-) -> stateset_core::AnalyticsQuery {
+) -> PyResult<stateset_core::AnalyticsQuery> {
     let mut q = stateset_core::AnalyticsQuery::new();
     if let Some(p) = period {
-        q = q.period(parse_time_period(&p));
+        q = q.period(parse_time_period(&p)?);
     }
     if let Some(g) = granularity {
-        q = q.granularity(parse_time_granularity(&g));
+        q = q.granularity(parse_time_granularity(&g)?);
     }
     if let Some(l) = limit {
         q = q.limit(l);
     }
-    q
+    Ok(q)
 }
 
 /// Sales summary metrics.
@@ -5948,9 +6303,13 @@ pub struct SalesSummary {
     #[pyo3(get)]
     total_revenue: f64,
     #[pyo3(get)]
+    total_revenue_exact: String,
+    #[pyo3(get)]
     order_count: u32,
     #[pyo3(get)]
     average_order_value: f64,
+    #[pyo3(get)]
+    average_order_value_exact: String,
     #[pyo3(get)]
     items_sold: u32,
     #[pyo3(get)]
@@ -5959,10 +6318,14 @@ pub struct SalesSummary {
 
 impl From<stateset_core::SalesSummary> for SalesSummary {
     fn from(s: stateset_core::SalesSummary) -> Self {
+        let total_revenue_exact = s.total_revenue.to_string();
+        let average_order_value_exact = s.average_order_value.to_string();
         Self {
             total_revenue: dec_to_f64(&s.total_revenue),
+            total_revenue_exact,
             order_count: s.order_count as u32,
             average_order_value: dec_to_f64(&s.average_order_value),
+            average_order_value_exact,
             items_sold: s.items_sold as u32,
             unique_customers: s.unique_customers as u32,
         }
@@ -5978,6 +6341,8 @@ pub struct RevenueByPeriod {
     #[pyo3(get)]
     revenue: f64,
     #[pyo3(get)]
+    revenue_exact: String,
+    #[pyo3(get)]
     order_count: u32,
     #[pyo3(get)]
     period_start: String,
@@ -5985,9 +6350,11 @@ pub struct RevenueByPeriod {
 
 impl From<stateset_core::RevenueByPeriod> for RevenueByPeriod {
     fn from(r: stateset_core::RevenueByPeriod) -> Self {
+        let revenue_exact = r.revenue.to_string();
         Self {
             period: r.period,
             revenue: dec_to_f64(&r.revenue),
+            revenue_exact,
             order_count: r.order_count as u32,
             period_start: r.period_start.to_rfc3339(),
         }
@@ -6009,17 +6376,21 @@ pub struct TopProduct {
     #[pyo3(get)]
     revenue: f64,
     #[pyo3(get)]
+    revenue_exact: String,
+    #[pyo3(get)]
     order_count: u32,
 }
 
 impl From<stateset_core::TopProduct> for TopProduct {
     fn from(p: stateset_core::TopProduct) -> Self {
+        let revenue_exact = p.revenue.to_string();
         Self {
             product_id: p.product_id.map(|id| id.to_string()),
             sku: p.sku,
             name: p.name,
             units_sold: p.units_sold as u32,
             revenue: dec_to_f64(&p.revenue),
+            revenue_exact,
             order_count: p.order_count as u32,
         }
     }
@@ -6040,27 +6411,43 @@ pub struct ProductPerformance {
     #[pyo3(get)]
     revenue: f64,
     #[pyo3(get)]
+    revenue_exact: String,
+    #[pyo3(get)]
     previous_units_sold: u32,
     #[pyo3(get)]
     previous_revenue: f64,
     #[pyo3(get)]
+    previous_revenue_exact: String,
+    #[pyo3(get)]
     units_growth_percent: f64,
     #[pyo3(get)]
+    units_growth_percent_exact: String,
+    #[pyo3(get)]
     revenue_growth_percent: f64,
+    #[pyo3(get)]
+    revenue_growth_percent_exact: String,
 }
 
 impl From<stateset_core::ProductPerformance> for ProductPerformance {
     fn from(p: stateset_core::ProductPerformance) -> Self {
+        let revenue_exact = p.revenue.to_string();
+        let previous_revenue_exact = p.previous_revenue.to_string();
+        let units_growth_percent_exact = p.units_growth_percent.to_string();
+        let revenue_growth_percent_exact = p.revenue_growth_percent.to_string();
         Self {
             product_id: p.product_id.to_string(),
             sku: p.sku,
             name: p.name,
             units_sold: p.units_sold as u32,
             revenue: dec_to_f64(&p.revenue),
+            revenue_exact,
             previous_units_sold: p.previous_units_sold as u32,
             previous_revenue: dec_to_f64(&p.previous_revenue),
+            previous_revenue_exact,
             units_growth_percent: dec_to_f64(&p.units_growth_percent),
+            units_growth_percent_exact,
             revenue_growth_percent: dec_to_f64(&p.revenue_growth_percent),
+            revenue_growth_percent_exact,
         }
     }
 }
@@ -6078,16 +6465,20 @@ pub struct CustomerMetrics {
     #[pyo3(get)]
     average_lifetime_value: f64,
     #[pyo3(get)]
+    average_lifetime_value_exact: String,
+    #[pyo3(get)]
     average_orders_per_customer: f64,
 }
 
 impl From<stateset_core::CustomerMetrics> for CustomerMetrics {
     fn from(m: stateset_core::CustomerMetrics) -> Self {
+        let average_lifetime_value_exact = m.average_lifetime_value.to_string();
         Self {
             total_customers: m.total_customers as u32,
             new_customers: m.new_customers as u32,
             returning_customers: m.returning_customers as u32,
             average_lifetime_value: dec_to_f64(&m.average_lifetime_value),
+            average_lifetime_value_exact,
             average_orders_per_customer: dec_to_f64(&m.average_orders_per_customer),
         }
     }
@@ -6108,18 +6499,26 @@ pub struct TopCustomer {
     #[pyo3(get)]
     total_spent: f64,
     #[pyo3(get)]
+    total_spent_exact: String,
+    #[pyo3(get)]
     average_order_value: f64,
+    #[pyo3(get)]
+    average_order_value_exact: String,
 }
 
 impl From<stateset_core::TopCustomer> for TopCustomer {
     fn from(c: stateset_core::TopCustomer) -> Self {
+        let total_spent_exact = c.total_spent.to_string();
+        let average_order_value_exact = c.average_order_value.to_string();
         Self {
             customer_id: c.customer_id.to_string(),
             name: c.name,
             email: c.email,
             order_count: c.order_count as u32,
             total_spent: dec_to_f64(&c.total_spent),
+            total_spent_exact,
             average_order_value: dec_to_f64(&c.average_order_value),
+            average_order_value_exact,
         }
     }
 }
@@ -6138,16 +6537,20 @@ pub struct InventoryHealth {
     out_of_stock_skus: u32,
     #[pyo3(get)]
     total_value: f64,
+    #[pyo3(get)]
+    total_value_exact: String,
 }
 
 impl From<stateset_core::InventoryHealth> for InventoryHealth {
     fn from(h: stateset_core::InventoryHealth) -> Self {
+        let total_value_exact = h.total_value.to_string();
         Self {
             total_skus: h.total_skus as u32,
             in_stock_skus: h.in_stock_skus as u32,
             low_stock_skus: h.low_stock_skus as u32,
             out_of_stock_skus: h.out_of_stock_skus as u32,
             total_value: dec_to_f64(&h.total_value),
+            total_value_exact,
         }
     }
 }
@@ -6268,7 +6671,11 @@ pub struct FulfillmentMetrics {
     #[pyo3(get)]
     on_time_shipping_percent: Option<f64>,
     #[pyo3(get)]
+    on_time_shipping_percent_exact: Option<String>,
+    #[pyo3(get)]
     on_time_delivery_percent: Option<f64>,
+    #[pyo3(get)]
+    on_time_delivery_percent_exact: Option<String>,
     #[pyo3(get)]
     shipped_today: u32,
     #[pyo3(get)]
@@ -6277,11 +6684,17 @@ pub struct FulfillmentMetrics {
 
 impl From<stateset_core::FulfillmentMetrics> for FulfillmentMetrics {
     fn from(m: stateset_core::FulfillmentMetrics) -> Self {
+        let on_time_shipping_percent_exact =
+            m.on_time_shipping_percent.map(|value| value.to_string());
+        let on_time_delivery_percent_exact =
+            m.on_time_delivery_percent.map(|value| value.to_string());
         Self {
             avg_time_to_ship_hours: m.avg_time_to_ship_hours.as_ref().map(dec_to_f64),
             avg_time_to_deliver_hours: m.avg_time_to_deliver_hours.as_ref().map(dec_to_f64),
             on_time_shipping_percent: m.on_time_shipping_percent.as_ref().map(dec_to_f64),
+            on_time_shipping_percent_exact,
             on_time_delivery_percent: m.on_time_delivery_percent.as_ref().map(dec_to_f64),
+            on_time_delivery_percent_exact,
             shipped_today: m.shipped_today as u32,
             awaiting_shipment: m.awaiting_shipment as u32,
         }
@@ -6297,15 +6710,23 @@ pub struct ReturnMetrics {
     #[pyo3(get)]
     return_rate_percent: f64,
     #[pyo3(get)]
+    return_rate_percent_exact: String,
+    #[pyo3(get)]
     total_refunded: f64,
+    #[pyo3(get)]
+    total_refunded_exact: String,
 }
 
 impl From<stateset_core::ReturnMetrics> for ReturnMetrics {
     fn from(m: stateset_core::ReturnMetrics) -> Self {
+        let return_rate_percent_exact = m.return_rate_percent.to_string();
+        let total_refunded_exact = m.total_refunded.to_string();
         Self {
             total_returns: m.total_returns as u32,
             return_rate_percent: dec_to_f64(&m.return_rate_percent),
+            return_rate_percent_exact,
             total_refunded: dec_to_f64(&m.total_refunded),
+            total_refunded_exact,
         }
     }
 }
@@ -6368,6 +6789,8 @@ pub struct RevenueForecast {
     #[pyo3(get)]
     forecasted_revenue: f64,
     #[pyo3(get)]
+    forecasted_revenue_exact: String,
+    #[pyo3(get)]
     lower_bound: f64,
     #[pyo3(get)]
     upper_bound: f64,
@@ -6379,9 +6802,11 @@ pub struct RevenueForecast {
 
 impl From<stateset_core::RevenueForecast> for RevenueForecast {
     fn from(f: stateset_core::RevenueForecast) -> Self {
+        let forecasted_revenue_exact = f.forecasted_revenue.to_string();
         Self {
             period: f.period,
             forecasted_revenue: dec_to_f64(&f.forecasted_revenue),
+            forecasted_revenue_exact,
             lower_bound: dec_to_f64(&f.lower_bound),
             upper_bound: dec_to_f64(&f.upper_bound),
             confidence_level: dec_to_f64(&f.confidence_level),
@@ -6410,7 +6835,7 @@ impl Analytics {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let q = build_analytics_query(period, None, limit);
+        let q = build_analytics_query(period, None, limit)?;
         let summary = commerce
             .analytics()
             .sales_summary(q)
@@ -6431,7 +6856,7 @@ impl Analytics {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let q = build_analytics_query(period, granularity, None);
+        let q = build_analytics_query(period, granularity, None)?;
         let rows = commerce
             .analytics()
             .revenue_by_period(q)
@@ -6452,7 +6877,7 @@ impl Analytics {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let q = build_analytics_query(period, None, limit);
+        let q = build_analytics_query(period, None, limit)?;
         let rows = commerce
             .analytics()
             .top_products(q)
@@ -6473,7 +6898,7 @@ impl Analytics {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let q = build_analytics_query(period, None, limit);
+        let q = build_analytics_query(period, None, limit)?;
         let rows = commerce.analytics().product_performance(q).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to get product performance: {}", e))
         })?;
@@ -6489,7 +6914,7 @@ impl Analytics {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let q = build_analytics_query(period, None, None);
+        let q = build_analytics_query(period, None, None)?;
         let metrics = commerce.analytics().customer_metrics(q).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to get customer metrics: {}", e))
         })?;
@@ -6509,7 +6934,7 @@ impl Analytics {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let q = build_analytics_query(period, None, limit);
+        let q = build_analytics_query(period, None, limit)?;
         let rows = commerce
             .analytics()
             .top_customers(q)
@@ -6562,7 +6987,7 @@ impl Analytics {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let q = build_analytics_query(period, None, None);
+        let q = build_analytics_query(period, None, None)?;
         let rows = commerce.analytics().inventory_movement(q).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to get inventory movement: {}", e))
         })?;
@@ -6578,7 +7003,7 @@ impl Analytics {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let q = build_analytics_query(period, None, None);
+        let q = build_analytics_query(period, None, None)?;
         let breakdown = commerce.analytics().order_status_breakdown(q).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to get order status breakdown: {}", e))
         })?;
@@ -6594,7 +7019,7 @@ impl Analytics {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let q = build_analytics_query(period, None, None);
+        let q = build_analytics_query(period, None, None)?;
         let metrics = commerce.analytics().fulfillment_metrics(q).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to get fulfillment metrics: {}", e))
         })?;
@@ -6610,7 +7035,7 @@ impl Analytics {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let q = build_analytics_query(period, None, None);
+        let q = build_analytics_query(period, None, None)?;
         let metrics = commerce
             .analytics()
             .return_metrics(q)
@@ -6654,6 +7079,7 @@ impl Analytics {
         let gran = granularity
             .as_deref()
             .map(parse_time_granularity)
+            .transpose()?
             .unwrap_or(stateset_core::TimeGranularity::Month);
 
         let forecasts =
@@ -6675,13 +7101,18 @@ fn parse_currency(code: &str) -> PyResult<stateset_core::Currency> {
         .map_err(|e| PyValueError::new_err(format!("Invalid currency code '{}': {}", code, e)))
 }
 
-fn parse_rounding_mode(mode: &str) -> stateset_core::RoundingMode {
+fn parse_rounding_mode(mode: &str) -> PyResult<stateset_core::RoundingMode> {
     match mode.to_lowercase().as_str() {
-        "half_down" => stateset_core::RoundingMode::HalfDown,
-        "up" => stateset_core::RoundingMode::Up,
-        "down" => stateset_core::RoundingMode::Down,
-        "half_even" => stateset_core::RoundingMode::HalfEven,
-        _ => stateset_core::RoundingMode::HalfUp,
+        "half_up" => Ok(stateset_core::RoundingMode::HalfUp),
+        "half_down" => Ok(stateset_core::RoundingMode::HalfDown),
+        "up" => Ok(stateset_core::RoundingMode::Up),
+        "down" => Ok(stateset_core::RoundingMode::Down),
+        "half_even" => Ok(stateset_core::RoundingMode::HalfEven),
+        other => Err(unknown_variant(
+            "rounding_mode",
+            other,
+            &["half_up", "half_down", "up", "down", "half_even"],
+        )),
     }
 }
 
@@ -6709,6 +7140,8 @@ pub struct ExchangeRate {
     #[pyo3(get)]
     rate: f64,
     #[pyo3(get)]
+    rate_exact: String,
+    #[pyo3(get)]
     source: String,
     #[pyo3(get)]
     rate_at: String,
@@ -6720,11 +7153,13 @@ pub struct ExchangeRate {
 
 impl From<stateset_core::ExchangeRate> for ExchangeRate {
     fn from(r: stateset_core::ExchangeRate) -> Self {
+        let rate_exact = r.rate.to_string();
         Self {
             id: r.id.to_string(),
             base_currency: r.base_currency.code().to_string(),
             quote_currency: r.quote_currency.code().to_string(),
             rate: dec_to_f64(&r.rate),
+            rate_exact,
             source: r.source,
             rate_at: r.rate_at.to_rfc3339(),
             created_at: r.created_at.to_rfc3339(),
@@ -6740,28 +7175,44 @@ pub struct ConversionResult {
     #[pyo3(get)]
     original_amount: f64,
     #[pyo3(get)]
+    original_amount_exact: String,
+    #[pyo3(get)]
     original_currency: String,
     #[pyo3(get)]
     converted_amount: f64,
+    #[pyo3(get)]
+    converted_amount_exact: String,
     #[pyo3(get)]
     target_currency: String,
     #[pyo3(get)]
     rate: f64,
     #[pyo3(get)]
+    rate_exact: String,
+    #[pyo3(get)]
     inverse_rate: f64,
+    #[pyo3(get)]
+    inverse_rate_exact: String,
     #[pyo3(get)]
     rate_at: String,
 }
 
 impl From<stateset_core::ConversionResult> for ConversionResult {
     fn from(r: stateset_core::ConversionResult) -> Self {
+        let original_amount_exact = r.original_amount.to_string();
+        let converted_amount_exact = r.converted_amount.to_string();
+        let rate_exact = r.rate.to_string();
+        let inverse_rate_exact = r.inverse_rate.to_string();
         Self {
             original_amount: dec_to_f64(&r.original_amount),
+            original_amount_exact,
             original_currency: r.original_currency.code().to_string(),
             converted_amount: dec_to_f64(&r.converted_amount),
+            converted_amount_exact,
             target_currency: r.target_currency.code().to_string(),
             rate: dec_to_f64(&r.rate),
+            rate_exact,
             inverse_rate: dec_to_f64(&r.inverse_rate),
+            inverse_rate_exact,
             rate_at: r.rate_at.to_rfc3339(),
         }
     }
@@ -7040,6 +7491,7 @@ impl CurrencyOperations {
                 rounding_mode: rounding_mode
                     .as_deref()
                     .map(parse_rounding_mode)
+                    .transpose()?
                     .unwrap_or_default(),
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to update settings: {}", e)))?;
@@ -7125,6 +7577,15 @@ impl CurrencyOperations {
     }
 
     /// Format an amount with currency symbol.
+    /// How many decimal places this currency permits.
+    ///
+    /// The engine refuses an amount with more places than this, so a caller
+    /// formatting or validating money needs the number rather than assuming
+    /// two: JPY, KRW and VND have none, BTC and ETH have eight.
+    fn decimal_places(&self, currency_code: String) -> PyResult<u8> {
+        Ok(parse_currency(&currency_code)?.decimal_places())
+    }
+
     fn format(&self, amount: f64, currency_code: String) -> PyResult<String> {
         let commerce = self
             .commerce
@@ -7161,9 +7622,13 @@ pub struct SubscriptionPlan {
     #[pyo3(get)]
     price: f64,
     #[pyo3(get)]
+    price_exact: String,
+    #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
     setup_fee: f64,
+    #[pyo3(get)]
+    setup_fee_exact: String,
     #[pyo3(get)]
     trial_days: i32,
     #[pyo3(get)]
@@ -7178,6 +7643,8 @@ impl TryFrom<stateset_core::SubscriptionPlan> for SubscriptionPlan {
     type Error = PyErr;
 
     fn try_from(p: stateset_core::SubscriptionPlan) -> PyResult<Self> {
+        let price_exact = p.price.to_string();
+        let setup_fee_exact = p.setup_fee.unwrap_or_default().to_string();
         Ok(Self {
             id: p.id.to_string(),
             code: p.code,
@@ -7186,9 +7653,11 @@ impl TryFrom<stateset_core::SubscriptionPlan> for SubscriptionPlan {
             billing_interval: format!("{:?}", p.billing_interval).to_lowercase(),
             billing_interval_count: 1, // Default to 1 since core doesn't have this field
             price: to_f64_result(p.price, "subscription plan price")?,
+            price_exact,
             currency: p.currency.to_string(),
             setup_fee: optional_to_f64_result(p.setup_fee, "subscription plan setup fee")?
                 .unwrap_or(0.0),
+            setup_fee_exact,
             trial_days: p.trial_days,
             status: format!("{:?}", p.status).to_lowercase(),
             created_at: p.created_at.to_rfc3339(),
@@ -7224,6 +7693,8 @@ pub struct Subscription {
     #[pyo3(get)]
     price: f64,
     #[pyo3(get)]
+    price_exact: String,
+    #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
     created_at: String,
@@ -7235,6 +7706,7 @@ impl TryFrom<stateset_core::Subscription> for Subscription {
     type Error = PyErr;
 
     fn try_from(s: stateset_core::Subscription) -> PyResult<Self> {
+        let price_exact = s.price.to_string();
         Ok(Self {
             id: s.id.to_string(),
             subscription_number: s.subscription_number,
@@ -7247,6 +7719,7 @@ impl TryFrom<stateset_core::Subscription> for Subscription {
             cancelled_at: s.cancelled_at.map(|d| d.to_rfc3339()),
             ends_at: s.ends_at.map(|d| d.to_rfc3339()),
             price: to_f64_result(s.price, "subscription price")?,
+            price_exact,
             currency: s.currency.to_string(),
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
@@ -7273,6 +7746,8 @@ pub struct BillingCycle {
     #[pyo3(get)]
     total: f64,
     #[pyo3(get)]
+    total_exact: String,
+    #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
     payment_id: Option<String>,
@@ -7288,6 +7763,7 @@ impl TryFrom<stateset_core::BillingCycle> for BillingCycle {
     type Error = PyErr;
 
     fn try_from(c: stateset_core::BillingCycle) -> PyResult<Self> {
+        let total_exact = c.total.to_string();
         Ok(Self {
             id: c.id.to_string(),
             cycle_number: c.cycle_number,
@@ -7296,6 +7772,7 @@ impl TryFrom<stateset_core::BillingCycle> for BillingCycle {
             period_start: c.period_start.to_rfc3339(),
             period_end: c.period_end.to_rfc3339(),
             total: to_f64_result(c.total, "billing cycle total")?,
+            total_exact,
             currency: c.currency.to_string(),
             payment_id: c.payment_id,
             invoice_id: c.invoice_id.map(|id| id.to_string()),
@@ -7395,9 +7872,7 @@ impl Subscriptions {
                 custom_interval_days: billing_interval_count,
                 price: decimal_from_f64(price, "price")?,
                 currency: Some(
-                    currency
-                        .unwrap_or_else(|| "USD".to_string())
-                        .parse::<CurrencyCode>()
+                    parse_optional_currency(currency.as_deref(), "currency")?
                         .unwrap_or(CurrencyCode::USD),
                 ),
                 setup_fee: optional_decimal_from_f64(setup_fee, "setup_fee")?,
@@ -7442,12 +7917,15 @@ impl Subscriptions {
 
         let interval = billing_interval.as_deref().map(parse_billing_interval).transpose()?;
 
-        let plan_status = status.as_deref().map(|s| match s.to_lowercase().as_str() {
-            "draft" => stateset_core::PlanStatus::Draft,
-            "active" => stateset_core::PlanStatus::Active,
-            "archived" => stateset_core::PlanStatus::Archived,
-            _ => stateset_core::PlanStatus::Draft,
-        });
+        let plan_status = status
+            .as_deref()
+            .map(|s| match s.to_lowercase().as_str() {
+                "draft" => Ok(stateset_core::PlanStatus::Draft),
+                "active" => Ok(stateset_core::PlanStatus::Active),
+                "archived" => Ok(stateset_core::PlanStatus::Archived),
+                other => Err(unknown_variant("status", other, &["draft", "active", "archived"])),
+            })
+            .transpose()?;
 
         let plans = commerce
             .subscriptions()
@@ -7591,16 +8069,34 @@ impl Subscriptions {
             .transpose()
             .map_err(|_| PyValueError::new_err("Invalid plan UUID"))?;
 
-        let sub_status = status.as_deref().map(|s| match s.to_lowercase().as_str() {
-            "pending" => stateset_core::SubscriptionStatus::Pending,
-            "trial" | "trialing" => stateset_core::SubscriptionStatus::Trial,
-            "active" => stateset_core::SubscriptionStatus::Active,
-            "paused" => stateset_core::SubscriptionStatus::Paused,
-            "past_due" | "pastdue" => stateset_core::SubscriptionStatus::PastDue,
-            "cancelled" | "canceled" => stateset_core::SubscriptionStatus::Cancelled,
-            "expired" => stateset_core::SubscriptionStatus::Expired,
-            _ => stateset_core::SubscriptionStatus::Active,
-        });
+        let sub_status = status
+            .as_deref()
+            .map(|s| match s.to_lowercase().as_str() {
+                "pending" => Ok(stateset_core::SubscriptionStatus::Pending),
+                "trial" | "trialing" => Ok(stateset_core::SubscriptionStatus::Trial),
+                "active" => Ok(stateset_core::SubscriptionStatus::Active),
+                "paused" => Ok(stateset_core::SubscriptionStatus::Paused),
+                "past_due" | "pastdue" => Ok(stateset_core::SubscriptionStatus::PastDue),
+                "cancelled" | "canceled" => Ok(stateset_core::SubscriptionStatus::Cancelled),
+                "expired" => Ok(stateset_core::SubscriptionStatus::Expired),
+                other => Err(unknown_variant(
+                    "status",
+                    other,
+                    &[
+                        "pending",
+                        "trial",
+                        "trialing",
+                        "active",
+                        "paused",
+                        "past_due",
+                        "pastdue",
+                        "cancelled",
+                        "canceled",
+                        "expired",
+                    ],
+                )),
+            })
+            .transpose()?;
 
         let subscriptions = commerce
             .subscriptions()
@@ -7726,16 +8222,32 @@ impl Subscriptions {
             .transpose()
             .map_err(|_| PyValueError::new_err("Invalid subscription UUID"))?;
 
-        let cycle_status = status.as_deref().map(|s| match s.to_lowercase().as_str() {
-            "scheduled" | "pending" => stateset_core::BillingCycleStatus::Scheduled,
-            "processing" => stateset_core::BillingCycleStatus::Processing,
-            "paid" => stateset_core::BillingCycleStatus::Paid,
-            "failed" => stateset_core::BillingCycleStatus::Failed,
-            "skipped" => stateset_core::BillingCycleStatus::Skipped,
-            "refunded" => stateset_core::BillingCycleStatus::Refunded,
-            "voided" => stateset_core::BillingCycleStatus::Voided,
-            _ => stateset_core::BillingCycleStatus::Scheduled,
-        });
+        let cycle_status = status
+            .as_deref()
+            .map(|s| match s.to_lowercase().as_str() {
+                "scheduled" | "pending" => Ok(stateset_core::BillingCycleStatus::Scheduled),
+                "processing" => Ok(stateset_core::BillingCycleStatus::Processing),
+                "paid" => Ok(stateset_core::BillingCycleStatus::Paid),
+                "failed" => Ok(stateset_core::BillingCycleStatus::Failed),
+                "skipped" => Ok(stateset_core::BillingCycleStatus::Skipped),
+                "refunded" => Ok(stateset_core::BillingCycleStatus::Refunded),
+                "voided" => Ok(stateset_core::BillingCycleStatus::Voided),
+                other => Err(unknown_variant(
+                    "status",
+                    other,
+                    &[
+                        "scheduled",
+                        "pending",
+                        "processing",
+                        "paid",
+                        "failed",
+                        "skipped",
+                        "refunded",
+                        "voided",
+                    ],
+                )),
+            })
+            .transpose()?;
 
         let cycles = commerce
             .subscriptions()
@@ -7823,9 +8335,15 @@ pub struct Promotion {
     #[pyo3(get)]
     percentage_off: Option<f64>,
     #[pyo3(get)]
+    percentage_off_exact: Option<String>,
+    #[pyo3(get)]
     fixed_amount_off: Option<f64>,
     #[pyo3(get)]
+    fixed_amount_off_exact: Option<String>,
+    #[pyo3(get)]
     max_discount_amount: Option<f64>,
+    #[pyo3(get)]
+    max_discount_amount_exact: Option<String>,
     #[pyo3(get)]
     buy_quantity: Option<i32>,
     #[pyo3(get)]
@@ -7854,6 +8372,9 @@ impl TryFrom<stateset_core::Promotion> for Promotion {
     type Error = PyErr;
 
     fn try_from(p: stateset_core::Promotion) -> PyResult<Self> {
+        let percentage_off_exact = p.percentage_off.map(|value| value.to_string());
+        let fixed_amount_off_exact = p.fixed_amount_off.map(|value| value.to_string());
+        let max_discount_amount_exact = p.max_discount_amount.map(|value| value.to_string());
         Ok(Self {
             id: p.id.to_string(),
             code: p.code,
@@ -7865,14 +8386,17 @@ impl TryFrom<stateset_core::Promotion> for Promotion {
             stacking: format!("{:?}", p.stacking).to_lowercase(),
             status: format!("{:?}", p.status).to_lowercase(),
             percentage_off: optional_to_f64_result(p.percentage_off, "promotion percentage off")?,
+            percentage_off_exact,
             fixed_amount_off: optional_to_f64_result(
                 p.fixed_amount_off,
                 "promotion fixed amount off",
             )?,
+            fixed_amount_off_exact,
             max_discount_amount: optional_to_f64_result(
                 p.max_discount_amount,
                 "promotion max discount amount",
             )?,
+            max_discount_amount_exact,
             buy_quantity: p.buy_quantity,
             get_quantity: p.get_quantity,
             starts_at: p.starts_at.to_rfc3339(),
@@ -7941,17 +8465,27 @@ pub struct ApplyPromotionsResult {
     #[pyo3(get)]
     original_subtotal: f64,
     #[pyo3(get)]
+    original_subtotal_exact: String,
+    #[pyo3(get)]
     total_discount: f64,
     #[pyo3(get)]
+    total_discount_exact: String,
+    #[pyo3(get)]
     discounted_subtotal: f64,
+    #[pyo3(get)]
+    discounted_subtotal_exact: String,
     #[pyo3(get)]
     original_shipping: f64,
     #[pyo3(get)]
     shipping_discount: f64,
     #[pyo3(get)]
+    shipping_discount_exact: String,
+    #[pyo3(get)]
     final_shipping: f64,
     #[pyo3(get)]
     grand_total: f64,
+    #[pyo3(get)]
+    grand_total_exact: String,
     #[pyo3(get)]
     applied_promotions: Vec<AppliedPromotion>,
 }
@@ -7960,17 +8494,27 @@ impl TryFrom<stateset_core::ApplyPromotionsResult> for ApplyPromotionsResult {
     type Error = PyErr;
 
     fn try_from(r: stateset_core::ApplyPromotionsResult) -> PyResult<Self> {
+        let original_subtotal_exact = r.original_subtotal.to_string();
+        let total_discount_exact = r.total_discount.to_string();
+        let discounted_subtotal_exact = r.discounted_subtotal.to_string();
+        let shipping_discount_exact = r.shipping_discount.to_string();
+        let grand_total_exact = r.grand_total.to_string();
         Ok(Self {
             original_subtotal: to_f64_result(r.original_subtotal, "promotion original subtotal")?,
+            original_subtotal_exact,
             total_discount: to_f64_result(r.total_discount, "promotion total discount")?,
+            total_discount_exact,
             discounted_subtotal: to_f64_result(
                 r.discounted_subtotal,
                 "promotion discounted subtotal",
             )?,
+            discounted_subtotal_exact,
             original_shipping: to_f64_result(r.original_shipping, "promotion original shipping")?,
             shipping_discount: to_f64_result(r.shipping_discount, "promotion shipping discount")?,
+            shipping_discount_exact,
             final_shipping: to_f64_result(r.final_shipping, "promotion final shipping")?,
             grand_total: to_f64_result(r.grand_total, "promotion grand total")?,
+            grand_total_exact,
             applied_promotions: convert_outputs(r.applied_promotions)?,
         })
     }
@@ -7989,6 +8533,8 @@ pub struct AppliedPromotion {
     #[pyo3(get)]
     discount_amount: f64,
     #[pyo3(get)]
+    discount_amount_exact: String,
+    #[pyo3(get)]
     discount_type: String,
 }
 
@@ -7996,11 +8542,13 @@ impl TryFrom<stateset_core::AppliedPromotion> for AppliedPromotion {
     type Error = PyErr;
 
     fn try_from(a: stateset_core::AppliedPromotion) -> PyResult<Self> {
+        let discount_amount_exact = a.discount_amount.to_string();
         Ok(Self {
             promotion_id: a.promotion_id.to_string(),
             promotion_name: a.promotion_name,
             coupon_code: a.coupon_code,
             discount_amount: to_f64_result(a.discount_amount, "applied promotion discount amount")?,
+            discount_amount_exact,
             discount_type: format!("{:?}", a.discount_type).to_lowercase(),
         })
     }
@@ -8025,6 +8573,8 @@ pub struct PromotionUsage {
     #[pyo3(get)]
     discount_amount: f64,
     #[pyo3(get)]
+    discount_amount_exact: String,
+    #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
     used_at: String,
@@ -8034,6 +8584,7 @@ impl TryFrom<stateset_core::PromotionUsage> for PromotionUsage {
     type Error = PyErr;
 
     fn try_from(u: stateset_core::PromotionUsage) -> PyResult<Self> {
+        let discount_amount_exact = u.discount_amount.to_string();
         Ok(Self {
             id: u.id.to_string(),
             promotion_id: u.promotion_id.to_string(),
@@ -8042,6 +8593,7 @@ impl TryFrom<stateset_core::PromotionUsage> for PromotionUsage {
             order_id: u.order_id.map(|id| id.to_string()),
             cart_id: u.cart_id.map(|id| id.to_string()),
             discount_amount: to_f64_result(u.discount_amount, "promotion usage discount amount")?,
+            discount_amount_exact,
             currency: u.currency.to_string(),
             used_at: u.used_at.to_rfc3339(),
         })
@@ -8052,57 +8604,79 @@ impl TryFrom<stateset_core::PromotionUsage> for PromotionUsage {
 // Promotions API
 // ============================================================================
 
-fn parse_promotion_type(s: &str) -> stateset_core::PromotionType {
+fn parse_promotion_type(s: &str) -> PyResult<stateset_core::PromotionType> {
     match s.to_lowercase().as_str() {
-        "percentage_off" => stateset_core::PromotionType::PercentageOff,
-        "fixed_amount_off" => stateset_core::PromotionType::FixedAmountOff,
-        "buy_x_get_y" | "bogo" => stateset_core::PromotionType::BuyXGetY,
-        "free_shipping" => stateset_core::PromotionType::FreeShipping,
-        "tiered_discount" => stateset_core::PromotionType::TieredDiscount,
-        "bundle_discount" => stateset_core::PromotionType::BundleDiscount,
-        _ => stateset_core::PromotionType::PercentageOff,
+        "percentage_off" => Ok(stateset_core::PromotionType::PercentageOff),
+        "fixed_amount_off" => Ok(stateset_core::PromotionType::FixedAmountOff),
+        "buy_x_get_y" | "bogo" => Ok(stateset_core::PromotionType::BuyXGetY),
+        "free_shipping" => Ok(stateset_core::PromotionType::FreeShipping),
+        "tiered_discount" => Ok(stateset_core::PromotionType::TieredDiscount),
+        "bundle_discount" => Ok(stateset_core::PromotionType::BundleDiscount),
+        other => Err(unknown_variant(
+            "promotion_type",
+            other,
+            &[
+                "percentage_off",
+                "fixed_amount_off",
+                "buy_x_get_y",
+                "bogo",
+                "free_shipping",
+                "tiered_discount",
+                "bundle_discount",
+            ],
+        )),
     }
 }
 
-fn parse_promotion_trigger(s: &str) -> stateset_core::PromotionTrigger {
+fn parse_promotion_trigger(s: &str) -> PyResult<stateset_core::PromotionTrigger> {
     match s.to_lowercase().as_str() {
-        "automatic" => stateset_core::PromotionTrigger::Automatic,
-        "coupon_code" => stateset_core::PromotionTrigger::CouponCode,
-        "both" => stateset_core::PromotionTrigger::Both,
-        _ => stateset_core::PromotionTrigger::Automatic,
+        "automatic" => Ok(stateset_core::PromotionTrigger::Automatic),
+        "coupon_code" => Ok(stateset_core::PromotionTrigger::CouponCode),
+        "both" => Ok(stateset_core::PromotionTrigger::Both),
+        other => Err(unknown_variant("trigger", other, &["automatic", "coupon_code", "both"])),
     }
 }
 
-fn parse_promotion_target(s: &str) -> stateset_core::PromotionTarget {
+fn parse_promotion_target(s: &str) -> PyResult<stateset_core::PromotionTarget> {
     match s.to_lowercase().as_str() {
-        "order" => stateset_core::PromotionTarget::Order,
-        "product" => stateset_core::PromotionTarget::Product,
-        "category" => stateset_core::PromotionTarget::Category,
-        "shipping" => stateset_core::PromotionTarget::Shipping,
-        "line_item" => stateset_core::PromotionTarget::LineItem,
-        _ => stateset_core::PromotionTarget::Order,
+        "order" => Ok(stateset_core::PromotionTarget::Order),
+        "product" => Ok(stateset_core::PromotionTarget::Product),
+        "category" => Ok(stateset_core::PromotionTarget::Category),
+        "shipping" => Ok(stateset_core::PromotionTarget::Shipping),
+        "line_item" => Ok(stateset_core::PromotionTarget::LineItem),
+        other => Err(unknown_variant(
+            "target",
+            other,
+            &["order", "product", "category", "shipping", "line_item"],
+        )),
     }
 }
 
-fn parse_stacking_behavior(s: &str) -> stateset_core::StackingBehavior {
+fn parse_stacking_behavior(s: &str) -> PyResult<stateset_core::StackingBehavior> {
     match s.to_lowercase().as_str() {
-        "stackable" => stateset_core::StackingBehavior::Stackable,
-        "exclusive" => stateset_core::StackingBehavior::Exclusive,
-        "selective_stack" => stateset_core::StackingBehavior::SelectiveStack,
-        _ => stateset_core::StackingBehavior::Stackable,
+        "stackable" => Ok(stateset_core::StackingBehavior::Stackable),
+        "exclusive" => Ok(stateset_core::StackingBehavior::Exclusive),
+        "selective_stack" => Ok(stateset_core::StackingBehavior::SelectiveStack),
+        other => {
+            Err(unknown_variant("stacking", other, &["stackable", "exclusive", "selective_stack"]))
+        }
     }
 }
 
-fn parse_promotion_status(s: &str) -> stateset_core::PromotionStatus {
+fn parse_promotion_status(s: &str) -> PyResult<stateset_core::PromotionStatus> {
     match s.to_lowercase().as_str() {
-        "draft" => stateset_core::PromotionStatus::Draft,
-        "scheduled" => stateset_core::PromotionStatus::Scheduled,
-        "active" => stateset_core::PromotionStatus::Active,
-        "paused" => stateset_core::PromotionStatus::Paused,
-        "expired" => stateset_core::PromotionStatus::Expired,
-        "exhausted" => stateset_core::PromotionStatus::Exhausted,
-        "archived" => stateset_core::PromotionStatus::Archived,
-        _ => stateset_core::PromotionStatus::Draft,
+        "draft" => Ok(stateset_core::PromotionStatus::Draft),
+        "scheduled" => Ok(stateset_core::PromotionStatus::Scheduled),
+        "active" => Ok(stateset_core::PromotionStatus::Active),
+        "paused" => Ok(stateset_core::PromotionStatus::Paused),
+        "expired" => Ok(stateset_core::PromotionStatus::Expired),
+        "exhausted" => Ok(stateset_core::PromotionStatus::Exhausted),
+        "archived" => Ok(stateset_core::PromotionStatus::Archived),
+        other => Err(unknown_variant(
+            "status",
+            other,
+            &["draft", "scheduled", "active", "paused", "expired", "exhausted", "archived"],
+        )),
     }
 }
 
@@ -8137,13 +8711,15 @@ fn parse_decimal_arg(value: Option<&str>, field: &str) -> PyResult<Option<rust_d
         .transpose()
 }
 
-fn parse_coupon_status(s: &str) -> stateset_core::CouponStatus {
+fn parse_coupon_status(s: &str) -> PyResult<stateset_core::CouponStatus> {
     match s.to_lowercase().as_str() {
-        "active" => stateset_core::CouponStatus::Active,
-        "disabled" => stateset_core::CouponStatus::Disabled,
-        "exhausted" => stateset_core::CouponStatus::Exhausted,
-        "expired" => stateset_core::CouponStatus::Expired,
-        _ => stateset_core::CouponStatus::Active,
+        "active" => Ok(stateset_core::CouponStatus::Active),
+        "disabled" => Ok(stateset_core::CouponStatus::Disabled),
+        "exhausted" => Ok(stateset_core::CouponStatus::Exhausted),
+        "expired" => Ok(stateset_core::CouponStatus::Expired),
+        other => {
+            Err(unknown_variant("status", other, &["active", "disabled", "exhausted", "expired"]))
+        }
     }
 }
 
@@ -8194,10 +8770,22 @@ impl PromotionsApi {
             name,
             description: None,
             internal_notes: None,
-            promotion_type: promotion_type.map(|s| parse_promotion_type(&s)).unwrap_or_default(),
-            trigger: trigger.map(|s| parse_promotion_trigger(&s)).unwrap_or_default(),
-            target: target.map(|s| parse_promotion_target(&s)).unwrap_or_default(),
-            stacking: stacking.map(|s| parse_stacking_behavior(&s)).unwrap_or_default(),
+            promotion_type: promotion_type
+                .as_deref()
+                .map(parse_promotion_type)
+                .transpose()?
+                .unwrap_or_default(),
+            trigger: trigger
+                .as_deref()
+                .map(parse_promotion_trigger)
+                .transpose()?
+                .unwrap_or_default(),
+            target: target.as_deref().map(parse_promotion_target).transpose()?.unwrap_or_default(),
+            stacking: stacking
+                .as_deref()
+                .map(parse_stacking_behavior)
+                .transpose()?
+                .unwrap_or_default(),
             percentage_off,
             fixed_amount_off,
             max_discount_amount,
@@ -8207,12 +8795,8 @@ impl PromotionsApi {
             tiers: None,
             bundle_product_ids: None,
             bundle_discount: None,
-            starts_at: starts_at.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))
-            }),
-            ends_at: ends_at.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))
-            }),
+            starts_at: parse_optional_datetime(starts_at.as_deref(), "starts_at")?,
+            ends_at: parse_optional_datetime(ends_at.as_deref(), "ends_at")?,
             total_usage_limit,
             per_customer_limit,
             conditions: None,
@@ -8223,7 +8807,7 @@ impl PromotionsApi {
             excluded_category_ids: None,
             eligible_customer_ids: None,
             eligible_customer_groups: None,
-            currency: currency.as_ref().and_then(|s| s.parse::<CurrencyCode>().ok()),
+            currency: parse_optional_currency(currency.as_deref(), "currency")?,
             priority,
             metadata: None,
         };
@@ -8284,8 +8868,8 @@ impl PromotionsApi {
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
         let filter = stateset_core::PromotionFilter {
-            status: status.map(|s| parse_promotion_status(&s)),
-            promotion_type: promotion_type.map(|s| parse_promotion_type(&s)),
+            status: status.as_deref().map(parse_promotion_status).transpose()?,
+            promotion_type: promotion_type.as_deref().map(parse_promotion_type).transpose()?,
             trigger: None,
             is_active,
             search: None,
@@ -8393,12 +8977,8 @@ impl PromotionsApi {
             code,
             usage_limit,
             per_customer_limit,
-            starts_at: starts_at.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))
-            }),
-            ends_at: ends_at.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))
-            }),
+            starts_at: parse_optional_datetime(starts_at.as_deref(), "starts_at")?,
+            ends_at: parse_optional_datetime(ends_at.as_deref(), "ends_at")?,
             metadata: None,
         };
 
@@ -8457,8 +9037,9 @@ impl PromotionsApi {
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
         let filter = stateset_core::CouponFilter {
-            promotion_id: promotion_id.and_then(|s| s.parse().ok()),
-            status: status.map(|s| parse_coupon_status(&s)),
+            promotion_id: parse_optional_uuid(promotion_id.as_deref(), "promotion_id")?
+                .map(Into::into),
+            status: status.as_deref().map(parse_coupon_status).transpose()?,
             search: None,
             limit: limit.map(|v| v as u32),
             offset: offset.map(|v| v as u32),
@@ -8519,9 +9100,7 @@ impl PromotionsApi {
             shipping_amount,
             shipping_country: None,
             shipping_state: None,
-            currency: currency
-                .unwrap_or_else(|| "USD".to_string())
-                .parse::<CurrencyCode>()
+            currency: parse_optional_currency(currency.as_deref(), "currency")?
                 .unwrap_or(CurrencyCode::USD),
             is_first_order: false,
         };
@@ -8558,10 +9137,10 @@ impl PromotionsApi {
             .promotions()
             .record_usage(
                 promo_uuid,
-                coupon_id.and_then(|s| s.parse().ok()),
-                customer_id.and_then(|s| s.parse().ok()),
-                order_id.and_then(|s| s.parse().ok()),
-                cart_id.and_then(|s| s.parse().ok()),
+                parse_optional_uuid(coupon_id.as_deref(), "coupon_id")?,
+                parse_optional_uuid(customer_id.as_deref(), "customer_id")?.map(Into::into),
+                parse_optional_uuid(order_id.as_deref(), "order_id")?.map(Into::into),
+                parse_optional_uuid(cart_id.as_deref(), "cart_id")?.map(Into::into),
                 decimal_from_f64(discount_amount, "discount_amount")?,
                 &currency,
             )
@@ -8642,6 +9221,8 @@ pub struct TaxRate {
     #[pyo3(get)]
     rate: f64,
     #[pyo3(get)]
+    rate_exact: String,
+    #[pyo3(get)]
     name: String,
     #[pyo3(get)]
     description: Option<String>,
@@ -8665,12 +9246,14 @@ impl TryFrom<stateset_core::TaxRate> for TaxRate {
     type Error = PyErr;
 
     fn try_from(r: stateset_core::TaxRate) -> PyResult<Self> {
+        let rate_exact = r.rate.to_string();
         Ok(Self {
             id: r.id.to_string(),
             jurisdiction_id: r.jurisdiction_id.to_string(),
             tax_type: r.tax_type.as_str().to_string(),
             product_category: r.product_category.as_str().to_string(),
             rate: to_f64_result(r.rate, "tax rate")?,
+            rate_exact,
             name: r.name,
             description: r.description,
             is_compound: r.is_compound,
@@ -8803,11 +9386,19 @@ pub struct TaxCalculationResult {
     #[pyo3(get)]
     total_tax: f64,
     #[pyo3(get)]
+    total_tax_exact: String,
+    #[pyo3(get)]
     subtotal: f64,
+    #[pyo3(get)]
+    subtotal_exact: String,
     #[pyo3(get)]
     total: f64,
     #[pyo3(get)]
+    total_exact: String,
+    #[pyo3(get)]
     shipping_tax: f64,
+    #[pyo3(get)]
+    shipping_tax_exact: String,
     #[pyo3(get)]
     exemptions_applied: bool,
     #[pyo3(get)]
@@ -8820,12 +9411,20 @@ impl TryFrom<stateset_core::TaxCalculationResult> for TaxCalculationResult {
     type Error = PyErr;
 
     fn try_from(r: stateset_core::TaxCalculationResult) -> PyResult<Self> {
+        let total_tax_exact = r.total_tax.to_string();
+        let subtotal_exact = r.subtotal.to_string();
+        let total_exact = r.total.to_string();
+        let shipping_tax_exact = r.shipping_tax.to_string();
         Ok(Self {
             id: r.id.to_string(),
             total_tax: to_f64_result(r.total_tax, "tax calculation total tax")?,
+            total_tax_exact,
             subtotal: to_f64_result(r.subtotal, "tax calculation subtotal")?,
+            subtotal_exact,
             total: to_f64_result(r.total, "tax calculation total")?,
+            total_exact,
             shipping_tax: to_f64_result(r.shipping_tax, "tax calculation shipping tax")?,
+            shipping_tax_exact,
             exemptions_applied: r.exemptions_applied,
             calculated_at: r.calculated_at.to_rfc3339(),
             is_estimate: r.is_estimate,
@@ -8844,6 +9443,8 @@ pub struct UsStateTaxInfo {
     #[pyo3(get)]
     state_rate: f64,
     #[pyo3(get)]
+    state_rate_exact: String,
+    #[pyo3(get)]
     has_local_taxes: bool,
     #[pyo3(get)]
     origin_based: bool,
@@ -8861,10 +9462,12 @@ impl TryFrom<stateset_core::UsStateTaxInfo> for UsStateTaxInfo {
     type Error = PyErr;
 
     fn try_from(i: stateset_core::UsStateTaxInfo) -> PyResult<Self> {
+        let state_rate_exact = i.state_rate.to_string();
         Ok(Self {
             state_code: i.state_code,
             state_name: i.state_name,
             state_rate: to_f64_result(i.state_rate, "US state tax rate")?,
+            state_rate_exact,
             has_local_taxes: i.has_local_taxes,
             origin_based: i.origin_based,
             tax_shipping: i.tax_shipping,
@@ -8886,27 +9489,43 @@ pub struct EuVatInfo {
     #[pyo3(get)]
     standard_rate: f64,
     #[pyo3(get)]
+    standard_rate_exact: String,
+    #[pyo3(get)]
     reduced_rate: Option<f64>,
+    #[pyo3(get)]
+    reduced_rate_exact: Option<String>,
     #[pyo3(get)]
     super_reduced_rate: Option<f64>,
     #[pyo3(get)]
+    super_reduced_rate_exact: Option<String>,
+    #[pyo3(get)]
     parking_rate: Option<f64>,
+    #[pyo3(get)]
+    parking_rate_exact: Option<String>,
 }
 
 impl TryFrom<stateset_core::EuVatInfo> for EuVatInfo {
     type Error = PyErr;
 
     fn try_from(i: stateset_core::EuVatInfo) -> PyResult<Self> {
+        let standard_rate_exact = i.standard_rate.to_string();
+        let reduced_rate_exact = i.reduced_rate.map(|value| value.to_string());
+        let super_reduced_rate_exact = i.super_reduced_rate.map(|value| value.to_string());
+        let parking_rate_exact = i.parking_rate.map(|value| value.to_string());
         Ok(Self {
             country_code: i.country_code,
             country_name: i.country_name,
             standard_rate: to_f64_result(i.standard_rate, "EU VAT standard rate")?,
+            standard_rate_exact,
             reduced_rate: optional_to_f64_result(i.reduced_rate, "EU VAT reduced rate")?,
+            reduced_rate_exact,
             super_reduced_rate: optional_to_f64_result(
                 i.super_reduced_rate,
                 "EU VAT super reduced rate",
             )?,
+            super_reduced_rate_exact,
             parking_rate: optional_to_f64_result(i.parking_rate, "EU VAT parking rate")?,
+            parking_rate_exact,
         })
     }
 }
@@ -8922,90 +9541,153 @@ pub struct CanadianTaxInfo {
     #[pyo3(get)]
     gst_rate: f64,
     #[pyo3(get)]
+    gst_rate_exact: String,
+    #[pyo3(get)]
     pst_rate: Option<f64>,
+    #[pyo3(get)]
+    pst_rate_exact: Option<String>,
     #[pyo3(get)]
     hst_rate: Option<f64>,
     #[pyo3(get)]
+    hst_rate_exact: Option<String>,
+    #[pyo3(get)]
     qst_rate: Option<f64>,
     #[pyo3(get)]
+    qst_rate_exact: Option<String>,
+    #[pyo3(get)]
     total_rate: f64,
+    #[pyo3(get)]
+    total_rate_exact: String,
 }
 
 impl TryFrom<stateset_core::CanadianTaxInfo> for CanadianTaxInfo {
     type Error = PyErr;
 
     fn try_from(i: stateset_core::CanadianTaxInfo) -> PyResult<Self> {
+        let gst_rate_exact = i.gst_rate.to_string();
+        let pst_rate_exact = i.pst_rate.map(|value| value.to_string());
+        let hst_rate_exact = i.hst_rate.map(|value| value.to_string());
+        let qst_rate_exact = i.qst_rate.map(|value| value.to_string());
+        let total_rate_exact = i.total_rate.to_string();
         Ok(Self {
             province_code: i.province_code,
             province_name: i.province_name,
             gst_rate: to_f64_result(i.gst_rate, "Canadian tax GST rate")?,
+            gst_rate_exact,
             pst_rate: optional_to_f64_result(i.pst_rate, "Canadian tax PST rate")?,
+            pst_rate_exact,
             hst_rate: optional_to_f64_result(i.hst_rate, "Canadian tax HST rate")?,
+            hst_rate_exact,
             qst_rate: optional_to_f64_result(i.qst_rate, "Canadian tax QST rate")?,
+            qst_rate_exact,
             total_rate: to_f64_result(i.total_rate, "Canadian tax total rate")?,
+            total_rate_exact,
         })
     }
 }
 
 // --- Helper Functions ---
 
-fn parse_tax_type(s: &str) -> stateset_core::TaxType {
+fn parse_tax_type(s: &str) -> PyResult<stateset_core::TaxType> {
     match s.to_lowercase().as_str() {
-        "sales_tax" => stateset_core::TaxType::SalesTax,
-        "vat" => stateset_core::TaxType::Vat,
-        "gst" => stateset_core::TaxType::Gst,
-        "hst" => stateset_core::TaxType::Hst,
-        "pst" => stateset_core::TaxType::Pst,
-        "qst" => stateset_core::TaxType::Qst,
-        "consumption_tax" => stateset_core::TaxType::ConsumptionTax,
-        "custom" => stateset_core::TaxType::Custom,
-        _ => stateset_core::TaxType::SalesTax,
+        "sales_tax" => Ok(stateset_core::TaxType::SalesTax),
+        "vat" => Ok(stateset_core::TaxType::Vat),
+        "gst" => Ok(stateset_core::TaxType::Gst),
+        "hst" => Ok(stateset_core::TaxType::Hst),
+        "pst" => Ok(stateset_core::TaxType::Pst),
+        "qst" => Ok(stateset_core::TaxType::Qst),
+        "consumption_tax" => Ok(stateset_core::TaxType::ConsumptionTax),
+        "custom" => Ok(stateset_core::TaxType::Custom),
+        other => Err(unknown_variant(
+            "tax_type",
+            other,
+            &["sales_tax", "vat", "gst", "hst", "pst", "qst", "consumption_tax", "custom"],
+        )),
     }
 }
 
-fn parse_product_tax_category(s: &str) -> stateset_core::ProductTaxCategory {
+fn parse_product_tax_category(s: &str) -> PyResult<stateset_core::ProductTaxCategory> {
     match s.to_lowercase().as_str() {
-        "standard" => stateset_core::ProductTaxCategory::Standard,
-        "reduced" => stateset_core::ProductTaxCategory::Reduced,
-        "super_reduced" => stateset_core::ProductTaxCategory::SuperReduced,
-        "zero_rated" => stateset_core::ProductTaxCategory::ZeroRated,
-        "exempt" => stateset_core::ProductTaxCategory::Exempt,
-        "digital" => stateset_core::ProductTaxCategory::Digital,
-        "clothing" => stateset_core::ProductTaxCategory::Clothing,
-        "food" => stateset_core::ProductTaxCategory::Food,
-        "prepared_food" => stateset_core::ProductTaxCategory::PreparedFood,
-        "medical" => stateset_core::ProductTaxCategory::Medical,
-        "educational" => stateset_core::ProductTaxCategory::Educational,
-        "luxury" => stateset_core::ProductTaxCategory::Luxury,
-        _ => stateset_core::ProductTaxCategory::Standard,
+        "standard" => Ok(stateset_core::ProductTaxCategory::Standard),
+        "reduced" => Ok(stateset_core::ProductTaxCategory::Reduced),
+        "super_reduced" => Ok(stateset_core::ProductTaxCategory::SuperReduced),
+        "zero_rated" => Ok(stateset_core::ProductTaxCategory::ZeroRated),
+        "exempt" => Ok(stateset_core::ProductTaxCategory::Exempt),
+        "digital" => Ok(stateset_core::ProductTaxCategory::Digital),
+        "clothing" => Ok(stateset_core::ProductTaxCategory::Clothing),
+        "food" => Ok(stateset_core::ProductTaxCategory::Food),
+        "prepared_food" => Ok(stateset_core::ProductTaxCategory::PreparedFood),
+        "medical" => Ok(stateset_core::ProductTaxCategory::Medical),
+        "educational" => Ok(stateset_core::ProductTaxCategory::Educational),
+        "luxury" => Ok(stateset_core::ProductTaxCategory::Luxury),
+        other => Err(unknown_variant(
+            "product_category",
+            other,
+            &[
+                "standard",
+                "reduced",
+                "super_reduced",
+                "zero_rated",
+                "exempt",
+                "digital",
+                "clothing",
+                "food",
+                "prepared_food",
+                "medical",
+                "educational",
+                "luxury",
+            ],
+        )),
     }
 }
 
-fn parse_jurisdiction_level(s: &str) -> stateset_core::JurisdictionLevel {
+fn parse_jurisdiction_level(s: &str) -> PyResult<stateset_core::JurisdictionLevel> {
     match s.to_lowercase().as_str() {
-        "country" => stateset_core::JurisdictionLevel::Country,
-        "state" => stateset_core::JurisdictionLevel::State,
-        "county" => stateset_core::JurisdictionLevel::County,
-        "city" => stateset_core::JurisdictionLevel::City,
-        "district" => stateset_core::JurisdictionLevel::District,
-        "special" => stateset_core::JurisdictionLevel::Special,
-        _ => stateset_core::JurisdictionLevel::Country,
+        "country" => Ok(stateset_core::JurisdictionLevel::Country),
+        "state" => Ok(stateset_core::JurisdictionLevel::State),
+        "county" => Ok(stateset_core::JurisdictionLevel::County),
+        "city" => Ok(stateset_core::JurisdictionLevel::City),
+        "district" => Ok(stateset_core::JurisdictionLevel::District),
+        "special" => Ok(stateset_core::JurisdictionLevel::Special),
+        other => Err(unknown_variant(
+            "level",
+            other,
+            &["country", "state", "county", "city", "district", "special"],
+        )),
     }
 }
 
-fn parse_exemption_type(s: &str) -> stateset_core::ExemptionType {
+fn parse_exemption_type(s: &str) -> PyResult<stateset_core::ExemptionType> {
     match s.to_lowercase().as_str() {
-        "resale" => stateset_core::ExemptionType::Resale,
-        "non_profit" | "nonprofit" => stateset_core::ExemptionType::NonProfit,
-        "government" => stateset_core::ExemptionType::Government,
-        "educational" => stateset_core::ExemptionType::Educational,
-        "religious" => stateset_core::ExemptionType::Religious,
-        "medical" => stateset_core::ExemptionType::Medical,
-        "manufacturing" => stateset_core::ExemptionType::Manufacturing,
-        "agricultural" => stateset_core::ExemptionType::Agricultural,
-        "export" => stateset_core::ExemptionType::Export,
-        "diplomatic" => stateset_core::ExemptionType::Diplomatic,
-        _ => stateset_core::ExemptionType::Other,
+        "resale" => Ok(stateset_core::ExemptionType::Resale),
+        "non_profit" | "nonprofit" => Ok(stateset_core::ExemptionType::NonProfit),
+        "government" => Ok(stateset_core::ExemptionType::Government),
+        "educational" => Ok(stateset_core::ExemptionType::Educational),
+        "religious" => Ok(stateset_core::ExemptionType::Religious),
+        "medical" => Ok(stateset_core::ExemptionType::Medical),
+        "manufacturing" => Ok(stateset_core::ExemptionType::Manufacturing),
+        "agricultural" => Ok(stateset_core::ExemptionType::Agricultural),
+        "export" => Ok(stateset_core::ExemptionType::Export),
+        "diplomatic" => Ok(stateset_core::ExemptionType::Diplomatic),
+        "other" => Ok(stateset_core::ExemptionType::Other),
+        other => Err(unknown_variant(
+            "exemption_type",
+            other,
+            &[
+                "resale",
+                "non_profit",
+                "nonprofit",
+                "government",
+                "educational",
+                "religious",
+                "medical",
+                "manufacturing",
+                "agricultural",
+                "export",
+                "diplomatic",
+                "other",
+            ],
+        )),
     }
 }
 
@@ -9041,10 +9723,10 @@ impl TaxApi {
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
         let create = stateset_core::CreateTaxJurisdiction {
-            parent_id: parent_id.and_then(|s| s.parse().ok()),
+            parent_id: parse_optional_uuid(parent_id.as_deref(), "parent_id")?,
             name,
             code,
-            level: level.map(|s| parse_jurisdiction_level(&s)).unwrap_or_default(),
+            level: level.as_deref().map(parse_jurisdiction_level).transpose()?.unwrap_or_default(),
             country_code,
             state_code,
             county,
@@ -9107,7 +9789,7 @@ impl TaxApi {
         let filter = stateset_core::TaxJurisdictionFilter {
             country_code,
             state_code,
-            level: level.map(|s| parse_jurisdiction_level(&s)),
+            level: level.as_deref().map(parse_jurisdiction_level).transpose()?,
             active_only: active_only.unwrap_or(false),
             ..Default::default()
         };
@@ -9153,9 +9835,11 @@ impl TaxApi {
 
         let create = stateset_core::CreateTaxRate {
             jurisdiction_id: jid,
-            tax_type: tax_type.map(|s| parse_tax_type(&s)).unwrap_or_default(),
+            tax_type: tax_type.as_deref().map(parse_tax_type).transpose()?.unwrap_or_default(),
             product_category: product_category
-                .map(|s| parse_product_tax_category(&s))
+                .as_deref()
+                .map(parse_product_tax_category)
+                .transpose()?
                 .unwrap_or_default(),
             rate: decimal_from_f64(rate, "rate")?,
             name,
@@ -9166,8 +9850,7 @@ impl TaxApi {
             threshold_max: None,
             fixed_amount: None,
             effective_from: eff_from,
-            effective_to: effective_to
-                .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+            effective_to: parse_optional_date(effective_to.as_deref(), "effective_to")?,
         };
 
         let rate_result = commerce
@@ -9209,9 +9892,12 @@ impl TaxApi {
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
         let filter = stateset_core::TaxRateFilter {
-            jurisdiction_id: jurisdiction_id.and_then(|s| s.parse().ok()),
-            tax_type: tax_type.map(|s| parse_tax_type(&s)),
-            product_category: product_category.map(|s| parse_product_tax_category(&s)),
+            jurisdiction_id: parse_optional_uuid(jurisdiction_id.as_deref(), "jurisdiction_id")?,
+            tax_type: tax_type.as_deref().map(parse_tax_type).transpose()?,
+            product_category: product_category
+                .as_deref()
+                .map(parse_product_tax_category)
+                .transpose()?,
             active_only: active_only.unwrap_or(false),
             effective_date: None,
             ..Default::default()
@@ -9256,22 +9942,20 @@ impl TaxApi {
 
         let create = stateset_core::CreateTaxExemption {
             customer_id: cid,
-            exemption_type: parse_exemption_type(&exemption_type),
+            exemption_type: parse_exemption_type(&exemption_type)?,
             certificate_number,
             issuing_authority,
-            jurisdiction_ids: jurisdiction_ids
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|s| s.parse().ok())
-                .collect(),
+            jurisdiction_ids: parse_id_list(
+                &jurisdiction_ids.unwrap_or_default(),
+                "jurisdiction_ids",
+            )?,
             exempt_categories: exempt_categories
                 .unwrap_or_default()
                 .into_iter()
                 .map(|s| parse_product_tax_category(&s))
-                .collect(),
+                .collect::<PyResult<Vec<_>>>()?,
             effective_from: eff_from,
-            expires_at: expires_at
-                .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+            expires_at: parse_optional_date(expires_at.as_deref(), "expires_at")?,
             notes,
         };
 
@@ -9561,7 +10245,13 @@ impl QualityApi {
             "in_process" => stateset_core::InspectionType::InProcess,
             "final" => stateset_core::InspectionType::Final,
             "random" => stateset_core::InspectionType::Random,
-            _ => stateset_core::InspectionType::Incoming,
+            other => {
+                return Err(unknown_variant(
+                    "inspection_type",
+                    other,
+                    &["incoming", "receiving", "in_process", "final", "random"],
+                ));
+            }
         };
         let ref_uuid =
             reference_id.parse().map_err(|_| PyValueError::new_err("Invalid reference UUID"))?;
@@ -9688,14 +10378,36 @@ impl QualityApi {
             "supplier" | "supplier_issue" => stateset_core::NonConformanceSource::SupplierIssue,
             "internal_audit" => stateset_core::NonConformanceSource::InternalAudit,
             "shipping_damage" => stateset_core::NonConformanceSource::ShippingDamage,
-            _ => stateset_core::NonConformanceSource::Inspection,
+            other => {
+                return Err(unknown_variant(
+                    "source",
+                    other,
+                    &[
+                        "inspection",
+                        "production",
+                        "production_defect",
+                        "customer",
+                        "customer_complaint",
+                        "supplier",
+                        "supplier_issue",
+                        "internal_audit",
+                        "shipping_damage",
+                    ],
+                ));
+            }
         };
         let sev = match severity.to_lowercase().as_str() {
             "critical" => stateset_core::Severity::Critical,
             "major" => stateset_core::Severity::Major,
             "minor" => stateset_core::Severity::Minor,
             "observation" => stateset_core::Severity::Observation,
-            _ => stateset_core::Severity::Minor,
+            other => {
+                return Err(unknown_variant(
+                    "severity",
+                    other,
+                    &["critical", "major", "minor", "observation"],
+                ));
+            }
         };
         let ncr = commerce
             .quality()
@@ -9879,9 +10591,7 @@ impl LotsApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let exp = expiration_date
-            .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
-            .map(|dt| dt.with_timezone(&chrono::Utc));
+        let exp = parse_optional_datetime(expiration_date.as_deref(), "expiration_date")?;
         let lot = commerce
             .lots()
             .create(stateset_core::CreateLot {
@@ -10048,7 +10758,22 @@ impl SerialsApi {
             "reserved" => stateset_core::SerialStatus::Reserved,
             "shipped" => stateset_core::SerialStatus::Shipped,
             "quarantine" | "quarantined" => stateset_core::SerialStatus::Quarantined,
-            _ => stateset_core::SerialStatus::Available,
+            other => {
+                return Err(unknown_variant(
+                    "status",
+                    other,
+                    &[
+                        "available",
+                        "sold",
+                        "returned",
+                        "scrapped",
+                        "reserved",
+                        "shipped",
+                        "quarantine",
+                        "quarantined",
+                    ],
+                ));
+            }
         };
         let serial = commerce
             .serials()
@@ -10192,15 +10917,21 @@ impl WarehouseApi {
         let wh_id: i32 =
             warehouse_id.parse().map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
         let loc_type = location_type
+            .as_deref()
             .map(|t| match t.to_lowercase().as_str() {
-                "pick" | "picking" => stateset_core::LocationType::Pick,
-                "bulk" => stateset_core::LocationType::Bulk,
-                "receiving" => stateset_core::LocationType::Receiving,
-                "shipping" => stateset_core::LocationType::Shipping,
-                "staging" => stateset_core::LocationType::Staging,
-                "quarantine" => stateset_core::LocationType::Quarantine,
-                _ => stateset_core::LocationType::Bulk,
+                "pick" | "picking" => Ok(stateset_core::LocationType::Pick),
+                "bulk" => Ok(stateset_core::LocationType::Bulk),
+                "receiving" => Ok(stateset_core::LocationType::Receiving),
+                "shipping" => Ok(stateset_core::LocationType::Shipping),
+                "staging" => Ok(stateset_core::LocationType::Staging),
+                "quarantine" => Ok(stateset_core::LocationType::Quarantine),
+                other => Err(unknown_variant(
+                    "location_type",
+                    other,
+                    &["pick", "picking", "bulk", "receiving", "shipping", "staging", "quarantine"],
+                )),
             })
+            .transpose()?
             .unwrap_or(stateset_core::LocationType::Bulk);
         let location = commerce
             .warehouse()
@@ -10288,6 +11019,8 @@ pub struct ReceiptLine {
     #[pyo3(get)]
     unit_cost: Option<f64>,
     #[pyo3(get)]
+    unit_cost_exact: Option<String>,
+    #[pyo3(get)]
     status: String,
 }
 
@@ -10295,6 +11028,7 @@ impl TryFrom<stateset_core::ReceiptItem> for ReceiptLine {
     type Error = PyErr;
 
     fn try_from(l: stateset_core::ReceiptItem) -> PyResult<Self> {
+        let unit_cost_exact = l.unit_cost.map(|value| value.to_string());
         Ok(Self {
             id: l.id.to_string(),
             receipt_id: l.receipt_id.to_string(),
@@ -10308,6 +11042,7 @@ impl TryFrom<stateset_core::ReceiptItem> for ReceiptLine {
                 "receipt line received quantity",
             )?,
             unit_cost: optional_to_f64_result(l.unit_cost, "receipt line unit cost")?,
+            unit_cost_exact,
             status: format!("{:?}", l.status),
         })
     }
@@ -10336,7 +11071,7 @@ impl ReceivingApi {
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
         let wh_id: i32 =
             warehouse_id.parse().map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
-        let sup_uuid = supplier_id.and_then(|id| id.parse().ok());
+        let sup_uuid = parse_optional_uuid(supplier_id.as_deref(), "supplier_id")?;
         let receipt = commerce
             .receiving()
             .create_receipt(stateset_core::CreateReceipt {
@@ -10487,10 +11222,8 @@ impl FulfillmentApi {
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
         let wh_id: i32 =
             warehouse_id.parse().map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
-        let order_typed_ids: Vec<stateset_core::OrderId> = order_ids
-            .iter()
-            .filter_map(|id| id.parse::<uuid::Uuid>().ok().map(Into::into))
-            .collect();
+        let order_typed_ids: Vec<stateset_core::OrderId> =
+            parse_id_list(&order_ids, "order_ids")?.into_iter().map(Into::into).collect();
         let wave = commerce
             .fulfillment()
             .create_wave(stateset_core::CreateWave {
@@ -10590,9 +11323,15 @@ pub struct Bill {
     #[pyo3(get)]
     total_amount: f64,
     #[pyo3(get)]
+    total_amount_exact: String,
+    #[pyo3(get)]
     amount_paid: f64,
     #[pyo3(get)]
+    amount_paid_exact: String,
+    #[pyo3(get)]
     amount_due: f64,
+    #[pyo3(get)]
+    amount_due_exact: String,
     #[pyo3(get)]
     status: String,
     #[pyo3(get)]
@@ -10603,13 +11342,19 @@ impl TryFrom<stateset_core::Bill> for Bill {
     type Error = PyErr;
 
     fn try_from(b: stateset_core::Bill) -> PyResult<Self> {
+        let total_amount_exact = b.total_amount.to_string();
+        let amount_paid_exact = b.amount_paid.to_string();
+        let amount_due_exact = b.amount_due.to_string();
         Ok(Self {
             id: b.id.to_string(),
             bill_number: b.bill_number,
             supplier_id: b.supplier_id.to_string(),
             total_amount: to_f64_result(b.total_amount, "bill total amount")?,
+            total_amount_exact,
             amount_paid: to_f64_result(b.amount_paid, "bill amount paid")?,
+            amount_paid_exact,
             amount_due: to_f64_result(b.amount_due, "bill amount due")?,
+            amount_due_exact,
             status: format!("{:?}", b.status),
             due_date: b.due_date.to_rfc3339(),
         })
@@ -10631,12 +11376,15 @@ pub struct ApAgingSummary {
     days_over_90: f64,
     #[pyo3(get)]
     total: f64,
+    #[pyo3(get)]
+    total_exact: String,
 }
 
 impl TryFrom<stateset_core::ApAgingSummary> for ApAgingSummary {
     type Error = PyErr;
 
     fn try_from(s: stateset_core::ApAgingSummary) -> PyResult<Self> {
+        let total_exact = s.total.to_string();
         Ok(Self {
             current: to_f64_result(s.current, "accounts payable aging current")?,
             days_1_30: to_f64_result(s.days_1_30, "accounts payable aging 1-30 days")?,
@@ -10644,6 +11392,7 @@ impl TryFrom<stateset_core::ApAgingSummary> for ApAgingSummary {
             days_61_90: to_f64_result(s.days_61_90, "accounts payable aging 61-90 days")?,
             days_over_90: to_f64_result(s.days_over_90, "accounts payable aging over 90 days")?,
             total: to_f64_result(s.total, "accounts payable aging total")?,
+            total_exact,
         })
     }
 }
@@ -10725,14 +11474,21 @@ impl AccountsPayableApi {
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
         let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let pm = payment_method
+            .as_deref()
             .map(|s| match s.to_lowercase().as_str() {
-                "check" => stateset_core::PaymentMethodAP::Check,
-                "ach" => stateset_core::PaymentMethodAP::Ach,
-                "wire" => stateset_core::PaymentMethodAP::Wire,
-                "credit_card" => stateset_core::PaymentMethodAP::CreditCard,
-                "cash" => stateset_core::PaymentMethodAP::Cash,
-                _ => stateset_core::PaymentMethodAP::Other,
+                "check" => Ok(stateset_core::PaymentMethodAP::Check),
+                "ach" => Ok(stateset_core::PaymentMethodAP::Ach),
+                "wire" => Ok(stateset_core::PaymentMethodAP::Wire),
+                "credit_card" => Ok(stateset_core::PaymentMethodAP::CreditCard),
+                "cash" => Ok(stateset_core::PaymentMethodAP::Cash),
+                "other" => Ok(stateset_core::PaymentMethodAP::Other),
+                other => Err(unknown_variant(
+                    "payment_method",
+                    other,
+                    &["check", "ach", "wire", "credit_card", "cash", "other"],
+                )),
             })
+            .transpose()?
             .unwrap_or(stateset_core::PaymentMethodAP::Check);
         let bill = commerce
             .accounts_payable()
@@ -10820,12 +11576,15 @@ pub struct ArAgingSummary {
     days_over_90: f64,
     #[pyo3(get)]
     total: f64,
+    #[pyo3(get)]
+    total_exact: String,
 }
 
 impl TryFrom<stateset_core::ArAgingSummary> for ArAgingSummary {
     type Error = PyErr;
 
     fn try_from(s: stateset_core::ArAgingSummary) -> PyResult<Self> {
+        let total_exact = s.total.to_string();
         Ok(Self {
             current: to_f64_result(s.current, "accounts receivable aging current")?,
             days_1_30: to_f64_result(s.days_1_30, "accounts receivable aging 1-30 days")?,
@@ -10833,6 +11592,7 @@ impl TryFrom<stateset_core::ArAgingSummary> for ArAgingSummary {
             days_61_90: to_f64_result(s.days_61_90, "accounts receivable aging 61-90 days")?,
             days_over_90: to_f64_result(s.days_over_90, "accounts receivable aging over 90 days")?,
             total: to_f64_result(s.total, "accounts receivable aging total")?,
+            total_exact,
         })
     }
 }
@@ -10849,6 +11609,8 @@ pub struct CreditMemo {
     #[pyo3(get)]
     amount: f64,
     #[pyo3(get)]
+    amount_exact: String,
+    #[pyo3(get)]
     reason: String,
     #[pyo3(get)]
     status: String,
@@ -10858,11 +11620,13 @@ impl TryFrom<stateset_core::CreditMemo> for CreditMemo {
     type Error = PyErr;
 
     fn try_from(m: stateset_core::CreditMemo) -> PyResult<Self> {
+        let amount_exact = m.amount.to_string();
         Ok(Self {
             id: m.id.to_string(),
             credit_memo_number: m.credit_memo_number,
             customer_id: m.customer_id.to_string(),
             amount: to_f64_result(m.amount, "credit memo amount")?,
+            amount_exact,
             reason: format!("{:?}", m.reason),
             status: format!("{:?}", m.status),
         })
@@ -10910,7 +11674,26 @@ impl AccountsReceivableApi {
             "damaged" => stateset_core::CreditMemoReason::Damaged,
             "service_credit" | "service" => stateset_core::CreditMemoReason::ServiceCredit,
             "goodwill" | "adjustment" => stateset_core::CreditMemoReason::GoodwillAdjustment,
-            _ => stateset_core::CreditMemoReason::Other,
+            "other" => stateset_core::CreditMemoReason::Other,
+            other => {
+                return Err(unknown_variant(
+                    "reason",
+                    other,
+                    &[
+                        "returned_goods",
+                        "return",
+                        "pricing_error",
+                        "price",
+                        "overpayment",
+                        "damaged",
+                        "service_credit",
+                        "service",
+                        "goodwill",
+                        "adjustment",
+                        "other",
+                    ],
+                ));
+            }
         };
         let memo = commerce
             .accounts_receivable()
@@ -10951,29 +11734,53 @@ pub struct ItemCost {
     #[pyo3(get)]
     standard_cost: f64,
     #[pyo3(get)]
+    standard_cost_exact: String,
+    #[pyo3(get)]
     average_cost: f64,
+    #[pyo3(get)]
+    average_cost_exact: String,
     #[pyo3(get)]
     last_cost: f64,
     #[pyo3(get)]
+    last_cost_exact: String,
+    #[pyo3(get)]
     material_cost: f64,
+    #[pyo3(get)]
+    material_cost_exact: String,
     #[pyo3(get)]
     labor_cost: f64,
     #[pyo3(get)]
+    labor_cost_exact: String,
+    #[pyo3(get)]
     overhead_cost: f64,
+    #[pyo3(get)]
+    overhead_cost_exact: String,
 }
 
 impl TryFrom<stateset_core::ItemCost> for ItemCost {
     type Error = PyErr;
 
     fn try_from(c: stateset_core::ItemCost) -> PyResult<Self> {
+        let standard_cost_exact = c.standard_cost.to_string();
+        let average_cost_exact = c.average_cost.to_string();
+        let last_cost_exact = c.last_cost.to_string();
+        let material_cost_exact = c.material_cost.to_string();
+        let labor_cost_exact = c.labor_cost.to_string();
+        let overhead_cost_exact = c.overhead_cost.to_string();
         Ok(Self {
             sku: c.sku,
             standard_cost: to_f64_result(c.standard_cost, "standard cost")?,
+            standard_cost_exact,
             average_cost: to_f64_result(c.average_cost, "average cost")?,
+            average_cost_exact,
             last_cost: to_f64_result(c.last_cost, "last cost")?,
+            last_cost_exact,
             material_cost: to_f64_result(c.material_cost, "material cost")?,
+            material_cost_exact,
             labor_cost: to_f64_result(c.labor_cost, "labor cost")?,
+            labor_cost_exact,
             overhead_cost: to_f64_result(c.overhead_cost, "overhead cost")?,
+            overhead_cost_exact,
         })
     }
 }
@@ -10984,19 +11791,31 @@ pub struct InventoryValuation {
     #[pyo3(get)]
     total_value: f64,
     #[pyo3(get)]
+    total_value_exact: String,
+    #[pyo3(get)]
     total_quantity: f64,
     #[pyo3(get)]
+    total_quantity_exact: String,
+    #[pyo3(get)]
     average_unit_cost: f64,
+    #[pyo3(get)]
+    average_unit_cost_exact: String,
 }
 
 impl TryFrom<stateset_core::InventoryValuation> for InventoryValuation {
     type Error = PyErr;
 
     fn try_from(v: stateset_core::InventoryValuation) -> PyResult<Self> {
+        let total_value_exact = v.total_value.to_string();
+        let total_quantity_exact = v.total_quantity.to_string();
+        let average_unit_cost_exact = v.average_unit_cost.to_string();
         Ok(Self {
             total_value: to_f64_result(v.total_value, "total value")?,
+            total_value_exact,
             total_quantity: to_f64_result(v.total_quantity, "total quantity")?,
+            total_quantity_exact,
             average_unit_cost: to_f64_result(v.average_unit_cost, "average unit cost")?,
+            average_unit_cost_exact,
         })
     }
 }
@@ -11079,13 +11898,19 @@ impl CostAccountingApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
         let method = cost_method
-            .and_then(|m| match m.to_lowercase().as_str() {
-                "standard" => Some(stateset_core::CostMethod::Standard),
-                "average" => Some(stateset_core::CostMethod::Average),
-                "fifo" => Some(stateset_core::CostMethod::Fifo),
-                "lifo" => Some(stateset_core::CostMethod::Lifo),
-                _ => None,
+            .as_deref()
+            .map(|m| match m.to_lowercase().as_str() {
+                "standard" => Ok(stateset_core::CostMethod::Standard),
+                "average" => Ok(stateset_core::CostMethod::Average),
+                "fifo" => Ok(stateset_core::CostMethod::Fifo),
+                "lifo" => Ok(stateset_core::CostMethod::Lifo),
+                other => Err(unknown_variant(
+                    "cost_method",
+                    other,
+                    &["standard", "average", "fifo", "lifo"],
+                )),
             })
+            .transpose()?
             .unwrap_or(stateset_core::CostMethod::Average);
         let valuation = commerce
             .cost_accounting()
@@ -11121,9 +11946,15 @@ pub struct CreditAccount {
     #[pyo3(get)]
     credit_limit: f64,
     #[pyo3(get)]
+    credit_limit_exact: String,
+    #[pyo3(get)]
     current_balance: f64,
     #[pyo3(get)]
+    current_balance_exact: String,
+    #[pyo3(get)]
     available_credit: f64,
+    #[pyo3(get)]
+    available_credit_exact: String,
     #[pyo3(get)]
     status: String,
     #[pyo3(get)]
@@ -11134,12 +11965,18 @@ impl TryFrom<stateset_core::CreditAccount> for CreditAccount {
     type Error = PyErr;
 
     fn try_from(a: stateset_core::CreditAccount) -> PyResult<Self> {
+        let credit_limit_exact = a.credit_limit.to_string();
+        let current_balance_exact = a.current_balance.to_string();
+        let available_credit_exact = a.available_credit.to_string();
         Ok(Self {
             id: a.id.to_string(),
             customer_id: a.customer_id.to_string(),
             credit_limit: to_f64_result(a.credit_limit, "credit limit")?,
+            credit_limit_exact,
             current_balance: to_f64_result(a.current_balance, "current balance")?,
+            current_balance_exact,
             available_credit: to_f64_result(a.available_credit, "available credit")?,
+            available_credit_exact,
             status: format!("{:?}", a.status),
             payment_terms: a.payment_terms,
         })
@@ -11156,6 +11993,8 @@ pub struct CreditCheckResult {
     #[pyo3(get)]
     available_credit: f64,
     #[pyo3(get)]
+    available_credit_exact: String,
+    #[pyo3(get)]
     requires_approval: bool,
 }
 
@@ -11163,10 +12002,12 @@ impl TryFrom<stateset_core::CreditCheckResult> for CreditCheckResult {
     type Error = PyErr;
 
     fn try_from(r: stateset_core::CreditCheckResult) -> PyResult<Self> {
+        let available_credit_exact = r.available_credit.to_string();
         Ok(Self {
             approved: r.approved,
             reason: r.reason.map(|r| format!("{:?}", r)),
             available_credit: to_f64_result(r.available_credit, "available credit")?,
+            available_credit_exact,
             requires_approval: r.requires_approval,
         })
     }
@@ -11329,6 +12170,8 @@ pub struct BackorderSummary {
     #[pyo3(get)]
     total_quantity: f64,
     #[pyo3(get)]
+    total_quantity_exact: String,
+    #[pyo3(get)]
     critical_count: i32,
     #[pyo3(get)]
     overdue_count: i32,
@@ -11338,9 +12181,11 @@ impl TryFrom<stateset_core::BackorderSummary> for BackorderSummary {
     type Error = PyErr;
 
     fn try_from(s: stateset_core::BackorderSummary) -> PyResult<Self> {
+        let total_quantity_exact = s.total_quantity.to_string();
         Ok(Self {
             total_backorders: s.total_backorders,
             total_quantity: to_f64_result(s.total_quantity, "backorder total quantity")?,
+            total_quantity_exact,
             critical_count: s.critical_count,
             overdue_count: s.overdue_count,
         })
@@ -11374,13 +12219,18 @@ impl BackorderApi {
         let ord_uuid = order_id.parse().map_err(|_| PyValueError::new_err("Invalid order UUID"))?;
         let cust_uuid =
             customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
-        let prio = priority.and_then(|p| match p.to_lowercase().as_str() {
-            "low" => Some(stateset_core::BackorderPriority::Low),
-            "normal" => Some(stateset_core::BackorderPriority::Normal),
-            "high" => Some(stateset_core::BackorderPriority::High),
-            "critical" => Some(stateset_core::BackorderPriority::Critical),
-            _ => None,
-        });
+        let prio = priority
+            .as_deref()
+            .map(|p| match p.to_lowercase().as_str() {
+                "low" => Ok(stateset_core::BackorderPriority::Low),
+                "normal" => Ok(stateset_core::BackorderPriority::Normal),
+                "high" => Ok(stateset_core::BackorderPriority::High),
+                "critical" => Ok(stateset_core::BackorderPriority::Critical),
+                other => {
+                    Err(unknown_variant("priority", other, &["low", "normal", "high", "critical"]))
+                }
+            })
+            .transpose()?;
         let backorder = commerce
             .backorder()
             .create_backorder(stateset_core::CreateBackorder {
@@ -11500,6 +12350,8 @@ pub struct GlAccount {
     #[pyo3(get)]
     current_balance: f64,
     #[pyo3(get)]
+    current_balance_exact: String,
+    #[pyo3(get)]
     status: String,
 }
 
@@ -11507,12 +12359,14 @@ impl TryFrom<stateset_core::GlAccount> for GlAccount {
     type Error = PyErr;
 
     fn try_from(a: stateset_core::GlAccount) -> PyResult<Self> {
+        let current_balance_exact = a.current_balance.to_string();
         Ok(Self {
             id: a.id.to_string(),
             account_number: a.account_number,
             name: a.name,
             account_type: format!("{:?}", a.account_type),
             current_balance: to_f64_result(a.current_balance, "account balance")?,
+            current_balance_exact,
             status: format!("{:?}", a.status),
         })
     }
@@ -11551,7 +12405,11 @@ pub struct TrialBalance {
     #[pyo3(get)]
     total_debits: f64,
     #[pyo3(get)]
+    total_debits_exact: String,
+    #[pyo3(get)]
     total_credits: f64,
+    #[pyo3(get)]
+    total_credits_exact: String,
     #[pyo3(get)]
     is_balanced: bool,
 }
@@ -11560,9 +12418,13 @@ impl TryFrom<stateset_core::TrialBalance> for TrialBalance {
     type Error = PyErr;
 
     fn try_from(t: stateset_core::TrialBalance) -> PyResult<Self> {
+        let total_debits_exact = t.total_debits.to_string();
+        let total_credits_exact = t.total_credits.to_string();
         Ok(Self {
             total_debits: to_f64_result(t.total_debits, "trial balance total debits")?,
+            total_debits_exact,
             total_credits: to_f64_result(t.total_credits, "trial balance total credits")?,
+            total_credits_exact,
             is_balanced: t.is_balanced,
         })
     }
@@ -11597,7 +12459,13 @@ impl GeneralLedgerApi {
             "equity" => stateset_core::AccountType::Equity,
             "revenue" => stateset_core::AccountType::Revenue,
             "expense" => stateset_core::AccountType::Expense,
-            _ => stateset_core::AccountType::Asset,
+            other => {
+                return Err(unknown_variant(
+                    "account_type",
+                    other,
+                    &["asset", "liability", "equity", "revenue", "expense"],
+                ));
+            }
         };
         let account = commerce
             .general_ledger()
@@ -11685,8 +12553,7 @@ impl GeneralLedgerApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let date = as_of_date
-            .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
+        let date = parse_optional_date(as_of_date.as_deref(), "as_of_date")?
             .unwrap_or_else(|| chrono::Utc::now().date_naive());
         let balance = commerce
             .general_ledger()
@@ -13157,6 +14024,8 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Order>()?;
     m.add_class::<OrderItem>()?;
     m.add_class::<CreateOrderItemInput>()?;
+    m.add_class::<CreateInvoiceItemInput>()?;
+    m.add_class::<CreatePurchaseOrderItemInput>()?;
 
     // Products
     m.add_class::<Products>()?;

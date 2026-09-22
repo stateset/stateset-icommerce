@@ -1,6 +1,7 @@
 //! PostgreSQL repository for subscriptions
 
 use super::map_db_error;
+use super::resolve_currency_with_executor;
 use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -666,6 +667,7 @@ impl PgSubscriptionRepository {
         // live plan with a partial item set — silently mispriced for every
         // subscriber. (Mirrors the SQLite backend.)
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
 
         sqlx::query(
             r#"
@@ -695,7 +697,7 @@ impl PgSubscriptionRepository {
         .bind(input.custom_interval_days)
         .bind(input.price)
         .bind(input.setup_fee)
-        .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
+        .bind(currency.as_str())
         .bind(input.trial_days.unwrap_or(0))
         .bind(input.trial_requires_payment_method.unwrap_or(true))
         .bind(input.min_cycles)

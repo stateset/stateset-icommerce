@@ -2,7 +2,8 @@
 
 use super::{
     map_db_error, parse_date_row, parse_datetime_row, parse_decimal_row, parse_enum_row,
-    parse_json_row, parse_uuid_opt_row, parse_uuid_row, with_immediate_transaction,
+    parse_json_row, parse_uuid_opt_row, parse_uuid_row, resolve_currency_in_tx,
+    with_immediate_transaction,
 };
 use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
@@ -229,8 +230,8 @@ impl stateset_core::RevenueRecognitionRepository for SqliteRevenueRecognitionRep
         let now = Utc::now().to_rfc3339();
         let contract_number =
             input.contract_number.clone().unwrap_or_else(generate_revenue_contract_number);
-        let currency = input.currency.unwrap_or_default();
         with_immediate_transaction(&self.pool, |tx| {
+            let currency = resolve_currency_in_tx(input.currency, tx)?;
             tx.execute(
                 "INSERT INTO revenue_contracts (id, contract_number, customer_id, order_id, invoice_id, transaction_price, currency, status, effective_date, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)",

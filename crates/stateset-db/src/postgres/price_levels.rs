@@ -1,6 +1,6 @@
 //! PostgreSQL price level repository implementation
 
-use super::map_db_error;
+use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -96,7 +96,7 @@ impl PgPriceLevelRepository {
     pub async fn create_async(&self, input: CreatePriceLevel) -> Result<PriceLevel> {
         let id = PriceLevelId::new();
         let now = Utc::now();
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
+        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
 
         sqlx::query(
             "INSERT INTO price_levels (id, name, code, description, adjustment_type, adjustment_value, currency, is_active, created_at, updated_at)

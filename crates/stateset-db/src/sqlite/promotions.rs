@@ -17,7 +17,8 @@ use uuid::Uuid;
 
 use super::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
-    parse_enum_row, parse_json_opt_row, parse_uuid_row, with_immediate_transaction,
+    parse_enum_row, parse_json_opt_row, parse_uuid_row, resolve_currency_with_conn,
+    with_immediate_transaction,
 };
 
 /// Parse the currency a usage is recorded in (case-insensitive ISO 4217).
@@ -58,6 +59,7 @@ impl SqlitePromotionRepository {
         let code = input.code.unwrap_or_else(generate_promotion_code);
         let now = Utc::now();
         let starts_at = input.starts_at.unwrap_or(now);
+        let currency = resolve_currency_with_conn(input.currency, &conn)?;
 
         conn.execute(
             "INSERT INTO promotions (
@@ -126,7 +128,7 @@ impl SqlitePromotionRepository {
                     .unwrap_or_default(),
                 serde_json::to_string(&input.eligible_customer_groups.unwrap_or_default())
                     .unwrap_or_default(),
-                input.currency.unwrap_or_default(),
+                currency,
                 input.priority.unwrap_or(0),
                 input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()),
                 now.to_rfc3339(),

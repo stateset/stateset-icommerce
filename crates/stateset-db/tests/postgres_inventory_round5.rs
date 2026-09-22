@@ -377,17 +377,17 @@ async fn postgres_expire_reservations_sweeps_idle_skus_and_keeps_invariant() {
     }
     assert_allocation_invariant(&db, &[id1, id2]).await;
 
-    // Other tests may have stale rows of their own in the shared database,
-    // so count only what lands on our items.
-    let mut total = 0;
+    // Drain the sweep in small batches. The count is deliberately not asserted:
+    // `expire_reservations_async` sweeps the whole table, and this database is
+    // shared, so a suite running alongside this one can sweep our three stale
+    // holds before we do and leave the tally short. What this test actually
+    // cares about is the state of its own rows, which the assertions below
+    // check directly and which hold whichever caller did the sweeping.
     loop {
-        let n = inv.expire_reservations_async(Utc::now(), 2).await.unwrap();
-        total += n;
-        if n < 2 {
+        if inv.expire_reservations_async(Utc::now(), 2).await.unwrap() < 2 {
             break;
         }
     }
-    assert!(total >= 3, "swept at least our three stale holds (got {total})");
     assert_eq!(inv.expire_reservations_async(Utc::now(), 0).await.unwrap(), 0);
 
     assert_eq!(balance(&inv, &sku1).await, (dec!(20), dec!(1), dec!(19)));

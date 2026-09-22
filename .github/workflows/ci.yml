@@ -664,6 +664,22 @@ jobs:
         working-directory: bindings/python
         run: python -m pytest tests/test_cross_binding_vectors.py -v
 
+      - name: Embedded engine examples (Python)
+        # `check_engine_examples.mjs` has supported --python-only since it was
+        # written, and CI only ever ran --js-only, so the Python examples in
+        # the docs were never executed. They pass; nothing was checking.
+        working-directory: .
+        run: node ./scripts/ci/check_engine_examples.mjs --python-only
+
+      - name: Python binding suite
+        # The whole suite, not a hand-picked subset. Until Sep 2026 CI ran
+        # four of thirty-five files, so the strict-input tests (58), the
+        # exact-money tests (15) and the semantic vectors never ran at all --
+        # they existed, passed locally, and guarded nothing. A test that does
+        # not run in CI is documentation.
+        working-directory: bindings/python
+        run: python -m pytest tests -q
+
   postgres:
     name: Postgres Parity (${{ matrix.suite }})
     runs-on: ubuntu-latest

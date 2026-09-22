@@ -1,6 +1,6 @@
 //! PostgreSQL repository for promotions and coupons
 
-use super::map_db_error;
+use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -659,6 +659,7 @@ impl PgPromotionRepository {
         let code = input.code.unwrap_or_else(generate_promotion_code);
         let now = Utc::now();
         let starts_at = input.starts_at.unwrap_or(now);
+        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
 
         sqlx::query(
             r#"
@@ -744,7 +745,7 @@ impl PgPromotionRepository {
             serde_json::to_value(input.eligible_customer_groups.unwrap_or_default())
                 .unwrap_or_default(),
         )
-        .bind(input.currency.unwrap_or(CurrencyCode::USD))
+        .bind(currency)
         .bind(input.priority.unwrap_or(0))
         .bind(input.metadata.as_ref().map(serde_json::to_value).transpose().unwrap_or_default())
         .bind(now)

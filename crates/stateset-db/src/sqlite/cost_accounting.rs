@@ -16,8 +16,8 @@ use uuid::Uuid;
 
 use super::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row,
-    parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, sum_decimal_query,
-    with_immediate_transaction,
+    parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
+    resolve_currency_in_tx, sum_decimal_query, with_immediate_transaction,
 };
 
 /// Explain why a cost-adjustment transition was refused: report the status the
@@ -140,7 +140,11 @@ impl SqliteCostAccountingRepository {
             let material_cost = material_cost.unwrap_or_default();
             let labor_cost = labor_cost.unwrap_or_default();
             let overhead_cost = overhead_cost.unwrap_or_default();
-            let currency = currency.unwrap_or_default();
+            // The UPDATE branch above leaves `currency` as the caller's
+            // `Option`: `COALESCE` means "leave the stored currency alone".
+            // A fresh row has nothing to keep, so an omitted currency takes
+            // the store's configured base currency.
+            let currency = resolve_currency_in_tx(currency, conn)?;
 
             conn.execute(
                 "INSERT INTO item_costs (id, sku, cost_method, standard_cost, average_cost, last_cost,
@@ -1057,6 +1061,11 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn create_adjustment(&self, input: CreateCostAdjustment) -> Result<CostAdjustment> {
+        // Refused here rather than only at apply time: an adjustment carrying a
+        // negative cost is not a pending decision anyone can approve, and it
+        // would sit in the queue looking actionable.
+        Self::validate_sku(&input.sku)?;
+        Self::validate_cost("new cost", input.new_cost)?;
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -2040,6 +2049,29 @@ mod tests {
         let summary = repo.get_variance_summary(from, to).expect("ok");
         // (12-10) * 5 = 10 unfavourable
         assert_eq!(summary, dec!(10));
+    }
+
+    #[test]
+    fn create_adjustment_rejects_a_negative_cost_and_a_blank_sku() {
+        let repo = fresh_repo();
+        let bad = |sku: &str, new_cost| CreateCostAdjustment {
+            sku: sku.into(),
+            adjustment_type: CostAdjustmentType::Revaluation,
+            new_cost,
+            reason: "bad".into(),
+            created_by: None,
+        };
+        for input in [bad("ADJ-NEG", dec!(-1)), bad("   ", dec!(5))] {
+            let err = repo.create_adjustment(input).expect_err("must be refused");
+            assert!(
+                matches!(err, CommerceError::ValidationError(_)),
+                "expected ValidationError, got {err:?}"
+            );
+        }
+        assert!(
+            repo.list_adjustments(CostAdjustmentFilter::default()).expect("list").is_empty(),
+            "a refused adjustment must not be written"
+        );
     }
 
     #[test]

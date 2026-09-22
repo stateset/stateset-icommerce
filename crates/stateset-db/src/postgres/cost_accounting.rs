@@ -1,5 +1,6 @@
 //! PostgreSQL implementation of cost accounting repository
 
+use super::resolve_currency_with_executor;
 use super::{block_on, map_db_error};
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use rust_decimal::Decimal;
@@ -497,7 +498,11 @@ impl PgCostAccountingRepository {
             let material_cost = input.material_cost.unwrap_or_default();
             let labor_cost = input.labor_cost.unwrap_or_default();
             let overhead_cost = input.overhead_cost.unwrap_or_default();
-            let currency = input.currency.unwrap_or(CurrencyCode::USD);
+            // The UPDATE branch above passes the caller's `Option` straight
+            // through: `COALESCE` means "leave the stored currency alone". A
+            // fresh row has nothing to keep, so an omitted currency takes the
+            // store's configured base currency.
+            let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
 
             sqlx::query(
                 "INSERT INTO item_costs (id, sku, cost_method, standard_cost, average_cost, last_cost,
@@ -1074,6 +1079,11 @@ impl PgCostAccountingRepository {
         &self,
         input: CreateCostAdjustment,
     ) -> Result<CostAdjustment> {
+        // Refused here rather than only at apply time: an adjustment carrying a
+        // negative cost is not a pending decision anyone can approve, and it
+        // would sit in the queue looking actionable.
+        Self::validate_sku(&input.sku)?;
+        Self::validate_cost("new cost", input.new_cost)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let adjustment_number = generate_cost_adjustment_number();

@@ -1,6 +1,6 @@
 //! PostgreSQL vendor credit repository implementation
 
-use super::map_db_error;
+use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -156,7 +156,7 @@ impl PgVendorCreditRepository {
         let id_uuid = Uuid::from(id);
         let now = Utc::now();
         let number = format!("VC-{}", &id_uuid.to_string()[..8]);
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
+        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
 
         sqlx::query(
             "INSERT INTO vendor_credits (id, number, supplier_id, vendor_return_id, amount, remaining, currency, status, memo, created_at, updated_at)

@@ -2,6 +2,7 @@
 
 use super::kernel_outbox::append_kernel_event_tx;
 use super::map_db_error;
+use super::resolve_currency_with_executor;
 use crate::KernelOutboxEvent;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
@@ -649,6 +650,12 @@ impl PgPaymentRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
         let payment_number = generate_payment_number();
+        // Currency resolution, the over-capture check and the INSERT share one
+        // transaction; the guard locks the order row so concurrent captures
+        // serialize. The outbox event is built from the resolved currency so
+        // the event and the row always agree.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
         let outbox_event = KernelOutboxEvent::domain(
             "payments.created.v1",
             "payment",
@@ -658,16 +665,11 @@ impl PgPaymentRepository {
                 "payment_number": payment_number,
                 "order_id": input.order_id.map(|value| value.to_string()),
                 "amount": input.amount.to_string(),
-                "currency": input.currency.unwrap_or_default().as_str(),
+                "currency": currency.as_str(),
                 "status": PaymentTransactionStatus::Pending.to_string(),
             }),
             input.idempotency_key.clone(),
         );
-
-        // Over-capture check and INSERT share one transaction; the guard locks
-        // the order row so concurrent captures serialize.
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         if let Some(order_id) = input.order_id {
             check_order_capture_capacity_pg(
                 tx.as_mut(),
@@ -1625,6 +1627,7 @@ impl PgPaymentRepository {
             let id = Uuid::new_v4();
             let now = Utc::now();
             let payment_number = generate_payment_number();
+            let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
 
             if let Some(order_id) = input.order_id {
                 check_order_capture_capacity_pg(
@@ -1632,7 +1635,7 @@ impl PgPaymentRepository {
                     order_id.into_uuid(),
                     None,
                     input.amount,
-                    input.currency.unwrap_or(CurrencyCode::USD),
+                    currency,
                 )
                 .await?;
             }
@@ -1652,7 +1655,7 @@ impl PgPaymentRepository {
             .bind(PaymentTransactionStatus::Pending.to_string())
             .bind(input.payment_method.to_string())
             .bind(input.amount)
-            .bind(input.currency.unwrap_or(CurrencyCode::USD))
+            .bind(currency)
             .bind(Decimal::ZERO)
             .bind(&input.external_id)
             .bind(&input.idempotency_key)
@@ -1681,7 +1684,7 @@ impl PgPaymentRepository {
                     "payment_number": payment_number,
                     "order_id": input.order_id.map(|value| value.to_string()),
                     "amount": input.amount.to_string(),
-                    "currency": input.currency.unwrap_or_default().as_str(),
+                    "currency": currency.as_str(),
                     "status": PaymentTransactionStatus::Pending.to_string(),
                 }),
                 input.idempotency_key.clone(),
@@ -1697,7 +1700,7 @@ impl PgPaymentRepository {
                 status: PaymentTransactionStatus::Pending,
                 payment_method: input.payment_method,
                 amount: input.amount,
-                currency: input.currency.unwrap_or(CurrencyCode::USD),
+                currency,
                 amount_refunded: Decimal::ZERO,
                 external_id: input.external_id,
                 idempotency_key: input.idempotency_key,

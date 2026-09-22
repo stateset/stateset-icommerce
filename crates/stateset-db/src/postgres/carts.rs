@@ -1,5 +1,6 @@
 //! PostgreSQL implementation of cart/checkout repository
 
+use super::resolve_currency_with_executor;
 use super::{PgOrderRepository, PgPromotionRepository, map_db_error};
 use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
@@ -549,7 +550,6 @@ impl PgCartRepository {
         let id = Uuid::new_v4();
         let cart_number = Self::generate_cart_number();
         let now = Utc::now();
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
         let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 
         let shipping_address_json =
@@ -559,6 +559,7 @@ impl PgCartRepository {
         let metadata_json = input.metadata.clone();
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
 
         sqlx::query(
             r#"INSERT INTO carts (
@@ -2036,7 +2037,7 @@ impl PgCartRepository {
             let id = Uuid::new_v4();
             let cart_number = Self::generate_cart_number();
             let now = Utc::now();
-            let currency = input.currency.unwrap_or(CurrencyCode::USD);
+            let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
             let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 
             let shipping_address_json = input

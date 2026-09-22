@@ -1286,11 +1286,14 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         // `unapplied_amount` as the audit record of what was never applied (as
         // a cancelled vendor credit keeps `remaining`), so "unapplied" also
         // gates on status.
-        let has_unapplied = filter.has_unapplied.unwrap_or(false);
+        // `Some(false)` means "only memos with nothing left to apply", not "no
+        // filter" -- Postgres reads it that way, and `unwrap_or(false)` here
+        // made the two backends answer the same filter differently.
+        let has_unapplied = filter.has_unapplied;
 
         sql.push_str(" ORDER BY issue_date DESC");
 
-        if !has_unapplied {
+        if has_unapplied.is_none() {
             if let Some(limit) = filter.limit {
                 sql.push_str(" LIMIT ?");
                 params_vec.push(Value::Integer(i64::from(limit)));
@@ -1302,9 +1305,11 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             .query_map(params_from_iter(params_vec), Self::map_credit_memo_row)
             .map_err(map_db_error)?;
         let mut memos = rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)?;
-        if has_unapplied {
+        if let Some(want_unapplied) = has_unapplied {
             memos.retain(|memo| {
-                memo.unapplied_amount > Decimal::ZERO && memo.status != CreditMemoStatus::Voided
+                let unapplied = memo.unapplied_amount > Decimal::ZERO
+                    && memo.status != CreditMemoStatus::Voided;
+                unapplied == want_unapplied
             });
             if let Some(limit) = filter.limit {
                 memos.truncate(limit as usize);
@@ -2324,6 +2329,45 @@ mod tests {
         assert_eq!(got.len(), 1, "only one memo has an unapplied balance");
         assert_eq!(got[0].id, m3.id);
         assert_eq!(got[0].unapplied_amount, dec!(0.005));
+    }
+
+    #[test]
+    fn has_unapplied_false_selects_the_memos_with_nothing_left_to_apply() {
+        // Postgres reads `Some(false)` as a filter; SQLite used to read it as
+        // "no filter" via unwrap_or(false), so the two backends answered the
+        // same query differently.
+        let repo = fresh_repo();
+        let cust = Uuid::new_v4();
+        seed_customer_if_missing(&repo, cust);
+        let open = make_memo(&repo, cust, dec!(10), CreditMemoReason::ReturnedGoods);
+        let spent = make_memo(&repo, cust, dec!(20), CreditMemoReason::ReturnedGoods);
+        {
+            let conn = repo.pool.get().expect("conn");
+            conn.execute(
+                "UPDATE ar_credit_memos SET unapplied_amount = '0' WHERE id = ?1",
+                params![spent.id.to_string()],
+            )
+            .expect("update memo");
+        }
+
+        let without = repo
+            .list_credit_memos(CreditMemoFilter {
+                customer_id: Some(cust),
+                has_unapplied: Some(false),
+                ..Default::default()
+            })
+            .expect("list");
+        assert_eq!(
+            without.iter().map(|m| m.id).collect::<Vec<_>>(),
+            vec![spent.id],
+            "Some(false) must select only memos with nothing left to apply"
+        );
+
+        let unfiltered = repo
+            .list_credit_memos(CreditMemoFilter { customer_id: Some(cust), ..Default::default() })
+            .expect("list");
+        assert_eq!(unfiltered.len(), 2, "None still means no filter");
+        let _ = open;
     }
 
     #[test]
