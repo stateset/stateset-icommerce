@@ -1,0 +1,128 @@
+"""The Python binding against the shared semantic corpus.
+
+`bindings/test-vectors/semantics-v1.json` pins the MEANING of money across
+every binding: currency scale, the exact decimal a value renders to, the
+published tax tables, and which inputs must be refused. The Rust test at
+`crates/stateset-embedded/tests/semantics_vectors.rs` keeps that file honest
+against the engine, so conforming to it means conforming to the engine.
+
+This file asserts the categories the Python surface can reach, and declares
+the ones it cannot. The declaration is enforced: adding a category to the
+corpus, or exposing one of these on the binding, fails this test until
+someone decides what to do about it. A silent skip would let the corpus grow
+while coverage quietly stood still.
+"""
+
+import json
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+
+from stateset_embedded import Commerce, CreateOrderItemInput, TaxApi
+
+CORPUS = Path(__file__).resolve().parents[2] / "test-vectors" / "semantics-v1.json"
+
+# Categories this binding cannot assert yet, with the reason. Keep this honest:
+# it is compared against the corpus, so it cannot drift out of date.
+NOT_REACHABLE = {
+    "currency_decimals": "the binding exposes no currency-scale accessor",
+    "decimal_render": "needs the *_exact money surface, which lands with the exact-money change",
+}
+
+
+@pytest.fixture(scope="module")
+def corpus():
+    doc = json.loads(CORPUS.read_text())
+    assert doc["version"] == 1, "corpus version must be 1"
+    return doc
+
+
+@pytest.fixture
+def commerce():
+    return Commerce(":memory:")
+
+
+def rows(corpus, category):
+    return corpus["categories"][category]["rows"]
+
+
+def test_every_corpus_category_is_either_asserted_or_declared_unreachable(corpus):
+    """A new category must not slip in unnoticed."""
+    asserted = {"rejected_inputs", "accepted_inputs", "canadian_tax_rates"}
+    declared = asserted | set(NOT_REACHABLE)
+    present = set(corpus["categories"])
+    assert present == declared, (
+        f"corpus categories {sorted(present)} do not match what this binding "
+        f"accounts for {sorted(declared)} — assert the new one or declare why not"
+    )
+
+
+def test_canadian_tax_rates_match_the_corpus(corpus):
+    """The same table the Rust test pins, read through the Python surface.
+
+    Quebec's rates were ten times too large until Sep 2026 and nothing pinned
+    them. Reintroducing that bug fails this test in every binding at once.
+    """
+    for row in rows(corpus, "canadian_tax_rates"):
+        info = TaxApi.get_canadian_tax_info(row["province"])
+        assert info is not None, f"{row['province']} is in the table"
+        for field in ("gst", "pst", "hst", "qst", "total"):
+            want = row[field]
+            got = getattr(info, f"{field}_rate" if field != "total" else "total_rate")
+            if want is None:
+                assert got is None, f"{row['id']}: {field} should be absent, got {got}"
+            else:
+                assert got is not None, f"{row['id']}: {field} missing"
+                assert Decimal(str(got)) == Decimal(want), (
+                    f"{row['id']}: {field} is {got}, corpus says {want}"
+                )
+
+
+def _customer(commerce):
+    return commerce.customers.create(
+        email="vectors@example.com", first_name="V", last_name="Ectors"
+    )
+
+
+def test_rejected_currencies_are_refused(commerce, corpus):
+    customer = _customer(commerce)
+    for row in rows(corpus, "rejected_inputs"):
+        if row["kind"] != "currency":
+            continue
+        with pytest.raises(ValueError) as caught:
+            commerce.orders.create(customer.id, [], currency=row["value"])
+        assert "currency" in str(caught.value).lower(), (
+            f"{row['id']}: the error should name the field, got {caught.value!r}"
+        )
+
+
+def test_rejected_uuids_are_refused(commerce, corpus):
+    for row in rows(corpus, "rejected_inputs"):
+        if row["kind"] != "uuid":
+            continue
+        with pytest.raises(ValueError):
+            commerce.orders.create(row["value"], [])
+
+
+def test_accepted_currencies_still_work(commerce, corpus):
+    """Tightening input parsing must not narrow what already worked."""
+    customer = _customer(commerce)
+    for row in rows(corpus, "accepted_inputs"):
+        if row["kind"] != "currency":
+            continue
+        order = commerce.orders.create(
+            customer.id,
+            [CreateOrderItemInput("SKU-1", "Widget", 1, 10.0)],
+            currency=row["value"],
+        )
+        assert order.id, f"{row['id']}: {row['value']!r} must stay acceptable"
+
+
+def test_a_rejected_input_writes_nothing(commerce, corpus):
+    """Refusal is only meaningful if the record is not written anyway."""
+    customer = _customer(commerce)
+    before = len(commerce.orders.list())
+    with pytest.raises(ValueError):
+        commerce.orders.create(customer.id, [], currency="EURO")
+    assert len(commerce.orders.list()) == before

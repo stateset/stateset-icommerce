@@ -131,3 +131,36 @@ The domain prefix used by `payload_plain_hash` is hardcoded in each binding
 to match `crates/stateset-crypto/src/lib.rs::domain::PAYLOAD_PLAIN`
 (`b"VES_PAYLOAD_PLAIN_V1"`). If Rust ever changes a domain prefix the
 corresponding bindings must update in lockstep.
+
+## `semantics-v1.json` — what money MEANS
+
+`v1.json` pins byte-identical hashing. `semantics-v1.json` pins the meaning
+of money: currency scale, the exact decimal a value renders to, the published
+tax tables, and which inputs must be refused (and which must stay accepted).
+
+It exists because every defect it covers shipped past its absence. Node
+returned exact decimals while Python returned floats. The engine said every
+tax rate is a fraction; Quebec's was ten times too large and reported a
+149.75% total. The WASM binding carries its own `Money(i64)` with a hardcoded
+`SCALE = 100`, so a zero-decimal currency like JPY is mis-scaled. Each was a
+stated contract with no failing check behind it.
+
+Every category carries a `why` naming the defect its absence allowed. The
+Rust test at `crates/stateset-embedded/tests/semantics_vectors.rs` asserts
+the FILE matches the engine, so the corpus cannot drift into a lie that every
+binding then conforms to — it caught two wrong assumptions while being
+written (Ontario charges no separate GST, and `0.1 + 0.2` renders `"0.3"`,
+not `"0.30"`, because addition keeps the widest operand's scale).
+
+### Adopting it in a binding
+
+Assert the categories your surface can reach, and **declare the ones it
+cannot, with a reason**. Compare that declaration against the corpus so a new
+category cannot slip in unnoticed and a silent skip cannot hide standing
+still. `bindings/python/tests/test_semantics_vectors.py` is the reference:
+its declaration check is what revealed that the whole Tax API was registered
+in the native module but never exported from the Python package.
+
+Current consumers: Rust (ground truth) and Python. Node's strict-input
+surface lands with the phase-B binding round; Go, .NET, Swift, Java, Kotlin,
+PHP and WASM have not adopted it yet.
