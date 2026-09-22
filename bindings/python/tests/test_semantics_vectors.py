@@ -27,7 +27,6 @@ CORPUS = Path(__file__).resolve().parents[2] / "test-vectors" / "semantics-v1.js
 # it is compared against the corpus, so it cannot drift out of date.
 NOT_REACHABLE = {
     "currency_decimals": "the binding exposes no currency-scale accessor",
-    "decimal_render": "needs the *_exact money surface, which lands with the exact-money change",
 }
 
 
@@ -49,7 +48,13 @@ def rows(corpus, category):
 
 def test_every_corpus_category_is_either_asserted_or_declared_unreachable(corpus):
     """A new category must not slip in unnoticed."""
-    asserted = {"rejected_inputs", "accepted_inputs", "canadian_tax_rates"}
+    asserted = {
+        "rejected_inputs",
+        "accepted_inputs",
+        "canadian_tax_rates",
+        "decimal_render",
+        "money_scale_enforced",
+    }
     declared = asserted | set(NOT_REACHABLE)
     present = set(corpus["categories"])
     assert present == declared, (
@@ -126,3 +131,53 @@ def test_a_rejected_input_writes_nothing(commerce, corpus):
     with pytest.raises(ValueError):
         commerce.orders.create(customer.id, [], currency="EURO")
     assert len(commerce.orders.list()) == before
+
+
+def test_decimal_render_survives_the_boundary(commerce, corpus):
+    """The exact strings the corpus pins must come back intact.
+
+    This is the category a float-based binding cannot satisfy: the value, the
+    scale, or both are lost on the way out. Python returned floats for 84
+    money fields until Sep 2026.
+    """
+    customer = _customer(commerce)
+    for row in rows(corpus, "decimal_render"):
+        if row["op"] != "add" or not row["money_scale_ok"]:
+            # Rows marked arithmetic-only exceed what the currency permits as
+            # an amount; the engine refuses them on input, correctly, and the
+            # Rust test covers their arithmetic.
+            continue
+        # Two order lines at unit quantity, so the engine's own arithmetic
+        # produces the total a caller reads back.
+        items = [
+            CreateOrderItemInput(f"SKU-{i}", f"line-{i}", 1, float(operand))
+            for i, operand in enumerate(row["operands"])
+        ]
+        order = commerce.orders.create(customer.id, items)
+        want = sum((Decimal(o) for o in row["operands"]), Decimal(0))
+        assert Decimal(order.total_amount_exact) == want, (
+            f"{row['id']}: total_amount_exact is {order.total_amount_exact}, want {want}"
+        )
+
+
+def test_money_scale_is_enforced_per_currency(commerce, corpus):
+    """An amount with more decimal places than its currency permits is refused.
+
+    A binding that hardcodes two decimal places cannot express this: it takes
+    the JPY fraction and scales it wrongly. Only USD rows run here, because
+    orders in this fixture are denominated in the store default.
+    """
+    customer = _customer(commerce)
+    for row in rows(corpus, "money_scale_enforced"):
+        if row["currency"] != "USD":
+            continue
+        items = [CreateOrderItemInput("SKU-1", "Widget", 1, float(row["amount"]))]
+        if row["must_reject"]:
+            with pytest.raises(RuntimeError) as caught:
+                commerce.orders.create(customer.id, items)
+            assert "decimal places" in str(caught.value), (
+                f"{row['id']}: the error should say why, got {caught.value!r}"
+            )
+        else:
+            order = commerce.orders.create(customer.id, items)
+            assert Decimal(order.total_amount_exact) == Decimal(row["amount"])

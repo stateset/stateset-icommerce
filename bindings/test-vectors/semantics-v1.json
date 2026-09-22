@@ -48,7 +48,7 @@
       ]
     },
     "decimal_render": {
-      "why": "Money crosses the boundary as an exact decimal STRING. A binding that routes it through a float cannot reproduce these: it loses the value, the scale, or both. The Python wheel returned floats for 84 money fields until Sep 2026. Scale is part of the contract: addition keeps the widest operand's scale and multiplication sums them, so a binding that routes through a float cannot reproduce these strings even when the value happens to survive.",
+      "why": "Money crosses the boundary as an exact decimal STRING. A binding that routes it through a float cannot reproduce these: it loses the value, the scale, or both. The Python wheel returned floats for 84 money fields until Sep 2026. Scale is part of the contract: addition keeps the widest operand's scale and multiplication sums them, so a binding that routes through a float cannot reproduce these strings even when the value happens to survive. Rows are raw decimal arithmetic. `money_scale_ok` marks the ones that are also valid as a USD AMOUNT: the engine refuses an input with more decimal places than the currency allows, which is the rule a binding with a hardcoded scale cannot express. Binding consumers should assert only the money-valid rows through a money path.",
       "rows": [
         {
           "id": "two-tenths-plus-one",
@@ -57,7 +57,8 @@
             "0.2"
           ],
           "op": "add",
-          "expected": "0.3"
+          "expected": "0.3",
+          "money_scale_ok": true
         },
         {
           "id": "keeps-cent-scale",
@@ -66,7 +67,8 @@
             "0.83"
           ],
           "op": "add",
-          "expected": "10.83"
+          "expected": "10.83",
+          "money_scale_ok": true
         },
         {
           "id": "non-representable-price",
@@ -75,7 +77,8 @@
             "0.00"
           ],
           "op": "add",
-          "expected": "19.99"
+          "expected": "19.99",
+          "money_scale_ok": true
         },
         {
           "id": "sub-cent-survives",
@@ -84,7 +87,8 @@
             "0.000"
           ],
           "op": "add",
-          "expected": "0.005"
+          "expected": "0.005",
+          "money_scale_ok": false
         },
         {
           "id": "quantity-times-price",
@@ -93,7 +97,8 @@
             "2"
           ],
           "op": "mul",
-          "expected": "39.98"
+          "expected": "39.98",
+          "money_scale_ok": true
         },
         {
           "id": "tax-rate-applied",
@@ -102,7 +107,8 @@
             "0.09975"
           ],
           "op": "mul",
-          "expected": "9.9750000"
+          "expected": "9.9750000",
+          "money_scale_ok": false
         },
         {
           "id": "thirds-do-not-round-early",
@@ -111,7 +117,8 @@
             "3"
           ],
           "op": "mul",
-          "expected": "0.21"
+          "expected": "0.21",
+          "money_scale_ok": true
         }
       ]
     },
@@ -226,6 +233,46 @@
           "kind": "currency",
           "value": "GBP",
           "normalizes_to": "GBP"
+        }
+      ]
+    },
+    "money_scale_enforced": {
+      "why": "The engine refuses an amount with more decimal places than its currency permits: 0.005 is not a USD amount, and 0.5 is not a JPY one. A binding that hardcodes two decimal places cannot express this -- it accepts the JPY value and scales it wrongly. The WASM binding does exactly that (Money(i64) with SCALE = 100).",
+      "rows": [
+        {
+          "id": "usd-sub-cent",
+          "currency": "USD",
+          "amount": "0.005",
+          "decimals": 2,
+          "must_reject": true
+        },
+        {
+          "id": "usd-three-places",
+          "currency": "USD",
+          "amount": "1.001",
+          "decimals": 2,
+          "must_reject": true
+        },
+        {
+          "id": "usd-two-places-ok",
+          "currency": "USD",
+          "amount": "1.99",
+          "decimals": 2,
+          "must_reject": false
+        },
+        {
+          "id": "jpy-fraction",
+          "currency": "JPY",
+          "amount": "0.5",
+          "decimals": 0,
+          "must_reject": true
+        },
+        {
+          "id": "jpy-whole-ok",
+          "currency": "JPY",
+          "amount": "1000",
+          "decimals": 0,
+          "must_reject": false
         }
       ]
     }

@@ -146,3 +146,32 @@ fn accepted_inputs_still_parse_and_normalize() {
         }
     }
 }
+
+#[test]
+fn money_scale_enforcement_matches_the_currency() {
+    // The engine's rule is arithmetic on the currency's decimal places, so the
+    // corpus can be checked against it directly: an amount is acceptable when
+    // its scale fits what the currency permits.
+    for row in rows("money_scale_enforced") {
+        let id = row["id"].as_str().expect("id");
+        let code = row["currency"].as_str().expect("currency");
+        let amount = row["amount"].as_str().expect("amount");
+        let must_reject = row["must_reject"].as_bool().expect("must_reject");
+
+        let currency =
+            CurrencyCode::from_str(code).unwrap_or_else(|_| panic!("{id}: {code} parses"));
+        let declared = u32::from(currency.decimal_places());
+        assert_eq!(
+            declared,
+            u32::try_from(row["decimals"].as_u64().expect("decimals")).expect("u32"),
+            "{id}: the corpus disagrees with the engine on {code} scale"
+        );
+
+        let over_scale = dec(amount).scale() > declared;
+        assert_eq!(
+            over_scale, must_reject,
+            "{id}: {amount} in {code} (scale {declared}) -- corpus says \
+             must_reject={must_reject}, the currency rule says {over_scale}"
+        );
+    }
+}
