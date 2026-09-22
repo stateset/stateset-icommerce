@@ -353,20 +353,8 @@
   ],
   "totalAuditedClasses": 32,
   "totalAuditedMethods": 401,
-  "mappedAuditedMethods": 390,
-  "uncoveredAuditedMethods": [
-    "Backorders.allocateBackorder",
-    "Backorders.autoAllocateInventory",
-    "Backorders.confirmAllocation",
-    "Backorders.expireAllocations",
-    "Backorders.fulfillBackorder",
-    "Backorders.getAllocations",
-    "Backorders.getBackordersForCustomer",
-    "Backorders.getFulfillmentHistory",
-    "Backorders.getSkuSummary",
-    "Backorders.releaseAllocation",
-    "Backorders.updateBackorder"
-  ],
+  "mappedAuditedMethods": 401,
+  "uncoveredAuditedMethods": [],
   "staleAuditedMethodMappings": [],
   "invalidAuditedToolReferences": [],
   "auditedClasses": [
@@ -397,20 +385,8 @@
     {
       "className": "Backorders",
       "methodCount": 21,
-      "mappedMethodCount": 10,
-      "uncoveredMethods": [
-        "allocateBackorder",
-        "autoAllocateInventory",
-        "confirmAllocation",
-        "expireAllocations",
-        "fulfillBackorder",
-        "getAllocations",
-        "getBackordersForCustomer",
-        "getFulfillmentHistory",
-        "getSkuSummary",
-        "releaseAllocation",
-        "updateBackorder"
-      ],
+      "mappedMethodCount": 21,
+      "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
@@ -639,5 +615,5 @@
       "invalidToolReferences": []
     }
   ],
-  "fullyCovered": false
+  "fullyCovered": true
 }

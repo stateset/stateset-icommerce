@@ -20,8 +20,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | Mapped getters | 68 |
 | Audited classes | 32 |
 | Audited methods | 401 |
-| Mapped audited methods | 390 |
-| Fully covered | no |
+| Mapped audited methods | 401 |
+| Fully covered | yes |
 
 ## Commerce Getter Coverage
 
@@ -103,7 +103,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `AccountsPayable` | 12 | 12 | 0 | 0 | 0 |
 | `AccountsReceivable` | 8 | 8 | 0 | 0 | 0 |
 | `Analytics` | 14 | 14 | 0 | 0 | 0 |
-| `Backorders` | 21 | 10 | 11 | 0 | 0 |
+| `Backorders` | 21 | 21 | 0 | 0 | 0 |
 | `Bom` | 7 | 7 | 0 | 0 | 0 |
 | `Carts` | 33 | 33 | 0 | 0 | 0 |
 | `CostAccounting` | 5 | 5 | 0 | 0 | 0 |
@@ -143,17 +143,7 @@ None.
 
 ## Uncovered Audited Methods
 
-- `Backorders.allocateBackorder`
-- `Backorders.autoAllocateInventory`
-- `Backorders.confirmAllocation`
-- `Backorders.expireAllocations`
-- `Backorders.fulfillBackorder`
-- `Backorders.getAllocations`
-- `Backorders.getBackordersForCustomer`
-- `Backorders.getFulfillmentHistory`
-- `Backorders.getSkuSummary`
-- `Backorders.releaseAllocation`
-- `Backorders.updateBackorder`
+None.
 
 ## Stale Audited Method Mappings
 

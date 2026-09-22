@@ -434,6 +434,17 @@ export const TOOL_PERMISSIONS = {
   list_backorders_for_sku: 'read',
   list_overdue_backorders: 'read',
   get_backorder_summary: 'read',
+  auto_allocate_inventory: 'write',
+  allocate_backorder: 'write',
+  get_backorder_allocations: 'read',
+  confirm_backorder_allocation: 'write',
+  release_backorder_allocation: 'write',
+  expire_backorder_allocations: 'write',
+  fulfill_backorder: 'write',
+  get_backorder_fulfillment_history: 'read',
+  list_backorders_for_customer: 'read',
+  get_sku_backorder_summary: 'read',
+  update_backorder: 'write',
   count_pending_backorders: 'read',
 
   // General Ledger
