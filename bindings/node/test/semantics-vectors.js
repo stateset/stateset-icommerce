@@ -121,3 +121,33 @@ test('money scale is enforced per currency', async () => {
     }
   }
 });
+
+test('decimal_render multiplication survives the boundary', async () => {
+  const commerce = new Commerce(':memory:');
+  const customer = await customerFor(commerce);
+
+  for (const row of rows('decimal_render')) {
+    if (row.op !== 'mul' || !row.money_scale_ok) continue;
+    // A quantity times a price is a different path from a sum. 19.99 x 2 is
+    // the classic case: the price has no exact binary representation, so a
+    // binding that multiplies in floating point lands near 39.98, not on it.
+    const [price, quantity] = row.operands;
+    const order = await commerce.orders.create({
+      customerId: customer.id,
+      items: [
+        {
+          sku: 'SKU-1',
+          name: 'Widget',
+          quantity: Number(quantity),
+          unitPrice: Number(price),
+          unitPriceExact: price,
+        },
+      ],
+    });
+    assert.equal(
+      order.totalAmountExact,
+      row.expected,
+      `${row.id}: ${quantity} x ${price} came back as ${order.totalAmountExact}`,
+    );
+  }
+});

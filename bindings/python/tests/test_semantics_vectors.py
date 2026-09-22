@@ -181,3 +181,23 @@ def test_money_scale_is_enforced_per_currency(commerce, corpus):
         else:
             order = commerce.orders.create(customer.id, items)
             assert Decimal(order.total_amount_exact) == Decimal(row["amount"])
+
+
+def test_decimal_render_multiplication_survives_the_boundary(commerce, corpus):
+    """A quantity times a price, which is a different path from a sum.
+
+    `19.99 x 2` is the classic case: the price has no exact binary
+    representation, so a binding that multiplies in floating point lands near
+    39.98 rather than on it.
+    """
+    customer = _customer(commerce)
+    for row in rows(corpus, "decimal_render"):
+        if row["op"] != "mul" or not row["money_scale_ok"]:
+            continue
+        price, quantity = row["operands"]
+        items = [CreateOrderItemInput("SKU-1", "Widget", int(quantity), float(price))]
+        order = commerce.orders.create(customer.id, items)
+        assert Decimal(order.total_amount_exact) == Decimal(row["expected"]), (
+            f"{row['id']}: {quantity} x {price} came back as "
+            f"{order.total_amount_exact}, want {row['expected']}"
+        )
