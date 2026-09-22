@@ -130,6 +130,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`AgentWalletProofInput`](#agentwalletproofinput)
   - [`AgentWalletProofType`](#agentwalletprooftype)
   - [`AgentWalletProofTypeInput`](#agentwalletprooftypeinput)
+  - [`AllocateBackorderInput`](#allocatebackorderinput)
   - [`AnalyticsGranularity`](#analyticsgranularity)
   - [`AnalyticsPeriod`](#analyticsperiod)
   - [`AnalyticsQueryInput`](#analyticsqueryinput)
@@ -142,7 +143,12 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`ArAgingSummaryOutput`](#aragingsummaryoutput)
   - [`AssetAmountWire`](#assetamountwire)
   - [`AssetDisposalOutput`](#assetdisposaloutput)
+  - [`BackorderAllocationOutput`](#backorderallocationoutput)
+  - [`BackorderAllocationStatus`](#backorderallocationstatus)
   - [`BackorderFilterInput`](#backorderfilterinput)
+  - [`BackorderFulfillmentOutput`](#backorderfulfillmentoutput)
+  - [`BackorderFulfillmentSource`](#backorderfulfillmentsource)
+  - [`BackorderFulfillmentSourceInput`](#backorderfulfillmentsourceinput)
   - [`BackorderOutput`](#backorderoutput)
   - [`BackorderPriority`](#backorderpriority)
   - [`BackorderPriorityFilter`](#backorderpriorityfilter)
@@ -382,6 +388,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`FraudRuleOutput`](#fraudruleoutput)
   - [`FraudSignalOutput`](#fraudsignaloutput)
   - [`FraudSignalType`](#fraudsignaltype)
+  - [`FulfillBackorderInput`](#fulfillbackorderinput)
   - [`FulfillmentMetricsOutput`](#fulfillmentmetricsoutput)
   - [`FulfillmentStatus`](#fulfillmentstatus)
   - [`FulfillmentType`](#fulfillmenttype)
@@ -669,6 +676,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`ShippingZoneFilterInput`](#shippingzonefilterinput)
   - [`ShippingZoneOutput`](#shippingzoneoutput)
   - [`SkipBillingCycleInput`](#skipbillingcycleinput)
+  - [`SkuBackorderSummaryOutput`](#skubackordersummaryoutput)
   - [`StockLevelOutput`](#stockleveloutput)
   - [`StockPolicy`](#stockpolicy)
   - [`StockSnapshotFilterInput`](#stocksnapshotfilterinput)
@@ -740,6 +748,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`UnitOfMeasureFilterInput`](#unitofmeasurefilterinput)
   - [`UnitOfMeasureOutput`](#unitofmeasureoutput)
   - [`UpdateAgentIdentityInput`](#updateagentidentityinput)
+  - [`UpdateBackorderInput`](#updatebackorderinput)
   - [`UpdateCartInput`](#updatecartinput)
   - [`UpdateCartItemInput`](#updatecartiteminput)
   - [`UpdateChannelInput`](#updatechannelinput)
@@ -3315,6 +3324,76 @@ Class `Backorders`. Also available as `commerce.backorders`.
 
   Count pending backorders
 
+- **`autoAllocateInventory(sku: string): Promise<Array<BackorderAllocationOutput>>`**
+
+  Allocate available inventory to this SKU's open backorders, in priority
+  order (critical first, then oldest first), each up to what is still
+  available at its source location.
+
+  Returns the allocations created, which is empty when nothing is
+  available or no backorder is open. Call it after stock arrives.
+
+  Types: [`BackorderAllocationOutput`](#backorderallocationoutput)
+
+- **`allocateBackorder(input: AllocateBackorderInput): Promise<BackorderAllocationOutput>`**
+
+  Reserve a specific quantity of stock against one backorder.
+
+  Types: [`AllocateBackorderInput`](#allocatebackorderinput), [`BackorderAllocationOutput`](#backorderallocationoutput)
+
+- **`getAllocations(backorderId: string): Promise<Array<BackorderAllocationOutput>>`**
+
+  List the allocations recorded against one backorder.
+
+  Types: [`BackorderAllocationOutput`](#backorderallocationoutput)
+
+- **`confirmAllocation(id: string): Promise<BackorderAllocationOutput>`**
+
+  Confirm a reserved allocation, committing the stock to the backorder.
+
+  Types: [`BackorderAllocationOutput`](#backorderallocationoutput)
+
+- **`releaseAllocation(id: string): Promise<BackorderAllocationOutput>`**
+
+  Release a reserved allocation, returning the stock to available.
+
+  Types: [`BackorderAllocationOutput`](#backorderallocationoutput)
+
+- **`expireAllocations(): Promise<number>`**
+
+  Expire every allocation whose hold has lapsed, returning how many were
+  swept. Without this the stock a lapsed allocation holds is never freed.
+
+- **`fulfillBackorder(input: FulfillBackorderInput): Promise<BackorderOutput>`**
+
+  Record a fulfilment against a backorder, drawing on the named source.
+
+  Types: [`FulfillBackorderInput`](#fulfillbackorderinput), [`BackorderOutput`](#backorderoutput)
+
+- **`getFulfillmentHistory(backorderId: string): Promise<Array<BackorderFulfillmentOutput>>`**
+
+  The fulfilment history recorded against one backorder.
+
+  Types: [`BackorderFulfillmentOutput`](#backorderfulfillmentoutput)
+
+- **`getBackordersForCustomer(customerId: string): Promise<Array<BackorderOutput>>`**
+
+  Every backorder raised for one customer.
+
+  Types: [`BackorderOutput`](#backorderoutput)
+
+- **`getSkuSummary(sku: string): Promise<SkuBackorderSummaryOutput | null>`**
+
+  Open backorder totals for one SKU, or null when none are open.
+
+  Types: [`SkuBackorderSummaryOutput`](#skubackordersummaryoutput)
+
+- **`updateBackorder(id: string, input: UpdateBackorderInput): Promise<BackorderOutput>`**
+
+  Update a backorder's priority, dates, source location or notes.
+
+  Types: [`UpdateBackorderInput`](#updatebackorderinput), [`BackorderOutput`](#backorderoutput)
+
 ### commerce.generalLedger
 
 Class `GeneralLedger`.
@@ -5422,6 +5501,16 @@ type AgentWalletProofTypeInput = 'eip712' | 'eip_712' | 'erc1271' | 'erc_1271'
 
 One of: `'eip712'`, `'eip_712'`, `'erc1271'`, `'erc_1271'`.
 
+### AllocateBackorderInput
+
+| Field | Type | Description |
+|---|---|---|
+| `backorderId` | `string` |  |
+| `quantity` | `number` |  |
+| `locationId?` | `number` |  |
+| `lotId?` | `string` |  |
+| `expiresAt?` | `string` |  |
+
 ### AnalyticsGranularity
 
 Bucket size accepted by `AnalyticsQueryInput.granularity` and `revenueForecast`; an unrecognised value is refused with `VALIDATION`.
@@ -5571,6 +5660,31 @@ token id (`AssetAmountWire`). The asset id is case-sensitive.
 | `gainLoss` | `string` | Exact decimal string: proceeds - book value |
 | `notes?` | `string` |  |
 
+### BackorderAllocationOutput
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `backorderId` | `string` |  |
+| `sku` | `string` |  |
+| `quantity` | `number` |  |
+| `locationId?` | `number` |  |
+| `lotId?` | `string` |  |
+| `status` | `BackorderAllocationStatus` | Types: [`BackorderAllocationStatus`](#backorderallocationstatus) |
+| `allocatedAt` | `string` |  |
+| `expiresAt?` | `string` |  |
+| `reservationId?` | `string` |  |
+
+### BackorderAllocationStatus
+
+Backorder allocation status as rendered on `BackorderAllocationOutput.status` (Rust `Debug` form).
+
+```ts
+type BackorderAllocationStatus = 'Reserved' | 'Confirmed' | 'Released' | 'Expired' | 'Fulfilled'
+```
+
+One of: `'Reserved'`, `'Confirmed'`, `'Released'`, `'Expired'`, `'Fulfilled'`.
+
 ### BackorderFilterInput
 
 Optional filters for `Backorders.listBackorders`. No argument lists all.
@@ -5585,6 +5699,41 @@ Optional filters for `Backorders.listBackorders`. No argument lists all.
 | `expectedBefore?` | `string` | RFC 3339 timestamp. |
 | `limit?` | `number` |  |
 | `offset?` | `number` |  |
+
+### BackorderFulfillmentOutput
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `backorderId` | `string` |  |
+| `quantity` | `number` |  |
+| `sourceType` | `BackorderFulfillmentSource` | Types: [`BackorderFulfillmentSource`](#backorderfulfillmentsource) |
+| `sourceId?` | `string` |  |
+| `notes?` | `string` |  |
+| `fulfilledAt` | `string` |  |
+| `fulfilledBy?` | `string` |  |
+
+### BackorderFulfillmentSource
+
+Backorder fulfilment source as rendered on `BackorderFulfillmentOutput.sourceType` (Rust `Debug` form).
+
+```ts
+type BackorderFulfillmentSource = 'Inventory' | 'PurchaseOrder' | 'Transfer' | 'Production'
+```
+
+One of: `'Inventory'`, `'PurchaseOrder'`, `'Transfer'`, `'Production'`.
+
+Types: [`Inventory`](#commerceinventory)
+
+### BackorderFulfillmentSourceInput
+
+Fulfilment source accepted by `FulfillBackorderInput.sourceType`: the rendered form or the engine's snake_case (strict).
+
+```ts
+type BackorderFulfillmentSourceInput = BackorderFulfillmentSource | 'inventory' | 'purchase_order' | 'transfer' | 'production'
+```
+
+Types: [`BackorderFulfillmentSource`](#backorderfulfillmentsource)
 
 ### BackorderOutput
 
@@ -8409,6 +8558,17 @@ type FraudSignalType = 'velocity_spike' | 'address_mismatch' | 'high_value_first
 ```
 
 One of: `'velocity_spike'`, `'address_mismatch'`, `'high_value_first_order'`, `'geo_ip_anomaly'`, `'bin_country_mismatch'`, `'device_fingerprint'`, `'proxy_vpn'`, `'disposable_email'`, `'payment_retries'`, `'unusual_time'`.
+
+### FulfillBackorderInput
+
+| Field | Type | Description |
+|---|---|---|
+| `backorderId` | `string` |  |
+| `quantity` | `number` |  |
+| `sourceType` | `BackorderFulfillmentSourceInput` | Types: [`BackorderFulfillmentSourceInput`](#backorderfulfillmentsourceinput) |
+| `sourceId?` | `string` |  |
+| `notes?` | `string` |  |
+| `fulfilledBy?` | `string` |  |
 
 ### FulfillmentMetricsOutput
 
@@ -11796,6 +11956,16 @@ One of: `'flat'`, `'weight_based'`, `'price_based'`, `'calculated'`, `'free'`.
 |---|---|---|
 | `reason?` | `string` |  |
 
+### SkuBackorderSummaryOutput
+
+| Field | Type | Description |
+|---|---|---|
+| `sku` | `string` |  |
+| `totalQuantity` | `number` |  |
+| `backorderCount` | `number` |  |
+| `oldestDate?` | `string` |  |
+| `earliestExpected?` | `string` |  |
+
 ### StockLevelOutput
 
 | Field | Type | Description |
@@ -12653,6 +12823,16 @@ Filter for `listRules()`; omit for every rule.
 | `walletProofChainId?` | `string` | Chain id as a decimal string |
 | `walletProofDeadline?` | `string` | RFC3339 timestamp |
 | `active?` | `boolean` |  |
+
+### UpdateBackorderInput
+
+| Field | Type | Description |
+|---|---|---|
+| `priority?` | `BackorderPriorityInput` | Types: [`BackorderPriorityInput`](#backorderpriorityinput) |
+| `expectedDate?` | `string` |  |
+| `promisedDate?` | `string` |  |
+| `sourceLocationId?` | `number` |  |
+| `notes?` | `string` |  |
 
 ### UpdateCartInput
 

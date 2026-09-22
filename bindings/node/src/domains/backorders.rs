@@ -490,8 +490,7 @@ impl Backorders {
     #[napi]
     pub async fn confirm_allocation(&self, id: String) -> Result<BackorderAllocationOutput> {
         let commerce = self.commerce.get()?;
-        let uuid =
-            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid allocation UUID"))?;
+        let uuid = id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid allocation UUID"))?;
         let allocation = commerce
             .backorder()
             .confirm_allocation(uuid)
@@ -503,8 +502,7 @@ impl Backorders {
     #[napi]
     pub async fn release_allocation(&self, id: String) -> Result<BackorderAllocationOutput> {
         let commerce = self.commerce.get()?;
-        let uuid =
-            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid allocation UUID"))?;
+        let uuid = id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid allocation UUID"))?;
         let allocation = commerce
             .backorder()
             .release_allocation(uuid)
@@ -569,9 +567,8 @@ impl Backorders {
         customer_id: String,
     ) -> Result<Vec<BackorderOutput>> {
         let commerce = self.commerce.get()?;
-        let uuid = customer_id
-            .parse()
-            .map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
+        let uuid =
+            customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid customer UUID"))?;
         let backorders = commerce
             .backorder()
             .get_backorders_for_customer(uuid)
@@ -598,22 +595,15 @@ impl Backorders {
         input: UpdateBackorderInput,
     ) -> Result<BackorderOutput> {
         let commerce = self.commerce.get()?;
-        let uuid =
-            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid backorder UUID"))?;
+        let uuid = id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid backorder UUID"))?;
         let backorder = commerce
             .backorder()
             .update_backorder(
                 uuid,
                 stateset_core::UpdateBackorder {
                     priority: input.priority.map(|s| parse_backorder_priority(&s)).transpose()?,
-                    expected_date: parse_optional_datetime(
-                        input.expected_date,
-                        "expected date",
-                    )?,
-                    promised_date: parse_optional_datetime(
-                        input.promised_date,
-                        "promised date",
-                    )?,
+                    expected_date: parse_optional_datetime(input.expected_date, "expected date")?,
+                    promised_date: parse_optional_datetime(input.promised_date, "promised date")?,
                     source_location_id: input.source_location_id,
                     notes: input.notes,
                 },

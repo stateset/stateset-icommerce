@@ -4,7 +4,7 @@
     "coverageModel": "cli/src/coverage/mcp-api-coverage.js"
   },
   "totalDomainModules": 87,
-  "totalDomainTools": 923,
+  "totalDomainTools": 934,
   "totalCommerceGetters": 68,
   "mappedCommerceGetters": 68,
   "uncoveredCommerceGetters": [],
@@ -33,12 +33,12 @@
     {
       "getter": "backorder",
       "module": "backorders",
-      "toolCount": 9
+      "toolCount": 20
     },
     {
       "getter": "backorders",
       "module": "backorders",
-      "toolCount": 9
+      "toolCount": 20
     },
     {
       "getter": "bom",
@@ -352,9 +352,21 @@
     }
   ],
   "totalAuditedClasses": 32,
-  "totalAuditedMethods": 390,
+  "totalAuditedMethods": 401,
   "mappedAuditedMethods": 390,
-  "uncoveredAuditedMethods": [],
+  "uncoveredAuditedMethods": [
+    "Backorders.allocateBackorder",
+    "Backorders.autoAllocateInventory",
+    "Backorders.confirmAllocation",
+    "Backorders.expireAllocations",
+    "Backorders.fulfillBackorder",
+    "Backorders.getAllocations",
+    "Backorders.getBackordersForCustomer",
+    "Backorders.getFulfillmentHistory",
+    "Backorders.getSkuSummary",
+    "Backorders.releaseAllocation",
+    "Backorders.updateBackorder"
+  ],
   "staleAuditedMethodMappings": [],
   "invalidAuditedToolReferences": [],
   "auditedClasses": [
@@ -384,9 +396,21 @@
     },
     {
       "className": "Backorders",
-      "methodCount": 10,
+      "methodCount": 21,
       "mappedMethodCount": 10,
-      "uncoveredMethods": [],
+      "uncoveredMethods": [
+        "allocateBackorder",
+        "autoAllocateInventory",
+        "confirmAllocation",
+        "expireAllocations",
+        "fulfillBackorder",
+        "getAllocations",
+        "getBackordersForCustomer",
+        "getFulfillmentHistory",
+        "getSkuSummary",
+        "releaseAllocation",
+        "updateBackorder"
+      ],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
@@ -615,5 +639,5 @@
       "invalidToolReferences": []
     }
   ],
-  "fullyCovered": true
+  "fullyCovered": false
 }
