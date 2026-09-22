@@ -18,7 +18,7 @@ use super::subscriptions::SqliteSubscriptionRepository;
 use super::x402_payment_intents::SqliteX402PaymentIntentRepository;
 use super::{
     parse_datetime_opt_row, parse_datetime_row, parse_decimal_row, parse_uuid_row,
-    with_immediate_transaction,
+    resolve_currency_with_conn, with_immediate_transaction,
 };
 use crate::kernel::plans::PlanOutcome;
 use crate::kernel::plans::catalog::{create_inventory_item_guard, create_product_guard};
@@ -677,6 +677,16 @@ impl SqliteKernelExecutor {
         if input.idempotency_key.is_none() {
             input.idempotency_key = Some(command.idempotency_key.clone());
         }
+        // Resolved once, up front: the economic money guard runs before the
+        // transaction opens, so guard, capacity check, budget check and INSERT
+        // must all see the same currency.
+        let currency = {
+            let conn = self
+                .pool
+                .get()
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            resolve_currency_with_conn(input.currency, &conn)?
+        };
         let run = CommandRun::prepare(
             command,
             &input,
@@ -686,13 +696,7 @@ impl SqliteKernelExecutor {
             "payment",
         )?
         .then_guard(|_| create_payment_guard(&input))
-        .then_guard(|_| {
-            economic_money_guard(
-                command.commitment.as_ref(),
-                input.amount,
-                input.currency.unwrap_or_default(),
-            )
-        })
+        .then_guard(|_| economic_money_guard(command.commitment.as_ref(), input.amount, currency))
         .then_guard(|_| {
             let counterparty = input.customer_id.map(|id| format!("customer:{id}"));
             economic_counterparty_guard(command.commitment.as_ref(), counterparty.as_deref())
@@ -719,16 +723,12 @@ impl SqliteKernelExecutor {
                     &order_id.to_string(),
                     None,
                     input.amount,
-                    input.currency.unwrap_or_default(),
+                    currency,
                 )?;
             }
-            if let Some(rejection) = enforce_budget_tx(
-                tx,
-                command,
-                input.amount,
-                input.currency.unwrap_or_default(),
-                !run.is_preview(),
-            )? {
+            if let Some(rejection) =
+                enforce_budget_tx(tx, command, input.amount, currency, !run.is_preview())?
+            {
                 let mut receipt = run.rejected_by(&rejection);
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
@@ -757,7 +757,7 @@ impl SqliteKernelExecutor {
                     PaymentTransactionStatus::Pending.to_string(),
                     input.payment_method.to_string(),
                     input.amount.to_string(),
-                    input.currency.unwrap_or_default(),
+                    currency,
                     "0",
                     input.external_id,
                     input.idempotency_key,

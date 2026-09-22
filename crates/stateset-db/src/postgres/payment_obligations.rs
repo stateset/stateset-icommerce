@@ -1,6 +1,6 @@
 //! PostgreSQL payment obligation repository implementation
 
-use super::map_db_error;
+use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -113,7 +113,7 @@ impl PgPaymentObligationRepository {
         let id_str = id.to_string();
         let number = format!("OBL-{}", &id_str[..8]);
         let now = Utc::now();
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
+        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
 
         sqlx::query(
             "INSERT INTO payment_obligations (id, number, supplier_id, purchase_order_id, amount, amount_paid, currency, due_date, status, linked_bill_ids, notes, created_at, updated_at)

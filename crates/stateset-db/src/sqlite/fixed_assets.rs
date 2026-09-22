@@ -2,7 +2,8 @@
 
 use super::{
     map_db_error, parse_date_row, parse_datetime_row, parse_decimal_row, parse_enum_row,
-    parse_json_row, parse_uuid_opt_row, parse_uuid_row, with_immediate_transaction,
+    parse_json_row, parse_uuid_opt_row, parse_uuid_row, resolve_currency_in_tx,
+    with_immediate_transaction,
 };
 use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
@@ -245,7 +246,6 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
         let id_str = id.to_string();
         let now = Utc::now().to_rfc3339();
         let asset_number = input.asset_number.clone().unwrap_or_else(generate_asset_number);
-        let currency = input.currency.unwrap_or_default();
         let status = if input.in_service_date.is_some() {
             FixedAssetStatus::InService
         } else {
@@ -254,6 +254,7 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
         let method_json = serde_json::to_string(&input.depreciation_method)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         with_immediate_transaction(&self.pool, |tx| {
+            let currency = resolve_currency_in_tx(input.currency, tx)?;
             tx.execute(
                 "INSERT INTO fixed_assets (id, asset_number, name, description, category, acquisition_date, acquisition_cost, salvage_value, useful_life_months, depreciation_method, status, in_service_date, location_id, asset_account_id, accumulated_depreciation_account_id, depreciation_expense_account_id, accumulated_depreciation, currency, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '0', ?, ?, ?)",

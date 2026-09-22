@@ -1,6 +1,6 @@
 //! PostgreSQL supplier SKU repository implementation
 
-use super::map_db_error;
+use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -72,7 +72,7 @@ impl PgSupplierSkuRepository {
     pub async fn create_async(&self, input: CreateSupplierSku) -> Result<SupplierSku> {
         let id = SupplierSkuId::new();
         let now = Utc::now();
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
+        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
 
         sqlx::query(
             "INSERT INTO supplier_skus (id, product_id, supplier_id, sku, unit_cost, currency, min_order_qty, lead_time_days, is_preferred, created_at, updated_at)

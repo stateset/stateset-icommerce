@@ -2,7 +2,7 @@
 
 use super::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row, parse_enum_row,
-    parse_uuid_row, with_immediate_transaction,
+    parse_uuid_row, resolve_currency_in_tx, with_immediate_transaction,
 };
 use chrono::{DateTime, Utc};
 use r2d2::Pool;
@@ -102,8 +102,8 @@ impl PriceScheduleRepository for SqlitePriceScheduleRepository {
         let id = PriceScheduleId::new();
         let id_str = id.to_string();
         let now_str = Utc::now().to_rfc3339();
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
         with_immediate_transaction(&self.pool, |tx| {
+            let currency = resolve_currency_in_tx(input.currency, tx)?;
             tx.execute(
                 "INSERT INTO price_schedules (id, name, code, currency, starts_at, ends_at, is_active, priority, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",

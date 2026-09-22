@@ -1,6 +1,7 @@
 //! PostgreSQL order repository implementation
 
 use super::kernel_outbox::append_kernel_event_tx;
+use super::resolve_currency_with_executor;
 use super::{
     backorder::PgBackorderRepository,
     inventory::{PgInventoryRepository, ReservationConfirmOutcome},
@@ -599,6 +600,7 @@ impl PgOrderRepository {
 
         // Insert the order row first. When creating from a cart, we ensure at most one order per
         // cart by using `orders.cart_id` and a unique index.
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
         let (order_id, order_number, inserted) = if idempotent_by_cart_id {
             let cart_id = cart_id.ok_or_else(|| {
                 CommerceError::ValidationError("cart_id is required for cart checkout".into())
@@ -626,7 +628,7 @@ impl PgOrderRepository {
             .bind(tax_amount)
             .bind(shipping_amount)
             .bind(discount_amount)
-            .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
+            .bind(currency.as_str())
             .bind("pending")
             .bind("unfulfilled")
             .bind(&input.payment_method)
@@ -660,7 +662,7 @@ impl PgOrderRepository {
             .bind(tax_amount)
             .bind(shipping_amount)
             .bind(discount_amount)
-            .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
+            .bind(currency.as_str())
             .bind("pending")
             .bind("unfulfilled")
             .bind(&input.payment_method)
@@ -774,7 +776,7 @@ impl PgOrderRepository {
             tax_amount,
             shipping_amount,
             discount_amount,
-            currency: input.currency.unwrap_or(CurrencyCode::USD),
+            currency,
             payment_status: PaymentStatus::Pending,
             fulfillment_status: FulfillmentStatus::Unfulfilled,
             payment_method: input.payment_method,

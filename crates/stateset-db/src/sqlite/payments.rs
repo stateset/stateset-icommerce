@@ -3,8 +3,8 @@
 use super::kernel_outbox::append_kernel_event_tx;
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
-    parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
-    with_immediate_transaction,
+    parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, resolve_currency_in_tx,
+    resolve_currency_with_conn, uuid_params, with_immediate_transaction,
 };
 use crate::KernelOutboxEvent;
 use r2d2::Pool;
@@ -637,25 +637,26 @@ impl PaymentRepository for SqlitePaymentRepository {
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
         let payment_number = generate_payment_number();
-        let outbox_event = KernelOutboxEvent::domain(
-            "payments.created.v1",
-            "payment",
-            id.to_string(),
-            serde_json::json!({
-                "payment_id": id.to_string(),
-                "payment_number": payment_number,
-                "order_id": input.order_id.map(|value| value.to_string()),
-                "amount": input.amount.to_string(),
-                "currency": input.currency.unwrap_or_default().as_str(),
-                "status": PaymentTransactionStatus::Pending.to_string(),
-            }),
-            input.idempotency_key.clone(),
-        );
-
-        // The over-capture check and the INSERT share one IMMEDIATE transaction
-        // (same pattern as `create_refund`'s over-refund guard).
-        let currency = input.currency.unwrap_or_default();
+        // The currency resolution, the over-capture check and the INSERT share
+        // one IMMEDIATE transaction (same pattern as `create_refund`'s
+        // over-refund guard). The outbox event is built inside it so the event
+        // and the row always agree on the currency.
         let inserted = with_immediate_transaction(&self.pool, |tx| {
+            let currency = resolve_currency_in_tx(input.currency, tx)?;
+            let outbox_event = KernelOutboxEvent::domain(
+                "payments.created.v1",
+                "payment",
+                id.to_string(),
+                serde_json::json!({
+                    "payment_id": id.to_string(),
+                    "payment_number": payment_number,
+                    "order_id": input.order_id.map(|value| value.to_string()),
+                    "amount": input.amount.to_string(),
+                    "currency": currency.as_str(),
+                    "status": PaymentTransactionStatus::Pending.to_string(),
+                }),
+                input.idempotency_key.clone(),
+            );
             if let Some(order_id) = input.order_id {
                 check_order_capture_capacity_tx(
                     tx,
@@ -680,7 +681,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                     PaymentTransactionStatus::Pending.to_string(),
                     input.payment_method.to_string(),
                     input.amount.to_string(),
-                    input.currency.unwrap_or_default(),
+                    currency,
                     "0",
                     input.external_id,
                     input.idempotency_key,
@@ -1433,6 +1434,7 @@ impl PaymentRepository for SqlitePaymentRepository {
             let id = Uuid::new_v4();
             let now = chrono::Utc::now();
             let payment_number = generate_payment_number();
+            let currency = resolve_currency_with_conn(input.currency, &tx)?;
 
             if let Some(order_id) = input.order_id {
                 check_order_capture_capacity_tx(
@@ -1440,7 +1442,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                     &order_id.to_string(),
                     None,
                     input.amount,
-                    input.currency.unwrap_or_default(),
+                    currency,
                 )
                 .map_err(map_db_error)?;
             }
@@ -1460,7 +1462,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                     PaymentTransactionStatus::Pending.to_string(),
                     input.payment_method.to_string(),
                     input.amount.to_string(),
-                    input.currency.unwrap_or_default(),
+                    currency,
                     "0",
                     input.external_id.clone(),
                     input.idempotency_key.clone(),
@@ -1488,7 +1490,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                     "payment_number": payment_number,
                     "order_id": input.order_id.map(|value| value.to_string()),
                     "amount": input.amount.to_string(),
-                    "currency": input.currency.unwrap_or_default().as_str(),
+                    "currency": currency.as_str(),
                     "status": PaymentTransactionStatus::Pending.to_string(),
                 }),
                 input.idempotency_key.clone(),
@@ -1504,7 +1506,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                 status: PaymentTransactionStatus::Pending,
                 payment_method: input.payment_method,
                 amount: input.amount,
-                currency: input.currency.unwrap_or_default(),
+                currency,
                 amount_refunded: rust_decimal::Decimal::ZERO,
                 external_id: input.external_id,
                 idempotency_key: input.idempotency_key,

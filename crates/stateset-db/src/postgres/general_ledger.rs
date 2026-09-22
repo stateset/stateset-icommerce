@@ -1,7 +1,7 @@
 //! PostgreSQL implementation of General Ledger repository
 
 use super::kernel_outbox::append_kernel_event_tx;
-use super::{block_on, map_db_error};
+use super::{block_on, map_db_error, resolve_currency_with_executor};
 use crate::KernelOutboxEvent;
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
@@ -393,7 +393,7 @@ impl PgGeneralLedgerRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
         let normal_balance = input.account_type.normal_balance();
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
+        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
         let is_header = input.is_header.unwrap_or(false);
         let is_posting = input.is_posting.unwrap_or(true);
 

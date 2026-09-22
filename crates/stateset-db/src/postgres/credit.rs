@@ -1,5 +1,6 @@
 //! PostgreSQL implementation of credit repository
 
+use super::resolve_currency_with_executor;
 use super::{block_on, map_db_error};
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use rust_decimal::Decimal;
@@ -390,6 +391,7 @@ impl PgCreditRepository {
         input: &CreateCreditAccount,
         now: DateTime<Utc>,
     ) -> Result<()> {
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
         sqlx::query(
             "INSERT INTO credit_accounts (id, customer_id, credit_limit, available_credit, current_balance,
                 hold_amount, currency, status, payment_terms, risk_rating, notes, created_at, updated_at)
@@ -401,7 +403,7 @@ impl PgCreditRepository {
         .bind(input.credit_limit)
         .bind(Decimal::ZERO)
         .bind(Decimal::ZERO)
-        .bind(input.currency.unwrap_or(CurrencyCode::USD))
+        .bind(currency)
         .bind(CreditAccountStatus::Active.to_string())
         .bind(input.payment_terms.clone())
         .bind(input.risk_rating.map(|r| r.to_string()))

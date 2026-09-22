@@ -16,8 +16,8 @@ use uuid::Uuid;
 
 use super::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row,
-    parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, sum_decimal_query,
-    with_immediate_transaction,
+    parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
+    resolve_currency_in_tx, sum_decimal_query, with_immediate_transaction,
 };
 
 /// Explain why a cost-adjustment transition was refused: report the status the
@@ -140,7 +140,11 @@ impl SqliteCostAccountingRepository {
             let material_cost = material_cost.unwrap_or_default();
             let labor_cost = labor_cost.unwrap_or_default();
             let overhead_cost = overhead_cost.unwrap_or_default();
-            let currency = currency.unwrap_or_default();
+            // The UPDATE branch above leaves `currency` as the caller's
+            // `Option`: `COALESCE` means "leave the stored currency alone".
+            // A fresh row has nothing to keep, so an omitted currency takes
+            // the store's configured base currency.
+            let currency = resolve_currency_in_tx(currency, conn)?;
 
             conn.execute(
                 "INSERT INTO item_costs (id, sku, cost_method, standard_cost, average_cost, last_cost,

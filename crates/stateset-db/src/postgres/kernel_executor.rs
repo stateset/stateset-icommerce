@@ -13,6 +13,7 @@ use super::payments::{
     PaymentRow, PgPaymentRepository, RefundRow, check_order_capture_capacity_pg,
     open_captures_for_order_pg, void_in_flight_payments_for_order_pg,
 };
+use super::resolve_currency_with_executor;
 use super::returns::{PgReturnRepository, ReturnItemRow, ReturnRow};
 use super::subscriptions::{BillingCycleRow, PgSubscriptionRepository};
 use super::x402_payment_intents::{IntentRow, PgX402PaymentIntentRepository};
@@ -606,6 +607,10 @@ impl PgKernelExecutor {
         if input.idempotency_key.is_none() {
             input.idempotency_key = Some(command.idempotency_key.clone());
         }
+        // Resolved once, up front: the economic money guard runs before the
+        // transaction opens, so guard, capacity check, budget check and INSERT
+        // must all see the same currency.
+        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
         let run = CommandRun::prepare(
             command,
             &input,
@@ -615,13 +620,7 @@ impl PgKernelExecutor {
             "payment",
         )?
         .then_guard(|_| create_payment_guard(&input))
-        .then_guard(|_| {
-            economic_money_guard(
-                command.commitment.as_ref(),
-                input.amount,
-                input.currency.unwrap_or_default(),
-            )
-        })
+        .then_guard(|_| economic_money_guard(command.commitment.as_ref(), input.amount, currency))
         .then_guard(|_| {
             let counterparty = input.customer_id.map(|id| format!("customer:{id}"));
             economic_counterparty_guard(command.commitment.as_ref(), counterparty.as_deref())
@@ -651,18 +650,13 @@ impl PgKernelExecutor {
                 order_id.into_uuid(),
                 None,
                 input.amount,
-                input.currency.unwrap_or_default(),
+                currency,
             )
             .await?;
         }
-        if let Some(rejection) = enforce_budget_pg(
-            tx.as_mut(),
-            command,
-            input.amount,
-            input.currency.unwrap_or_default(),
-            !run.is_preview(),
-        )
-        .await?
+        if let Some(rejection) =
+            enforce_budget_pg(tx.as_mut(), command, input.amount, currency, !run.is_preview())
+                .await?
         {
             let mut receipt = run.rejected_by(&rejection);
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
@@ -695,7 +689,7 @@ impl PgKernelExecutor {
         .bind(PaymentTransactionStatus::Pending.to_string())
         .bind(input.payment_method.to_string())
         .bind(input.amount)
-        .bind(input.currency.unwrap_or_default())
+        .bind(currency)
         .bind(rust_decimal::Decimal::ZERO)
         .bind(&input.external_id)
         .bind(&input.idempotency_key)

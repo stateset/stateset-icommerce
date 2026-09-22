@@ -14,6 +14,7 @@ use super::{
     parse_uuid,
     parse_uuid_opt_row,
     parse_uuid_row,
+    resolve_currency_with_conn,
     sum_decimal_query,
     uuid_params,
     with_immediate_transaction,
@@ -452,6 +453,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
         let supplier_code = input.supplier_code.unwrap_or_else(generate_supplier_code);
+        let currency = resolve_currency_with_conn(input.currency, &conn)?;
 
         conn.execute(
             "INSERT INTO suppliers (id, supplier_code, name, contact_name, email, phone, website,
@@ -473,7 +475,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
                 input.country,
                 input.tax_id,
                 input.payment_terms.unwrap_or_default().to_string(),
-                input.currency.unwrap_or_default(),
+                currency,
                 input.lead_time_days,
                 input.minimum_order.map(|d| d.to_string()),
                 1,
