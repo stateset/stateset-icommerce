@@ -6,6 +6,28 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Changed (behaviour, needs a release note)
+
+- **An omitted currency now takes the store's configured base currency, not
+  USD.** The engine has had a store-level base currency since migration 008,
+  and exactly one path honoured it. Everywhere else an omitted `currency`
+  became a hardcoded USD, so a store configured for EUR silently recorded
+  payments, invoices, carts, GL accounts, price levels, prepayments, vendor
+  credits and company records in dollars. 26 call sites per backend, replacing
+  71 hardcoded expressions.
+
+  The seeded default is `USD`, so **a store that never changed the setting
+  sees no difference**. Only a store that explicitly configured another
+  currency changes -- which is the bug being fixed. A row holding an
+  unparsable currency code now raises rather than silently falling back.
+
+### Fixed
+
+- **Quebec's tax rates were ten times too large.** `get_canadian_tax_info("QC")`
+  reported a 149.75% total rate, so a $100 Quebec sale computed $149.75 of tax.
+  Every other province stores a fraction; Quebec alone was written at the wrong
+  scale.
+
 ## [1.35.2] - 2026-09-21
 
 ### Fixed
