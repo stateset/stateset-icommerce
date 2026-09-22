@@ -7577,6 +7577,15 @@ impl CurrencyOperations {
     }
 
     /// Format an amount with currency symbol.
+    /// How many decimal places this currency permits.
+    ///
+    /// The engine refuses an amount with more places than this, so a caller
+    /// formatting or validating money needs the number rather than assuming
+    /// two: JPY, KRW and VND have none, BTC and ETH have eight.
+    fn decimal_places(&self, currency_code: String) -> PyResult<u8> {
+        Ok(parse_currency(&currency_code)?.decimal_places())
+    }
+
     fn format(&self, amount: f64, currency_code: String) -> PyResult<String> {
         let commerce = self
             .commerce

@@ -40,7 +40,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | Kotlin | Maven | `com.stateset:embedded-kotlin` | `1.35.2` | `package-manifest` | manifest coverage |
 | Node.js | npm | `@stateset/embedded` | `1.35.2` | `detailed` | 8 export entrypoints |
 | PHP | Composer | `stateset/embedded` | `1.35.2` | `package-manifest` | manifest coverage |
-| Python | PyPI | `stateset-embedded` | `1.35.2` | `detailed` | 246 public symbols |
+| Python | PyPI | `stateset-embedded` | `1.35.2` | `detailed` | 254 public symbols |
 | Ruby | RubyGems | `stateset_embedded` | `1.35.2` | `package-manifest` | manifest coverage |
 | Swift | SwiftPM | `StateSet` | — | `detailed` | 71 API methods |
 | WASM | npm | `@stateset/embedded-wasm` | `1.35.2` | `package-manifest` | manifest coverage |
@@ -697,6 +697,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `BomComponent` |
 | `BoostRule` |
 | `BoostRuleInput` |
+| `CanadianTaxInfo` |
 | `CaptureStockLineInput` |
 | `Cart` |
 | `CartAddress` |
@@ -893,6 +894,12 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `SyncStatus` |
 | `SynonymGroup` |
 | `SynonymGroupInput` |
+| `TaxApi` |
+| `TaxCalculationResult` |
+| `TaxExemption` |
+| `TaxJurisdiction` |
+| `TaxRate` |
+| `TaxSettings` |
 | `ThreeWayMatchLine` |
 | `ThreeWayMatchResult` |
 | `TopCustomer` |
@@ -907,6 +914,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `UnitConversionRule` |
 | `UnitOfMeasure` |
 | `UnitsOfMeasure` |
+| `UsStateTaxInfo` |
 | `ValidationSummary` |
 | `VectorSearch` |
 | `VendorCredit` |

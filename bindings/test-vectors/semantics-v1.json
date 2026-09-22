@@ -1,0 +1,280 @@
+{
+  "version": 1,
+  "description": "Cross-binding SEMANTIC vectors. The crypto corpus in v1.json pins byte-identical hashing; this one pins the meaning of money. Every binding must agree with the Rust core on currency scale, on the exact decimal a value renders to, and on refusing malformed input. Each row exists because a real defect shipped past its absence -- see `why` on the category.",
+  "categories": {
+    "currency_decimals": {
+      "why": "A binding that hardcodes two decimal places mis-scales every zero-decimal and crypto currency. The WASM binding does exactly this (Money(i64) with SCALE=100), so JPY 1000 becomes 100000 minor units.",
+      "rows": [
+        {
+          "id": "usd",
+          "code": "USD",
+          "decimals": 2
+        },
+        {
+          "id": "eur",
+          "code": "EUR",
+          "decimals": 2
+        },
+        {
+          "id": "gbp",
+          "code": "GBP",
+          "decimals": 2
+        },
+        {
+          "id": "jpy-zero-decimal",
+          "code": "JPY",
+          "decimals": 0
+        },
+        {
+          "id": "krw-zero-decimal",
+          "code": "KRW",
+          "decimals": 0
+        },
+        {
+          "id": "vnd-zero-decimal",
+          "code": "VND",
+          "decimals": 0
+        },
+        {
+          "id": "btc-eight-decimal",
+          "code": "BTC",
+          "decimals": 8
+        },
+        {
+          "id": "eth-eight-decimal",
+          "code": "ETH",
+          "decimals": 8
+        }
+      ]
+    },
+    "decimal_render": {
+      "why": "Money crosses the boundary as an exact decimal STRING. A binding that routes it through a float cannot reproduce these: it loses the value, the scale, or both. The Python wheel returned floats for 84 money fields until Sep 2026. Scale is part of the contract: addition keeps the widest operand's scale and multiplication sums them, so a binding that routes through a float cannot reproduce these strings even when the value happens to survive. Rows are raw decimal arithmetic. `money_scale_ok` marks the ones that are also valid as a USD AMOUNT: the engine refuses an input with more decimal places than the currency allows, which is the rule a binding with a hardcoded scale cannot express. Binding consumers should assert only the money-valid rows through a money path.",
+      "rows": [
+        {
+          "id": "two-tenths-plus-one",
+          "operands": [
+            "0.1",
+            "0.2"
+          ],
+          "op": "add",
+          "expected": "0.3",
+          "money_scale_ok": true
+        },
+        {
+          "id": "keeps-cent-scale",
+          "operands": [
+            "10.00",
+            "0.83"
+          ],
+          "op": "add",
+          "expected": "10.83",
+          "money_scale_ok": true
+        },
+        {
+          "id": "non-representable-price",
+          "operands": [
+            "19.99",
+            "0.00"
+          ],
+          "op": "add",
+          "expected": "19.99",
+          "money_scale_ok": true
+        },
+        {
+          "id": "sub-cent-survives",
+          "operands": [
+            "0.005",
+            "0.000"
+          ],
+          "op": "add",
+          "expected": "0.005",
+          "money_scale_ok": false
+        },
+        {
+          "id": "quantity-times-price",
+          "operands": [
+            "19.99",
+            "2"
+          ],
+          "op": "mul",
+          "expected": "39.98",
+          "money_scale_ok": true
+        },
+        {
+          "id": "tax-rate-applied",
+          "operands": [
+            "100.00",
+            "0.09975"
+          ],
+          "op": "mul",
+          "expected": "9.9750000",
+          "money_scale_ok": false
+        },
+        {
+          "id": "thirds-do-not-round-early",
+          "operands": [
+            "0.07",
+            "3"
+          ],
+          "op": "mul",
+          "expected": "0.21",
+          "money_scale_ok": true
+        }
+      ]
+    },
+    "canadian_tax_rates": {
+      "why": "Every rate in the engine's table is a FRACTION, never a percentage. Quebec was written at the wrong scale and reported a 149.75% total rate; a $100 sale computed $149.75 of tax. Nothing pinned the value, so nothing caught it.",
+      "rows": [
+        {
+          "id": "on-hst",
+          "province": "ON",
+          "gst": "0",
+          "pst": null,
+          "hst": "0.13",
+          "qst": null,
+          "total": "0.13",
+          "note": "HST replaces GST and PST in Ontario, so gst_rate is zero"
+        },
+        {
+          "id": "qc-gst-qst",
+          "province": "QC",
+          "gst": "0.05",
+          "pst": null,
+          "hst": null,
+          "qst": "0.09975",
+          "total": "0.14975"
+        },
+        {
+          "id": "bc-gst-pst",
+          "province": "BC",
+          "gst": "0.05",
+          "pst": "0.07",
+          "hst": null,
+          "qst": null,
+          "total": "0.12"
+        },
+        {
+          "id": "ab-gst-only",
+          "province": "AB",
+          "gst": "0.05",
+          "pst": null,
+          "hst": null,
+          "qst": null,
+          "total": "0.05"
+        },
+        {
+          "id": "sk-gst-pst",
+          "province": "SK",
+          "gst": "0.05",
+          "pst": "0.06",
+          "hst": null,
+          "qst": null,
+          "total": "0.11"
+        }
+      ]
+    },
+    "rejected_inputs": {
+      "why": "A malformed value must be REFUSED, never coerced. Silently defaulting a bad currency to USD, or a bad id to the nil UUID, writes a record that points at nothing. Both shipped in the Node and Python bindings until Sep 2026.",
+      "rows": [
+        {
+          "id": "currency-word",
+          "kind": "currency",
+          "value": "EURO"
+        },
+        {
+          "id": "currency-empty",
+          "kind": "currency",
+          "value": ""
+        },
+        {
+          "id": "currency-numeric",
+          "kind": "currency",
+          "value": "978"
+        },
+        {
+          "id": "uuid-not-a-uuid",
+          "kind": "uuid",
+          "value": "not-a-uuid"
+        },
+        {
+          "id": "uuid-truncated",
+          "kind": "uuid",
+          "value": "550e8400-e29b-41d4-a716"
+        },
+        {
+          "id": "timestamp-not-rfc3339",
+          "kind": "timestamp",
+          "value": "yesterday"
+        },
+        {
+          "id": "date-not-iso",
+          "kind": "date",
+          "value": "31/12/2026"
+        }
+      ]
+    },
+    "accepted_inputs": {
+      "why": "The other half of the contract: tightening input parsing must not narrow what was already accepted. Case-insensitive currency codes and enum spellings stayed valid through the Sep 2026 strict-input work, and must stay valid.",
+      "rows": [
+        {
+          "id": "currency-lower",
+          "kind": "currency",
+          "value": "usd",
+          "normalizes_to": "USD"
+        },
+        {
+          "id": "currency-mixed",
+          "kind": "currency",
+          "value": "eUr",
+          "normalizes_to": "EUR"
+        },
+        {
+          "id": "currency-upper",
+          "kind": "currency",
+          "value": "GBP",
+          "normalizes_to": "GBP"
+        }
+      ]
+    },
+    "money_scale_enforced": {
+      "why": "The engine refuses an amount with more decimal places than its currency permits: 0.005 is not a USD amount, and 0.5 is not a JPY one. A binding that hardcodes two decimal places cannot express this -- it accepts the JPY value and scales it wrongly. The WASM binding does exactly that (Money(i64) with SCALE = 100).",
+      "rows": [
+        {
+          "id": "usd-sub-cent",
+          "currency": "USD",
+          "amount": "0.005",
+          "decimals": 2,
+          "must_reject": true
+        },
+        {
+          "id": "usd-three-places",
+          "currency": "USD",
+          "amount": "1.001",
+          "decimals": 2,
+          "must_reject": true
+        },
+        {
+          "id": "usd-two-places-ok",
+          "currency": "USD",
+          "amount": "1.99",
+          "decimals": 2,
+          "must_reject": false
+        },
+        {
+          "id": "jpy-fraction",
+          "currency": "JPY",
+          "amount": "0.5",
+          "decimals": 0,
+          "must_reject": true
+        },
+        {
+          "id": "jpy-whole-ok",
+          "currency": "JPY",
+          "amount": "1000",
+          "decimals": 0,
+          "must_reject": false
+        }
+      ]
+    }
+  }
+}
