@@ -142,7 +142,7 @@ It exists because every defect it covers shipped past its absence. Node
 returned exact decimals while Python returned floats. The engine said every
 tax rate is a fraction; Quebec's was ten times too large and reported a
 149.75% total. The WASM binding carries its own `Money(i64)` with a hardcoded
-`SCALE = 100`, so a zero-decimal currency like JPY is mis-scaled. Each was a
+`SCALE = 100`, so a zero-decimal currency like JPY is scaled wrongly. Each was a
 stated contract with no failing check behind it.
 
 Every category carries a `why` naming the defect its absence allowed. The
