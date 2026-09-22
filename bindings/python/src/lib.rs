@@ -1014,6 +1014,93 @@ impl TryFrom<stateset_core::Order> for Order {
     }
 }
 
+/// Input for an invoice line item.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct CreateInvoiceItemInput {
+    #[pyo3(get, set)]
+    description: String,
+    #[pyo3(get, set)]
+    quantity: f64,
+    #[pyo3(get, set)]
+    unit_price: f64,
+    #[pyo3(get, set)]
+    sku: Option<String>,
+    #[pyo3(get, set)]
+    product_id: Option<String>,
+    #[pyo3(get, set)]
+    unit_of_measure: Option<String>,
+    #[pyo3(get, set)]
+    discount_amount: Option<f64>,
+    #[pyo3(get, set)]
+    tax_amount: Option<f64>,
+}
+
+#[pymethods]
+impl CreateInvoiceItemInput {
+    #[new]
+    #[pyo3(signature = (description, quantity, unit_price, sku=None, product_id=None, unit_of_measure=None, discount_amount=None, tax_amount=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        description: String,
+        quantity: f64,
+        unit_price: f64,
+        sku: Option<String>,
+        product_id: Option<String>,
+        unit_of_measure: Option<String>,
+        discount_amount: Option<f64>,
+        tax_amount: Option<f64>,
+    ) -> Self {
+        Self {
+            description,
+            quantity,
+            unit_price,
+            sku,
+            product_id,
+            unit_of_measure,
+            discount_amount,
+            tax_amount,
+        }
+    }
+}
+
+/// Input for a purchase order line item.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct CreatePurchaseOrderItemInput {
+    #[pyo3(get, set)]
+    sku: String,
+    #[pyo3(get, set)]
+    name: String,
+    #[pyo3(get, set)]
+    quantity: f64,
+    #[pyo3(get, set)]
+    unit_cost: f64,
+    #[pyo3(get, set)]
+    product_id: Option<String>,
+    #[pyo3(get, set)]
+    supplier_sku: Option<String>,
+    #[pyo3(get, set)]
+    unit_of_measure: Option<String>,
+}
+
+#[pymethods]
+impl CreatePurchaseOrderItemInput {
+    #[new]
+    #[pyo3(signature = (sku, name, quantity, unit_cost, product_id=None, supplier_sku=None, unit_of_measure=None))]
+    fn new(
+        sku: String,
+        name: String,
+        quantity: f64,
+        unit_cost: f64,
+        product_id: Option<String>,
+        supplier_sku: Option<String>,
+        unit_of_measure: Option<String>,
+    ) -> Self {
+        Self { sku, name, quantity, unit_cost, product_id, supplier_sku, unit_of_measure }
+    }
+}
+
 /// Input for creating an order item.
 #[pyclass(from_py_object)]
 #[derive(Clone)]
@@ -3736,7 +3823,12 @@ impl PurchaseOrders {
     }
 
     /// Create a new purchase order.
-    fn create(&self, supplier_id: String) -> PyResult<PurchaseOrder> {
+    #[pyo3(signature = (supplier_id, items=None))]
+    fn create(
+        &self,
+        supplier_id: String,
+        items: Option<Vec<CreatePurchaseOrderItemInput>>,
+    ) -> PyResult<PurchaseOrder> {
         let commerce = self
             .commerce
             .lock()
@@ -3749,7 +3841,26 @@ impl PurchaseOrders {
             .purchase_orders()
             .create(stateset_core::CreatePurchaseOrder {
                 supplier_id: supp_uuid,
-                items: vec![],
+                items: items
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|i| {
+                        Ok(stateset_core::CreatePurchaseOrderItem {
+                            product_id: parse_optional_uuid(i.product_id.as_deref(), "product id")?
+                                .map(Into::into),
+                            sku: i.sku,
+                            name: i.name,
+                            supplier_sku: i.supplier_sku,
+                            quantity: decimal_from_f64(i.quantity, "purchase order item quantity")?,
+                            unit_of_measure: i.unit_of_measure,
+                            unit_cost: decimal_from_f64(
+                                i.unit_cost,
+                                "purchase order item unit cost",
+                            )?,
+                            ..Default::default()
+                        })
+                    })
+                    .collect::<PyResult<Vec<_>>>()?,
                 ..Default::default()
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create PO: {}", e)))?;
@@ -4009,12 +4120,13 @@ pub struct Invoices {
 #[pymethods]
 impl Invoices {
     /// Create a new invoice.
-    #[pyo3(signature = (customer_id, order_id=None, billing_email=None))]
+    #[pyo3(signature = (customer_id, order_id=None, billing_email=None, items=None))]
     fn create(
         &self,
         customer_id: String,
         order_id: Option<String>,
         billing_email: Option<String>,
+        items: Option<Vec<CreateInvoiceItemInput>>,
     ) -> PyResult<Invoice> {
         let commerce = self
             .commerce
@@ -4035,7 +4147,30 @@ impl Invoices {
                 customer_id: cust_uuid,
                 order_id: order_uuid,
                 billing_email,
-                items: vec![],
+                items: items
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|i| {
+                        Ok(stateset_core::CreateInvoiceItem {
+                            product_id: parse_optional_uuid(i.product_id.as_deref(), "product id")?
+                                .map(Into::into),
+                            sku: i.sku,
+                            description: i.description,
+                            quantity: decimal_from_f64(i.quantity, "invoice item quantity")?,
+                            unit_of_measure: i.unit_of_measure,
+                            unit_price: decimal_from_f64(i.unit_price, "invoice item unit price")?,
+                            discount_amount: i
+                                .discount_amount
+                                .map(|v| decimal_from_f64(v, "invoice item discount amount"))
+                                .transpose()?,
+                            tax_amount: i
+                                .tax_amount
+                                .map(|v| decimal_from_f64(v, "invoice item tax amount"))
+                                .transpose()?,
+                            ..Default::default()
+                        })
+                    })
+                    .collect::<PyResult<Vec<_>>>()?,
                 ..Default::default()
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create invoice: {}", e)))?;
@@ -13880,6 +14015,8 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Order>()?;
     m.add_class::<OrderItem>()?;
     m.add_class::<CreateOrderItemInput>()?;
+    m.add_class::<CreateInvoiceItemInput>()?;
+    m.add_class::<CreatePurchaseOrderItemInput>()?;
 
     // Products
     m.add_class::<Products>()?;
