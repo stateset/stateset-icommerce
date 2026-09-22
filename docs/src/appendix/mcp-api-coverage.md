@@ -15,12 +15,12 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | Metric | Value |
 | --- | --- |
 | Domain tool modules | 87 |
-| Domain tools | 923 |
+| Domain tools | 934 |
 | Commerce getters | 68 |
 | Mapped getters | 68 |
 | Audited classes | 32 |
-| Audited methods | 390 |
-| Mapped audited methods | 390 |
+| Audited methods | 401 |
+| Mapped audited methods | 401 |
 | Fully covered | yes |
 
 ## Commerce Getter Coverage
@@ -31,8 +31,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `accountsReceivable` | `accounts-receivable` | 8 |
 | `activityLogs` | `activity-logs` | 5 |
 | `analytics` | `analytics` | 14 |
-| `backorder` | `backorders` | 9 |
-| `backorders` | `backorders` | 9 |
+| `backorder` | `backorders` | 20 |
+| `backorders` | `backorders` | 20 |
 | `bom` | `manufacturing` | 11 |
 | `carts` | `carts` | 30 |
 | `channels` | `channels` | 8 |
@@ -103,7 +103,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `AccountsPayable` | 12 | 12 | 0 | 0 | 0 |
 | `AccountsReceivable` | 8 | 8 | 0 | 0 | 0 |
 | `Analytics` | 14 | 14 | 0 | 0 | 0 |
-| `Backorders` | 10 | 10 | 0 | 0 | 0 |
+| `Backorders` | 21 | 21 | 0 | 0 | 0 |
 | `Bom` | 7 | 7 | 0 | 0 | 0 |
 | `Carts` | 33 | 33 | 0 | 0 | 0 |
 | `CostAccounting` | 5 | 5 | 0 | 0 | 0 |

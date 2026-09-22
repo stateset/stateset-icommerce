@@ -121,6 +121,14 @@ export type CreditAccountStatus = 'Active' | 'Suspended' | 'OnHold' | 'Closed' |
 /** Credit account status accepted by `CreditAccountFilterInput.status`: the rendered form or the engine's snake_case (strict). */
 export type CreditAccountStatusInput = CreditAccountStatus | 'active' | 'suspended' | 'on_hold' | 'onhold' | 'closed' | 'pending_review' | 'pendingreview'
 
+/** Backorder fulfilment source as rendered on `BackorderFulfillmentOutput.sourceType` (Rust `Debug` form). */
+export type BackorderFulfillmentSource = 'Inventory' | 'PurchaseOrder' | 'Transfer' | 'Production'
+/** Fulfilment source accepted by `FulfillBackorderInput.sourceType`: the rendered form or the engine's snake_case (strict). */
+export type BackorderFulfillmentSourceInput = BackorderFulfillmentSource | 'inventory' | 'purchase_order' | 'transfer' | 'production'
+
+/** Backorder allocation status as rendered on `BackorderAllocationOutput.status` (Rust `Debug` form). */
+export type BackorderAllocationStatus = 'Reserved' | 'Confirmed' | 'Released' | 'Expired' | 'Fulfilled'
+
 /** Backorder status as rendered on `BackorderOutput.status` (Rust `Debug` form). */
 export type BackorderStatus = 'Pending' | 'PartiallyFulfilled' | 'Allocated' | 'ReadyToShip' | 'Fulfilled' | 'Cancelled'
 /** Backorder status accepted by `BackorderFilterInput.status`: the rendered form or the engine's snake_case (strict). */

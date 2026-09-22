@@ -285,8 +285,8 @@
         "className": "X402"
       }
     ],
-    "toolCount": 727,
-    "readOnlyCount": 370,
+    "toolCount": 749,
+    "readOnlyCount": 378,
     "readOnlyPrefixes": [
       "calculate",
       "check",
@@ -630,6 +630,31 @@
       },
       "additionalProperties": false,
       "description": "Optional on-chain proof data accompanying a wallet binding."
+    },
+    "AllocateBackorderInput": {
+      "type": "object",
+      "properties": {
+        "backorderId": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "number"
+        },
+        "locationId": {
+          "type": "number"
+        },
+        "lotId": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "backorderId",
+        "quantity"
+      ],
+      "additionalProperties": false
     },
     "AnalyticsQueryInput": {
       "type": "object",
@@ -5413,6 +5438,46 @@
       },
       "additionalProperties": false
     },
+    "FulfillBackorderInput": {
+      "type": "object",
+      "properties": {
+        "backorderId": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "number"
+        },
+        "sourceType": {
+          "type": "string",
+          "enum": [
+            "Inventory",
+            "PurchaseOrder",
+            "Transfer",
+            "Production",
+            "inventory",
+            "purchase_order",
+            "transfer",
+            "production"
+          ],
+          "description": "Backorder fulfilment source as rendered on `BackorderFulfillmentOutput.sourceType` (Rust `Debug` form)."
+        },
+        "sourceId": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "fulfilledBy": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "backorderId",
+        "quantity",
+        "sourceType"
+      ],
+      "additionalProperties": false
+    },
     "GiftCardFilterInput": {
       "type": "object",
       "properties": {
@@ -8177,6 +8242,34 @@
         },
         "active": {
           "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "UpdateBackorderInput": {
+      "type": "object",
+      "properties": {
+        "priority": {
+          "type": "string",
+          "enum": [
+            "critical",
+            "high",
+            "normal",
+            "low"
+          ],
+          "description": "Backorder priority accepted by `CreateBackorderInput.priority` (case-insensitive)."
+        },
+        "expectedDate": {
+          "type": "string"
+        },
+        "promisedDate": {
+          "type": "string"
+        },
+        "sourceLocationId": {
+          "type": "number"
+        },
+        "notes": {
+          "type": "string"
         }
       },
       "additionalProperties": false
@@ -11070,6 +11163,58 @@
       }
     },
     {
+      "name": "backorder.allocateBackorder",
+      "module": "backorder",
+      "className": "Backorders",
+      "method": "allocateBackorder",
+      "description": "Reserve a specific quantity of stock against one backorder.",
+      "signature": "allocateBackorder(input: AllocateBackorderInput): Promise<BackorderAllocationOutput>",
+      "returnType": "Promise<BackorderAllocationOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "$ref": "#/definitions/AllocateBackorderInput"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorder.autoAllocateInventory",
+      "module": "backorder",
+      "className": "Backorders",
+      "method": "autoAllocateInventory",
+      "description": "Allocate available inventory to this SKU's open backorders, in priority order (critical first, then oldest first), each up to what is still available at its source location.\n\nReturns the allocations created, which is empty when nothing is available or no backorder is open. Call it after stock arrives.",
+      "signature": "autoAllocateInventory(sku: string): Promise<Array<BackorderAllocationOutput>>",
+      "returnType": "Promise<Array<BackorderAllocationOutput>>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "sku"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sku"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "backorder.cancelBackorder",
       "module": "backorder",
       "className": "Backorders",
@@ -11077,6 +11222,32 @@
       "description": "Cancel a backorder",
       "signature": "cancelBackorder(id: string): Promise<BackorderOutput>",
       "returnType": "Promise<BackorderOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorder.confirmAllocation",
+      "module": "backorder",
+      "className": "Backorders",
+      "method": "confirmAllocation",
+      "description": "Confirm a reserved allocation, committing the stock to the backorder.",
+      "signature": "confirmAllocation(id: string): Promise<BackorderAllocationOutput>",
+      "returnType": "Promise<BackorderAllocationOutput>",
       "readOnly": false,
       "permission": "write",
       "positional": [
@@ -11139,6 +11310,75 @@
       }
     },
     {
+      "name": "backorder.expireAllocations",
+      "module": "backorder",
+      "className": "Backorders",
+      "method": "expireAllocations",
+      "description": "Expire every allocation whose hold has lapsed, returning how many were swept. Without this the stock a lapsed allocation holds is never freed.",
+      "signature": "expireAllocations(): Promise<number>",
+      "returnType": "Promise<number>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [],
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorder.fulfillBackorder",
+      "module": "backorder",
+      "className": "Backorders",
+      "method": "fulfillBackorder",
+      "description": "Record a fulfilment against a backorder, drawing on the named source.",
+      "signature": "fulfillBackorder(input: FulfillBackorderInput): Promise<BackorderOutput>",
+      "returnType": "Promise<BackorderOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "$ref": "#/definitions/FulfillBackorderInput"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorder.getAllocations",
+      "module": "backorder",
+      "className": "Backorders",
+      "method": "getAllocations",
+      "description": "List the allocations recorded against one backorder.",
+      "signature": "getAllocations(backorderId: string): Promise<Array<BackorderAllocationOutput>>",
+      "returnType": "Promise<Array<BackorderAllocationOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "backorderId"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "backorderId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "backorderId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "backorder.getBackorder",
       "module": "backorder",
       "className": "Backorders",
@@ -11186,6 +11426,32 @@
         },
         "required": [
           "number"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorder.getBackordersForCustomer",
+      "module": "backorder",
+      "className": "Backorders",
+      "method": "getBackordersForCustomer",
+      "description": "Every backorder raised for one customer.",
+      "signature": "getBackordersForCustomer(customerId: string): Promise<Array<BackorderOutput>>",
+      "returnType": "Promise<Array<BackorderOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "customerId"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "customerId"
         ],
         "additionalProperties": false
       }
@@ -11243,6 +11509,32 @@
       }
     },
     {
+      "name": "backorder.getFulfillmentHistory",
+      "module": "backorder",
+      "className": "Backorders",
+      "method": "getFulfillmentHistory",
+      "description": "The fulfilment history recorded against one backorder.",
+      "signature": "getFulfillmentHistory(backorderId: string): Promise<Array<BackorderFulfillmentOutput>>",
+      "returnType": "Promise<Array<BackorderFulfillmentOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "backorderId"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "backorderId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "backorderId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "backorder.getOverdueBackorders",
       "module": "backorder",
       "className": "Backorders",
@@ -11256,6 +11548,32 @@
       "parameters": {
         "type": "object",
         "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorder.getSkuSummary",
+      "module": "backorder",
+      "className": "Backorders",
+      "method": "getSkuSummary",
+      "description": "Open backorder totals for one SKU, or null when none are open.",
+      "signature": "getSkuSummary(sku: string): Promise<SkuBackorderSummaryOutput | null>",
+      "returnType": "Promise<SkuBackorderSummaryOutput | null>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "sku"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sku"
+        ],
         "additionalProperties": false
       }
     },
@@ -11307,6 +11625,115 @@
       }
     },
     {
+      "name": "backorder.releaseAllocation",
+      "module": "backorder",
+      "className": "Backorders",
+      "method": "releaseAllocation",
+      "description": "Release a reserved allocation, returning the stock to available.",
+      "signature": "releaseAllocation(id: string): Promise<BackorderAllocationOutput>",
+      "returnType": "Promise<BackorderAllocationOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorder.updateBackorder",
+      "module": "backorder",
+      "className": "Backorders",
+      "method": "updateBackorder",
+      "description": "Update a backorder's priority, dates, source location or notes.",
+      "signature": "updateBackorder(id: string, input: UpdateBackorderInput): Promise<BackorderOutput>",
+      "returnType": "Promise<BackorderOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/definitions/UpdateBackorderInput"
+          }
+        },
+        "required": [
+          "id",
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorders.allocateBackorder",
+      "module": "backorders",
+      "className": "Backorders",
+      "method": "allocateBackorder",
+      "description": "Reserve a specific quantity of stock against one backorder.",
+      "signature": "allocateBackorder(input: AllocateBackorderInput): Promise<BackorderAllocationOutput>",
+      "returnType": "Promise<BackorderAllocationOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "$ref": "#/definitions/AllocateBackorderInput"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorders.autoAllocateInventory",
+      "module": "backorders",
+      "className": "Backorders",
+      "method": "autoAllocateInventory",
+      "description": "Allocate available inventory to this SKU's open backorders, in priority order (critical first, then oldest first), each up to what is still available at its source location.\n\nReturns the allocations created, which is empty when nothing is available or no backorder is open. Call it after stock arrives.",
+      "signature": "autoAllocateInventory(sku: string): Promise<Array<BackorderAllocationOutput>>",
+      "returnType": "Promise<Array<BackorderAllocationOutput>>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "sku"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sku"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "backorders.cancelBackorder",
       "module": "backorders",
       "className": "Backorders",
@@ -11314,6 +11741,32 @@
       "description": "Cancel a backorder",
       "signature": "cancelBackorder(id: string): Promise<BackorderOutput>",
       "returnType": "Promise<BackorderOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorders.confirmAllocation",
+      "module": "backorders",
+      "className": "Backorders",
+      "method": "confirmAllocation",
+      "description": "Confirm a reserved allocation, committing the stock to the backorder.",
+      "signature": "confirmAllocation(id: string): Promise<BackorderAllocationOutput>",
+      "returnType": "Promise<BackorderAllocationOutput>",
       "readOnly": false,
       "permission": "write",
       "positional": [
@@ -11376,6 +11829,75 @@
       }
     },
     {
+      "name": "backorders.expireAllocations",
+      "module": "backorders",
+      "className": "Backorders",
+      "method": "expireAllocations",
+      "description": "Expire every allocation whose hold has lapsed, returning how many were swept. Without this the stock a lapsed allocation holds is never freed.",
+      "signature": "expireAllocations(): Promise<number>",
+      "returnType": "Promise<number>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [],
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorders.fulfillBackorder",
+      "module": "backorders",
+      "className": "Backorders",
+      "method": "fulfillBackorder",
+      "description": "Record a fulfilment against a backorder, drawing on the named source.",
+      "signature": "fulfillBackorder(input: FulfillBackorderInput): Promise<BackorderOutput>",
+      "returnType": "Promise<BackorderOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "$ref": "#/definitions/FulfillBackorderInput"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorders.getAllocations",
+      "module": "backorders",
+      "className": "Backorders",
+      "method": "getAllocations",
+      "description": "List the allocations recorded against one backorder.",
+      "signature": "getAllocations(backorderId: string): Promise<Array<BackorderAllocationOutput>>",
+      "returnType": "Promise<Array<BackorderAllocationOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "backorderId"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "backorderId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "backorderId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "backorders.getBackorder",
       "module": "backorders",
       "className": "Backorders",
@@ -11423,6 +11945,32 @@
         },
         "required": [
           "number"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorders.getBackordersForCustomer",
+      "module": "backorders",
+      "className": "Backorders",
+      "method": "getBackordersForCustomer",
+      "description": "Every backorder raised for one customer.",
+      "signature": "getBackordersForCustomer(customerId: string): Promise<Array<BackorderOutput>>",
+      "returnType": "Promise<Array<BackorderOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "customerId"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "customerId"
         ],
         "additionalProperties": false
       }
@@ -11480,6 +12028,32 @@
       }
     },
     {
+      "name": "backorders.getFulfillmentHistory",
+      "module": "backorders",
+      "className": "Backorders",
+      "method": "getFulfillmentHistory",
+      "description": "The fulfilment history recorded against one backorder.",
+      "signature": "getFulfillmentHistory(backorderId: string): Promise<Array<BackorderFulfillmentOutput>>",
+      "returnType": "Promise<Array<BackorderFulfillmentOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "backorderId"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "backorderId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "backorderId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "backorders.getOverdueBackorders",
       "module": "backorders",
       "className": "Backorders",
@@ -11493,6 +12067,32 @@
       "parameters": {
         "type": "object",
         "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorders.getSkuSummary",
+      "module": "backorders",
+      "className": "Backorders",
+      "method": "getSkuSummary",
+      "description": "Open backorder totals for one SKU, or null when none are open.",
+      "signature": "getSkuSummary(sku: string): Promise<SkuBackorderSummaryOutput | null>",
+      "returnType": "Promise<SkuBackorderSummaryOutput | null>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "sku"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sku"
+        ],
         "additionalProperties": false
       }
     },
@@ -11540,6 +12140,63 @@
             ]
           }
         },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorders.releaseAllocation",
+      "module": "backorders",
+      "className": "Backorders",
+      "method": "releaseAllocation",
+      "description": "Release a reserved allocation, returning the stock to available.",
+      "signature": "releaseAllocation(id: string): Promise<BackorderAllocationOutput>",
+      "returnType": "Promise<BackorderAllocationOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "backorders.updateBackorder",
+      "module": "backorders",
+      "className": "Backorders",
+      "method": "updateBackorder",
+      "description": "Update a backorder's priority, dates, source location or notes.",
+      "signature": "updateBackorder(id: string, input: UpdateBackorderInput): Promise<BackorderOutput>",
+      "returnType": "Promise<BackorderOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/definitions/UpdateBackorderInput"
+          }
+        },
+        "required": [
+          "id",
+          "input"
+        ],
         "additionalProperties": false
       }
     },

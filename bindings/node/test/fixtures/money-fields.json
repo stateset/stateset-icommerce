@@ -221,93 +221,11 @@
     ]
   },
   "notMoney": {
-    "ProductPerformanceOutput": [
-      "revenueGrowthPercent",
-      "unitsGrowthPercent"
-    ],
-    "CustomerMetricsOutput": [
-      "averageOrdersPerCustomer"
-    ],
-    "RevenueForecastOutput": [
-      "confidenceLevel"
-    ],
-    "ReturnMetricsOutput": [
-      "returnRatePercent"
-    ],
-    "ConversionResultOutput": [
-      "inverseRate",
-      "rate"
-    ],
-    "SubscriptionPlanOutput": [
-      "discountPercent"
-    ],
-    "SubscriptionOutput": [
-      "discountPercent"
-    ],
-    "PromotionOutput": [
-      "getDiscountPercent",
-      "percentageOff"
-    ],
-    "TaxRateOutput": [
-      "rate"
-    ],
-    "TaxBreakdownOutput": [
-      "rate"
-    ],
-    "TaxDetailOutput": [
-      "rate"
-    ],
-    "LineItemTaxOutput": [
-      "effectiveRate"
-    ],
-    "JurisdictionSummaryOutput": [
-      "totalRate"
-    ],
-    "LowStockItemOutput": [
-      "allocated",
-      "available",
-      "averageDailySales",
-      "daysOfStock",
-      "onHand",
-      "reorderPoint"
-    ],
-    "DemandForecastOutput": [
-      "averageDailyDemand",
-      "confidence",
-      "currentStock",
-      "forecastedDemand",
-      "recommendedReorderQty"
-    ],
-    "FulfillmentMetricsOutput": [
-      "avgTimeToDeliverHours",
-      "avgTimeToShipHours",
-      "onTimeDeliveryPercent",
-      "onTimeShippingPercent"
-    ],
-    "ExchangeRateOutput": [
-      "rate"
-    ],
-    "BomComponentOutput": [
+    "BackorderAllocationOutput": [
       "quantity"
     ],
-    "WorkOrderOutput": [
-      "quantityCompleted",
-      "quantityToBuild"
-    ],
-    "NcrOutput": [
-      "quantityAffected"
-    ],
-    "QualityHoldOutput": [
-      "quantityHeld"
-    ],
-    "LotOutput": [
-      "quantityAvailable",
-      "quantityProduced",
-      "quantityReserved"
-    ],
-    "PickTaskOutput": [
-      "quantityPicked",
-      "quantityRequested"
+    "BackorderFulfillmentOutput": [
+      "quantity"
     ],
     "BackorderOutput": [
       "quantityFulfilled",
@@ -317,55 +235,11 @@
     "BackorderSummaryOutput": [
       "totalValue"
     ],
-    "VectorSearchResultOutput": [
-      "distance",
-      "score"
-    ],
-    "ProductSearchResultOutput": [
-      "distance",
-      "score"
-    ],
-    "CustomerSearchResultOutput": [
-      "distance",
-      "score"
-    ],
-    "OrderSearchResultOutput": [
-      "distance",
-      "score"
-    ],
-    "InventorySearchResultOutput": [
-      "distance",
-      "score"
-    ],
-    "ReviewSummaryOutput": [
-      "averageRating"
-    ],
-    "LoyaltyTierOutput": [
-      "multiplier"
-    ],
-    "FraudSignalOutput": [
-      "score"
-    ],
-    "FraudAssessmentOutput": [
-      "riskScore"
-    ],
-    "FraudRuleOutput": [
-      "threshold"
-    ],
-    "SearchFieldOutput": [
-      "weight"
+    "BomComponentOutput": [
+      "quantity"
     ],
     "BoostRuleOutput": [
       "boostFactor"
-    ],
-    "UsStateTaxInfoOutput": [
-      "stateRate"
-    ],
-    "EuVatInfoOutput": [
-      "parkingRate",
-      "reducedRate",
-      "standardRate",
-      "superReducedRate"
     ],
     "CanadianTaxInfoOutput": [
       "gstRate",
@@ -373,6 +247,141 @@
       "pstRate",
       "qstRate",
       "totalRate"
+    ],
+    "ConversionResultOutput": [
+      "inverseRate",
+      "rate"
+    ],
+    "CustomerMetricsOutput": [
+      "averageOrdersPerCustomer"
+    ],
+    "CustomerSearchResultOutput": [
+      "distance",
+      "score"
+    ],
+    "DemandForecastOutput": [
+      "averageDailyDemand",
+      "confidence",
+      "currentStock",
+      "forecastedDemand",
+      "recommendedReorderQty"
+    ],
+    "EuVatInfoOutput": [
+      "parkingRate",
+      "reducedRate",
+      "standardRate",
+      "superReducedRate"
+    ],
+    "ExchangeRateOutput": [
+      "rate"
+    ],
+    "FraudAssessmentOutput": [
+      "riskScore"
+    ],
+    "FraudRuleOutput": [
+      "threshold"
+    ],
+    "FraudSignalOutput": [
+      "score"
+    ],
+    "FulfillmentMetricsOutput": [
+      "avgTimeToDeliverHours",
+      "avgTimeToShipHours",
+      "onTimeDeliveryPercent",
+      "onTimeShippingPercent"
+    ],
+    "InventorySearchResultOutput": [
+      "distance",
+      "score"
+    ],
+    "JurisdictionSummaryOutput": [
+      "totalRate"
+    ],
+    "LineItemTaxOutput": [
+      "effectiveRate"
+    ],
+    "LotOutput": [
+      "quantityAvailable",
+      "quantityProduced",
+      "quantityReserved"
+    ],
+    "LowStockItemOutput": [
+      "allocated",
+      "available",
+      "averageDailySales",
+      "daysOfStock",
+      "onHand",
+      "reorderPoint"
+    ],
+    "LoyaltyTierOutput": [
+      "multiplier"
+    ],
+    "NcrOutput": [
+      "quantityAffected"
+    ],
+    "OrderSearchResultOutput": [
+      "distance",
+      "score"
+    ],
+    "PickTaskOutput": [
+      "quantityPicked",
+      "quantityRequested"
+    ],
+    "ProductPerformanceOutput": [
+      "revenueGrowthPercent",
+      "unitsGrowthPercent"
+    ],
+    "ProductSearchResultOutput": [
+      "distance",
+      "score"
+    ],
+    "PromotionOutput": [
+      "getDiscountPercent",
+      "percentageOff"
+    ],
+    "QualityHoldOutput": [
+      "quantityHeld"
+    ],
+    "ReturnMetricsOutput": [
+      "returnRatePercent"
+    ],
+    "RevenueForecastOutput": [
+      "confidenceLevel"
+    ],
+    "ReviewSummaryOutput": [
+      "averageRating"
+    ],
+    "SearchFieldOutput": [
+      "weight"
+    ],
+    "SkuBackorderSummaryOutput": [
+      "totalQuantity"
+    ],
+    "SubscriptionOutput": [
+      "discountPercent"
+    ],
+    "SubscriptionPlanOutput": [
+      "discountPercent"
+    ],
+    "TaxBreakdownOutput": [
+      "rate"
+    ],
+    "TaxDetailOutput": [
+      "rate"
+    ],
+    "TaxRateOutput": [
+      "rate"
+    ],
+    "UsStateTaxInfoOutput": [
+      "stateRate"
+    ],
+    "VectorSearchResultOutput": [
+      "distance",
+      "score"
+    ],
+    "WorkOrderOutput": [
+      "quantityCompleted",
+      "quantityToBuild"
     ]
   }
 }
