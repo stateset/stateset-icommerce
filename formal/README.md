@@ -656,8 +656,11 @@ Two two-point redemptions compete for a three-point account. A guarded
 balance and transaction insert permit at most one; stale reads overdraw. The
 SQLite `concurrent_redemptions_cannot_overdraw` regression exercises the race.
 Lean proves the accounting equations for arbitrary accepted earns and
-redemptions. Tier changes, expiry, and the finite `i64` representation are
-outside this bounded model.
+redemptions. Both backends now check `i64` overflow in lifetime-earned points
+before changing either counter or inserting a transaction;
+`lifetime_points_overflow_preserves_balance_and_ledger` and its Postgres twin
+exercise that finite-range boundary. Tier changes and expiry remain outside
+this bounded model.
 
 ## Prepayment settlement — tla/finance/PrepaymentSettlement.tla
 
@@ -729,6 +732,7 @@ cargo test -p stateset-db --lib receipt_requires_shipment_and_shipping_cannot_re
 cargo test -p stateset-db --lib competing_applications_cannot_exceed_vendor_credit
 cargo test -p stateset-db --lib concurrent_puts_preserve_one_first_response
 cargo test -p stateset-db --lib concurrent_redemptions_cannot_overdraw
+cargo test -p stateset-db --lib lifetime_points_overflow_preserves_balance_and_ledger
 cargo test -p stateset-db --lib competing_applications_cannot_exceed_prepayment
 cargo test -p stateset-db --lib competing_hold_releases_preserve_first_audit_record
 cargo test -p stateset-db --lib terminal_status_cannot_be_replaced
@@ -739,6 +743,7 @@ cargo test -p stateset-db --features postgres --test postgres_transfer_order_rec
 cargo test -p stateset-db --features postgres --test postgres_warranty_claim_guards postgres_competing_claims_consume_one_available_slot
 cargo test -p stateset-db --features postgres --test postgres_vendor_credit_race
 cargo test -p stateset-db --features postgres --test postgres_edi_terminal_race
+cargo test -p stateset-db --features postgres --test postgres_loyalty_overflow
 cargo test -p stateset-sync pull_does_not_advance_cursor_when_conflict_resolution_cannot_persist
 cargo test -p stateset-db --test sqlite_payment_order_guards concurrent_captures_cannot_exceed_one_order_total
 cargo test -p stateset-embedded --test ap_money_guards_test process_payment_run_concurrent_double_process_pays_each_bill_once
