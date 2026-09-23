@@ -1530,8 +1530,14 @@ async fn postgres_kernel_ledger_and_x402_commands_preserve_exact_fact_parity() {
     let db = PostgresDatabase::connect(&url).await.expect("connect and migrate");
     let suffix = Uuid::new_v4();
     let bytes = suffix.as_bytes();
-    let fiscal_year = 2200 + i32::from(bytes[0]);
-    let period_number = 1 + i32::from(bytes[1] % 12);
+    // `(fiscal_year, period_number)` is unique, and this database is shared
+    // with every other Postgres suite in the job. The key used to be drawn from
+    // 256 years x 12 periods -- 3,072 combinations -- which collided often
+    // enough to fail CI intermittently with the code unchanged. 3000-8999 is a
+    // range no other test uses, and two bytes of the UUID give 6,000 years x 12
+    // periods = 72,000 combinations.
+    let fiscal_year = 3000 + i32::from(u16::from_be_bytes([bytes[0], bytes[1]]) % 6000);
+    let period_number = 1 + i32::from(bytes[2] % 12);
     let gl = db.general_ledger();
     let period = gl
         .create_period_async(CreateGlPeriod {
