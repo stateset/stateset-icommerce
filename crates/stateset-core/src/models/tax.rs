@@ -900,9 +900,9 @@ pub struct TaxComputationInputs {
 /// Given the request and the data a backend resolved for it, produce the
 /// result. Guarantees:
 ///
-/// * every amount is rounded to `settings.decimal_places` with
-///   `settings.rounding_mode`, per line and per rate, allocating rounding
-///   residue by largest remainder — so
+/// * every amount is rounded to the valid `settings.decimal_places` (or 2
+///   for invalid legacy settings) with `settings.rounding_mode`, per line
+///   and per rate. It allocates rounding residue by largest remainder, so
 ///   `Σ line_item_taxes + shipping_tax == total_tax` and
 ///   `Σ tax_breakdown == total_tax` hold exactly;
 /// * customer exemptions apply only when effective on the transaction date
@@ -1070,6 +1070,7 @@ struct RateShare {
 
 impl TaxAccumulator {
     /// Start a calculation rounding to `decimal_places` with `strategy`.
+    /// Scales above [`Decimal::MAX_SCALE`] use the two-place default.
     #[must_use]
     pub fn new(decimal_places: u32, strategy: RoundingStrategy) -> Self {
         let decimal_places = if decimal_places <= Decimal::MAX_SCALE { decimal_places } else { 2 };
