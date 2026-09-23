@@ -2768,6 +2768,15 @@ fn kernel_a2a_escrow_create_fund_and_refund_are_exact_atomic_and_replayable() {
         .expect("replay refund");
     assert_eq!(replay.receipt_id, refunded.receipt_id);
 
+    let mut release_after_refund =
+        release_escrow_command("a2a-escrow-release-after-refund-1", &escrow.id);
+    release_after_refund.mode = ExecutionMode::Apply;
+    let rejected = db
+        .kernel_executor(payment_policy())
+        .execute_release_a2a_escrow(&release_after_refund)
+        .expect("reject release after refund");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+
     let conn = db.pool().get().expect("connection");
     let event_count: i64 = conn
         .query_row(
@@ -2914,6 +2923,29 @@ fn kernel_a2a_formal_dispute_is_scoped_exact_atomic_and_replayable() {
     assert_eq!(denied.status, ExecutionStatus::Rejected);
     assert_eq!(denied.error_code.as_deref(), Some("commerce.a2a.dispute_not_found"));
 
+    let mut unbalanced = governed_dispute_command(
+        "a2a.dispute.resolve",
+        "a2a-formal-unbalanced-split-1",
+        "agent:resolver",
+        ResolveA2ADispute {
+            dispute_id: dispute.id.clone(),
+            resolution_type: A2ADisputeResolutionType::Split,
+            buyer_amount: Some(dec!(40.000001)),
+            seller_amount: Some(dec!(84.000000)),
+            note: None,
+        },
+    );
+    unbalanced.mode = ExecutionMode::Apply;
+    let rejected = db
+        .kernel_executor(payment_policy())
+        .execute_resolve_a2a_dispute(&unbalanced)
+        .expect("durable unbalanced split rejection");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    assert_eq!(
+        rejected.error_code.as_deref(),
+        Some("commerce.a2a.dispute.allocations_do_not_balance")
+    );
+
     let mut resolve = governed_dispute_command(
         "a2a.dispute.resolve",
         "a2a-formal-resolve-1",
@@ -3051,6 +3083,18 @@ fn kernel_a2a_escrow_release_validates_conditions_previews_applies_and_replays()
         .execute_release_a2a_escrow(&retry)
         .expect("replay release");
     assert_eq!(replay.receipt_id, applied.receipt_id);
+    let mut refund_after_release = scope_escrow_command(CommandEnvelope::preview(
+        "a2a.escrow.refund",
+        "a2a-escrow-refund-after-release-1",
+        escrow_principal("a2a.escrow.refund"),
+        RefundA2AEscrow { escrow_id: escrow_id.clone(), reason: None },
+    ));
+    refund_after_release.mode = ExecutionMode::Apply;
+    let rejected = db
+        .kernel_executor(payment_policy())
+        .execute_refund_a2a_escrow(&refund_after_release)
+        .expect("reject refund after release");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
     let conn = db.pool().get().expect("connection");
     let released: (String, Option<String>) = conn
         .query_row(

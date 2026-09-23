@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Check the Lean proofs, and hold them to the code.
 #
-#   1. Allocation.lean and MerklePath.lean must compile, and their theorems must rest on Lean's
-#      standard axioms only -- a `sorry` anywhere would show up as sorryAx;
+#   1. Every proof file must compile, and its public theorems must rest on
+#      Lean's standard axioms only -- a `sorry` would show up as sorryAx;
 #   2. the golden vectors the proved model computes must equal the committed
 #      allocate_rounded.golden.json, which the Rust test
 #      `allocate_rounded_matches_the_lean_model` holds the engine to.
@@ -30,10 +30,14 @@ echo "== Allocation.lean: the proofs must check"
 lean -o "$build/Allocation.olean" Allocation.lean
 echo "== MerklePath.lean: the proofs must check"
 lean -o "$build/MerklePath.olean" MerklePath.lean
+echo "== RevenueSchedule.lean: the proofs must check"
+lean -o "$build/RevenueSchedule.olean" RevenueSchedule.lean
+echo "== LedgerRevaluation.lean: the proofs must check"
+lean -o "$build/LedgerRevaluation.olean" LedgerRevaluation.lean
 
 echo "== the theorems must use no axiom beyond Lean's standard three"
 theorems=(round_within residue_le_length select_marks nudge_sum allocate_sum allocate_near)
-axioms="$(printf 'import Allocation\nimport MerklePath\n' ; for t in "${theorems[@]}"; do printf '#print axioms Allocation.%s\n' "$t"; done; printf '#print axioms MerklePath.leaf_binding\n#print axioms MerklePath.index_exhausted\n')"
+axioms="$(printf 'import Allocation\nimport MerklePath\nimport RevenueSchedule\nimport LedgerRevaluation\n' ; for t in "${theorems[@]}"; do printf '#print axioms Allocation.%s\n' "$t"; done; printf '#print axioms MerklePath.leaf_binding\n#print axioms MerklePath.index_exhausted\n#print axioms RevenueSchedule.ratable_sum\n#print axioms RevenueSchedule.recognized_add_deferred\n#print axioms LedgerRevaluation.journal_balanced\n#print axioms LedgerRevaluation.journal_lines_valid\n#print axioms LedgerRevaluation.reversal_balanced\n')"
 report="$(lean --stdin <<< "$axioms")"
 echo "$report"
 if grep -Eo '\b[A-Za-z.]+\b' <<< "$(grep -o '\[.*\]' <<< "$report")" \

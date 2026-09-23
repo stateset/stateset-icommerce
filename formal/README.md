@@ -8,17 +8,21 @@
 ## Why a model has to be able to fail
 
 A proof about a model says nothing about code the model does not match, and a
-model that cannot find a bug proves nothing at all. So every spec here is held
-to three things, and CI fails if any stops being true:
+model that cannot find a bug proves nothing at all. Every TLA+ spec therefore
+checks a guarded configuration and requires a counterexample from a broken
+one. The payment lifecycle has a transition golden file shared with Rust;
+the inventory, x402, escrow and returns models are connected to the focused Rust
+regressions named below. These are different strengths of model-to-code link.
 
 1. **The implementation's configuration satisfies every invariant**, across
    every interleaving TLC can reach.
 2. **A deliberately broken configuration violates one.** If the model ever
    stops finding the bug it was built to find, it has stopped saying anything,
    and `check.sh` reports that as a failure.
-3. **The spec's state machine equals a golden file that a Rust test also
-   checks**, so the proof about the spec stays a proof about the code. Change
-   either side alone and one of the two checks names the exact difference.
+3. **Rust tests exercise the corresponding behavior.** A shared golden file
+   compares the payment transition relation exactly; the newer models use
+   scenario tests for their critical guards and races. Those tests do not
+   establish equivalence between the models and every Rust path.
 
 ## `tla/payments/PaymentRefunds.tla` — refund reservation
 
@@ -67,6 +71,71 @@ model makes plain: a partial refund still in flight when its payment moves
 `partially_refunded` — so it holds its reservation until someone fails or
 cancels it. That is safe (no money moves), but it is a record that needs
 cleaning up.
+
+## `tla/inventory/InventoryReservations.tla` — stock holds
+
+One item/location starts with five units and two reservation records of two
+and three units. The model interleaves reserve, confirm, partial/full fulfill,
+release and expiry. `AllocatedMatchesOpen` requires the balance's allocated
+quantity to equal the sum of open holds; `StockBounds` prevents overselling.
+With terminal guards, TLC checks all 176 reachable states. Without them it
+finds `fulfilled → confirmed`: the row again looks like a live hold although
+its units have already left allocated stock. Releasing a fulfilled row can
+likewise free another hold's stock.
+
+SQLite and Postgres use `ReservationStatus::holds_stock()` in their release
+and confirm guards. The mutation-tested SQLite regression
+`releasing_fulfilled_reservation_does_not_free_another_hold` checks both
+terminal paths while another reservation remains live. The TLA+ result is
+bounded to these two records, integral units and one location. It does not
+model database repair from previously drifted balances or prove the SQL
+transaction implementation.
+
+## `tla/x402/X402Claims.tla` — one claim per cart
+
+Two intents compete for one cart. `NoDuplicateClaim` counts `created`,
+`signed`, `sequenced`, `batched` and `settled` as claiming states. Atomic
+creation explores 56 states without a violation. Splitting the claim check
+from insert yields two `created` intents for the same cart. SQLite's
+`BEGIN IMMEDIATE` and both backends' unique claim-key indexes implement the
+atomic case; the SQLite and Postgres
+`*_x402_concurrent_creates_for_one_cart_leave_exactly_one_claim` tests
+exercise the race. This model covers one cart and two intents. It does not
+prove on-chain settlement, signatures, expiry timing or the database indexes.
+
+## `tla/x402/EscrowSettlement.tla` — one terminal allocation
+
+One escrow of three integral units may be funded, disputed, released,
+refunded or resolved with a buyer/seller split. `NoDoubleSettlement` and
+`TerminalAllocated` require a terminal outcome to allocate the amount once
+and exactly once. The guarded model explores 18 reachable states. A split
+read/commit lets a stale refund follow a release or dispute resolution and
+allocate value twice; dropping the split-balance check also violates
+conservation. The kernel executors use serialized write transactions and
+status-conditional updates, and validate split allocations exactly. The
+SQLite tests `kernel_a2a_escrow_create_fund_and_refund_are_exact_atomic_and_replayable`
+and `kernel_a2a_escrow_release_validates_conditions_previews_applies_and_replays`
+also check that the opposite settlement is rejected after a terminal result;
+`kernel_a2a_formal_dispute_is_scoped_exact_atomic_and_replayable` checks an
+unbalanced split is rejected before a valid exact split succeeds.
+The modeled amounts are **kernel settlement allocations**, not proof of an
+external asset transfer. The model omits the payment rail, dispute evidence,
+release-condition evaluation and idempotency receipts.
+
+## `tla/returns/ShippedReturns.tla` — shipped-unit claims
+
+An order line ships up to three units, possibly in parts; two workers create
+returns against its shipped quantity. `NoOverReturn` prevents live or
+completed returns from claiming more than shipped. A dispositioned return
+must keep its claim (`DispositionClaimsPersist`), because returned or scrapped
+goods cannot become returnable again through rejection or cancellation.
+The guarded model explores 382 states. A split read/insert over-returns;
+allowing rejection after disposition breaks claim persistence. SQLite tests
+`concurrent_full_returns_on_one_line_admit_exactly_one` and
+`reject_after_restock_is_refused_and_over_return_guard_holds` exercise those
+guards; Postgres has a concurrent-create counterpart. The model covers one
+line, at most two returns and integral quantities. It does not model refund
+amounts, warehouse disposition details or the full order state machine.
 
 ## `lean/Allocation.lean` — allocating rounded money
 
@@ -131,6 +200,34 @@ remote root was generated from a particular leaf set or that the root was
 authenticated. The Rust tests connect the path shape and direction to the
 implementation on their cases.
 
+## `lean/RevenueSchedule.lean` — recognition conservation
+
+`ratable_sum` proves that a capped normal-period amount plus a final plug
+sums to the original amount for **any** positive number of periods, any
+nonnegative amount and any nonnegative normal-period amount. The cap prevents
+an early period from exhausting more than remains. `recognized_add_deferred`
+proves that marking entries recognized or deferred partitions that same
+money without changing its total. The Rust test
+`ratable_schedule_matches_lean_minor_unit_model` checks 1,440 amount/period
+cases against an independently rounded integer-cent model and verifies the
+recognized/deferred partition. The proof assumes `per` has already been
+rounded; it does not prove `rust_decimal` division, calendar-month dates or
+the Rust implementation beyond those test cases.
+
+## `lean/LedgerRevaluation.lean` — balanced FX journals
+
+Signed adjustments are split into positive one-sided debit or credit lines;
+zero adjustments are omitted. `journal_balanced` proves that the net FX
+offset makes total debits equal total credits for **any list** of signed
+adjustments. `journal_lines_valid` proves every emitted line is single-sided
+and positive on that side. `reversal_balanced` proves that swapping debit
+and credit on every line preserves balance. The Rust test
+`revaluation_journal_matches_lean_signed_model` checks 1,000 combinations
+of signs, zeros and debit/credit normal balances against the modeled line
+amounts. The proof takes adjustments and their orientation as inputs; it
+does not prove exchange-rate calculation, account selection, SQL posting or
+the database reversal workflow.
+
 ## Running it
 
 ```
@@ -143,9 +240,12 @@ v1.8.0 prerelease replaces the jar at its tag URL, so that URL cannot serve
 as a reproducible CI dependency.
 
 Requires Java 11+. The Rust half is
-`cargo test -p stateset-core --lib can_transition_to_matches_the_tla_spec`.
+`cargo test -p stateset-core --lib can_transition_to_matches_the_tla_spec`;
+the other Rust regressions are named in their sections above.
 
 ```
 formal/lean/check.sh                     # needs Lean 4.15.0 (elan picks it from lean-toolchain)
 cargo test -p stateset-core --lib allocate_rounded_matches_the_lean_model
+cargo test -p stateset-core --lib ratable_schedule_matches_lean_minor_unit_model
+cargo test -p stateset-core --lib revaluation_journal_matches_lean_signed_model
 ```
