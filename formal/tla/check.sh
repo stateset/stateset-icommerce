@@ -14,8 +14,10 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-TLA_VERSION="1.8.0"
-TLA_SHA256="9732eea90bdc7432e618184e4bee78700460e83e988238a80151dfd6507cfa0c"
+# v1.8.0 is a rolling prerelease: upstream replaces its jar at the same URL.
+# Pin the stable v1.7.4 release and its exact bytes instead.
+TLA_VERSION="1.7.4"
+TLA_SHA256="936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
 JAR="${TLA2TOOLS:-${XDG_CACHE_HOME:-$HOME/.cache}/tla2tools-${TLA_VERSION}.jar}"
 
 if [[ ! -f "$JAR" ]]; then
@@ -27,9 +29,8 @@ echo "${TLA_SHA256}  ${JAR}" | sha256sum -c --quiet - \
   || { echo "tla2tools.jar checksum mismatch" >&2; exit 1; }
 
 tlc() {
-  # -cleanup removes the state directory; -noGenerateSpecTE stops TLC writing
-  # a trace-exploration spec for every counterexample the broken config finds.
-  java -XX:+UseParallelGC -cp "$JAR" tlc2.TLC -workers auto -cleanup -noGenerateSpecTE "$@"
+  # -cleanup removes TLC's state directory. v1.7.4 predates -noGenerateSpecTE.
+  java -XX:+UseParallelGC -cp "$JAR" tlc2.TLC -workers auto -cleanup "$@"
 }
 
 fail=0

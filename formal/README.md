@@ -73,5 +73,9 @@ formal/tla/check.sh                      # downloads and verifies tla2tools.jar
 TLA2TOOLS=/path/to/tla2tools.jar formal/tla/check.sh
 ```
 
+The checker pins the stable TLA+ Tools v1.7.4 jar by SHA-256. Upstream's
+v1.8.0 prerelease replaces the jar at its tag URL, so that URL cannot serve
+as a reproducible CI dependency.
+
 Requires Java 11+. The Rust half is
 `cargo test -p stateset-core --lib can_transition_to_matches_the_tla_spec`.
