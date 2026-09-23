@@ -3054,8 +3054,15 @@ mod tests {
         // ...the lease holder bills.
         let created = repo.create_billing_cycle(cycle(Some("w1"))).expect("lease holder bills");
         assert_eq!(created.cycle_number, 2);
+        // Replaying the same cycle number cannot insert a second row, even
+        // when the caller still owns the lease.
+        assert!(matches!(
+            repo.create_billing_cycle(cycle(Some("w1"))),
+            Err(CommerceError::Conflict(_))
+        ));
         // Once released, anyone may create a (new) cycle again.
         assert!(repo.release_billing_claim(sub.id, "w1").expect("release"));
+        assert!(matches!(repo.create_billing_cycle(cycle(None)), Err(CommerceError::Conflict(_))));
         let mut next = cycle(None);
         next.cycle_number = 3;
         repo.create_billing_cycle(next).expect("unleased subscription bills");

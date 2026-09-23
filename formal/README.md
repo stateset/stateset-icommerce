@@ -156,7 +156,8 @@ commit. `OneCyclePerKey` holds in all six guarded states; a split key check and
 insert permits two cycles. SQLite's
 `claim_due_for_billing_hands_disjoint_batches_to_concurrent_workers` and
 `create_billing_cycle_refuses_a_subscription_leased_to_another_worker` tests
-exercise leasing, while the unique `cycle_key` index guards duplicate cycles.
+exercise leasing and reject duplicate cycle numbers, backed by the unique
+`cycle_key` index.
 The model is for one key and two workers. It does not prove exactly-once
 external charging, invoice generation or liveness.
 
@@ -169,7 +170,8 @@ creation preserves `AtMostOneLivePayment`, while split eligibility check and
 payment insert lets two workers create live attempts. SQLite's
 `kernel_subscription_charge_previews_applies_and_replays_pending_collection`
 and `kernel_subscription_receipt_failure_rolls_back_payment_cycle_and_event`
-exercise the transaction and replay behavior. The model omits external
+exercise the transaction, same-key replay and distinct-key rejection while a
+charge is processing. The model omits external
 processor execution and eventual success/failure callbacks.
 
 ## `tla/warehouse/LocationMove.tla` — atomic stock movement
