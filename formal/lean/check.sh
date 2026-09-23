@@ -34,10 +34,14 @@ echo "== RevenueSchedule.lean: the proofs must check"
 lean -o "$build/RevenueSchedule.olean" RevenueSchedule.lean
 echo "== LedgerRevaluation.lean: the proofs must check"
 lean -o "$build/LedgerRevaluation.olean" LedgerRevaluation.lean
+echo "== PromotionCaps.lean: the proofs must check"
+lean -o "$build/PromotionCaps.olean" PromotionCaps.lean
+echo "== LedgerPosting.lean: the proofs must check"
+lean -o "$build/LedgerPosting.olean" LedgerPosting.lean
 
 echo "== the theorems must use no axiom beyond Lean's standard three"
 theorems=(round_within residue_le_length select_marks nudge_sum allocate_sum allocate_near)
-axioms="$(printf 'import Allocation\nimport MerklePath\nimport RevenueSchedule\nimport LedgerRevaluation\n' ; for t in "${theorems[@]}"; do printf '#print axioms Allocation.%s\n' "$t"; done; printf '#print axioms MerklePath.leaf_binding\n#print axioms MerklePath.index_exhausted\n#print axioms RevenueSchedule.ratable_sum\n#print axioms RevenueSchedule.recognized_add_deferred\n#print axioms LedgerRevaluation.journal_balanced\n#print axioms LedgerRevaluation.journal_lines_valid\n#print axioms LedgerRevaluation.reversal_balanced\n')"
+axioms="$(printf 'import Allocation\nimport MerklePath\nimport RevenueSchedule\nimport LedgerRevaluation\nimport PromotionCaps\nimport LedgerPosting\n' ; for t in "${theorems[@]}"; do printf '#print axioms Allocation.%s\n' "$t"; done; printf '#print axioms MerklePath.leaf_binding\n#print axioms MerklePath.index_exhausted\n#print axioms RevenueSchedule.ratable_sum\n#print axioms RevenueSchedule.recognized_add_deferred\n#print axioms LedgerRevaluation.journal_balanced\n#print axioms LedgerRevaluation.journal_lines_valid\n#print axioms LedgerRevaluation.reversal_balanced\n#print axioms PromotionCaps.step_bounded\n#print axioms PromotionCaps.stack_bounded\n#print axioms PromotionCaps.step_never_reverses\n#print axioms PromotionCaps.step_request_bound\n#print axioms LedgerPosting.balanced_net_zero\n#print axioms LedgerPosting.posting_preserves_trial_balance\n#print axioms LedgerPosting.append_balanced\n#print axioms LedgerPosting.reversal_balanced\n')"
 report="$(lean --stdin <<< "$axioms")"
 echo "$report"
 if grep -Eo '\b[A-Za-z.]+\b' <<< "$(grep -o '\[.*\]' <<< "$report")" \

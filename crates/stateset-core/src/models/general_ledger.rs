@@ -1338,6 +1338,29 @@ mod tests {
     }
 
     #[test]
+    fn posting_gate_matches_lean_debit_credit_model() {
+        // LedgerPosting treats each line as exact debit/credit minor units.
+        // The actual posting gate should accept these valid one-sided lines
+        // exactly when their independently summed totals match.
+        for debit_a in 1i64..=12 {
+            for debit_b in 1i64..=12 {
+                for credit in 1i64..=25 {
+                    let entry = draft_entry(vec![
+                        line(Decimal::new(debit_a, 2), Decimal::ZERO, 1),
+                        line(Decimal::new(debit_b, 2), Decimal::ZERO, 2),
+                        line(Decimal::ZERO, Decimal::new(credit, 2), 3),
+                    ]);
+                    assert_eq!(
+                        entry.ensure_postable().is_ok(),
+                        debit_a + debit_b == credit,
+                        "debits=({debit_a},{debit_b}), credit={credit}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn ensure_postable_reports_unbalanced_separately_from_other_rejections() {
         let entry = draft_entry(vec![line(dec!(10), dec!(0), 1), line(dec!(0), dec!(4), 2)]);
         let err = entry.ensure_postable().expect_err("unbalanced");

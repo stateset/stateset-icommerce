@@ -137,6 +137,62 @@ guards; Postgres has a concurrent-create counterpart. The model covers one
 line, at most two returns and integral quantities. It does not model refund
 amounts, warehouse disposition details or the full order state machine.
 
+## `tla/finance/PeriodClose.tla` — close versus late postings
+
+Two ordinary entries may post before close. The model makes the close snapshot
+and status transition atomic with the posting guard. `ClosedBalanceFrozen`
+requires that a closed or locked period retain exactly the total it had when
+closed; TLC explores all nine guarded states. A split check/commit lets a
+pending posting land after close and supplies the required counterexample.
+The SQLite and Postgres `kernel_journal_post_rejects_closed_period_durably`
+tests exercise the status guard. This model does not cover reopening, closing
+entry arithmetic, multiple periods, or the SQL transaction implementation.
+
+## `tla/subscriptions/BillingClaim.tla` — one cycle key
+
+Two workers compete for the same subscription and cycle number. A worker may
+hold or lose a lease, but only atomic creation with the unique cycle key may
+commit. `OneCyclePerKey` holds in all six guarded states; a split key check and
+insert permits two cycles. SQLite's
+`claim_due_for_billing_hands_disjoint_batches_to_concurrent_workers` and
+`create_billing_cycle_refuses_a_subscription_leased_to_another_worker` tests
+exercise leasing, while the unique `cycle_key` index guards duplicate cycles.
+The model is for one key and two workers. It does not prove exactly-once
+external charging, invoice generation or liveness.
+
+## `tla/subscriptions/ChargeRetry.tla` — one live charge attempt
+
+A cycle may be scheduled, processing, failed, then retried, or paid. Retrying
+after failure may create a second **historical** payment attempt, but at most
+one may be live at a time; replaying a receipt creates none. Atomic charge
+creation preserves `AtMostOneLivePayment`, while split eligibility check and
+payment insert lets two workers create live attempts. SQLite's
+`kernel_subscription_charge_previews_applies_and_replays_pending_collection`
+and `kernel_subscription_receipt_failure_rolls_back_payment_cycle_and_event`
+exercise the transaction and replay behavior. The model omits external
+processor execution and eventual success/failure callbacks.
+
+## `tla/warehouse/LocationMove.tla` — atomic stock movement
+
+One SKU/lot has three source units (one reserved) and one destination unit.
+Atomic unit moves preserve total on-hand stock and never consume the reserved
+source unit. TLC checks all three guarded states. Exposing a source decrement
+before the destination increment immediately violates `StockConserved`.
+SQLite's `move_inventory_is_atomic_when_destination_write_fails` checks
+rollback; Postgres's `postgres_move_inventory_never_over_transfers_under_concurrency`
+checks competing movers. This model covers two locations and integral unit
+moves; it does not prove the database transaction or lot genealogy.
+
+## `tla/warehouse/LotGenealogy.tla` — complete merge ancestry
+
+Two source lots are composed by a split followed by a merge. The merged lot
+must retain a path to the split source and a direct edge to the other source.
+All three guarded states satisfy `TraceComplete`; dropping one merge-parent
+edge gives a counterexample. SQLite's `merge_records_genealogy_for_every_source`
+and the Postgres traceability composition tests exercise the graph shape.
+This model covers four lots and one split/merge; it does not prove recursive
+trace traversal, cycle rejection or provenance of supplier records.
+
 ## `lean/Allocation.lean` — allocating rounded money
 
 `allocate_rounded` (`crates/stateset-core/src/models/tax.rs`) is how both tax
@@ -228,6 +284,27 @@ amounts. The proof takes adjustments and their orientation as inputs; it
 does not prove exchange-rate calculation, account selection, SQL posting or
 the database reversal workflow.
 
+## `lean/PromotionCaps.lean` — item-discount budgets
+
+For any subtotal and list of already-rounded nonnegative item-discount
+requests, `stack_bounded` proves that consuming each request up to the
+remaining budget never discounts more than the subtotal. Each step is
+monotonic and grants no more than requested. The Rust test
+`stacked_item_discounts_match_lean_budget_model` compares 8,820 two-promotion
+cases in exact minor units, including reversed candidate order. Eligibility,
+percentage calculation, banker rounding and shipping discounts are outside
+this arithmetic model.
+
+## `lean/LedgerPosting.lean` — balanced posting
+
+For any list of debit/credit minor-unit pairs, equal aggregate debits and
+credits imply zero net posting change. Appending balanced journals and
+swapping debit/credit for reversal preserve balance. The Rust test
+`posting_gate_matches_lean_debit_credit_model` compares the actual posting
+gate to the arithmetic condition for 3,600 three-line cases. The proof takes
+validated lines as input; it does not prove line validation, account routing,
+SQL posting, period status or an external trial-balance report.
+
 ## Running it
 
 ```
@@ -248,4 +325,6 @@ formal/lean/check.sh                     # needs Lean 4.15.0 (elan picks it from
 cargo test -p stateset-core --lib allocate_rounded_matches_the_lean_model
 cargo test -p stateset-core --lib ratable_schedule_matches_lean_minor_unit_model
 cargo test -p stateset-core --lib revaluation_journal_matches_lean_signed_model
+cargo test -p stateset-core --lib stacked_item_discounts_match_lean_budget_model
+cargo test -p stateset-core --lib posting_gate_matches_lean_debit_credit_model
 ```
