@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:8cd42efd560ecea060e1b411663be4bcb7c5a00089be32aa2300509a9f283cbc",
+  "digest": "sha256:3f0c6fbe29810eda9a5b15a3eb40980b7d34521ce7ba551ef2551928f8fcefa5",
   "counts": {
-    "total": 949,
-    "readOnly": 468,
+    "total": 950,
+    "readOnly": 469,
     "mutations": 481,
     "governed": 25,
     "governedComposite": 1,
@@ -3484,6 +3484,13 @@
     },
     {
       "name": "get_credit_memo",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_currency_decimal_places",
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",

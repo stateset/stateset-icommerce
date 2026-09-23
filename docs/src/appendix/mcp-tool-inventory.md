@@ -13,10 +13,10 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 967 |
+| Total tools | 968 |
 | MCP servers | 3 |
 | Policy domains | 89 |
-| Read tools | 477 |
+| Read tools | 478 |
 | Write tools | 422 |
 | Delete tools | 21 |
 | Admin tools | 47 |
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 949 | `cli/src/mcp-server.js` |
+| stateset-commerce | 950 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -59,7 +59,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | connectors | 11 |
 | cost_accounting | 5 |
 | credit | 8 |
-| currency | 12 |
+| currency | 13 |
 | custom_objects | 12 |
 | customers | 11 |
 | cycle_counts | 7 |
@@ -130,7 +130,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | --- | --- |
 | admin | 47 |
 | delete | 21 |
-| read | 477 |
+| read | 478 |
 | write | 422 |
 
 ## Tool Registry
@@ -634,6 +634,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `get_coupon` | `stateset-commerce` | `promotions` | `read` |
 | `get_credit_account` | `stateset-commerce` | `credit` | `read` |
 | `get_credit_memo` | `stateset-commerce` | `accounts_receivable` | `read` |
+| `get_currency_decimal_places` | `stateset-commerce` | `currency` | `read` |
 | `get_currency_settings` | `stateset-commerce` | `currency` | `read` |
 | `get_custom_object` | `stateset-commerce` | `custom_objects` | `read` |
 | `get_custom_object_by_handle` | `stateset-commerce` | `custom_objects` | `read` |

@@ -460,6 +460,16 @@ impl CurrencyOperations {
         Ok(currencies.iter().map(|c| c.code().to_string()).collect())
     }
 
+    /// How many decimal places a currency permits.
+    ///
+    /// The engine refuses an amount with more places than this, so a caller
+    /// formatting or validating money needs the number rather than assuming
+    /// two: JPY, KRW and VND have none, BTC and ETH have eight.
+    #[napi]
+    pub fn decimal_places(&self, currency_code: String) -> Result<u32> {
+        Ok(u32::from(parse_currency(&currency_code)?.decimal_places()))
+    }
+
     /// Format an amount with currency symbol
     #[napi]
     pub async fn format(&self, amount: f64, currency_code: String) -> Result<String> {

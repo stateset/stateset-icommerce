@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 967,
+  "totalTools": 968,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 949
+      "count": 950
     },
     {
       "name": "stateset-scaffold",
@@ -123,7 +123,7 @@
     },
     {
       "name": "currency",
-      "count": 12
+      "count": 13
     },
     {
       "name": "custom_objects",
@@ -389,7 +389,7 @@
     },
     {
       "name": "read",
-      "count": 477
+      "count": 478
     },
     {
       "name": "write",
@@ -399,7 +399,7 @@
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
-    "read": 477,
+    "read": 478,
     "write": 422
   },
   "tools": [
@@ -4874,6 +4874,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_credit_memo",
       "policyDomain": "accounts_receivable",
+      "permission": "read"
+    },
+    {
+      "name": "get_currency_decimal_places",
+      "description": "How many decimal places a currency permits. The engine refuses an amount with more places than this, so check it before formatting or validating money rather than assuming two: JPY, KRW and VND have none, BTC and ETH have eight.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_currency_decimal_places",
+      "policyDomain": "currency",
       "permission": "read"
     },
     {

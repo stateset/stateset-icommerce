@@ -6015,6 +6015,14 @@ export declare class CurrencyOperations {
   getBaseCurrency(): Promise<string>
   /** Get all enabled currencies */
   getEnabledCurrencies(): Promise<Array<string>>
+  /**
+   * How many decimal places a currency permits.
+   *
+   * The engine refuses an amount with more places than this, so a caller
+   * formatting or validating money needs the number rather than assuming
+   * two: JPY, KRW and VND have none, BTC and ETH have eight.
+   */
+  decimalPlaces(currencyCode: string): number
   /** Format an amount with currency symbol */
   format(amount: number, currencyCode: string): Promise<string>
 }

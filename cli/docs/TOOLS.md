@@ -5,7 +5,7 @@
 
 Source of truth: `cli/src/tools/domain-registry.js`.
 
-**934 tools** across **87 domains**.
+**935 tools** across **87 domains**.
 
 ## Domains
 
@@ -19,7 +19,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [returns](#returns) | 12 |
 | [carts](#carts) | 30 |
 | [analytics](#analytics) | 14 |
-| [currency](#currency) | 12 |
+| [currency](#currency) | 13 |
 | [tax](#tax) | 29 |
 | [promotions](#promotions) | 15 |
 | [subscriptions](#subscriptions) | 17 |
@@ -259,6 +259,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `set_base_currency` | admin | Set the store's base currency. |
 | `enable_currencies` | admin | Enable currencies for the store. |
 | `check_currency_enabled` | read | Check whether a currency is enabled for the store. |
+| `get_currency_decimal_places` | read | How many decimal places a currency permits. The engine refuses an amount with more places than this, so check it before formatting or validating money rather than assuming two: JPY, KRW and VND have none, BTC and ETH have eight. |
 | `format_currency` | read | Format an amount with currency symbol. |
 
 ## tax

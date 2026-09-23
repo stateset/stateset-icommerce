@@ -285,7 +285,7 @@
         "className": "X402"
       }
     ],
-    "toolCount": 749,
+    "toolCount": 750,
     "readOnlyCount": 378,
     "readOnlyPrefixes": [
       "calculate",
@@ -14215,6 +14215,32 @@
         },
         "required": [
           "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "currency.decimalPlaces",
+      "module": "currency",
+      "className": "CurrencyOperations",
+      "method": "decimalPlaces",
+      "description": "How many decimal places a currency permits.\n\nThe engine refuses an amount with more places than this, so a caller formatting or validating money needs the number rather than assuming two: JPY, KRW and VND have none, BTC and ETH have eight.",
+      "signature": "decimalPlaces(currencyCode: string): number",
+      "returnType": "number",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "currencyCode"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "currencyCode": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "currencyCode"
         ],
         "additionalProperties": false
       }

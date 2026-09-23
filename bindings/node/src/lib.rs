@@ -217,7 +217,6 @@ impl EngineHandle {
 /// discarded. A caller who sent an id meant it.
 fn parse_optional_id<T: FromStr>(value: Option<String>, what: &str) -> Result<Option<T>> {
     value
-        .filter(|s| !s.trim().is_empty())
         .map(|s| {
             s.parse::<T>()
                 .map_err(|_| coded(ErrCode::Validation, format!("Invalid {what} UUID '{s}'")))
@@ -249,7 +248,6 @@ fn parse_id_list<T: From<uuid::Uuid>>(
 /// `VALIDATION` rather than silently pricing the record in the store default.
 fn parse_optional_currency(value: Option<String>) -> Result<Option<CurrencyCode>> {
     value
-        .filter(|s| !s.trim().is_empty())
         .map(|s| {
             s.parse::<CurrencyCode>()
                 .map_err(|_| coded(ErrCode::Validation, format!("Invalid currency code '{s}'")))
@@ -263,7 +261,6 @@ fn parse_optional_datetime(
     what: &str,
 ) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
     value
-        .filter(|s| !s.trim().is_empty())
         .map(|s| {
             chrono::DateTime::parse_from_rfc3339(&s).map(|d| d.with_timezone(&chrono::Utc)).map_err(
                 |_| {
@@ -280,7 +277,6 @@ fn parse_optional_datetime(
 /// Parse an optional `YYYY-MM-DD` date, refusing a malformed one.
 fn parse_optional_date(value: Option<String>, what: &str) -> Result<Option<chrono::NaiveDate>> {
     value
-        .filter(|s| !s.trim().is_empty())
         .map(|s| {
             chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").map_err(|_| {
                 coded(
@@ -298,7 +294,6 @@ fn parse_optional_json<T: serde::de::DeserializeOwned>(
     what: &str,
 ) -> Result<Option<T>> {
     value
-        .filter(|s| !s.trim().is_empty())
         .map(|s| {
             serde_json::from_str::<T>(&s)
                 .map_err(|e| coded(ErrCode::Validation, format!("Invalid {what} JSON: {e}")))
@@ -1118,8 +1113,43 @@ use domains::*;
 
 #[cfg(test)]
 mod tests {
-    use super::{money_input, money_pair, optional_money_input, to_f64_checked};
+    use super::{
+        money_input, money_pair, optional_money_input, parse_optional_currency,
+        parse_optional_date, parse_optional_datetime, parse_optional_id, parse_optional_json,
+        to_f64_checked,
+    };
     use rust_decimal::Decimal;
+
+    /// An explicit blank is not an omission. These parsers used to drop a
+    /// blank or whitespace-only string before parsing it, so `currency: ""`
+    /// silently became the store default and `lotId: ""` became "no lot" --
+    /// while the engine and the Python binding refuse the same input. The
+    /// shared semantic corpus caught the currency case; the same filter sat
+    /// on all five parsers, so all five are pinned here.
+    #[test]
+    fn a_blank_optional_value_is_refused_not_treated_as_absent() {
+        for blank in ["", "   "] {
+            let b = || Some(blank.to_string());
+            assert!(parse_optional_currency(b()).is_err(), "currency {blank:?}");
+            assert!(parse_optional_id::<uuid::Uuid>(b(), "id").is_err(), "id {blank:?}");
+            assert!(parse_optional_datetime(b(), "at").is_err(), "datetime {blank:?}");
+            assert!(parse_optional_date(b(), "on").is_err(), "date {blank:?}");
+            assert!(
+                parse_optional_json::<serde_json::Value>(b(), "json").is_err(),
+                "json {blank:?}"
+            );
+        }
+    }
+
+    /// Absence is still absence: `None` parses to `None` everywhere.
+    #[test]
+    fn an_omitted_optional_value_is_still_absent() {
+        assert!(parse_optional_currency(None).expect("ok").is_none());
+        assert!(parse_optional_id::<uuid::Uuid>(None, "id").expect("ok").is_none());
+        assert!(parse_optional_datetime(None, "at").expect("ok").is_none());
+        assert!(parse_optional_date(None, "on").expect("ok").is_none());
+        assert!(parse_optional_json::<serde_json::Value>(None, "json").expect("ok").is_none());
+    }
 
     /// `Decimal::to_f64` — which `TryFrom<Decimal> for f64` delegates to — has
     /// no reachable `None` arm, so the conversion cannot fail for any money the

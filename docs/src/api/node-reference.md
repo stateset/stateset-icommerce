@@ -2271,6 +2271,14 @@ Currency and exchange rate operations API
 
   Get all enabled currencies
 
+- **`decimalPlaces(currencyCode: string): number`**
+
+  How many decimal places a currency permits.
+
+  The engine refuses an amount with more places than this, so a caller
+  formatting or validating money needs the number rather than assuming
+  two: JPY, KRW and VND have none, BTC and ETH have eight.
+
 - **`format(amount: number, currencyCode: string): Promise<string>`**
 
   Format an amount with currency symbol

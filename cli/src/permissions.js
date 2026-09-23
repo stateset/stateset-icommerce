@@ -161,6 +161,7 @@ export const TOOL_PERMISSIONS = {
   enable_currencies: 'admin',
   check_currency_enabled: 'read',
   format_currency: 'read',
+  get_currency_decimal_places: 'read',
 
   // Tax tools
   calculate_tax: 'read',

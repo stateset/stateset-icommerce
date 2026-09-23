@@ -15,12 +15,12 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | Metric | Value |
 | --- | --- |
 | Domain tool modules | 87 |
-| Domain tools | 934 |
+| Domain tools | 935 |
 | Commerce getters | 68 |
 | Mapped getters | 68 |
 | Audited classes | 32 |
-| Audited methods | 401 |
-| Mapped audited methods | 401 |
+| Audited methods | 402 |
+| Mapped audited methods | 402 |
 | Fully covered | yes |
 
 ## Commerce Getter Coverage
@@ -39,7 +39,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `companies` | `companies` | 9 |
 | `costAccounting` | `cost-accounting` | 5 |
 | `credit` | `credit` | 8 |
-| `currency` | `currency` | 12 |
+| `currency` | `currency` | 13 |
 | `customObjects` | `custom-objects` | 12 |
 | `customers` | `customers` | 11 |
 | `cycleCounts` | `cycle-counts` | 7 |
@@ -108,7 +108,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `Carts` | 33 | 33 | 0 | 0 | 0 |
 | `CostAccounting` | 5 | 5 | 0 | 0 | 0 |
 | `Credit` | 9 | 9 | 0 | 0 | 0 |
-| `CurrencyOperations` | 15 | 15 | 0 | 0 | 0 |
+| `CurrencyOperations` | 16 | 16 | 0 | 0 | 0 |
 | `Customers` | 13 | 13 | 0 | 0 | 0 |
 | `CustomObjects` | 12 | 12 | 0 | 0 | 0 |
 | `Fulfillment` | 14 | 14 | 0 | 0 | 0 |

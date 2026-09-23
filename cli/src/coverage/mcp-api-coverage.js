@@ -418,6 +418,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       getBaseCurrency: ['get_currency_settings'],
       getEnabledCurrencies: ['get_currency_settings'],
       format: ['format_currency'],
+      decimalPlaces: ['get_currency_decimal_places'],
     },
   },
   Subscriptions: {

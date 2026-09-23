@@ -8,6 +8,15 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Changed (behaviour, needs a release note)
 
+- **`@stateset/embedded`: an explicit blank is refused, not treated as
+  omitted.** All five optional parsers -- currency, ids, timestamps, dates and
+  JSON -- dropped a blank or whitespace-only string before parsing, so
+  `currency: ""` silently became the store default and `lotId: ""` meant "no
+  lot". The engine and the Python binding refuse the same input. Pass
+  `undefined` (or omit the key) to mean absent. Caught by the shared semantic
+  corpus, `bindings/test-vectors/semantics-v1.json`, on its first run against
+  this binding's strict inputs.
+
 - **An omitted currency now takes the store's configured base currency, not
   USD.** The engine has had a store-level base currency since migration 008,
   and exactly one path honoured it. Everywhere else an omitted `currency`
