@@ -818,10 +818,10 @@ impl SqliteInventoryRepository {
             )))
         })?;
 
-        if parsed_status == ReservationStatus::Released
-            || parsed_status == ReservationStatus::Cancelled
-            || parsed_status == ReservationStatus::Expired
-        {
+        // Fulfillment has already removed these units from the allocated
+        // balance. Releasing a terminal reservation again would free another
+        // live reservation's stock when that balance is large enough.
+        if !parsed_status.holds_stock() {
             return Ok(());
         }
 
@@ -2701,6 +2701,68 @@ mod tests {
         let after_release = repo.get_stock("RESERVE-001").expect("ok").expect("found");
         assert_eq!(after_release.total_allocated, dec!(0));
         assert_eq!(after_release.total_available, dec!(10));
+    }
+
+    #[test]
+    fn releasing_fulfilled_reservation_does_not_free_another_hold() {
+        let repo = fresh_repo();
+        repo.create_item(item("FULFILLED-RELEASE")).expect("create");
+        let reserve = |quantity, reference_id: &str| {
+            repo.reserve(ReserveInventory {
+                sku: "FULFILLED-RELEASE".into(),
+                location_id: Some(1),
+                quantity,
+                reference_type: "order".into(),
+                reference_id: reference_id.into(),
+                expires_in_seconds: None,
+            })
+            .expect("reserve")
+        };
+        let fulfilled = reserve(dec!(3), "fulfilled-order");
+        let live = reserve(dec!(4), "live-order");
+
+        {
+            let mut conn = repo.pool.get().expect("connection");
+            let tx = conn.transaction().expect("transaction");
+            SqliteInventoryRepository::fulfil_reservation_in_tx(
+                &tx,
+                fulfilled.id,
+                dec!(3),
+                "shipped",
+                Utc::now(),
+            )
+            .expect("fulfill");
+            tx.commit().expect("commit");
+        }
+        let before = repo.get_stock("FULFILLED-RELEASE").expect("stock").expect("item");
+        assert_eq!(before.total_on_hand, dec!(7));
+        assert_eq!(before.total_allocated, dec!(4));
+        assert_eq!(before.total_available, dec!(3));
+
+        repo.release_reservation(fulfilled.id).expect("idempotent release");
+        let after = repo.get_stock("FULFILLED-RELEASE").expect("stock").expect("item");
+        assert_eq!(after.total_on_hand, before.total_on_hand);
+        assert_eq!(after.total_allocated, before.total_allocated);
+        assert_eq!(after.total_available, before.total_available);
+        assert_eq!(
+            repo.get_reservation(fulfilled.id).expect("reservation").expect("fulfilled").status,
+            ReservationStatus::Fulfilled
+        );
+        assert_eq!(
+            repo.get_reservation(live.id).expect("reservation").expect("live").status,
+            ReservationStatus::Pending
+        );
+        assert!(matches!(
+            repo.reserve(ReserveInventory {
+                sku: "FULFILLED-RELEASE".into(),
+                location_id: Some(1),
+                quantity: dec!(4),
+                reference_type: "order".into(),
+                reference_id: "would-oversell".into(),
+                expires_in_seconds: None,
+            }),
+            Err(CommerceError::InsufficientStock { .. })
+        ));
     }
 
     #[test]

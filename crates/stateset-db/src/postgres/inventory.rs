@@ -915,10 +915,10 @@ impl PgInventoryRepository {
             ))
         })?;
 
-        if status == ReservationStatus::Released
-            || status == ReservationStatus::Cancelled
-            || status == ReservationStatus::Expired
-        {
+        // Fulfillment has already removed these units from the allocated
+        // balance. Releasing a terminal reservation again would free another
+        // live reservation's stock when that balance is large enough.
+        if !status.holds_stock() {
             return Ok(());
         }
 
