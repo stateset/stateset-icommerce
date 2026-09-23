@@ -22,7 +22,8 @@ fi
 
 build="$(mktemp -d)"
 trap 'rm -rf "$build"' EXIT
-export LEAN_PATH="$build:$(lean --print-prefix)/lib/lean"
+LEAN_PATH="$build:$(lean --print-prefix)/lib/lean"
+export LEAN_PATH
 fail=0
 
 echo "== Allocation.lean: the proofs must check"
