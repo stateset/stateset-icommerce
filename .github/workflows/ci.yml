@@ -1379,6 +1379,36 @@ jobs:
         # the Rust conformance test uses. It pins tla2tools.jar by SHA-256.
         run: bash formal/tla/check.sh
 
+  lean:
+    name: Lean Proofs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Lean toolchain
+        # The release named in formal/lean/lean-toolchain, verified by SHA-256.
+        run: |
+          curl -fsSL -o lean.tar.zst \
+            https://github.com/leanprover/lean4/releases/download/v4.15.0/lean-4.15.0-linux.tar.zst
+          echo "af71a2569a9f68337de2434829b3008cd8e32c436e9cb6bd8c84a2c2ba3585c9  lean.tar.zst" \
+            | sha256sum -c --quiet -
+          tar --zstd -xf lean.tar.zst -C "$RUNNER_TEMP"
+          rm lean.tar.zst
+          echo "$RUNNER_TEMP/lean-4.15.0-linux/bin" >> "$GITHUB_PATH"
+
+      - name: Check the proofs and hold them to the code
+        # formal/lean/check.sh compiles the proofs, fails if any theorem rests
+        # on an axiom beyond Lean's standard three (a `sorry` shows up as
+        # sorryAx), and fails if the proved model's golden vectors differ from
+        # the committed file the Rust test `allocate_rounded_matches_the_lean_model`
+        # holds allocate_rounded to.
+        run: bash formal/lean/check.sh
+
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
@@ -1422,6 +1452,7 @@ jobs:
       - codeql
       - rust-docs
       - tla
+      - lean
     steps:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe
