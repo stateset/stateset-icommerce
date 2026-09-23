@@ -101,6 +101,29 @@ fn cstr_to_string(s: *const c_char) -> Option<String> {
     unsafe { CStr::from_ptr(s).to_str().ok().map(|s| s.to_string()) }
 }
 
+/// An OPTIONAL string from Go. Go has no "absent" string and its wrappers pass
+/// every argument through `C.CString`, so the zero value `""` is the only way a
+/// Go caller can mean "not given". Treating it as a real empty value made every
+/// optional field unomittable: a customer could not be created without a
+/// phone, nor a cart without a customer, because the engine rightly rejects an
+/// empty phone and an empty id.
+fn cstr_to_opt_string(s: *const c_char) -> Option<String> {
+    cstr_to_string(s).filter(|v| !v.is_empty())
+}
+
+/// Resolve a currency passed from Go. Go has no "absent" string, so the zero
+/// value `""` (or a null pointer) means "not given" and the engine picks the
+/// store's base currency. Anything else must be a real ISO 4217 code: `Err`
+/// makes the caller return null, which the Go side reports as an error. This
+/// used to be `parse().unwrap_or_default()`, so `"EURO"` silently became USD.
+fn resolve_currency(raw: Option<String>) -> Result<Option<stateset_embedded::CurrencyCode>, ()> {
+    match raw {
+        None => Ok(None),
+        Some(s) if s.is_empty() => Ok(None),
+        Some(s) => s.parse().map(Some).map_err(|_| ()),
+    }
+}
+
 fn string_to_cstr(s: String) -> *mut c_char {
     match CString::new(s) {
         Ok(cstr) => cstr.into_raw(),
@@ -171,7 +194,7 @@ pub extern "C" fn stateset_customer_create(
     let email_str = cstr_to_string(email).unwrap_or_default();
     let first_name_str = cstr_to_string(first_name).unwrap_or_default();
     let last_name_str = cstr_to_string(last_name).unwrap_or_default();
-    let phone_str = cstr_to_string(phone);
+    let phone_str = cstr_to_opt_string(phone);
 
     let result = use_handle(handle, |commerce| {
         commerce
@@ -276,7 +299,7 @@ pub extern "C" fn stateset_product_create(
 ) -> *mut c_char {
     let name_str = cstr_to_string(name).unwrap_or_default();
     let sku_str = cstr_to_string(sku).unwrap_or_default();
-    let desc_str = cstr_to_string(description);
+    let desc_str = cstr_to_opt_string(description);
     let price_decimal = Decimal::try_from(price).unwrap_or_default();
 
     let result = use_handle(handle, |commerce| {
@@ -394,7 +417,10 @@ pub extern "C" fn stateset_order_create(
         None => return ptr::null_mut(),
     };
     let items_str = cstr_to_string(items_json).unwrap_or_default();
-    let currency_str = cstr_to_string(currency).unwrap_or_else(|| "USD".to_string());
+    let currency = match resolve_currency(cstr_to_string(currency)) {
+        Ok(c) => c,
+        Err(()) => return ptr::null_mut(),
+    };
 
     let customer_uuid = match uuid::Uuid::parse_str(&customer_id_str) {
         Ok(u) => u,
@@ -412,7 +438,7 @@ pub extern "C" fn stateset_order_create(
             .create(CreateOrder {
                 customer_id: customer_uuid.into(),
                 items,
-                currency: Some(currency_str.parse().unwrap_or_default()),
+                currency,
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -596,8 +622,11 @@ pub extern "C" fn stateset_cart_create(
     customer_id: *const c_char,
     currency: *const c_char,
 ) -> *mut c_char {
-    let customer_id_str = cstr_to_string(customer_id);
-    let currency_str = cstr_to_string(currency);
+    let customer_id_str = cstr_to_opt_string(customer_id);
+    let currency = match resolve_currency(cstr_to_string(currency)) {
+        Ok(c) => c,
+        Err(()) => return ptr::null_mut(),
+    };
 
     let customer_uuid = customer_id_str
         .and_then(|s| if s.is_empty() { None } else { uuid::Uuid::parse_str(&s).ok() });
@@ -607,7 +636,7 @@ pub extern "C" fn stateset_cart_create(
             .carts()
             .create(CreateCart {
                 customer_id: customer_uuid.map(Into::into),
-                currency: currency_str.and_then(|s| s.parse().ok()),
+                currency,
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -709,7 +738,7 @@ pub extern "C" fn stateset_return_create(
         None => return ptr::null_mut(),
     };
     let reason_str = cstr_to_string(reason).unwrap_or_default();
-    let notes_str = cstr_to_string(notes);
+    let notes_str = cstr_to_opt_string(notes);
 
     let order_uuid = match uuid::Uuid::parse_str(&order_id_str) {
         Ok(u) => u,
@@ -791,7 +820,10 @@ pub extern "C" fn stateset_payment_create(
         Some(s) => s,
         None => return ptr::null_mut(),
     };
-    let currency_str = cstr_to_string(currency).unwrap_or_else(|| "USD".to_string());
+    let currency = match resolve_currency(cstr_to_string(currency)) {
+        Ok(c) => c,
+        Err(()) => return ptr::null_mut(),
+    };
     let method_str = cstr_to_string(method).unwrap_or_default();
     let amount_decimal = Decimal::try_from(amount).unwrap_or_default();
 
@@ -817,7 +849,7 @@ pub extern "C" fn stateset_payment_create(
             .create(CreatePayment {
                 order_id: Some(order_uuid.into()),
                 amount: amount_decimal,
-                currency: Some(currency_str.parse().unwrap_or_default()),
+                currency,
                 payment_method,
                 ..Default::default()
             })
@@ -1199,7 +1231,7 @@ pub extern "C" fn stateset_payment_refund(
         Some(s) => s,
         None => return ptr::null_mut(),
     };
-    let reason_str = cstr_to_string(reason);
+    let reason_str = cstr_to_opt_string(reason);
 
     let payment_uuid = match uuid::Uuid::parse_str(&payment_id_str) {
         Ok(u) => u,
@@ -1246,7 +1278,7 @@ pub extern "C" fn stateset_shipment_create(
     };
     let recipient_name_str = cstr_to_string(recipient_name).unwrap_or_default();
     let shipping_address_str = cstr_to_string(shipping_address).unwrap_or_default();
-    let carrier_str = cstr_to_string(carrier);
+    let carrier_str = cstr_to_opt_string(carrier);
 
     let order_uuid = match uuid::Uuid::parse_str(&order_id_str) {
         Ok(u) => u,
@@ -1333,7 +1365,7 @@ pub extern "C" fn stateset_shipment_ship(
         Some(s) => s,
         None => return ptr::null_mut(),
     };
-    let tracking = cstr_to_string(tracking_number);
+    let tracking = cstr_to_opt_string(tracking_number);
 
     let uuid = match uuid::Uuid::parse_str(&id_str) {
         Ok(u) => u,
@@ -1422,8 +1454,8 @@ pub extern "C" fn stateset_warranty_create(
         Some(s) => s,
         None => return ptr::null_mut(),
     };
-    let product_id_str = cstr_to_string(product_id);
-    let warranty_type_str = cstr_to_string(warranty_type);
+    let product_id_str = cstr_to_opt_string(product_id);
+    let warranty_type_str = cstr_to_opt_string(warranty_type);
 
     let customer_uuid = match uuid::Uuid::parse_str(&customer_id_str) {
         Ok(u) => u,
@@ -1646,8 +1678,8 @@ pub extern "C" fn stateset_supplier_create(
     phone: *const c_char,
 ) -> *mut c_char {
     let name_str = cstr_to_string(name).unwrap_or_default();
-    let email_str = cstr_to_string(email);
-    let phone_str = cstr_to_string(phone);
+    let email_str = cstr_to_opt_string(email);
+    let phone_str = cstr_to_opt_string(phone);
 
     let result = use_handle(handle, |commerce| {
         commerce
@@ -1918,7 +1950,7 @@ pub extern "C" fn stateset_invoice_create(
         None => return ptr::null_mut(),
     };
     let items_str = cstr_to_string(items_json).unwrap_or_default();
-    let billing_email_str = cstr_to_string(billing_email);
+    let billing_email_str = cstr_to_opt_string(billing_email);
 
     let customer_uuid = match uuid::Uuid::parse_str(&customer_id_str) {
         Ok(u) => u,
@@ -2051,7 +2083,7 @@ pub extern "C" fn stateset_invoice_record_payment(
         Some(s) => s,
         None => return ptr::null_mut(),
     };
-    let payment_method_str = cstr_to_string(payment_method);
+    let payment_method_str = cstr_to_opt_string(payment_method);
     let amount_decimal = Decimal::try_from(amount).unwrap_or_default();
 
     let uuid = match uuid::Uuid::parse_str(&id_str) {
@@ -2110,7 +2142,7 @@ pub extern "C" fn stateset_bom_create(
         None => return ptr::null_mut(),
     };
     let name_str = cstr_to_string(name).unwrap_or_default();
-    let description_str = cstr_to_string(description);
+    let description_str = cstr_to_opt_string(description);
 
     let product_uuid = match uuid::Uuid::parse_str(&product_id_str) {
         Ok(u) => u,
@@ -2186,7 +2218,7 @@ pub extern "C" fn stateset_bom_add_component(
         None => return ptr::null_mut(),
     };
     let name_str = cstr_to_string(name).unwrap_or_default();
-    let sku_str = cstr_to_string(component_sku);
+    let sku_str = cstr_to_opt_string(component_sku);
     let qty = Decimal::try_from(quantity).unwrap_or_default();
 
     let bom_uuid = match uuid::Uuid::parse_str(&bom_id_str) {
@@ -2285,7 +2317,7 @@ pub extern "C" fn stateset_work_order_create(
         Some(s) => s,
         None => return ptr::null_mut(),
     };
-    let bom_id_str = cstr_to_string(bom_id);
+    let bom_id_str = cstr_to_opt_string(bom_id);
     let qty = Decimal::try_from(quantity_to_build).unwrap_or_default();
 
     let product_uuid = match uuid::Uuid::parse_str(&product_id_str) {
@@ -2576,7 +2608,7 @@ pub extern "C" fn stateset_quality_create_inspection(
 ) -> *mut c_char {
     let sku_str = cstr_to_string(sku).unwrap_or_default();
     let type_str = cstr_to_string(inspection_type).unwrap_or_default();
-    let inspector_str = cstr_to_string(inspector);
+    let inspector_str = cstr_to_opt_string(inspector);
     let qty = Decimal::try_from(quantity).unwrap_or_default();
 
     let insp_type = match type_str.to_lowercase().as_str() {
@@ -2814,8 +2846,8 @@ pub extern "C" fn stateset_lot_create(
     expiration_date: *const c_char,
 ) -> *mut c_char {
     let sku_str = cstr_to_string(sku).unwrap_or_default();
-    let lot_str = cstr_to_string(lot_number);
-    let exp_str = cstr_to_string(expiration_date);
+    let lot_str = cstr_to_opt_string(lot_number);
+    let exp_str = cstr_to_opt_string(expiration_date);
     let qty = Decimal::try_from(quantity).unwrap_or_default();
 
     let exp_date = exp_str
@@ -3251,8 +3283,8 @@ pub extern "C" fn stateset_receiving_create_receipt(
     purchase_order_id: *const c_char,
     supplier_id: *const c_char,
 ) -> *mut c_char {
-    let po_id_str = cstr_to_string(purchase_order_id);
-    let supplier_id_str = cstr_to_string(supplier_id);
+    let po_id_str = cstr_to_opt_string(purchase_order_id);
+    let supplier_id_str = cstr_to_opt_string(supplier_id);
 
     let po_uuid = po_id_str.and_then(|s| uuid::Uuid::parse_str(&s).ok());
     let supplier_uuid = supplier_id_str.and_then(|s| uuid::Uuid::parse_str(&s).ok());
@@ -3517,7 +3549,7 @@ pub extern "C" fn stateset_fulfillment_create_pick_task(
     sku: *const c_char,
     quantity: c_double,
 ) -> *mut c_char {
-    let wave_id_str = cstr_to_string(wave_id);
+    let wave_id_str = cstr_to_opt_string(wave_id);
     let order_id_str = match cstr_to_string(order_id) {
         Some(s) => s,
         None => return ptr::null_mut(),
@@ -3604,7 +3636,7 @@ pub extern "C" fn stateset_ap_create_bill(
         Some(s) => s,
         None => return ptr::null_mut(),
     };
-    let due_str = cstr_to_string(due_date);
+    let due_str = cstr_to_opt_string(due_date);
     let amount_decimal = Decimal::try_from(amount).unwrap_or_default();
 
     let supplier_uuid = match uuid::Uuid::parse_str(&supplier_id_str) {
@@ -3725,7 +3757,7 @@ pub extern "C" fn stateset_ap_pay_bill(
         None => return ptr::null_mut(),
     };
     let amount_decimal = Decimal::try_from(amount).unwrap_or_default();
-    let method_str = cstr_to_string(payment_method);
+    let method_str = cstr_to_opt_string(payment_method);
 
     let uuid = match uuid::Uuid::parse_str(&id_str) {
         Ok(u) => u,
@@ -4053,7 +4085,7 @@ pub extern "C" fn stateset_credit_create_account(
         None => return ptr::null_mut(),
     };
     let limit = Decimal::try_from(credit_limit).unwrap_or_default();
-    let terms = cstr_to_string(payment_terms);
+    let terms = cstr_to_opt_string(payment_terms);
 
     let customer_uuid = match uuid::Uuid::parse_str(&customer_id_str) {
         Ok(u) => u,
