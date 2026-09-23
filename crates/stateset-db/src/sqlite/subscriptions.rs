@@ -2630,7 +2630,7 @@ mod tests {
                 subscription_id: Some(sub.id),
                 ..Default::default()
             })
-            .expect("initial cycle")
+            .unwrap_or_else(|_| panic!("initial billing cycle lookup failed"))
             .remove(0);
         assert_eq!(old.subtotal, dec!(10));
 

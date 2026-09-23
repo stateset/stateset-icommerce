@@ -1055,16 +1055,25 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         let now = Utc::now().to_rfc3339();
 
         with_immediate_transaction(&self.pool, |tx| {
-            let (requested_raw, picked_raw): (String, String) = tx
+            let (status_raw, requested_raw, picked_raw): (String, String, String) = tx
                 .query_row(
-                    "SELECT quantity_requested, quantity_picked FROM pick_tasks WHERE id = ?1",
+                    "SELECT status, quantity_requested, quantity_picked FROM pick_tasks WHERE id = ?1",
                     params![id_str],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .map_err(|e| match e {
                     rusqlite::Error::QueryReturnedNoRows => Self::smuggle(CommerceError::NotFound),
                     other => other,
                 })?;
+            if !matches!(status_raw.as_str(), "pending" | "assigned" | "in_progress") {
+                return Err(Self::transition_conflict(
+                    tx,
+                    "pick_tasks",
+                    "pick task",
+                    &id_str,
+                    "report a shortage on",
+                ));
+            }
             let requested = parse_decimal_row(&requested_raw, "pick_task", "quantity_requested")?;
             let picked = parse_decimal_row(&picked_raw, "pick_task", "quantity_picked")?;
             if short_qty < Decimal::ZERO

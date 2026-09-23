@@ -1029,14 +1029,26 @@ impl PgFulfillmentRepository {
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let (requested, picked): (Decimal, Decimal) = sqlx::query_as(
-            "SELECT quantity_requested, quantity_picked FROM pick_tasks WHERE id = $1 FOR UPDATE",
+        let (status, requested, picked): (String, Decimal, Decimal) = sqlx::query_as(
+            "SELECT status, quantity_requested, quantity_picked FROM pick_tasks WHERE id = $1 FOR UPDATE",
         )
         .bind(id)
         .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?
         .ok_or(CommerceError::NotFound)?;
+        if !matches!(status.as_str(), "pending" | "assigned" | "in_progress") {
+            return Self::finish_transition(
+                tx,
+                0,
+                "pick_tasks",
+                "pick task",
+                id,
+                "report a shortage on",
+                Self::row_to_pick,
+            )
+            .await;
+        }
         if short_qty < Decimal::ZERO
             || picked < Decimal::ZERO
             || picked > requested
