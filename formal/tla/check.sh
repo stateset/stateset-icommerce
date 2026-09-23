@@ -33,7 +33,7 @@ tlc() {
 fail=0
 cd "$HERE/payments"
 # A run that ends on a counterexample leaves its state directory behind.
-trap 'rm -rf "$HERE/payments/states" "$HERE/inventory/states" "$HERE/x402/states" "$HERE/returns/states" "$HERE/finance/states" "$HERE/subscriptions/states" "$HERE/warehouse/states" "$HERE/kernel/states" "$HERE/checkout/states" "$HERE/promotions/states" "$HERE/sync/states" "$HERE/manufacturing/states" "$HERE/stored_value/states"' EXIT
+trap 'rm -rf "$HERE/payments/states" "$HERE/inventory/states" "$HERE/x402/states" "$HERE/returns/states" "$HERE/finance/states" "$HERE/subscriptions/states" "$HERE/warehouse/states" "$HERE/kernel/states" "$HERE/checkout/states" "$HERE/promotions/states" "$HERE/sync/states" "$HERE/manufacturing/states" "$HERE/stored_value/states" "$HERE/warranties/states"' EXIT
 
 echo "== PaymentRefunds: the implementation (Locked = TRUE) must satisfy every property"
 if tlc -config PaymentRefunds_locked.cfg PaymentRefunds.tla > locked.log 2>&1; then
@@ -163,5 +163,10 @@ check_pair warehouse SerialQuarantine SerialQuarantine_atomic.cfg SerialQuaranti
 check_pair manufacturing YieldAccounting YieldAccounting_atomic.cfg YieldAccounting_split.cfg WithinPlan
 check_pair finance PaymentLedger PaymentLedger_atomic.cfg PaymentLedger_split.cfg Reconciled
 check_pair returns ReturnDisposition ReturnDisposition_atomic.cfg ReturnDisposition_split.cfg StockMatchesDisposition
+check_pair warehouse CycleCountCompletion CycleCountCompletion_atomic.cfg CycleCountCompletion_split.cfg AtMostOneAdjustment
+check_pair warehouse TransferReceipt TransferReceipt_atomic.cfg TransferReceipt_split.cfg WithinShipped
+check_pair warranties WarrantyClaimSlots WarrantyClaimSlots_atomic.cfg WarrantyClaimSlots_split.cfg WithinClaimLimit
+check_pair finance VendorCreditApplication VendorCreditApplication_atomic.cfg VendorCreditApplication_split.cfg NonnegativeRemaining
+check_pair x402 X402CreditDebit X402CreditDebit_atomic.cfg X402CreditDebit_split.cfg NonnegativeBalance
 
 exit $fail

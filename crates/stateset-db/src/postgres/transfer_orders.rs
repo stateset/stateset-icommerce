@@ -286,7 +286,12 @@ impl PgTransferOrderRepository {
     pub async fn ship_async(&self, id: TransferOrderId) -> Result<TransferOrder> {
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let _status = Self::lock_order(&mut tx, id).await?;
+        let status = Self::lock_order(&mut tx, id).await?;
+        if !matches!(status, TransferOrderStatus::Draft | TransferOrderStatus::Pending) {
+            return Err(CommerceError::Conflict(format!(
+                "Cannot ship a transfer order in status {status}"
+            )));
+        }
         // Shipping sets quantity_shipped = quantity on each line.
         sqlx::query(
             "UPDATE transfer_order_items SET quantity_shipped = quantity WHERE transfer_order_id = $1",
@@ -336,27 +341,37 @@ impl PgTransferOrderRepository {
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let status = Self::lock_order(&mut tx, id).await?;
-        if status == TransferOrderStatus::Cancelled {
-            return Err(CommerceError::ValidationError(
-                "Cannot receive against a cancelled transfer order".into(),
-            ));
+        if !matches!(
+            status,
+            TransferOrderStatus::InTransit | TransferOrderStatus::PartiallyReceived
+        ) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot receive against a transfer order in status {status}"
+            )));
         }
 
-        let row: Option<(Decimal, Decimal)> = sqlx::query_as(
-            "SELECT quantity, quantity_received FROM transfer_order_items WHERE id = $1 AND transfer_order_id = $2 FOR UPDATE",
+        let row: Option<(Decimal, Decimal, Decimal)> = sqlx::query_as(
+            "SELECT quantity, quantity_shipped, quantity_received FROM transfer_order_items WHERE id = $1 AND transfer_order_id = $2 FOR UPDATE",
         )
         .bind(item_id)
         .bind(id)
         .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-        let Some((expected, current)) = row else {
+        let Some((expected, shipped, current)) = row else {
             return Err(CommerceError::NotFound);
         };
-        let new_received = current + quantity;
+        let new_received = current.checked_add(quantity).ok_or_else(|| {
+            CommerceError::ValidationError("Transfer receipt quantity exceeds decimal range".into())
+        })?;
         if new_received > expected {
             return Err(CommerceError::ValidationError(format!(
                 "receiving {quantity} would exceed the {expected} expected on this line ({current} already received)"
+            )));
+        }
+        if new_received > shipped {
+            return Err(CommerceError::ValidationError(format!(
+                "receiving {quantity} would exceed the {shipped} shipped on this line ({current} already received)"
             )));
         }
         sqlx::query(

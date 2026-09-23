@@ -2238,6 +2238,61 @@ mod tests {
     }
 
     #[test]
+    fn competing_cycle_count_completions_apply_variance_once() {
+        use stateset_core::{CreateCycleCount, CreateCycleCountLine, RecordCycleCountLine};
+
+        let repo = std::sync::Arc::new(fresh_repo());
+        let wh = make_wh(&repo, "WH-CC-RACE");
+        let loc = make_loc(&repo, wh.id, "L-CC-RACE");
+        seed_inventory(&repo, loc.id, "CC-RACE-SKU", "3");
+        let cc = repo
+            .create_cycle_count(CreateCycleCount {
+                warehouse_id: wh.id,
+                location_id: Some(loc.id),
+                scheduled_date: None,
+                counted_by: None,
+                lines: vec![CreateCycleCountLine {
+                    sku: "CC-RACE-SKU".into(),
+                    lot_id: None,
+                    expected_quantity: dec!(3),
+                }],
+            })
+            .expect("create");
+        repo.start_cycle_count(cc.id).expect("start");
+        repo.record_cycle_counts(
+            cc.id,
+            vec![RecordCycleCountLine {
+                sku: "CC-RACE-SKU".into(),
+                lot_id: None,
+                counted_quantity: dec!(4),
+            }],
+        )
+        .expect("record");
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let repo = std::sync::Arc::clone(&repo);
+            let barrier = std::sync::Arc::clone(&barrier);
+            let id = cc.id;
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                repo.complete_cycle_count(id)
+            }));
+        }
+        let mut successes = 0;
+        for handle in handles {
+            if handle.join().expect("join completion").is_ok() {
+                successes += 1;
+            }
+        }
+        assert_eq!(successes, 1);
+        let inventory = repo.get_location_inventory(loc.id).expect("inventory");
+        let row = inventory.iter().find(|row| row.sku == "CC-RACE-SKU").expect("row");
+        assert_eq!(row.quantity_on_hand, dec!(4));
+    }
+
+    #[test]
     fn cycle_count_cancel_applies_no_adjustments() {
         use stateset_core::{
             CreateCycleCount, CreateCycleCountLine, CycleCountFilter, CycleCountStatus,
