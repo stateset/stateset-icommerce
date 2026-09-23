@@ -4626,7 +4626,7 @@
     },
     {
       "name": "generate_inclusion_proof",
-      "description": "Generate a Merkle inclusion proof for a specific event within a batch of events.",
+      "description": "Generate a Merkle inclusion proof for an event within a batch. Events carrying tenantId, storeId, sequenceNumber, eventSigningHash and agentSignature get a ves-v1 proof that the SDK spec verifier accepts; events with only id and eventSigningHash get a legacy-v0 proof and a warning saying which fields are missing.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__generate_inclusion_proof",

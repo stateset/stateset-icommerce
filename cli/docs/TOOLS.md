@@ -893,7 +893,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | Tool | Permission | Description |
 | --- | --- | --- |
 | `verify_receipt` | read | Verify a VES commerce receipt — checks signature, hash, and Merkle inclusion proof. |
-| `generate_inclusion_proof` | read | Generate a Merkle inclusion proof for a specific event within a batch of events. |
+| `generate_inclusion_proof` | read | Generate a Merkle inclusion proof for an event within a batch. Events carrying tenantId, storeId, sequenceNumber, eventSigningHash and agentSignature get a ves-v1 proof that the SDK spec verifier accepts; events with only id and eventSigningHash get a legacy-v0 proof and a warning saying which fields are missing. |
 | `verify_inclusion_proof` | read | Verify a Merkle inclusion proof — confirms that a leaf hash is included in a Merkle root. |
 | `generate_receipt_bundle` | read | Generate a full verifiable receipt bundle for an event — includes event data, leaf hash, Merkle inclusion proof, and anchor metadata. |
 | `inspect_batch` | read | Inspect a batch of events — computes Merkle root, event count, and time range. |
