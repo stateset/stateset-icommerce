@@ -723,7 +723,8 @@ pub struct TaxSettings {
     /// (default), `half_even`/`bankers`, `half_down`, `up`, `down`/`truncate`,
     /// `ceil`, or `floor`. See [`Self::rounding_strategy`].
     pub rounding_mode: String,
-    /// Decimal places for tax amounts
+    /// Decimal places for tax amounts (0 through [`Decimal::MAX_SCALE`]).
+    /// Invalid legacy values are treated as the default of 2 during calculation.
     pub decimal_places: i32,
     /// Whether to validate addresses
     pub validate_addresses: bool,
@@ -759,6 +760,12 @@ impl Default for TaxSettings {
 }
 
 impl TaxSettings {
+    /// Return the configured scale when `rust_decimal` can represent one minor unit.
+    #[must_use]
+    pub fn valid_decimal_places(&self) -> Option<u32> {
+        u32::try_from(self.decimal_places).ok().filter(|&dp| dp <= Decimal::MAX_SCALE)
+    }
+
     /// Resolve the configured [`rounding_mode`](Self::rounding_mode) string to a
     /// concrete [`RoundingStrategy`] for rounding computed tax amounts.
     ///
@@ -814,9 +821,11 @@ impl TaxExemption {
     }
 }
 
-/// Round `parts` to `decimal_places` so that they sum EXACTLY to
-/// `total.round(decimal_places)`, allocating the rounding residue by largest
-/// remainder. Returns `(rounded_total, rounded_parts)`.
+/// Round `parts` to `decimal_places` so that they sum exactly to
+/// `total.round(decimal_places)` when `total == parts.iter().sum()`;
+/// allocate the rounding residue by largest remainder. Returns
+/// `(rounded_total, rounded_parts)`. Scales above [`Decimal::MAX_SCALE`]
+/// leave the already representable amounts unchanged.
 ///
 /// Both tax engines use this to round per line (and per rate within a line)
 /// while keeping `sum(lines) == total_tax` — three `$1.11` lines at 8.25%
@@ -834,11 +843,11 @@ pub fn allocate_rounded(
     }
     let mut rounded: Vec<Decimal> =
         parts.iter().map(|p| p.round_dp_with_strategy(decimal_places, strategy)).collect();
-    let unit = Decimal::new(1, decimal_places);
     let mut residue = rounded_total - rounded.iter().sum::<Decimal>();
-    if residue.is_zero() {
+    if residue.is_zero() || decimal_places > Decimal::MAX_SCALE {
         return (rounded_total, rounded);
     }
+    let unit = Decimal::new(1, decimal_places);
     // Order parts by how much rounding took from (or gave to) them, and
     // nudge the most deserving ones one minor unit at a time.
     let mut order: Vec<usize> = (0..parts.len()).collect();
@@ -932,7 +941,7 @@ pub fn compute_tax(
     let transaction_date = request.transaction_date.unwrap_or_else(|| now.date_naive());
     let inclusive = request.prices_include_tax
         || settings.calculation_method == TaxCalculationMethod::Inclusive;
-    let decimal_places = u32::try_from(settings.decimal_places).unwrap_or(2);
+    let decimal_places = settings.valid_decimal_places().unwrap_or(2);
     let mut acc = TaxAccumulator::new(decimal_places, settings.rounding_strategy());
     acc.inclusive = inclusive;
 
@@ -1063,6 +1072,7 @@ impl TaxAccumulator {
     /// Start a calculation rounding to `decimal_places` with `strategy`.
     #[must_use]
     pub fn new(decimal_places: u32, strategy: RoundingStrategy) -> Self {
+        let decimal_places = if decimal_places <= Decimal::MAX_SCALE { decimal_places } else { 2 };
         Self {
             subtotal: Decimal::ZERO,
             total_tax: Decimal::ZERO,
@@ -2510,6 +2520,31 @@ mod tests {
         assert_eq!(total, dec!(0.28));
         assert_eq!(parts.iter().sum::<Decimal>(), dec!(0.28));
         assert_eq!(parts, vec![dec!(0.10), dec!(0.09), dec!(0.09)]);
+    }
+
+    #[test]
+    fn invalid_tax_scales_do_not_panic_during_calculation() {
+        let j = jur("ZZ-CA");
+        let req = request(vec![line("a", dec!(1.11), dec!(1))]);
+        let rates = vec![rate(&j, dec!(0.0825))];
+        for invalid in [-1, 29, i32::MAX] {
+            let mut inp = inputs(rates.clone(), vec![]);
+            inp.settings.decimal_places = invalid;
+            assert_eq!(inp.settings.valid_decimal_places(), None);
+            let result = compute_tax(&req, &inp, Utc::now());
+            assert_eq!(result.total_tax, dec!(0.09), "scale {invalid}");
+        }
+
+        // A caller may pass a larger scale to this public helper directly.
+        // Decimal values have at most 28 places, so no rounding is needed.
+        let (total, parts) = allocate_rounded(
+            dec!(0.3),
+            &[dec!(0.1), dec!(0.2)],
+            29,
+            RoundingStrategy::MidpointAwayFromZero,
+        );
+        assert_eq!(parts.iter().sum::<Decimal>(), total);
+        assert_eq!(parts, vec![dec!(0.1), dec!(0.2)]);
     }
 
     mod properties {
