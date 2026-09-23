@@ -815,6 +815,12 @@ impl PgTaxRepository {
     }
 
     pub async fn update_settings_async(&self, settings: TaxSettings) -> Result<TaxSettings> {
+        if settings.valid_decimal_places().is_none() {
+            return Err(CommerceError::InvalidInput {
+                field: "decimal_places".into(),
+                message: "must be between 0 and 28".into(),
+            });
+        }
         let origin_address = settings
             .origin_address
             .as_ref()

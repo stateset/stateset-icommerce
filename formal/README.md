@@ -108,6 +108,29 @@ production caller (`apply_rates`) passes the sum. And the golden vectors link
 the model to the code on the cases they contain — a strong check, not a
 proof about the Rust.
 
+## `lean/MerklePath.lean` — command inclusion paths
+
+`stateset-sync` verifies a command settlement leaf against a retained remote
+root by combining one sibling at each Merkle level. The verifier now requires
+exactly `ceil(log₂ total_leaves)` siblings (zero for one leaf), in addition to
+requiring `leaf_index < total_leaves`. A sibling subtree beyond the declared
+leaf count must also equal the canonical padding subtree. The depth check closes a malformed
+proof that previously accepted the leaf hash itself as the root while claiming
+a larger tree. Rust tests cover that case, an extra level, and a valid padded
+three-leaf path, plus a four-leaf root falsely described as a three-leaf tree.
+
+`leaf_binding` proves that two paths of the same length at the same index
+cannot produce the same root from different leaves when node hashing is
+modeled as a collision-free constructor. `index_exhausted` proves that a
+path whose width covers the index consumes all of its index bits. The Lean
+check rejects unfinished proofs and unexpected axioms.
+
+**Limit.** SHA-256 collision resistance is an assumption, not a Lean theorem.
+The model covers path combination and leaf binding; it does not prove that a
+remote root was generated from a particular leaf set or that the root was
+authenticated. The Rust tests connect the path shape and direction to the
+implementation on their cases.
+
 ## Running it
 
 ```

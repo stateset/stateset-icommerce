@@ -886,6 +886,12 @@ impl SqliteTaxRepository {
 
     /// Update tax settings
     pub fn update_settings(&self, settings: TaxSettings) -> Result<TaxSettings> {
+        if settings.valid_decimal_places().is_none() {
+            return Err(CommerceError::InvalidInput {
+                field: "decimal_places".into(),
+                message: "must be between 0 and 28".into(),
+            });
+        }
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let origin_address_json = settings
@@ -1394,6 +1400,20 @@ mod tests {
         repo.update_settings(settings).expect("update settings");
         let up = repo.calculate_tax(request).expect("calc");
         assert_eq!(up.total_tax, dec!(0.13), "half_up must round $0.125 up to 0.13: {up:?}");
+    }
+
+    #[test]
+    fn update_settings_rejects_unrepresentable_decimal_places() {
+        let repo = fresh_repo();
+        for invalid in [-1, 29, i32::MAX] {
+            let mut settings = repo.get_settings().expect("settings");
+            settings.decimal_places = invalid;
+            assert!(matches!(
+                repo.update_settings(settings),
+                Err(CommerceError::InvalidInput { field, .. }) if field == "decimal_places"
+            ));
+            assert_eq!(repo.get_settings().expect("settings").decimal_places, 2);
+        }
     }
 
     #[test]
