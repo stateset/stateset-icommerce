@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Check the Lean proofs, and hold them to the code.
 #
-#   1. Allocation.lean must compile, and its theorems must rest on Lean's
+#   1. Allocation.lean and MerklePath.lean must compile, and their theorems must rest on Lean's
 #      standard axioms only -- a `sorry` anywhere would show up as sorryAx;
 #   2. the golden vectors the proved model computes must equal the committed
 #      allocate_rounded.golden.json, which the Rust test
@@ -28,10 +28,12 @@ fail=0
 
 echo "== Allocation.lean: the proofs must check"
 lean -o "$build/Allocation.olean" Allocation.lean
+echo "== MerklePath.lean: the proofs must check"
+lean -o "$build/MerklePath.olean" MerklePath.lean
 
 echo "== the theorems must use no axiom beyond Lean's standard three"
 theorems=(round_within residue_le_length select_marks nudge_sum allocate_sum allocate_near)
-axioms="$(printf 'import Allocation\n' ; for t in "${theorems[@]}"; do printf '#print axioms Allocation.%s\n' "$t"; done)"
+axioms="$(printf 'import Allocation\nimport MerklePath\n' ; for t in "${theorems[@]}"; do printf '#print axioms Allocation.%s\n' "$t"; done; printf '#print axioms MerklePath.leaf_binding\n#print axioms MerklePath.index_exhausted\n')"
 report="$(lean --stdin <<< "$axioms")"
 echo "$report"
 if grep -Eo '\b[A-Za-z.]+\b' <<< "$(grep -o '\[.*\]' <<< "$report")" \
