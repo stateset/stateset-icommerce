@@ -1572,6 +1572,39 @@ mod tests {
     }
 
     #[test]
+    fn competing_put_away_completions_record_one_receipt() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let (db, loc) = fresh_db_with_location();
+        let db = Arc::new(db);
+        let repo = db.receiving();
+        let (rid, iid) = receipt_with_one_item(&repo, dec!(2));
+        receive(&repo, rid, iid, dec!(2));
+        let task = put_away(&repo, rid, iid, loc, dec!(2)).expect("plan");
+        let gate = Arc::new(Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let db = Arc::clone(&db);
+                let gate = Arc::clone(&gate);
+                thread::spawn(move || {
+                    gate.wait();
+                    db.receiving().complete_put_away(CompletePutAway {
+                        put_away_id: task.id,
+                        actual_location_id: None,
+                        notes: None,
+                        completed_by: None,
+                    })
+                })
+            })
+            .collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+        assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1, "{results:?}");
+        let receipt = db.receiving().get_receipt(rid).expect("get").expect("receipt");
+        assert_eq!(receipt.put_away_quantity, dec!(2));
+    }
+
+    #[test]
     fn cancelled_put_away_frees_its_planned_quantity() {
         let (db, loc) = fresh_db_with_location();
         let repo = db.receiving();

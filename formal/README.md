@@ -460,6 +460,67 @@ This covers the payment refund ledger. There is no proven automatic link from
 payments to general-ledger journal entries, so it does **not** establish a
 cross-system order-to-cash reconciliation invariant.
 
+## Manufacturing material consumption — tla/manufacturing/MaterialConsumption.tla
+
+Two workers each request two units from a three-unit reservation. With the
+read, cap check and write serialized, at most one succeeds; the split version
+shows four units consumed. SQLite consume_material now uses one immediate
+transaction, and Postgres uses a guarded arithmetic UPDATE. Both reject
+nonpositive and over-reservation consumption. The SQLite
+material_consumption_is_bounded_and_serialized regression exercises both
+guards and ten simultaneous consumers. lean/CommerceQuantities.lean proves that an
+accepted increment stays within the reservation and leaves an exact
+remainder. The model does not establish that material is deducted from
+inventory: this repository records work-order material quantities.
+
+## Stored value — tla/stored_value/StoredValueSpend.tla
+
+The model interleaves two charges of two units against a three-unit balance
+and subsequent full refunds. Atomic charging keeps the balance nonnegative;
+both workers passing a stale balance check produces the counterexample.
+SQLite gift-card concurrent_charges_cannot_overspend and store-credit
+concurrent_applies_cannot_overspend exercise the actual serialized charges.
+The Lean equations preserve opening value through accepted charges and
+refunds. Expiry, partial refunds, manual adjustments, cross-account transfers
+and payment-provider effects are outside this model.
+
+## Receiving put-away — tla/warehouse/ReceivingPutAway.tla
+
+Two workers race to complete one two-unit task. The guarded task transition,
+stock increment and movement insert form one effect; a split version adds
+stock twice. SQLite's competing_put_away_completions_record_one_receipt
+checks that one completion succeeds and the receipt records two units.
+The Lean proof covers a task bounded by received quantity and the arithmetic
+for a fixed-size sequence of movements. It does not prove the warehouse and
+location balance tables agree in every possible operation.
+
+## Backorder allocation — tla/inventory/BackorderAllocation.tla
+
+Two two-unit allocations compete for a three-unit remainder, with a separate
+fulfillment transition. An atomic allocation cap avoids over-allocation; stale
+reads permit four units to be allocated. The SQLite and Postgres
+inventory_round5 tests exercise allocation bounds and partial fulfillment.
+Lean proves that accepted fulfillment preserves ordered = fulfilled +
+remaining. This model abstracts the underlying stock reservations and
+locations, which are checked separately.
+
+## Receivable settlement — tla/finance/ReceivableSettlement.tla
+
+Two payments, a credit and a write-off compete over a three-unit invoice.
+Atomic updates conserve invoice value and prevent the combined settlement
+from exceeding it; stale payment approval violates the cap. SQLite
+apply_payment_to_invoice_is_atomic_under_concurrency,
+apply_credit_memo_is_atomic_under_concurrency, and
+write_off_is_atomic_and_guards_double_write_off exercise the key guards.
+Lean proves conservation for any accepted payment, credit or full write-off
+step. The model does not cover invoice reversals, payment allocation across
+multiple invoices or the general-ledger posting link.
+
+These five TLC checks exhaust their stated small bounds, and each requires
+its broken configuration to fail. The Lean results cover arbitrary natural
+quantities at a common exact scale. The Rust tests connect critical paths to
+the models, but do not prove implementation equivalence.
+
 ## Running it
 
 ```
@@ -486,6 +547,9 @@ cargo test -p stateset-core --lib straight_line_matches_lean_minor_unit_schedule
 cargo test -p stateset-db --lib partial_credit_applications_preserve_memo_and_invoice_balances
 cargo test -p stateset-db --lib pick_quantity_claims_cannot_exceed_or_reverse_the_request
 cargo test -p stateset-db --lib billing_cycle_snapshots_price_and_discount_at_insert
+cargo test -p stateset-db --lib material_consumption_is_bounded_and_serialized
+cargo test -p stateset-db --lib competing_put_away_completions_record_one_receipt
+cargo test -p stateset-db --test inventory_round5_sqlite sqlite_competing_backorder_allocations_cannot_exceed_remaining
 cargo test -p stateset-sync pull_does_not_advance_cursor_when_conflict_resolution_cannot_persist
 cargo test -p stateset-db --test sqlite_payment_order_guards concurrent_captures_cannot_exceed_one_order_total
 cargo test -p stateset-embedded --test ap_money_guards_test process_payment_run_concurrent_double_process_pays_each_bill_once

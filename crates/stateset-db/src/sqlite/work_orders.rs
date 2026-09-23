@@ -823,6 +823,11 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
         work_order_id: Uuid,
         material: AddWorkOrderMaterial,
     ) -> Result<WorkOrderMaterial> {
+        if material.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Reserved material quantity must be positive".into(),
+            ));
+        }
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let id = Uuid::new_v4();
@@ -859,27 +864,41 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
     }
 
     fn consume_material(&self, material_id: Uuid, quantity: Decimal) -> Result<WorkOrderMaterial> {
-        // Get existing material first (releases connection after)
-        let existing = self.get_material_internal(material_id)?;
-        let now = Utc::now();
-
-        let new_consumed = existing.consumed_quantity + quantity;
-
-        // Do the update in a scoped block
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-            conn.execute(
-                "UPDATE manufacturing_work_order_materials SET consumed_quantity = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![
-                    new_consumed.to_string(),
-                    now.to_rfc3339(),
-                    material_id.to_string(),
-                ],
-            )
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        } // Connection released here
-
+        if quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Consumed material quantity must be positive".into(),
+            ));
+        }
+        let id = material_id.to_string();
+        with_immediate_transaction(&self.pool, |tx| {
+            let (reserved, consumed): (String, String) = tx
+                .query_row(
+                    "SELECT reserved_quantity, consumed_quantity FROM manufacturing_work_order_materials WHERE id = ?1",
+                    [&id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows =>
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::NotFound)),
+                    other => other,
+                })?;
+            let reserved = parse_decimal_strict(&reserved, "material", "reserved_quantity")
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            let consumed = parse_decimal_strict(&consumed, "material", "consumed_quantity")
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            if consumed + quantity > reserved {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(
+                        "Cannot consume more material than reserved".into(),
+                    ),
+                )));
+            }
+            tx.execute(
+                "UPDATE manufacturing_work_order_materials SET consumed_quantity = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![(consumed + quantity).to_string(), Utc::now().to_rfc3339(), id],
+            )?;
+            Ok(())
+        })?;
         self.get_material_internal(material_id)
     }
 
@@ -1508,6 +1527,59 @@ mod tests {
         assert_eq!(consumed.id, mat.id);
         let remaining_materials = repo.get_materials(wo.id).expect("materials");
         assert_eq!(remaining_materials.len(), 1);
+    }
+
+    #[test]
+    fn material_consumption_is_bounded_and_serialized() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory"));
+        let repo = db.work_orders();
+        let wo = make_wo(&repo, dec!(1));
+        assert!(
+            repo.add_material(
+                wo.id,
+                AddWorkOrderMaterial {
+                    component_id: None,
+                    component_sku: "BAD".into(),
+                    component_name: "Bad".into(),
+                    quantity: dec!(-1),
+                }
+            )
+            .is_err()
+        );
+        let mat = repo
+            .add_material(
+                wo.id,
+                AddWorkOrderMaterial {
+                    component_id: None,
+                    component_sku: "PART-A".into(),
+                    component_name: "Resistor".into(),
+                    quantity: dec!(10),
+                },
+            )
+            .expect("add material");
+        assert!(repo.consume_material(mat.id, dec!(-1)).is_err());
+        assert!(repo.consume_material(mat.id, dec!(11)).is_err());
+
+        let barrier = Arc::new(Barrier::new(10));
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                let db = Arc::clone(&db);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    db.work_orders().consume_material(mat.id, dec!(1))
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().expect("thread").expect("consume");
+        }
+        let stored = db.work_orders().get_materials(wo.id).expect("materials");
+        assert_eq!(stored[0].consumed_quantity, dec!(10));
+        assert!(db.work_orders().consume_material(mat.id, dec!(1)).is_err());
     }
 
     #[test]
