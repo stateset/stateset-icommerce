@@ -20,7 +20,7 @@
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
 use serde::{Deserialize, Serialize};
 use stateset_core::BillingInterval;
 use stateset_pricing::{
@@ -55,6 +55,32 @@ fn parse_uuid(value: &str, label: &str) -> Result<Uuid, String> {
 
 fn parse_optional_uuid(value: Option<&str>, label: &str) -> Result<Option<Uuid>, String> {
     value.map(|raw| parse_uuid(raw, label)).transpose()
+}
+
+/// A rate from the engine's exact tables, as this binding's number contract.
+fn rate(value: Decimal) -> f64 {
+    value.to_f64().unwrap_or(f64::NAN)
+}
+
+fn to_js_or_null<T: Serialize>(info: Option<T>) -> Result<JsValue, JsValue> {
+    match info {
+        Some(i) => serde_wasm_bindgen::to_value(&i).map_err(|e| JsValue::from_str(&e.to_string())),
+        None => Ok(JsValue::NULL),
+    }
+}
+
+/// Resolve a caller-supplied currency code. Omitted means USD, as it always
+/// has here. Anything supplied must be a real ISO 4217 code and comes back
+/// upper-cased; a blank or unknown code is refused. This binding used to take
+/// any string at all -- `currency: "EURO"` was stored verbatim -- while the
+/// engine and the Node and Python bindings refuse it.
+fn resolve_currency(value: Option<String>) -> Result<String, String> {
+    match value {
+        None => Ok("USD".to_string()),
+        Some(raw) => stateset_core::CurrencyCode::from_str(&raw)
+            .map(|code| code.as_str().to_string())
+            .map_err(|_| format!("Invalid currency code '{raw}'")),
+    }
 }
 
 fn parse_uuid_list(values: Option<Vec<String>>, label: &str) -> Result<Vec<Uuid>, String> {
@@ -258,7 +284,32 @@ impl Money {
         Some(scaled.round() as i64)
     }
 
+    /// The most decimal places this binding's money can hold. Money here is a
+    /// fixed two-decimal integer of minor units, so a finer input amount is
+    /// refused rather than rounded: rounding `0.005` up to `0.01` invents half
+    /// a cent, and the engine refuses the same input.
+    const MAX_INPUT_DECIMAL_PLACES: u32 = 2;
+
+    /// Scale is counted after trimming insignificant trailing zeros, as the
+    /// engine counts it, so `10.9900` is two-scale.
+    fn check_input_scale(value: Decimal, field: &str) -> Result<(), String> {
+        if value.normalize().scale() > Self::MAX_INPUT_DECIMAL_PLACES {
+            return Err(format!(
+                "{field} {value} has more decimal places than this binding allows (maximum {})",
+                Self::MAX_INPUT_DECIMAL_PLACES
+            ));
+        }
+        Ok(())
+    }
+
     fn try_from_f64(value: f64, field: &str) -> Result<Self, String> {
+        // `Decimal::from_f64` is the conversion the Node and Python bindings use
+        // on a caller's number, so this refuses exactly what they refuse.
+        if value.is_finite() {
+            if let Some(written) = Decimal::from_f64(value) {
+                Self::check_input_scale(written, field)?;
+            }
+        }
         Self::checked_minor_units_from_f64(value)
             .map(Money)
             .ok_or_else(|| format!("Invalid {field}"))
@@ -382,6 +433,7 @@ impl<'de> Deserialize<'de> for Money {
                 E: serde::de::Error,
             {
                 let parsed = Decimal::from_str(value).map_err(E::custom)?;
+                Money::check_input_scale(parsed, "monetary amount").map_err(E::custom)?;
                 Money::from_decimal(parsed).ok_or_else(|| E::custom("Invalid monetary amount"))
             }
 
@@ -2232,7 +2284,7 @@ impl Orders {
             customer_id,
             status: "pending".to_string(),
             total_amount: total,
-            currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+            currency: resolve_currency(input.currency).map_err(|e| JsValue::from_str(&e))?,
             payment_status: "pending".to_string(),
             fulfillment_status: "unfulfilled".to_string(),
             tracking_number: None,
@@ -2865,7 +2917,7 @@ impl Payments {
             customer_id: parse_optional_uuid(input.customer_id.as_deref(), "customer")
                 .map_err(|message| JsValue::from_str(&message))?,
             amount: input.amount,
-            currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+            currency: resolve_currency(input.currency).map_err(|e| JsValue::from_str(&e))?,
             status: "pending".to_string(),
             payment_method: input.payment_method,
             version: 1,
@@ -3267,7 +3319,7 @@ impl PurchaseOrders {
             supplier_id,
             status: "draft".to_string(),
             total_amount: Money::zero(),
-            currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+            currency: resolve_currency(input.currency).map_err(|e| JsValue::from_str(&e))?,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3750,7 +3802,7 @@ impl Carts {
             cart_number,
             customer_id,
             status: "active".to_string(),
-            currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+            currency: resolve_currency(input.currency).map_err(|e| JsValue::from_str(&e))?,
             subtotal: Money::zero(),
             tax_amount: Money::zero(),
             shipping_amount: Money::zero(),
@@ -4270,7 +4322,7 @@ impl Subscriptions {
             billing_interval,
             billing_interval_count,
             price: input.price,
-            currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+            currency: resolve_currency(input.currency).map_err(|e| JsValue::from_str(&e))?,
             setup_fee: input.setup_fee.unwrap_or_default(),
             trial_days,
             status: "draft".to_string(),
@@ -4929,7 +4981,7 @@ impl Promotions {
             total_usage_limit: input.total_usage_limit,
             per_customer_limit: input.per_customer_limit,
             usage_count: 0,
-            currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+            currency: resolve_currency(input.currency).map_err(|e| JsValue::from_str(&e))?,
             priority: input.priority.unwrap_or(0),
             created_at: now.to_rfc3339(),
             updated_at: now.to_rfc3339(),
@@ -6621,186 +6673,53 @@ impl Tax {
     /// Get US state tax information.
     #[wasm_bindgen(js_name = getUsStateInfo)]
     pub fn get_us_state_info(state_code: &str) -> Result<JsValue, JsValue> {
-        // US state tax rates (simplified)
-        let info = match state_code.to_uppercase().as_str() {
-            "CA" => Some(JsUsStateTaxInfo {
-                state_code: "CA".to_string(),
-                state_name: "California".to_string(),
-                state_rate: 0.0725,
-                has_local_taxes: true,
-                origin_based: true,
-                tax_shipping: false,
-                tax_clothing: true,
-                tax_food: false,
-                tax_digital: false,
-            }),
-            "TX" => Some(JsUsStateTaxInfo {
-                state_code: "TX".to_string(),
-                state_name: "Texas".to_string(),
-                state_rate: 0.0625,
-                has_local_taxes: true,
-                origin_based: true,
-                tax_shipping: true,
-                tax_clothing: true,
-                tax_food: false,
-                tax_digital: true,
-            }),
-            "NY" => Some(JsUsStateTaxInfo {
-                state_code: "NY".to_string(),
-                state_name: "New York".to_string(),
-                state_rate: 0.04,
-                has_local_taxes: true,
-                origin_based: false,
-                tax_shipping: true,
-                tax_clothing: false,
-                tax_food: false,
-                tax_digital: true,
-            }),
-            "FL" => Some(JsUsStateTaxInfo {
-                state_code: "FL".to_string(),
-                state_name: "Florida".to_string(),
-                state_rate: 0.06,
-                has_local_taxes: true,
-                origin_based: false,
-                tax_shipping: true,
-                tax_clothing: true,
-                tax_food: false,
-                tax_digital: true,
-            }),
-            "DE" | "MT" | "NH" | "OR" => Some(JsUsStateTaxInfo {
-                state_code: state_code.to_uppercase(),
-                state_name: match state_code.to_uppercase().as_str() {
-                    "DE" => "Delaware",
-                    "MT" => "Montana",
-                    "NH" => "New Hampshire",
-                    "OR" => "Oregon",
-                    _ => state_code,
-                }
-                .to_string(),
-                state_rate: 0.0,
-                has_local_taxes: false,
-                origin_based: false,
-                tax_shipping: false,
-                tax_clothing: false,
-                tax_food: false,
-                tax_digital: false,
-            }),
-            _ => None,
-        };
-
-        match info {
-            Some(i) => {
-                serde_wasm_bindgen::to_value(&i).map_err(|e| JsValue::from_str(&e.to_string()))
-            }
-            None => Ok(JsValue::NULL),
-        }
+        // The engine's table, not a copy. This used to be a hand-written table
+        // of five states, so every other state silently returned null.
+        let info = stateset_core::get_us_state_tax_info(state_code).map(|i| JsUsStateTaxInfo {
+            state_code: i.state_code,
+            state_name: i.state_name,
+            state_rate: rate(i.state_rate),
+            has_local_taxes: i.has_local_taxes,
+            origin_based: i.origin_based,
+            tax_shipping: i.tax_shipping,
+            tax_clothing: i.tax_clothing,
+            tax_food: i.tax_food,
+            tax_digital: i.tax_digital,
+        });
+        to_js_or_null(info)
     }
 
     /// Get EU VAT information.
     #[wasm_bindgen(js_name = getEuVatInfo)]
     pub fn get_eu_vat_info(country_code: &str) -> Result<JsValue, JsValue> {
-        let info = match country_code.to_uppercase().as_str() {
-            "DE" => Some(JsEuVatInfo {
-                country_code: "DE".to_string(),
-                country_name: "Germany".to_string(),
-                standard_rate: 0.19,
-                reduced_rate: Some(0.07),
-                super_reduced_rate: None,
-                parking_rate: None,
-            }),
-            "FR" => Some(JsEuVatInfo {
-                country_code: "FR".to_string(),
-                country_name: "France".to_string(),
-                standard_rate: 0.20,
-                reduced_rate: Some(0.10),
-                super_reduced_rate: Some(0.055),
-                parking_rate: None,
-            }),
-            "GB" => Some(JsEuVatInfo {
-                country_code: "GB".to_string(),
-                country_name: "United Kingdom".to_string(),
-                standard_rate: 0.20,
-                reduced_rate: Some(0.05),
-                super_reduced_rate: None,
-                parking_rate: None,
-            }),
-            "IT" => Some(JsEuVatInfo {
-                country_code: "IT".to_string(),
-                country_name: "Italy".to_string(),
-                standard_rate: 0.22,
-                reduced_rate: Some(0.10),
-                super_reduced_rate: Some(0.04),
-                parking_rate: None,
-            }),
-            "ES" => Some(JsEuVatInfo {
-                country_code: "ES".to_string(),
-                country_name: "Spain".to_string(),
-                standard_rate: 0.21,
-                reduced_rate: Some(0.10),
-                super_reduced_rate: Some(0.04),
-                parking_rate: None,
-            }),
-            _ => None,
-        };
-
-        match info {
-            Some(i) => {
-                serde_wasm_bindgen::to_value(&i).map_err(|e| JsValue::from_str(&e.to_string()))
-            }
-            None => Ok(JsValue::NULL),
-        }
+        // The engine's table, not a copy: this was five hand-written countries.
+        let info = stateset_core::get_eu_vat_info(country_code).map(|i| JsEuVatInfo {
+            country_code: i.country_code,
+            country_name: i.country_name,
+            standard_rate: rate(i.standard_rate),
+            reduced_rate: i.reduced_rate.map(rate),
+            super_reduced_rate: i.super_reduced_rate.map(rate),
+            parking_rate: i.parking_rate.map(rate),
+        });
+        to_js_or_null(info)
     }
 
     /// Get Canadian tax information.
     #[wasm_bindgen(js_name = getCanadianTaxInfo)]
     pub fn get_canadian_tax_info(province_code: &str) -> Result<JsValue, JsValue> {
-        let gst = 0.05;
-        let info = match province_code.to_uppercase().as_str() {
-            "ON" => Some(JsCanadianTaxInfo {
-                province_code: "ON".to_string(),
-                province_name: "Ontario".to_string(),
-                gst_rate: 0.0,
-                pst_rate: None,
-                hst_rate: Some(0.13),
-                qst_rate: None,
-                total_rate: 0.13,
-            }),
-            "BC" => Some(JsCanadianTaxInfo {
-                province_code: "BC".to_string(),
-                province_name: "British Columbia".to_string(),
-                gst_rate: gst,
-                pst_rate: Some(0.07),
-                hst_rate: None,
-                qst_rate: None,
-                total_rate: 0.12,
-            }),
-            "QC" => Some(JsCanadianTaxInfo {
-                province_code: "QC".to_string(),
-                province_name: "Quebec".to_string(),
-                gst_rate: gst,
-                pst_rate: None,
-                hst_rate: None,
-                qst_rate: Some(0.09975),
-                total_rate: 0.14975,
-            }),
-            "AB" => Some(JsCanadianTaxInfo {
-                province_code: "AB".to_string(),
-                province_name: "Alberta".to_string(),
-                gst_rate: gst,
-                pst_rate: None,
-                hst_rate: None,
-                qst_rate: None,
-                total_rate: gst,
-            }),
-            _ => None,
-        };
-
-        match info {
-            Some(i) => {
-                serde_wasm_bindgen::to_value(&i).map_err(|e| JsValue::from_str(&e.to_string()))
-            }
-            None => Ok(JsValue::NULL),
-        }
+        // The engine's table, not a copy: this held 4 of the engine's 8
+        // provinces, so Saskatchewan, Manitoba, Nova Scotia and New Brunswick
+        // silently returned null. One table means one place to be right.
+        let info = stateset_core::get_canadian_tax_info(province_code).map(|i| JsCanadianTaxInfo {
+            province_code: i.province_code,
+            province_name: i.province_name,
+            gst_rate: rate(i.gst_rate),
+            pst_rate: i.pst_rate.map(rate),
+            hst_rate: i.hst_rate.map(rate),
+            qst_rate: i.qst_rate.map(rate),
+            total_rate: rate(i.total_rate),
+        });
+        to_js_or_null(info)
     }
 
     /// Check if a country is in the EU.
@@ -6903,6 +6822,29 @@ mod tests {
     use super::*;
     fn now_rfc3339() -> String {
         Utc::now().to_rfc3339()
+    }
+
+    /// Money here is a fixed two-decimal integer, so an input it cannot hold
+    /// exactly is refused. It used to be rounded: `0.005` became `0.01`.
+    #[test]
+    fn money_input_refuses_more_places_than_it_can_hold() {
+        let refused = Money::try_from_f64(0.005, "unit price").expect_err("0.005 must be refused");
+        assert!(refused.contains("decimal places"), "{refused}");
+        assert!(Money::try_from_f64(1.001, "unit price").is_err());
+        // Scale is counted after trimming trailing zeros, as the engine does.
+        assert!(Money::check_input_scale(Decimal::from_str("10.9900").expect("dec"), "x").is_ok());
+        assert_eq!(Money::try_from_f64(19.99, "unit price").expect("19.99"), Money(1999));
+    }
+
+    /// Currency codes are validated and normalized. This binding used to store
+    /// whatever string it was given, so `currency: "EURO"` was accepted.
+    #[test]
+    fn currency_is_validated_and_normalized() {
+        assert_eq!(resolve_currency(None).expect("default"), "USD");
+        assert_eq!(resolve_currency(Some("eUr".into())).expect("mixed case"), "EUR");
+        assert!(resolve_currency(Some("EURO".into())).is_err());
+        assert!(resolve_currency(Some(String::new())).is_err(), "a blank is not an omission");
+        assert!(resolve_currency(Some("978".into())).is_err());
     }
 
     #[test]
