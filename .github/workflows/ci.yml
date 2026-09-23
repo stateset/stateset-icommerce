@@ -1120,7 +1120,15 @@ jobs:
         # canonical-JSON, payload-plain-hash and merkle-root output to Rust
         # ground truth for every vector in `bindings/test-vectors/v1.json`.
         working-directory: bindings/wasm
-        run: node --test test/cross-binding-vectors.js
+        # Every test file, not one named file: the semantic-corpus consumer
+        # lives beside this one, and a named list quietly stops growing.
+        run: node --test test/*.js
+
+      - name: WASM unit tests
+        # This job only BUILT the crate, so its Rust unit tests -- including
+        # the ones pinning money-scale refusal and currency validation -- never
+        # ran in CI. They run natively; the crate needs no wasm target to test.
+        run: cargo test -p stateset-embedded-wasm
 
   coverage:
     name: Code Coverage
