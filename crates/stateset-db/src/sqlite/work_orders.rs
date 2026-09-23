@@ -886,7 +886,12 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
             let consumed = parse_decimal_strict(&consumed, "material", "consumed_quantity")
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            if consumed + quantity > reserved {
+            let new_consumed = consumed.checked_add(quantity).ok_or_else(|| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::ValidationError(
+                    "Cannot consume more material than reserved".into(),
+                )))
+            })?;
+            if new_consumed > reserved {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                     CommerceError::ValidationError(
                         "Cannot consume more material than reserved".into(),
@@ -895,7 +900,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             }
             tx.execute(
                 "UPDATE manufacturing_work_order_materials SET consumed_quantity = ?1, updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![(consumed + quantity).to_string(), Utc::now().to_rfc3339(), id],
+                rusqlite::params![new_consumed.to_string(), Utc::now().to_rfc3339(), id],
             )?;
             Ok(())
         })?;
@@ -1580,6 +1585,34 @@ mod tests {
         let stored = db.work_orders().get_materials(wo.id).expect("materials");
         assert_eq!(stored[0].consumed_quantity, dec!(10));
         assert!(db.work_orders().consume_material(mat.id, dec!(1)).is_err());
+    }
+
+    #[test]
+    fn material_consumption_overflow_returns_validation_error() {
+        let repo = fresh_repo();
+        let wo = make_wo(&repo, dec!(1));
+        let mat = repo
+            .add_material(
+                wo.id,
+                AddWorkOrderMaterial {
+                    component_id: None,
+                    component_sku: "MAX".into(),
+                    component_name: "Maximum quantity".into(),
+                    quantity: Decimal::MAX,
+                },
+            )
+            .expect("add");
+        repo.consume_material(mat.id, Decimal::MAX).expect("consume full reservation");
+        let err = repo.consume_material(mat.id, dec!(1)).expect_err("reject overflow");
+        assert!(
+            matches!(err, CommerceError::ValidationError(ref message)
+                if message.contains("more material than reserved")),
+            "got {err:?}"
+        );
+        assert_eq!(
+            repo.get_materials(wo.id).expect("materials")[0].consumed_quantity,
+            Decimal::MAX
+        );
     }
 
     #[test]

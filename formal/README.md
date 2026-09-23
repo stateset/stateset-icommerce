@@ -466,12 +466,18 @@ Two workers each request two units from a three-unit reservation. With the
 read, cap check and write serialized, at most one succeeds; the split version
 shows four units consumed. SQLite consume_material now uses one immediate
 transaction, and Postgres uses a guarded arithmetic UPDATE. Both reject
-nonpositive and over-reservation consumption. The SQLite
-material_consumption_is_bounded_and_serialized regression exercises both
-guards and ten simultaneous consumers. lean/CommerceQuantities.lean proves that an
-accepted increment stays within the reservation and leaves an exact
-remainder. The model does not establish that material is deducted from
-inventory: this repository records work-order material quantities.
+nonpositive and over-reservation consumption. SQLite uses checked addition
+so an out-of-range request returns a validation error instead of panicking.
+The SQLite material_consumption_is_bounded_and_serialized and
+material_consumption_overflow_returns_validation_error regressions exercise
+concurrent consumers and the Decimal maximum; Postgres
+postgres_material_consumption_is_bounded_and_serialized runs the same race
+against a live database in the parity matrix. lean/CommerceQuantities.lean
+proves that an accepted increment stays within the reservation and leaves an exact
+remainder. Lean uses unbounded naturals; the Decimal-maximum regression
+covers the finite representation boundary. The model does not establish that
+material is deducted from inventory: this repository records work-order
+material quantities.
 
 ## Stored value — tla/stored_value/StoredValueSpend.tla
 
@@ -548,8 +554,10 @@ cargo test -p stateset-db --lib partial_credit_applications_preserve_memo_and_in
 cargo test -p stateset-db --lib pick_quantity_claims_cannot_exceed_or_reverse_the_request
 cargo test -p stateset-db --lib billing_cycle_snapshots_price_and_discount_at_insert
 cargo test -p stateset-db --lib material_consumption_is_bounded_and_serialized
+cargo test -p stateset-db --lib material_consumption_overflow_returns_validation_error
 cargo test -p stateset-db --lib competing_put_away_completions_record_one_receipt
 cargo test -p stateset-db --test inventory_round5_sqlite sqlite_competing_backorder_allocations_cannot_exceed_remaining
+cargo test -p stateset-db --no-default-features --features postgres --test postgres_work_order_concurrency
 cargo test -p stateset-sync pull_does_not_advance_cursor_when_conflict_resolution_cannot_persist
 cargo test -p stateset-db --test sqlite_payment_order_guards concurrent_captures_cannot_exceed_one_order_total
 cargo test -p stateset-embedded --test ap_money_guards_test process_payment_run_concurrent_double_process_pays_each_bill_once
