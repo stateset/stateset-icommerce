@@ -65,6 +65,44 @@ async fn postgres_concurrent_completions_are_not_lost() {
 }
 
 #[tokio::test]
+async fn postgres_competing_completions_cannot_exceed_plan() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = Arc::new(PostgresDatabase::connect(&url).await.expect("connect + migrate"));
+    let wo = db
+        .work_orders()
+        .create_async(CreateWorkOrder {
+            product_id: ProductId::new(),
+            quantity_to_build: dec!(3),
+            ..Default::default()
+        })
+        .await
+        .expect("create work order");
+    let barrier = Arc::new(tokio::sync::Barrier::new(2));
+    let mut handles = Vec::new();
+    for _ in 0..2 {
+        let db = Arc::clone(&db);
+        let barrier = Arc::clone(&barrier);
+        let id = wo.id;
+        handles.push(tokio::spawn(async move {
+            barrier.wait().await;
+            db.work_orders().complete_async(id, dec!(2)).await
+        }));
+    }
+    let mut successes = 0;
+    for handle in handles {
+        if handle.await.expect("join completion").is_ok() {
+            successes += 1;
+        }
+    }
+    assert_eq!(successes, 1);
+    let stored = db.work_orders().get_async(wo.id).await.expect("get").expect("work order");
+    assert_eq!(stored.quantity_completed, dec!(2));
+}
+
+#[tokio::test]
 async fn postgres_material_consumption_is_bounded_and_serialized() {
     let Some(url) = postgres_url() else {
         eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");

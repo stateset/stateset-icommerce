@@ -527,6 +527,64 @@ its broken configuration to fail. The Lean results cover arbitrary natural
 quantities at a common exact scale. The Rust tests connect critical paths to
 the models, but do not prove implementation equivalence.
 
+## Credit exposure — tla/finance/CreditExposure.tla
+
+Two two-unit reservations compete against a three-unit line. The guarded
+transaction keeps balance plus outstanding holds within the limit; a stale
+read permits four units of holds. SQLite `reserve_credit` uses `BEGIN IMMEDIATE`
+and Postgres locks the account row. The
+`concurrent_reservations_cannot_exceed_available_credit` and
+`two_reservations_keep_hold_amount_exact` tests exercise the relevant path.
+Lean proves available-credit arithmetic and the conversion of a charge's own
+hold into balance for arbitrary exact units. Limit reductions that deliberately
+put an account over its line are outside this reservation model.
+
+## Serial quarantine — tla/warehouse/SerialQuarantine.tla
+
+Lot quarantine and the change to its available serials must commit together.
+The split configuration exposes a quarantined lot with an available serial;
+the guarded configuration prevents that state. SQLite's
+`quarantine_lot_on` calls `quarantine_for_lot_on` in the same transaction, and
+`quarantine_is_atomic_with_its_serials` exercises rollback. Lean proves the
+sellable-to-blocked quantity transfer. This does **not** prove recall
+propagation: generic lot `update` can set `Recalled` without updating serials.
+That is an outstanding cross-record contract to define and implement.
+
+## Manufacturing yield — tla/manufacturing/YieldAccounting.tla
+
+The bounded model records one good and one scrapped unit in a single yield
+report; racing reports must not exceed the three-unit plan. Splitting the
+approval from the quantity update violates the cap. Lean proves conservation
+of good, scrap and remaining quantities for any accepted report. Current
+`WorkOrder::complete` records good units only; this change enforces its
+`quantity_completed <= quantity_to_build` contract in both backends and tests
+rejection at the boundary. A persisted scrap report tied to the same work
+order is still needed before the combined yield model describes an entire
+production operation.
+
+## Credit payment ledger — tla/finance/PaymentLedger.tla
+
+The account balance and its credit-transaction running balance move together
+for a payment. The split model exposes a recorded payment with a stale ledger
+balance. SQLite `credit::apply_payment` uses one IMMEDIATE transaction; Postgres
+uses a row lock and one transaction. Lean proves balance subtraction and
+zero-clamping. This is the **credit transaction ledger**, not the general
+ledger or an external payment processor; those links remain outside the spec.
+
+## Return disposition — tla/returns/ReturnDisposition.tla
+
+Recording a restock disposition and adding its units to on-hand stock is one
+transaction. The split model exposes a dispositioned item with no stock
+receipt. SQLite `set_item_disposition` uses `BEGIN IMMEDIATE` and Postgres uses
+a transaction; existing return disposition tests exercise the stock and
+serial effects. Lean proves restock increases sellable stock and quarantine
+increases on-hand and allocated equally. The model covers one return item and
+one restock; it does not cover bins, lot genealogy or refund settlement.
+
+Each of these five TLC models requires a counterexample in its deliberately
+broken configuration. The Lean proofs concern exact-unit transition equations,
+and the Rust tests establish behavior only for the cases they exercise.
+
 ## Running it
 
 ```
@@ -555,6 +613,8 @@ cargo test -p stateset-db --lib pick_quantity_claims_cannot_exceed_or_reverse_th
 cargo test -p stateset-db --lib billing_cycle_snapshots_price_and_discount_at_insert
 cargo test -p stateset-db --lib material_consumption_is_bounded_and_serialized
 cargo test -p stateset-db --lib material_consumption_overflow_returns_validation_error
+cargo test -p stateset-db --lib completion_cannot_exceed_planned_quantity
+cargo test -p stateset-db --lib payment_ledger_running_balance_matches_account
 cargo test -p stateset-db --lib competing_put_away_completions_record_one_receipt
 cargo test -p stateset-db --test inventory_round5_sqlite sqlite_competing_backorder_allocations_cannot_exceed_remaining
 cargo test -p stateset-db --no-default-features --features postgres --test postgres_work_order_concurrency
