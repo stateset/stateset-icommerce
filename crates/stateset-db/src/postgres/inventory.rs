@@ -997,14 +997,13 @@ impl PgInventoryRepository {
             ))
         })?;
 
-        if status == ReservationStatus::Released || status == ReservationStatus::Cancelled {
-            return Ok(ReservationConfirmOutcome::Confirmed);
-        }
-        if status == ReservationStatus::Confirmed {
-            return Ok(ReservationConfirmOutcome::Confirmed);
-        }
         if status == ReservationStatus::Expired {
             return Ok(ReservationConfirmOutcome::Expired);
+        }
+        // Confirming a fulfilled reservation must never make it a live hold
+        // again: its units have already left both on-hand and allocated stock.
+        if !status.holds_stock() || status == ReservationStatus::Confirmed {
+            return Ok(ReservationConfirmOutcome::Confirmed);
         }
 
         if let Some(expires_at) = res.expires_at {

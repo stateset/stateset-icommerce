@@ -919,17 +919,13 @@ impl SqliteInventoryRepository {
             )))
         })?;
 
-        if parsed_status == ReservationStatus::Released
-            || parsed_status == ReservationStatus::Cancelled
-        {
-            return Ok(ReservationConfirmOutcome::Confirmed);
-        }
-        if parsed_status == ReservationStatus::Confirmed {
-            return Ok(ReservationConfirmOutcome::Confirmed);
-        }
-
         if parsed_status == ReservationStatus::Expired {
             return Ok(ReservationConfirmOutcome::Expired);
+        }
+        // Confirming a fulfilled reservation must never make it a live hold
+        // again: its units have already left both on-hand and allocated stock.
+        if !parsed_status.holds_stock() || parsed_status == ReservationStatus::Confirmed {
+            return Ok(ReservationConfirmOutcome::Confirmed);
         }
 
         if let Some(expires_at) = expires_at {
@@ -2739,6 +2735,18 @@ mod tests {
         assert_eq!(before.total_allocated, dec!(4));
         assert_eq!(before.total_available, dec!(3));
 
+        {
+            let mut conn = repo.pool.get().expect("connection");
+            let tx = conn.transaction().expect("transaction");
+            let outcome = SqliteInventoryRepository::confirm_reservation_in_tx_with_now(
+                &tx,
+                fulfilled.id,
+                Utc::now(),
+            )
+            .expect("idempotent confirm");
+            assert_eq!(outcome, ReservationConfirmOutcome::Confirmed);
+            tx.commit().expect("commit");
+        }
         repo.release_reservation(fulfilled.id).expect("idempotent release");
         let after = repo.get_stock("FULFILLED-RELEASE").expect("stock").expect("item");
         assert_eq!(after.total_on_hand, before.total_on_hand);
