@@ -126,6 +126,7 @@ mod tests {
     use super::*;
     use crate::{DatabaseConfig, SqliteDatabase};
     use chrono::Duration;
+    use std::sync::{Arc, Barrier};
 
     fn repo() -> SqliteHttpIdempotencyRepository {
         let db = SqliteDatabase::new(&DatabaseConfig::in_memory()).expect("in-memory db");
@@ -176,6 +177,30 @@ mod tests {
         assert!(!repo.put(&second).unwrap());
         let loaded = repo.get("tenant-a", "k1", now - Duration::hours(1)).unwrap().expect("record");
         assert_eq!(loaded.response_body, b"{\"id\":\"order-1\"}");
+    }
+
+    #[test]
+    fn concurrent_puts_preserve_one_first_response() {
+        let repo = Arc::new(repo());
+        let barrier = Arc::new(Barrier::new(2));
+        let now = Utc::now();
+        let mut handles = Vec::new();
+        for body in [b"first".to_vec(), b"second".to_vec()] {
+            let repo = Arc::clone(&repo);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                let mut rec = record("race", now);
+                rec.response_body = body.clone();
+                barrier.wait();
+                (repo.put(&rec).expect("put"), body)
+            }));
+        }
+        let outcomes: Vec<_> = handles.into_iter().map(|h| h.join().expect("join")).collect();
+        let winners: Vec<_> = outcomes.iter().filter(|(inserted, _)| *inserted).collect();
+        assert_eq!(winners.len(), 1);
+        let stored =
+            repo.get("tenant-a", "race", now - Duration::hours(1)).expect("get").expect("record");
+        assert_eq!(stored.response_body, winners[0].1);
     }
 
     #[test]

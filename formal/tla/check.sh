@@ -33,7 +33,7 @@ tlc() {
 fail=0
 cd "$HERE/payments"
 # A run that ends on a counterexample leaves its state directory behind.
-trap 'rm -rf "$HERE/payments/states" "$HERE/inventory/states" "$HERE/x402/states" "$HERE/returns/states" "$HERE/finance/states" "$HERE/subscriptions/states" "$HERE/warehouse/states" "$HERE/kernel/states" "$HERE/checkout/states" "$HERE/promotions/states" "$HERE/sync/states" "$HERE/manufacturing/states" "$HERE/stored_value/states" "$HERE/warranties/states"' EXIT
+trap 'rm -rf "$HERE/payments/states" "$HERE/inventory/states" "$HERE/x402/states" "$HERE/returns/states" "$HERE/finance/states" "$HERE/subscriptions/states" "$HERE/warehouse/states" "$HERE/kernel/states" "$HERE/checkout/states" "$HERE/promotions/states" "$HERE/sync/states" "$HERE/manufacturing/states" "$HERE/stored_value/states" "$HERE/warranties/states" "$HERE/http/states" "$HERE/loyalty/states" "$HERE/quality/states" "$HERE/edi/states"' EXIT
 
 echo "== PaymentRefunds: the implementation (Locked = TRUE) must satisfy every property"
 if tlc -config PaymentRefunds_locked.cfg PaymentRefunds.tla > locked.log 2>&1; then
@@ -168,5 +168,10 @@ check_pair warehouse TransferReceipt TransferReceipt_atomic.cfg TransferReceipt_
 check_pair warranties WarrantyClaimSlots WarrantyClaimSlots_atomic.cfg WarrantyClaimSlots_split.cfg WithinClaimLimit
 check_pair finance VendorCreditApplication VendorCreditApplication_atomic.cfg VendorCreditApplication_split.cfg NonnegativeRemaining
 check_pair x402 X402CreditDebit X402CreditDebit_atomic.cfg X402CreditDebit_split.cfg NonnegativeBalance
+check_pair http HttpIdempotency HttpIdempotency_atomic.cfg HttpIdempotency_split.cfg FirstWriterWins
+check_pair loyalty LoyaltyPoints LoyaltyPoints_atomic.cfg LoyaltyPoints_split.cfg NoNegativeBalance
+check_pair finance PrepaymentSettlement PrepaymentSettlement_atomic.cfg PrepaymentSettlement_split.cfg NonnegativeRemaining
+check_pair quality QualityHoldRelease QualityHoldRelease_atomic.cfg QualityHoldRelease_split.cfg AtMostOneRelease
+check_pair edi EdiTerminalStatus EdiTerminalStatus_atomic.cfg EdiTerminalStatus_split.cfg TerminalOnce
 
 exit $fail

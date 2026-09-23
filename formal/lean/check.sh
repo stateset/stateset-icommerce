@@ -56,6 +56,8 @@ echo "== OperationalReconciliation.lean: the proofs must check"
 lean -o "$build/OperationalReconciliation.olean" OperationalReconciliation.lean
 echo "== OperationalClaims.lean: the proofs must check"
 lean -o "$build/OperationalClaims.olean" OperationalClaims.lean
+echo "== OperationalIntegrity.lean: the proofs must check"
+lean -o "$build/OperationalIntegrity.olean" OperationalIntegrity.lean
 
 echo "== the theorems must use no axiom beyond Lean's standard three"
 theorems=(round_within residue_le_length select_marks nudge_sum allocate_sum allocate_near)
@@ -70,6 +72,9 @@ $(lean --stdin <<< "$operational_axioms")"
 claims_axioms="$(printf 'import OperationalClaims\n#print axioms CycleCount.variance_reconciles\n#print axioms CycleCount.zero_variance_leaves_stock\n#print axioms TransferReceipt.accepted_within_shipped\n#print axioms TransferReceipt.line_totals\n#print axioms WarrantyClaims.claim_consumes_one_slot\n#print axioms VendorCredit.apply_conserves\n#print axioms VendorCredit.reverse_conserves\n#print axioms X402Credit.debit_conserves\n#print axioms X402Credit.credit_conserves\n')"
 report="$report
 $(lean --stdin <<< "$claims_axioms")"
+integrity_axioms="$(printf 'import OperationalIntegrity\n#print axioms HttpIdempotency.first_write_wins\n#print axioms HttpIdempotency.expired_generation_restarts\n#print axioms LoyaltyPoints.redeem_conserves\n#print axioms LoyaltyPoints.earn_conserves\n#print axioms PrepaymentSettlement.application_conserves\n#print axioms PrepaymentSettlement.refund_conserves\n#print axioms QualityHoldRelease.release_once\n#print axioms EdiTerminalStatus.terminal_write_once\n')"
+report="$report
+$(lean --stdin <<< "$integrity_axioms")"
 echo "$report"
 if grep -Eo '\b[A-Za-z.]+\b' <<< "$(grep -o '\[.*\]' <<< "$report")" \
     | grep -vxE 'propext|Classical\.choice|Quot\.sound' | grep -q .; then
