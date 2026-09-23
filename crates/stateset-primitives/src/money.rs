@@ -77,10 +77,35 @@ pub struct Money {
 }
 
 impl Money {
-    /// Create a new monetary value.
+    /// Create a new monetary value without scale validation.
+    ///
+    /// Prefer [`Self::try_new`] or [`Self::from_decimal_str`] for
+    /// caller-supplied amounts: they enforce invariant M1
+    /// (`commerce.money.scale_exceeds_currency`) against
+    /// [`CurrencyCode::decimal_places`]. `new` remains for
+    /// already-validated engine paths and `const` contexts.
     #[inline]
     pub const fn new(amount: Decimal, currency: CurrencyCode) -> Self {
         Self { amount, currency }
+    }
+
+    /// Create a monetary value, rejecting amounts that carry more
+    /// significant fractional digits than `currency` permits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MoneyWireError::ScaleExceedsCurrency`] when the amount's
+    /// significant scale exceeds the currency's minor units.
+    pub fn try_new(amount: Decimal, currency: CurrencyCode) -> Result<Self, MoneyWireError> {
+        let allowed_scale = currency.decimal_places();
+        if amount.normalize().scale() > u32::from(allowed_scale) {
+            return Err(MoneyWireError::ScaleExceedsCurrency {
+                currency,
+                amount: amount.normalize().to_string(),
+                allowed_scale,
+            });
+        }
+        Ok(Self::new(amount, currency))
     }
 
     /// Parse an exact base-10 amount and validate it against the currency's
@@ -502,6 +527,21 @@ mod tests {
             Just(CurrencyCode::CHF),
             Just(CurrencyCode::CNY),
         ]
+    }
+
+    #[test]
+    fn checked_constructor_enforces_currency_scale() {
+        assert!(Money::try_new(dec!(19.99), CurrencyCode::USD).is_ok());
+        // Trailing zeros are insignificant.
+        assert!(Money::try_new(dec!(19.9900), CurrencyCode::USD).is_ok());
+        assert!(Money::try_new(dec!(100), CurrencyCode::JPY).is_ok());
+        let err = Money::try_new(dec!(19.999), CurrencyCode::USD).expect_err("3dp in USD");
+        assert!(matches!(err, MoneyWireError::ScaleExceedsCurrency { allowed_scale: 2, .. }));
+        let err = Money::try_new(dec!(100.5), CurrencyCode::JPY).expect_err("fractional JPY");
+        assert!(matches!(err, MoneyWireError::ScaleExceedsCurrency { allowed_scale: 0, .. }));
+        let btc: CurrencyCode = "BTC".parse().expect("BTC parses");
+        assert!(Money::try_new(dec!(0.00000001), btc).is_ok());
+        assert!(Money::try_new(dec!(0.000000001), btc).is_err());
     }
 
     #[test]

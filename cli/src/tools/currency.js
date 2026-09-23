@@ -323,6 +323,22 @@ export const currencyTools = [
     },
   },
   {
+    name: 'get_currency_decimal_places',
+    description:
+      'How many decimal places a currency permits. The engine refuses an amount with more ' +
+      'places than this, so check it before formatting or validating money rather than ' +
+      'assuming two: JPY, KRW and VND have none, BTC and ETH have eight.',
+    inputSchema: {
+      currency: z.string().min(1).describe('Currency code (e.g., USD, JPY, BTC)'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const currency = params.currency.toUpperCase();
+      const decimalPlaces = commerce.currency.decimalPlaces(currency);
+      return { success: true, currency, decimalPlaces };
+    },
+  },
+  {
     name: 'format_currency',
     description: 'Format an amount with currency symbol.',
     inputSchema: {

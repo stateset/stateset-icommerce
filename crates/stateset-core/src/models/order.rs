@@ -488,13 +488,12 @@ impl Order {
     }
 }
 
-/// Decimal places a line/order money total is rounded to.
-///
-/// Currency minor units vary (JPY has 0, most have 2, a few have 3), but the
-/// order pipeline has historically assumed 2; keeping a single constant here
-/// keeps every backend's rounding identical. A currency-aware version would
-/// thread the currency into `calculate_total`.
-pub(crate) const MONEY_SCALE: u32 = 2;
+/// Minor-unit scale for `currency`: the single source of truth is
+/// [`CurrencyCode::decimal_places`].
+#[must_use]
+pub fn money_scale_for(currency: CurrencyCode) -> u32 {
+    u32::from(currency.decimal_places())
+}
 
 impl OrderItem {
     /// Units not yet shipped on this line (`quantity - shipped_quantity`, never negative).
@@ -506,11 +505,25 @@ impl OrderItem {
 
     /// Calculate a line item's money total, rounded to the currency minor unit.
     ///
-    /// The result is rounded to `MONEY_SCALE` (2) decimal places so the stored
-    /// line total is a real money amount and an order's `total_amount` (the sum
-    /// of these line totals) foots exactly to its line items. All order-creation
-    /// paths on both backends route through this function so they agree to the
-    /// cent.
+    /// Currency-aware: rounds to `currency.decimal_places()` so JPY foots to
+    /// whole yen and BTC keeps 8 places. All order-creation paths on both
+    /// backends route through this function so they agree exactly.
+    #[must_use]
+    pub fn calculate_total_for_currency(
+        quantity: i32,
+        unit_price: Decimal,
+        discount: Decimal,
+        tax: Decimal,
+        currency: CurrencyCode,
+    ) -> Decimal {
+        let subtotal = unit_price * Decimal::from(quantity);
+        (subtotal - discount + tax).round_dp(money_scale_for(currency))
+    }
+
+    /// Calculate a line item's money total with the legacy 2-dp fallback.
+    ///
+    /// Prefer [`Self::calculate_total_for_currency`] when the order currency
+    /// is known. Kept for callers without currency context.
     #[must_use]
     pub fn calculate_total(
         quantity: i32,
@@ -518,8 +531,13 @@ impl OrderItem {
         discount: Decimal,
         tax: Decimal,
     ) -> Decimal {
-        let subtotal = unit_price * Decimal::from(quantity);
-        (subtotal - discount + tax).round_dp(MONEY_SCALE)
+        Self::calculate_total_for_currency(
+            quantity,
+            unit_price,
+            discount,
+            tax,
+            CurrencyCode::default(),
+        )
     }
 }
 
@@ -571,17 +589,20 @@ impl CreateOrder {
     }
 
     /// Sum of the line totals this request would store, each rounded by
-    /// [`OrderItem::calculate_total`] exactly as the backends store them.
+    /// [`OrderItem::calculate_total_for_currency`] in the request's
+    /// effective currency, exactly as the backends store them.
     #[must_use]
     pub fn line_subtotal(&self) -> Decimal {
+        let currency = self.effective_currency();
         self.items
             .iter()
             .map(|item| {
-                OrderItem::calculate_total(
+                OrderItem::calculate_total_for_currency(
                     item.quantity,
                     item.unit_price,
                     item.discount.unwrap_or_default(),
                     item.tax_amount.unwrap_or_default(),
+                    currency,
                 )
             })
             .sum()
@@ -813,6 +834,46 @@ mod tests {
         order.shipping_amount = dec!(5.00);
         order.discount_amount = dec!(2.00);
         assert_eq!(order.calculate_total(), lines + dec!(1.50) + dec!(5.00) - dec!(2.00));
+    }
+
+    #[test]
+    fn line_total_rounds_to_currency_minor_unit() {
+        use stateset_primitives::CurrencyCode;
+        // USD keeps cents.
+        assert_eq!(
+            OrderItem::calculate_total_for_currency(
+                1,
+                dec!(10.006),
+                dec!(0),
+                dec!(0),
+                CurrencyCode::USD
+            ),
+            dec!(10.01)
+        );
+        // JPY has no minor units: 100.6 rounds to whole yen.
+        assert_eq!(
+            OrderItem::calculate_total_for_currency(
+                1,
+                dec!(100),
+                dec!(0),
+                dec!(0.6),
+                CurrencyCode::JPY
+            ),
+            dec!(101)
+        );
+        // BTC keeps 8 places.
+        assert_eq!(
+            OrderItem::calculate_total_for_currency(
+                1,
+                dec!(0.000000016),
+                dec!(0),
+                dec!(0),
+                "BTC".parse().expect("BTC parses"),
+            ),
+            dec!(0.00000002)
+        );
+        // Legacy wrapper stays USD/2dp.
+        assert_eq!(OrderItem::calculate_total(1, dec!(10.006), dec!(0), dec!(0)), dec!(10.01));
     }
 
     #[test]

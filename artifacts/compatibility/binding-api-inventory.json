@@ -1810,8 +1810,8 @@
       "packageName": "@stateset/embedded",
       "version": "1.35.2",
       "runtime": "napi-rs",
-      "entrypointCount": 8,
-      "packedFilePatternCount": 6,
+      "entrypointCount": 9,
+      "packedFilePatternCount": 9,
       "peerDependencies": [
         "@stateset/cli"
       ],
@@ -1840,6 +1840,11 @@
           "subpath": "./langchain",
           "runtimeEntry": "./langchain.mjs",
           "typesEntry": "./langchain.d.ts"
+        },
+        {
+          "subpath": "./native-toolkit",
+          "runtimeEntry": "./native-toolkit.mjs",
+          "typesEntry": "./native-toolkit.d.ts"
         },
         {
           "subpath": "./openai",

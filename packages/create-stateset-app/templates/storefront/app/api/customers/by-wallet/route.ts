@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCommerce } from '@/lib/commerce';
 import { verifyWalletRequest } from '@/lib/wallet-auth';
+import { walletMatches } from '@/lib/customer-metadata';
 
 export async function GET(request: NextRequest) {
   const address = request.nextUrl.searchParams.get('address');
@@ -15,7 +16,7 @@ export async function GET(request: NextRequest) {
     const commerce = getCommerce();
     const customers = await commerce.customers.list();
     const customer = customers.find(
-      (c: any) => c.metadata?.walletAddress?.toLowerCase() === address.toLowerCase(),
+      (c) => walletMatches(c.metadata, address),
     );
 
     if (!customer) {

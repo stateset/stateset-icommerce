@@ -13,6 +13,9 @@
  *   stateset-sync status            # Show sync status
  *   stateset-sync verify <event-id> # Verify event inclusion
  *   stateset-sync rebase            # Rebase after conflict
+ *   stateset-sync config show       # Show configuration (secrets redacted)
+ *   stateset-sync config set <k> <v># Set a config value, e.g. sequencer-public-key
+ *   stateset-sync doctor            # Inspect quarantined events and peer key pins
  *
  * Key Management (VES v1.0):
  *   stateset-sync keys:generate     # Generate Ed25519/X25519 key pairs
@@ -30,6 +33,8 @@ import fs from 'node:fs';
 import {
   loadSyncConfig,
   createSyncConfig,
+  updateSyncConfig,
+  normalizeSequencerPublicKey,
   isSyncConfigured,
   validateSyncConfig,
   getConfigDir,
@@ -37,6 +42,7 @@ import {
 } from '../src/sync/config.js';
 import { createSyncEngine } from '../src/sync/engine.js';
 import { createOutbox } from '../src/sync/outbox.js';
+import { syncDoctor } from '../src/commands/sync.js';
 import { createSequencerClient } from '../src/sync/client.js';
 import { getKeyManager } from '../src/sync/keys.js';
 import { getRotationPolicyManager } from '../src/sync/rotation-policy.js';
@@ -65,6 +71,15 @@ function createSpinner(text, jsonOutput) {
   return ora({ text, isEnabled: !jsonOutput });
 }
 
+function parseOptionalSeconds(value, flag) {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${flag} must be a positive number of seconds`);
+  }
+  return parsed;
+}
+
 program
   .name('stateset-sync')
   .description('Verifiable Event Sync (VES) for StateSet CLI')
@@ -80,6 +95,20 @@ program
   .requiredOption('--tenant-id <uuid>', 'Tenant UUID')
   .requiredOption('--store-id <uuid>', 'Store UUID')
   .option('--api-key <key>', 'API key for authentication')
+  .option(
+    '--sequencer-public-key <hex>',
+    "Sequencer's Ed25519 public key (raw 32 bytes as hex, 0x optional). " +
+      'REQUIRED to pull: without it no peer key directory can be verified and ' +
+      'every pulled event is quarantined as sequencer_key_not_configured.',
+  )
+  .option(
+    '--peer-key-ttl-seconds <n>',
+    'How long a cached peer key directory may be reused before re-fetching',
+  )
+  .option(
+    '--peer-key-max-stale-seconds <n>',
+    'How long cached peer keys may still serve while the sequencer is unreachable',
+  )
   .option('--db <path>', 'Database path', './store.db')
   .option('--security-profile <profile>', 'Sync security profile', 'hybrid')
   .option(
@@ -111,6 +140,15 @@ program
         dbPath: options.db,
         securityProfile: options.securityProfile,
         allowInsecureTransport: options.allowInsecureTransport === true,
+        sequencerPublicKey: options.sequencerPublicKey,
+        peerKeyTtlSeconds: parseOptionalSeconds(
+          options.peerKeyTtlSeconds,
+          '--peer-key-ttl-seconds',
+        ),
+        peerKeyMaxStaleSeconds: parseOptionalSeconds(
+          options.peerKeyMaxStaleSeconds,
+          '--peer-key-max-stale-seconds',
+        ),
       });
 
       // Validate
@@ -157,7 +195,22 @@ program
       console.log(`  Store ID:      ${config.identity.storeId}`);
       console.log(`  Agent ID:      ${config.identity.agentId}`);
       console.log(`  Database:      ${options.db}`);
+      console.log(
+        `  Sequencer key: ${config.sequencerPublicKey ?? chalk.yellow('not configured')}`,
+      );
       console.log();
+      if (!config.sequencerPublicKey) {
+        console.log(
+          chalk.yellow(
+            'WARNING: no sequencer public key is configured. Pull cannot verify any peer\n' +
+              '         key directory, so every pulled event will be quarantined as\n' +
+              '         "sequencer_key_not_configured" and nothing will be stored.\n' +
+              '         Set it with:\n' +
+              '           stateset-sync config set sequencer-public-key <hex>',
+          ),
+        );
+        console.log();
+      }
       console.log(chalk.dim('Run "stateset-sync status" to check sync state.'));
     } catch (error) {
       spinner.fail(`Initialization failed: ${error.message}`);
@@ -278,7 +331,14 @@ program
         } else if (result.pulled === 0) {
           spinner.info('Already up to date');
         } else {
-          spinner.succeed(`Pull complete: ${result.pulled} events pulled`);
+          spinner.succeed(
+            `Pull complete: ${result.pulled} pulled, ${result.stored} stored, ${result.quarantined} quarantined`,
+          );
+          if (result.quarantined > 0) {
+            spinner.warn(
+              `${result.quarantined} event(s) failed signature verification and were quarantined; they are not readable as store state.`,
+            );
+          }
         }
       } else {
         spinner.fail(`Pull failed: ${result.error}`);
@@ -1912,6 +1972,229 @@ program
       }
     } catch (error) {
       console.error(chalk.red(`Failed to list groups: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+// ============================================================================
+// config command
+// ============================================================================
+
+/**
+ * Config fields this command can write, keyed by the CLI spelling.
+ *
+ * Deliberately narrow: these are the receive-path settings that had no
+ * supported way to be set at all, which is how a stock deployment ended up
+ * storing nothing. Identity and transport are set by `init`.
+ */
+const CONFIG_SETTERS = {
+  'sequencer-public-key': {
+    field: 'sequencerPublicKey',
+    describe: "Sequencer's Ed25519 public key (raw 32 bytes as hex, 0x optional)",
+    parse: (value) => normalizeSequencerPublicKey(value),
+  },
+  'peer-key-ttl-seconds': {
+    field: 'peerKeyTtlSeconds',
+    describe: 'How long a cached peer key directory may be reused before re-fetching',
+    parse: (value) => parseOptionalSeconds(value, 'peer-key-ttl-seconds'),
+  },
+  'peer-key-max-stale-seconds': {
+    field: 'peerKeyMaxStaleSeconds',
+    describe: 'How long cached peer keys may still serve while the sequencer is unreachable',
+    parse: (value) => parseOptionalSeconds(value, 'peer-key-max-stale-seconds'),
+  },
+};
+
+const configCommand = program
+  .command('config')
+  .description('Inspect and update sync configuration');
+
+configCommand
+  .command('show')
+  .description('Show the current sync configuration (secrets redacted)')
+  .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
+  .action((options) => {
+    const config = loadSyncConfig();
+    if (!config) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    const view = {
+      sequencerUrl: config.sequencer?.url,
+      tenantId: config.identity?.tenantId,
+      storeId: config.identity?.storeId,
+      agentId: config.identity?.agentId,
+      securityProfile: config.sync?.securityProfile,
+      sequencerPublicKey: config.sequencerPublicKey,
+      peerKeyTtlSeconds: config.peerKeyTtlSeconds,
+      peerKeyMaxStaleSeconds: config.peerKeyMaxStaleSeconds,
+      apiKey: config.auth?.apiKey ? '***redacted***' : null,
+      jwt: config.auth?.jwt ? '***redacted***' : null,
+      dbPath: config.local?.dbPath,
+    };
+
+    if (wantsJsonOutput(options)) {
+      writeJsonOutput(options, view);
+      return;
+    }
+
+    console.log();
+    for (const [key, value] of Object.entries(view)) {
+      const shown = value === null || value === undefined ? chalk.dim('(unset)') : value;
+      console.log(`  ${key.padEnd(24)} ${shown}`);
+    }
+    console.log();
+    if (!config.sequencerPublicKey) {
+      console.log(
+        chalk.yellow(
+          'sequencerPublicKey is unset: pull will quarantine every event as\n' +
+            '"sequencer_key_not_configured". Set it with:\n' +
+            '  stateset-sync config set sequencer-public-key <hex>',
+        ),
+      );
+    }
+  });
+
+configCommand
+  .command('set <key> <value>')
+  .description(`Set a sync configuration value. Keys: ${Object.keys(CONFIG_SETTERS).join(', ')}`)
+  .action((key, value) => {
+    const setter = CONFIG_SETTERS[key];
+    if (!setter) {
+      console.error(chalk.red(`Unknown config key: ${key}`));
+      console.error();
+      console.error('Available keys:');
+      for (const [name, meta] of Object.entries(CONFIG_SETTERS)) {
+        console.error(`  ${name.padEnd(28)} ${meta.describe}`);
+      }
+      process.exit(1);
+    }
+
+    if (!isSyncConfigured()) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    try {
+      const updated = updateSyncConfig({ [setter.field]: setter.parse(value) });
+      console.log(chalk.green(`Set ${key} = ${updated[setter.field]}`));
+    } catch (error) {
+      console.error(chalk.red(`Failed to set ${key}: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+// ============================================================================
+// doctor command
+// ============================================================================
+program
+  .command('doctor')
+  .description('Inspect quarantined events and peer key pins; optionally re-verify and promote')
+  .option('--promote', 'Re-verify quarantined events and promote what now passes')
+  .option('--db <path>', 'Database path', './store.db')
+  .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
+  .action(async (options) => {
+    const jsonOutput = wantsJsonOutput(options);
+    const config = loadSyncConfig();
+    if (!config) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    const db = new Database(options.db || config.local.dbPath);
+
+    try {
+      const engine = createSyncEngine({ db, config });
+      // `initialize()` emits 'error' rather than throwing when the sequencer is
+      // unreachable, and an unlistened 'error' on an EventEmitter throws — which
+      // killed doctor during exactly the outage it exists to diagnose. The
+      // quarantine report is built from local state and is still worth printing.
+      engine.on('error', (error) => {
+        if (!jsonOutput) {
+          console.warn(
+            chalk.yellow(`Sequencer unreachable (${error.message}); reporting local state only.`),
+          );
+        }
+      });
+      await engine.initialize();
+
+      const report = await syncDoctor({
+        outbox: engine.outbox,
+        client: engine.client,
+        keyDirectory: engine.keyDirectory,
+        promote: Boolean(options.promote),
+      });
+
+      await engine.shutdown();
+
+      if (jsonOutput) {
+        writeJsonOutput(options, report);
+        db.close();
+        return;
+      }
+
+      console.log();
+      console.log(chalk.bold(`Quarantined events (${report.total} total)`));
+      if (report.quarantined.length === 0) {
+        console.log(chalk.dim('  none'));
+      } else {
+        for (const { reason, count } of report.quarantined) {
+          console.log(`  ${chalk.yellow(reason)}: ${count}`);
+        }
+        if (report.quarantined.some((entry) => entry.reason === 'sequencer_key_not_configured')) {
+          console.log();
+          console.log(
+            chalk.yellow(
+              'sequencerPublicKey is not set: no peer key directory can be verified, so\n' +
+                'nothing can be stored. Set it with:\n' +
+                '  stateset-sync config set sequencer-public-key <hex>',
+            ),
+          );
+        }
+        if (report.quarantined.some((entry) => entry.reason === 'directory_untrusted')) {
+          console.log();
+          console.log(
+            chalk.red(
+              'directory_untrusted: a key directory response was refused as forged, misdirected,\n' +
+                'replayed or unattested. This is not a benign outage — check the sequencer and\n' +
+                'the transport (the gRPC receive path is unsupported; use https://).',
+            ),
+          );
+        }
+      }
+
+      console.log();
+      console.log(chalk.bold('Pinned peer keys'));
+      if (report.pins.length === 0) {
+        console.log(chalk.dim('  none'));
+      } else {
+        for (const pin of report.pins) {
+          console.log(`  ${pin.agentId} / key ${pin.keyId} — pinned ${pin.pinnedAt}`);
+        }
+      }
+
+      console.log();
+      if (options.promote) {
+        console.log(chalk.bold(`Promoted ${report.promoted} event(s) out of quarantine`));
+        if (report.rediagnosed > 0) {
+          console.log(
+            chalk.bold(
+              `Re-diagnosed ${report.rediagnosed} event(s) that still do not verify — ` +
+                'the reasons above are current',
+            ),
+          );
+        }
+      } else {
+        console.log(chalk.dim('Run with --promote to re-verify and promote quarantined events'));
+      }
+
+      db.close();
+    } catch (error) {
+      console.error(chalk.red(`Doctor failed: ${error.message}`));
+      db.close();
       process.exit(1);
     }
   });

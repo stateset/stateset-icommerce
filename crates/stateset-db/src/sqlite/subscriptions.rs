@@ -1583,7 +1583,7 @@ impl SqliteSubscriptionRepository {
     /// reach the create path's own seed of cycle 1 (see
     /// [`Self::create_subscription`]).
     fn insert_billing_cycle_with_conn(
-        tx: &rusqlite::Connection,
+        tx: &rusqlite::Transaction<'_>,
         id: Uuid,
         sub: &Subscription,
         cycle_number: i32,
@@ -1619,6 +1619,27 @@ impl SqliteSubscriptionRepository {
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
+        )?;
+
+        // A scheduled cycle is what a billing worker, a dunning process or a
+        // peer's forecast acts on, so it is a fact in its own right rather
+        // than an internal detail of whoever seeded it.
+        super::kernel_outbox::record_outbox_fact(
+            tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "billing_cycle.scheduled",
+                aggregate_type: "billing_cycle",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({
+                    "id": id,
+                    "subscription_id": sub.id,
+                    "cycle_number": cycle_number,
+                    "period_start": period_start,
+                    "period_end": period_end,
+                    "total": total.to_string(),
+                    "currency": sub.currency,
+                }),
+            },
         )?;
 
         Ok(())
@@ -1851,6 +1872,29 @@ impl SqliteSubscriptionRepository {
         )
         .map_err(map_db_error)?;
 
+        // Every settlement outcome is a fact, not just the paid one:
+        // `advances_subscription()` only covers `Paid`, so without this a
+        // failed, skipped, refunded or voided cycle changed state with
+        // nothing in the log for a peer to act on.
+        super::kernel_outbox::record_outbox_fact(
+            tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "billing_cycle.status_changed",
+                aggregate_type: "billing_cycle",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({
+                    "id": id,
+                    "subscription_id": &subscription_id_raw,
+                    "cycle_number": cycle_number,
+                    "from": current_status.to_string(),
+                    "to": status.to_string(),
+                    "payment_id": payment_id,
+                    "failure_reason": failure_reason,
+                }),
+            },
+        )
+        .map_err(map_db_error)?;
+
         if status.advances_subscription() {
             let subscription_id = SubscriptionId::from(
                 parse_uuid_row(&subscription_id_raw, "billing_cycle", "subscription_id")
@@ -1989,23 +2033,36 @@ impl SqliteSubscriptionRepository {
         data: Option<serde_json::Value>,
         triggered_by: Option<&str>,
     ) -> Result<SubscriptionEvent> {
-        let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-        })?;
-
-        self.record_event_with_conn(
-            &conn,
-            subscription_id,
-            event_type,
-            description,
-            data,
-            triggered_by,
-        )
+        // The journal row and its replicated fact are written together, so
+        // this standalone path needs the same transaction every in-flight
+        // caller already holds.
+        with_immediate_transaction(&self.pool, |tx| {
+            self.record_event_with_conn(
+                tx,
+                subscription_id,
+                event_type,
+                description,
+                data.clone(),
+                triggered_by,
+            )
+            .map_err(Self::tx_err)
+        })
     }
 
+    /// Append one subscription lifecycle event, and the replicated fact that
+    /// mirrors it, in the caller's transaction.
+    ///
+    /// This is the single funnel for every subscription state change
+    /// (created, trial started, activated, paused, resumed, skipped,
+    /// cancelled, renewed), so emitting here covers the whole lifecycle with
+    /// one call rather than one per mutation — and the fact can never
+    /// disagree with the journal row, because they commit together.
+    ///
+    /// The parameter is a `Transaction`, not a `Connection`, so that
+    /// atomicity is enforced by the type rather than by convention.
     fn record_event_with_conn(
         &self,
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         subscription_id: SubscriptionId,
         event_type: SubscriptionEventType,
         description: &str,
@@ -2028,6 +2085,23 @@ impl SqliteSubscriptionRepository {
                 now.to_rfc3339(),
             ],
         ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}")))?;
+
+        super::kernel_outbox::record_outbox_fact(
+            conn,
+            crate::kernel_outbox::RecordedFact {
+                event_type: &format!("subscription.{event_type}"),
+                aggregate_type: "subscription",
+                aggregate_id: &subscription_id.to_string(),
+                payload: serde_json::json!({
+                    "subscription_id": subscription_id,
+                    "event_id": id,
+                    "event_type": event_type.to_string(),
+                    "description": description,
+                    "data": data,
+                }),
+            },
+        )
+        .map_err(map_db_error)?;
 
         Ok(SubscriptionEvent {
             id,

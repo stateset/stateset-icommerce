@@ -3099,3 +3099,98 @@ fn kernel_a2a_escrow_unmet_conditions_are_durable_and_non_mutating() {
     assert_eq!(status, "active");
     assert_eq!(events, 0);
 }
+
+#[test]
+fn kernel_outbox_rows_default_to_the_governed_tier() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+    let sku = format!("INV-{}", Uuid::new_v4());
+    let mut apply = inventory_item_command("kernel-outbox-tier-1", &sku);
+    apply.mode = ExecutionMode::Apply;
+    let applied = db
+        .kernel_executor(payment_policy())
+        .execute_create_inventory_item(&apply)
+        .expect("apply inventory item");
+    assert_eq!(applied.status, ExecutionStatus::Succeeded);
+    assert_eq!(applied.event_ids.len(), 1, "row must actually exist in kernel_outbox");
+
+    let conn = db.pool().get().expect("connection");
+    let row_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM kernel_outbox", [], |row| row.get(0))
+        .expect("count kernel_outbox rows");
+    assert!(row_count > 0, "test must exercise a table with a pre-existing row");
+
+    let tier: String = conn
+        .query_row(
+            "SELECT tier FROM kernel_outbox WHERE id = ?",
+            [applied.event_ids[0].to_string()],
+            |row| row.get(0),
+        )
+        .expect("tier column must exist after migration 096 and be populated for the applied row");
+
+    assert_eq!(
+        tier, "governed",
+        "pre-existing rows are governed by definition, so the default must backfill them"
+    );
+}
+
+#[test]
+fn recorded_facts_land_in_the_recorded_tier() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+
+    let customer = db
+        .customers()
+        .create(CreateCustomer {
+            email: "recorded-tier@example.com".into(),
+            first_name: "Kernel".into(),
+            last_name: "Recorded".into(),
+            phone: None,
+            accepts_marketing: None,
+            tags: None,
+            metadata: None,
+        })
+        .expect("create customer");
+
+    let conn = db.pool().get().expect("connection");
+    let (tier, aggregate_id): (String, String) = conn
+        .query_row(
+            "SELECT tier, aggregate_id FROM kernel_outbox
+             WHERE aggregate_type = 'customer' ORDER BY created_at DESC LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("creating a customer must emit an outbox fact");
+
+    assert_eq!(tier, "recorded");
+    assert_eq!(aggregate_id, customer.id.to_string());
+}
+
+#[test]
+fn a_failed_mutation_leaves_no_outbox_fact() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+
+    // A create that violates the unique-email constraint must roll the fact
+    // back with it.
+    let dup = CreateCustomer {
+        email: "rollback@example.com".into(),
+        first_name: "Kernel".into(),
+        last_name: "Rollback".into(),
+        phone: None,
+        accepts_marketing: None,
+        tags: None,
+        metadata: None,
+    };
+    db.customers().create(dup.clone()).expect("first create succeeds");
+    let conn = db.pool().get().expect("connection");
+    let before: i64 =
+        conn.query_row("SELECT COUNT(*) FROM kernel_outbox", [], |row| row.get(0)).expect("count");
+
+    let _ = db.customers().create(dup);
+
+    let after: i64 =
+        conn.query_row("SELECT COUNT(*) FROM kernel_outbox", [], |row| row.get(0)).expect("count");
+
+    assert_eq!(
+        before, after,
+        "the fact is written in the mutation's transaction, so a rollback must take it too"
+    );
+}

@@ -5,7 +5,9 @@
  * Supports VES v1.0 signed events and encrypted payloads.
  */
 
+import { createHash } from 'node:crypto';
 import {
+  canonicalizeJson,
   computeEventSigningHash,
   verifyEventSignature,
   verifyEventSignatureHybrid,
@@ -13,6 +15,7 @@ import {
   computeLeafHash,
   computeNodeHash,
   hexToBuffer,
+  DOMAIN,
 } from './crypto.js';
 import {
   KEY_WRAP_SCHEME_X25519_HKDF_SHA256,
@@ -100,6 +103,26 @@ import {
  * REST client for the sequencer (fallback when gRPC not available)
  */
 
+/**
+ * Build a key-directory failure carrying a machine-readable `code`.
+ *
+ * The code is what `PeerKeyDirectory` turns into a quarantine reason, so an
+ * operator reading `sync doctor` is pointed at the actual cause. Without it
+ * every failure here — an unset `sequencerPublicKey`, an unreachable
+ * sequencer, a forged signature, a replayed stale directory — collapsed into
+ * `key_unresolved`, which names the sequencer's key registry as the suspect
+ * even when the real fault is a missing line in the local config.
+ *
+ * @param {string} message
+ * @param {'sequencer_key_not_configured'|'directory_untrusted'} code
+ * @returns {Error}
+ */
+function keyDirectoryError(message, code) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
 const ALLOWED_SEQUENCER_PROTOCOLS = new Set(['grpc:', 'grpcs:', 'http:', 'https:']);
 
 function parseSequencerUrl(url) {
@@ -149,19 +172,6 @@ function toSnakeCasePublicKeyBundle(bundle) {
     ml_dsa_65_public_key: bundle.mlDsa65PublicKey ?? bundle.ml_dsa_65_public_key ?? null,
     x25519_public_key: bundle.x25519PublicKey ?? bundle.x25519_public_key ?? null,
     ml_kem_768_public_key: bundle.mlKem768PublicKey ?? bundle.ml_kem_768_public_key ?? null,
-  };
-}
-
-function fromSnakeCasePublicKeyBundle(bundle) {
-  if (!bundle) {
-    return null;
-  }
-
-  return {
-    ed25519PublicKey: bundle.ed25519_public_key ?? bundle.ed25519PublicKey ?? null,
-    mlDsa65PublicKey: bundle.ml_dsa_65_public_key ?? bundle.mlDsa65PublicKey ?? null,
-    x25519PublicKey: bundle.x25519_public_key ?? bundle.x25519PublicKey ?? null,
-    mlKem768PublicKey: bundle.ml_kem_768_public_key ?? bundle.mlKem768PublicKey ?? null,
   };
 }
 
@@ -972,29 +982,101 @@ export class SequencerClient {
   }
 
   /**
-   * Get agent's registered public keys
-   * @param {string} agentId - Agent UUID
-   * @returns {Promise<Array<{keyId: number, publicKey: string, status: string, createdAt: string}>>}
+   * Fetch an agent's signed key directory.
+   *
+   * The response carries a sequencer signature over the whole body. An invalid
+   * signature is a hard refusal — that is a MITM, not a bad key. A validly
+   * signed but stale directory is also refused: signatures don't expire on
+   * their own, so a captured response could otherwise be replayed forever to
+   * hide a key revocation. So is a validly signed directory for a different
+   * agent or tenant: a signature says who wrote the body, not which request it
+   * answers.
+   *
+   * Failures carry a `code` (`sequencer_key_not_configured` or
+   * `directory_untrusted`) that `PeerKeyDirectory` maps to a quarantine reason.
+   *
+   * @param {string} agentId
+   * @returns {Promise<{agentId: string, tenantId: string, keys: Array<Object>, signedAt: string}>}
    */
-  async getAgentKeys(agentId) {
-    const params = new URLSearchParams({
-      tenant_id: this.config.tenantId,
-      agent_id: agentId,
-    });
+  async getAgentSigningKeys(agentId) {
+    const params = new URLSearchParams({ tenant_id: this.config.tenantId });
+    const response = await this._request('GET', `/api/v1/agents/${agentId}/signing-keys?${params}`);
 
-    const response = await this._request('GET', `/api/v1/agents/keys?${params}`);
+    const sequencerPublicKey = this.config.sequencerPublicKey ?? this.config.sequencer?.publicKey;
+    if (!sequencerPublicKey) {
+      throw keyDirectoryError(
+        'sequencerPublicKey is not configured, so the key directory signature cannot be verified. ' +
+          'Set it with "stateset-sync init --sequencer-public-key <hex>" or ' +
+          '"stateset-sync config set sequencer-public-key <hex>"; without it the receive path ' +
+          'can verify nothing and every pulled event quarantines.',
+        'sequencer_key_not_configured',
+      );
+    }
 
-    return (response.keys || []).map((k) => ({
-      keyId: k.key_id,
-      keyType: k.key_type,
-      keyAlgorithm: k.key_algorithm,
-      publicKey: k.public_key,
-      publicKeyBundle: fromSnakeCasePublicKeyBundle(k.public_key_bundle),
-      status: k.status,
-      createdAt: k.created_at,
-      validFrom: k.valid_from,
-      validTo: k.valid_to,
-    }));
+    const { directorySignature, ...body } = response;
+    if (!directorySignature) {
+      throw keyDirectoryError(
+        'Key directory signature invalid: response is unsigned',
+        'directory_untrusted',
+      );
+    }
+
+    const preimage = Buffer.concat([DOMAIN.KEYDIR, Buffer.from(canonicalizeJson(body))]);
+    const hash = createHash('sha256').update(preimage).digest();
+    const ed25519Pk =
+      normalizeVerificationPublicKeyBundle(sequencerPublicKey)?.ed25519PublicKey ??
+      sequencerPublicKey;
+    const valid = verifyEventSignature(
+      hash,
+      hexToBuffer(directorySignature),
+      typeof ed25519Pk === 'string' ? hexToBuffer(ed25519Pk) : ed25519Pk,
+    );
+    if (!valid) {
+      throw keyDirectoryError('Key directory signature invalid', 'directory_untrusted');
+    }
+
+    // A signature proves the sequencer wrote this body; it does not prove the
+    // body answers THIS request. A validly signed directory for agent B,
+    // replayed in response to a request for agent A, would otherwise bind B's
+    // keys under A — after which events claiming to be from A but signed by B
+    // verify. The threat model includes a lying sequencer, so the response is
+    // bound to the agent and tenant it was requested for. A response that omits
+    // either field is refused for the same reason: an unbound directory is
+    // replayable against every agent.
+    if (body.agentId !== agentId) {
+      throw keyDirectoryError(
+        `Key directory is for agent ${body.agentId ?? '(unset)'}, not the requested ${agentId}`,
+        'directory_untrusted',
+      );
+    }
+    if (body.tenantId !== this.config.tenantId) {
+      throw keyDirectoryError(
+        `Key directory is for tenant ${body.tenantId ?? '(unset)'}, not the configured ${this.config.tenantId}`,
+        'directory_untrusted',
+      );
+    }
+
+    const maxStaleSeconds = this.config.peerKeyMaxStaleSeconds ?? 86400;
+    const clockSkewToleranceSeconds = 300;
+    const signedAtMs = Date.parse(body.signedAt);
+    if (Number.isNaN(signedAtMs)) {
+      throw keyDirectoryError(
+        'Key directory too old: signedAt is missing or invalid',
+        'directory_untrusted',
+      );
+    }
+    const ageSeconds = (Date.now() - signedAtMs) / 1000;
+    if (ageSeconds > maxStaleSeconds) {
+      throw keyDirectoryError('Key directory too old', 'directory_untrusted');
+    }
+    if (ageSeconds < -clockSkewToleranceSeconds) {
+      throw keyDirectoryError(
+        'Key directory too old: signedAt is in the future',
+        'directory_untrusted',
+      );
+    }
+
+    return body;
   }
 }
 

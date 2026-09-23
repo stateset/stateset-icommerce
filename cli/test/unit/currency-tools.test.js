@@ -91,7 +91,7 @@ function makeCurrencyCommerce(overrides = {}) {
 describe('currencyTools — module exports', () => {
   it('exports an array of 12 tools', () => {
     assert.ok(Array.isArray(currencyTools));
-    assert.equal(currencyTools.length, 12);
+    assert.equal(currencyTools.length, 13);
   });
 
   it('exports expected tool names', () => {
@@ -108,6 +108,7 @@ describe('currencyTools — module exports', () => {
       'set_base_currency',
       'enable_currencies',
       'check_currency_enabled',
+      'get_currency_decimal_places',
       'format_currency',
     ]);
   });
@@ -147,6 +148,7 @@ describe('currencyTools — permission assignments', () => {
       'convert_currency',
       'get_currency_settings',
       'format_currency',
+      'get_currency_decimal_places',
     ];
     for (const name of readToolNames) {
       const tool = findTool(name);

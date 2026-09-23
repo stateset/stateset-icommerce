@@ -8,6 +8,15 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Changed (behaviour, needs a release note)
 
+- **`@stateset/embedded`: an explicit blank is refused, not treated as
+  omitted.** All five optional parsers -- currency, ids, timestamps, dates and
+  JSON -- dropped a blank or whitespace-only string before parsing, so
+  `currency: ""` silently became the store default and `lotId: ""` meant "no
+  lot". The engine and the Python binding refuse the same input. Pass
+  `undefined` (or omit the key) to mean absent. Caught by the shared semantic
+  corpus, `bindings/test-vectors/semantics-v1.json`, on its first run against
+  this binding's strict inputs.
+
 - **An omitted currency now takes the store's configured base currency, not
   USD.** The engine has had a store-level base currency since migration 008,
   and exactly one path honoured it. Everywhere else an omitted `currency`
@@ -21,7 +30,104 @@ This project follows Keep a Changelog and Semantic Versioning.
   currency changes -- which is the bug being fixed. A row holding an
   unparsable currency code now raises rather than silently falling back.
 
+### Added
+
+- **`@stateset/embedded` lifecycle.** `Commerce.open(path, { maxConnections })`
+  runs migrations on a worker thread and resolves to the ready instance (the
+  constructor still does the same work synchronously). `commerce.close()`,
+  `commerce.isClosed` and `Symbol.asyncDispose` release the connection pool;
+  later calls reject with `err.code === 'PRECONDITION_FAILED'`. Sub-API getters
+  return the same object on every access.
+- **`@stateset/embedded` typed surface.** `index.d.ts` now declares 198
+  literal-union types for every status, kind, method and policy field (no
+  `status: string` remains), typed kernel commands, policies, receipts, budgets
+  and checkout snapshots (no `any` on the governed-write path), and optional
+  filter objects with `limit`/`offset` on every `list()` that used to return
+  an unbounded array.
+- **`@stateset/embedded` standalone agent adapters.** The `/openai`,
+  `/generic`, `/langchain` and `/vercel-ai` entrypoints and the new
+  `/native-toolkit` work with nothing but the binding installed, from a shipped
+  `tool-descriptors.json` (727 tools). Writes preview unless `allowApply` is
+  set. `@stateset/cli` is still preferred when it is installed.
+- **Generated Node.js API reference** at `docs/api/node-reference.md`,
+  regenerated on every build and guarded by a staleness test.
+- New binding test suites for promotions, subscriptions, credit, lots,
+  serials, fulfillment, receiving, backorders, cost accounting and accounts
+  receivable (600 tests in total; 22 marked todo document engine defects).
+- **`@stateset/embedded` event streams.** A subscription is async-iterable
+  (`for await (const event of subscription)`), and has `close()`, `isClosed`,
+  `ref()` and `unref()`. A pending `recv()` holds the process open only while
+  it is awaited; `close()`, leaving the loop, or closing the `Commerce` ends the
+  stream and lets the process exit.
+- **Verifiable receive path.** Every event returned by `stateset-sync pull` is now
+  verified against its author's signing key, resolved through the sequencer's
+  signed key directory and pinned on first use. What fails verification is
+  quarantined in `_ves_quarantined_events` and is never returned by application
+  reads. Verification is unconditional; there is no flag that disables it.
+- `stateset-sync init --sequencer-public-key <hex>` (plus
+  `--peer-key-ttl-seconds` and `--peer-key-max-stale-seconds`), and a new
+  `stateset-sync config show` / `stateset-sync config set <key> <value>`.
+- `stateset-sync doctor` — quarantine counts by reason and current peer key pins;
+  `--promote` re-verifies quarantined events and promotes what now passes.
+
+### Changed
+
+- **UPGRADE NOTE — `@stateset/embedded` inputs are strict.** A malformed input
+  that used to be coerced is now refused with `err.code === 'VALIDATION'`: an
+  unknown currency code (was: the store default), a non-UUID `productId`,
+  `variantId`, `customerId`, `cartId`, `couponId` or similar (was: dropped, or
+  the nil UUID), one bad id in an id list (was: skipped), a malformed
+  RFC 3339 timestamp or `YYYY-MM-DD` date on a create or a list filter (was:
+  ignored, so a filter typo listed everything), malformed JSON in `tiers` /
+  `metadata`, an unknown `paymentMethod` (was: credit card), and an unknown
+  currency on `tax.calculate` (was: USD). Callers that relied on the coercion
+  must send valid values.
+- **UPGRADE NOTE — `@stateset/embedded` enum inputs are strict.** Every
+  enumerated input (`promotionType`, `accountType`, `receiptType`,
+  `costMethod`, `priority`, `carrier`, `shippingMethod`, `warehouseType`,
+  `locationType`, tax types and categories, analytics `period`/`granularity`,
+  status filters, …) now refuses an unknown spelling with
+  `err.code === 'VALIDATION'` and a message listing the accepted values,
+  instead of silently using a default. Accepted spellings are unchanged and
+  still case-insensitive; the literal unions in `index.d.ts` list them.
+- **`@stateset/embedded` float money is optional.** `unitPrice`, `price`,
+  `amount` and `taxAmount` inputs accept the exact `*Exact` string alone;
+  sending neither form is a `VALIDATION` error naming the field. The float
+  fields are now typed `number | undefined` in `index.d.ts`.
+- **`@stateset/embedded` runs calls concurrently.** The binding no longer holds
+  one lock around the engine for the duration of every call; the engine's own
+  connection pool serialises what needs serialising.
+- **UPGRADE NOTE — configure `sequencerPublicKey` before upgrading, or the
+  receive path stops.** An agent without it can still push, but cannot verify
+  any key directory: every pulled event quarantines as
+  `sequencer_key_not_configured` and nothing is stored. Set it with
+  `stateset-sync config set sequencer-public-key <hex>` (the raw 32-byte Ed25519
+  key as hex, `0x` optional), then run `stateset-sync doctor --promote` to take
+  the backlog out of quarantine. The sequencer must also be serving
+  `GET /api/v1/agents/:agent_id/signing-keys`.
+- **UPGRADE NOTE — the gRPC receive path is unsupported.** `pull()` now refuses
+  on a gRPC transport with an explanation instead of storing nothing quietly,
+  and streamed events are never written to local state. gRPC deployments that
+  receive events must move to an `https://` sequencer URL; pushing over gRPC is
+  unaffected.
+- The `pull` result drops `applied` (nothing is applied to local entity state)
+  and reports `pulled`, `verified`, `quarantined`, `stored` and `conflicts`, each
+  computed from what happened. `conflicts` is `null`, never `0`, where it is not
+  computed.
+- `peerKeyTtlSeconds` defaults to 300 seconds (was 3600), matching the design:
+  it bounds how long a revoked peer key keeps verifying events.
+- `securityProfile` is deliberately **not** enforced on the receive path, so
+  agents on `hybrid`/`pqc-strict` still accept legacy Ed25519 peers. Tracked.
+
 ### Fixed
+
+- Conflict rows are keyed by the conflict's identity instead of a fresh UUID per
+  detection, so repeated detection — now on the background sync timer — no longer
+  grows `_ves_conflicts`, the `sync conflicts` listing and the `sync_conflicts`
+  MCP count without bound.
+- `sync doctor` counts quarantined events with SQL rather than by measuring a
+  1,000-row page, and `--promote` pages through the whole table instead of
+  sweeping only the first 1,000.
 
 - **Quebec's tax rates were ten times too large.** `get_canadian_tax_info("QC")`
   reported a 149.75% total rate, so a $100 Quebec sale computed $149.75 of tax.

@@ -4,9 +4,9 @@
     "coverageModel": "cli/src/coverage/mcp-api-coverage.js"
   },
   "totalDomainModules": 87,
-  "totalDomainTools": 923,
-  "totalCommerceGetters": 67,
-  "mappedCommerceGetters": 67,
+  "totalDomainTools": 935,
+  "totalCommerceGetters": 68,
+  "mappedCommerceGetters": 68,
   "uncoveredCommerceGetters": [],
   "staleGetterMappings": [],
   "getters": [
@@ -33,7 +33,12 @@
     {
       "getter": "backorder",
       "module": "backorders",
-      "toolCount": 9
+      "toolCount": 20
+    },
+    {
+      "getter": "backorders",
+      "module": "backorders",
+      "toolCount": 20
     },
     {
       "getter": "bom",
@@ -68,7 +73,7 @@
     {
       "getter": "currency",
       "module": "currency",
-      "toolCount": 12
+      "toolCount": 13
     },
     {
       "getter": "customObjects",
@@ -347,8 +352,8 @@
     }
   ],
   "totalAuditedClasses": 32,
-  "totalAuditedMethods": 390,
-  "mappedAuditedMethods": 390,
+  "totalAuditedMethods": 402,
+  "mappedAuditedMethods": 402,
   "uncoveredAuditedMethods": [],
   "staleAuditedMethodMappings": [],
   "invalidAuditedToolReferences": [],
@@ -379,8 +384,8 @@
     },
     {
       "className": "Backorders",
-      "methodCount": 10,
-      "mappedMethodCount": 10,
+      "methodCount": 21,
+      "mappedMethodCount": 21,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
@@ -419,8 +424,8 @@
     },
     {
       "className": "CurrencyOperations",
-      "methodCount": 15,
-      "mappedMethodCount": 15,
+      "methodCount": 16,
+      "mappedMethodCount": 16,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []

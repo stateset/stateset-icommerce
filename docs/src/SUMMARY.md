@@ -140,6 +140,7 @@
 - [Overview](api/index.md)
   - [Rust](api/rust.md)
   - [Node.js](api/node.md)
+    - [Node.js API Reference (generated)](api/node-reference.md)
   - [Python](api/python.md)
   - [Ruby](api/ruby.md)
   - [PHP](api/php.md)

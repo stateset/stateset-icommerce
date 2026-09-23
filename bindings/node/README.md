@@ -21,7 +21,7 @@ npm install @stateset/embedded
 
 Requires Node `20.20.0+`. npm resolves your platform's prebuilt native
 binary automatically via one optional dependency
-(`@stateset/embedded-<platform>`, ~20-26 MB) — the install stays small
+(`@stateset/embedded-<platform>`, roughly 25–40 MB depending on the platform) — the install stays small
 instead of bundling every platform.
 
 **Supported platforms:** Linux x64/arm64 (glibc 2.33+ and musl),
@@ -36,16 +36,25 @@ Repo development uses the workspace-standard Node toolchain: Node `20.20.0+`
 and npm `10+`. The binding package now checks that version before running
 `build`, `build:debug`, `test`, `test:coverage`, `artifacts`, or `universal`.
 
+The Rust side is one crate root (`src/lib.rs`: helpers, `Commerce`, events)
+plus one file per domain under `src/domains/`. Every `npm run build*` runs
+`scripts/postbuild.mjs`, which appends the hand-written declaration fragments
+in `scripts/types/*.d.ts` to the napi-generated `index.d.ts`, regenerates
+`tool-descriptors.json`, and regenerates the API reference under
+`docs/src/api/node-reference.md`; tests fail if any of those are stale. A bare
+`napi build` skips all of that — use the npm scripts.
+
 ## Quick Start
 
 ```javascript
 const { Commerce } = require('@stateset/embedded');
 
-// Create a commerce instance with SQLite backend
-const commerce = new Commerce('./store.db');
+// Open a SQLite-backed store. `open` runs migrations off the event loop;
+// `new Commerce(path)` does the same work synchronously.
+const commerce = await Commerce.open('./store.db');
 
-// Or use in-memory database for testing
-// const commerce = new Commerce(':memory:');
+// Or use an in-memory database for testing
+// const commerce = await Commerce.open(':memory:');
 
 // Create a customer
 const customer = await commerce.customers.create({
@@ -61,8 +70,8 @@ const product = await commerce.products.create({
   name: 'Premium Widget',
   description: 'A high-quality widget',
   variants: [
-    { sku: 'WIDGET-001', name: 'Small', price: 19.99 },
-    { sku: 'WIDGET-002', name: 'Large', price: 29.99 }
+    { sku: 'WIDGET-001', name: 'Small', priceExact: '19.99' },
+    { sku: 'WIDGET-002', name: 'Large', priceExact: '29.99' }
   ]
 });
 
@@ -78,7 +87,7 @@ await commerce.inventory.createItem({
 const order = await commerce.orders.create({
   customerId: customer.id,
   items: [
-    { sku: 'WIDGET-001', name: 'Small Widget', quantity: 2, unitPrice: 19.99 }
+    { sku: 'WIDGET-001', name: 'Small Widget', quantity: 2, unitPriceExact: '19.99' }
   ],
   currency: 'USD'
 });
@@ -88,7 +97,7 @@ await commerce.orders.ship(order.id, 'TRACK123456');
 
 // Analytics
 const summary = await commerce.analytics.salesSummary({ period: 'last30days' });
-console.log(`Revenue: $${summary.totalRevenue}`);
+console.log(`Revenue: $${summary.totalRevenueExact}`);
 
 // Currency conversion (set a rate, then convert)
 await commerce.currency.setRate({
@@ -98,15 +107,125 @@ await commerce.currency.setRate({
   source: 'manual'
 });
 const conversion = await commerce.currency.convert({ from: 'USD', to: 'EUR', amount: 100 });
-console.log(`$100 USD = €${conversion.convertedAmount} EUR`);
+console.log(`$100 USD = €${conversion.convertedAmountExact} EUR`);
+
+// Release the connection pool when you are done (also `await using`).
+await commerce.close();
 ```
+
+## Lifecycle
+
+```typescript
+// Asynchronous open: migrations run on a worker thread, not the event loop.
+const commerce = await Commerce.open('./store.db', { maxConnections: 8 });
+
+// Sub-API handles are stable: commerce.orders === commerce.orders.
+
+// close() releases the engine. Calls already in flight complete; every later
+// call rejects with err.code === 'PRECONDITION_FAILED'. Idempotent.
+await commerce.close();
+commerce.isClosed; // true
+
+// Node 20+: `await using` closes on scope exit.
+{
+  await using store = await Commerce.open(':memory:');
+}
+```
+
+Calls run concurrently: the engine pools its own SQLite connections, so
+readers do not wait on each other or on a writer.
+
+## Inputs are strict
+
+A malformed input is refused with `err.code === 'VALIDATION'`; nothing is
+silently coerced. An unknown currency code is an error, not the store default;
+a product, customer or cart id that is not a UUID is an error, not "absent";
+one bad id in a list refuses the list; a malformed date or timestamp is an
+error, not "no filter". Check `err.message` for the field.
+
+## Events
+
+```typescript
+const subscription = await commerce.events.subscribeFiltered(['order_created']);
+
+for await (const event of subscription) {
+  console.log(event.event_type, event);
+  if (done) break; // leaving the loop closes the subscription
+}
+
+// Or pull one at a time: `null` once the stream has ended.
+const next = await subscription.recv();
+subscription.close();
+```
+
+An open subscription never keeps the process alive by itself, so a script
+that finishes its work exits promptly even with a `recv()` outstanding. Call
+`subscription.ref()` when the subscription *should* keep the process running
+(a worker whose only job is to react to events), and `unref()` to undo that.
+Closing the `Commerce` ends its subscriptions.
 
 ## Agent Framework Embedding
 
-`@stateset/cli` is an **optional peer dependency** — the core engine never
-pulls it in. Install it alongside the binding only when you want the full
-advanced runtime for server-side agents, then use the dedicated toolkit
-entrypoint:
+The adapter subpaths work with nothing but this package installed:
+
+- `@stateset/embedded/openai` — OpenAI tool definitions + tool-call execution
+- `@stateset/embedded/generic` — framework-neutral `{ name, description, schema, execute }` descriptors
+- `@stateset/embedded/langchain` — `DynamicStructuredTool` instances
+- `@stateset/embedded/vercel-ai` — Vercel AI SDK `tool()` map
+- `@stateset/embedded/native-toolkit` — the toolkit behind them (`getTools({ format })`, `executeTool`, …)
+
+They are backed by `tool-descriptors.json`, a catalog generated from
+`index.d.ts` at build time: one tool per public method reachable from a
+`Commerce` getter, named `<getter>.<method>` (`orders.create`,
+`customers.getByEmail`, `analytics.salesSummary`), with a JSON Schema built
+from the declared input types. On the wire (OpenAI, Anthropic, MCP) the name
+is `orders__create`, because those formats forbid `.`; both spellings are
+accepted everywhere a name is passed in.
+
+```javascript
+import { Commerce } from '@stateset/embedded';
+import { createOpenAITools, executeOpenAIToolCall } from '@stateset/embedded/openai';
+import { createToolDescriptors } from '@stateset/embedded/generic';
+
+const commerce = new Commerce('./store.db');
+const openaiTools = createOpenAITools(commerce, {
+  filter: ['customers.list', 'orders.get', 'orders.create'],
+});
+const execution = await executeOpenAIToolCall(commerce, {
+  call_id: 'demo_call_1',
+  function: { name: 'customers__list', arguments: '{}' },
+});
+const descriptors = createToolDescriptors(commerce, {
+  filter: ['orders.*', 'analytics.salesSummary'],
+});
+```
+
+**Writes are preview-only by default.** A read tool (`get*`, `list*`,
+`count*`, `find*`, `search*`, `calculate*`, `validate*`, `is*`, …) executes
+immediately. A write tool returns `{ preview: true, tool, params, note }` and
+touches nothing until you opt in with `allowApply: true` — the same posture as
+`--apply` on the CLI and MCP server. Engine failures come back as
+`{ error: { code, message, details } }` with the binding's `err.code`
+(`NOT_FOUND`, `VALIDATION`, …), so a tool-calling loop never has to catch.
+
+```javascript
+import { createNativeToolkit } from '@stateset/embedded/native-toolkit';
+
+const toolkit = createNativeToolkit(commerce, { allowApply: true, filter: ['orders.*'] });
+toolkit.getTools({ format: 'mcp' });          // also 'openai', 'anthropic', 'generic'
+await toolkit.executeTool('orders.create', { input: { customerId, items } });
+```
+
+### What `@stateset/cli` adds
+
+`@stateset/cli` is an **optional peer dependency** — the engine never pulls
+it in. When it is installed, the same adapter calls transparently switch to
+its agent toolkit (`toolkit.backend === 'cli'` instead of `'native'`), which
+adds the governed runtime: capability scopes, policy evaluation, spend
+budgets, mutation simulation and replay logs, kernel-governed commands, x402
+/ MPP payments, and the 900+ curated tools the MCP server exposes
+(`list_customers`-style names). Install it alongside the binding when you
+want that, and use the dedicated entrypoint for the full surface:
 
 ```bash
 npm install @stateset/embedded @stateset/cli
@@ -120,36 +239,8 @@ const openaiTools = toolkit.getTools({ format: 'openai' });
 const mcpTools = toolkit.getTools({ format: 'mcp' });
 ```
 
-If you want lighter-weight helper entrypoints around an existing `Commerce`
-instance, start with `@stateset/embedded/openai`,
-`@stateset/embedded/generic`, `@stateset/embedded/langchain`, and
-`@stateset/embedded/vercel-ai`.
-
-```javascript
-import { Commerce } from '@stateset/embedded';
-import { createOpenAITools, executeOpenAIToolCall } from '@stateset/embedded/openai';
-import { createToolDescriptors } from '@stateset/embedded/generic';
-
-const commerce = new Commerce('./store.db');
-const openaiTools = createOpenAITools(commerce, {
-  filter: ['list_customers'],
-});
-const execution = await executeOpenAIToolCall(commerce, {
-  call_id: 'demo_call_1',
-  function: {
-    name: 'list_customers',
-    arguments: '{}',
-  },
-});
-const descriptors = createToolDescriptors(commerce, {
-  filter: ['list_customers', 'list_orders', 'get_sales_summary'],
-});
-```
-
-That gives you both OpenAI-compatible tool definitions and a framework-neutral
-`{ name, description, schema, execute }` surface for custom runtimes. The
-binding also ships `@stateset/embedded/langchain` and
-`@stateset/embedded/vercel-ai` helper subpaths for those JS hosts.
+Pass `backend: 'native'` to `resolveToolkit` (from `toolkit-helpers.mjs`) to
+force the built-in toolkit even when the CLI is present.
 
 ## Money: use the `*Exact` fields
 
@@ -181,15 +272,16 @@ order.totalAmount.toPrecision(17);     // … but the value is 59.96999999999999
 order.totalAmountExact;                // "59.97" — the actual amount
 ```
 
-Inputs work the same way, in reverse. Money inputs take an optional
-`<field>Exact` string alongside the `number`, and the string wins when both are
-sent:
+Inputs work the same way, in reverse. Every money input accepts a
+`<field>Exact` string, and the float `<field>` is optional: send one or the
+other. The string wins when both are sent, and sending neither is a
+`VALIDATION` error naming the field.
 
 ```typescript
 await commerce.orders.create({
   customerId,
   items: [
-    { sku: 'WIDGET', name: 'Widget', quantity: 3, unitPrice: 0, unitPriceExact: '19.99' },
+    { sku: 'WIDGET', name: 'Widget', quantity: 3, unitPriceExact: '19.99' },
   ],
 });
 // -> items[0].totalExact === "59.97"
@@ -207,268 +299,73 @@ twin.
 
 ## API Reference
 
+The full surface — every sub-API on `Commerce`, each method signature with its
+JSDoc, the crypto / VES / x402 functions, and every interface and type alias in
+`index.d.ts` — is in the generated
+[Node.js API Reference](../../docs/src/api/node-reference.md)
+(published at [docs.stateset.com](https://docs.stateset.com/api/node-reference.html)).
+It is rebuilt from `index.d.ts` by `scripts/generate-api-reference.mjs` on
+every build, and `test/api-reference.js` fails when the committed page drifts.
+The snippets below are the operations most integrations start with.
+
 ### Commerce
 
 Main entry point for all commerce operations.
 
 ```typescript
-const commerce = new Commerce(dbPath: string);
+const commerce = await Commerce.open(dbPath: string, options?: { maxConnections?: number });
+const commerce = new Commerce(dbPath: string); // synchronous alternative
+await commerce.close();
 ```
 
-### Customers
+### Customers and orders
 
 ```typescript
-// Create a customer
-const customer = await commerce.customers.create({
-  email: string,
-  firstName: string,
-  lastName: string,
-  phone?: string,
-  acceptsMarketing?: boolean
+const customer = await commerce.customers.findOrCreate({
+  email: 'alice@example.com',
+  firstName: 'Alice',
+  lastName: 'Smith',
 });
 
-// Get customer by ID
-const customer = await commerce.customers.get(id: string);
-
-// Get customer by email
-const customer = await commerce.customers.getByEmail(email: string);
-
-// List all customers
-const customers = await commerce.customers.list();
-
-// Count customers
-const count = await commerce.customers.count();
-```
-
-### Orders
-
-```typescript
-// Create an order
-const order = await commerce.orders.create({
-  customerId: string,
-  items: [{ sku: string, name: string, quantity: number, unitPrice: number }],
-  currency?: string,
-  notes?: string
+// Exact money in, exact money out: `createExact` never touches a float.
+const order = await commerce.orders.createExact({
+  customerId: customer.id,
+  items: [{ sku: 'SKU-001', name: 'Widget', quantity: 2, unitPrice: '29.99' }],
+  currency: 'USD',
 });
+console.log(order.totalAmountExact); // '59.98'
 
-// Get order by ID
-const order = await commerce.orders.get(id: string);
-
-// List all orders
+const shipped = await commerce.orders.ship(order.id, '1Z999AA10123456784');
 const orders = await commerce.orders.list();
-
-// Update order status
-const order = await commerce.orders.updateStatus(id: string, status: string);
-
-// Ship order
-const order = await commerce.orders.ship(id: string, trackingNumber?: string);
-
-// Cancel order
-const order = await commerce.orders.cancel(id: string);
-
-// Count orders
-const count = await commerce.orders.count();
-```
-
-### Products
-
-```typescript
-// Create a product
-const product = await commerce.products.create({
-  name: string,
-  description?: string,
-  variants?: [{ sku: string, name?: string, price: number, compareAtPrice?: number }]
-});
-
-// Get product by ID
-const product = await commerce.products.get(id: string);
-
-// Get variant by SKU
-const variant = await commerce.products.getVariantBySku(sku: string);
-
-// List all products
-const products = await commerce.products.list();
-
-// Count products
-const count = await commerce.products.count();
 ```
 
 ### Inventory
 
 ```typescript
-// Create inventory item
-const item = await commerce.inventory.createItem({
-  sku: string,
-  name: string,
-  description?: string,
-  initialQuantity?: number,
-  reorderPoint?: number
-});
+const item = await commerce.inventory.createItem({ sku: 'SKU-001', name: 'Widget', initialQuantity: 100 });
+const stock = await commerce.inventory.getStock('SKU-001');
 
-// Get stock level
-const stock = await commerce.inventory.getStock(sku: string);
+await commerce.inventory.adjust('SKU-001', -5, 'damaged');
 
-// Adjust inventory
-await commerce.inventory.adjust(sku: string, quantity: number, reason: string);
-
-// Reserve inventory
-const reservation = await commerce.inventory.reserve(
-  sku: string,
-  quantity: number,
-  referenceType: string,
-  referenceId: string,
-  expiresInSeconds?: number
-);
-
-// Confirm reservation
-await commerce.inventory.confirmReservation(reservationId: string);
-
-// Release reservation
-await commerce.inventory.releaseReservation(reservationId: string);
-```
-
-### Vector Search (Hybrid Semantic + BM25)
-
-Vector search uses OpenAI embeddings with optional SQLite FTS5 (BM25) for lexical matches.
-Set `OPENAI_API_KEY` in your environment.
-
-```bash
-export OPENAI_API_KEY=sk-...
-```
-
-```typescript
-const vector = commerce.vector(process.env.OPENAI_API_KEY!);
-
-// Search products/customers/orders/inventory
-const products = await vector.searchProducts('wireless earbuds', 10);
-const customers = await vector.searchCustomers('enterprise retail buyers', 10);
-const orders = await vector.searchOrders('late shipment', 10);
-const inventory = await vector.searchInventory('outdoor gear', 10);
-
-// Index entities (single + bulk)
-await vector.indexProduct('<product-id>');
-await vector.indexCustomer('<customer-id>');
-await vector.indexOrder('<order-id>');
-await vector.indexInventoryItem('<inventory-id>');
-
-await vector.indexAllProducts();
-await vector.indexAllCustomers();
-await vector.indexAllOrders();
-await vector.indexAllInventory();
-
-// Stats + maintenance
-const stats = await vector.stats();
-await vector.clear('products');
-await vector.clearAll();
-```
-
-### Returns
-
-```typescript
-// Create a return
-const ret = await commerce.returns.create({
-  orderId: string,
-  reason: string, // 'defective', 'wrong_item', 'not_as_described', etc.
-  reasonDetails?: string,
-  items: [{ orderItemId: string, quantity: number }]
-});
-
-// Get return by ID
-const ret = await commerce.returns.get(id: string);
-
-// Approve return
-const ret = await commerce.returns.approve(id: string);
-
-// Reject return
-const ret = await commerce.returns.reject(id: string, reason: string);
-
-// List all returns
-const returns = await commerce.returns.list();
-
-// Count returns
-const count = await commerce.returns.count();
+// Hold stock for an order, then confirm or release it.
+const reservation = await commerce.inventory.reserve('SKU-001', 2, 'order', order.id, 900);
+await commerce.inventory.confirmReservation(reservation.id);
 ```
 
 ### Carts / Checkout
 
 ```typescript
-// Create a cart
-const cart = await commerce.carts.create({
-  customerEmail: 'alice@example.com',
-  currency: 'USD'
-});
-
-// Add items
-await commerce.carts.addItem(cart.id, {
-  sku: 'SKU-001',
-  name: 'Widget',
-  quantity: 2,
-  unitPrice: 29.99
-});
-
-// Set shipping (address + selection)
+const cart = await commerce.carts.create({ customerEmail: 'alice@example.com', currency: 'USD' });
+await commerce.carts.addItem(cart.id, { sku: 'SKU-001', name: 'Widget', quantity: 2, unitPriceExact: '29.99' });
 await commerce.carts.setShipping(cart.id, {
-  shippingAddress: {
-    firstName: 'Alice',
-    lastName: 'Smith',
-    line1: '123 Main St',
-    city: 'San Francisco',
-    postalCode: '94105',
-    country: 'US'
-  },
+  shippingAddress: { firstName: 'Alice', lastName: 'Smith', line1: '123 Main St', city: 'San Francisco', postalCode: '94105', country: 'US' },
   shippingMethod: 'standard',
-  shippingCarrier: 'ups',
-  shippingAmount: 9.99
+  shippingAmountExact: '9.99',
 });
 
-// Reserve/release inventory for cart items
 await commerce.carts.reserveInventory(cart.id);
-await commerce.carts.releaseInventory(cart.id);
-
-// Complete checkout (creates an order)
-const result = await commerce.carts.complete(cart.id);
+const result = await commerce.carts.complete(cart.id); // creates the order
 console.log(result.orderNumber);
-
-// Expire + query expired carts
-await commerce.carts.expire(cart.id);
-const expired = await commerce.carts.getExpired();
-```
-
-### Analytics
-
-```typescript
-// Sales summary
-const summary = await commerce.analytics.salesSummary({ period: 'last30days' });
-
-// Top products
-const topProducts = await commerce.analytics.topProducts({ period: 'this_month', limit: 10 });
-
-// Product performance + inventory movement
-const perf = await commerce.analytics.productPerformance({ period: 'last30days' });
-const movement = await commerce.analytics.inventoryMovement({ period: 'last30days' });
-
-// Forecasting
-const demand = await commerce.analytics.demandForecast(['SKU-001'], 30);
-const revenue = await commerce.analytics.revenueForecast(3, 'month');
-```
-
-### Currency
-
-```typescript
-// Set an exchange rate
-await commerce.currency.setRate({
-  baseCurrency: 'USD',
-  quoteCurrency: 'EUR',
-  rate: 0.92,
-  source: 'manual'
-});
-
-// Convert currency
-const conversion = await commerce.currency.convert({ from: 'USD', to: 'EUR', amount: 100 });
-
-// List rates + store settings
-const rates = await commerce.currency.listRates({ baseCurrency: 'USD' });
-const settings = await commerce.currency.getSettings();
 ```
 
 ## TypeScript

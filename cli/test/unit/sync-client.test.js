@@ -4,15 +4,20 @@
  * Tests: constructor, URL parsing, authentication headers, HTTP requests,
  * push events, pull events, Merkle proof verification, event signature
  * verification, retry logic, pagination, getHead, getCommitment,
- * getEntityHistory, registerAgentKey, getAgentKeys, connect/disconnect.
+ * getEntityHistory, registerAgentKey, getAgentSigningKeys, connect/disconnect.
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { SequencerClient, createSequencerClient } from '../../src/sync/client.js';
+import { createSyncConfig, SyncConfig } from '../../src/sync/config.js';
 import {
+  canonicalizeJson,
   computeLeafHash,
   computeNodeHash,
   computePayloadPlainHash,
@@ -1271,99 +1276,483 @@ describe('SequencerClient — registerAgentKey', () => {
 });
 
 // =============================================================================
-// getAgentKeys
+// getAgentSigningKeys
 // =============================================================================
 
-describe('SequencerClient — getAgentKeys', () => {
+describe('getAgentSigningKeys', () => {
   afterEach(() => restoreFetch());
 
-  it('calls GET /api/v1/agents/keys with query params', async () => {
-    let capturedUrl;
-    mockFetch((url) => {
-      capturedUrl = url;
-      return okResponse({ keys: [] });
+  function signDirectory(body, signingKey) {
+    const preimage = Buffer.concat([
+      Buffer.from('VES_KEYDIR_V1'),
+      Buffer.from(canonicalizeJson(body)),
+    ]);
+    const hash = crypto.createHash('sha256').update(preimage).digest();
+    return crypto.sign(null, hash, signingKey.privateKey);
+  }
+
+  it('verifies the directory signature before returning keys', async () => {
+    const signingKey = crypto.generateKeyPairSync('ed25519');
+    const sequencerPublicKey = signingKey.publicKey
+      .export({ type: 'spki', format: 'der' })
+      .subarray(-32);
+
+    const body = {
+      agentId: '44444444-4444-4444-4444-444444444444',
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      keys: [
+        {
+          keyId: 1,
+          algorithm: 'ed25519',
+          publicKey: '0xaa',
+          publicKeyBundle: null,
+          validFrom: null,
+          validTo: null,
+          revokedAt: null,
+        },
+      ],
+      signedAt: new Date().toISOString(),
+    };
+    const signature = signDirectory(body, signingKey);
+
+    const client = createSequencerClient({
+      sequencerUrl: 'http://localhost:8080',
+      tenantId: body.tenantId,
+      apiKey: 'test',
+      sequencerPublicKey,
+      allowInsecureTransport: true,
+      securityProfile: 'legacy',
+    });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
     });
 
-    const client = new SequencerClient(
-      makeConfig({ tenantId: UUID2, url: 'https://seq.example.com' }),
-    );
-    await client.getAgentKeys(UUID1);
-
-    const url = new URL(capturedUrl);
-    assert.strictEqual(url.pathname, '/api/v1/agents/keys');
-    assert.strictEqual(url.searchParams.get('tenant_id'), UUID2);
-    assert.strictEqual(url.searchParams.get('agent_id'), UUID1);
+    const result = await client.getAgentSigningKeys(body.agentId);
+    assert.equal(result.keys.length, 1);
+    assert.equal(result.keys[0].keyId, 1);
   });
 
-  it('maps snake_case key fields to camelCase', async () => {
-    mockFetch(() =>
-      okResponse({
-        keys: [
-          {
-            key_id: 2,
-            public_key: 'pub-hex',
-            status: 'active',
-            created_at: '2024-01-01T00:00:00Z',
-            valid_from: '2024-01-01T00:00:00Z',
-            valid_to: '2025-01-01T00:00:00Z',
-          },
-        ],
-      }),
-    );
+  it('rejects a tampered directory response', async () => {
+    const signingKey = crypto.generateKeyPairSync('ed25519');
+    const sequencerPublicKey = signingKey.publicKey
+      .export({ type: 'spki', format: 'der' })
+      .subarray(-32);
 
-    const client = new SequencerClient(makeConfig());
-    const keys = await client.getAgentKeys(UUID1);
+    const body = {
+      agentId: '44444444-4444-4444-4444-444444444444',
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      keys: [
+        {
+          keyId: 1,
+          algorithm: 'ed25519',
+          publicKey: '0xaa',
+          publicKeyBundle: null,
+          validFrom: null,
+          validTo: null,
+          revokedAt: null,
+        },
+      ],
+      signedAt: new Date().toISOString(),
+    };
+    const signature = signDirectory(body, signingKey);
 
-    assert.strictEqual(keys.length, 1);
-    assert.strictEqual(keys[0].keyId, 2);
-    assert.strictEqual(keys[0].publicKey, 'pub-hex');
-    assert.strictEqual(keys[0].status, 'active');
-    assert.strictEqual(keys[0].createdAt, '2024-01-01T00:00:00Z');
-    assert.strictEqual(keys[0].validFrom, '2024-01-01T00:00:00Z');
-    assert.strictEqual(keys[0].validTo, '2025-01-01T00:00:00Z');
-  });
-
-  it('maps PQ key bundle fields to camelCase', async () => {
-    mockFetch(() =>
-      okResponse({
-        keys: [
-          {
-            key_id: 7,
-            key_type: 1,
-            key_algorithm: 5,
-            public_key: 'legacy-pk',
-            public_key_bundle: {
-              ed25519_public_key: 'aa'.repeat(32),
-              ml_dsa_65_public_key: 'bb'.repeat(64),
-              x25519_public_key: null,
-              ml_kem_768_public_key: null,
-            },
-            status: 'active',
-            created_at: '2024-01-01T00:00:00Z',
-          },
-        ],
-      }),
-    );
-
-    const client = new SequencerClient(makeConfig());
-    const keys = await client.getAgentKeys(UUID1);
-
-    assert.strictEqual(keys[0].keyType, 1);
-    assert.strictEqual(keys[0].keyAlgorithm, 5);
-    assert.deepStrictEqual(keys[0].publicKeyBundle, {
-      ed25519PublicKey: 'aa'.repeat(32),
-      mlDsa65PublicKey: 'bb'.repeat(64),
-      x25519PublicKey: null,
-      mlKem768PublicKey: null,
+    const client = createSequencerClient({
+      sequencerUrl: 'http://localhost:8080',
+      tenantId: body.tenantId,
+      apiKey: 'test',
+      sequencerPublicKey,
+      allowInsecureTransport: true,
+      securityProfile: 'legacy',
     });
+    // An attacker swaps in their own key but cannot re-sign.
+    client._request = async () => ({
+      ...body,
+      keys: [{ ...body.keys[0], publicKey: '0xbb' }],
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
+
+    await assert.rejects(
+      () => client.getAgentSigningKeys(body.agentId),
+      /Key directory signature invalid/,
+    );
   });
 
-  it('returns empty array when no keys registered', async () => {
-    mockFetch(() => okResponse({ keys: [] }));
+  it('rejects a directory older than peerKeyMaxStaleSeconds', async () => {
+    const signingKey = crypto.generateKeyPairSync('ed25519');
+    const sequencerPublicKey = signingKey.publicKey
+      .export({ type: 'spki', format: 'der' })
+      .subarray(-32);
 
-    const client = new SequencerClient(makeConfig());
-    const keys = await client.getAgentKeys(UUID1);
-    assert.deepStrictEqual(keys, []);
+    const staleDate = new Date(Date.now() - 2 * 86400 * 1000).toISOString();
+    const body = {
+      agentId: '44444444-4444-4444-4444-444444444444',
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      keys: [
+        {
+          keyId: 1,
+          algorithm: 'ed25519',
+          publicKey: '0xaa',
+          publicKeyBundle: null,
+          validFrom: null,
+          validTo: null,
+          revokedAt: null,
+        },
+      ],
+      signedAt: staleDate,
+    };
+    const signature = signDirectory(body, signingKey);
+
+    const client = createSequencerClient({
+      sequencerUrl: 'http://localhost:8080',
+      tenantId: body.tenantId,
+      apiKey: 'test',
+      sequencerPublicKey,
+      allowInsecureTransport: true,
+      securityProfile: 'legacy',
+    });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
+
+    await assert.rejects(() => client.getAgentSigningKeys(body.agentId), /Key directory too old/);
+  });
+
+  it('rejects a directory timestamped implausibly far in the future', async () => {
+    const signingKey = crypto.generateKeyPairSync('ed25519');
+    const sequencerPublicKey = signingKey.publicKey
+      .export({ type: 'spki', format: 'der' })
+      .subarray(-32);
+
+    const futureDate = new Date(Date.now() + 3600 * 1000).toISOString();
+    const body = {
+      agentId: '44444444-4444-4444-4444-444444444444',
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      keys: [
+        {
+          keyId: 1,
+          algorithm: 'ed25519',
+          publicKey: '0xaa',
+          publicKeyBundle: null,
+          validFrom: null,
+          validTo: null,
+          revokedAt: null,
+        },
+      ],
+      signedAt: futureDate,
+    };
+    const signature = signDirectory(body, signingKey);
+
+    const client = createSequencerClient({
+      sequencerUrl: 'http://localhost:8080',
+      tenantId: body.tenantId,
+      apiKey: 'test',
+      sequencerPublicKey,
+      allowInsecureTransport: true,
+      securityProfile: 'legacy',
+    });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
+
+    await assert.rejects(() => client.getAgentSigningKeys(body.agentId), /Key directory too old/);
+  });
+
+  it('rejects a directory older than a custom (tighter) peerKeyMaxStaleSeconds', async () => {
+    // A 5s-old directory is well within the 86400s default, so this can only
+    // pass for the right reason if the custom config value is actually used
+    // instead of silently falling back to the default.
+    const signingKey = crypto.generateKeyPairSync('ed25519');
+    const sequencerPublicKey = signingKey.publicKey
+      .export({ type: 'spki', format: 'der' })
+      .subarray(-32);
+
+    const recentDate = new Date(Date.now() - 5000).toISOString();
+    const body = {
+      agentId: '44444444-4444-4444-4444-444444444444',
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      keys: [
+        {
+          keyId: 1,
+          algorithm: 'ed25519',
+          publicKey: '0xaa',
+          publicKeyBundle: null,
+          validFrom: null,
+          validTo: null,
+          revokedAt: null,
+        },
+      ],
+      signedAt: recentDate,
+    };
+    const signature = signDirectory(body, signingKey);
+
+    const client = createSequencerClient({
+      sequencerUrl: 'http://localhost:8080',
+      tenantId: body.tenantId,
+      apiKey: 'test',
+      sequencerPublicKey,
+      allowInsecureTransport: true,
+      securityProfile: 'legacy',
+      peerKeyMaxStaleSeconds: 1,
+    });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
+
+    await assert.rejects(() => client.getAgentSigningKeys(body.agentId), /Key directory too old/);
+  });
+
+  it('accepts a hex-string sequencerPublicKey (the shape config files actually carry)', async () => {
+    const signingKey = crypto.generateKeyPairSync('ed25519');
+    const rawPublicKey = signingKey.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
+    const sequencerPublicKey = `0x${rawPublicKey.toString('hex')}`;
+
+    const body = {
+      agentId: '44444444-4444-4444-4444-444444444444',
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      keys: [
+        {
+          keyId: 1,
+          algorithm: 'ed25519',
+          publicKey: '0xaa',
+          publicKeyBundle: null,
+          validFrom: null,
+          validTo: null,
+          revokedAt: null,
+        },
+      ],
+      signedAt: new Date().toISOString(),
+    };
+    const signature = signDirectory(body, signingKey);
+
+    const client = createSequencerClient({
+      sequencerUrl: 'http://localhost:8080',
+      tenantId: body.tenantId,
+      apiKey: 'test',
+      sequencerPublicKey,
+      allowInsecureTransport: true,
+      securityProfile: 'legacy',
+    });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
+
+    const result = await client.getAgentSigningKeys(body.agentId);
+    assert.equal(result.keys.length, 1);
+    assert.equal(result.keys[0].keyId, 1);
+  });
+
+  it('threads sequencerPublicKey through createSyncConfig/SyncConfig the way production constructs the client', async () => {
+    const signingKey = crypto.generateKeyPairSync('ed25519');
+    const rawPublicKey = signingKey.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
+    const sequencerPublicKey = `0x${rawPublicKey.toString('hex')}`;
+
+    const tenantId = '22222222-2222-2222-2222-222222222222';
+    const storeId = '33333333-3333-3333-3333-333333333333';
+    const agentId = '44444444-4444-4444-4444-444444444444';
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ves-sync-config-'));
+    try {
+      const rawConfig = createSyncConfig(
+        {
+          sequencerUrl: 'http://localhost:8080',
+          tenantId,
+          storeId,
+          apiKey: 'test',
+          securityProfile: 'legacy',
+          allowInsecureTransport: true,
+          sequencerPublicKey,
+          peerKeyMaxStaleSeconds: 1,
+        },
+        tmpDir,
+      );
+
+      assert.equal(rawConfig.sequencerPublicKey, sequencerPublicKey);
+      assert.equal(rawConfig.peerKeyMaxStaleSeconds, 1);
+      assert.equal(rawConfig.peerKeyTtlSeconds, 300);
+
+      const config = new SyncConfig(rawConfig);
+      assert.equal(config.sequencerPublicKey, sequencerPublicKey);
+      assert.equal(config.peerKeyMaxStaleSeconds, 1);
+
+      const client = createSequencerClient(config);
+
+      const body = {
+        agentId,
+        tenantId,
+        keys: [
+          {
+            keyId: 1,
+            algorithm: 'ed25519',
+            publicKey: '0xaa',
+            publicKeyBundle: null,
+            validFrom: null,
+            validTo: null,
+            revokedAt: null,
+          },
+        ],
+        signedAt: new Date().toISOString(),
+      };
+      const signature = signDirectory(body, signingKey);
+      client._request = async () => ({
+        ...body,
+        directorySignature: `0x${signature.toString('hex')}`,
+      });
+
+      const result = await client.getAgentSigningKeys(agentId);
+      assert.equal(result.keys.length, 1);
+      assert.equal(result.keys[0].keyId, 1);
+
+      // And the freshness check also honors the plumbed-through value: a
+      // directory a few seconds old must be rejected under
+      // peerKeyMaxStaleSeconds: 1, proving the config value (not the
+      // 86400s default) is what the client is actually reading.
+      const staleBody = { ...body, signedAt: new Date(Date.now() - 5000).toISOString() };
+      const staleSignature = signDirectory(staleBody, signingKey);
+      client._request = async () => ({
+        ...staleBody,
+        directorySignature: `0x${staleSignature.toString('hex')}`,
+      });
+      await assert.rejects(() => client.getAgentSigningKeys(agentId), /Key directory too old/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * A signature says who wrote the body, not which request it answers. Without
+   * the binding below, a validly signed directory for agent B — replayed by a
+   * lying sequencer in answer to a request for agent A — caches B's keys under
+   * A, after which events claiming to be from A and signed by B verify.
+   */
+  it('refuses a validly signed directory issued for a different agent', async () => {
+    const signingKey = crypto.generateKeyPairSync('ed25519');
+    const sequencerPublicKey = signingKey.publicKey
+      .export({ type: 'spki', format: 'der' })
+      .subarray(-32);
+
+    const body = {
+      agentId: '55555555-5555-5555-5555-555555555555',
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      keys: [{ keyId: 1, algorithm: 'ed25519', publicKey: '0xaa' }],
+      signedAt: new Date().toISOString(),
+    };
+    const signature = signDirectory(body, signingKey);
+
+    const client = createSequencerClient({
+      sequencerUrl: 'http://localhost:8080',
+      tenantId: body.tenantId,
+      apiKey: 'test',
+      sequencerPublicKey,
+      allowInsecureTransport: true,
+      securityProfile: 'legacy',
+    });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
+
+    await assert.rejects(
+      () => client.getAgentSigningKeys('44444444-4444-4444-4444-444444444444'),
+      (error) => {
+        assert.match(error.message, /not the requested 44444444/);
+        assert.equal(error.code, 'directory_untrusted');
+        return true;
+      },
+    );
+  });
+
+  it('refuses a validly signed directory issued for a different tenant', async () => {
+    const signingKey = crypto.generateKeyPairSync('ed25519');
+    const sequencerPublicKey = signingKey.publicKey
+      .export({ type: 'spki', format: 'der' })
+      .subarray(-32);
+
+    const body = {
+      agentId: '44444444-4444-4444-4444-444444444444',
+      tenantId: '99999999-9999-9999-9999-999999999999',
+      keys: [{ keyId: 1, algorithm: 'ed25519', publicKey: '0xaa' }],
+      signedAt: new Date().toISOString(),
+    };
+    const signature = signDirectory(body, signingKey);
+
+    const client = createSequencerClient({
+      sequencerUrl: 'http://localhost:8080',
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      apiKey: 'test',
+      sequencerPublicKey,
+      allowInsecureTransport: true,
+      securityProfile: 'legacy',
+    });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
+
+    await assert.rejects(
+      () => client.getAgentSigningKeys(body.agentId),
+      (error) => {
+        assert.match(error.message, /not the configured 22222222/);
+        assert.equal(error.code, 'directory_untrusted');
+        return true;
+      },
+    );
+  });
+
+  it('refuses an unbound directory that names no agent at all', async () => {
+    const signingKey = crypto.generateKeyPairSync('ed25519');
+    const sequencerPublicKey = signingKey.publicKey
+      .export({ type: 'spki', format: 'der' })
+      .subarray(-32);
+
+    const body = {
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      keys: [{ keyId: 1, algorithm: 'ed25519', publicKey: '0xaa' }],
+      signedAt: new Date().toISOString(),
+    };
+    const signature = signDirectory(body, signingKey);
+
+    const client = createSequencerClient({
+      sequencerUrl: 'http://localhost:8080',
+      tenantId: body.tenantId,
+      apiKey: 'test',
+      sequencerPublicKey,
+      allowInsecureTransport: true,
+      securityProfile: 'legacy',
+    });
+    client._request = async () => ({
+      ...body,
+      directorySignature: `0x${signature.toString('hex')}`,
+    });
+
+    await assert.rejects(
+      () => client.getAgentSigningKeys('44444444-4444-4444-4444-444444444444'),
+      /is for agent \(unset\)/,
+    );
+  });
+
+  it('tags the missing-config failure with its own code', async () => {
+    const client = createSequencerClient({
+      sequencerUrl: 'http://localhost:8080',
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      apiKey: 'test',
+      allowInsecureTransport: true,
+      securityProfile: 'legacy',
+    });
+    client._request = async () => ({ agentId: 'x', keys: [] });
+
+    await assert.rejects(
+      () => client.getAgentSigningKeys('44444444-4444-4444-4444-444444444444'),
+      (error) => {
+        assert.equal(error.code, 'sequencer_key_not_configured');
+        assert.match(error.message, /stateset-sync config set sequencer-public-key/);
+        return true;
+      },
+    );
   });
 });
 

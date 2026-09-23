@@ -15,12 +15,12 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | Metric | Value |
 | --- | --- |
 | Domain tool modules | 87 |
-| Domain tools | 923 |
-| Commerce getters | 67 |
-| Mapped getters | 67 |
+| Domain tools | 935 |
+| Commerce getters | 68 |
+| Mapped getters | 68 |
 | Audited classes | 32 |
-| Audited methods | 390 |
-| Mapped audited methods | 390 |
+| Audited methods | 402 |
+| Mapped audited methods | 402 |
 | Fully covered | yes |
 
 ## Commerce Getter Coverage
@@ -31,14 +31,15 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `accountsReceivable` | `accounts-receivable` | 8 |
 | `activityLogs` | `activity-logs` | 5 |
 | `analytics` | `analytics` | 14 |
-| `backorder` | `backorders` | 9 |
+| `backorder` | `backorders` | 20 |
+| `backorders` | `backorders` | 20 |
 | `bom` | `manufacturing` | 11 |
 | `carts` | `carts` | 30 |
 | `channels` | `channels` | 8 |
 | `companies` | `companies` | 9 |
 | `costAccounting` | `cost-accounting` | 5 |
 | `credit` | `credit` | 8 |
-| `currency` | `currency` | 12 |
+| `currency` | `currency` | 13 |
 | `customObjects` | `custom-objects` | 12 |
 | `customers` | `customers` | 11 |
 | `cycleCounts` | `cycle-counts` | 7 |
@@ -102,12 +103,12 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `AccountsPayable` | 12 | 12 | 0 | 0 | 0 |
 | `AccountsReceivable` | 8 | 8 | 0 | 0 | 0 |
 | `Analytics` | 14 | 14 | 0 | 0 | 0 |
-| `Backorders` | 10 | 10 | 0 | 0 | 0 |
+| `Backorders` | 21 | 21 | 0 | 0 | 0 |
 | `Bom` | 7 | 7 | 0 | 0 | 0 |
 | `Carts` | 33 | 33 | 0 | 0 | 0 |
 | `CostAccounting` | 5 | 5 | 0 | 0 | 0 |
 | `Credit` | 9 | 9 | 0 | 0 | 0 |
-| `CurrencyOperations` | 15 | 15 | 0 | 0 | 0 |
+| `CurrencyOperations` | 16 | 16 | 0 | 0 | 0 |
 | `Customers` | 13 | 13 | 0 | 0 | 0 |
 | `CustomObjects` | 12 | 12 | 0 | 0 | 0 |
 | `Fulfillment` | 14 | 14 | 0 | 0 | 0 |

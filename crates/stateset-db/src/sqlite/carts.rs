@@ -1407,16 +1407,44 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn begin_checkout(&self, id: CartId) -> Result<Cart> {
-        {
-            let conn = self.conn()?;
-            conn.execute(
-                "UPDATE carts SET status = 'payment_pending', updated_at = ? WHERE id = ?",
+        with_immediate_transaction(&self.pool, |tx| {
+            let cart = Self::load_cart_with_conn(tx, id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+            if cart.status == CartStatus::PaymentPending {
+                return Self::load_cart_with_conn(tx, id)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                    .ok_or(rusqlite::Error::QueryReturnedNoRows);
+            }
+            if !cart.is_checkoutable_status() {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict(format!(
+                        "Cart cannot begin checkout in status: {}",
+                        cart.status
+                    )),
+                )));
+            }
+            if cart.is_expired() {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError("Cart is expired".to_string()),
+                )));
+            }
+            let rows = tx.execute(
+                "UPDATE carts SET status = 'payment_pending', updated_at = ?
+                 WHERE id = ? AND status IN ('active', 'ready_for_payment', 'payment_pending')",
                 rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        }
-
-        self.get(id)?.ok_or(CommerceError::NotFound)
+            )?;
+            if rows == 0 {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict(
+                        "Cart is no longer in a state that can begin checkout".to_string(),
+                    ),
+                )));
+            }
+            Self::load_cart_with_conn(tx, id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                .ok_or(rusqlite::Error::QueryReturnedNoRows)
+        })
     }
 
     fn complete(&self, id: CartId) -> Result<CheckoutResult> {
@@ -1432,42 +1460,117 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn cancel(&self, id: CartId) -> Result<Cart> {
-        {
-            let conn = self.conn()?;
-            conn.execute(
-                "UPDATE carts SET status = 'cancelled', updated_at = ? WHERE id = ?",
+        with_immediate_transaction(&self.pool, |tx| {
+            let cart = Self::load_cart_with_conn(tx, id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+            if cart.status == CartStatus::Cancelled {
+                return Self::load_cart_with_conn(tx, id)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                    .ok_or(rusqlite::Error::QueryReturnedNoRows);
+            }
+            if !cart.can_cancel() {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict(format!(
+                        "Cart cannot be cancelled in status: {}",
+                        cart.status
+                    )),
+                )));
+            }
+            let rows = tx.execute(
+                "UPDATE carts SET status = 'cancelled', updated_at = ?
+                 WHERE id = ? AND status IN ('active', 'ready_for_payment', 'payment_pending')",
                 rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        }
-
-        self.get(id)?.ok_or(CommerceError::NotFound)
+            )?;
+            if rows == 0 {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict(
+                        "Cart is no longer in a state that can be cancelled".to_string(),
+                    ),
+                )));
+            }
+            Self::load_cart_with_conn(tx, id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                .ok_or(rusqlite::Error::QueryReturnedNoRows)
+        })
     }
 
     fn abandon(&self, id: CartId) -> Result<Cart> {
-        {
-            let conn = self.conn()?;
-            conn.execute(
-                "UPDATE carts SET status = 'abandoned', updated_at = ? WHERE id = ?",
+        with_immediate_transaction(&self.pool, |tx| {
+            let cart = Self::load_cart_with_conn(tx, id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+            if cart.status == CartStatus::Abandoned {
+                return Self::load_cart_with_conn(tx, id)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                    .ok_or(rusqlite::Error::QueryReturnedNoRows);
+            }
+            if !matches!(
+                cart.status,
+                CartStatus::Active | CartStatus::ReadyForPayment | CartStatus::PaymentPending
+            ) {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict(format!(
+                        "Cart cannot be abandoned in status: {}",
+                        cart.status
+                    )),
+                )));
+            }
+            let rows = tx.execute(
+                "UPDATE carts SET status = 'abandoned', updated_at = ?
+                 WHERE id = ? AND status IN ('active', 'ready_for_payment', 'payment_pending')",
                 rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        }
-
-        self.get(id)?.ok_or(CommerceError::NotFound)
+            )?;
+            if rows == 0 {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict(
+                        "Cart is no longer in a state that can be abandoned".to_string(),
+                    ),
+                )));
+            }
+            Self::load_cart_with_conn(tx, id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                .ok_or(rusqlite::Error::QueryReturnedNoRows)
+        })
     }
 
     fn expire(&self, id: CartId) -> Result<Cart> {
-        {
-            let conn = self.conn()?;
-            conn.execute(
-                "UPDATE carts SET status = 'expired', updated_at = ? WHERE id = ?",
+        with_immediate_transaction(&self.pool, |tx| {
+            let cart = Self::load_cart_with_conn(tx, id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+            if cart.status == CartStatus::Expired {
+                return Self::load_cart_with_conn(tx, id)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                    .ok_or(rusqlite::Error::QueryReturnedNoRows);
+            }
+            if !matches!(
+                cart.status,
+                CartStatus::Active | CartStatus::ReadyForPayment | CartStatus::PaymentPending
+            ) {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict(format!(
+                        "Cart cannot be expired in status: {}",
+                        cart.status
+                    )),
+                )));
+            }
+            let rows = tx.execute(
+                "UPDATE carts SET status = 'expired', updated_at = ?
+                 WHERE id = ? AND status IN ('active', 'ready_for_payment', 'payment_pending')",
                 rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        }
-
-        self.get(id)?.ok_or(CommerceError::NotFound)
+            )?;
+            if rows == 0 {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict(
+                        "Cart is no longer in a state that can be expired".to_string(),
+                    ),
+                )));
+            }
+            Self::load_cart_with_conn(tx, id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                .ok_or(rusqlite::Error::QueryReturnedNoRows)
+        })
     }
 
     fn reserve_inventory(&self, id: CartId) -> Result<Cart> {
@@ -1993,7 +2096,7 @@ impl SqliteCartRepository {
     /// two different customers. Delegating keeps guest checkout on exactly the
     /// same normalised identity as every other way a customer is created.
     fn resolve_customer_id_with_conn(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         cart: &Cart,
     ) -> Result<CustomerId> {
         if let Some(customer_id) = cart.customer_id {
@@ -2440,6 +2543,26 @@ impl SqliteCartRepository {
                 ],
             )?;
         }
+
+        // The checkout is the cart's terminal fact: a peer that sees it knows
+        // the cart is spent and which order carries it forward. It is emitted
+        // in the checkout's own transaction, so a cart can never commit as
+        // completed with no fact behind it.
+        super::kernel_outbox::record_outbox_fact(
+            tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "cart.checked_out",
+                aggregate_type: "cart",
+                aggregate_id: &cart_id.to_string(),
+                payload: serde_json::json!({
+                    "cart_id": cart_id,
+                    "order_id": order.id,
+                    "order_number": order.order_number,
+                    "total_charged": cart.grand_total.to_string(),
+                    "currency": cart.currency,
+                }),
+            },
+        )?;
 
         Ok(CheckoutResult {
             cart_id,
@@ -3460,6 +3583,20 @@ mod tests {
         let cart = repo.create(CreateCart::default()).expect("create");
         let abandoned = repo.abandon(cart.id).expect("abandon");
         assert_eq!(abandoned.status, CartStatus::Abandoned);
+    }
+
+    #[test]
+    fn lifecycle_guards_reject_terminal_carts() {
+        let repo = fresh_repo();
+        let cart = repo.create(CreateCart::default()).expect("create");
+        let cancelled = repo.cancel(cart.id).expect("cancel");
+        assert_eq!(cancelled.status, CartStatus::Cancelled);
+        // Terminal carts stay terminal: no resurrection via other transitions.
+        assert!(matches!(repo.abandon(cart.id), Err(CommerceError::Conflict(_))));
+        assert!(matches!(repo.expire(cart.id), Err(CommerceError::Conflict(_))));
+        assert!(matches!(repo.begin_checkout(cart.id), Err(CommerceError::Conflict(_))));
+        // Idempotent re-cancel still succeeds.
+        assert_eq!(repo.cancel(cart.id).expect("re-cancel").status, CartStatus::Cancelled);
     }
 
     /// Create a cart that satisfies every `is_ready_for_checkout` requirement

@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:e1013b1f01b7dd24eaf7cfd4342da85f4af4ca268cc6e48dbd66743da4a5ae70",
+  "digest": "sha256:3f0c6fbe29810eda9a5b15a3eb40980b7d34521ce7ba551ef2551928f8fcefa5",
   "counts": {
-    "total": 938,
-    "readOnly": 464,
-    "mutations": 474,
+    "total": 950,
+    "readOnly": 469,
+    "mutations": 481,
     "governed": 25,
     "governedComposite": 1,
-    "blocked": 448
+    "blocked": 455
   },
   "entries": [
     {
@@ -1551,6 +1551,13 @@
       "commandType": null
     },
     {
+      "name": "allocate_backorder",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "apply_cart_discount",
       "permission": "write",
       "mutation": true,
@@ -1681,6 +1688,13 @@
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "auto_allocate_inventory",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {
@@ -2196,6 +2210,13 @@
     },
     {
       "name": "configure_woocommerce_webhooks",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "confirm_backorder_allocation",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
@@ -3161,6 +3182,13 @@
       "commandType": null
     },
     {
+      "name": "expire_backorder_allocations",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "expire_cart",
       "permission": "write",
       "mutation": true,
@@ -3242,6 +3270,13 @@
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "fulfill_backorder",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {
@@ -3364,6 +3399,20 @@
       "commandType": null
     },
     {
+      "name": "get_backorder_allocations",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_backorder_fulfillment_history",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
       "name": "get_backorder_summary",
       "permission": "read",
       "mutation": false,
@@ -3435,6 +3484,13 @@
     },
     {
       "name": "get_credit_memo",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_currency_decimal_places",
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",
@@ -4008,6 +4064,13 @@
       "commandType": null
     },
     {
+      "name": "get_sku_backorder_summary",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
       "name": "get_stock",
       "permission": "read",
       "mutation": false,
@@ -4373,6 +4436,13 @@
     },
     {
       "name": "list_backorders",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_backorders_for_customer",
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",
@@ -5513,6 +5583,13 @@
       "commandType": null
     },
     {
+      "name": "release_backorder_allocation",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "release_cart_inventory",
       "permission": "write",
       "mutation": true,
@@ -6081,6 +6158,13 @@
     },
     {
       "name": "update_average_item_cost",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_backorder",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",

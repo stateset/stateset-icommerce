@@ -38,6 +38,27 @@ import crypto from 'crypto';
  */
 
 /**
+ * The stable identity of a conflict: the same local event conflicting the same
+ * way over the same entity is the same conflict, however many times it is
+ * detected.
+ *
+ * It used to be a fresh `crypto.randomUUID()` per detection, which turned
+ * `INSERT OR REPLACE` into an unbounded insert — and once `pull()` started
+ * calling `detectConflicts()`, the background `syncIntervalMs` loop grew the
+ * table (and the `sync conflicts` listing, and the `sync_conflicts` MCP
+ * `count`) forever off one unresolved conflict.
+ *
+ * @param {ConflictType} type
+ * @param {import('./outbox.js').OutboxEvent} localEvent
+ * @param {string} entityType
+ * @param {string} entityId
+ * @returns {string}
+ */
+function conflictId(type, localEvent, entityType, entityId) {
+  return `${type}:${localEvent.localSeq}:${entityType}:${entityId}`;
+}
+
+/**
  * Conflict Resolver for VES sync
  */
 export class ConflictResolver {
@@ -154,7 +175,7 @@ export class ConflictResolver {
     // Check if our base version is behind
     if (local.baseVersion < currentVersion) {
       return {
-        id: crypto.randomUUID(),
+        id: conflictId('version', local, local.entityType, local.entityId),
         type: 'version',
         localEvent: local,
         remoteEvent: remoteEvents[remoteEvents.length - 1] || null,
@@ -187,7 +208,7 @@ export class ConflictResolver {
       const remoteAgent = remote.source_agent || remote.sourceAgent;
       if (remoteAgent !== local.sourceAgent && timeDiff < timeWindow) {
         return {
-          id: crypto.randomUUID(),
+          id: conflictId('concurrent', local, local.entityType, local.entityId),
           type: 'concurrent',
           localEvent: local,
           remoteEvent: remote,
@@ -230,16 +251,27 @@ export class ConflictResolver {
   }
 
   /**
-   * Store a detected conflict
+   * Store a detected conflict.
+   *
+   * Idempotent by conflict identity: re-detecting refreshes the mutable
+   * description of an existing row instead of adding another. `status`,
+   * `detected_at` and the resolution columns are deliberately left alone, so a
+   * conflict an operator has already resolved is not resurrected as unresolved
+   * by the next background pull.
+   *
    * @private
    */
   _storeConflict(conflict) {
     const stmt = this.outbox.db.prepare(`
-      INSERT OR REPLACE INTO _ves_conflicts (
+      INSERT INTO _ves_conflicts (
         id, conflict_type, local_event_seq, remote_event_seq,
         entity_type, entity_id, description, suggested_strategy,
         status, detected_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'unresolved', ?)
+      ON CONFLICT(id) DO UPDATE SET
+        remote_event_seq = excluded.remote_event_seq,
+        description = excluded.description,
+        suggested_strategy = excluded.suggested_strategy
     `);
 
     stmt.run(

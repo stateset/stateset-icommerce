@@ -18,7 +18,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const fs = require('node:fs');
 const path = require('node:path');
-const { Commerce } = require('../index.js');
+const { Commerce, Tax } = require('../index.js');
 
 const CORPUS_PATH = path.join(__dirname, '..', '..', 'test-vectors', 'semantics-v1.json');
 
@@ -33,14 +33,16 @@ function rows(category) {
 }
 
 // Categories this binding cannot assert yet, with the reason.
-const NOT_REACHABLE = {
-  currency_decimals: 'the binding exposes no currency-scale accessor',
-  canadian_tax_rates: 'the binding exposes no getCanadianTaxInfo equivalent',
-  rejected_inputs: 'strict input parsing lands with the phase-B binding round',
-  accepted_inputs: 'paired with rejected_inputs; lands with the same round',
-};
+const NOT_REACHABLE = {};
 
-const ASSERTED = new Set(['decimal_render', 'money_scale_enforced']);
+const ASSERTED = new Set([
+  'decimal_render',
+  'money_scale_enforced',
+  'rejected_inputs',
+  'accepted_inputs',
+  'canadian_tax_rates',
+  'currency_decimals',
+]);
 
 test('every corpus category is either asserted or declared unreachable', () => {
   const present = new Set(Object.keys(corpus().categories));
@@ -148,6 +150,78 @@ test('decimal_render multiplication survives the boundary', async () => {
       order.totalAmountExact,
       row.expected,
       `${row.id}: ${quantity} x ${price} came back as ${order.totalAmountExact}`,
+    );
+  }
+});
+
+test('rejected_inputs are refused, and refusal writes nothing', async () => {
+  const commerce = new Commerce(':memory:');
+  const customer = await customerFor(commerce);
+  const item = { sku: 'SKU-1', name: 'Widget', quantity: 1, unitPrice: 10, unitPriceExact: '10.00' };
+
+  for (const row of rows('rejected_inputs')) {
+    let attempt;
+    if (row.kind === 'currency') {
+      attempt = () =>
+        commerce.orders.create({ customerId: customer.id, currency: row.value, items: [item] });
+    } else if (row.kind === 'uuid') {
+      attempt = () => commerce.orders.create({ customerId: row.value, items: [item] });
+    } else {
+      continue; // timestamps and dates have no order-path field to carry them
+    }
+    const before = (await commerce.orders.list()).length;
+    await assert.rejects(attempt, `${row.id}: ${JSON.stringify(row.value)} must be refused`);
+    assert.equal(
+      (await commerce.orders.list()).length,
+      before,
+      `${row.id}: a refused input must not write an order`,
+    );
+  }
+});
+
+test('accepted_inputs still work after strict parsing', async () => {
+  const commerce = new Commerce(':memory:');
+  const customer = await customerFor(commerce);
+  for (const row of rows('accepted_inputs')) {
+    if (row.kind !== 'currency') continue;
+    const order = await commerce.orders.create({
+      customerId: customer.id,
+      currency: row.value,
+      items: [{ sku: 'SKU-1', name: 'Widget', quantity: 1, unitPrice: 10, unitPriceExact: '10.00' }],
+    });
+    assert.equal(order.currency, row.normalizes_to, `${row.id}: normalized currency`);
+  }
+});
+
+test('canadian_tax_rates match the corpus', () => {
+  // The same table the Rust test pins. Quebec's rates were ten times too
+  // large until Sep 2026; reintroducing that fails this in every binding.
+  const fields = { gst: 'gstRate', pst: 'pstRate', hst: 'hstRate', qst: 'qstRate', total: 'totalRate' };
+  for (const row of rows('canadian_tax_rates')) {
+    const info = Tax.getCanadianTaxInfo(row.province);
+    assert.ok(info, `${row.province} is in the table`);
+    for (const [key, prop] of Object.entries(fields)) {
+      const want = row[key];
+      const got = info[prop];
+      if (want === null) {
+        assert.ok(got === undefined || got === null, `${row.id}: ${key} should be absent, got ${got}`);
+      } else {
+        assert.ok(
+          Math.abs(got - Number(want)) < 1e-12,
+          `${row.id}: ${key} is ${got}, corpus says ${want}`,
+        );
+      }
+    }
+  }
+});
+
+test('currency_decimals match the corpus', () => {
+  const commerce = new Commerce(':memory:');
+  for (const row of rows('currency_decimals')) {
+    assert.equal(
+      commerce.currency.decimalPlaces(row.code),
+      row.decimals,
+      `${row.id}: ${row.code} decimal places`,
     );
   }
 });

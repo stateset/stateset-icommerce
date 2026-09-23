@@ -282,21 +282,24 @@ impl SqliteCreditRepository {
     /// done with exact `rust_decimal::Decimal` and written back as an exact
     /// bound parameter rather than coercing to a float in SQL.
     fn release_reservation_with_conn(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         customer_id: CustomerId,
         order_id: OrderId,
         now: &str,
     ) -> rusqlite::Result<Decimal> {
-        let reserved = match conn.query_row(
-            "SELECT amount FROM credit_reservations
+        let released = match conn.query_row(
+            "SELECT id, amount FROM credit_reservations
              WHERE customer_id = ? AND order_id = ? AND status = 'active'",
             [customer_id.to_string(), order_id.to_string()],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         ) {
-            Ok(value) => parse_decimal_row(&value, "credit_reservation", "amount")?,
-            Err(rusqlite::Error::QueryReturnedNoRows) => Decimal::ZERO,
+            Ok((id, amount)) => {
+                Some((id, parse_decimal_row(&amount, "credit_reservation", "amount")?))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
             Err(e) => return Err(e),
         };
+        let reserved = released.as_ref().map_or(Decimal::ZERO, |(_, amount)| *amount);
 
         conn.execute(
             "UPDATE credit_reservations SET status = 'released', released_at = ?
@@ -317,6 +320,27 @@ impl SqliteCreditRepository {
             [&new_hold.to_string(), &customer_id.to_string()],
         )?;
 
+        // Only a release that actually freed a reservation is a fact. Calling
+        // this for an order that never reserved anything moves no money, and
+        // a "released 0" event would be noise a peer has to filter out.
+        if let Some((reservation_id, amount)) = released {
+            super::kernel_outbox::record_outbox_fact(
+                conn,
+                crate::kernel_outbox::RecordedFact {
+                    event_type: "credit_reservation.released",
+                    aggregate_type: "credit_reservation",
+                    aggregate_id: &reservation_id,
+                    payload: serde_json::json!({
+                        "id": reservation_id,
+                        "customer_id": customer_id,
+                        "order_id": order_id,
+                        "amount": amount.to_string(),
+                        "remaining_hold": new_hold.to_string(),
+                    }),
+                },
+            )?;
+        }
+
         Ok(new_hold)
     }
 
@@ -326,7 +350,7 @@ impl SqliteCreditRepository {
     /// just moved the balance in this transaction know the post-transaction
     /// figure exactly, and re-reading it would double-count a payment.
     fn insert_transaction_with_conn(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         id: Uuid,
         input: &RecordCreditTransaction,
         running_balance: Decimal,
@@ -348,6 +372,29 @@ impl SqliteCreditRepository {
                 now,
             ],
         )?;
+
+        // The ledger row is the credit account's fact: every movement of the
+        // balance or the limit lands here exactly once, so a peer that
+        // replays these reconstructs the account without needing a separate
+        // event per calling mutation.
+        super::kernel_outbox::record_outbox_fact(
+            conn,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "credit_account.transaction_recorded",
+                aggregate_type: "credit_account",
+                aggregate_id: &input.customer_id.to_string(),
+                payload: serde_json::json!({
+                    "transaction_id": id,
+                    "customer_id": input.customer_id,
+                    "transaction_type": input.transaction_type.to_string(),
+                    "amount": input.amount.to_string(),
+                    "running_balance": running_balance.to_string(),
+                    "reference_type": input.reference_type,
+                    "reference_id": input.reference_id,
+                    "notes": input.notes,
+                }),
+            },
+        )?;
         Ok(())
     }
 
@@ -363,9 +410,9 @@ impl SqliteCreditRepository {
         Ok(())
     }
 
-    /// Insert a credit account on the caller's connection.
+    /// Insert a credit account on the caller's transaction.
     fn create_credit_account_with_conn(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         id: CreditId,
         input: &CreateCreditAccount,
         now: &str,
@@ -391,6 +438,24 @@ impl SqliteCreditRepository {
                 now,
             ],
         )?;
+
+        // Keyed by customer, not by `CreditId`: every other statement in this
+        // module addresses the account as `WHERE customer_id = ?`, so that is
+        // the identity a peer can actually resolve.
+        super::kernel_outbox::record_outbox_fact(
+            conn,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "credit_account.created",
+                aggregate_type: "credit_account",
+                aggregate_id: &input.customer_id.to_string(),
+                payload: serde_json::json!({
+                    "id": id,
+                    "customer_id": input.customer_id,
+                    "credit_limit": input.credit_limit.to_string(),
+                    "currency": currency,
+                }),
+            },
+        )?;
         Ok(())
     }
 
@@ -398,7 +463,7 @@ impl SqliteCreditRepository {
     /// recompute available credit — all on the caller's connection, so the
     /// limit and its audit trail can never disagree.
     fn adjust_credit_limit_with_conn(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         customer_id: CustomerId,
         new_limit: Decimal,
         reason: &str,
@@ -481,11 +546,13 @@ impl CreditRepository for SqliteCreditRepository {
         let id = CreditId::new();
         let now = Utc::now();
 
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            Self::create_credit_account_with_conn(&conn, id, &input, &now.to_rfc3339())
-                .map_err(map_db_error)?;
-        }
+        // The account row and the fact announcing it commit together, so the
+        // standalone create takes the transaction the approval path
+        // (`review_application`) already held.
+        let now_str = now.to_rfc3339();
+        with_immediate_transaction(&self.pool, |tx| {
+            Self::create_credit_account_with_conn(tx, id, &input, &now_str)
+        })?;
 
         self.get_credit_account(id)?.ok_or(CommerceError::NotFound)
     }

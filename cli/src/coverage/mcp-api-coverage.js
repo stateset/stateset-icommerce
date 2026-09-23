@@ -74,6 +74,8 @@ export const COMMERCE_GETTER_TO_MODULE = Object.freeze({
   costAccounting: 'cost-accounting',
   credit: 'credit',
   backorder: 'backorders',
+  // Plural alias of `backorder` on the binding; same tool module.
+  backorders: 'backorders',
   generalLedger: 'general-ledger',
   cycleCounts: 'cycle-counts',
   fixedAssets: 'fixed-assets',
@@ -416,6 +418,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       getBaseCurrency: ['get_currency_settings'],
       getEnabledCurrencies: ['get_currency_settings'],
       format: ['format_currency'],
+      decimalPlaces: ['get_currency_decimal_places'],
     },
   },
   Subscriptions: {
@@ -524,6 +527,17 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       getOverdueBackorders: ['list_overdue_backorders'],
       getSummary: ['get_backorder_summary'],
       countPending: ['count_pending_backorders'],
+      autoAllocateInventory: ['auto_allocate_inventory'],
+      allocateBackorder: ['allocate_backorder'],
+      getAllocations: ['get_backorder_allocations'],
+      confirmAllocation: ['confirm_backorder_allocation'],
+      releaseAllocation: ['release_backorder_allocation'],
+      expireAllocations: ['expire_backorder_allocations'],
+      fulfillBackorder: ['fulfill_backorder'],
+      getFulfillmentHistory: ['get_backorder_fulfillment_history'],
+      getBackordersForCustomer: ['list_backorders_for_customer'],
+      getSkuSummary: ['get_sku_backorder_summary'],
+      updateBackorder: ['update_backorder'],
     },
   },
   Quality: {
@@ -690,6 +704,8 @@ export function buildMcpApiCoverage() {
 
   getterNames.delete('customStates');
   getterNames.delete('events');
+  // A value getter (whether `close()` has run), not a sub-API.
+  getterNames.delete('isClosed');
 
   const getters = [...getterNames].sort().map((getter) => {
     const moduleName = COMMERCE_GETTER_TO_MODULE[getter] ?? null;

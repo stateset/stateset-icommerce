@@ -304,7 +304,9 @@ export const syncTools = [
       return {
         success: result.success,
         pulled: result.pulled,
-        applied: result.applied,
+        verified: result.verified,
+        quarantined: result.quarantined,
+        stored: result.stored,
         conflicts: result.conflicts,
         error: result.error,
         includeEvents,

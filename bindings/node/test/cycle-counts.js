@@ -22,7 +22,7 @@ test('CycleCounts: full lifecycle', async (t) => {
   });
   const location = await commerce.warehouse.createLocation({
     warehouseId: warehouse.id,
-    locationType: 'bin',
+    locationType: 'pick',
     zone: 'A',
   });
 

@@ -13,11 +13,11 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 956 |
+| Total tools | 968 |
 | MCP servers | 3 |
 | Policy domains | 89 |
-| Read tools | 473 |
-| Write tools | 415 |
+| Read tools | 478 |
+| Write tools | 422 |
 | Delete tools | 21 |
 | Admin tools | 47 |
 | Unknown permission | 0 |
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 938 | `cli/src/mcp-server.js` |
+| stateset-commerce | 950 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -48,7 +48,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | agentic | 15 |
 | analytics | 14 |
 | audit | 4 |
-| backorders | 9 |
+| backorders | 20 |
 | carts | 30 |
 | catalog | 6 |
 | channels | 8 |
@@ -59,7 +59,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | connectors | 11 |
 | cost_accounting | 5 |
 | credit | 8 |
-| currency | 12 |
+| currency | 13 |
 | custom_objects | 12 |
 | customers | 11 |
 | cycle_counts | 7 |
@@ -130,8 +130,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | --- | --- |
 | admin | 47 |
 | delete | 21 |
-| read | 473 |
-| write | 415 |
+| read | 478 |
+| write | 422 |
 
 ## Tool Registry
 
@@ -357,6 +357,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `agentic_subscribe_events` | `stateset-commerce` | `agentic` | `read` |
 | `agentic_tool_catalog` | `stateset-commerce` | `agentic` | `read` |
 | `agentic_unsubscribe_events` | `stateset-commerce` | `agentic` | `read` |
+| `allocate_backorder` | `stateset-commerce` | `backorders` | `write` |
 | `apply_cart_discount` | `stateset-commerce` | `carts` | `write` |
 | `apply_cart_promotions` | `stateset-commerce` | `promotions` | `write` |
 | `apply_prepayment` | `stateset-commerce` | `prepayments` | `write` |
@@ -376,6 +377,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `audit_query` | `stateset-commerce` | `audit` | `read` |
 | `audit_retention` | `stateset-commerce` | `audit` | `admin` |
 | `audit_summary` | `stateset-commerce` | `audit` | `read` |
+| `auto_allocate_inventory` | `stateset-commerce` | `backorders` | `write` |
 | `backup_database` | `stateset-commerce` | `maintenance` | `write` |
 | `begin_cart_checkout` | `stateset-commerce` | `carts` | `write` |
 | `bulk_create_integration_field_mappings` | `stateset-commerce` | `integration-field-mappings` | `write` |
@@ -450,6 +452,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `compliance_summary` | `stateset-commerce` | `compliance` | `read` |
 | `configure_stripe_webhooks` | `stateset-commerce` | `import` | `write` |
 | `configure_woocommerce_webhooks` | `stateset-commerce` | `import` | `write` |
+| `confirm_backorder_allocation` | `stateset-commerce` | `backorders` | `write` |
 | `confirm_reservation` | `stateset-commerce` | `inventory` | `write` |
 | `convert_currency` | `stateset-commerce` | `currency` | `read` |
 | `convert_wishlist_to_cart` | `stateset-commerce` | `wishlists` | `write` |
@@ -587,6 +590,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `evaluate_policy` | `stateset-commerce` | `policies` | `read` |
 | `evaluate_segment_membership` | `stateset-commerce` | `segments` | `read` |
 | `execute_wasm_connector` | `stateset-commerce` | `connectors` | `write` |
+| `expire_backorder_allocations` | `stateset-commerce` | `backorders` | `write` |
 | `expire_cart` | `stateset-commerce` | `carts` | `write` |
 | `explain_policy_denial` | `stateset-commerce` | `policies` | `read` |
 | `export_agent_catalog` | `stateset-commerce` | `catalog` | `read` |
@@ -599,6 +603,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `find_or_create_customer` | `stateset-commerce` | `customers` | `write` |
 | `flag_review` | `stateset-commerce` | `reviews` | `write` |
 | `format_currency` | `stateset-commerce` | `currency` | `read` |
+| `fulfill_backorder` | `stateset-commerce` | `backorders` | `write` |
 | `generate_1099k` | `stateset-commerce` | `compliance` | `admin` |
 | `generate_depreciation_schedule` | `stateset-commerce` | `fixed_assets` | `write` |
 | `generate_inclusion_proof` | `stateset-commerce` | `proofs` | `read` |
@@ -616,6 +621,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `get_agent_card` | `stateset-commerce` | `agent_cards` | `read` |
 | `get_agent_wallet` | `stateset-commerce` | `stablecoin` | `read` |
 | `get_backorder` | `stateset-commerce` | `backorders` | `read` |
+| `get_backorder_allocations` | `stateset-commerce` | `backorders` | `read` |
+| `get_backorder_fulfillment_history` | `stateset-commerce` | `backorders` | `read` |
 | `get_backorder_summary` | `stateset-commerce` | `backorders` | `read` |
 | `get_balance_sheet` | `stateset-commerce` | `general_ledger` | `read` |
 | `get_bill` | `stateset-commerce` | `accounts_payable` | `read` |
@@ -627,6 +634,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `get_coupon` | `stateset-commerce` | `promotions` | `read` |
 | `get_credit_account` | `stateset-commerce` | `credit` | `read` |
 | `get_credit_memo` | `stateset-commerce` | `accounts_receivable` | `read` |
+| `get_currency_decimal_places` | `stateset-commerce` | `currency` | `read` |
 | `get_currency_settings` | `stateset-commerce` | `currency` | `read` |
 | `get_custom_object` | `stateset-commerce` | `custom_objects` | `read` |
 | `get_custom_object_by_handle` | `stateset-commerce` | `custom_objects` | `read` |
@@ -708,6 +716,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `get_shipment` | `stateset-commerce` | `shipments` | `read` |
 | `get_shipping_rates` | `stateset-commerce` | `carts` | `read` |
 | `get_shipping_zone` | `stateset-commerce` | `shipping_zones` | `read` |
+| `get_sku_backorder_summary` | `stateset-commerce` | `backorders` | `read` |
 | `get_stock` | `stateset-commerce` | `inventory` | `read` |
 | `get_stock_snapshot` | `stateset-commerce` | `stock-snapshots` | `read` |
 | `get_store_credit` | `stateset-commerce` | `store_credits` | `read` |
@@ -761,6 +770,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `list_available_lots_for_sku` | `stateset-commerce` | `lots` | `read` |
 | `list_available_serials` | `stateset-commerce` | `serials` | `read` |
 | `list_backorders` | `stateset-commerce` | `backorders` | `read` |
+| `list_backorders_for_customer` | `stateset-commerce` | `backorders` | `read` |
 | `list_backorders_for_order` | `stateset-commerce` | `backorders` | `read` |
 | `list_backorders_for_sku` | `stateset-commerce` | `backorders` | `read` |
 | `list_billing_cycles` | `stateset-commerce` | `subscriptions` | `read` |
@@ -923,6 +933,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `register_policy_template` | `stateset-commerce` | `policies` | `write` |
 | `reject_return` | `stateset-commerce` | `returns` | `write` |
 | `reject_review` | `stateset-commerce` | `reviews` | `write` |
+| `release_backorder_allocation` | `stateset-commerce` | `backorders` | `write` |
 | `release_cart_inventory` | `stateset-commerce` | `carts` | `write` |
 | `release_fulfillment_wave` | `stateset-commerce` | `fulfillment` | `write` |
 | `release_lot_quarantine` | `stateset-commerce` | `lots` | `write` |
@@ -1005,6 +1016,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `treasury_register_token` | `stateset-commerce` | `treasury` | `admin` |
 | `uninstall_wasm_connector` | `stateset-commerce` | `connectors` | `delete` |
 | `update_average_item_cost` | `stateset-commerce` | `cost_accounting` | `write` |
+| `update_backorder` | `stateset-commerce` | `backorders` | `write` |
 | `update_cart` | `stateset-commerce` | `carts` | `write` |
 | `update_cart_item` | `stateset-commerce` | `carts` | `write` |
 | `update_channel` | `stateset-commerce` | `channels` | `write` |

@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 956,
+  "totalTools": 968,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 938
+      "count": 950
     },
     {
       "name": "stateset-scaffold",
@@ -79,7 +79,7 @@
     },
     {
       "name": "backorders",
-      "count": 9
+      "count": 20
     },
     {
       "name": "carts",
@@ -123,7 +123,7 @@
     },
     {
       "name": "currency",
-      "count": 12
+      "count": 13
     },
     {
       "name": "custom_objects",
@@ -389,18 +389,18 @@
     },
     {
       "name": "read",
-      "count": 473
+      "count": 478
     },
     {
       "name": "write",
-      "count": 415
+      "count": 422
     }
   ],
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
-    "read": 473,
-    "write": 415
+    "read": 478,
+    "write": 422
   },
   "tools": [
     {
@@ -2384,6 +2384,15 @@
       "permission": "read"
     },
     {
+      "name": "allocate_backorder",
+      "description": "Reserve a specific quantity of stock against one backorder.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__allocate_backorder",
+      "policyDomain": "backorders",
+      "permission": "write"
+    },
+    {
       "name": "apply_cart_discount",
       "description": "Apply a coupon/discount code to the cart.",
       "serverName": "stateset-commerce",
@@ -2553,6 +2562,15 @@
       "qualifiedName": "mcp__stateset-commerce__audit_summary",
       "policyDomain": "audit",
       "permission": "read"
+    },
+    {
+      "name": "auto_allocate_inventory",
+      "description": "Allocate available stock to a SKU's open backorders, in priority order (critical first, then oldest first). Call after stock arrives.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__auto_allocate_inventory",
+      "policyDomain": "backorders",
+      "permission": "write"
     },
     {
       "name": "backup_database",
@@ -3218,6 +3236,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__configure_woocommerce_webhooks",
       "policyDomain": "import",
+      "permission": "write"
+    },
+    {
+      "name": "confirm_backorder_allocation",
+      "description": "Confirm a reserved allocation, committing the stock to the backorder.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__confirm_backorder_allocation",
+      "policyDomain": "backorders",
       "permission": "write"
     },
     {
@@ -4454,6 +4481,15 @@
       "permission": "write"
     },
     {
+      "name": "expire_backorder_allocations",
+      "description": "Expire every allocation whose hold has lapsed, freeing the stock it held. Returns how many were swept.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__expire_backorder_allocations",
+      "policyDomain": "backorders",
+      "permission": "write"
+    },
+    {
       "name": "expire_cart",
       "description": "Mark a cart as expired.",
       "serverName": "stateset-commerce",
@@ -4560,6 +4596,15 @@
       "qualifiedName": "mcp__stateset-commerce__format_currency",
       "policyDomain": "currency",
       "permission": "read"
+    },
+    {
+      "name": "fulfill_backorder",
+      "description": "Record a fulfilment against a backorder, drawing on the named source.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__fulfill_backorder",
+      "policyDomain": "backorders",
+      "permission": "write"
     },
     {
       "name": "generate_1099k",
@@ -4715,6 +4760,24 @@
       "permission": "read"
     },
     {
+      "name": "get_backorder_allocations",
+      "description": "List the allocations recorded against one backorder.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_backorder_allocations",
+      "policyDomain": "backorders",
+      "permission": "read"
+    },
+    {
+      "name": "get_backorder_fulfillment_history",
+      "description": "The fulfilment history recorded against one backorder.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_backorder_fulfillment_history",
+      "policyDomain": "backorders",
+      "permission": "read"
+    },
+    {
       "name": "get_backorder_summary",
       "description": "Get the backorder summary.",
       "serverName": "stateset-commerce",
@@ -4811,6 +4874,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_credit_memo",
       "policyDomain": "accounts_receivable",
+      "permission": "read"
+    },
+    {
+      "name": "get_currency_decimal_places",
+      "description": "How many decimal places a currency permits. The engine refuses an amount with more places than this, so check it before formatting or validating money rather than assuming two: JPY, KRW and VND have none, BTC and ETH have eight.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_currency_decimal_places",
+      "policyDomain": "currency",
       "permission": "read"
     },
     {
@@ -5543,6 +5615,15 @@
       "permission": "read"
     },
     {
+      "name": "get_sku_backorder_summary",
+      "description": "Open backorder totals for one SKU.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_sku_backorder_summary",
+      "policyDomain": "backorders",
+      "permission": "read"
+    },
+    {
       "name": "get_stock",
       "description": "Get current stock level for a SKU. Shows on-hand, allocated, and available quantities.",
       "serverName": "stateset-commerce",
@@ -6016,6 +6097,15 @@
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_backorders",
+      "policyDomain": "backorders",
+      "permission": "read"
+    },
+    {
+      "name": "list_backorders_for_customer",
+      "description": "Every backorder raised for one customer.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__list_backorders_for_customer",
       "policyDomain": "backorders",
       "permission": "read"
     },
@@ -7478,6 +7568,15 @@
       "permission": "write"
     },
     {
+      "name": "release_backorder_allocation",
+      "description": "Release a reserved allocation, returning the stock to available.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__release_backorder_allocation",
+      "policyDomain": "backorders",
+      "permission": "write"
+    },
+    {
       "name": "release_cart_inventory",
       "description": "Release reserved inventory for all cart items.",
       "serverName": "stateset-commerce",
@@ -8213,6 +8312,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__update_average_item_cost",
       "policyDomain": "cost_accounting",
+      "permission": "write"
+    },
+    {
+      "name": "update_backorder",
+      "description": "Update a backorder's priority, dates, source location or notes.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_backorder",
+      "policyDomain": "backorders",
       "permission": "write"
     },
     {

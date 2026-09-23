@@ -3,7 +3,7 @@
  */
 
 import { loadSyncConfig, SyncConfig, isSyncConfigured } from '../sync/config.js';
-import { createOutbox } from '../sync/outbox.js';
+import { createOutbox, isQuarantineReasonDowngrade } from '../sync/outbox.js';
 import { createSyncEngine } from '../sync/engine.js';
 import { createSequencerClient } from '../sync/client.js';
 import { getPayloadWrapScheme } from '../sync/pqc.js';
@@ -217,7 +217,11 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       await engine.shutdown();
       return jsonOutput
         ? { ...result, events }
-        : { result, events, formatted: `Pulled ${result.pulled} events` };
+        : {
+            result,
+            events,
+            formatted: `Pulled ${result.pulled} events: ${result.stored} stored, ${result.quarantined} quarantined`,
+          };
     }
 
     case 'outbox': {
@@ -718,6 +722,153 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
           '  key-rotate <agentId> <keyType> [securityProfile]     Rotate agent key\n' +
           '  key-export <agentId> [keyType] [keyId] [securityProfile]  Export public key',
       );
+  }
+}
+
+/**
+ * Inspect the receive path: what is quarantined, what keys are pinned, and
+ * (when `promote` is true) which quarantined events now verify.
+ *
+ * The common benign case is an agent that pushed events before its signing
+ * key reached the directory: they quarantine as `key_unresolved`, and once
+ * the key is registered they should verify and become readable without a
+ * full re-pull. Promotion here follows the exact resolve -> verify -> store
+ * -> delete sequence `SyncEngine#_persistVerified` uses in `engine.js` (the
+ * pull-path promotion), so the two never diverge on what counts as
+ * "verified" - only `_persistVerified`'s batch/per-record retry fallback is
+ * not needed here, since doctor already operates one quarantined event at a
+ * time and a failed store or delete for one event must not affect another.
+ *
+ * This function is read-only unless `promote` is true: without it, it only
+ * reports, and calls no outbox write methods.
+ *
+ * The sweep pages rather than taking the default 1,000-row page, and the
+ * counts come from SQL rather than from the length of that page: a report that
+ * says `key_unresolved: 1000` when 50,000 are quarantined, and a `--promote`
+ * that silently stops after the first 1,000, are exactly the fabricated
+ * numbers this work set out to delete.
+ *
+ * @param {Object} params
+ * @param {import('../sync/outbox.js').Outbox} params.outbox
+ * @param {Object} params.client
+ * @param {Object} params.keyDirectory
+ * @param {boolean} [params.promote] - re-verify and promote what now passes
+ * @param {number} [params.pageSize=500] - rows per promotion page
+ * @returns {Promise<{quarantined: Array<{reason: string, count: number}>, total: number, pins: Array<Object>, promoted: number, rediagnosed: number}>}
+ */
+export async function syncDoctor({
+  outbox,
+  client,
+  keyDirectory,
+  promote = false,
+  pageSize = 500,
+}) {
+  let promoted = 0;
+  let rediagnosed = 0;
+
+  if (promote) {
+    // Promotion deletes the rows it promotes, so the remaining rows shift down
+    // by exactly the number left behind. Skipping that many is therefore a
+    // correct cursor, and the loop terminates because every row examined is
+    // either promoted (deleted) or skipped (counted).
+    let skipped = 0;
+    for (;;) {
+      const events = outbox.getQuarantinedEvents(pageSize, skipped);
+      if (events.length === 0) break;
+
+      for (const event of events) {
+        // A throw out of key resolution is a failure to resolve, not a reason
+        // to promote - mirrors _persistVerified's fail-closed handling.
+        let resolution;
+        try {
+          resolution = await keyDirectory.resolve(
+            event.sourceAgent,
+            event.agentKeyId,
+            event.createdAt,
+          );
+        } catch (error) {
+          resolution = { error: 'key_unresolved', detail: error?.message };
+        }
+
+        // What we learn replaces the stored diagnosis, the way `pull()`
+        // re-quarantines - but only ever upwards. Leaving the old reason meant
+        // a provably forged event still read as `key_unresolved` - the
+        // benign-outage diagnosis - in the very report built to surface
+        // forgeries; overwriting it with `key_unresolved` erases the forgery
+        // instead. See `rediagnose`.
+        if (resolution.error) {
+          rediagnosed += rediagnose(outbox, event, resolution.error);
+          skipped += 1;
+          continue;
+        }
+
+        let valid = false;
+        try {
+          valid = client.verifyEventSignature(
+            event,
+            resolution.publicKeyBundle ?? resolution.publicKey,
+          );
+        } catch {
+          valid = false;
+        }
+        if (!valid) {
+          rediagnosed += rediagnose(outbox, event, 'signature_invalid');
+          skipped += 1;
+          continue;
+        }
+
+        try {
+          outbox.storePulledEvents([event]);
+          outbox.deleteQuarantinedEvent(event.eventId);
+          promoted += 1;
+        } catch {
+          // Leave this event quarantined; other events still get a chance.
+          skipped += 1;
+        }
+      }
+    }
+  }
+
+  const quarantined = outbox.getQuarantinedCountsByReason();
+
+  return {
+    quarantined,
+    total: quarantined.reduce((sum, entry) => sum + entry.count, 0),
+    pins: outbox.getPeerKeyPins(),
+    promoted,
+    rediagnosed,
+  };
+}
+
+/**
+ * Record a new diagnosis for a still-quarantined event - but never a weaker one.
+ *
+ * While the sequencer is unreachable, `keyDirectory.resolve()` returns
+ * `key_unresolved` for EVERY event. Writing that back unconditionally walked
+ * every stricter diagnosis - `signature_invalid`, `directory_untrusted`,
+ * `peer_key_conflict`, `key_revoked` - down to the benign-outage reason, and
+ * silenced doctor's red hint block with it. Since `doctor` is meant to run
+ * during exactly that outage, and the documentation tells operators to run
+ * `--promote` to clear a backlog, the two composed into forgery evidence being
+ * erased by the recommended recovery procedure.
+ *
+ * The rule itself lives in {@link isQuarantineReasonDowngrade} because
+ * `SyncEngine._persistQuarantined` needs the same one on the pull path; stating
+ * it twice is how the two would drift.
+ *
+ * @param {import('../sync/outbox.js').Outbox} outbox
+ * @param {{eventId: string, reason: string}} event
+ * @param {string} reason
+ * @returns {number} 1 if the stored reason changed, else 0
+ */
+function rediagnose(outbox, event, reason) {
+  if (event.reason === reason) return 0;
+  if (isQuarantineReasonDowngrade(event.reason, reason)) return 0;
+  try {
+    outbox.updateQuarantineReason(event.eventId, reason);
+    return 1;
+  } catch {
+    return 0;
   }
 }
 
