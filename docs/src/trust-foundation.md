@@ -116,7 +116,7 @@ The `v1.0.0` compatibility contract is frozen and remains active:
 | Finality model | documented | `docs/PQC_INITIAL_SPEC.md` and trilogy docs distinguish soft vs hard finality | `pq hard finality` definition and deployment plan |
 | Security disclosure process | implemented in this repo | `SECURITY.md` defines reporting channel and response targets | public advisory index, CVE process, bug bounty |
 | Independent security audits | open gap | no public third-party audit reports are linked from this repo | published audit reports and remediation tracking |
-| Formal verification | open gap | no Lean, Coq, or machine-checked proof artifacts were located in this workspace | AIR proofs, ordering proofs, PQ composition proofs |
+| Formal verification | scoped, machine-checked results | `formal/tla/` model-checks refund reservation within explicit bounds and checks a deliberately broken model; `formal/lean/` proves tax allocation properties for all seven rounding modes and idealized Merkle path leaf binding, with Rust conformance tests | proof of the Rust implementations themselves, SHA-256 collision resistance, authenticated remote roots, AIR proofs, ordering proofs, PQ composition proofs |
 | Versioning and deprecation policy | implemented policy | `docs/src/versioning.md` and `RELEASING.md` define the `v1.0` contract, deprecation window, and backport rules | GitHub branch protection and release permissions live outside this repo |
 | Observability primitives | implemented in this repo | `crates/stateset-observability`, `deploy/grafana`, `deploy/prometheus` | published SLOs, runbooks, correlated production dashboards, chaos results |
 | Bench harness and perf gates | implemented in this repo | `crates/stateset-benches`, `perf-gates.json` | published benchmark report with hardware, workload, and repeatable methodology |
@@ -157,12 +157,15 @@ These are defensible claims today:
 - result-bound, independently co-signable economic receipts and an executable
   two-agent reference flow using a simulated rail;
 - a frozen `v1.0` OSS compatibility contract with documented deprecation and backport rules;
-- a defined vulnerability-reporting process.
+- a defined vulnerability-reporting process;
+- bounded TLA+ model-checking of refund reservation and Lean proofs of the
+  allocation model and idealized Merkle path binding, with assumptions and
+  code-conformance limits documented in `formal/README.md`;
 
 These are not yet defensible as shipped, globally trustworthy claims:
 
 - PQ hard finality
-- formal verification
+- end-to-end formal verification of the commerce engine
 - public third-party audit coverage
 - SOC 2 readiness or hosted control assurance
 - exact, stable MCP tool counts across all surfaces
@@ -179,7 +182,8 @@ These are not yet defensible as shipped, globally trustworthy claims:
 ## Non-Negotiable Selling Rules
 
 - Do not claim `pq hard finality`.
-- Do not claim formal verification.
+- Name the exact checked models and theorems when claiming formal results;
+  do not claim that the whole engine or its Rust code has been proved.
 - Do not claim public audit coverage until reports are linked.
 - Do not claim SOC 2 posture unless a hosted control environment and evidence package exist.
 - Do not claim exact MCP tool counts unless they come from a generated inventory.
