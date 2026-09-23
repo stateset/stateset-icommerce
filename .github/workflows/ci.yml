@@ -1354,6 +1354,31 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  tla:
+    name: TLA+ Model Checking
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+
+      - name: Model-check the specs and hold them to the code
+        # formal/tla/check.sh proves, for each spec, that the implementation's
+        # configuration satisfies every invariant, that the deliberately
+        # broken one still VIOLATES one (a model that cannot fail proves
+        # nothing), and that the spec's state machine equals the golden file
+        # the Rust conformance test uses. It pins tla2tools.jar by SHA-256.
+        run: bash formal/tla/check.sh
+
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
@@ -1396,6 +1421,7 @@ jobs:
       - benchmarks
       - codeql
       - rust-docs
+      - tla
     steps:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe

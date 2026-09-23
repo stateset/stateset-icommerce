@@ -1,0 +1,4 @@
+# TLC output: model-checking state and counterexample trace specs.
+states/
+*_TTrace_*
+*.log

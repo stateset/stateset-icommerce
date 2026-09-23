@@ -814,6 +814,85 @@ fn generate_number(prefix: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Every status, via an exhaustive match: adding a variant fails to
+    /// compile here until the TLA+ spec and its golden file are updated too.
+    fn all_payment_statuses() -> Vec<PaymentTransactionStatus> {
+        use PaymentTransactionStatus as S;
+        let all = vec![
+            S::Pending,
+            S::Processing,
+            S::RequiresAction,
+            S::Completed,
+            S::Failed,
+            S::Cancelled,
+            S::Refunded,
+            S::PartiallyRefunded,
+            S::Disputed,
+        ];
+        for status in &all {
+            match status {
+                S::Pending
+                | S::Processing
+                | S::RequiresAction
+                | S::Completed
+                | S::Failed
+                | S::Cancelled
+                | S::Refunded
+                | S::PartiallyRefunded
+                | S::Disputed => {}
+            }
+        }
+        all
+    }
+
+    /// The state machine is formally specified in
+    /// `formal/tla/payments/PaymentRefunds.tla`, and TLC checks every
+    /// interleaving of the refund protocol against it. That proof is about
+    /// the SPEC; this test is what makes it about the CODE. It holds
+    /// `can_transition_to` to `can_transition.golden`, and
+    /// `formal/tla/check.sh` holds the spec's `CanTransition` to the same
+    /// file, so neither side can drift from the other without a failure.
+    #[test]
+    fn can_transition_to_matches_the_tla_spec() {
+        let golden_path =
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../formal/tla/payments/can_transition.golden");
+        let golden = std::fs::read_to_string(golden_path).expect("read can_transition.golden");
+        let allowed: std::collections::HashSet<(String, String)> = golden
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                let (from, to) = line.split_once(" -> ").expect("`from -> to`");
+                (from.to_string(), to.to_string())
+            })
+            .collect();
+        assert!(!allowed.is_empty(), "the golden file must not be empty");
+
+        let statuses = all_payment_statuses();
+        let mut disagreements = Vec::new();
+        for from in &statuses {
+            for to in &statuses {
+                let in_spec = from == to || allowed.contains(&(from.to_string(), to.to_string()));
+                if from.can_transition_to(*to) != in_spec {
+                    disagreements.push(format!(
+                        "{from} -> {to}: code says {}, spec says {in_spec}",
+                        from.can_transition_to(*to)
+                    ));
+                }
+            }
+        }
+        assert!(disagreements.is_empty(), "code and spec disagree:\n{}", disagreements.join("\n"));
+
+        // Every golden line must name real statuses, or it would be dead weight.
+        let names: std::collections::HashSet<String> =
+            statuses.iter().map(ToString::to_string).collect();
+        for (from, to) in &allowed {
+            assert!(
+                names.contains(from) && names.contains(to),
+                "unknown status in golden: {from} -> {to}"
+            );
+        }
+    }
+
     #[test]
     fn payment_number_has_prefix_and_entropy_suffix() {
         let value = generate_payment_number();
