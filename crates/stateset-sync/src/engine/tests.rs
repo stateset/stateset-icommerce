@@ -2093,6 +2093,41 @@ async fn pull_conflict_resolution() {
     // RemoteWins removes conflicting local outbox events and keeps pulled event.
     assert_eq!(engine.buffered_count(), 1);
     assert_eq!(engine.pending_count(), 0);
+    assert_eq!(engine.state().remote_cursor, 5);
+}
+
+#[tokio::test]
+async fn pull_does_not_advance_cursor_when_conflict_resolution_cannot_persist() {
+    #[derive(Debug)]
+    struct ConflictTransport;
+
+    #[async_trait::async_trait]
+    impl Transport for ConflictTransport {
+        async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
+            Ok(PushResult::accepted_only(events.len(), 5))
+        }
+        async fn pull_events(&self, _since: u64, _limit: usize) -> Result<PullResult, SyncError> {
+            let remote =
+                SyncEvent::new("order.updated", "order", "ORD-1", json!({"status": "remote"}))
+                    .with_remote_sequence(5);
+            Ok(PullResult { events: vec![remote], remote_head: 5, has_more: false })
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("outbox.json");
+    let config = make_config().with_outbox_path(path.to_string_lossy().into_owned());
+    let mut engine = SyncEngine::with_strategy(config, ConflictStrategy::RemoteWins).unwrap();
+    engine
+        .record(SyncEvent::new("order.updated", "order", "ORD-1", json!({"status": "local"})))
+        .unwrap();
+
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert!(matches!(engine.pull(&ConflictTransport).await, Err(SyncError::Storage(_))));
+    assert_eq!(engine.pending_count(), 1);
+    assert_eq!(engine.buffered_count(), 0);
+    assert_eq!(engine.state().remote_cursor, 0);
 }
 
 #[tokio::test]

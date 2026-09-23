@@ -996,12 +996,18 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
                     CommerceError::ValidationError("Cannot complete a cancelled pick task".into()),
                 )));
             }
-            // Over-pick guard: cannot pick more than was requested.
-            if input.quantity_picked > requested {
+            // Picked and short units are disjoint claims against the request.
+            // Subtract after checking the picked bound to avoid an overflowing
+            // Decimal addition on malformed input.
+            if input.quantity_picked < Decimal::ZERO
+                || short_qty < Decimal::ZERO
+                || input.quantity_picked > requested
+                || short_qty > requested - input.quantity_picked
+            {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                     CommerceError::ValidationError(format!(
-                        "Cannot pick {} of pick task {}: only {} were requested",
-                        input.quantity_picked, input.pick_id, requested
+                        "Picked and short quantities must be nonnegative and total at most {} for pick task {}",
+                        requested, input.pick_id
                     )),
                 )));
             }
@@ -1049,6 +1055,27 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         let now = Utc::now().to_rfc3339();
 
         with_immediate_transaction(&self.pool, |tx| {
+            let (requested_raw, picked_raw): (String, String) = tx
+                .query_row(
+                    "SELECT quantity_requested, quantity_picked FROM pick_tasks WHERE id = ?1",
+                    params![id_str],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => Self::smuggle(CommerceError::NotFound),
+                    other => other,
+                })?;
+            let requested = parse_decimal_row(&requested_raw, "pick_task", "quantity_requested")?;
+            let picked = parse_decimal_row(&picked_raw, "pick_task", "quantity_picked")?;
+            if short_qty < Decimal::ZERO
+                || picked < Decimal::ZERO
+                || picked > requested
+                || short_qty > requested - picked
+            {
+                return Err(Self::smuggle(CommerceError::ValidationError(
+                    "Short quantity must be nonnegative and fit the unpicked request".into(),
+                )));
+            }
             let changed = tx.execute(
                 "UPDATE pick_tasks SET status = ?1, quantity_short = ?2, notes = ?3,
                  completed_at = ?4
@@ -2216,6 +2243,53 @@ mod tests {
             .expect("complete");
         assert_eq!(completed.id, pick.id);
         assert_eq!(completed.quantity_picked, dec!(5));
+    }
+
+    #[test]
+    fn pick_quantity_claims_cannot_exceed_or_reverse_the_request() {
+        let (repo, wh_id, loc_id) = fresh_setup();
+        let pick = make_pick(&repo, wh_id, loc_id, None, OrderId::new(), "SKU-QUANTITY");
+
+        for (picked, short) in
+            [(dec!(-1), dec!(0)), (dec!(0), dec!(-1)), (dec!(6), dec!(0)), (dec!(3), dec!(3))]
+        {
+            assert!(
+                repo.complete_pick(CompletePick {
+                    pick_id: pick.id,
+                    quantity_picked: picked,
+                    quantity_short: Some(short),
+                    short_reason: None,
+                    lot_id: None,
+                    serial_number: None,
+                    completed_by: None,
+                })
+                .is_err(),
+                "picked={picked}, short={short} must be rejected"
+            );
+            assert_eq!(repo.get_pick(pick.id).unwrap().unwrap().status, pick.status);
+        }
+
+        for short in [dec!(-1), dec!(6)] {
+            assert!(repo.report_short(pick.id, short, "invalid").is_err());
+            assert_eq!(repo.get_pick(pick.id).unwrap().unwrap().status, pick.status);
+        }
+        let finalized = repo.report_short(pick.id, dec!(5), "unavailable").unwrap();
+        assert_eq!(finalized.quantity_short, dec!(5));
+
+        seed_location_stock(&repo, wh_id, loc_id, "SKU-VALID", "5");
+        let valid = make_pick(&repo, wh_id, loc_id, None, OrderId::new(), "SKU-VALID");
+        let finalized = repo
+            .complete_pick(CompletePick {
+                pick_id: valid.id,
+                quantity_picked: dec!(2),
+                quantity_short: Some(dec!(3)),
+                short_reason: Some("only two available".into()),
+                lot_id: None,
+                serial_number: None,
+                completed_by: None,
+            })
+            .expect("exact boundary is accepted");
+        assert_eq!(finalized.quantity_picked + finalized.quantity_short, dec!(5));
     }
 
     #[test]

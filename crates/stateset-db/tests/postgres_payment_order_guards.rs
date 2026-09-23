@@ -219,6 +219,34 @@ async fn postgres_disputed_payment_keeps_its_slice_of_the_order_total() {
     assert_eq!(open_ids(&db, order_id).await, vec![first_id]);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn postgres_concurrent_captures_cannot_exceed_one_order_total() {
+    let db = Arc::new(require_db!());
+    let order_id = order_totalling(&db, dec!(3.00), CurrencyCode::USD).await;
+    let barrier = Arc::new(Barrier::new(2));
+    let handles: Vec<_> = (0..2)
+        .map(|_| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            tokio::spawn(async move {
+                barrier.wait().await;
+                db.payments().create_async(payment_input(Some(order_id), dec!(2.00))).await
+            })
+        })
+        .collect();
+    let mut results = Vec::new();
+    for handle in handles {
+        results.push(handle.await.expect("task"));
+    }
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+    assert!(
+        results.iter().any(|r| matches!(r, Err(CommerceError::CaptureExceedsOrderTotal { .. })))
+    );
+    let payments = payments_for(&db, order_id).await;
+    assert_eq!(payments.len(), 1);
+    assert_eq!(payments[0].amount, dec!(2.00));
+}
+
 // ============================================================================
 // D2 — captures against a cancelled order are refused
 // ============================================================================
