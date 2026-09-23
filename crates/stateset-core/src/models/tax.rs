@@ -2602,4 +2602,52 @@ mod tests {
             }
         }
     }
+
+    /// `formal/lean/Allocation.lean` proves, for every rounding strategy,
+    /// that allocation sums exactly to the rounded total and moves no part
+    /// more than one minor unit from its own rounding. Those proofs are about
+    /// a model; this holds `allocate_rounded` to the model's output on the
+    /// golden vectors `formal/lean/Golden.lean` computes, so the two cannot
+    /// drift apart without this test failing.
+    #[test]
+    fn allocate_rounded_matches_the_lean_model() {
+        let golden_path =
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../formal/lean/allocate_rounded.golden.json");
+        let golden =
+            std::fs::read_to_string(golden_path).expect("read allocate_rounded.golden.json");
+        let cases: Vec<serde_json::Value> = serde_json::from_str(&golden).expect("golden is JSON");
+        assert!(cases.len() >= 7 * 10, "the golden file lost its cases");
+
+        let decimal = |v: &serde_json::Value| Decimal::from_str(v.as_str().unwrap()).unwrap();
+        let decimals =
+            |v: &serde_json::Value| v.as_array().unwrap().iter().map(decimal).collect::<Vec<_>>();
+        let mut nudged = 0;
+        for case in &cases {
+            let strategy = match case["strategy"].as_str().unwrap() {
+                "MidpointNearestEven" => RoundingStrategy::MidpointNearestEven,
+                "MidpointAwayFromZero" => RoundingStrategy::MidpointAwayFromZero,
+                "MidpointTowardZero" => RoundingStrategy::MidpointTowardZero,
+                "ToZero" => RoundingStrategy::ToZero,
+                "AwayFromZero" => RoundingStrategy::AwayFromZero,
+                "ToNegativeInfinity" => RoundingStrategy::ToNegativeInfinity,
+                "ToPositiveInfinity" => RoundingStrategy::ToPositiveInfinity,
+                other => panic!("unknown strategy in golden: {other}"),
+            };
+            let parts = decimals(&case["parts"]);
+            let total = decimal(&case["total"]);
+            assert_eq!(total, parts.iter().sum::<Decimal>(), "golden totals are their parts' sum");
+
+            let (rounded_total, rounded) = allocate_rounded(total, &parts, 2, strategy);
+            assert_eq!(rounded_total, decimal(&case["expected_total"]), "total, case {case}");
+            assert_eq!(rounded, decimals(&case["expected_parts"]), "parts, case {case}");
+
+            let naive: Vec<Decimal> =
+                parts.iter().map(|p| p.round_dp_with_strategy(2, strategy)).collect();
+            if naive != rounded {
+                nudged += 1;
+            }
+        }
+        // The vectors must exercise the residue loop, not just plain rounding.
+        assert!(nudged > cases.len() / 4, "only {nudged} cases reach the residue loop");
+    }
 }

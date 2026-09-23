@@ -1,7 +1,9 @@
 # Formal specifications
 
-TLA+ specifications of the engine's concurrent protocols, model-checked with
-TLC in CI (`TLA+ Model Checking`, run by `formal/tla/check.sh`).
+- **TLA+** specifications of the engine's concurrent protocols, model-checked
+  with TLC in CI (`TLA+ Model Checking`, run by `formal/tla/check.sh`).
+- **Lean 4** proofs about its money arithmetic, checked in CI (`Lean Proofs`,
+  run by `formal/lean/check.sh`).
 
 ## Why a model has to be able to fail
 
@@ -66,6 +68,46 @@ model makes plain: a partial refund still in flight when its payment moves
 cancels it. That is safe (no money moves), but it is a record that needs
 cleaning up.
 
+## `lean/Allocation.lean` — allocating rounded money
+
+`allocate_rounded` (`crates/stateset-core/src/models/tax.rs`) is how both tax
+engines round per line and per rate while keeping the lines summing to the
+total: round everything, then hand the residue out one minor unit at a time
+to the parts with the largest remainders. Its doc comment promised the sum is
+exact. The file proves it, for **all seven** rounding strategies the tax
+settings can select, with no bound on the number of parts or their size:
+
+| Theorem | Says |
+|---|---|
+| `round_within` | every strategy lands strictly within one unit of the exact value — the only fact about rounding the rest needs |
+| `residue_le_length` | when the total is the sum of the parts, the residue is at most one unit per part — so the Rust loop's `order.len() * 1000` cap is never reached |
+| `allocate_sum` | **the allocated parts sum exactly to the rounded total** |
+| `allocate_near` | no part moves more than one unit from its own rounding |
+
+Amounts are integers in fine units (4 places) rounded by a scale `f > 0` (to 2
+places, `f = 100`); that is exact for the finite decimals the engine stores.
+The model picks "largest remainder first, lowest index on ties" as repeatedly
+marking the first unmarked part holding the best remainder, which is what
+Rust's stable sort then in-order walk picks.
+
+**Held to the code** the same way as the TLA+ specs: `Golden.lean` runs the
+proved model on 490 cases (7 strategies × 70 inputs: the documented three
+`$1.11` lines at 8.25%, exact midpoints of both signs, remainder ties,
+refunds, mixed signs, and 60 seeded random ones), `check.sh` fails if that
+output differs from the committed `allocate_rounded.golden.json`, and the
+Rust test `allocate_rounded_matches_the_lean_model` holds `allocate_rounded`
+to the file. More than a quarter of the cases reach the residue loop, and
+the test asserts that they do. Reversing the sort for a positive residue
+fails it. `check.sh` also fails if any theorem depends on an axiom beyond
+`propext`, `Classical.choice` and `Quot.sound`, so a `sorry` cannot slip in.
+
+**What it does not cover.** The precondition matters: `allocate_rounded` is
+`pub` and gives no guarantee when `total` is not the sum of `parts`, where
+the residue can exceed one unit per part and the loop cap can bind. The only
+production caller (`apply_rates`) passes the sum. And the golden vectors link
+the model to the code on the cases they contain — a strong check, not a
+proof about the Rust.
+
 ## Running it
 
 ```
@@ -79,3 +121,8 @@ as a reproducible CI dependency.
 
 Requires Java 11+. The Rust half is
 `cargo test -p stateset-core --lib can_transition_to_matches_the_tla_spec`.
+
+```
+formal/lean/check.sh                     # needs Lean 4.15.0 (elan picks it from lean-toolchain)
+cargo test -p stateset-core --lib allocate_rounded_matches_the_lean_model
+```
