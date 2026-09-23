@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use stateset_crypto::merkle::compute_node_hash;
+use stateset_crypto::merkle::{compute_node_hash, compute_pad_leaf};
 use stateset_crypto::u64_be;
 use thiserror::Error;
 
@@ -280,6 +280,20 @@ pub fn verify_command_inclusion_proof(
         .map(|hash| decode_hex_array32(&proof.command_id, "sibling_hash", hash))
         .collect::<Result<_, _>>()?;
 
+    // A subtree entirely beyond total_leaves must be the canonical padding
+    // subtree used by compute_merkle_root, rather than an arbitrary hash.
+    let mut pad_subtree = compute_pad_leaf();
+    for (level, sibling_hash) in sibling_hashes.iter().enumerate() {
+        let sibling_start = ((u64::from(proof.leaf_index) >> level) ^ 1) << level;
+        if sibling_start >= u64::from(proof.total_leaves) && *sibling_hash != pad_subtree {
+            return Err(AttestationError::InvalidProofShape {
+                command_id: proof.command_id.clone(),
+                reason: format!("noncanonical padding sibling at level {level}"),
+            });
+        }
+        pad_subtree = compute_node_hash(&pad_subtree, &pad_subtree);
+    }
+
     if !verify_merkle_path(leaf_hash, proof.leaf_index as usize, &sibling_hashes, state_root_hash) {
         return Err(AttestationError::ProofVerificationFailed(proof.command_id.clone()));
     }
@@ -456,5 +470,31 @@ mod tests {
         let attestation = verify_command_inclusion_proof(&proof, &receipts, &state).unwrap();
         assert_eq!(attestation.leaf_index, 2);
         assert_eq!(attestation.total_leaves, 3);
+    }
+
+    #[test]
+    fn inclusion_proof_rejects_noncanonical_padding() {
+        let receipts = vec![confirmed_receipt("cmd-1", 7)];
+        let leaf_hash = compute_command_settlement_leaf("cmd-1", &receipts).unwrap();
+        let first = [1_u8; 32];
+        let second = [2_u8; 32];
+        let fake_fourth = [3_u8; 32];
+        let root = compute_merkle_root(&[first, second, leaf_hash, fake_fourth]);
+        let proof = CommandInclusionProof::new("cmd-1", hex::encode(root), 2, 3)
+            .with_sibling_hashes(vec![
+                hex::encode(fake_fourth),
+                hex::encode(compute_node_hash(&first, &second)),
+            ]);
+        let state = SyncState {
+            remote_head: 9,
+            remote_cursor: 9,
+            remote_state_root: Some(hex::encode(root)),
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            verify_command_inclusion_proof(&proof, &receipts, &state),
+            Err(AttestationError::InvalidProofShape { .. })
+        ));
     }
 }

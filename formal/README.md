@@ -113,10 +113,11 @@ proof about the Rust.
 `stateset-sync` verifies a command settlement leaf against a retained remote
 root by combining one sibling at each Merkle level. The verifier now requires
 exactly `ceil(log₂ total_leaves)` siblings (zero for one leaf), in addition to
-requiring `leaf_index < total_leaves`. The former check closes a malformed
+requiring `leaf_index < total_leaves`. A sibling subtree beyond the declared
+leaf count must also equal the canonical padding subtree. The depth check closes a malformed
 proof that previously accepted the leaf hash itself as the root while claiming
 a larger tree. Rust tests cover that case, an extra level, and a valid padded
-three-leaf path.
+three-leaf path, plus a four-leaf root falsely described as a three-leaf tree.
 
 `leaf_binding` proves that two paths of the same length at the same index
 cannot produce the same root from different leaves when node hashing is
