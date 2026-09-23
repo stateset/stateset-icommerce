@@ -1477,6 +1477,71 @@ mod tests {
     }
 
     #[test]
+    fn revaluation_journal_matches_lean_signed_model() {
+        // LedgerRevaluation.split and journal prove that any signed input
+        // produces one-sided lines and a balanced FX offset. Compare the
+        // actual builder with that model across signs, zeros, and both
+        // normal-balance directions.
+        let asset = foreign_account(AccountType::Asset, Decimal::ZERO);
+        let liability = foreign_account(AccountType::Liability, Decimal::ZERO);
+        for a in -2i64..=2 {
+            for b in -2i64..=2 {
+                for c in -2i64..=2 {
+                    for mask in 0u8..8 {
+                        let fx_account = Uuid::new_v4();
+                        let mut inputs = Vec::new();
+                        let mut expected = Vec::new();
+                        let mut net = 0i64;
+                        for (index, raw) in [a, b, c].into_iter().enumerate() {
+                            let credit_normal = mask & (1 << index) != 0;
+                            let account = if credit_normal { &liability } else { &asset };
+                            let mut line =
+                                compute_revaluation_line(account, Decimal::ZERO, dec!(1), 2);
+                            line.account_id = Uuid::new_v4();
+                            line.adjustment = Decimal::new(raw, 2);
+                            inputs.push(line);
+
+                            let signed = if credit_normal { -raw } else { raw };
+                            net += signed;
+                            if signed > 0 {
+                                expected.push((Decimal::new(signed, 2), Decimal::ZERO));
+                            } else if signed < 0 {
+                                expected.push((Decimal::ZERO, Decimal::new(-signed, 2)));
+                            }
+                        }
+                        if net > 0 {
+                            expected.push((Decimal::ZERO, Decimal::new(net, 2)));
+                        } else if net < 0 {
+                            expected.push((Decimal::new(-net, 2), Decimal::ZERO));
+                        }
+
+                        let actual = build_revaluation_journal_lines(&inputs, fx_account);
+                        let actual_amounts: Vec<_> = actual
+                            .iter()
+                            .map(|line| (line.debit_amount, line.credit_amount))
+                            .collect();
+                        assert_eq!(
+                            actual_amounts, expected,
+                            "adjustments=({a},{b},{c}), normal-side mask={mask}"
+                        );
+                        assert!(actual.iter().all(|line| {
+                            (line.debit_amount > Decimal::ZERO && line.credit_amount.is_zero())
+                                || (line.debit_amount.is_zero()
+                                    && line.credit_amount > Decimal::ZERO)
+                        }));
+                        let debits: Decimal = actual.iter().map(|line| line.debit_amount).sum();
+                        let credits: Decimal = actual.iter().map(|line| line.credit_amount).sum();
+                        assert_eq!(debits, credits);
+                        if net != 0 {
+                            assert_eq!(actual.last().expect("FX offset").account_id, fx_account);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn revaluation_journal_lines_offset_net_gain_to_fx_account() {
         let asset = foreign_account(AccountType::Asset, dec!(1000));
         let fx_account = Uuid::new_v4();
