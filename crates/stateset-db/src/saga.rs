@@ -420,7 +420,7 @@ impl SagaCoordinator {
             r#"
             SELECT id, payload, compensation_step_id
             FROM saga_steps
-            WHERE saga_id = $1 AND status = $2
+            WHERE saga_id = $1 AND status = $2 AND rollback_at IS NULL
             ORDER BY step_order DESC
             "#,
         )
@@ -432,6 +432,10 @@ impl SagaCoordinator {
 
         for step in steps {
             if let Some(comp_step_id) = step.compensation_step_id {
+                // The handler must be idempotent under comp_step_id: a crash
+                // after its side effect but before rollback_at is persisted
+                // can still cause a retry. The marker prevents re-invocation
+                // after a successfully recorded compensation.
                 handler(comp_step_id, step.payload)
                     .await
                     .map_err(|e| SagaError::RollbackFailed(e.to_string()))?;
