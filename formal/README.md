@@ -639,6 +639,61 @@ Lean proves credit/debit conservation for accepted exact-unit operations.
 The model assumes one payer, asset and network; integer range checks and
 external x402 settlement are separate concerns.
 
+## HTTP idempotency — tla/http/HttpIdempotency.tla
+
+Two writers compete for a tenant/key response; the first successful insert
+owns the response until expiry, after which a new generation can begin. A
+split check and write overwrites the first response. The SQLite
+`concurrent_puts_preserve_one_first_response` regression and existing expiry
+boundary tests exercise the repository. SQLite and Postgres bulk expiry now
+delete rows at the same inclusive cutoff as lazy lookup; exact-cutoff
+regressions verify key reuse. Lean proves the pure first-write and
+generation-reset choices. The model does not cover the HTTP handler's request
+fingerprint comparison or atomicity of the business mutation with response
+recording; the kernel receipt gate is modeled separately.
+
+## Loyalty points — tla/loyalty/LoyaltyPoints.tla
+
+Two two-point redemptions compete for a three-point account. A guarded
+balance and transaction insert permit at most one; stale reads overdraw. The
+SQLite `concurrent_redemptions_cannot_overdraw` regression exercises the race.
+Lean proves the accounting equations for arbitrary accepted earns and
+redemptions. Both backends now check `i64` overflow in lifetime-earned points
+before changing either counter or inserting a transaction;
+`lifetime_points_overflow_preserves_balance_and_ledger` and its Postgres twin
+exercise that finite-range boundary. Tier changes and expiry remain outside
+this bounded model.
+
+## Prepayment settlement — tla/finance/PrepaymentSettlement.tla
+
+Two applications compete against a three-unit prepayment while a refund may
+close the remaining balance. Atomic transitions preserve original = remaining
++ active applications + refunded and prevent a negative remainder; stale
+approval can overapply or apply after refund. The SQLite
+`competing_applications_cannot_exceed_prepayment` regression and existing
+reversal/refund tests exercise the repository. Lean proves application and
+refund conservation in exact units. The model omits bill settlement and
+currency conversion.
+
+## Quality hold release — tla/quality/QualityHoldRelease.tla
+
+Two operators compete to release one hold. A conditional update accepts one
+release and preserves its audit owner; splitting the active check from the
+write admits two. SQLite's `release_hold_only_releases_once` and
+`competing_hold_releases_preserve_first_audit_record` regressions exercise
+these properties. Lean proves the one-release bound. The model does not claim
+that every inventory allocation path consults quality holds.
+
+## EDI terminal status — tla/edi/EdiTerminalStatus.tla
+
+Two processors compete to finish one pending document. A conditional status
+write makes `processed` and `acknowledged` immutable, so one result wins;
+stale approval can overwrite it. SQLite and Postgres now guard terminal
+updates, tested by `terminal_status_cannot_be_replaced` and
+`postgres_competing_edi_terminal_updates_choose_one_result`. Lean proves the
+one-write bound. This model covers terminal immutability, not the complete
+direction-specific EDI workflow or external partner acknowledgement.
+
 Each model checks a small bounded state space and requires a counterexample
 from its broken configuration. The Lean proofs cover arbitrary natural-unit
 amounts under their explicit preconditions. Rust regressions test the named
@@ -677,12 +732,22 @@ cargo test -p stateset-db --lib payment_ledger_running_balance_matches_account
 cargo test -p stateset-db --lib competing_cycle_count_completions_apply_variance_once
 cargo test -p stateset-db --lib receipt_requires_shipment_and_shipping_cannot_resurrect_terminal_order
 cargo test -p stateset-db --lib competing_applications_cannot_exceed_vendor_credit
+cargo test -p stateset-db --lib concurrent_puts_preserve_one_first_response
+cargo test -p stateset-db --lib purge_expired_includes_exact_cutoff_and_frees_key
+cargo test -p stateset-db --lib concurrent_redemptions_cannot_overdraw
+cargo test -p stateset-db --lib lifetime_points_overflow_preserves_balance_and_ledger
+cargo test -p stateset-db --lib competing_applications_cannot_exceed_prepayment
+cargo test -p stateset-db --lib competing_hold_releases_preserve_first_audit_record
+cargo test -p stateset-db --lib terminal_status_cannot_be_replaced
 cargo test -p stateset-db --lib competing_put_away_completions_record_one_receipt
 cargo test -p stateset-db --test inventory_round5_sqlite sqlite_competing_backorder_allocations_cannot_exceed_remaining
 cargo test -p stateset-db --no-default-features --features postgres --test postgres_work_order_concurrency
 cargo test -p stateset-db --features postgres --test postgres_transfer_order_receipt_race postgres_receipt_requires_shipment_and_ship_preserves_terminal_status
 cargo test -p stateset-db --features postgres --test postgres_warranty_claim_guards postgres_competing_claims_consume_one_available_slot
 cargo test -p stateset-db --features postgres --test postgres_vendor_credit_race
+cargo test -p stateset-db --features postgres --test postgres_edi_terminal_race
+cargo test -p stateset-db --features postgres --test postgres_loyalty_overflow
+cargo test -p stateset-db --features postgres --test postgres_http_idempotency_expiry
 cargo test -p stateset-sync pull_does_not_advance_cursor_when_conflict_resolution_cannot_persist
 cargo test -p stateset-db --test sqlite_payment_order_guards concurrent_captures_cannot_exceed_one_order_total
 cargo test -p stateset-embedded --test ap_money_guards_test process_payment_run_concurrent_double_process_pays_each_bill_once

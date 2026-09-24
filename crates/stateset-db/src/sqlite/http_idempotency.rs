@@ -113,7 +113,7 @@ impl HttpIdempotencyRepository for SqliteHttpIdempotencyRepository {
         let conn = self.conn()?;
         let deleted = conn
             .execute(
-                "DELETE FROM http_idempotency_keys WHERE created_at < ?1",
+                "DELETE FROM http_idempotency_keys WHERE created_at <= ?1",
                 rusqlite::params![expired_before.timestamp_millis()],
             )
             .map_err(map_err)?;
@@ -126,6 +126,7 @@ mod tests {
     use super::*;
     use crate::{DatabaseConfig, SqliteDatabase};
     use chrono::Duration;
+    use std::sync::{Arc, Barrier};
 
     fn repo() -> SqliteHttpIdempotencyRepository {
         let db = SqliteDatabase::new(&DatabaseConfig::in_memory()).expect("in-memory db");
@@ -179,6 +180,30 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_puts_preserve_one_first_response() {
+        let repo = Arc::new(repo());
+        let barrier = Arc::new(Barrier::new(2));
+        let now = Utc::now();
+        let mut handles = Vec::new();
+        for body in [b"first".to_vec(), b"second".to_vec()] {
+            let repo = Arc::clone(&repo);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                let mut rec = record("race", now);
+                rec.response_body = body.clone();
+                barrier.wait();
+                (repo.put(&rec).expect("put"), body)
+            }));
+        }
+        let outcomes: Vec<_> = handles.into_iter().map(|h| h.join().expect("join")).collect();
+        let winners: Vec<_> = outcomes.iter().filter(|(inserted, _)| *inserted).collect();
+        assert_eq!(winners.len(), 1);
+        let stored =
+            repo.get("tenant-a", "race", now - Duration::hours(1)).expect("get").expect("record");
+        assert_eq!(stored.response_body, winners[0].1);
+    }
+
+    #[test]
     fn get_lazily_deletes_expired_rows() {
         let repo = repo();
         let created = Utc::now() - Duration::hours(25);
@@ -204,6 +229,15 @@ mod tests {
         let purged = repo.purge_expired(now - Duration::hours(24)).unwrap();
         assert_eq!(purged, 2);
         assert!(repo.get("tenant-a", "fresh", now - Duration::hours(24)).unwrap().is_some());
+    }
+
+    #[test]
+    fn purge_expired_includes_exact_cutoff_and_frees_key() {
+        let repo = repo();
+        let cutoff = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).expect("timestamp");
+        assert!(repo.put(&record("boundary-sweep", cutoff)).expect("put"));
+        assert_eq!(repo.purge_expired(cutoff).expect("purge"), 1);
+        assert!(repo.put(&record("boundary-sweep", Utc::now())).expect("reuse key"));
     }
     #[test]
     fn entry_created_exactly_at_cutoff_is_expired() {

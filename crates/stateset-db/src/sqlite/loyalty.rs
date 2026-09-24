@@ -270,10 +270,10 @@ impl LoyaltyProgramRepository for SqliteLoyaltyProgramRepository {
         with_immediate_transaction(&self.pool, |tx| {
             // Fetch the current balance inside the transaction (errors if the
             // account does not exist).
-            let current_balance: i64 = tx.query_row(
-                "SELECT points_balance FROM loyalty_accounts WHERE id = ?",
+            let (current_balance, lifetime_points): (i64, i64) = tx.query_row(
+                "SELECT points_balance, lifetime_points FROM loyalty_accounts WHERE id = ?",
                 [&account_id_str],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
 
             let new_balance = current_balance.checked_add(input.points).ok_or_else(|| {
@@ -287,19 +287,21 @@ impl LoyaltyProgramRepository for SqliteLoyaltyProgramRepository {
                 )));
             }
 
-            // Update the account balance
-            tx.execute(
-                "UPDATE loyalty_accounts SET points_balance = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![new_balance, &now_str, &account_id_str],
-            )?;
+            let new_lifetime = if input.points > 0 {
+                lifetime_points.checked_add(input.points).ok_or_else(|| {
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(
+                        CommerceError::ValidationError("Lifetime points overflow".to_string()),
+                    ))
+                })?
+            } else {
+                lifetime_points
+            };
 
-            // If earning points, also increment lifetime_points
-            if input.points > 0 {
-                tx.execute(
-                    "UPDATE loyalty_accounts SET lifetime_points = lifetime_points + ? WHERE id = ?",
-                    rusqlite::params![input.points, &account_id_str],
-                )?;
-            }
+            // Update both counters with values checked at the same snapshot.
+            tx.execute(
+                "UPDATE loyalty_accounts SET points_balance = ?, lifetime_points = ?, updated_at = ? WHERE id = ?",
+                rusqlite::params![new_balance, new_lifetime, &now_str, &account_id_str],
+            )?;
 
             // Insert the transaction record
             tx.execute(
@@ -556,6 +558,48 @@ mod tests {
         assert_eq!(fetched.points_balance, 50);
         // No transaction record for the rejected redemption.
         assert_eq!(repo.get_transactions(account.id, None).expect("txns").len(), 1);
+    }
+
+    #[test]
+    fn lifetime_points_overflow_preserves_balance_and_ledger() {
+        let repo = test_repo();
+        let program = repo
+            .create(CreateLoyaltyProgram {
+                name: "Lifetime Limit".into(),
+                description: None,
+                points_per_dollar: 1,
+                tiers: vec![],
+            })
+            .expect("program");
+        let account = repo
+            .enroll(EnrollCustomer { customer_id: CustomerId::new(), program_id: program.id })
+            .expect("enroll");
+        for (points, transaction_type) in
+            [(i64::MAX, LoyaltyTransactionType::Earn), (-i64::MAX, LoyaltyTransactionType::Redeem)]
+        {
+            repo.adjust_points(AdjustPoints {
+                account_id: account.id,
+                points,
+                transaction_type,
+                reference_id: None,
+                description: None,
+            })
+            .expect("seed lifetime points");
+        }
+        let err = repo
+            .adjust_points(AdjustPoints {
+                account_id: account.id,
+                points: 1,
+                transaction_type: LoyaltyTransactionType::Earn,
+                reference_id: None,
+                description: None,
+            })
+            .expect_err("lifetime overflow");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        let stored = repo.get_account(account.id).expect("get").expect("account");
+        assert_eq!(stored.points_balance, 0);
+        assert_eq!(stored.lifetime_points, i64::MAX as u64);
+        assert_eq!(repo.get_transactions(account.id, None).expect("transactions").len(), 2);
     }
 
     #[test]

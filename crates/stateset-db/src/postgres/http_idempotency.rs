@@ -99,7 +99,7 @@ impl HttpIdempotencyRepository for PgHttpIdempotencyRepository {
 
     fn purge_expired(&self, expired_before: DateTime<Utc>) -> Result<u64> {
         block_on(async {
-            let result = sqlx::query("DELETE FROM http_idempotency_keys WHERE created_at < $1")
+            let result = sqlx::query("DELETE FROM http_idempotency_keys WHERE created_at <= $1")
                 .bind(expired_before)
                 .execute(&self.pool)
                 .await
