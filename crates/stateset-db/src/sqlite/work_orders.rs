@@ -634,7 +634,21 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             let quantity_to_build =
                 parse_decimal_strict(&existing.1, "work_order", "quantity_to_build")
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            let new_quantity_completed = existing_completed + quantity_completed;
+            let new_quantity_completed =
+                existing_completed.checked_add(quantity_completed).ok_or_else(|| {
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(
+                        CommerceError::ValidationError(
+                            "Completed quantity exceeds decimal range".to_string(),
+                        ),
+                    ))
+                })?;
+            if new_quantity_completed > quantity_to_build {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(
+                        "Completed quantity would exceed quantity to build".to_string(),
+                    ),
+                )));
+            }
             let is_complete = new_quantity_completed >= quantity_to_build;
             let new_status = if is_complete { "completed" } else { "partially_completed" };
             let new_actual_end = if is_complete { Some(now.to_rfc3339()) } else { existing.2 };
@@ -1438,6 +1452,22 @@ mod tests {
         let partial = repo.complete(wo.id, dec!(7)).expect("partial");
         assert_eq!(partial.status, WorkOrderStatus::PartiallyCompleted);
         assert_eq!(partial.quantity_completed, dec!(7));
+    }
+
+    #[test]
+    fn completion_cannot_exceed_planned_quantity() {
+        let repo = fresh_repo();
+        let wo = make_wo(&repo, dec!(5));
+        repo.start(wo.id).expect("start");
+        let partial = repo.complete(wo.id, dec!(3)).expect("partial");
+        assert_eq!(partial.quantity_completed, dec!(3));
+        assert!(matches!(repo.complete(wo.id, dec!(3)), Err(CommerceError::ValidationError(_))));
+        assert_eq!(repo.get(wo.id).expect("get").expect("work order").quantity_completed, dec!(3));
+        assert_eq!(
+            repo.complete(wo.id, dec!(2)).expect("exact remainder").quantity_completed,
+            dec!(5)
+        );
+        assert!(matches!(repo.complete(wo.id, dec!(1)), Err(CommerceError::ValidationError(_))));
     }
 
     #[test]

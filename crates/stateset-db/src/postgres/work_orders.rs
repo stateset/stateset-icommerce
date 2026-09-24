@@ -566,7 +566,17 @@ impl PgWorkOrderRepository {
         .map_err(map_db_error)?
         .ok_or(CommerceError::NotFound)?;
 
-        let new_quantity_completed = existing.0 + quantity_completed;
+        let new_quantity_completed =
+            existing.0.checked_add(quantity_completed).ok_or_else(|| {
+                CommerceError::ValidationError(
+                    "Completed quantity exceeds decimal range".to_string(),
+                )
+            })?;
+        if new_quantity_completed > existing.1 {
+            return Err(CommerceError::ValidationError(
+                "Completed quantity would exceed quantity to build".to_string(),
+            ));
+        }
         let is_complete = new_quantity_completed >= existing.1;
         let new_status = if is_complete { "completed" } else { "partially_completed" };
         let new_actual_end = if is_complete { Some(now) } else { existing.2 };

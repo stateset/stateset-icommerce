@@ -52,6 +52,8 @@ echo "== CashReconciliation.lean: the proofs must check"
 lean -o "$build/CashReconciliation.olean" CashReconciliation.lean
 echo "== CommerceQuantities.lean: the proofs must check"
 lean -o "$build/CommerceQuantities.olean" CommerceQuantities.lean
+echo "== OperationalReconciliation.lean: the proofs must check"
+lean -o "$build/OperationalReconciliation.olean" OperationalReconciliation.lean
 
 echo "== the theorems must use no axiom beyond Lean's standard three"
 theorems=(round_within residue_le_length select_marks nudge_sum allocate_sum allocate_near)
@@ -60,6 +62,9 @@ report="$(lean --stdin <<< "$axioms")"
 commerce_axioms="$(printf 'import CommerceQuantities\n#print axioms MaterialConsumption.accepted_within_reservation\n#print axioms StoredValue.charge_conserved\n#print axioms StoredValue.refund_conserved\n#print axioms ReceivingPutAway.completion_within_received\n#print axioms ReceivingPutAway.stock_and_movement_advance\n#print axioms Backorder.allocate_within_remaining\n#print axioms Backorder.fulfill_conserved\n#print axioms Receivable.payment_conserved\n#print axioms Receivable.credit_conserved\n#print axioms Receivable.writeoff_conserved\n')"
 report="$report
 $(lean --stdin <<< "$commerce_axioms")"
+operational_axioms="$(printf 'import OperationalReconciliation\n#print axioms CreditExposure.reserve_preserves_available\n#print axioms CreditExposure.charge_converts_own_hold\n#print axioms SerialQuarantine.quarantine_moves_only_sellable\n#print axioms SerialQuarantine.block_all_sellable\n#print axioms ManufacturingYield.report_good_and_scrap\n#print axioms ManufacturingYield.completed_within_plan\n#print axioms PaymentLedger.payment_running_balance\n#print axioms PaymentLedger.overpayment_clamps_balance\n#print axioms ReturnDisposition.restock_increases_sellable\n#print axioms ReturnDisposition.quarantine_preserves_sellable\n')"
+report="$report
+$(lean --stdin <<< "$operational_axioms")"
 echo "$report"
 if grep -Eo '\b[A-Za-z.]+\b' <<< "$(grep -o '\[.*\]' <<< "$report")" \
     | grep -vxE 'propext|Classical\.choice|Quot\.sound' | grep -q .; then
