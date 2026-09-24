@@ -724,6 +724,9 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn issue_fifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError("issue quantity must be positive".into()));
+        }
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut remaining = input.quantity;
@@ -797,6 +800,9 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn issue_lifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError("issue quantity must be positive".into()));
+        }
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut remaining = input.quantity;
@@ -2005,6 +2011,36 @@ mod tests {
         // Oldest layer should now have 3 remaining
         let layer = repo.get_cost_layer(oldest.id).expect("ok").expect("found");
         assert_eq!(layer.remaining_quantity, dec!(3));
+    }
+
+    #[test]
+    fn cost_layer_issue_requires_positive_quantity() {
+        let repo = fresh_repo();
+        make_layer(&repo, "ISSUE-POSITIVE", dec!(4), dec!(2));
+        let request = |quantity| IssueCostLayers {
+            sku: "ISSUE-POSITIVE".into(),
+            quantity,
+            reference_type: None,
+            reference_id: None,
+            notes: None,
+        };
+        assert!(matches!(
+            repo.issue_fifo(request(dec!(0))),
+            Err(CommerceError::ValidationError(_))
+        ));
+        assert!(matches!(
+            repo.issue_lifo(request(dec!(-1))),
+            Err(CommerceError::ValidationError(_))
+        ));
+        let layer = repo
+            .list_cost_layers(CostLayerFilter {
+                sku: Some("ISSUE-POSITIVE".into()),
+                ..Default::default()
+            })
+            .expect("layers")
+            .pop()
+            .expect("layer");
+        assert_eq!(layer.remaining_quantity, dec!(4));
     }
 
     #[test]

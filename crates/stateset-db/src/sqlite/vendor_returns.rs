@@ -378,6 +378,48 @@ mod tests {
     }
 
     #[test]
+    fn processing_and_cancellation_choose_one_terminal_result() {
+        use std::sync::{Arc, Barrier};
+
+        let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory"));
+        let repo = db.vendor_returns();
+        let r = new_return(&repo);
+        repo.submit(r.id).expect("submit");
+        let id = r.id;
+        let barrier = Arc::new(Barrier::new(2));
+        let process = {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                db.vendor_returns().process(id, true)
+            })
+        };
+        let cancel = {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                db.vendor_returns().cancel(id)
+            })
+        };
+        let processed = process.join().expect("process thread");
+        let cancelled = cancel.join().expect("cancel thread");
+        assert!(processed.is_ok() ^ cancelled.is_ok(), "{processed:?} {cancelled:?}");
+        let after = repo.get(r.id).expect("get").expect("return");
+        assert_eq!(after.total_credit(), dec!(30));
+        assert_eq!(
+            after.status,
+            if processed.is_ok() {
+                VendorReturnStatus::Processed
+            } else {
+                VendorReturnStatus::Cancelled
+            }
+        );
+        assert_eq!(after.credit_generated, processed.is_ok());
+    }
+
+    #[test]
     fn list_filters_by_status() {
         let repo = test_repo();
         let a = new_return(&repo);
