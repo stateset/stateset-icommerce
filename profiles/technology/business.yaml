@@ -1,0 +1,27 @@
+schemaVersion: 1
+business:
+  name: Technology
+  currency: USD
+  timezone: UTC
+terminology:
+  customer: account
+  order: subscription
+modules:
+  orders: true
+  inventory: false
+  payments: true
+  returns: false
+policies:
+  - name: expansion-approval
+    kind: approval
+    resource: order
+  - name: trial-conversion
+    kind: policy
+    resource: customer
+workflows:
+  - name: account-adoption
+    resource: customer
+    states: [trial, onboarding, active, expanding, churned]
+views: []
+automations: []
+integrations: []

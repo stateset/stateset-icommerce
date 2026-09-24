@@ -1,0 +1,27 @@
+schemaVersion: 1
+business:
+  name: Healthcare
+  currency: USD
+  timezone: UTC
+terminology:
+  customer: patient
+  order: care request
+modules:
+  orders: true
+  inventory: true
+  payments: true
+  returns: false
+policies:
+  - name: privacy-review
+    kind: compliance
+    resource: customer
+  - name: care-authorization
+    kind: approval
+    resource: order
+workflows:
+  - name: care-access
+    resource: order
+    states: [requested, authorized, scheduled, delivered, closed]
+views: []
+automations: []
+integrations: []

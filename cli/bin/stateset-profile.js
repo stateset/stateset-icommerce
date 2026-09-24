@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util';
 import YAML from 'yaml';
 import {
   businessProfileDoctor,
+  createBusinessPack,
   diffBusinessProfiles,
   initBusinessProfile,
   installBusinessPack,
@@ -33,6 +34,7 @@ COMMANDS:
   pack list             List local starter packs
   pack inspect --file   Validate and inspect a pack
   pack install --file   Preview or install a local pack
+  pack create --output  Fork the current profile into a pack
 
 OPTIONS:
   --root DIR           Project directory (default: current directory)
@@ -42,6 +44,9 @@ OPTIONS:
   --force              Replace an existing profile
   --json               Emit machine-readable output
   --apply              Install a pack instead of previewing it
+  --replace             Replace the current profile instead of merging a pack
+  --name NAME           Pack name for pack create
+  --description TEXT    Pack description for pack create
 `;
 
 function readProfile(file) {
@@ -75,6 +80,9 @@ async function main() {
       force: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       apply: { type: 'boolean', default: false },
+      replace: { type: 'boolean', default: false },
+      name: { type: 'string' },
+      description: { type: 'string', default: '' },
     },
     allowPositionals: true,
   });
@@ -119,6 +127,14 @@ async function main() {
     if (action === 'list') {
       return output(listBusinessPacks(path.resolve(root, 'profiles')), values.json);
     }
+    if (action === 'create') {
+      if (!values.output) throw new Error('pack create requires --output DIR');
+      if (!values.name) throw new Error('pack create requires --name NAME');
+      return output(createBusinessPack(values.output, root, {
+        name: values.name,
+        description: values.description,
+      }), values.json);
+    }
     if (!values.file) throw new Error(`pack ${action} requires --file PATH`);
     if (action === 'inspect') {
       const pack = loadBusinessPack(values.file);
@@ -132,7 +148,11 @@ async function main() {
       }, values.json);
     }
     if (action === 'install') {
-      const result = installBusinessPack(values.file, root, { force: values.force, preview: !values.apply });
+      const result = installBusinessPack(values.file, root, {
+        force: values.force,
+        preview: !values.apply,
+        replace: values.replace,
+      });
       return output({
         ok: true,
         preview: result.preview,

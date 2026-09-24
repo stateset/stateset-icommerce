@@ -21,6 +21,7 @@ stateset-profile pack list
 stateset-profile pack inspect --file ./profiles/wholesale.yaml
 stateset-profile pack install --file ./profiles/wholesale.yaml
 stateset-profile pack install --file ./profiles/wholesale.yaml --apply --force
+stateset-profile pack create --output ./packs/acme --name acme
 ```
 
 `apply` installs the declaration after validation and reports preview mode. It
@@ -32,6 +33,16 @@ design in this first version, so a business can review a Git checkout before
 installing it. `pack install` previews the leaf changes and writes a lock file
 under `.stateset/packs/` only when `--apply` is supplied. Network fetching and
 code-bearing plugins stay outside this path.
+
+Pack installation merges named declarations into the current profile by
+default. Use `--replace` when a pack should become the complete profile.
+`pack create` snapshots the current profile into a directory that can be
+committed, edited, and shared.
+
+The repository includes starters for financial services, travel and
+hospitality, healthcare, retail and consumer goods, telecommunications,
+technology, media, and wholesale. They are deliberately conservative defaults;
+each business is expected to fork and edit them.
 
 The profile is intentionally small and composable:
 

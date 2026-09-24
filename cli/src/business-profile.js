@@ -148,6 +148,20 @@ export function diffBusinessProfiles(before, after) {
     .map((key) => ({ path: key, before: left.get(key), after: right.get(key) }));
 }
 
+function mergeNamedList(base = [], overlay = []) {
+  const merged = new Map(base.map((item) => [item.name, item]));
+  for (const item of overlay) merged.set(item.name, item);
+  return [...merged.values()];
+}
+
+export function mergeBusinessProfiles(base, overlay) {
+  const result = merge(clone(base), overlay);
+  for (const key of ['policies', 'workflows', 'views', 'automations', 'integrations']) {
+    result[key] = mergeNamedList(base[key], overlay[key]);
+  }
+  return result;
+}
+
 export function businessProfileDoctor(root = process.cwd()) {
   const loaded = loadBusinessProfile(root);
   return {
@@ -210,14 +224,19 @@ export function loadBusinessPack(source) {
   };
 }
 
-export function installBusinessPack(source, root = process.cwd(), { force = false, preview = true } = {}) {
+export function installBusinessPack(
+  source,
+  root = process.cwd(),
+  { force = false, preview = true, replace = false } = {},
+) {
   const pack = loadBusinessPack(source);
   if (pack.errors.length) throw new Error(`Invalid business pack:\n- ${pack.errors.join('\n- ')}`);
   const current = loadBusinessProfile(root);
-  const changes = diffBusinessProfiles(current.profile, pack.profile);
+  const profile = replace ? pack.profile : mergeBusinessProfiles(current.profile, pack.profile);
+  const changes = diffBusinessProfiles(current.profile, profile);
   const destination = profilePath(root);
-  if (preview) return { ...pack, preview: true, destination, changes };
-  const file = writeBusinessProfile(pack.profile, root, { force });
+  if (preview) return { ...pack, profile, preview: true, destination, changes };
+  const file = writeBusinessProfile(profile, root, { force });
   const lockFile = path.resolve(root, '.stateset', 'packs', `${pack.name}.lock.json`);
   fs.mkdirSync(path.dirname(lockFile), { recursive: true });
   fs.writeFileSync(
@@ -226,6 +245,18 @@ export function installBusinessPack(source, root = process.cwd(), { force = fals
     { mode: 0o600 },
   );
   return { ...pack, preview: false, destination: file, lockFile, changes };
+}
+
+export function createBusinessPack(output, root = process.cwd(), { name, version = '0.1.0', description = '' } = {}) {
+  if (!name || !NAME.test(name)) throw new Error('pack name must be lowercase letters, numbers, dashes, or underscores');
+  const current = loadBusinessProfile(root);
+  if (!current.exists || current.errors?.length) throw new Error('a valid business profile is required before creating a pack');
+  const directory = path.resolve(output);
+  if (fs.existsSync(directory) && fs.readdirSync(directory).length > 0) throw new Error(`pack directory is not empty: ${directory}`);
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, BUSINESS_PACK_MANIFEST), YAML.stringify({ name, version, description, profile: BUSINESS_PACK_PROFILE }), { mode: 0o600 });
+  fs.writeFileSync(path.join(directory, BUSINESS_PACK_PROFILE), YAML.stringify(current.profile), { mode: 0o600 });
+  return { directory, manifest: path.join(directory, BUSINESS_PACK_MANIFEST), profile: path.join(directory, BUSINESS_PACK_PROFILE) };
 }
 
 export function listBusinessPacks(directory = path.resolve('profiles')) {
