@@ -5,6 +5,7 @@
 //!   quantities, and serializes concurrent put-aways with `FOR UPDATE`;
 //! - W2 `waves.pick_count` is maintained on pick insert/cancel and
 //!   `complete_wave` refuses while picks are still open;
+//! - W2b picked plus short quantities cannot exceed the requested quantity;
 //! - W3 a line with `expected_quantity = 0` is a blind receipt;
 //! - W4 `delete_location` refuses reserved stock and movement history with a
 //!   `ValidationError`, and reports a missing id as `NotFound`.
@@ -178,6 +179,44 @@ fn pick(
         priority: None,
         notes: None,
     }
+}
+
+#[tokio::test]
+async fn postgres_pick_quantity_claims_cannot_exceed_or_reverse_the_request() {
+    let Some(db) = connect().await else { return };
+    let (wh, loc) = seed_warehouse(&db).await;
+    let order = seed_order(&db).await;
+    let task = db
+        .fulfillment()
+        .create_pick_async(pick(None, order, wh, loc, "SKU-QUANTITY"))
+        .await
+        .expect("pick");
+
+    for (picked, short) in
+        [(dec!(-1), dec!(0)), (dec!(0), dec!(-1)), (dec!(6), dec!(0)), (dec!(3), dec!(3))]
+    {
+        assert!(
+            db.fulfillment()
+                .complete_pick_async(CompletePick {
+                    pick_id: task.id,
+                    quantity_picked: picked,
+                    quantity_short: Some(short),
+                    short_reason: None,
+                    lot_id: None,
+                    serial_number: None,
+                    completed_by: None,
+                })
+                .await
+                .is_err(),
+            "picked={picked}, short={short} must be rejected"
+        );
+    }
+    for short in [dec!(-1), dec!(6)] {
+        assert!(db.fulfillment().report_short_async(task.id, short, "invalid").await.is_err());
+    }
+    let unchanged = db.fulfillment().get_pick_async(task.id).await.expect("read").unwrap();
+    assert_eq!(unchanged.status, task.status);
+    db.fulfillment().report_short_async(task.id, dec!(5), "unavailable").await.expect("valid");
 }
 
 // ---------------------------------------------------------------- W1

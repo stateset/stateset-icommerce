@@ -2561,7 +2561,7 @@ mod tests {
     use rust_decimal_macros::dec;
     use stateset_core::{
         BillingCycleFilter, BillingInterval, CommerceError, CreateBillingCycle, CreateSubscription,
-        CreateSubscriptionPlan, CustomerId,
+        CreateSubscriptionPlan, CustomerId, UpdateSubscription,
     };
 
     fn create_subscription_input(
@@ -2613,6 +2613,68 @@ mod tests {
             .expect("list cycles");
         assert_eq!(cycles.len(), 1, "a new subscription must have an initial billing cycle");
         assert_eq!(cycles[0].cycle_number, 1);
+    }
+
+    #[test]
+    fn billing_cycle_snapshots_price_and_discount_at_insert() {
+        let repo = SqliteDatabase::in_memory().expect("in-memory").subscriptions();
+        let customer = CustomerId::new();
+        seed_customer(&repo, customer);
+        let plan = repo.create_plan(plan_input()).expect("create plan");
+        repo.activate_plan(plan.id).expect("activate plan");
+        let sub = repo
+            .create_subscription(create_subscription_input(customer, plan.id))
+            .expect("create subscription");
+        let old = match repo.list_billing_cycles(BillingCycleFilter {
+            subscription_id: Some(sub.id),
+            ..Default::default()
+        }) {
+            Ok(mut cycles) => cycles.remove(0),
+            Err(_) => panic!("initial billing cycle lookup failed"),
+        };
+        assert_eq!(old.subtotal, dec!(10));
+
+        repo.update_subscription(
+            sub.id,
+            UpdateSubscription {
+                price: Some(dec!(19.99)),
+                discount_percent: Some(dec!(0.15)),
+                ..Default::default()
+            },
+        )
+        .expect("change subscription price");
+        let next = repo
+            .create_billing_cycle(CreateBillingCycle {
+                subscription_id: sub.id,
+                cycle_number: 2,
+                period_start: sub.current_period_end,
+                period_end: sub.current_period_end + chrono::Duration::days(30),
+                claimed_by: None,
+            })
+            .expect("new cycle");
+        assert_eq!(next.subtotal, dec!(19.99));
+        assert_eq!(next.discount, dec!(3.00));
+        assert_eq!(next.total, dec!(16.99));
+        let unchanged = repo.get_billing_cycle(old.id).expect("old cycle").unwrap();
+        assert_eq!(unchanged.subtotal, dec!(10));
+        assert_eq!(unchanged.total, old.total);
+
+        repo.update_subscription(
+            sub.id,
+            UpdateSubscription { discount_amount: Some(dec!(50)), ..Default::default() },
+        )
+        .expect("increase discount");
+        let capped = repo
+            .create_billing_cycle(CreateBillingCycle {
+                subscription_id: sub.id,
+                cycle_number: 3,
+                period_start: sub.current_period_end + chrono::Duration::days(30),
+                period_end: sub.current_period_end + chrono::Duration::days(60),
+                claimed_by: None,
+            })
+            .expect("capped cycle");
+        assert_eq!(capped.discount, capped.subtotal);
+        assert_eq!(capped.total, dec!(0));
     }
 
     #[test]
