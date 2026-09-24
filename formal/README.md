@@ -585,6 +585,65 @@ Each of these five TLC models requires a counterexample in its deliberately
 broken configuration. The Lean proofs concern exact-unit transition equations,
 and the Rust tests establish behavior only for the cases they exercise.
 
+## Cycle-count completion — tla/warehouse/CycleCountCompletion.tla
+
+Two workers try to complete one count with a +1 variance. The guarded status
+transition and stock adjustment admit one completion; splitting the status
+check from the write applies the variance twice. SQLite uses an IMMEDIATE
+transaction and Postgres locks the count header. The
+`competing_cycle_count_completions_apply_variance_once` SQLite regression
+exercises the race. Lean proves the exact `current + counted - expected`
+equation when the result is nonnegative. The model has one line and does not
+cover concurrent writes to the underlying stock outside the count.
+
+## Transfer receipts — tla/warehouse/TransferReceipt.tla
+
+Shipment establishes the units a line can receive. Two clerks then compete
+for a three-unit shipped line with two-unit receipts. The guarded transaction
+keeps received at or below shipped; a stale approval admits four. The SQLite
+and Postgres `*_concurrent_receipts_respect_over_receipt_cap` tests exercise
+the race. Both backends now reject receipts before shipment and refuse to
+ship a completed or cancelled transfer order; the new lifecycle regressions
+check those guards. Lean proves receipt headroom and line-total arithmetic.
+The model does not account for physical source/destination inventory movement.
+
+## Warranty claim slots — tla/warranties/WarrantyClaimSlots.tla
+
+Two claims compete for one available slot. The guarded increment and claim
+insert are one transaction; a stale slot check admits two. SQLite's
+`create_claim_enforces_max_claims_at_record_time` and the Postgres
+`postgres_competing_claims_consume_one_available_slot` regression exercise
+the cap. Lean proves the used-plus-remaining slot equation. The model does not
+cover expiry, eligibility, claim resolution or coverage amounts.
+
+## Vendor credit applications — tla/finance/VendorCreditApplication.tla
+
+Two applications of two units race against a three-unit credit. Atomic
+balance updates conserve original = remaining + active applications while
+keeping remaining nonnegative; stale approval makes remaining negative.
+`competing_applications_cannot_exceed_vendor_credit`
+checks the SQLite path, and the Postgres regression exercises the same race;
+existing reversal tests ensure a reversed
+application cannot restore value twice. Lean proves application and reversal
+conservation. The model omits the target bill/payment obligation and currency
+conversion.
+
+## x402 credit debits — tla/x402/X402CreditDebit.tla
+
+Two debits of two units race against a three-unit balance, with one possible
+additional credit. The guarded write
+keeps the balance nonnegative and appends a transaction in the same commit;
+a stale debit drives the balance negative. SQLite and Postgres
+`*_x402_credit_concurrent_debits_never_go_negative` tests exercise this guard.
+Lean proves credit/debit conservation for accepted exact-unit operations.
+The model assumes one payer, asset and network; integer range checks and
+external x402 settlement are separate concerns.
+
+Each model checks a small bounded state space and requires a counterexample
+from its broken configuration. The Lean proofs cover arbitrary natural-unit
+amounts under their explicit preconditions. Rust regressions test the named
+paths, not full equivalence between model and implementation.
+
 ## Running it
 
 ```
@@ -615,9 +674,15 @@ cargo test -p stateset-db --lib material_consumption_is_bounded_and_serialized
 cargo test -p stateset-db --lib material_consumption_overflow_returns_validation_error
 cargo test -p stateset-db --lib completion_cannot_exceed_planned_quantity
 cargo test -p stateset-db --lib payment_ledger_running_balance_matches_account
+cargo test -p stateset-db --lib competing_cycle_count_completions_apply_variance_once
+cargo test -p stateset-db --lib receipt_requires_shipment_and_shipping_cannot_resurrect_terminal_order
+cargo test -p stateset-db --lib competing_applications_cannot_exceed_vendor_credit
 cargo test -p stateset-db --lib competing_put_away_completions_record_one_receipt
 cargo test -p stateset-db --test inventory_round5_sqlite sqlite_competing_backorder_allocations_cannot_exceed_remaining
 cargo test -p stateset-db --no-default-features --features postgres --test postgres_work_order_concurrency
+cargo test -p stateset-db --features postgres --test postgres_transfer_order_receipt_race postgres_receipt_requires_shipment_and_ship_preserves_terminal_status
+cargo test -p stateset-db --features postgres --test postgres_warranty_claim_guards postgres_competing_claims_consume_one_available_slot
+cargo test -p stateset-db --features postgres --test postgres_vendor_credit_race
 cargo test -p stateset-sync pull_does_not_advance_cursor_when_conflict_resolution_cannot_persist
 cargo test -p stateset-db --test sqlite_payment_order_guards concurrent_captures_cannot_exceed_one_order_total
 cargo test -p stateset-embedded --test ap_money_guards_test process_payment_run_concurrent_double_process_pays_each_bill_once

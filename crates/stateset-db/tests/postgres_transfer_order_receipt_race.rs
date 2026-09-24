@@ -58,6 +58,63 @@ async fn shipped_order(db: &PostgresDatabase, line_quantities: &[Decimal]) -> Tr
     db.transfer_orders().ship_async(order.id).await.expect("ship transfer order")
 }
 
+#[tokio::test]
+async fn postgres_receipt_requires_shipment_and_ship_preserves_terminal_status() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let repo = db.transfer_orders();
+    let draft = repo
+        .create_async(CreateTransferOrder {
+            source_warehouse_id: WarehouseId::new(),
+            destination_warehouse_id: WarehouseId::new(),
+            items: vec![CreateTransferOrderItem {
+                product_id: ProductId::new(),
+                quantity: dec!(3),
+            }],
+            expected_at: None,
+            notes: None,
+        })
+        .await
+        .expect("create");
+    let item_id = draft.items[0].id;
+    assert!(repo.receive_line_async(draft.id, item_id, dec!(1)).await.is_err());
+    assert_eq!(
+        repo.get_async(draft.id).await.expect("get").expect("order").total_received(),
+        dec!(0)
+    );
+    repo.ship_async(draft.id).await.expect("ship");
+    assert!(repo.ship_async(draft.id).await.is_err());
+    repo.receive_line_async(draft.id, item_id, dec!(3)).await.expect("receive");
+    assert!(repo.ship_async(draft.id).await.is_err());
+    assert_eq!(
+        repo.get_async(draft.id).await.expect("get").expect("order").status,
+        TransferOrderStatus::Received
+    );
+
+    let cancelled = repo
+        .create_async(CreateTransferOrder {
+            source_warehouse_id: WarehouseId::new(),
+            destination_warehouse_id: WarehouseId::new(),
+            items: vec![CreateTransferOrderItem {
+                product_id: ProductId::new(),
+                quantity: dec!(1),
+            }],
+            expected_at: None,
+            notes: None,
+        })
+        .await
+        .expect("create second");
+    repo.cancel_async(cancelled.id).await.expect("cancel");
+    assert!(repo.ship_async(cancelled.id).await.is_err());
+    assert_eq!(
+        repo.get_async(cancelled.id).await.expect("get").expect("order").status,
+        TransferOrderStatus::Cancelled
+    );
+}
+
 /// Two clerks each scan a full 100-unit receipt against a 100-unit line at the
 /// same time. Exactly one may win: the line must never record fewer units than
 /// were accepted, i.e. `quantity_received == 100 * successes`.

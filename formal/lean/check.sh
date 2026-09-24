@@ -54,6 +54,8 @@ echo "== CommerceQuantities.lean: the proofs must check"
 lean -o "$build/CommerceQuantities.olean" CommerceQuantities.lean
 echo "== OperationalReconciliation.lean: the proofs must check"
 lean -o "$build/OperationalReconciliation.olean" OperationalReconciliation.lean
+echo "== OperationalClaims.lean: the proofs must check"
+lean -o "$build/OperationalClaims.olean" OperationalClaims.lean
 
 echo "== the theorems must use no axiom beyond Lean's standard three"
 theorems=(round_within residue_le_length select_marks nudge_sum allocate_sum allocate_near)
@@ -65,6 +67,9 @@ $(lean --stdin <<< "$commerce_axioms")"
 operational_axioms="$(printf 'import OperationalReconciliation\n#print axioms CreditExposure.reserve_preserves_available\n#print axioms CreditExposure.charge_converts_own_hold\n#print axioms SerialQuarantine.quarantine_moves_only_sellable\n#print axioms SerialQuarantine.block_all_sellable\n#print axioms ManufacturingYield.report_good_and_scrap\n#print axioms ManufacturingYield.completed_within_plan\n#print axioms PaymentLedger.payment_running_balance\n#print axioms PaymentLedger.overpayment_clamps_balance\n#print axioms ReturnDisposition.restock_increases_sellable\n#print axioms ReturnDisposition.quarantine_preserves_sellable\n')"
 report="$report
 $(lean --stdin <<< "$operational_axioms")"
+claims_axioms="$(printf 'import OperationalClaims\n#print axioms CycleCount.variance_reconciles\n#print axioms CycleCount.zero_variance_leaves_stock\n#print axioms TransferReceipt.accepted_within_shipped\n#print axioms TransferReceipt.line_totals\n#print axioms WarrantyClaims.claim_consumes_one_slot\n#print axioms VendorCredit.apply_conserves\n#print axioms VendorCredit.reverse_conserves\n#print axioms X402Credit.debit_conserves\n#print axioms X402Credit.credit_conserves\n')"
+report="$report
+$(lean --stdin <<< "$claims_axioms")"
 echo "$report"
 if grep -Eo '\b[A-Za-z.]+\b' <<< "$(grep -o '\[.*\]' <<< "$report")" \
     | grep -vxE 'propext|Classical\.choice|Quot\.sound' | grep -q .; then

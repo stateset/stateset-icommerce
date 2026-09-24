@@ -400,4 +400,35 @@ mod tests {
         let cancelled = repo.cancel(c.id).expect("cancel");
         assert_eq!(cancelled.status, VendorCreditStatus::Cancelled);
     }
+
+    #[test]
+    fn competing_applications_cannot_exceed_vendor_credit() {
+        let repo = std::sync::Arc::new(test_repo());
+        let credit = new_credit(&repo, dec!(3));
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let repo = std::sync::Arc::clone(&repo);
+            let barrier = std::sync::Arc::clone(&barrier);
+            let id = credit.id;
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                repo.apply(id, apply(VendorCreditTargetType::Bill, dec!(2)))
+            }));
+        }
+        let mut successes = 0;
+        for handle in handles {
+            if handle.join().expect("join application").is_ok() {
+                successes += 1;
+            }
+        }
+        assert_eq!(successes, 1);
+        let stored = repo.get(credit.id).expect("get").expect("credit");
+        assert_eq!(stored.remaining, dec!(1));
+        let apps = repo
+            .list_applications(credit.id)
+            .unwrap_or_else(|_| panic!("application lookup failed"));
+        assert_eq!(apps.len(), 1);
+        assert_eq!(stored.remaining + apps[0].amount, credit.amount);
+    }
 }
