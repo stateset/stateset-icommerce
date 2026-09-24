@@ -513,6 +513,49 @@ mod tests {
     }
 
     #[test]
+    fn straight_line_matches_lean_minor_unit_schedule() {
+        // Depreciation.schedule uses a capped normal period and final plug.
+        // Derive ties-to-even cents / months independently of rust_decimal.
+        for cost in 1i64..=40 {
+            for salvage in 0i64..=cost {
+                for months in 1u32..=12 {
+                    let base = cost - salvage;
+                    if base == 0 {
+                        continue;
+                    }
+                    let entries = generate_depreciation_schedule(
+                        DepreciationMethod::StraightLine,
+                        Decimal::new(cost, 2),
+                        Decimal::new(salvage, 2),
+                        months,
+                    );
+                    assert_eq!(entries.len(), months as usize);
+                    let divisor = i64::from(months);
+                    let quotient = base / divisor;
+                    let twice_remainder = 2 * (base % divisor);
+                    let per = quotient
+                        + i64::from(
+                            twice_remainder > divisor
+                                || (twice_remainder == divisor && quotient % 2 != 0),
+                        );
+                    let mut remaining = base;
+                    for (index, entry) in entries.iter().enumerate() {
+                        let expected = if index + 1 == months as usize {
+                            remaining
+                        } else {
+                            per.min(remaining)
+                        };
+                        assert_eq!(entry.amount, Decimal::new(expected, 2));
+                        remaining -= expected;
+                        assert_eq!(entry.book_value, Decimal::new(salvage + remaining, 2));
+                    }
+                    assert_eq!(remaining, 0);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn declining_balance_schedule_sums_exactly() {
         let entries = generate_depreciation_schedule(
             DepreciationMethod::DecliningBalance { rate: dec!(0.2) },

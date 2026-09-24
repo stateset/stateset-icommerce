@@ -116,7 +116,7 @@ The `v1.0.0` compatibility contract is frozen and remains active:
 | Finality model | documented | `docs/PQC_INITIAL_SPEC.md` and trilogy docs distinguish soft vs hard finality | `pq hard finality` definition and deployment plan |
 | Security disclosure process | implemented in this repo | `SECURITY.md` defines reporting channel and response targets | public advisory index, CVE process, bug bounty |
 | Independent security audits | open gap | no public third-party audit reports are linked from this repo | published audit reports and remediation tracking |
-| Formal verification | scoped, machine-checked results | `formal/tla/` checks bounded refund, inventory, x402 claim, escrow, returns, period close, subscription cycle, warehouse move and lot genealogy protocols against broken variants; `formal/lean/` proves tax allocation, idealized Merkle path binding, revenue conservation, FX and journal balance, and promotion budget bounds, with focused Rust conformance tests | proof of the Rust implementations themselves, SHA-256 collision resistance, authenticated remote roots, AIR proofs, ordering proofs, PQ composition proofs |
+| Formal verification | scoped, machine-checked results | `formal/tla/` checks bounded refund, inventory, x402, escrow, returns, close, billing, warehouse, receipt, outbox, saga, checkout and promotion protocols against broken variants; `formal/lean/` proves tax allocation, idealized Merkle path binding, revenue and depreciation conservation, FX and journal balance, promotion budgets and credit allocation, with focused Rust tests | proof of the Rust implementations themselves, SHA-256 collision resistance, authenticated remote roots, AIR proofs, ordering proofs, PQ composition proofs |
 | Versioning and deprecation policy | implemented policy | `docs/src/versioning.md` and `RELEASING.md` define the `v1.0` contract, deprecation window, and backport rules | GitHub branch protection and release permissions live outside this repo |
 | Observability primitives | implemented in this repo | `crates/stateset-observability`, `deploy/grafana`, `deploy/prometheus` | published SLOs, runbooks, correlated production dashboards, chaos results |
 | Bench harness and perf gates | implemented in this repo | `crates/stateset-benches`, `perf-gates.json` | published benchmark report with hardware, workload, and repeatable methodology |
@@ -159,9 +159,11 @@ These are defensible claims today:
 - a frozen `v1.0` OSS compatibility contract with documented deprecation and backport rules;
 - a defined vulnerability-reporting process;
 - bounded TLA+ model-checking of refund, inventory, x402, escrow, returns,
-  period close, subscription billing claims, warehouse moves and lot lineage,
-  plus Lean proofs of allocation, idealized Merkle path binding, revenue
-  conservation, FX and journal balance, and promotion budget bounds, with assumptions and
+  period close, subscription billing, warehouse, kernel receipts, outbox leases,
+  saga rollback, checkout and promotion exclusivity, plus Lean proofs of
+  allocation, idealized Merkle path binding, revenue and depreciation
+  conservation, FX and journal balance, promotion budgets and credit
+  allocation, with assumptions and
   code-conformance limits documented in `formal/README.md`;
 
 These are not yet defensible as shipped, globally trustworthy claims:

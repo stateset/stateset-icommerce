@@ -33,7 +33,7 @@ tlc() {
 fail=0
 cd "$HERE/payments"
 # A run that ends on a counterexample leaves its state directory behind.
-trap 'rm -rf "$HERE/payments/states" "$HERE/inventory/states" "$HERE/x402/states" "$HERE/returns/states" "$HERE/finance/states" "$HERE/subscriptions/states" "$HERE/warehouse/states"' EXIT
+trap 'rm -rf "$HERE/payments/states" "$HERE/inventory/states" "$HERE/x402/states" "$HERE/returns/states" "$HERE/finance/states" "$HERE/subscriptions/states" "$HERE/warehouse/states" "$HERE/kernel/states" "$HERE/checkout/states" "$HERE/promotions/states"' EXIT
 
 echo "== PaymentRefunds: the implementation (Locked = TRUE) must satisfy every property"
 if tlc -config PaymentRefunds_locked.cfg PaymentRefunds.tla > locked.log 2>&1; then
@@ -139,5 +139,13 @@ check_pair subscriptions BillingClaim BillingClaim_atomic.cfg BillingClaim_split
 check_pair subscriptions ChargeRetry ChargeRetry_atomic.cfg ChargeRetry_split.cfg AtMostOneLivePayment
 check_pair warehouse LocationMove LocationMove_atomic.cfg LocationMove_split.cfg StockConserved
 check_pair warehouse LotGenealogy LotGenealogy_complete.cfg LotGenealogy_missing.cfg TraceComplete
+
+check_pair kernel ReceiptGate ReceiptGate_atomic.cfg ReceiptGate_split.cfg AtMostOneEffect
+check_pair kernel ReceiptGate ReceiptGate_atomic.cfg ReceiptGate_unprotected.cfg NoUnauthorizedEffect
+check_pair kernel OutboxLease OutboxLease_guarded.cfg OutboxLease_unguarded.cfg AckOwned
+check_pair kernel SagaRollback SagaRollback_guarded.cfg SagaRollback_repeat.cfg AtMostOnceRecorded
+check_pair kernel SagaRollback SagaRollback_guarded.cfg SagaRollback_forward.cfg ReverseCompensation
+check_pair checkout CommitCheckout CommitCheckout_atomic.cfg CommitCheckout_split.cfg OrderBacked
+check_pair promotions ExclusiveStacking ExclusiveStacking_guarded.cfg ExclusiveStacking_unguarded.cfg ExclusiveStandsAlone
 
 exit $fail

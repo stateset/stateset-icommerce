@@ -195,6 +195,64 @@ and the Postgres traceability composition tests exercise the graph shape.
 This model covers four lots and one split/merge; it does not prove recursive
 trace traversal, cycle rejection or provenance of supplier records.
 
+## `tla/kernel/ReceiptGate.tla` — governed idempotent writes
+
+Two workers share one idempotency key and may submit different request
+fingerprints. With a fixed operator-owned policy decision and atomic business
+mutation and receipt insert, only the first authorized request has an effect;
+exact replay and
+different-payload conflict have none. The guarded model has three states.
+Splitting the key check from commit causes two effects; dropping the policy
+check admits an unauthorized effect. SQLite's
+`kernel_rejects_idempotency_key_reuse_for_different_work` and
+`kernel_policy_denial_is_a_durable_non_mutating_receipt` exercise these
+guards. The model abstracts policy evaluation to an operator decision and
+does not prove every command handler or distributed side effects.
+
+## `tla/kernel/OutboxLease.tla` — owned acknowledgement
+
+One event may be claimed, expire, be reclaimed, fail into dead letter, or be
+redriven. `AckOwned` permits publication acknowledgement only by its current
+lease owner, including after reassignment. The guarded model has 19 states;
+allowing an arbitrary worker to acknowledge yields a counterexample. SQLite's
+`outbox_leases_prevent_double_delivery_and_dead_letter_exhausted_events` and
+Postgres's `postgres_outbox_leases_retry_dead_letter_redrive_and_ack_are_durable`
+exercise the guard. **A lease does not provide exactly-once external delivery**:
+a stale worker may already have sent the event before losing the lease, so
+consumers still need idempotency.
+
+## `tla/kernel/SagaRollback.tla` — recorded compensation order
+
+For two completed steps, rollback records compensation in reverse order and
+skips a step whose `rollback_at` is already set. The guarded model has three
+states; forward order and repeated recorded compensation each yield a
+counterexample. `rollback_saga` now filters already marked steps, and
+`postgres_saga_smoke` checks that a repeated call does not invoke the handler.
+This is a **durable-marker** property under serialized rollback calls, not
+exactly-once external compensation. The handler must be idempotent under its
+compensation-step ID: a crash after the handler succeeds but before the marker
+commits, or concurrent rollback callers, can still invoke it again.
+
+## `tla/checkout/CommitCheckout.tla` — atomic order handoff
+
+The cart, order, stock hold and pending payment record commit together. A
+completed order must have both a stock hold and payment record; the guarded
+model has two states. Making the order visible before the other writes gives
+an immediate `OrderBacked` counterexample. SQLite's
+`kernel_checkout_strict_stock_rejects_preview_and_apply_without_effects`,
+`kernel_checkout_strict_stock_concurrent_buyers_cannot_oversell` and
+`kernel_checkout_preview_applies_and_replays_one_atomic_commit` exercise the
+transaction and replay boundaries. The model omits payment settlement,
+shipment, multiple carts and stock quantities.
+
+## `tla/promotions/ExclusiveStacking.tla` — exclusive application
+
+An exclusive promotion may apply only before any other promotion, and no
+stackable promotion may apply after it. The four guarded states satisfy
+`ExclusiveStandsAlone`; dropping the latter guard lets both apply. The core
+test `exclusive_stacking_is_order_independent` checks candidate order. The
+model abstracts eligibility, priority tie-breaking and discount arithmetic.
+
 ## `lean/Allocation.lean` — allocating rounded money
 
 `allocate_rounded` (`crates/stateset-core/src/models/tax.rs`) is how both tax
@@ -307,6 +365,29 @@ gate to the arithmetic condition for 3,600 three-line cases. The proof takes
 validated lines as input; it does not prove line validation, account routing,
 SQL posting, period status or an external trial-balance report.
 
+## `lean/Depreciation.lean` — salvage-preserving final plug
+
+For any nonnegative cost and salvage with salvage no greater than cost, any
+positive useful life, and any already-rounded normal-period amount, the
+capped schedule sums to cost minus salvage and ends at exactly salvage.
+`straight_line_matches_lean_minor_unit_schedule` compares the actual Rust
+builder with independently rounded minor-unit amounts over 9,840 cases.
+The proof does not cover rate multiplication, `rust_decimal` division or
+the database posting of depreciation entries.
+
+## `lean/CreditAllocation.lean` — credit memo conservation
+
+For any list of nonnegative requested applications, a capped mathematical
+model preserves the memo's available-plus-applied amount and never increases
+invoice due. `accepted_matches_cap` proves this model agrees with the Rust
+mutation when the request fits both balances; Rust rejects oversized requests
+rather than silently capping them. SQLite's
+`partial_credit_applications_preserve_memo_and_invoice_balances` and
+`apply_credit_memo_is_atomic_under_concurrency` exercise persistence and the
+concurrent over-application guard. The proof models exact minor units and
+does not prove the SQL transaction, invoice status checks, or cross-invoice
+allocation.
+
 ## Running it
 
 ```
@@ -329,4 +410,6 @@ cargo test -p stateset-core --lib ratable_schedule_matches_lean_minor_unit_model
 cargo test -p stateset-core --lib revaluation_journal_matches_lean_signed_model
 cargo test -p stateset-core --lib stacked_item_discounts_match_lean_budget_model
 cargo test -p stateset-core --lib posting_gate_matches_lean_debit_credit_model
+cargo test -p stateset-core --lib straight_line_matches_lean_minor_unit_schedule
+cargo test -p stateset-db --lib partial_credit_applications_preserve_memo_and_invoice_balances
 ```
