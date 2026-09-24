@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, unlinkSync } from 'node:fs';
@@ -214,6 +215,43 @@ describe('Claude harness paths', { concurrency: false }, () => {
       cleanupDb(dbPath);
     },
   );
+
+  itSerial('injects the active business profile into Claude system prompts', async () => {
+    const dbPath = newDbPath();
+    const profileRoot = mkdtempSync(join(tmpdir(), 'stateset-profile-prompt-'));
+    const previousCwd = process.cwd();
+    let capturedSystemPrompt = '';
+    mkdirSync(join(profileRoot, '.stateset'), { recursive: true });
+    writeFileSync(
+      join(profileRoot, '.stateset', 'business.yaml'),
+      'schemaVersion: 1\nbusiness:\n  name: Prompt Test\n  currency: USD\n  timezone: UTC\n',
+    );
+    process.chdir(profileRoot);
+    try {
+      const queryImpl = ({ options }) => {
+        capturedSystemPrompt = options.systemPrompt;
+        return (async function* () {
+          yield { sessionId: 'sess-profile-prompt', type: 'result', result: 'ok' };
+        })();
+      };
+      await runAgentLoop({
+        request: 'What is my business name?',
+        provider: 'claude',
+        model: 'claude-test',
+        dbPath,
+        enableSync: false,
+        enableMemory: false,
+        sessionStore: createSessionStore(),
+        queryImpl,
+      });
+      assert.match(capturedSystemPrompt, /<business_profile>/);
+      assert.match(capturedSystemPrompt, /Business: Prompt Test/);
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(profileRoot, { recursive: true, force: true });
+      cleanupDb(dbPath);
+    }
+  });
 
   itSerial('passes autonomousEngine into the Claude MCP server for runAgentLoop', async () => {
     const dbPath = newDbPath();
