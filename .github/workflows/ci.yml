@@ -340,8 +340,8 @@ jobs:
   miri:
     name: Miri
     runs-on: ubuntu-latest
-    # The full core suite now exceeds 30 minutes under interpretation on CI.
-    timeout-minutes: 60
+    # The full core suite can exceed 60 minutes under interpretation on CI.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
