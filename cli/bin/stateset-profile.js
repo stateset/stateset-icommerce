@@ -8,6 +8,9 @@ import {
   businessProfileDoctor,
   diffBusinessProfiles,
   initBusinessProfile,
+  installBusinessPack,
+  listBusinessPacks,
+  loadBusinessPack,
   loadBusinessProfile,
   validateBusinessProfile,
   writeBusinessProfile,
@@ -18,7 +21,7 @@ const HELP = `
 StateSet business profiles
 
 USAGE:
-  stateset-profile <init|show|doctor|diff|export|apply> [options]
+  stateset-profile <init|show|doctor|diff|export|apply|pack> [options]
 
 COMMANDS:
   init                 Create .stateset/business.yaml
@@ -27,6 +30,9 @@ COMMANDS:
   diff --against FILE  Compare the current profile with another profile
   export --output FILE Export the current profile to a portable file
   apply --file FILE    Validate and install a profile (preview by default)
+  pack list             List local starter packs
+  pack inspect --file   Validate and inspect a pack
+  pack install --file   Preview or install a local pack
 
 OPTIONS:
   --root DIR           Project directory (default: current directory)
@@ -35,6 +41,7 @@ OPTIONS:
   --output FILE        Output file for export
   --force              Replace an existing profile
   --json               Emit machine-readable output
+  --apply              Install a pack instead of previewing it
 `;
 
 function readProfile(file) {
@@ -58,7 +65,7 @@ async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--help') || args.includes('-h')) return console.log(HELP.trim());
   const command = args[0] || 'show';
-  const { values } = parseArgs({
+  const { values, positionals } = parseArgs({
     args: args.slice(1),
     options: {
       root: { type: 'string', default: process.cwd() },
@@ -67,8 +74,9 @@ async function main() {
       output: { type: 'string' },
       force: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
+      apply: { type: 'boolean', default: false },
     },
-    allowPositionals: false,
+    allowPositionals: true,
   });
   const root = path.resolve(values.root);
   if (command === 'init') {
@@ -105,6 +113,38 @@ async function main() {
     const profile = readProfile(values.file);
     const file = writeBusinessProfile(profile, root, { force: values.force });
     return output({ ok: true, preview: true, file, message: 'Profile installed; database mutations require an explicit governed apply command.' }, values.json);
+  }
+  if (command === 'pack') {
+    const action = positionals[0] || 'list';
+    if (action === 'list') {
+      return output(listBusinessPacks(path.resolve(root, 'profiles')), values.json);
+    }
+    if (!values.file) throw new Error(`pack ${action} requires --file PATH`);
+    if (action === 'inspect') {
+      const pack = loadBusinessPack(values.file);
+      return output({
+        name: pack.name,
+        version: pack.version,
+        description: pack.description,
+        source: pack.directory,
+        valid: pack.errors.length === 0,
+        errors: pack.errors,
+      }, values.json);
+    }
+    if (action === 'install') {
+      const result = installBusinessPack(values.file, root, { force: values.force, preview: !values.apply });
+      return output({
+        ok: true,
+        preview: result.preview,
+        name: result.name,
+        version: result.version,
+        destination: result.destination,
+        lockFile: result.lockFile,
+        changes: result.changes,
+        message: result.preview ? 'Preview only. Re-run with --apply to install the pack.' : 'Pack installed; database mutations still require governed writes.',
+      }, values.json);
+    }
+    throw new Error(`Unknown pack action: ${action}`);
   }
   throw new Error(`Unknown command: ${command}`);
 }

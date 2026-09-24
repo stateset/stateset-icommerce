@@ -17,11 +17,21 @@ stateset-profile show
 stateset-profile export --output ./profiles/acme.json
 stateset-profile diff --against ./profiles/wholesale.yaml
 stateset-profile apply --file ./profiles/acme.yaml --force
+stateset-profile pack list
+stateset-profile pack inspect --file ./profiles/wholesale.yaml
+stateset-profile pack install --file ./profiles/wholesale.yaml
+stateset-profile pack install --file ./profiles/wholesale.yaml --apply --force
 ```
 
 `apply` installs the declaration after validation and reports preview mode. It
 does not mutate commerce records. Database mutations still require the normal
 governed write path with an explicit operator policy and principal.
+
+A pack is a profile plus optional `pack.yaml` metadata. Packs are local by
+design in this first version, so a business can review a Git checkout before
+installing it. `pack install` previews the leaf changes and writes a lock file
+under `.stateset/packs/` only when `--apply` is supplied. Network fetching and
+code-bearing plugins stay outside this path.
 
 The profile is intentionally small and composable:
 

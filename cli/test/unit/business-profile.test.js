@@ -6,7 +6,10 @@ import path from 'node:path';
 import {
   businessProfileDoctor,
   diffBusinessProfiles,
+  installBusinessPack,
   initBusinessProfile,
+  listBusinessPacks,
+  loadBusinessPack,
   loadBusinessProfile,
   writeBusinessProfile,
 } from '../../src/business-profile.js';
@@ -44,4 +47,18 @@ test('profile diff is deterministic and reports changed leaves', () => {
     { path: 'business.currency', before: '"USD"', after: '"CAD"' },
     { path: 'modules.inventory', before: 'true', after: 'false' },
   ]);
+});
+
+test('local packs preview changes and record a lock on install', () => {
+  const root = tempProject();
+  const packRoot = tempProject();
+  fs.writeFileSync(path.join(packRoot, 'pack.yaml'), 'name: repair-shop\nversion: 1.0.0\ndescription: Repair shop\n');
+  fs.writeFileSync(path.join(packRoot, 'business.yaml'), `schemaVersion: 1\nbusiness:\n  name: Repair shop\n  currency: CAD\n  timezone: UTC\nmodules:\n  orders: true\n  inventory: true\n  payments: true\n  returns: true\npolicies: []\nworkflows: []\nviews: []\nautomations: []\nintegrations: []\n`);
+  const pack = loadBusinessPack(packRoot);
+  assert.equal(pack.errors.length, 0);
+  assert.equal(installBusinessPack(packRoot, root).preview, true);
+  const installed = installBusinessPack(packRoot, root, { force: true, preview: false });
+  assert.equal(installed.preview, false);
+  assert.equal(fs.existsSync(path.join(root, '.stateset', 'packs', 'repair-shop.lock.json')), true);
+  assert.equal(listBusinessPacks(path.dirname(packRoot)).some((entry) => entry.name === 'repair-shop'), true);
 });

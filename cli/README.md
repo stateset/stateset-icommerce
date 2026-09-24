@@ -90,11 +90,16 @@ stateset-profile doctor
 stateset-profile show
 stateset-profile diff --against ./profiles/wholesale.yaml
 stateset-profile export --output ./profiles/acme.json
+stateset-profile pack install --file ./profiles/wholesale.yaml
 ```
 
 `stateset-profile apply` validates and installs a profile in preview mode. It
 does not mutate commerce records; governed writes still require the explicit
 operator policy and principal used by the MCP and CLI write paths.
+
+Packs are reviewable local profile bundles. Use `pack list`, `pack inspect`, and
+`pack install`; installation is preview-only until `--apply` is explicitly
+provided and records the selected pack in `.stateset/packs/`.
 
 ### Run the Tutorial
 

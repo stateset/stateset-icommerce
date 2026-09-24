@@ -11,6 +11,8 @@ import YAML from 'yaml';
 
 export const BUSINESS_PROFILE_VERSION = 1;
 export const BUSINESS_PROFILE_FILE = path.join('.stateset', 'business.yaml');
+export const BUSINESS_PACK_MANIFEST = 'pack.yaml';
+export const BUSINESS_PACK_PROFILE = 'business.yaml';
 
 export const DEFAULT_BUSINESS_PROFILE = {
   schemaVersion: BUSINESS_PROFILE_VERSION,
@@ -155,4 +157,95 @@ export function businessProfileDoctor(root = process.cwd()) {
     errors: loaded.errors || [],
     profile: loaded.profile,
   };
+}
+
+function readYaml(file) {
+  try {
+    return YAML.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    throw new Error(`Unable to read ${file}: ${error.message}`);
+  }
+}
+
+function packSource(source) {
+  const resolved = path.resolve(source);
+  if (!fs.existsSync(resolved)) throw new Error(`Pack path does not exist: ${source}`);
+  const stat = fs.statSync(resolved);
+  if (stat.isFile()) {
+    return {
+      directory: path.dirname(resolved),
+      profileFile: resolved,
+      sourceName: path.basename(resolved).replace(/\.(ya?ml)$/i, ''),
+      manifest: {},
+    };
+  }
+  const manifestFile = path.join(resolved, BUSINESS_PACK_MANIFEST);
+  const manifest = fs.existsSync(manifestFile) ? readYaml(manifestFile) : {};
+  const profileFile = path.join(resolved, manifest.profile || BUSINESS_PACK_PROFILE);
+  if (!fs.existsSync(profileFile)) throw new Error(`Pack has no ${BUSINESS_PACK_PROFILE}: ${resolved}`);
+  return { directory: resolved, profileFile, manifest };
+}
+
+export function loadBusinessPack(source) {
+  const pack = packSource(source);
+  const profile = readYaml(pack.profileFile);
+  const errors = validateBusinessProfile(profile);
+  const name =
+    pack.manifest.name ||
+    pack.sourceName ||
+    path.basename(pack.directory).toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+  if (!NAME.test(name)) errors.push(`pack name is invalid: ${name}`);
+  if (pack.manifest.version !== undefined && typeof pack.manifest.version !== 'string') {
+    errors.push('pack.version must be a string');
+  }
+  return {
+    name,
+    version: pack.manifest.version || '0.1.0',
+    description: pack.manifest.description || '',
+    directory: pack.directory,
+    profileFile: pack.profileFile,
+    manifest: pack.manifest,
+    profile,
+    errors,
+  };
+}
+
+export function installBusinessPack(source, root = process.cwd(), { force = false, preview = true } = {}) {
+  const pack = loadBusinessPack(source);
+  if (pack.errors.length) throw new Error(`Invalid business pack:\n- ${pack.errors.join('\n- ')}`);
+  const current = loadBusinessProfile(root);
+  const changes = diffBusinessProfiles(current.profile, pack.profile);
+  const destination = profilePath(root);
+  if (preview) return { ...pack, preview: true, destination, changes };
+  const file = writeBusinessProfile(pack.profile, root, { force });
+  const lockFile = path.resolve(root, '.stateset', 'packs', `${pack.name}.lock.json`);
+  fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+  fs.writeFileSync(
+    lockFile,
+    `${JSON.stringify({ name: pack.name, version: pack.version, source: pack.directory, installedAt: new Date().toISOString() }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  return { ...pack, preview: false, destination: file, lockFile, changes };
+}
+
+export function listBusinessPacks(directory = path.resolve('profiles')) {
+  if (!fs.existsSync(directory)) return [];
+  return fs
+    .readdirSync(directory, { withFileTypes: true })
+    .map((entry) => (entry.isDirectory() ? path.join(directory, entry.name) : path.join(directory, entry.name)))
+    .filter((entry) => {
+      try {
+        return fs.statSync(entry).isFile() ? entry.endsWith('.yaml') || entry.endsWith('.yml') : fs.existsSync(path.join(entry, BUSINESS_PACK_PROFILE));
+      } catch {
+        return false;
+      }
+    })
+    .map((entry) => {
+      try {
+        const pack = loadBusinessPack(entry);
+        return { name: pack.name, version: pack.version, description: pack.description, source: entry, valid: pack.errors.length === 0 };
+      } catch (error) {
+        return { name: path.basename(entry), source: entry, valid: false, errors: [error.message] };
+      }
+    });
 }
