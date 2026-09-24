@@ -6,6 +6,19 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.35.3] - 2026-09-24
+
+### Verified commerce invariants
+
+- Added TLA+ models and Lean proofs for exchange-rate publication, payment
+  obligations, FIFO/LIFO cost-layer issues, inbound shipment cancellation and
+  receipt, and vendor-return decisions. The models include broken interleavings
+  as counterexamples and document the bounds of each proof.
+- Exchange-rate updates now publish the current rate and history atomically in
+  SQLite and PostgreSQL. Manual payment-obligation status changes cannot forge
+  payment progress or reopen a paid or cancelled obligation. Cost-layer issues
+  reject zero and negative quantities.
+
 ### Changed (behaviour, needs a release note)
 
 - **`@stateset/embedded`: an explicit blank is refused, not treated as
