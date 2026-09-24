@@ -80,6 +80,9 @@ function printStatus(status) {
   console.log(`StateSet iCommerce — ${status.message}`);
   console.log(`Store: ${status.dbPath || 'not discovered'}`);
   console.log(`Mode: ${status.mode}`);
+  if (status.businessProfile?.ready) {
+    console.log(`Business: ${status.businessProfile.name} · ${status.businessProfile.currency}`);
+  }
   if (status.ok) {
     console.log(
       `Orders ${status.counts.orders} · Customers ${status.counts.customers} · Products ${status.counts.products} · Returns ${status.counts.returns} · Payments ${status.counts.payments}`,

@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createCommerce } from './commerce.js';
+import { businessProfileDoctor } from './business-profile.js';
 
 export const OMARCHY_PLUGIN_ID = 'com.stateset.icommerce';
 export const OMARCHY_CONFIG_DIRNAME = 'stateset-omarchy';
@@ -209,6 +210,8 @@ export async function getOperationalSummary(commerce) {
 
 export async function getStoreStatus(options = {}) {
   const dbPath = discoverStore(options);
+  const profileRoot = options.profileRoot || process.cwd();
+  const profileReport = businessProfileDoctor(profileRoot);
   const config = loadOmarchyConfig(options.homeDir);
   const governedStore =
     config.apply === true &&
@@ -222,6 +225,12 @@ export async function getStoreStatus(options = {}) {
     mode: governedStore ? 'governed-apply' : 'preview',
     counts: { orders: 0, customers: 0, products: 0, returns: 0, payments: 0 },
     checkedAt: new Date().toISOString(),
+    businessProfile: {
+      ready: profileReport.ready,
+      name: profileReport.profile?.business?.name || null,
+      currency: profileReport.profile?.business?.currency || null,
+      file: profileReport.file,
+    },
   };
 
   if (!dbPath) return { ...base, message: 'No iCommerce store found' };
