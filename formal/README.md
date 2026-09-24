@@ -699,6 +699,58 @@ from its broken configuration. The Lean proofs cover arbitrary natural-unit
 amounts under their explicit preconditions. Rust regressions test the named
 paths, not full equivalence between model and implementation.
 
+## Subscription cancellation and settlement — tla/subscriptions/CancelSettlement.tla
+
+Cancelling clears the billing schedule under the same SQLite write lock used to
+settle an existing cycle. The guarded model never restores a billing date;
+settlement based on a stale pre-cancellation read does. The regression
+`settling_an_existing_cycle_after_cancel_does_not_restore_billing` checks the
+repository boundary. A cycle created before cancellation may still settle;
+the claim is about future scheduling, not reversal of an existing payment.
+Lean proves that the schedule selection returns no date for a cancelled
+subscription, for any paid period end.
+
+## Purchase-order receiving — tla/warehouse/PurchaseOrderReceipt.tla
+
+Two workers race to receive the last ordered unit while cancellation is also
+possible. The immediate transaction rechecks status and remaining quantity,
+so accepted receipts never exceed the order; stale prechecks can overreceive.
+The SQLite regressions `receive_accumulates_concurrent_partial_receipts_without_lost_updates`
+and `cancel_transitions_status` cover the quantity and terminal guards. Lean
+proves remaining quantity conservation for arbitrary accepted units. The model
+uses one line and does not cover supplier acknowledgements or invoice matching.
+
+## Fixed-asset disposal — tla/finance/AssetDisposal.tla
+
+Depreciation posting and disposal compete for the same asset. An immediate
+transaction takes the disposal book-value snapshot and prevents a subsequent
+post; a stale posting decision changes accumulated depreciation after disposal.
+The `full_lifecycle_with_schedule_totals_exact` regression checks the terminal
+post guard and frozen book value. Lean proves the book-value and proceeds split
+equations in arbitrary nonnegative units. The model omits useful-life schedule
+generation and GL account configuration.
+
+## Revenue recognition posting — tla/finance/RevenuePosting.tla
+
+Two recognizers can observe the same deferred entry, while cancellation can
+stop new recognition. The SQLite transaction changes the entry, accumulated
+recognized amount and GL journal together; a split read and commit can post
+twice. `recognize_is_idempotent_for_recognized_entries` and
+`recognize_on_draft_or_cancelled_contract_conflicts` exercise both guards.
+Lean proves recognized plus deferred conservation and a balanced journal in
+arbitrary units. One entry represents the bounded model; tax and multi-period
+scheduling are outside it.
+
+## Gift-card expiry and refund — tla/stored_value/GiftCardExpiry.tla
+
+Expiry removes spendability even when a refund restores balance. The guarded
+model keeps an expired card nonspendable; a refund that ignores expiry
+resurrects it. `refund_to_date_expired_card_does_not_restore_spendability`
+checks the Rust charge guard after a refund. Lean proves refund conservation
+and zero spendability after expiry. The model assumes a valid refund to a prior
+charge; it does not prove refund authorization or cap refund size in the public
+repository API.
+
 ## Running it
 
 ```
@@ -739,6 +791,11 @@ cargo test -p stateset-db --lib lifetime_points_overflow_preserves_balance_and_l
 cargo test -p stateset-db --lib competing_applications_cannot_exceed_prepayment
 cargo test -p stateset-db --lib competing_hold_releases_preserve_first_audit_record
 cargo test -p stateset-db --lib terminal_status_cannot_be_replaced
+cargo test -p stateset-db --lib settling_an_existing_cycle_after_cancel_does_not_restore_billing
+cargo test -p stateset-db --lib receive_accumulates_concurrent_partial_receipts_without_lost_updates
+cargo test -p stateset-db --lib full_lifecycle_with_schedule_totals_exact
+cargo test -p stateset-db --lib recognize_is_idempotent_for_recognized_entries
+cargo test -p stateset-db --lib refund_to_date_expired_card_does_not_restore_spendability
 cargo test -p stateset-db --lib competing_put_away_completions_record_one_receipt
 cargo test -p stateset-db --test inventory_round5_sqlite sqlite_competing_backorder_allocations_cannot_exceed_remaining
 cargo test -p stateset-db --no-default-features --features postgres --test postgres_work_order_concurrency
