@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   businessProfileDoctor,
+  businessProfileContext,
   diffBusinessProfiles,
   installBusinessPack,
   initBusinessProfile,
@@ -36,6 +37,22 @@ test('invalid declarations are rejected before they can be installed', () => {
     () => writeBusinessProfile({ schemaVersion: 1, business: { name: '', currency: 'dollars' } }, root),
     /business\.name.*business\.currency/s,
   );
+});
+
+test('profile context gives agents business-specific operating vocabulary', () => {
+  const root = tempProject();
+  initBusinessProfile(root, {
+    profile: {
+      business: { name: 'Acme', currency: 'CAD' },
+      terminology: { order: 'work order' },
+      workflows: [{ name: 'service-intake', resource: 'order' }],
+    },
+  });
+  const context = businessProfileContext(root);
+  assert.equal(context.ready, true);
+  assert.match(context.text, /Business: Acme/);
+  assert.match(context.text, /order=work order/);
+  assert.match(context.text, /service-intake/);
 });
 
 test('profile diff is deterministic and reports changed leaves', () => {

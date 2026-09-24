@@ -216,6 +216,7 @@ export {
   BUSINESS_PACK_PROFILE,
   DEFAULT_BUSINESS_PROFILE,
   businessProfileDoctor,
+  businessProfileContext,
   diffBusinessProfiles,
   initBusinessProfile,
   createBusinessPack,

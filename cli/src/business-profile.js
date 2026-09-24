@@ -173,6 +173,33 @@ export function businessProfileDoctor(root = process.cwd()) {
   };
 }
 
+export function businessProfileContext(root = process.cwd()) {
+  const loaded = loadBusinessProfile(root);
+  if (!loaded.exists) return { ready: false, text: 'No business profile is configured.' };
+  if (loaded.errors?.length) return { ready: false, errors: loaded.errors, text: 'Business profile is invalid.' };
+  const profile = loaded.profile;
+  const modules = Object.entries(profile.modules)
+    .filter(([, enabled]) => enabled)
+    .map(([name]) => name)
+    .join(', ');
+  const terminology = Object.entries(profile.terminology)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(', ');
+  const declarations = ['policies', 'workflows', 'views', 'automations', 'integrations']
+    .map((key) => `${key}: ${profile[key].map((item) => item.name).join(', ') || 'none'}`)
+    .join('\n');
+  const text = [
+    `Business: ${profile.business.name}`,
+    `Currency: ${profile.business.currency}`,
+    `Timezone: ${profile.business.timezone}`,
+    `Enabled modules: ${modules || 'none'}`,
+    `Terminology: ${terminology || 'default'}`,
+    declarations,
+    'Safety: preserve the commerce kernel invariants; preview writes before governed apply.',
+  ].join('\n');
+  return { ready: true, text, profile };
+}
+
 function readYaml(file) {
   try {
     return YAML.parse(fs.readFileSync(file, 'utf8'));

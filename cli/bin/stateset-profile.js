@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util';
 import YAML from 'yaml';
 import {
   businessProfileDoctor,
+  businessProfileContext,
   createBusinessPack,
   diffBusinessProfiles,
   initBusinessProfile,
@@ -22,12 +23,13 @@ const HELP = `
 StateSet business profiles
 
 USAGE:
-  stateset-profile <init|show|doctor|diff|export|apply|pack> [options]
+  stateset-profile <init|show|doctor|context|diff|export|apply|pack> [options]
 
 COMMANDS:
   init                 Create .stateset/business.yaml
   show                 Print the current profile
   doctor               Validate the profile and its declarations
+  context              Print the compact operating brief for agents
   diff --against FILE  Compare the current profile with another profile
   export --output FILE Export the current profile to a portable file
   apply --file FILE    Validate and install a profile (preview by default)
@@ -95,6 +97,12 @@ async function main() {
     const report = businessProfileDoctor(root);
     output(report, values.json);
     if (!report.ready) process.exitCode = 1;
+    return;
+  }
+  if (command === 'context') {
+    const context = businessProfileContext(root);
+    output(values.json ? context : context.text, values.json);
+    if (!context.ready) process.exitCode = 1;
     return;
   }
   if (command === 'show') {

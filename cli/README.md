@@ -87,6 +87,7 @@ your application:
 ```bash
 stateset-profile init
 stateset-profile doctor
+stateset-profile context
 stateset-profile show
 stateset-profile diff --against ./profiles/wholesale.yaml
 stateset-profile export --output ./profiles/acme.json

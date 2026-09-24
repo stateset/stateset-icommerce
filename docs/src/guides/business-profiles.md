@@ -13,6 +13,7 @@ JavaScript or SQL.
 ```bash
 stateset-profile init
 stateset-profile doctor
+stateset-profile context
 stateset-profile show
 stateset-profile export --output ./profiles/acme.json
 stateset-profile diff --against ./profiles/wholesale.yaml
@@ -27,6 +28,10 @@ stateset-profile pack create --output ./packs/acme --name acme
 `apply` installs the declaration after validation and reports preview mode. It
 does not mutate commerce records. Database mutations still require the normal
 governed write path with an explicit operator policy and principal.
+
+`context` emits a compact, deterministic operating brief for agents and custom
+adapters. It includes the business vocabulary, enabled modules, declared
+workflows, and safety boundary without exposing credentials or database rows.
 
 A pack is a profile plus optional `pack.yaml` metadata. Packs are local by
 design in this first version, so a business can review a Git checkout before
