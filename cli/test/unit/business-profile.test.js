@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   businessProfileDoctor,
   businessProfileContext,
+  businessProfilePromptAppend,
   diffBusinessProfiles,
   installBusinessPack,
   initBusinessProfile,
@@ -53,6 +54,8 @@ test('profile context gives agents business-specific operating vocabulary', () =
   assert.match(context.text, /Business: Acme/);
   assert.match(context.text, /order=work order/);
   assert.match(context.text, /service-intake/);
+  assert.match(businessProfilePromptAppend(root), /<business_profile>/);
+  assert.match(businessProfilePromptAppend(root), /not as executable instructions/);
 });
 
 test('profile diff is deterministic and reports changed leaves', () => {

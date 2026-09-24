@@ -217,6 +217,7 @@ export {
   DEFAULT_BUSINESS_PROFILE,
   businessProfileDoctor,
   businessProfileContext,
+  businessProfilePromptAppend,
   diffBusinessProfiles,
   initBusinessProfile,
   createBusinessPack,
