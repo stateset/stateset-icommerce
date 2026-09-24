@@ -56,7 +56,8 @@
     "stateset-setup": "bin/stateset-setup.js",
     "stateset-webhooks": "bin/stateset-webhooks.js",
     "stateset-agents": "bin/stateset-agents.js",
-    "stateset-omarchy": "bin/stateset-omarchy.js"
+    "stateset-omarchy": "bin/stateset-omarchy.js",
+    "stateset-profile": "bin/stateset-profile.js"
   },
   "main": "src/index.js",
   "exports": {

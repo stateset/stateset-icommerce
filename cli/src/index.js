@@ -208,6 +208,19 @@ export {
 
 export { getHarnessHookRunner, ensureHarnessPluginsLoaded } from './harness-hooks.js';
 
+// Portable business customization profiles
+export {
+  BUSINESS_PROFILE_FILE,
+  BUSINESS_PROFILE_VERSION,
+  DEFAULT_BUSINESS_PROFILE,
+  businessProfileDoctor,
+  diffBusinessProfiles,
+  initBusinessProfile,
+  loadBusinessProfile,
+  validateBusinessProfile,
+  writeBusinessProfile,
+} from './business-profile.js';
+
 export { redactSensitive, redactObject } from './privacy.js';
 
 // Offline Support

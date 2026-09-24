@@ -27,6 +27,7 @@ The StateSet CLI is built on the premise that commerce infrastructure should be 
 - **Deterministic operations** for agent reliability
 - **Protocol-neutral checkout primitives** for adapter and agent integrations
 - **Safety-first architecture** — read-only by default, explicit `--apply` for writes
+- **Forkable business profiles** — keep your terminology, defaults, policies, and workflows in `.stateset/business.yaml`
 
 ## Features
 
@@ -76,6 +77,24 @@ npm link
 ## Quick Start
 
 Tip: `ss` is a shorthand alias for `stateset`.
+
+### Make the operating model yours
+
+Business profiles are portable, reviewable YAML declarations around the stable
+commerce kernel. They are data-only and safe to keep in the same repository as
+your application:
+
+```bash
+stateset-profile init
+stateset-profile doctor
+stateset-profile show
+stateset-profile diff --against ./profiles/wholesale.yaml
+stateset-profile export --output ./profiles/acme.json
+```
+
+`stateset-profile apply` validates and installs a profile in preview mode. It
+does not mutate commerce records; governed writes still require the explicit
+operator policy and principal used by the MCP and CLI write paths.
 
 ### Run the Tutorial
 
