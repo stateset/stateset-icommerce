@@ -113,7 +113,7 @@ impl HttpIdempotencyRepository for SqliteHttpIdempotencyRepository {
         let conn = self.conn()?;
         let deleted = conn
             .execute(
-                "DELETE FROM http_idempotency_keys WHERE created_at < ?1",
+                "DELETE FROM http_idempotency_keys WHERE created_at <= ?1",
                 rusqlite::params![expired_before.timestamp_millis()],
             )
             .map_err(map_err)?;
@@ -229,6 +229,15 @@ mod tests {
         let purged = repo.purge_expired(now - Duration::hours(24)).unwrap();
         assert_eq!(purged, 2);
         assert!(repo.get("tenant-a", "fresh", now - Duration::hours(24)).unwrap().is_some());
+    }
+
+    #[test]
+    fn purge_expired_includes_exact_cutoff_and_frees_key() {
+        let repo = repo();
+        let cutoff = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).expect("timestamp");
+        assert!(repo.put(&record("boundary-sweep", cutoff)).expect("put"));
+        assert_eq!(repo.purge_expired(cutoff).expect("purge"), 1);
+        assert!(repo.put(&record("boundary-sweep", Utc::now())).expect("reuse key"));
     }
     #[test]
     fn entry_created_exactly_at_cutoff_is_expired() {

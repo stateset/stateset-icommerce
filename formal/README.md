@@ -645,7 +645,9 @@ Two writers compete for a tenant/key response; the first successful insert
 owns the response until expiry, after which a new generation can begin. A
 split check and write overwrites the first response. The SQLite
 `concurrent_puts_preserve_one_first_response` regression and existing expiry
-boundary tests exercise the repository. Lean proves the pure first-write and
+boundary tests exercise the repository. SQLite and Postgres bulk expiry now
+delete rows at the same inclusive cutoff as lazy lookup; exact-cutoff
+regressions verify key reuse. Lean proves the pure first-write and
 generation-reset choices. The model does not cover the HTTP handler's request
 fingerprint comparison or atomicity of the business mutation with response
 recording; the kernel receipt gate is modeled separately.
@@ -731,6 +733,7 @@ cargo test -p stateset-db --lib competing_cycle_count_completions_apply_variance
 cargo test -p stateset-db --lib receipt_requires_shipment_and_shipping_cannot_resurrect_terminal_order
 cargo test -p stateset-db --lib competing_applications_cannot_exceed_vendor_credit
 cargo test -p stateset-db --lib concurrent_puts_preserve_one_first_response
+cargo test -p stateset-db --lib purge_expired_includes_exact_cutoff_and_frees_key
 cargo test -p stateset-db --lib concurrent_redemptions_cannot_overdraw
 cargo test -p stateset-db --lib lifetime_points_overflow_preserves_balance_and_ledger
 cargo test -p stateset-db --lib competing_applications_cannot_exceed_prepayment
@@ -744,6 +747,7 @@ cargo test -p stateset-db --features postgres --test postgres_warranty_claim_gua
 cargo test -p stateset-db --features postgres --test postgres_vendor_credit_race
 cargo test -p stateset-db --features postgres --test postgres_edi_terminal_race
 cargo test -p stateset-db --features postgres --test postgres_loyalty_overflow
+cargo test -p stateset-db --features postgres --test postgres_http_idempotency_expiry
 cargo test -p stateset-sync pull_does_not_advance_cursor_when_conflict_resolution_cannot_persist
 cargo test -p stateset-db --test sqlite_payment_order_guards concurrent_captures_cannot_exceed_one_order_total
 cargo test -p stateset-embedded --test ap_money_guards_test process_payment_run_concurrent_double_process_pays_each_bill_once

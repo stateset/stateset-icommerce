@@ -7,7 +7,7 @@
 //! (method + path + body hash) plus the stored response.
 //!
 //! TTL expiry is enforced lazily: [`HttpIdempotencyRepository::get`] deletes
-//! and ignores rows created before the caller-supplied cutoff, and
+//! and ignores rows created at or before the caller-supplied cutoff, and
 //! [`HttpIdempotencyRepository::purge_expired`] performs bulk cleanup sweeps.
 
 use chrono::{DateTime, Utc};
@@ -37,7 +37,7 @@ pub struct HttpIdempotencyRecord {
 pub trait HttpIdempotencyRepository: Send + Sync {
     /// Fetch the entry for `(tenant, key)`.
     ///
-    /// Rows created strictly before `expired_before` are treated as expired:
+    /// Rows created at or before `expired_before` are treated as expired:
     /// they are deleted (lazy cleanup) and `None` is returned.
     fn get(
         &self,
@@ -50,7 +50,7 @@ pub trait HttpIdempotencyRepository: Send + Sync {
     /// for `(tenant, key)` already exists — first write wins across replicas.
     fn put(&self, record: &HttpIdempotencyRecord) -> Result<bool>;
 
-    /// Delete all entries created strictly before `expired_before`, returning
+    /// Delete all entries created at or before `expired_before`, returning
     /// the number of rows removed.
     fn purge_expired(&self, expired_before: DateTime<Utc>) -> Result<u64>;
 }
