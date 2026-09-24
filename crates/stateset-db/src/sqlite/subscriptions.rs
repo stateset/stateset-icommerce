@@ -2625,13 +2625,13 @@ mod tests {
         let sub = repo
             .create_subscription(create_subscription_input(customer, plan.id))
             .expect("create subscription");
-        let old = repo
-            .list_billing_cycles(BillingCycleFilter {
-                subscription_id: Some(sub.id),
-                ..Default::default()
-            })
-            .unwrap_or_else(|_| panic!("initial billing cycle lookup failed"))
-            .remove(0);
+        let old = match repo.list_billing_cycles(BillingCycleFilter {
+            subscription_id: Some(sub.id),
+            ..Default::default()
+        }) {
+            Ok(mut cycles) => cycles.remove(0),
+            Err(_) => panic!("initial billing cycle lookup failed"),
+        };
         assert_eq!(old.subtotal, dec!(10));
 
         repo.update_subscription(
