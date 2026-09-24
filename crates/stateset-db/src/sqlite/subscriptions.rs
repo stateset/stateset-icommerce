@@ -3212,4 +3212,32 @@ mod tests {
         assert_eq!(repo.get_due_for_billing(now, Some(1)).expect("due").len(), 1);
         assert_eq!(repo.get_due_for_billing(now, None).expect("due").len(), 2);
     }
+
+    #[test]
+    fn settling_an_existing_cycle_after_cancel_does_not_restore_billing() {
+        use stateset_core::BillingCycleStatus;
+
+        let repo = SqliteDatabase::in_memory().expect("in-memory").subscriptions();
+        let plan = active_plan(&repo, Some(0));
+        let sub = subscribe_started_at(&repo, plan, Utc::now() - Duration::days(40));
+        let cycle = repo
+            .list_billing_cycles(BillingCycleFilter {
+                subscription_id: Some(sub.id),
+                ..Default::default()
+            })
+            .expect("cycles")
+            .into_iter()
+            .find(|cycle| cycle.status == BillingCycleStatus::Scheduled)
+            .expect("scheduled cycle");
+
+        repo.cancel_subscription(sub.id, stateset_core::CancelSubscription::default())
+            .expect("cancel");
+        repo.update_billing_cycle_status(cycle.id, BillingCycleStatus::Paid, None, None)
+            .expect("settle existing cycle");
+        let after = repo.get_subscription(sub.id).expect("get").expect("subscription");
+        assert_eq!(after.status, SubscriptionStatus::Cancelled);
+        assert_eq!(after.next_billing_date, None);
+        assert_eq!(after.billing_cycle_count, sub.billing_cycle_count + 1);
+        assert!(repo.get_due_for_billing(Utc::now(), None).expect("due").is_empty());
+    }
 }
