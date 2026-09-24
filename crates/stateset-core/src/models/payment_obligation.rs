@@ -39,6 +39,20 @@ impl PaymentObligationStatus {
     pub const fn is_terminal(&self) -> bool {
         matches!(self, Self::Paid | Self::Cancelled)
     }
+
+    /// Explicit status changes schedule or cancel work. Payment progress is
+    /// derived only by `record_payment`; terminal states cannot be reopened.
+    #[must_use]
+    pub const fn allows_manual_transition(self, next: Self) -> bool {
+        match self {
+            Self::Pending | Self::Scheduled => {
+                matches!(next, Self::Pending | Self::Scheduled | Self::Cancelled)
+            }
+            Self::PartiallyPaid => matches!(next, Self::PartiallyPaid | Self::Cancelled),
+            Self::Paid => matches!(next, Self::Paid),
+            Self::Cancelled => matches!(next, Self::Cancelled),
+        }
+    }
 }
 
 /// A scheduled amount owed to a supplier.

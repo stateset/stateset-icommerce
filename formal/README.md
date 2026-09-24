@@ -751,6 +751,58 @@ and zero spendability after expiry. The model assumes a valid refund to a prior
 charge; it does not prove refund authorization or cap refund size in the public
 repository API.
 
+## Exchange-rate publication — tla/finance/RatePublication.tla
+
+The current rate and its history entry are one published fact. The guarded
+model keeps them together; a split upsert exposes a current rate without its
+history. SQLite and Postgres `set_rate` now write both inside one transaction.
+The SQLite `failed_history_insert_rolls_back_current_rate` regression injects
+a history failure. Lean proves that a published rate is recorded and that
+fixed-point division decomposes a scaled value into quotient and bounded
+remainder. The model covers one pair and one publication, not rate-source
+selection or exchange-rate market correctness.
+
+## Payment-obligation settlement — tla/finance/ObligationSettlement.tla
+
+Two payments compete for one obligation while cancellation or a manual status
+change may occur. Serialized payments stay within the amount owed, and a
+cancelled obligation cannot be reopened. Both backends now restrict manual
+status changes to scheduling/cancellation, leaving payment progress to
+`record_payment`. The SQLite
+`manual_status_cannot_forge_payment_or_reopen_terminal_obligation` regression
+checks that guard. Lean proves the outstanding-balance equation for arbitrary
+accepted amounts. The model does not link an obligation to the AP bill it may
+reference.
+
+## Cost-layer issues — tla/finance/CostLayerIssue.tla
+
+Two workers compete for the same remaining layer. Under the repository write
+lock, accepted issues cannot exceed the layer and quantity is conserved; stale
+reads can overissue. FIFO and LIFO now reject nonpositive request quantities
+on both backends, tested by `cost_layer_issue_requires_positive_quantity`.
+Existing `issue_fifo_consumes_oldest_layer_first` and
+`issue_lifo_consumes_newest_layer_first` tie the layer-order choice to Rust.
+Lean proves one- and two-layer conservation in arbitrary units. This bounded
+model uses one layer and does not cover physical stock movements.
+
+## Inbound shipment cancellation — tla/warehouse/InboundCancelReceipt.tla
+
+A final receipt and cancellation race. The guarded model makes exactly one
+terminal result possible; a stale receipt decision can resurrect a cancelled
+shipment. The existing `cancel_racing_a_full_receipt_admits_exactly_one`
+regression exercises the SQLite implementation. Lean proves expected =
+received + outstanding after an accepted partial receipt. The model represents
+one line and omits carrier events.
+
+## Vendor-return decision — tla/returns/VendorReturnDecision.tla
+
+Processing and cancellation race for one pending return. A transaction allows
+only one terminal decision; split reads let both complete. The new
+`processing_and_cancellation_choose_one_terminal_result` regression checks
+the SQLite repository. Lean proves that total line credit is additive across
+line lists. `credit_generated` is currently a status flag; this model does not
+claim that an external supplier credit or vendor-credit row was created.
+
 ## Running it
 
 ```
@@ -796,6 +848,12 @@ cargo test -p stateset-db --lib receive_accumulates_concurrent_partial_receipts_
 cargo test -p stateset-db --lib full_lifecycle_with_schedule_totals_exact
 cargo test -p stateset-db --lib recognize_is_idempotent_for_recognized_entries
 cargo test -p stateset-db --lib refund_to_date_expired_card_does_not_restore_spendability
+cargo test -p stateset-db --lib failed_history_insert_rolls_back_current_rate
+cargo test -p stateset-db --lib manual_status_cannot_forge_payment_or_reopen_terminal_obligation
+cargo test -p stateset-db --lib cost_layer_issue_requires_positive_quantity
+cargo test -p stateset-db --lib cancel_racing_a_full_receipt_admits_exactly_one
+cargo test -p stateset-db --lib processing_and_cancellation_choose_one_terminal_result
+cargo test -p stateset-db --no-default-features --features postgres --test postgres_formal_settlement
 cargo test -p stateset-db --lib competing_put_away_completions_record_one_receipt
 cargo test -p stateset-db --test inventory_round5_sqlite sqlite_competing_backorder_allocations_cannot_exceed_remaining
 cargo test -p stateset-db --no-default-features --features postgres --test postgres_work_order_concurrency

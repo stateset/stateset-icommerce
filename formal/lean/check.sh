@@ -60,6 +60,8 @@ echo "== OperationalIntegrity.lean: the proofs must check"
 lean -o "$build/OperationalIntegrity.olean" OperationalIntegrity.lean
 echo "== LifecycleAccounting.lean: the proofs must check"
 lean -o "$build/LifecycleAccounting.olean" LifecycleAccounting.lean
+echo "== CommerceSettlement.lean: the proofs must check"
+lean -o "$build/CommerceSettlement.olean" CommerceSettlement.lean
 
 echo "== the theorems must use no axiom beyond Lean's standard three"
 theorems=(round_within residue_le_length select_marks nudge_sum allocate_sum allocate_near)
@@ -80,6 +82,9 @@ $(lean --stdin <<< "$integrity_axioms")"
 lifecycle_axioms="$(printf 'import LifecycleAccounting\n#print axioms SubscriptionCancel.paid_cycle_cannot_reschedule_cancelled\n#print axioms PurchaseOrderReceipt.receipt_within_order\n#print axioms PurchaseOrderReceipt.remaining_conserved\n#print axioms AssetDisposal.book_value_at_disposal\n#print axioms AssetDisposal.proceeds_split\n#print axioms RevenuePosting.recognize_conserves\n#print axioms RevenuePosting.journal_balanced\n#print axioms GiftCardExpiry.refund_conserves\n#print axioms GiftCardExpiry.expired_refund_not_spendable\n')"
 report="$report
 $(lean --stdin <<< "$lifecycle_axioms")"
+settlement_axioms="$(printf 'import CommerceSettlement\n#print axioms RatePublication.current_is_recorded\n#print axioms RatePublication.fixed_point_remainder\n#print axioms ObligationSettlement.payment_conserves\n#print axioms ObligationSettlement.cancelled_amount_frozen\n#print axioms CostLayerIssue.one_layer_conserves\n#print axioms CostLayerIssue.two_layers_conserve\n#print axioms InboundCancelReceipt.receipt_conserves\n#print axioms VendorReturnDecision.credit_of_appended_lines\n')"
+report="$report
+$(lean --stdin <<< "$settlement_axioms")"
 echo "$report"
 if grep -Eo '\b[A-Za-z.]+\b' <<< "$(grep -o '\[.*\]' <<< "$report")" \
     | grep -vxE 'propext|Classical\.choice|Quot\.sound' | grep -q .; then
