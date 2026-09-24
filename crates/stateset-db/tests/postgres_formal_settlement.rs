@@ -1,5 +1,5 @@
 //! Postgres counterparts to the SQLite regressions for formal settlement guards.
-//! Requires POSTGRES_URL or DATABASE_URL; skipped otherwise.
+//! Requires `POSTGRES_URL` or `DATABASE_URL`; skipped otherwise.
 
 #![cfg(feature = "postgres")]
 
