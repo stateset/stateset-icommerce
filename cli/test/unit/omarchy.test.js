@@ -63,6 +63,9 @@ describe('Omarchy integration', () => {
   it('reports a missing configured database without creating it', async () => {
     const store = path.join(projectDir, 'missing.db');
     const status = await getStoreStatus({ dbPath: store, homeDir });
+    assert.equal(status.schemaVersion, 1);
+    assert.match(status.controllerVersion, /^\d+\.\d+\.\d+/);
+    assert.ok(status.capabilities.includes('mcp-service'));
     assert.equal(status.ok, false);
     assert.equal(status.configured, true);
     assert.match(status.message, /does not exist/);
