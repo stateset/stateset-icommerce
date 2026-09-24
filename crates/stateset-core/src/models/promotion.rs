@@ -1832,6 +1832,39 @@ mod tests {
     }
 
     #[test]
+    fn stacked_item_discounts_match_lean_budget_model() {
+        // PromotionCaps.stack consumes each accepted request from the
+        // remaining item budget. Percentage=100% makes max_discount_amount
+        // the request, so the Rust evaluator can be compared in minor units.
+        for subtotal in 1i64..=20 {
+            for first_cap in 0i64..=20 {
+                for second_cap in 0i64..=20 {
+                    let req = request(vec![item("A", 1, Decimal::new(subtotal, 2))], Decimal::ZERO);
+                    let mut first =
+                        promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 1);
+                    first.percentage_off = Some(Decimal::ONE);
+                    first.max_discount_amount = Some(Decimal::new(first_cap, 2));
+                    let mut second =
+                        promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 2);
+                    second.percentage_off = Some(Decimal::ONE);
+                    second.max_discount_amount = Some(Decimal::new(second_cap, 2));
+
+                    let result = evaluate(&req, vec![second, first]);
+                    let after_first = first_cap.min(subtotal);
+                    let expected = after_first + second_cap.min(subtotal - after_first);
+                    assert_eq!(
+                        result.total_discount,
+                        Decimal::new(expected, 2),
+                        "subtotal={subtotal}, caps=({first_cap},{second_cap})"
+                    );
+                    assert!(result.total_discount <= req.subtotal);
+                    assert_eq!(result.discounted_subtotal + result.total_discount, req.subtotal);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn calculate_discount_scoped_fixed_amount_cannot_exceed_eligible_items() {
         let mut p = promo(PromotionType::FixedAmountOff, StackingBehavior::Stackable, 1);
         p.fixed_amount_off = Some(Decimal::from(50));

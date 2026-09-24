@@ -2592,6 +2592,17 @@ fn kernel_subscription_charge_previews_applies_and_replays_pending_collection() 
         .execute_charge_subscription(&retry)
         .expect("replay charge");
     assert_eq!(replay.receipt_id, applied.receipt_id);
+    let mut competing = subscription_charge_command("subscription-charge-2", cycle_id);
+    competing.mode = ExecutionMode::Apply;
+    let rejected = db
+        .kernel_executor(payment_policy())
+        .execute_charge_subscription(&competing)
+        .expect("reject second live attempt");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    assert_eq!(
+        rejected.error_code.as_deref(),
+        Some("commerce.subscription.billing_cycle_not_chargeable")
+    );
     let conn = db.pool().get().expect("connection");
     let payments: i64 = conn
         .query_row("SELECT COUNT(*) FROM payments", [], |row| row.get(0))
