@@ -102,6 +102,48 @@ test('kernel restrictions only tighten existing operator-owned commands', () => 
   );
 });
 
+test('compiled refund policy matches the Rust kernel fixture', () => {
+  const profile = {
+    ...structuredClone(DEFAULT_BUSINESS_PROFILE),
+    policies: [
+      {
+        name: 'refund-review',
+        kind: 'kernel-restriction',
+        command: 'payments.create_refund',
+        requiresApproval: true,
+      },
+    ],
+  };
+  const base = {
+    version: 'profile-refunds-v1',
+    commands: {
+      'payments.create_refund': {
+        required_capabilities: ['payments.create_refund'],
+        requires_approval: false,
+        requires_tenant: true,
+        requires_store: true,
+        allowed_tenant_ids: ['tenant:acme'],
+        allowed_store_ids: ['store:production'],
+        requires_agent_delegation: true,
+        requires_signed_authority: false,
+      },
+    },
+    trusted_authority_keys: {},
+  };
+  const expected = JSON.parse(
+    fs.readFileSync(
+      fileURLToPath(
+        new URL('../../../kernel/examples/profile-restricted-refund-policy.json', import.meta.url),
+      ),
+      'utf8',
+    ),
+  );
+  assert.deepEqual(
+    compileBusinessProfileKernelPolicy(profile, base, 'profile-refunds-v2').policy,
+    expected,
+  );
+});
+
 test('invalid declarations are rejected before they can be installed', () => {
   const root = tempProject();
   assert.throws(

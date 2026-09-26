@@ -1422,6 +1422,42 @@ mod tests {
     }
 
     #[test]
+    fn profile_compiled_refund_policy_requires_approval() {
+        let policy: KernelPolicy = serde_json::from_str(include_str!(
+            "../../../kernel/examples/profile-restricted-refund-policy.json"
+        ))
+        .expect("profile-compiled policy should deserialize");
+        let now = Utc::now();
+        let mut principal = agent();
+        principal.tenant_id = Some("tenant:acme".into());
+        principal.capabilities = vec!["payments.create_refund".into()];
+        let mut command = CommandEnvelope::preview(
+            "payments.create_refund",
+            "retry-profile-refund",
+            principal,
+            42_u8,
+        );
+        command.store_id = Some("store:production".into());
+        command.policy_version = Some("profile-refunds-v2".into());
+
+        let denied = policy.evaluate(&command, now);
+        assert!(!denied.allowed);
+        assert!(denied.reason_codes.contains(&"policy.approval_required".to_string()));
+
+        command.approval = Some(ApprovalEvidence {
+            approval_id: "approval-profile-refund".into(),
+            approved_by: "user:operator".into(),
+            scope: "payments.create_refund".into(),
+            tenant_id: Some("tenant:acme".into()),
+            store_id: Some("store:production".into()),
+            idempotency_key: Some("retry-profile-refund".into()),
+            approved_at: now,
+            expires_at: None,
+        });
+        assert!(policy.evaluate(&command, now).allowed);
+    }
+
+    #[test]
     fn policy_is_deny_by_default_and_checks_capability_version_and_approval() {
         let policy = KernelPolicy::new("policy-2").allow(
             "payments.create",
