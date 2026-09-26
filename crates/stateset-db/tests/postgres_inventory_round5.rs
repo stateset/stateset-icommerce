@@ -377,16 +377,24 @@ async fn postgres_expire_reservations_sweeps_idle_skus_and_keeps_invariant() {
     }
     assert_allocation_invariant(&db, &[id1, id2]).await;
 
-    // Drain the sweep in small batches. The count is deliberately not asserted:
-    // `expire_reservations_async` sweeps the whole table, and this database is
-    // shared, so a suite running alongside this one can sweep our three stale
-    // holds before we do and leave the tally short. What this test actually
-    // cares about is the state of its own rows, which the assertions below
-    // check directly and which hold whichever caller did the sweeping.
-    loop {
-        if inv.expire_reservations_async(Utc::now(), 2).await.unwrap() < 2 {
+    // Sweep the shared table in small batches until this test's own holds have
+    // expired. A short batch (or zero rows) does not mean the table is drained:
+    // another suite can lock rows while this sweeper uses SKIP LOCKED.
+    for _ in 0..128 {
+        let mut own_holds_expired = true;
+        for id in &stale {
+            if inv.get_reservation_async(*id).await.unwrap().unwrap().status
+                != ReservationStatus::Expired
+            {
+                own_holds_expired = false;
+                break;
+            }
+        }
+        if own_holds_expired {
             break;
         }
+        inv.expire_reservations_async(Utc::now(), 2).await.unwrap();
+        tokio::task::yield_now().await;
     }
     assert_eq!(inv.expire_reservations_async(Utc::now(), 0).await.unwrap(), 0);
 

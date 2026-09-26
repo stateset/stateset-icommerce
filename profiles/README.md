@@ -9,5 +9,8 @@ and wholesale. Their descriptions are deliberately short; the profile is a
 starting point for the operator's own policies, workflows, and terminology.
 
 The profile layer changes business vocabulary and records intended operating
-behavior. Policy and workflow entries are declarations only in this version;
-they do not change commerce permissions or run jobs.
+behavior. Most policy and workflow entries are declarations only. Explicit
+`kernel-restriction` entries can be compiled against an operator-owned kernel
+policy, but only tighten commands that policy already permits. Compilation
+previews by default and requires a separate `--apply` to write a policy file;
+installing a pack never changes commerce permissions or runs jobs.

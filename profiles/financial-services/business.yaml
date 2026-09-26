@@ -12,6 +12,10 @@ modules:
   payments: true
   returns: false
 policies:
+  - name: refund-review
+    kind: kernel-restriction
+    command: payments.create_refund
+    requiresApproval: true
   - name: high-value-approval
     kind: approval
     resource: payment
