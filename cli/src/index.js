@@ -218,6 +218,7 @@ export {
   businessProfileDoctor,
   businessProfileContext,
   businessProfilePromptAppend,
+  compileBusinessProfileKernelPolicy,
   diffBusinessProfiles,
   initBusinessProfile,
   createBusinessPack,
