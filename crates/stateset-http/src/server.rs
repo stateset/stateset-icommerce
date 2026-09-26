@@ -119,7 +119,7 @@ fn parse_bool_env(env_var: &str, value: &str) -> Result<bool, HttpError> {
 /// let commerce = Commerce::new(":memory:")?;
 ///
 /// ServerBuilder::new_from_env(commerce)?
-///     .bind("0.0.0.0:8080".parse()?)
+///     .bind("127.0.0.1:8080".parse()?)
 ///     .with_cors()
 ///     .with_request_id()
 ///     .with_bearer_auth("replace-me-with-a-secret")
@@ -141,6 +141,7 @@ pub struct ServerBuilder {
     trust_actor_headers_for_authz: bool,
     authz_allow_unmapped_routes: bool,
     allow_unauthenticated: bool,
+    trusted_gateway_controls: bool,
     rate_limit: Option<RateLimitConfig>,
     require_idempotency_keys: bool,
     background_sweeps: Option<SweepConfig>,
@@ -167,6 +168,7 @@ impl fmt::Debug for ServerBuilder {
             .field("trust_actor_headers_for_authz", &self.trust_actor_headers_for_authz)
             .field("authz_allow_unmapped_routes", &self.authz_allow_unmapped_routes)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
+            .field("trusted_gateway_controls", &self.trusted_gateway_controls)
             .field("rate_limit", &self.rate_limit)
             .field("require_idempotency_keys", &self.require_idempotency_keys)
             .field("background_sweeps", &self.background_sweeps)
@@ -273,6 +275,7 @@ impl ServerBuilder {
             trust_actor_headers_for_authz: false,
             authz_allow_unmapped_routes: false,
             allow_unauthenticated: false,
+            trusted_gateway_controls: false,
             rate_limit: None,
             // Secure-by-default: money-moving create endpoints require an
             // Idempotency-Key header (HTTP 428 when missing).
@@ -772,6 +775,20 @@ impl ServerBuilder {
         self
     }
 
+    /// Acknowledge that a trusted gateway provides authorization and rate
+    /// limiting before traffic reaches this server.
+    ///
+    /// This only waives the non-loopback startup requirement for those two
+    /// controls. It does not disable API bearer authentication; use
+    /// [`Self::allow_unauthenticated`] separately if the gateway also owns
+    /// authentication. Configure the gateway to strip client-supplied actor
+    /// headers and enforce per-actor permissions and throttling.
+    #[must_use]
+    pub const fn with_trusted_gateway_controls(mut self) -> Self {
+        self.trusted_gateway_controls = true;
+        self
+    }
+
     /// Fail closed on authorization for unmapped API paths.
     ///
     /// This is now the default: `/api/v1` requests that the authorization
@@ -943,6 +960,7 @@ impl ServerBuilder {
         let generated_default_token = self.generated_default_token;
         let authz_enabled = self.authz_config.is_some();
         let rate_limit_enabled = self.rate_limit.is_some();
+        let trusted_gateway_controls = self.trusted_gateway_controls;
         let trust_actor_headers_for_authz = self.trust_actor_headers_for_authz;
         let addr = self.addr;
 
@@ -974,6 +992,26 @@ impl ServerBuilder {
 
         if let Some(message) = self.api_auth_error() {
             return Err(HttpError::BadRequest(format!("Refusing to start: {message}")));
+        }
+
+        if !addr.ip().is_loopback() && !self.trusted_gateway_controls {
+            if !authz_enabled || self.authz_allow_unmapped_routes {
+                return Err(HttpError::BadRequest(
+                    "Refusing to start on a non-loopback address without fail-closed API \
+                     authorization. Configure ServerBuilder::with_authz_engine or explicitly \
+                     acknowledge upstream authorization with \
+                     ServerBuilder::with_trusted_gateway_controls."
+                        .to_string(),
+                ));
+            }
+            if !rate_limit_enabled {
+                return Err(HttpError::BadRequest(
+                    "Refusing to start on a non-loopback address without rate limiting. \
+                     Configure ServerBuilder::with_rate_limit or explicitly acknowledge \
+                     upstream throttling with ServerBuilder::with_trusted_gateway_controls."
+                        .to_string(),
+                ));
+            }
         }
 
         // Start the built-in sweeps alongside the listener. They run on their
@@ -1055,22 +1093,12 @@ impl ServerBuilder {
                 "Request authorization is enabled for /api/v1/*; ensure x-actor-id is set by a trusted upstream"
             );
         }
-        if !addr.ip().is_loopback() {
-            // Production baseline: authentication alone leaves every valid
-            // token with full API access, and no throttle at all.
-            if !authz_enabled {
-                tracing::warn!(
-                    "No authorization (RBAC) configured on a non-loopback bind: any valid \
-                     bearer token has full access to every /api/v1 route. Configure \
-                     ServerBuilder::with_authz for production deployments."
-                );
-            }
-            if !rate_limit_enabled {
-                tracing::warn!(
-                    "No rate limiting configured on a non-loopback bind. Configure \
-                     ServerBuilder::with_rate_limit for production deployments."
-                );
-            }
+        if !addr.ip().is_loopback() && trusted_gateway_controls {
+            tracing::info!(
+                authz_enabled,
+                rate_limit_enabled,
+                "Trusted gateway authorization and rate limiting acknowledged for public bind"
+            );
         }
 
         if metrics_token.is_some() {
@@ -1549,6 +1577,7 @@ mod tests {
     async fn explicit_token_reaches_non_loopback_bind() {
         let err = ServerBuilder::new(test_commerce())
             .with_bearer_auth("operator-token")
+            .with_trusted_gateway_controls()
             .bind("192.0.2.1:0".parse().expect("socket addr"))
             .serve()
             .await
@@ -1578,12 +1607,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn public_bind_requires_authz_and_rate_limit_or_trusted_gateway() {
+        let addr = "192.0.2.1:0".parse().expect("socket addr");
+        let no_authz = ServerBuilder::new(test_commerce())
+            .with_bearer_auth("operator-token")
+            .with_rate_limit(100, 100)
+            .bind(addr)
+            .serve()
+            .await
+            .expect_err("public bind without authz must fail");
+        assert!(
+            matches!(no_authz, HttpError::BadRequest(message) if message.contains("fail-closed API authorization"))
+        );
+
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::viewer())
+            .assign_role("viewer-1", "viewer")
+            .build();
+        let no_rate_limit = ServerBuilder::new(test_commerce())
+            .with_bearer_auth_for_actor("viewer-token", "viewer-1")
+            .with_authz_engine(engine)
+            .bind(addr)
+            .serve()
+            .await
+            .expect_err("public bind without rate limit must fail");
+        assert!(
+            matches!(no_rate_limit, HttpError::BadRequest(message) if message.contains("without rate limiting"))
+        );
+
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::viewer())
+            .assign_role("viewer-1", "viewer")
+            .build();
+        let unmapped_bypass = ServerBuilder::new(test_commerce())
+            .with_bearer_auth_for_actor("viewer-token", "viewer-1")
+            .with_authz_engine(engine)
+            .with_rate_limit(100, 100)
+            .allow_unmapped_authz_routes(true)
+            .bind(addr)
+            .serve()
+            .await
+            .expect_err("public bind with unmapped authz bypass must fail");
+        assert!(
+            matches!(unmapped_bypass, HttpError::BadRequest(message) if message.contains("fail-closed API authorization"))
+        );
+    }
+
+    #[tokio::test]
+    async fn public_bind_with_internal_controls_reaches_listener() {
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::viewer())
+            .assign_role("viewer-1", "viewer")
+            .build();
+        let err = ServerBuilder::new(test_commerce())
+            .with_bearer_auth_for_actor("viewer-token", "viewer-1")
+            .with_authz_engine(engine)
+            .with_rate_limit(100, 100)
+            .bind("192.0.2.1:0".parse().expect("socket addr"))
+            .serve()
+            .await
+            .expect_err("bind to TEST-NET-1 must fail");
+        assert!(
+            matches!(err, HttpError::InternalError(message) if message.contains("Failed to bind"))
+        );
+    }
+
+    #[tokio::test]
     async fn allow_unauthenticated_bypasses_non_loopback_refusal() {
         // 192.0.2.1 (TEST-NET-1) is not locally assigned, so binding fails —
         // reaching the bind step proves the fail-closed check was opted out of.
         let err = ServerBuilder::new(test_commerce())
             .without_auth()
             .allow_unauthenticated()
+            .with_trusted_gateway_controls()
             .bind("192.0.2.1:0".parse().expect("socket addr"))
             .serve()
             .await

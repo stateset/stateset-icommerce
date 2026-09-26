@@ -136,7 +136,8 @@ binds `127.0.0.1:3000` by default and serves the OpenAPI 3.1 spec at
 `/api/v1/openapi.json`, with an interactive reference at `/api/v1/docs`. Auth
 is on by default: the server generates a token that can be read with
 `bearer_auth_token()` before `serve()`; logs show only a redacted preview.
-A non-loopback bind requires an explicit operator-owned bearer token. See
+A non-loopback bind requires an explicit operator-owned bearer token,
+authorization, and rate limiting (or an explicitly trusted gateway). See
 [step 4 of the Rust quickstart](QUICKSTART.md).
 
 ---

@@ -21,7 +21,7 @@ use std::net::SocketAddr;
 # #[tokio::main]
 # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 let commerce = Commerce::new(":memory:")?;
-let addr: SocketAddr = "0.0.0.0:3000".parse()?;
+let addr: SocketAddr = "127.0.0.1:3000".parse()?;
 
 ServerBuilder::new_from_env(commerce)?
     .bind(addr)
@@ -67,9 +67,12 @@ The builder creates a random bearer token by default. Call
 `bearer_auth_token()` before `serve()` if you need that token for a local
 development client; startup logs do not reveal the full value. A non-loopback
 bind requires an explicit operator-owned token set with `with_bearer_auth`
-or an actor/tenant-bound variant. API authorization and rate limiting are
-separate controls; configure them or provide equivalent upstream protection
-before exposing the server publicly. See the
+or an actor/tenant-bound variant. Public startup also requires fail-closed
+API authorization via `with_authz_engine` and rate limiting via
+`with_rate_limit`. If a trusted gateway supplies both controls instead, call
+`with_trusted_gateway_controls()` explicitly; the gateway must authenticate
+actors, enforce permissions, and throttle traffic before forwarding it.
+See the
 [deployment guide](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/advanced/deployment.md).
 
 ## Part of StateSet iCommerce
