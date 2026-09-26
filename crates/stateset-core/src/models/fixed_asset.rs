@@ -516,7 +516,10 @@ mod tests {
     fn straight_line_matches_lean_minor_unit_schedule() {
         // Depreciation.schedule uses a capped normal period and final plug.
         // Derive ties-to-even cents / months independently of rust_decimal.
-        for cost in 1i64..=40 {
+        // Normal tests cover the full grid. Miri interprets every schedule,
+        // so use a smaller grid that still includes ties and final plugs.
+        let max_cost = if cfg!(miri) { 8 } else { 40 };
+        for cost in 1i64..=max_cost {
             for salvage in 0i64..=cost {
                 for months in 1u32..=12 {
                     let base = cost - salvage;
