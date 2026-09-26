@@ -1836,9 +1836,12 @@ mod tests {
         // PromotionCaps.stack consumes each accepted request from the
         // remaining item budget. Percentage=100% makes max_discount_amount
         // the request, so the Rust evaluator can be compared in minor units.
-        for subtotal in 1i64..=20 {
-            for first_cap in 0i64..=20 {
-                for second_cap in 0i64..=20 {
+        // Normal tests cover every minor-unit combination in the full grid;
+        // Miri covers the same branches over a smaller budget domain.
+        let max_case = if cfg!(miri) { 8 } else { 20 };
+        for subtotal in 1i64..=max_case {
+            for first_cap in 0i64..=max_case {
+                for second_cap in 0i64..=max_case {
                     let req = request(vec![item("A", 1, Decimal::new(subtotal, 2))], Decimal::ZERO);
                     let mut first =
                         promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 1);
