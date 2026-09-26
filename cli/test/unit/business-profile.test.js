@@ -57,6 +57,20 @@ test('profile YAML rejects prototype-sensitive keys before merging defaults', ()
   assert.equal({}.polluted, undefined);
 });
 
+test('invalid terminology is reported instead of crashing agent context', () => {
+  const root = tempProject();
+  const directory = path.join(root, '.stateset');
+  fs.mkdirSync(directory);
+  fs.writeFileSync(
+    path.join(directory, 'business.yaml'),
+    'schemaVersion: 1\nbusiness:\n  name: Acme\n  currency: USD\n  timezone: UTC\nterminology: null\n',
+  );
+  const report = businessProfileDoctor(root);
+  assert.equal(report.ready, false);
+  assert.match(report.errors.join(' '), /terminology must be a mapping/);
+  assert.equal(businessProfileContext(root).ready, false);
+});
+
 test('pack manifest cannot load a profile outside its directory', () => {
   const root = tempProject();
   const packRoot = path.join(root, 'pack');

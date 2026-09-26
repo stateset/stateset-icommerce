@@ -101,6 +101,20 @@ export function validateBusinessProfile(profile) {
       if (typeof enabled !== 'boolean') errors.push(`module ${key} must be boolean`);
     }
   }
+  if (
+    profile.terminology !== undefined &&
+    (!profile.terminology ||
+      typeof profile.terminology !== 'object' ||
+      Array.isArray(profile.terminology))
+  ) {
+    errors.push('terminology must be a mapping');
+  } else if (profile.terminology) {
+    for (const [key, term] of Object.entries(profile.terminology)) {
+      if (!NAME.test(key)) errors.push(`terminology key is invalid: ${key}`);
+      if (typeof term !== 'string' || term.trim() === '')
+        errors.push(`terminology ${key} must be a non-empty string`);
+    }
+  }
   for (const key of ['policies', 'workflows', 'views', 'automations', 'integrations']) {
     if (!Array.isArray(profile[key])) errors.push(`${key} must be a list`);
     else {
