@@ -20,7 +20,7 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 | Binding crates in workspace | 8 |
 | Excluded local binding manifests | 2 |
 | CLI binaries | 53 |
-| CLI optional dependencies | 15 |
+| CLI optional dependencies | 14 |
 | Admin local embedded binding | `file:../bindings/node` |
 
 ## Product Graph Layers
@@ -84,7 +84,7 @@ workspace membership because they require host runtimes or headers.
 | Tool modules | 93 |
 | A2A modules | 61 |
 | JS dependencies | 13 |
-| Optional integrations | 15 |
+| Optional integrations | 14 |
 
 ## CLI Top-Level Source Groups
 
@@ -99,8 +99,8 @@ workspace membership because they require host runtimes or headers.
 | `sync` | 20 |
 | `utils` | 15 |
 | `harness` | 14 |
+| `chains` | 10 |
 | `x402` | 10 |
-| `chains` | 9 |
 | `knowledge` | 6 |
 | `memory` | 6 |
 | `skills` | 5 |
