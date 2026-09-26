@@ -228,6 +228,9 @@ impl ServerBuilder {
 
         let mut seen_tokens = HashSet::with_capacity(bindings.len());
         for binding in &bindings {
+            if binding.token.trim().is_empty() {
+                return Some("API bearer tokens must not be empty".to_string());
+            }
             if !seen_tokens.insert(binding.token.clone()) {
                 return Some("duplicate API bearer tokens are not allowed".to_string());
             }
@@ -943,6 +946,15 @@ impl ServerBuilder {
         let trust_actor_headers_for_authz = self.trust_actor_headers_for_authz;
         let addr = self.addr;
 
+        if !addr.ip().is_loopback() && generated_default_token {
+            return Err(HttpError::BadRequest(format!(
+                "Refusing to start with a generated API bearer token on non-loopback address \
+                 {addr}. Configure an operator-owned token with \
+                 ServerBuilder::with_bearer_auth (or an actor/tenant-bound variant), or \
+                 explicitly opt out with ServerBuilder::without_auth().allow_unauthenticated()."
+            )));
+        }
+
         if api_token_count == 0 && !self.allow_unauthenticated {
             if addr.ip().is_loopback() {
                 tracing::warn!(
@@ -1512,6 +1524,54 @@ mod tests {
                 assert!(message.contains("Refusing to start"), "message: {message}");
                 assert!(message.contains("allow_unauthenticated"), "message: {message}");
                 assert!(message.contains("STATESET_HTTP_ALLOW_UNAUTHENTICATED"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn serve_refuses_generated_token_on_non_loopback_bind() {
+        let err = ServerBuilder::new(test_commerce())
+            .bind("192.0.2.1:0".parse().expect("socket addr"))
+            .serve()
+            .await
+            .expect_err("public bind must require an operator-owned bearer token");
+        match err {
+            HttpError::BadRequest(message) => {
+                assert!(message.contains("generated API bearer token"), "message: {message}");
+                assert!(message.contains("with_bearer_auth"), "message: {message}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn explicit_token_reaches_non_loopback_bind() {
+        let err = ServerBuilder::new(test_commerce())
+            .with_bearer_auth("operator-token")
+            .bind("192.0.2.1:0".parse().expect("socket addr"))
+            .serve()
+            .await
+            .expect_err("bind to TEST-NET-1 must fail");
+        match err {
+            HttpError::InternalError(message) => {
+                assert!(message.contains("Failed to bind"), "message: {message}");
+            }
+            other => panic!("expected bind failure, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_explicit_token_does_not_pass_public_startup() {
+        let err = ServerBuilder::new(test_commerce())
+            .with_bearer_auth("  ")
+            .bind("192.0.2.1:0".parse().expect("socket addr"))
+            .serve()
+            .await
+            .expect_err("blank bearer token must fail before binding");
+        match err {
+            HttpError::BadRequest(message) => {
+                assert!(message.contains("must not be empty"), "message: {message}");
             }
             other => panic!("unexpected error: {other:?}"),
         }
