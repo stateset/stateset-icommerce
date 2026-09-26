@@ -4,7 +4,8 @@
  * Bridges Microsoft Teams messages to the StateSet commerce agent via
  * the Bot Framework REST API. Uses a lightweight HTTP webhook approach
  * (no Bot Framework SDK dependency) with Node's built-in http module
- * and fetch for outbound API calls.
+ * and fetch for outbound API calls. Inbound activities are authenticated
+ * against the public Bot Connector signing keys before dispatch.
  *
  * Each Teams user gets their own agent session for multi-turn conversations.
  *
@@ -18,6 +19,7 @@ import { createSessionManager, createMessageHandler, BOT_PREFIX } from '../chann
 import { getNotifier } from '../channels/notifier.js';
 import { richMessageToPlainText } from '../channels/rich-messages.js';
 import { isSafeDisplayUrl, validateFetchUrl } from '../utils/url-validator.js';
+import { createTeamsActivityVerifier } from './auth.js';
 
 // ============================================================================
 // Bot Framework serviceUrl allowlist
@@ -180,8 +182,24 @@ async function sendActivity(serviceUrl, conversationId, activityId, activity, ap
 function parseBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on('data', (chunk) => chunks.push(chunk));
+    let size = 0;
+    let tooLarge = false;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > 1024 * 1024) {
+        tooLarge = true;
+        chunks.length = 0;
+      } else if (!tooLarge) {
+        chunks.push(chunk);
+      }
+    });
     req.on('end', () => {
+      if (tooLarge) {
+        const error = new Error('Request body exceeds 1 MiB');
+        error.code = 'BODY_TOO_LARGE';
+        reject(error);
+        return;
+      }
       try {
         const raw = Buffer.concat(chunks).toString('utf-8');
         resolve(raw ? JSON.parse(raw) : {});
@@ -246,7 +264,7 @@ function formatForTeams(text) {
  * @param {import('../channels/identity.js').CustomerIdentityStore} [options.identityStore]
  * @param {Function[]} [options.middleware]
  * @param {string}   [options.dbPath='./store.db']
- * @param {boolean}  [options.allowApply=true]
+ * @param {boolean}  [options.allowApply=false]
  * @param {string}   [options.model]
  * @param {number}   [options.maxTurns=10]
  * @param {string}   [options.agent]
@@ -261,7 +279,7 @@ export async function startTeamsGateway({
   identityStore,
   middleware = [],
   dbPath = './store.db',
-  allowApply = true,
+  allowApply = false,
   model,
   maxTurns = 10,
   agent,
@@ -288,6 +306,7 @@ export async function startTeamsGateway({
   }
 
   console.info('Starting StateSet Microsoft Teams Gateway...');
+  const verifyTeamsActivity = createTeamsActivityVerifier();
 
   // ---- Session management ----
   const sessionManager = createSessionManager({ store: sessionStore, channel: 'teams' });
@@ -589,12 +608,27 @@ export async function startTeamsGateway({
 
     // Bot Framework messages endpoint
     if (method === 'POST' && pathname === '/api/messages') {
+      if (typeof req.headers.authorization !== 'string' || !/^Bearer [^\s]+$/i.test(req.headers.authorization)) {
+        sendJson(res, 403, { error: 'Invalid Bot Connector authorization' });
+        return;
+      }
       let activity;
       try {
         activity = await parseBody(req);
       } catch (err) {
         console.error('[Teams] Failed to parse request body:', err.message);
-        sendJson(res, 400, { error: 'Invalid request body' });
+        sendJson(res, err.code === 'BODY_TOO_LARGE' ? 413 : 400, { error: 'Invalid request body' });
+        return;
+      }
+
+      try {
+        if (!(await verifyTeamsActivity(req.headers.authorization, activity, appId))) {
+          sendJson(res, 403, { error: 'Invalid Bot Connector authorization' });
+          return;
+        }
+      } catch (err) {
+        console.error('[Teams] Bot Connector verification unavailable:', err.message);
+        sendJson(res, 503, { error: 'Bot Connector verification unavailable' });
         return;
       }
 
@@ -713,7 +747,7 @@ export async function startTeamsGateway({
     });
   };
 
-  return { shutdown };
+  return { shutdown, port: server.address().port };
 }
 
 // ============================================================================

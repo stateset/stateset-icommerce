@@ -238,6 +238,14 @@ TEAMS_APP_PASSWORD=...
 OPENAI_API_KEY=sk-...
 ```
 
+The Teams webhook accepts only signed activities from the public Bot Connector
+service. Configure the registered messaging endpoint with HTTPS; unsigned POSTs
+and Bot Framework Emulator tokens are rejected. The gateway checks the bot App
+ID, token issuer and lifetime, Teams signing-key endorsement, and the activity's
+service URL before handing a message to the agent.
+Direct gateway startup also defaults to preview-only writes; set `allowApply`
+explicitly in operator-owned configuration to enable mutations.
+
 ### Gateway Configuration (`gateway.json`)
 
 See `cli/deploy/gateway.config.example.json` for full reference.
