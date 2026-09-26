@@ -36,7 +36,7 @@ quickstart_output="$(
   CARGO_TARGET_DIR="$target_dir" cargo run --quiet
 )"
 printf '%s\n' "$quickstart_output"
-for expected in 'Customer: Alice' 'Stock: 100 units' 'Order: ORD-' '— $99.98' 'Payment:' 'Shipment:' 'Orders created: 1' 'Payments completed: 1'; do
+for expected in 'Customer: Alice' 'Stock: 100 units' 'Order: ORD-' "— \$99.98" 'Payment:' 'Shipment:' 'Orders created: 1' 'Payments completed: 1'; do
   if [[ "$quickstart_output" != *"$expected"* ]]; then
     echo "error: Rust quickstart output is missing: $expected" >&2
     exit 1
