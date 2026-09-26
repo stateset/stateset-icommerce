@@ -71,7 +71,9 @@ or an actor/tenant-bound variant. Public startup also requires fail-closed
 API authorization via `with_authz_engine` and rate limiting via
 `with_rate_limit`. If a trusted gateway supplies both controls instead, call
 `with_trusted_gateway_controls()` explicitly; the gateway must authenticate
-actors, enforce permissions, and throttle traffic before forwarding it.
+actors, enforce permissions, strip client-supplied actor/forwarding headers,
+and throttle traffic before forwarding it. Public binds cannot trust
+`x-actor-id` or forwarded client IP headers without that declaration.
 See the
 [deployment guide](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/advanced/deployment.md).
 

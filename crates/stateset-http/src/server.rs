@@ -756,7 +756,8 @@ impl ServerBuilder {
     /// Explicitly trust `x-actor-id` request headers for authorization.
     ///
     /// Use this only behind a trusted upstream that authenticates callers and
-    /// strips or overwrites any client-supplied actor header.
+    /// strips or overwrites any client-supplied actor header. A non-loopback
+    /// `serve()` also requires [`Self::with_trusted_gateway_controls`].
     #[must_use]
     pub const fn trust_actor_headers_for_authz(mut self) -> Self {
         self.trust_actor_headers_for_authz = true;
@@ -852,7 +853,8 @@ impl ServerBuilder {
     /// Only enable this when every request reaches this server through a
     /// proxy you control that sets those headers; otherwise clients can choose
     /// their own bucket. Has no effect unless [`Self::with_rate_limit`] is
-    /// also called.
+    /// also called. A non-loopback `serve()` also requires
+    /// [`Self::with_trusted_gateway_controls`].
     #[must_use]
     pub const fn with_rate_limit_trusting_proxy_headers(mut self, trust: bool) -> Self {
         if let Some(config) = self.rate_limit.as_mut() {
@@ -995,6 +997,22 @@ impl ServerBuilder {
         }
 
         if !addr.ip().is_loopback() && !self.trusted_gateway_controls {
+            if trust_actor_headers_for_authz {
+                return Err(HttpError::BadRequest(
+                    "Refusing to trust client-supplied actor headers on a non-loopback address. \
+                     Bind bearer tokens to actors or explicitly acknowledge a trusted gateway \
+                     with ServerBuilder::with_trusted_gateway_controls."
+                        .to_string(),
+                ));
+            }
+            if self.rate_limit.as_ref().is_some_and(|config| config.trust_proxy_headers) {
+                return Err(HttpError::BadRequest(
+                    "Refusing to trust client-supplied proxy headers for rate limiting on a \
+                     non-loopback address. Use peer IPs or explicitly acknowledge a trusted \
+                     gateway with ServerBuilder::with_trusted_gateway_controls."
+                        .to_string(),
+                ));
+            }
             if !authz_enabled || self.authz_allow_unmapped_routes {
                 return Err(HttpError::BadRequest(
                     "Refusing to start on a non-loopback address without fail-closed API \
@@ -1669,6 +1687,44 @@ mod tests {
             .expect_err("bind to TEST-NET-1 must fail");
         assert!(
             matches!(err, HttpError::InternalError(message) if message.contains("Failed to bind"))
+        );
+    }
+
+    #[tokio::test]
+    async fn public_bind_rejects_untrusted_identity_and_rate_limit_headers() {
+        let addr = "192.0.2.1:0".parse().expect("socket addr");
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::viewer())
+            .assign_role("viewer-1", "viewer")
+            .build();
+        let actor_header = ServerBuilder::new(test_commerce())
+            .with_bearer_auth("operator-token")
+            .with_authz_engine(engine)
+            .trust_actor_headers_for_authz()
+            .with_rate_limit(100, 100)
+            .bind(addr)
+            .serve()
+            .await
+            .expect_err("public clients must not choose their actor identity");
+        assert!(
+            matches!(actor_header, HttpError::BadRequest(message) if message.contains("actor headers"))
+        );
+
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::viewer())
+            .assign_role("viewer-1", "viewer")
+            .build();
+        let proxy_header = ServerBuilder::new(test_commerce())
+            .with_bearer_auth_for_actor("viewer-token", "viewer-1")
+            .with_authz_engine(engine)
+            .with_rate_limit(100, 100)
+            .with_rate_limit_trusting_proxy_headers(true)
+            .bind(addr)
+            .serve()
+            .await
+            .expect_err("public clients must not choose their rate-limit bucket");
+        assert!(
+            matches!(proxy_header, HttpError::BadRequest(message) if message.contains("proxy headers"))
         );
     }
 
