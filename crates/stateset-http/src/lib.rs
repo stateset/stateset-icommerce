@@ -24,7 +24,7 @@
 //! use std::net::SocketAddr;
 //!
 //! let commerce = Commerce::new(":memory:")?;
-//! let addr: SocketAddr = "0.0.0.0:3000".parse()?;
+//! let addr: SocketAddr = "127.0.0.1:3000".parse()?;
 //!
 //! ServerBuilder::new_from_env(commerce)?
 //!     .bind(addr)

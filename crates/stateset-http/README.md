@@ -21,7 +21,7 @@ use std::net::SocketAddr;
 # #[tokio::main]
 # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 let commerce = Commerce::new(":memory:")?;
-let addr: SocketAddr = "0.0.0.0:3000".parse()?;
+let addr: SocketAddr = "127.0.0.1:3000".parse()?;
 
 ServerBuilder::new_from_env(commerce)?
     .bind(addr)
@@ -58,15 +58,24 @@ ServerBuilder::new_from_env(commerce)?
 - **Server-Sent Events** for live order and inventory changes
 - **Cursor pagination** with consistent envelope shapes
 - **Structured errors** — typed JSON bodies, not bare status codes
-- **Bearer auth**, CORS, and request-ID propagation as opt-in layers
+- **Bearer auth** by default, with CORS and request-ID propagation as opt-in layers
 - **OpenAPI** description generated from the route table
 
 ## Security Defaults
 
-`with_bearer_auth` is opt-in, not implied — an unconfigured server is unauthenticated,
-so bind it to localhost or put it behind a gateway during development. See the
-[deployment guide](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/advanced/deployment.md)
-before exposing it publicly.
+The builder creates a random bearer token by default. Call
+`bearer_auth_token()` before `serve()` if you need that token for a local
+development client; startup logs do not reveal the full value. A non-loopback
+bind requires an explicit operator-owned token set with `with_bearer_auth`
+or an actor/tenant-bound variant. Public startup also requires fail-closed
+API authorization via `with_authz_engine` and rate limiting via
+`with_rate_limit`. If a trusted gateway supplies both controls instead, call
+`with_trusted_gateway_controls()` explicitly; the gateway must authenticate
+actors, enforce permissions, strip client-supplied actor/forwarding headers,
+and throttle traffic before forwarding it. Public binds cannot trust
+`x-actor-id` or forwarded client IP headers without that declaration.
+See the
+[deployment guide](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/advanced/deployment.md).
 
 ## Part of StateSet iCommerce
 

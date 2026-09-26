@@ -152,8 +152,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Now you have a full REST API at `http://localhost:3000/api/v1/` with the
-OpenAPI spec at `/api/v1/openapi.json`. (If you skip `with_bearer_auth`, the
-server generates a token and prints it at startup — auth is on by default.)
+OpenAPI spec at `/api/v1/openapi.json`. If you skip `with_bearer_auth` on a
+loopback bind, the server generates a token; read it with
+`bearer_auth_token()` before calling `serve()`. Logs do not print it in full.
 
 ---
 
