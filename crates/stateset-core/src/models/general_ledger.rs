@@ -1342,9 +1342,13 @@ mod tests {
         // LedgerPosting treats each line as exact debit/credit minor units.
         // The actual posting gate should accept these valid one-sided lines
         // exactly when their independently summed totals match.
-        for debit_a in 1i64..=12 {
-            for debit_b in 1i64..=12 {
-                for credit in 1i64..=25 {
+        // Normal tests cover the full grid. The Miri grid still has balanced
+        // and unbalanced entries for every debit pair at much lower cost.
+        let max_debit = if cfg!(miri) { 4 } else { 12 };
+        let max_credit = if cfg!(miri) { 9 } else { 25 };
+        for debit_a in 1i64..=max_debit {
+            for debit_b in 1i64..=max_debit {
+                for credit in 1i64..=max_credit {
                     let entry = draft_entry(vec![
                         line(Decimal::new(debit_a, 2), Decimal::ZERO, 1),
                         line(Decimal::new(debit_b, 2), Decimal::ZERO, 2),
