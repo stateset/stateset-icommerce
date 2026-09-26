@@ -43,6 +43,34 @@ test('invalid declarations are rejected before they can be installed', () => {
   );
 });
 
+test('profile YAML rejects prototype-sensitive keys before merging defaults', () => {
+  const root = tempProject();
+  const directory = path.join(root, '.stateset');
+  fs.mkdirSync(directory);
+  fs.writeFileSync(
+    path.join(directory, 'business.yaml'),
+    'schemaVersion: 1\n__proto__:\n  polluted: true\n',
+  );
+  const loaded = loadBusinessProfile(root);
+  assert.equal(loaded.profile, null);
+  assert.match(loaded.errors.join(' '), /unsafe profile key: profile\.__proto__/);
+  assert.equal({}.polluted, undefined);
+});
+
+test('pack manifest cannot load a profile outside its directory', () => {
+  const root = tempProject();
+  const packRoot = path.join(root, 'pack');
+  fs.mkdirSync(packRoot);
+  const outside = path.join(root, 'outside.yaml');
+  fs.writeFileSync(outside, 'schemaVersion: 1\n');
+  fs.writeFileSync(path.join(packRoot, 'pack.yaml'), 'profile: ../outside.yaml\n');
+  assert.throws(() => loadBusinessPack(packRoot), /inside the pack/);
+
+  fs.writeFileSync(path.join(packRoot, 'pack.yaml'), 'profile: linked.yaml\n');
+  fs.symlinkSync(outside, path.join(packRoot, 'linked.yaml'));
+  assert.throws(() => loadBusinessPack(packRoot), /inside the pack/);
+});
+
 test('profile context gives agents business-specific operating vocabulary', () => {
   const root = tempProject();
   initBusinessProfile(root, {

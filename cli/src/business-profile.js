@@ -37,6 +37,17 @@ export const DEFAULT_BUSINESS_PROFILE = {
 
 const NAME = /^[a-z][a-z0-9_-]{0,62}$/;
 const CURRENCY = /^[A-Z]{3}$/;
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function findUnsafeKey(value, location = 'profile') {
+  if (!value || typeof value !== 'object') return null;
+  for (const [key, entry] of Object.entries(value)) {
+    if (UNSAFE_KEYS.has(key)) return `${location}.${key}`;
+    const nested = findUnsafeKey(entry, `${location}.${key}`);
+    if (nested) return nested;
+  }
+  return null;
+}
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -46,6 +57,7 @@ function merge(base, value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const result = { ...base };
   for (const [key, entry] of Object.entries(value)) {
+    if (UNSAFE_KEYS.has(key)) throw new Error(`Unsafe business profile key: ${key}`);
     result[key] =
       entry && typeof entry === 'object' && !Array.isArray(entry)
         ? merge(result[key] && typeof result[key] === 'object' ? result[key] : {}, entry)
@@ -63,6 +75,8 @@ export function validateBusinessProfile(profile) {
   if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
     return ['profile must be a mapping'];
   }
+  const unsafeKey = findUnsafeKey(profile);
+  if (unsafeKey) errors.push(`unsafe profile key: ${unsafeKey}`);
   if (profile.schemaVersion !== BUSINESS_PROFILE_VERSION) {
     errors.push(`schemaVersion must be ${BUSINESS_PROFILE_VERSION}`);
   }
@@ -112,6 +126,9 @@ export function loadBusinessProfile(root = process.cwd()) {
   } catch (error) {
     return { profile: null, file, exists: true, errors: [`invalid YAML: ${error.message}`] };
   }
+  const unsafeKey = findUnsafeKey(parsed);
+  if (unsafeKey)
+    return { profile: null, file, exists: true, errors: [`unsafe profile key: ${unsafeKey}`] };
   const profile = merge(clone(DEFAULT_BUSINESS_PROFILE), parsed);
   return { profile, file, exists: true, errors: validateBusinessProfile(profile) };
 }
@@ -241,9 +258,22 @@ function packSource(source) {
   }
   const manifestFile = path.join(resolved, BUSINESS_PACK_MANIFEST);
   const manifest = fs.existsSync(manifestFile) ? readYaml(manifestFile) : {};
-  const profileFile = path.join(resolved, manifest.profile || BUSINESS_PACK_PROFILE);
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest))
+    throw new Error(`Pack manifest must be a mapping: ${manifestFile}`);
+  const profileName = manifest.profile || BUSINESS_PACK_PROFILE;
+  if (typeof profileName !== 'string' || path.isAbsolute(profileName))
+    throw new Error('Pack profile must be a relative path inside the pack');
+  const profileFile = path.resolve(resolved, profileName);
+  const relative = path.relative(resolved, profileFile);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`))
+    throw new Error('Pack profile must be inside the pack');
   if (!fs.existsSync(profileFile))
     throw new Error(`Pack has no ${BUSINESS_PACK_PROFILE}: ${resolved}`);
+  const realRoot = fs.realpathSync(resolved);
+  const realProfile = fs.realpathSync(profileFile);
+  const realRelative = path.relative(realRoot, realProfile);
+  if (realRelative === '..' || realRelative.startsWith(`..${path.sep}`))
+    throw new Error('Pack profile must be inside the pack');
   return { directory: resolved, profileFile, manifest };
 }
 
