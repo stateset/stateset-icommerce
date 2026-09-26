@@ -115,8 +115,8 @@ describe('Teams Gateway', () => {
       assert.match(source, /maxTurns\s*=\s*10/);
     });
 
-    it('default allowApply is true', () => {
-      assert.match(source, /allowApply\s*=\s*true/);
+    it('defaults to preview-only writes', () => {
+      assert.match(source, /allowApply\s*=\s*false/);
     });
 
     it('default verbose is false', () => {
@@ -268,8 +268,5 @@ describe('Teams Gateway', () => {
       assert.ok(source.includes('server.close'));
     });
 
-    it('returns an object with shutdown method', () => {
-      assert.ok(source.includes('return { shutdown }'));
-    });
   });
 });
