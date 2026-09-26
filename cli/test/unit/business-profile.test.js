@@ -456,5 +456,29 @@ test('kernel-policy previews by default and writes a narrower policy only with -
     { encoding: 'utf8' },
   );
   assert.notEqual(overwriteAlias.status, 0);
+  assert.match(overwriteAlias.stderr, /symbolic link/);
+  const danglingTarget = path.join(root, 'unexpected-policy.json');
+  const danglingLink = path.join(root, 'dangling-alias.json');
+  fs.symlinkSync(danglingTarget, danglingLink);
+  const followDangling = spawnSync(
+    process.execPath,
+    [
+      command,
+      'kernel-policy',
+      '--root',
+      root,
+      '--base',
+      baseFile,
+      '--version',
+      'operator-v2',
+      '--output',
+      danglingLink,
+      '--apply',
+      '--force',
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.notEqual(followDangling.status, 0);
+  assert.equal(fs.existsSync(danglingTarget), false);
   assert.equal(JSON.parse(fs.readFileSync(baseFile, 'utf8')).version, 'operator-v1');
 });

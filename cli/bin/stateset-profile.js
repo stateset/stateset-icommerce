@@ -164,6 +164,8 @@ async function main() {
       );
     }
     if (!destination) throw new Error('kernel-policy --apply requires --output FILE');
+    if (fs.lstatSync(destination, { throwIfNoEntry: false })?.isSymbolicLink())
+      throw new Error('kernel-policy output must not be a symbolic link');
     if (
       destination === path.resolve(values.base) ||
       (fs.existsSync(destination) &&
