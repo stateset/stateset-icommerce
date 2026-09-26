@@ -555,7 +555,7 @@
   "cli": {
     "binaryCount": 53,
     "dependencyCount": 13,
-    "optionalDependencyCount": 14,
+    "optionalDependencyCount": 12,
     "topLevelSourceCounts": [
       {
         "name": "tools",
