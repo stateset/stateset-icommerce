@@ -19,7 +19,7 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 | Rust crates in workspace | 22 |
 | Binding crates in workspace | 8 |
 | Excluded local binding manifests | 2 |
-| CLI binaries | 53 |
+| CLI binaries | 55 |
 | CLI optional dependencies | 15 |
 | Admin local embedded binding | `file:../bindings/node` |
 
@@ -80,7 +80,7 @@ workspace membership because they require host runtimes or headers.
 
 | Metric | Value |
 | --- | --- |
-| Top-level source groups | 107 |
+| Top-level source groups | 108 |
 | Tool modules | 93 |
 | A2A modules | 61 |
 | JS dependencies | 13 |
@@ -127,6 +127,7 @@ workspace membership because they require host runtimes or headers.
 | `agent-toolkit.js` | 1 |
 | `audit-store.js` | 1 |
 | `browser` | 1 |
+| `business-profile.js` | 1 |
 | `catalog` | 1 |
 | `checkout` | 1 |
 | `claude-harness.js` | 1 |

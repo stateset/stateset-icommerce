@@ -1,0 +1,25 @@
+schemaVersion: 1
+business:
+  name: Wholesale business
+  currency: USD
+  timezone: UTC
+terminology:
+  order: sales order
+  customer: account
+modules:
+  orders: true
+  inventory: true
+  payments: true
+  returns: true
+policies:
+  - name: account-credit-review
+    kind: approval
+    resource: order
+    condition: account_credit_required
+workflows:
+  - name: wholesale-fulfillment
+    resource: order
+    states: [draft, confirmed, allocated, shipped, complete]
+views: []
+automations: []
+integrations: []

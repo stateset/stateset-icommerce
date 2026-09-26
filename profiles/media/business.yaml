@@ -1,0 +1,27 @@
+schemaVersion: 1
+business:
+  name: Media
+  currency: USD
+  timezone: UTC
+terminology:
+  customer: subscriber
+  order: subscription
+modules:
+  orders: true
+  inventory: false
+  payments: true
+  returns: false
+policies:
+  - name: subscriber-retention
+    kind: policy
+    resource: customer
+  - name: refund-review
+    kind: approval
+    resource: payment
+workflows:
+  - name: audience-subscription
+    resource: customer
+    states: [visitor, trial, subscribed, paused, cancelled]
+views: []
+automations: []
+integrations: []
