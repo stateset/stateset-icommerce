@@ -553,7 +553,7 @@
     }
   ],
   "cli": {
-    "binaryCount": 53,
+    "binaryCount": 55,
     "dependencyCount": 13,
     "optionalDependencyCount": 15,
     "topLevelSourceCounts": [
@@ -703,6 +703,10 @@
       },
       {
         "name": "browser",
+        "count": 1
+      },
+      {
+        "name": "business-profile.js",
         "count": 1
       },
       {

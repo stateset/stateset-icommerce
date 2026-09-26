@@ -104,7 +104,8 @@ export function validateBusinessProfile(profile) {
 
 export function loadBusinessProfile(root = process.cwd()) {
   const file = profilePath(root);
-  if (!fs.existsSync(file)) return { profile: clone(DEFAULT_BUSINESS_PROFILE), file, exists: false };
+  if (!fs.existsSync(file))
+    return { profile: clone(DEFAULT_BUSINESS_PROFILE), file, exists: false };
   let parsed;
   try {
     parsed = YAML.parse(fs.readFileSync(file, 'utf8'));
@@ -119,7 +120,8 @@ export function writeBusinessProfile(profile, root = process.cwd(), { force = fa
   const errors = validateBusinessProfile(profile);
   if (errors.length) throw new Error(`Invalid business profile:\n- ${errors.join('\n- ')}`);
   const file = profilePath(root);
-  if (fs.existsSync(file) && !force) throw new Error(`Profile already exists: ${file} (use --force)`);
+  if (fs.existsSync(file) && !force)
+    throw new Error(`Profile already exists: ${file} (use --force)`);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, YAML.stringify(profile), { mode: 0o600 });
   return file;
@@ -132,7 +134,8 @@ export function initBusinessProfile(root = process.cwd(), options = {}) {
 
 function flatten(value, prefix = '', output = new Map()) {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
-    for (const key of Object.keys(value).sort()) flatten(value[key], prefix ? `${prefix}.${key}` : key, output);
+    for (const key of Object.keys(value).sort())
+      flatten(value[key], prefix ? `${prefix}.${key}` : key, output);
   } else {
     output.set(prefix, JSON.stringify(value));
   }
@@ -156,6 +159,9 @@ function mergeNamedList(base = [], overlay = []) {
 
 export function mergeBusinessProfiles(base, overlay) {
   const result = merge(clone(base), overlay);
+  // A pack contributes capabilities to an existing business. Its example
+  // identity must not silently change the operator's name or accounting defaults.
+  result.business = clone(base.business);
   for (const key of ['policies', 'workflows', 'views', 'automations', 'integrations']) {
     result[key] = mergeNamedList(base[key], overlay[key]);
   }
@@ -176,7 +182,8 @@ export function businessProfileDoctor(root = process.cwd()) {
 export function businessProfileContext(root = process.cwd()) {
   const loaded = loadBusinessProfile(root);
   if (!loaded.exists) return { ready: false, text: 'No business profile is configured.' };
-  if (loaded.errors?.length) return { ready: false, errors: loaded.errors, text: 'Business profile is invalid.' };
+  if (loaded.errors?.length)
+    return { ready: false, errors: loaded.errors, text: 'Business profile is invalid.' };
   const profile = loaded.profile;
   const modules = Object.entries(profile.modules)
     .filter(([, enabled]) => enabled)
@@ -235,7 +242,8 @@ function packSource(source) {
   const manifestFile = path.join(resolved, BUSINESS_PACK_MANIFEST);
   const manifest = fs.existsSync(manifestFile) ? readYaml(manifestFile) : {};
   const profileFile = path.join(resolved, manifest.profile || BUSINESS_PACK_PROFILE);
-  if (!fs.existsSync(profileFile)) throw new Error(`Pack has no ${BUSINESS_PACK_PROFILE}: ${resolved}`);
+  if (!fs.existsSync(profileFile))
+    throw new Error(`Pack has no ${BUSINESS_PACK_PROFILE}: ${resolved}`);
   return { directory: resolved, profileFile, manifest };
 }
 
@@ -246,7 +254,10 @@ export function loadBusinessPack(source) {
   const name =
     pack.manifest.name ||
     pack.sourceName ||
-    path.basename(pack.directory).toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+    path
+      .basename(pack.directory)
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-');
   if (!NAME.test(name)) errors.push(`pack name is invalid: ${name}`);
   if (pack.manifest.version !== undefined && typeof pack.manifest.version !== 'string') {
     errors.push('pack.version must be a string');
@@ -271,7 +282,13 @@ export function installBusinessPack(
   const pack = loadBusinessPack(source);
   if (pack.errors.length) throw new Error(`Invalid business pack:\n- ${pack.errors.join('\n- ')}`);
   const current = loadBusinessProfile(root);
-  const profile = replace ? pack.profile : mergeBusinessProfiles(current.profile, pack.profile);
+  if (current.errors?.length) {
+    throw new Error(`Invalid current business profile:\n- ${current.errors.join('\n- ')}`);
+  }
+  const profile =
+    replace || !current.exists
+      ? pack.profile
+      : mergeBusinessProfiles(current.profile, pack.profile);
   const changes = diffBusinessProfiles(current.profile, profile);
   const destination = profilePath(root);
   if (preview) return { ...pack, profile, preview: true, destination, changes };
@@ -286,26 +303,47 @@ export function installBusinessPack(
   return { ...pack, preview: false, destination: file, lockFile, changes };
 }
 
-export function createBusinessPack(output, root = process.cwd(), { name, version = '0.1.0', description = '' } = {}) {
-  if (!name || !NAME.test(name)) throw new Error('pack name must be lowercase letters, numbers, dashes, or underscores');
+export function createBusinessPack(
+  output,
+  root = process.cwd(),
+  { name, version = '0.1.0', description = '' } = {},
+) {
+  if (!name || !NAME.test(name))
+    throw new Error('pack name must be lowercase letters, numbers, dashes, or underscores');
   const current = loadBusinessProfile(root);
-  if (!current.exists || current.errors?.length) throw new Error('a valid business profile is required before creating a pack');
+  if (!current.exists || current.errors?.length)
+    throw new Error('a valid business profile is required before creating a pack');
   const directory = path.resolve(output);
-  if (fs.existsSync(directory) && fs.readdirSync(directory).length > 0) throw new Error(`pack directory is not empty: ${directory}`);
+  if (fs.existsSync(directory) && fs.readdirSync(directory).length > 0)
+    throw new Error(`pack directory is not empty: ${directory}`);
   fs.mkdirSync(directory, { recursive: true });
-  fs.writeFileSync(path.join(directory, BUSINESS_PACK_MANIFEST), YAML.stringify({ name, version, description, profile: BUSINESS_PACK_PROFILE }), { mode: 0o600 });
-  fs.writeFileSync(path.join(directory, BUSINESS_PACK_PROFILE), YAML.stringify(current.profile), { mode: 0o600 });
-  return { directory, manifest: path.join(directory, BUSINESS_PACK_MANIFEST), profile: path.join(directory, BUSINESS_PACK_PROFILE) };
+  fs.writeFileSync(
+    path.join(directory, BUSINESS_PACK_MANIFEST),
+    YAML.stringify({ name, version, description, profile: BUSINESS_PACK_PROFILE }),
+    { mode: 0o600 },
+  );
+  fs.writeFileSync(path.join(directory, BUSINESS_PACK_PROFILE), YAML.stringify(current.profile), {
+    mode: 0o600,
+  });
+  return {
+    directory,
+    manifest: path.join(directory, BUSINESS_PACK_MANIFEST),
+    profile: path.join(directory, BUSINESS_PACK_PROFILE),
+  };
 }
 
 export function listBusinessPacks(directory = path.resolve('profiles')) {
   if (!fs.existsSync(directory)) return [];
   return fs
     .readdirSync(directory, { withFileTypes: true })
-    .map((entry) => (entry.isDirectory() ? path.join(directory, entry.name) : path.join(directory, entry.name)))
+    .map((entry) =>
+      entry.isDirectory() ? path.join(directory, entry.name) : path.join(directory, entry.name),
+    )
     .filter((entry) => {
       try {
-        return fs.statSync(entry).isFile() ? entry.endsWith('.yaml') || entry.endsWith('.yml') : fs.existsSync(path.join(entry, BUSINESS_PACK_PROFILE));
+        return fs.statSync(entry).isFile()
+          ? entry.endsWith('.yaml') || entry.endsWith('.yml')
+          : fs.existsSync(path.join(entry, BUSINESS_PACK_PROFILE));
       } catch {
         return false;
       }
@@ -313,7 +351,13 @@ export function listBusinessPacks(directory = path.resolve('profiles')) {
     .map((entry) => {
       try {
         const pack = loadBusinessPack(entry);
-        return { name: pack.name, version: pack.version, description: pack.description, source: entry, valid: pack.errors.length === 0 };
+        return {
+          name: pack.name,
+          version: pack.version,
+          description: pack.description,
+          source: entry,
+          valid: pack.errors.length === 0,
+        };
       } catch (error) {
         return { name: path.basename(entry), source: entry, valid: false, errors: [error.message] };
       }

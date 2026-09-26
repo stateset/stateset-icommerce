@@ -9,7 +9,7 @@ AI-powered command-line interface for autonomous commerce operations.
 
 ## Highlights
 
-- **802 MCP Tools / 73 Domains** - Full commerce engine surface, generated catalog in [docs/TOOLS.md](docs/TOOLS.md)
+- **Generated MCP Tool Catalog** - Full commerce engine surface, with current counts in [docs/TOOLS.md](docs/TOOLS.md)
 - **Finance Suite** - General ledger, month-end close (with dry run), AP with 3-way match, AR aging, fixed assets, revenue recognition
 - **Warehouse (WMS)** - Warehouses/locations, fulfillment waves, pick tasks, receiving, cycle counts, lots/serials, quality holds
 - **Supply Chain & EDI** - Transfer orders, inbound shipments, supplier SKUs, price schedules/levels, EDI document tracking
@@ -21,7 +21,7 @@ AI-powered command-line interface for autonomous commerce operations.
 
 ## Philosophy
 
-The StateSet CLI is built on the premise that commerce infrastructure should be designed for AI agents, not just humans. Think of it as **"The SQLite of Commerce"** — an embedded, zero-dependency commerce engine that:
+The StateSet CLI is built on the premise that commerce infrastructure should be designed for AI agents, not just humans. Think of it as **"The SQLite of Commerce"** — an embedded commerce engine with no required external services that:
 
 - **Runs locally** without cloud dependencies
 - **Deterministic operations** for agent reliability
@@ -94,9 +94,10 @@ stateset-profile export --output ./profiles/acme.json
 stateset-profile pack install --file ./profiles/wholesale.yaml
 ```
 
-`stateset-profile apply` validates and installs a profile in preview mode. It
-does not mutate commerce records; governed writes still require the explicit
-operator policy and principal used by the MCP and CLI write paths.
+`stateset-profile apply --file FILE` previews the profile changes without
+writing. Add `--apply` to install the file. Profile installation does not
+mutate commerce records; governed writes still require the explicit operator
+policy and principal used by the MCP and CLI write paths.
 
 Packs are reviewable local profile bundles. Use `pack list`, `pack inspect`, and
 `pack install`; installation is preview-only until `--apply` is explicitly

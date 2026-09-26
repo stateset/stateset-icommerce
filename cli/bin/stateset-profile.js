@@ -45,7 +45,7 @@ OPTIONS:
   --output FILE        Output file for export
   --force              Replace an existing profile
   --json               Emit machine-readable output
-  --apply              Install a pack instead of previewing it
+  --apply              Install a profile or pack instead of previewing it
   --replace             Replace the current profile instead of merging a pack
   --name NAME           Pack name for pack create
   --description TEXT    Pack description for pack create
@@ -121,14 +121,41 @@ async function main() {
     const current = loadBusinessProfile(root);
     if (current.errors?.length) throw new Error(current.errors.join('; '));
     fs.mkdirSync(path.dirname(path.resolve(values.output)), { recursive: true });
-    fs.writeFileSync(path.resolve(values.output), JSON.stringify(current.profile, null, 2) + '\n', { mode: 0o600 });
+    fs.writeFileSync(path.resolve(values.output), JSON.stringify(current.profile, null, 2) + '\n', {
+      mode: 0o600,
+    });
     return output({ ok: true, file: path.resolve(values.output) }, values.json);
   }
   if (command === 'apply') {
     if (!values.file) throw new Error('apply requires --file FILE');
     const profile = readProfile(values.file);
+    const current = loadBusinessProfile(root);
+    if (current.errors?.length) throw new Error(current.errors.join('; '));
+    const destination = path.resolve(root, '.stateset', 'business.yaml');
+    const changes = diffBusinessProfiles(current.profile, profile);
+    if (!values.apply) {
+      return output(
+        {
+          ok: true,
+          preview: true,
+          destination,
+          changes,
+          message: 'Preview only. Re-run with --apply to install the profile.',
+        },
+        values.json,
+      );
+    }
     const file = writeBusinessProfile(profile, root, { force: values.force });
-    return output({ ok: true, preview: true, file, message: 'Profile installed; database mutations require an explicit governed apply command.' }, values.json);
+    return output(
+      {
+        ok: true,
+        preview: false,
+        file,
+        changes,
+        message: 'Profile installed; database mutations still require governed writes.',
+      },
+      values.json,
+    );
   }
   if (command === 'pack') {
     const action = positionals[0] || 'list';
@@ -138,22 +165,28 @@ async function main() {
     if (action === 'create') {
       if (!values.output) throw new Error('pack create requires --output DIR');
       if (!values.name) throw new Error('pack create requires --name NAME');
-      return output(createBusinessPack(values.output, root, {
-        name: values.name,
-        description: values.description,
-      }), values.json);
+      return output(
+        createBusinessPack(values.output, root, {
+          name: values.name,
+          description: values.description,
+        }),
+        values.json,
+      );
     }
     if (!values.file) throw new Error(`pack ${action} requires --file PATH`);
     if (action === 'inspect') {
       const pack = loadBusinessPack(values.file);
-      return output({
-        name: pack.name,
-        version: pack.version,
-        description: pack.description,
-        source: pack.directory,
-        valid: pack.errors.length === 0,
-        errors: pack.errors,
-      }, values.json);
+      return output(
+        {
+          name: pack.name,
+          version: pack.version,
+          description: pack.description,
+          source: pack.directory,
+          valid: pack.errors.length === 0,
+          errors: pack.errors,
+        },
+        values.json,
+      );
     }
     if (action === 'install') {
       const result = installBusinessPack(values.file, root, {
@@ -161,16 +194,21 @@ async function main() {
         preview: !values.apply,
         replace: values.replace,
       });
-      return output({
-        ok: true,
-        preview: result.preview,
-        name: result.name,
-        version: result.version,
-        destination: result.destination,
-        lockFile: result.lockFile,
-        changes: result.changes,
-        message: result.preview ? 'Preview only. Re-run with --apply to install the pack.' : 'Pack installed; database mutations still require governed writes.',
-      }, values.json);
+      return output(
+        {
+          ok: true,
+          preview: result.preview,
+          name: result.name,
+          version: result.version,
+          destination: result.destination,
+          lockFile: result.lockFile,
+          changes: result.changes,
+          message: result.preview
+            ? 'Preview only. Re-run with --apply to install the pack.'
+            : 'Pack installed; database mutations still require governed writes.',
+        },
+        values.json,
+      );
     }
     throw new Error(`Unknown pack action: ${action}`);
   }
