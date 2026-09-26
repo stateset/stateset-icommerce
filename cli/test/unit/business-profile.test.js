@@ -133,7 +133,7 @@ test('compiled refund policy matches the Rust kernel fixture', () => {
   const expected = JSON.parse(
     fs.readFileSync(
       fileURLToPath(
-        new URL('../../../kernel/examples/profile-restricted-refund-policy.json', import.meta.url),
+        new URL('../../../crates/stateset-core/src/fixtures/profile-restricted-refund-policy.json', import.meta.url),
       ),
       'utf8',
     ),

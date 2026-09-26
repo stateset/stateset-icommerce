@@ -1424,7 +1424,7 @@ mod tests {
     #[test]
     fn profile_compiled_refund_policy_requires_approval() {
         let policy: KernelPolicy = serde_json::from_str(include_str!(
-            "../../../kernel/examples/profile-restricted-refund-policy.json"
+            "fixtures/profile-restricted-refund-policy.json"
         ))
         .expect("profile-compiled policy should deserialize");
         let now = Utc::now();
