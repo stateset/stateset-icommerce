@@ -523,7 +523,7 @@ jobs:
   rust:
     name: Rust
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     needs: [fmt, clippy]
 
     steps:
@@ -556,6 +556,9 @@ jobs:
         # relying on manual validation or downstream binding jobs.
         run: |
           cargo test -p stateset-crypto -p stateset-sync
+
+      - name: Run documented Rust quickstart
+        run: bash scripts/ci/check_rust_quickstart.sh
 
       - name: Mutation Testing (Core)
         # Label-triggered only: a full mutation run over stateset-core takes hours,
