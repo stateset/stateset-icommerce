@@ -5,6 +5,9 @@
 # from a deliberately broken one. PaymentRefunds additionally shares a
 # transition golden file with Rust; the newer protocols are tied to focused
 # repository regressions for the modelled races.
+# Broken configurations check only their target invariant: otherwise TLC's
+# parallel exploration can report another expected failure first, making the
+# counterexample assertion nondeterministic.
 #
 # Usage: formal/tla/check.sh            (downloads tla2tools.jar if needed)
 #        TLA2TOOLS=/path/to/jar formal/tla/check.sh
