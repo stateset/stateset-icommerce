@@ -312,7 +312,10 @@ mod tests {
     fn backorder_numbers_are_unique_under_tight_loops() {
         let mut seen = std::collections::HashSet::new();
 
-        for _ in 0..10_000 {
+        // Keep the large collision sample in normal CI; Miri checks the
+        // generator and collection path without interpreting 10,000 UUIDs.
+        let samples = if cfg!(miri) { 500 } else { 10_000 };
+        for _ in 0..samples {
             let number = generate_backorder_number();
             assert!(number.starts_with("BO-"));
             assert!(seen.insert(number));
