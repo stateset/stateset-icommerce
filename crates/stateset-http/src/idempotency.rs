@@ -45,10 +45,8 @@
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
-use std::collections::hash_map::RandomState;
-use std::hash::BuildHasher;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use axum::{
@@ -80,8 +78,9 @@ const DEFAULT_MAX_ENTRIES: usize = 10_000;
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 /// Run a bulk expiry sweep of the durable store every N durable writes.
 const SWEEP_EVERY_N_WRITES: u64 = 512;
-/// Bound lock memory while keeping unrelated keys independent in practice.
-const INFLIGHT_LOCK_STRIPES: usize = 1024;
+type CacheKey = (String, String);
+type KeyLock = tokio::sync::Mutex<()>;
+type InflightRegistry = Arc<Mutex<HashMap<CacheKey, Weak<KeyLock>>>>;
 
 /// A cached idempotent response plus the fingerprint of the originating request.
 #[derive(Clone, Debug)]
@@ -150,8 +149,7 @@ impl IdempotencyStore {
 pub struct IdempotencyLayer {
     store: Arc<Mutex<IdempotencyStore>>,
     /// Serialize lookups and handler execution for a key within this process.
-    inflight_locks: Arc<[tokio::sync::Mutex<()>; INFLIGHT_LOCK_STRIPES]>,
-    lock_hash: RandomState,
+    inflight: InflightRegistry,
     /// Commerce handle whose database backs the durable store, if any.
     durable: Option<Arc<Commerce>>,
     /// Counts durable writes to schedule opportunistic bulk expiry sweeps.
@@ -185,8 +183,7 @@ impl IdempotencyLayer {
     fn with_config(ttl: Duration, max_entries: usize) -> Self {
         Self {
             store: Arc::new(Mutex::new(IdempotencyStore::new(ttl, max_entries))),
-            inflight_locks: Arc::new(std::array::from_fn(|_| tokio::sync::Mutex::new(()))),
-            lock_hash: RandomState::new(),
+            inflight: Arc::new(Mutex::new(HashMap::new())),
             durable: None,
             write_count: Arc::new(AtomicU64::new(0)),
             require_keys: false,
@@ -217,6 +214,55 @@ impl IdempotencyLayer {
             .ok()
             .and_then(|ttl| now.checked_sub_signed(ttl))
             .unwrap_or(DateTime::<Utc>::MIN_UTC)
+    }
+
+    async fn lock_key(&self, key: &CacheKey) -> InflightKeyGuard {
+        let key_lock = {
+            let mut registry =
+                self.inflight.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Cancelled waiters can leave weak entries behind. Sweep stale
+            // entries at this threshold without disturbing active keys.
+            if registry.len() >= 1024 {
+                registry.retain(|_, lock| lock.strong_count() > 0);
+            }
+            if let Some(existing) = registry.get(key).and_then(Weak::upgrade) {
+                existing
+            } else {
+                let lock = Arc::new(KeyLock::new(()));
+                registry.insert(key.clone(), Arc::downgrade(&lock));
+                lock
+            }
+        };
+        let guard = key_lock.clone().lock_owned().await;
+        InflightKeyGuard {
+            _guard: Some(guard),
+            key_lock,
+            key: key.clone(),
+            registry: self.inflight.clone(),
+        }
+    }
+}
+
+struct InflightKeyGuard {
+    _guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+    key_lock: Arc<KeyLock>,
+    key: CacheKey,
+    registry: InflightRegistry,
+}
+
+impl Drop for InflightKeyGuard {
+    fn drop(&mut self) {
+        // Release the async lock before looking for another holder. Waiters
+        // own an Arc, so the key remains registered while any one waits.
+        drop(self._guard.take());
+        let mut registry = self.registry.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if Arc::strong_count(&self.key_lock) == 1
+            && registry
+                .get(&self.key)
+                .is_some_and(|entry| entry.ptr_eq(&Arc::downgrade(&self.key_lock)))
+        {
+            registry.remove(&self.key);
+        }
     }
 }
 
@@ -444,8 +490,7 @@ pub(crate) async fn idempotency(
     let fingerprint = request_fingerprint(&parts.method, &path, &body_bytes);
     // A second request must re-check the cache after the first finishes. The
     // lock spans durable lookup, handler execution, and response persistence.
-    let stripe = (layer.lock_hash.hash_one(&cache_key) as usize) % INFLIGHT_LOCK_STRIPES;
-    let _inflight_guard = layer.inflight_locks[stripe].lock().await;
+    let _inflight_guard = layer.lock_key(&cache_key).await;
     let now = Utc::now();
 
     // Read-through lookup: memory first, then the durable store.
@@ -749,6 +794,21 @@ mod tests {
             to_bytes(first.into_body(), usize::MAX).await.unwrap(),
             to_bytes(second.into_body(), usize::MAX).await.unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn distinct_keys_have_independent_locks_and_cleanup() {
+        let layer = IdempotencyLayer::new();
+        let first_key = ("tenant".to_string(), "first".to_string());
+        let second_key = ("tenant".to_string(), "second".to_string());
+        let first = layer.lock_key(&first_key).await;
+        let second = tokio::time::timeout(Duration::from_millis(100), layer.lock_key(&second_key))
+            .await
+            .expect("a distinct key must not wait for the first handler");
+        assert_eq!(layer.inflight.lock().unwrap().len(), 2);
+        drop(first);
+        drop(second);
+        assert!(layer.inflight.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
