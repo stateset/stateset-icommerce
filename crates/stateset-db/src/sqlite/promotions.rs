@@ -381,7 +381,8 @@ impl SqlitePromotionRepository {
     ///
     /// The insert is guarded on the promotion existing in the same statement,
     /// so a promotion deleted concurrently is reported as not found rather
-    /// than left with an orphaned condition.
+    /// than left with an orphaned condition, and the `promotion.condition_added`
+    /// fact commits in the same transaction as the row.
     pub fn add_condition(
         &self,
         promotion_id: PromotionId,
@@ -389,32 +390,44 @@ impl SqlitePromotionRepository {
     ) -> Result<Promotion> {
         input.validate()?;
         let condition = input.into_condition(promotion_id);
-        {
-            let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-            })?;
-            let inserted = conn
-                .execute(
-                    "INSERT INTO promotion_conditions
-                        (id, promotion_id, condition_type, operator, value, is_required)
-                     SELECT ?1, ?2, ?3, ?4, ?5, ?6
-                     WHERE EXISTS (SELECT 1 FROM promotions WHERE id = ?2)",
-                    rusqlite::params![
-                        condition.id.to_string(),
-                        promotion_id.to_string(),
-                        condition.condition_type.to_string(),
-                        condition.operator.to_string(),
-                        condition.value,
-                        i32::from(condition.is_required),
-                    ],
-                )
-                .map_err(|e| {
-                    stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}"))
-                })?;
+        with_immediate_transaction(&self.pool, |tx| {
+            let inserted = tx.execute(
+                "INSERT INTO promotion_conditions
+                    (id, promotion_id, condition_type, operator, value, is_required)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6
+                 WHERE EXISTS (SELECT 1 FROM promotions WHERE id = ?2)",
+                rusqlite::params![
+                    condition.id.to_string(),
+                    promotion_id.to_string(),
+                    condition.condition_type.to_string(),
+                    condition.operator.to_string(),
+                    condition.value,
+                    i32::from(condition.is_required),
+                ],
+            )?;
             if inserted == 0 {
-                return Err(CommerceError::NotFound);
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::NotFound,
+                )));
             }
-        }
+            super::kernel_outbox::record_outbox_fact(
+                tx,
+                crate::kernel_outbox::RecordedFact {
+                    event_type: "promotion.condition_added",
+                    aggregate_type: "promotion",
+                    aggregate_id: &promotion_id.to_string(),
+                    payload: serde_json::json!({
+                        "promotion_id": promotion_id,
+                        "condition_id": condition.id,
+                        "condition_type": condition.condition_type.to_string(),
+                        "operator": condition.operator.to_string(),
+                        "value": condition.value,
+                        "is_required": condition.is_required,
+                    }),
+                },
+            )?;
+            Ok(())
+        })?;
         self.get(promotion_id)?.ok_or(CommerceError::NotFound)
     }
 
