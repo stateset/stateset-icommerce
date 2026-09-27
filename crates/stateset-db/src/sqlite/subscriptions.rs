@@ -2629,7 +2629,10 @@ mod tests {
             subscription_id: Some(sub.id),
             ..Default::default()
         }) {
-            Ok(mut cycles) => cycles.remove(0),
+            Ok(cycles) => match cycles.into_iter().next() {
+                Some(cycle) => cycle,
+                None => panic!("initial billing cycle missing"),
+            },
             Err(_) => panic!("initial billing cycle lookup failed"),
         };
         assert_eq!(old.subtotal, dec!(10));
