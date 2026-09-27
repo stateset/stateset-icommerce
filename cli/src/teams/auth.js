@@ -94,10 +94,17 @@ export function createTeamsActivityVerifier({ fetchImpl = globalThis.fetch } = {
         algorithms: ['RS256'],
         clockTolerance: 300,
       });
+      // The Bot Framework SDK uses `serviceurl`; Microsoft documentation also
+      // calls this claim `serviceUrl`. Accept either spelling, but reject a
+      // token that provides conflicting signed values.
+      const signedServiceUrl = payload.serviceurl ?? payload.serviceUrl;
       return (
         Number.isInteger(payload.exp) &&
         Number.isInteger(payload.nbf) &&
-        payload.serviceUrl === activity.serviceUrl
+        signedServiceUrl === activity.serviceUrl &&
+        (payload.serviceurl === undefined ||
+          payload.serviceUrl === undefined ||
+          payload.serviceurl === payload.serviceUrl)
       );
     };
 

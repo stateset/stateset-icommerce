@@ -32,9 +32,9 @@ function metadataFetch({ issuer = 'https://api.botframework.com', keys = [public
   return { fetchImpl, calls };
 }
 
-async function signedToken({ audience = APP_ID, issuer = 'https://api.botframework.com', serviceUrl = SERVICE_URL, kid = 'test-key', expires = 3600, includeNbf = true, includeExp = true, key = privateKey } = {}) {
+async function signedToken({ audience = APP_ID, issuer = 'https://api.botframework.com', serviceUrl = SERVICE_URL, serviceUrlClaim = 'serviceurl', extraClaims = {}, kid = 'test-key', expires = 3600, includeNbf = true, includeExp = true, key = privateKey } = {}) {
   const now = Math.floor(Date.now() / 1000);
-  let jwt = new SignJWT({ serviceUrl })
+  let jwt = new SignJWT({ [serviceUrlClaim]: serviceUrl, ...extraClaims })
     .setProtectedHeader({ alg: 'RS256', kid })
     .setIssuer(issuer)
     .setAudience(audience);
@@ -51,6 +51,9 @@ test('accepts only a signed, Teams-endorsed activity bound to the app and servic
   assert.deepEqual(calls, [METADATA_URL, KEYS_URL]);
   assert.equal(await verify(`Bearer ${token}`, activity, APP_ID), true);
   assert.deepEqual(calls, [METADATA_URL, KEYS_URL], 'signing keys are cached');
+  assert.equal(await verify(`Bearer ${await signedToken({ serviceUrlClaim: 'serviceUrl' })}`, activity, APP_ID), true);
+  assert.equal(await verify(`Bearer ${await signedToken({ extraClaims: { serviceUrl: SERVICE_URL } })}`, activity, APP_ID), true);
+  assert.equal(await verify(`Bearer ${await signedToken({ extraClaims: { serviceUrl: 'https://attacker.example/' } })}`, activity, APP_ID), false);
 
   assert.equal(await verify('', activity, APP_ID), false);
   assert.equal(await verify(`Basic ${token}`, activity, APP_ID), false);
