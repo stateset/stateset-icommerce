@@ -182,7 +182,10 @@ async function main() {
     if (values.force) {
       // Replace the directory entry instead of truncating an existing inode.
       // A hard link introduced after the checks above cannot modify its peer.
-      const temporary = path.join(path.dirname(destination), `.${path.basename(destination)}.${randomUUID()}.tmp`);
+      const temporary = path.join(
+        path.dirname(destination),
+        `.${path.basename(destination)}.${randomUUID()}.tmp`,
+      );
       try {
         fs.writeFileSync(temporary, policyJson, { mode: 0o600, flag: 'wx' });
         fs.renameSync(temporary, destination);
