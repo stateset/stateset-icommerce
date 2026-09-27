@@ -25,7 +25,7 @@ cargo add stateset-sdk --features full
 ```rust
 use stateset_sdk::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Create an embedded commerce engine (SQLite, zero config)
     let commerce = Commerce::new("store.db")?;
 
@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     commerce.inventory().adjust(
         "RUST-BOOK-001",
-        rust_decimal_macros::dec!(100),
+        "100".parse()?,
         "Initial stock",
     )?;
     println!("Stock: 100 units of RUST-BOOK-001");
@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             sku: "RUST-BOOK-001".into(),
             name: "Rust Programming Book".into(),
             quantity: 2,
-            unit_price: rust_decimal_macros::dec!(49.99),
+            unit_price: "49.99".parse()?,
             ..Default::default()
         }],
         ..Default::default()
@@ -128,10 +128,15 @@ Payments completed: 1
 ## 4. Serve the REST API
 
 The REST API is an embeddable layer (`stateset-http`), started from your Rust
-application:
+application. Add the HTTP and async runtime dependencies first:
+
+```bash
+cargo add stateset-http
+cargo add tokio --features macros,rt-multi-thread
+```
 
 ```rust
-use stateset_embedded::Commerce;
+use stateset_sdk::prelude::Commerce;
 use stateset_http::ServerBuilder;
 use std::net::SocketAddr;
 
@@ -152,8 +157,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Now you have a full REST API at `http://localhost:3000/api/v1/` with the
-OpenAPI spec at `/api/v1/openapi.json`. (If you skip `with_bearer_auth`, the
-server generates a token and prints it at startup — auth is on by default.)
+OpenAPI spec at `/api/v1/openapi.json`. If you skip `with_bearer_auth` on a
+loopback bind, the server generates a token; read it with
+`bearer_auth_token()` before calling `serve()`. Logs do not print it in full.
 
 ---
 
