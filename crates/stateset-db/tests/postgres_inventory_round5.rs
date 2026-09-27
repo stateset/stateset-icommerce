@@ -380,21 +380,25 @@ async fn postgres_expire_reservations_sweeps_idle_skus_and_keeps_invariant() {
     // Sweep the shared table in small batches until this test's own holds have
     // expired. A short batch (or zero rows) does not mean the table is drained:
     // another suite can lock rows while this sweeper uses SKIP LOCKED.
-    for _ in 0..128 {
-        let mut own_holds_expired = true;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let mut pending = Vec::new();
         for id in &stale {
             if inv.get_reservation_async(*id).await.unwrap().unwrap().status
                 != ReservationStatus::Expired
             {
-                own_holds_expired = false;
-                break;
+                pending.push(*id);
             }
         }
-        if own_holds_expired {
+        if pending.is_empty() {
             break;
         }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "stale reservations not expired: {pending:?}"
+        );
         inv.expire_reservations_async(Utc::now(), 2).await.unwrap();
-        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     assert_eq!(inv.expire_reservations_async(Utc::now(), 0).await.unwrap(), 0);
 
