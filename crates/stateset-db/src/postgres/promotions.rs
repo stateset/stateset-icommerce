@@ -405,6 +405,7 @@ impl PgPromotionRepository {
     ) -> Result<Promotion> {
         input.validate()?;
         let condition = input.into_condition(promotion_id);
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let inserted = sqlx::query(
             "INSERT INTO promotion_conditions
                 (id, promotion_id, condition_type, operator, value, is_required)
@@ -417,13 +418,31 @@ impl PgPromotionRepository {
         .bind(condition.operator.to_string())
         .bind(&condition.value)
         .bind(condition.is_required)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_db_error)?
         .rows_affected();
         if inserted == 0 {
             return Err(CommerceError::NotFound);
         }
+        super::kernel_outbox::record_outbox_fact(
+            &mut tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "promotion.condition_added",
+                aggregate_type: "promotion",
+                aggregate_id: &promotion_id.to_string(),
+                payload: serde_json::json!({
+                    "promotion_id": promotion_id,
+                    "condition_id": condition.id,
+                    "condition_type": condition.condition_type.to_string(),
+                    "operator": condition.operator.to_string(),
+                    "value": condition.value,
+                    "is_required": condition.is_required,
+                }),
+            },
+        )
+        .await?;
+        tx.commit().await.map_err(map_db_error)?;
         self.get_async(promotion_id).await?.ok_or(CommerceError::NotFound)
     }
 
