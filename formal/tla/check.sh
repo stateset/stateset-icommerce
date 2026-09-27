@@ -33,7 +33,7 @@ tlc() {
 fail=0
 cd "$HERE/payments"
 # A run that ends on a counterexample leaves its state directory behind.
-trap 'rm -rf "$HERE/payments/states" "$HERE/inventory/states" "$HERE/x402/states" "$HERE/returns/states" "$HERE/finance/states" "$HERE/subscriptions/states" "$HERE/warehouse/states"' EXIT
+trap 'rm -rf "$HERE/payments/states" "$HERE/inventory/states" "$HERE/x402/states" "$HERE/returns/states" "$HERE/finance/states" "$HERE/subscriptions/states" "$HERE/warehouse/states" "$HERE/kernel/states" "$HERE/checkout/states" "$HERE/promotions/states" "$HERE/sync/states" "$HERE/manufacturing/states" "$HERE/stored_value/states" "$HERE/warranties/states" "$HERE/http/states" "$HERE/loyalty/states" "$HERE/quality/states" "$HERE/edi/states"' EXIT
 
 echo "== PaymentRefunds: the implementation (Locked = TRUE) must satisfy every property"
 if tlc -config PaymentRefunds_locked.cfg PaymentRefunds.tla > locked.log 2>&1; then
@@ -98,6 +98,7 @@ check_pair() {
   rm -rf states
 }
 
+check_pair payments OrderCapture OrderCapture_atomic.cfg OrderCapture_split.cfg NoOverCapture
 check_pair inventory InventoryReservations InventoryReservations_guarded.cfg InventoryReservations_unguarded.cfg AllocatedMatchesOpen
 check_pair x402 X402Claims X402Claims_atomic.cfg X402Claims_split.cfg NoDuplicateClaim
 check_pair x402 EscrowSettlement EscrowSettlement_guarded.cfg EscrowSettlement_split.cfg NoDoubleSettlement
@@ -135,9 +136,55 @@ rm -f unprotected.log
 rm -rf states
 
 check_pair finance PeriodClose PeriodClose_atomic.cfg PeriodClose_split.cfg ClosedBalanceFrozen
+check_pair finance PaymentRun PaymentRun_atomic.cfg PaymentRun_split.cfg NoDoubleDisbursement
 check_pair subscriptions BillingClaim BillingClaim_atomic.cfg BillingClaim_split.cfg OneCyclePerKey
 check_pair subscriptions ChargeRetry ChargeRetry_atomic.cfg ChargeRetry_split.cfg AtMostOneLivePayment
+check_pair subscriptions PriceSnapshot PriceSnapshot_atomic.cfg PriceSnapshot_split.cfg NoStaleCyclePrice
 check_pair warehouse LocationMove LocationMove_atomic.cfg LocationMove_split.cfg StockConserved
 check_pair warehouse LotGenealogy LotGenealogy_complete.cfg LotGenealogy_missing.cfg TraceComplete
+check_pair warehouse PickWave PickWave_guarded.cfg PickWave_unguarded.cfg CompletedOnlyWhenFinal
+check_pair sync PullConflict PullConflict_atomic.cfg PullConflict_split.cfg CursorHasDecision
+check_pair sync PullConflict PullConflict_local.cfg PullConflict_local_split.cfg CursorHasDecision
+
+check_pair kernel ReceiptGate ReceiptGate_atomic.cfg ReceiptGate_split.cfg AtMostOneEffect
+check_pair kernel ReceiptGate ReceiptGate_atomic.cfg ReceiptGate_unprotected.cfg NoUnauthorizedEffect
+check_pair kernel OutboxLease OutboxLease_guarded.cfg OutboxLease_unguarded.cfg AckOwned
+check_pair kernel SagaRollback SagaRollback_guarded.cfg SagaRollback_repeat.cfg AtMostOnceRecorded
+check_pair kernel SagaRollback SagaRollback_guarded.cfg SagaRollback_forward.cfg ReverseCompensation
+check_pair checkout CommitCheckout CommitCheckout_atomic.cfg CommitCheckout_split.cfg OrderBacked
+check_pair promotions ExclusiveStacking ExclusiveStacking_guarded.cfg ExclusiveStacking_unguarded.cfg ExclusiveStandsAlone
+check_pair manufacturing MaterialConsumption MaterialConsumption_atomic.cfg MaterialConsumption_split.cfg WithinReservation
+check_pair stored_value StoredValueSpend StoredValueSpend_atomic.cfg StoredValueSpend_split.cfg NonnegativeBalance
+check_pair warehouse ReceivingPutAway ReceivingPutAway_atomic.cfg ReceivingPutAway_split.cfg NoDoublePutAway
+check_pair inventory BackorderAllocation BackorderAllocation_atomic.cfg BackorderAllocation_split.cfg NoOverAllocation
+check_pair finance ReceivableSettlement ReceivableSettlement_atomic.cfg ReceivableSettlement_split.cfg NoOverSettlement
+check_pair finance CreditExposure CreditExposure_atomic.cfg CreditExposure_split.cfg WithinLimit
+check_pair warehouse SerialQuarantine SerialQuarantine_atomic.cfg SerialQuarantine_split.cfg QuarantineCascades
+check_pair manufacturing YieldAccounting YieldAccounting_atomic.cfg YieldAccounting_split.cfg WithinPlan
+check_pair finance PaymentLedger PaymentLedger_atomic.cfg PaymentLedger_split.cfg Reconciled
+check_pair returns ReturnDisposition ReturnDisposition_atomic.cfg ReturnDisposition_split.cfg StockMatchesDisposition
+check_pair warehouse CycleCountCompletion CycleCountCompletion_atomic.cfg CycleCountCompletion_split.cfg AtMostOneAdjustment
+check_pair warehouse TransferReceipt TransferReceipt_atomic.cfg TransferReceipt_split.cfg WithinShipped
+check_pair warranties WarrantyClaimSlots WarrantyClaimSlots_atomic.cfg WarrantyClaimSlots_split.cfg WithinClaimLimit
+check_pair finance VendorCreditApplication VendorCreditApplication_atomic.cfg VendorCreditApplication_split.cfg NonnegativeRemaining
+check_pair x402 X402CreditDebit X402CreditDebit_atomic.cfg X402CreditDebit_split.cfg NonnegativeBalance
+check_pair http HttpIdempotency HttpIdempotency_atomic.cfg HttpIdempotency_split.cfg FirstWriterWins
+check_pair loyalty LoyaltyPoints LoyaltyPoints_atomic.cfg LoyaltyPoints_split.cfg NoNegativeBalance
+check_pair finance PrepaymentSettlement PrepaymentSettlement_atomic.cfg PrepaymentSettlement_split.cfg NonnegativeRemaining
+check_pair quality QualityHoldRelease QualityHoldRelease_atomic.cfg QualityHoldRelease_split.cfg AtMostOneRelease
+check_pair edi EdiTerminalStatus EdiTerminalStatus_atomic.cfg EdiTerminalStatus_split.cfg TerminalOnce
+check_pair subscriptions CancelSettlement CancelSettlement_atomic.cfg CancelSettlement_split.cfg NoResurrection
+check_pair warehouse PurchaseOrderReceipt PurchaseOrderReceipt_atomic.cfg PurchaseOrderReceipt_split.cfg WithinOrder
+check_pair warehouse PurchaseOrderReceipt PurchaseOrderReceipt_atomic.cfg PurchaseOrderReceipt_cancel_split.cfg ClosedFrozen
+check_pair finance AssetDisposal AssetDisposal_atomic.cfg AssetDisposal_split.cfg DisposalFrozen
+check_pair finance RevenuePosting RevenuePosting_atomic.cfg RevenuePosting_split.cfg RecognizedOnce
+check_pair finance RevenuePosting RevenuePosting_atomic.cfg RevenuePosting_cancel_split.cfg CancelledFrozen
+check_pair stored_value GiftCardExpiry GiftCardExpiry_atomic.cfg GiftCardExpiry_split.cfg ExpiredCannotSpend
+check_pair finance RatePublication RatePublication_atomic.cfg RatePublication_split.cfg PublishedHasHistory
+check_pair finance ObligationSettlement ObligationSettlement_atomic.cfg ObligationSettlement_split.cfg WithinObligation
+check_pair finance ObligationSettlement ObligationSettlement_atomic.cfg ObligationSettlement_reopen.cfg TerminalNeverReopens
+check_pair finance CostLayerIssue CostLayerIssue_atomic.cfg CostLayerIssue_split.cfg NoOverIssue
+check_pair warehouse InboundCancelReceipt InboundCancelReceipt_atomic.cfg InboundCancelReceipt_split.cfg CancelledHasNoReceipt
+check_pair returns VendorReturnDecision VendorReturnDecision_atomic.cfg VendorReturnDecision_split.cfg TerminalOnce
 
 exit $fail

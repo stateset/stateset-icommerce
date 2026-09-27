@@ -340,8 +340,8 @@ jobs:
   miri:
     name: Miri
     runs-on: ubuntu-latest
-    # The full core suite now exceeds 30 minutes under interpretation on CI.
-    timeout-minutes: 60
+    # The full core suite can exceed 60 minutes under interpretation on CI.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -523,7 +523,7 @@ jobs:
   rust:
     name: Rust
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     needs: [fmt, clippy]
 
     steps:
@@ -556,6 +556,9 @@ jobs:
         # relying on manual validation or downstream binding jobs.
         run: |
           cargo test -p stateset-crypto -p stateset-sync
+
+      - name: Run documented Rust quickstart
+        run: bash scripts/ci/check_rust_quickstart.sh
 
       - name: Mutation Testing (Core)
         # Label-triggered only: a full mutation run over stateset-core takes hours,
@@ -795,7 +798,8 @@ jobs:
 
       - name: Security audit
         working-directory: cli
-        run: npm audit --omit=optional --audit-level=high
+        # Optional integrations ship with the CLI and must be audited too.
+        run: npm audit --audit-level=high
 
       - name: Install root tooling (ESLint, Prettier)
         # Disable husky git hook installation in CI.

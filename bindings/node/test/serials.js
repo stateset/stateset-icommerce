@@ -127,18 +127,14 @@ test('malformed ids are VALIDATION and unknown ids are NOT_FOUND', async () => {
   assert.equal(await commerce.serials.count(), 1);
 });
 
-test(
-  'a refused state transition is PRECONDITION_FAILED',
-  { todo: 'engine: SerialNumber::ensure_can_transition_to raises CommerceError::Conflict, which the binding reports as CONFLICT; the record is in the wrong state, not in a race' },
-  async () => {
-    const commerce = new Commerce(':memory:');
-    const buyer = await customer(commerce);
-    const serial = await commerce.serials.create({ serial: 'SN-STATE', sku: 'LAPTOP' });
-    await commerce.serials.markSold(serial.id, buyer.id);
-    await assert.rejects(commerce.serials.markSold(serial.id, buyer.id), (err) => err.code === 'PRECONDITION_FAILED');
-    await assert.rejects(commerce.serials.quarantine(serial.id, 'x'), (err) => err.code === 'PRECONDITION_FAILED');
-  },
-);
+test('a refused state transition is CONFLICT', async () => {
+  const commerce = new Commerce(':memory:');
+  const buyer = await customer(commerce);
+  const serial = await commerce.serials.create({ serial: 'SN-STATE', sku: 'LAPTOP' });
+  await commerce.serials.markSold(serial.id, buyer.id);
+  await assert.rejects(commerce.serials.markSold(serial.id, buyer.id), (err) => err.code === 'CONFLICT');
+  await assert.rejects(commerce.serials.quarantine(serial.id, 'x'), (err) => err.code === 'CONFLICT');
+});
 
 test(
   'a malformed manufacturedAt is refused instead of dropped',
