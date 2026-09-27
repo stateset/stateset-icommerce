@@ -188,16 +188,6 @@ describe('v0.3.0 — Package version', () => {
     assert.equal(config.CLI_VERSION, pkg.version);
   });
 
-  it('package.json should have botbuilder in optionalDependencies', () => {
-    const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
-    assert.ok(pkg.optionalDependencies.botbuilder);
-  });
-
-  it('package.json should have matrix-js-sdk in optionalDependencies', () => {
-    const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
-    assert.ok(pkg.optionalDependencies['matrix-js-sdk']);
-  });
-
   it('package.json should have ws in optionalDependencies', () => {
     const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
     assert.ok(pkg.optionalDependencies.ws);
