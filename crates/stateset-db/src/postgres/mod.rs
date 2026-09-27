@@ -539,6 +539,10 @@ impl PostgresDatabase {
             "103_kernel_outbox_tier",
             include_str!("migrations/103_kernel_outbox_tier.sql"),
         ));
+        migrations.push((
+            "104_http_idempotency_exact_time",
+            include_str!("migrations/104_http_idempotency_exact_time.sql"),
+        ));
 
         migrations
     }

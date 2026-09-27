@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
-use stateset_core::Result;
+use stateset_core::{CommerceError, Result};
 
 use super::{block_on, map_db_error};
 use crate::{HttpIdempotencyRecord, HttpIdempotencyRepository};
@@ -21,6 +21,8 @@ struct HttpIdempotencyRow {
     content_type: Option<String>,
     response_body: Vec<u8>,
     created_at: DateTime<Utc>,
+    created_at_epoch_seconds: Option<i64>,
+    created_at_subsec_ns: Option<i64>,
 }
 
 impl PgHttpIdempotencyRepository {
@@ -38,13 +40,21 @@ impl HttpIdempotencyRepository for PgHttpIdempotencyRepository {
         expired_before: DateTime<Utc>,
     ) -> Result<Option<HttpIdempotencyRecord>> {
         block_on(async {
-            // Lazy cleanup: drop an expired row for this key before reading.
+            // Exact components prevent a live response from expiring within
+            // PostgreSQL's microsecond timestamp resolution. Legacy rows use
+            // a conservative strict comparison at that boundary.
             sqlx::query(
                 "DELETE FROM http_idempotency_keys
-                 WHERE tenant = $1 AND idempotency_key = $2 AND created_at <= $3",
+                 WHERE tenant = $1 AND idempotency_key = $2 AND (
+                   (created_at_epoch_seconds IS NOT NULL AND
+                    (created_at_epoch_seconds < $3 OR
+                     (created_at_epoch_seconds = $3 AND created_at_subsec_ns <= $4)))
+                   OR (created_at_epoch_seconds IS NULL AND created_at < $5))",
             )
             .bind(tenant)
             .bind(key)
+            .bind(expired_before.timestamp())
+            .bind(i64::from(expired_before.timestamp_subsec_nanos()))
             .bind(expired_before)
             .execute(&self.pool)
             .await
@@ -52,7 +62,8 @@ impl HttpIdempotencyRepository for PgHttpIdempotencyRepository {
 
             let row: Option<HttpIdempotencyRow> = sqlx::query_as(
                 "SELECT request_fingerprint, response_status, content_type,
-                        response_body, created_at
+                        response_body, created_at, created_at_epoch_seconds,
+                        created_at_subsec_ns
                  FROM http_idempotency_keys
                  WHERE tenant = $1 AND idempotency_key = $2",
             )
@@ -62,15 +73,34 @@ impl HttpIdempotencyRepository for PgHttpIdempotencyRepository {
             .await
             .map_err(map_db_error)?;
 
-            Ok(row.map(|row| HttpIdempotencyRecord {
-                tenant: tenant.to_string(),
-                idempotency_key: key.to_string(),
-                request_fingerprint: row.request_fingerprint,
-                response_status: u16::try_from(row.response_status).unwrap_or(500),
-                content_type: row.content_type,
-                response_body: row.response_body,
-                created_at: row.created_at,
-            }))
+            row.map(|row| {
+                let created_at = match (row.created_at_epoch_seconds, row.created_at_subsec_ns) {
+                    (Some(seconds), Some(nanos)) => u32::try_from(nanos)
+                        .ok()
+                        .and_then(|nanos| DateTime::<Utc>::from_timestamp(seconds, nanos))
+                        .ok_or_else(|| {
+                            CommerceError::DatabaseError(
+                                "http_idempotency_keys exact creation time out of range".into(),
+                            )
+                        })?,
+                    (None, None) => row.created_at,
+                    _ => {
+                        return Err(CommerceError::DatabaseError(
+                            "http_idempotency_keys exact creation time is incomplete".into(),
+                        ));
+                    }
+                };
+                Ok(HttpIdempotencyRecord {
+                    tenant: tenant.to_string(),
+                    idempotency_key: key.to_string(),
+                    request_fingerprint: row.request_fingerprint,
+                    response_status: u16::try_from(row.response_status).unwrap_or(500),
+                    content_type: row.content_type,
+                    response_body: row.response_body,
+                    created_at,
+                })
+            })
+            .transpose()
         })
     }
 
@@ -79,8 +109,9 @@ impl HttpIdempotencyRepository for PgHttpIdempotencyRepository {
             let result = sqlx::query(
                 "INSERT INTO http_idempotency_keys
                  (tenant, idempotency_key, request_fingerprint, response_status,
-                  content_type, response_body, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                  content_type, response_body, created_at,
+                  created_at_epoch_seconds, created_at_subsec_ns)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                  ON CONFLICT (tenant, idempotency_key) DO NOTHING",
             )
             .bind(&record.tenant)
@@ -90,6 +121,8 @@ impl HttpIdempotencyRepository for PgHttpIdempotencyRepository {
             .bind(&record.content_type)
             .bind(&record.response_body)
             .bind(record.created_at)
+            .bind(record.created_at.timestamp())
+            .bind(i64::from(record.created_at.timestamp_subsec_nanos()))
             .execute(&self.pool)
             .await
             .map_err(map_db_error)?;
@@ -99,11 +132,19 @@ impl HttpIdempotencyRepository for PgHttpIdempotencyRepository {
 
     fn purge_expired(&self, expired_before: DateTime<Utc>) -> Result<u64> {
         block_on(async {
-            let result = sqlx::query("DELETE FROM http_idempotency_keys WHERE created_at <= $1")
-                .bind(expired_before)
-                .execute(&self.pool)
-                .await
-                .map_err(map_db_error)?;
+            let result = sqlx::query(
+                "DELETE FROM http_idempotency_keys WHERE
+                   (created_at_epoch_seconds IS NOT NULL AND
+                    (created_at_epoch_seconds < $1 OR
+                     (created_at_epoch_seconds = $1 AND created_at_subsec_ns <= $2)))
+                   OR (created_at_epoch_seconds IS NULL AND created_at < $3)",
+            )
+            .bind(expired_before.timestamp())
+            .bind(i64::from(expired_before.timestamp_subsec_nanos()))
+            .bind(expired_before)
+            .execute(&self.pool)
+            .await
+            .map_err(map_db_error)?;
             Ok(result.rows_affected())
         })
     }
