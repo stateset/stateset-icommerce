@@ -8,6 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import { Contract, JsonRpcProvider, Wallet } from 'ethers';
 import { deriveWallet, getWalletAddress } from './wallet.js';
+import { createSolanaTokenSdk } from './solana-token.js';
 import {
   getChain,
   getToken,
@@ -87,12 +88,12 @@ function createEvmProvider(chainId) {
 
 async function loadSolanaSdk() {
   if (!solanaSdkPromise) {
-    solanaSdkPromise = Promise.all([import('@solana/web3.js'), import('@solana/spl-token')])
-      .then(([web3, splToken]) => ({ web3, splToken }))
+    solanaSdkPromise = import('@solana/web3.js')
+      .then((web3) => ({ web3, splToken: createSolanaTokenSdk(web3) }))
       .catch((error) => {
         solanaSdkPromise = null;
         throw new Error(
-          `Solana support requires @solana/web3.js and @solana/spl-token. Install them in cli/: ${error.message}`,
+          `Solana support requires @solana/web3.js. Install it in cli/: ${error.message}`,
         );
       });
   }

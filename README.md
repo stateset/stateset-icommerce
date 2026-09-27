@@ -88,13 +88,13 @@ transport boundary, or `--strict-protocol` to refuse pre-2026-07-28 clients.
 | Channel | Command |
 | ------- | ------- |
 | **crates.io** | `cargo add stateset-sdk --features full` |
-| **npm** | `npm install @stateset/embedded@1.35.2` |
-| **PyPI** | `pip install stateset-embedded==1.35.2` |
-| **CLI + MCP servers** | `npm install -g @stateset/cli@1.35.2` |
+| **npm** | `npm install @stateset/embedded@1.35.3` |
+| **PyPI** | `pip install stateset-embedded==1.35.3` |
+| **CLI + MCP servers** | `npm install -g @stateset/cli@1.35.3` |
 
 The Ruby and WASM bindings have published packages that are not kept current:
 RubyGems `stateset_embedded` is at 0.1.9 and npm `@stateset/embedded-wasm` at
-0.7.22, both far behind 1.35.2. PHP, Java, Kotlin, Swift, .NET, and Go have no
+0.7.22, both far behind 1.35.3. PHP, Java, Kotlin, Swift, .NET, and Go have no
 published package at all — build those from source, and see
 [`docs/src/api/`](docs/src/api/) for each binding's API and install snippet.
 
@@ -134,8 +134,11 @@ Amounts are exact decimal values end to end. Every mutation is auditable.
 `stateset-http` is an embeddable layer, started from your Rust application. It
 binds `127.0.0.1:3000` by default and serves the OpenAPI 3.1 spec at
 `/api/v1/openapi.json`, with an interactive reference at `/api/v1/docs`. Auth
-is on by default: skip `with_bearer_auth` and the server generates a token and
-prints it at startup. See [step 4 of the Rust quickstart](QUICKSTART.md).
+is on by default: the server generates a token that can be read with
+`bearer_auth_token()` before `serve()`; logs show only a redacted preview.
+A non-loopback bind requires an explicit operator-owned bearer token,
+authorization, and rate limiting (or an explicitly trusted gateway). See
+[step 4 of the Rust quickstart](QUICKSTART.md).
 
 ---
 
@@ -203,7 +206,7 @@ JSON-schema tools rather than stdio MCP, use the embedded toolkit:
 | `stateset_embedded.openai` / `.langchain` / `.crewai` / `.autogen` | Python equivalents |
 
 Install the Python framework extras in one step with
-`pip install "stateset-embedded[agents]==1.35.2"`.
+`pip install "stateset-embedded[agents]==1.35.3"`.
 
 The toolkit also exposes payment-aware helpers (`getPayableToolCatalog()`,
 `executePaidTool()`, `discoverRemotePaymentService()`) and contract/replay

@@ -741,6 +741,10 @@ mod tests {
         let d = a.disposal.expect("disposal recorded");
         assert_eq!(d.book_value_at_disposal, dec!(9250));
         assert_eq!(d.gain_loss, dec!(250));
+        assert!(repo.post_depreciation(a.id, 1).is_err(), "disposed asset cannot depreciate");
+        let unchanged = repo.get(a.id).expect("get").expect("asset");
+        assert_eq!(unchanged.accumulated_depreciation, dec!(750));
+        assert_eq!(unchanged.disposal.expect("disposal").book_value_at_disposal, dec!(9250));
     }
 
     #[test]

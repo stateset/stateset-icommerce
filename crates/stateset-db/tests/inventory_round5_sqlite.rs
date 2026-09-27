@@ -413,6 +413,33 @@ fn sqlite_backorder_allocation_reserves_stock_and_blocks_cart_reserve() {
 }
 
 #[test]
+fn sqlite_competing_backorder_allocations_cannot_exceed_remaining() {
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    let db = Arc::new(db());
+    db.inventory().create_item(item("BO-RACE", dec!(4))).expect("stock");
+    let bo = create_backorder(&db, "BO-RACE", dec!(3));
+    let gate = Arc::new(Barrier::new(2));
+    let handles: Vec<_> = (0..2)
+        .map(|_| {
+            let db = Arc::clone(&db);
+            let gate = Arc::clone(&gate);
+            thread::spawn(move || {
+                gate.wait();
+                db.backorder().allocate_backorder(allocate(bo.id, dec!(2)))
+            })
+        })
+        .collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1, "{results:?}");
+    let allocations = db.backorder().get_allocations(bo.id).expect("allocations");
+    assert_eq!(allocations.len(), 1);
+    assert_eq!(allocations[0].quantity, dec!(2));
+    assert_allocation_invariant(&db);
+}
+
+#[test]
 fn sqlite_backorder_allocation_refused_without_stock() {
     let db = db();
     db.inventory().create_item(item("BO-2", dec!(2))).unwrap();

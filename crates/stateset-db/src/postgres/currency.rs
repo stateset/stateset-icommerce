@@ -197,15 +197,18 @@ impl PgCurrencyRepository {
         let now = Utc::now();
         let source = input.source.unwrap_or_else(|| "manual".into());
 
-        // Upsert the rate
-        sqlx::query(
+        // Publish the current quote and its history atomically. RETURNING
+        // ties the response to this write even when another writer follows.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let row = sqlx::query_as::<_, ExchangeRateRow>(
             "INSERT INTO exchange_rates (id, base_currency, quote_currency, rate, source, rate_at, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              ON CONFLICT (base_currency, quote_currency) DO UPDATE SET
                 rate = EXCLUDED.rate,
                 source = EXCLUDED.source,
                 rate_at = EXCLUDED.rate_at,
-                updated_at = EXCLUDED.updated_at",
+                updated_at = EXCLUDED.updated_at
+             RETURNING id, base_currency, quote_currency, rate, source, rate_at, created_at, updated_at",
         )
         .bind(id)
         .bind(input.base_currency.code())
@@ -215,7 +218,7 @@ impl PgCurrencyRepository {
         .bind(now)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -229,13 +232,12 @@ impl PgCurrencyRepository {
         .bind(input.rate)
         .bind(&source)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        self.get_rate_async(input.base_currency, input.quote_currency)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        tx.commit().await.map_err(map_db_error)?;
+        Self::row_to_exchange_rate(row)
     }
 
     /// Delete rate (async)
