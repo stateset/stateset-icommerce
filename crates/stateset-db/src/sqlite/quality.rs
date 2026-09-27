@@ -1470,6 +1470,7 @@ mod tests {
         CreateQualityHold, InspectionFilter, InspectionType, NonConformanceFilter,
         NonConformanceSource, QualityHoldFilter, QualityRepository, Severity, UpdateNonConformance,
     };
+    use std::sync::{Arc, Barrier};
 
     fn fresh_repo() -> SqliteQualityRepository {
         SqliteDatabase::in_memory().expect("in-memory").quality()
@@ -2258,6 +2259,40 @@ mod tests {
             .expect_err("unknown"),
             CommerceError::NotFound
         ));
+    }
+
+    #[test]
+    fn competing_hold_releases_preserve_first_audit_record() {
+        let repo = Arc::new(fresh_repo());
+        let hold = repo
+            .create_hold(CreateQualityHold {
+                sku: "HOLD-RACE".into(),
+                quantity: dec!(1),
+                reason: "inspection".into(),
+                placed_by: "qa".into(),
+                ..Default::default()
+            })
+            .expect("hold");
+        let barrier = Arc::new(Barrier::new(2));
+        let mut handles = Vec::new();
+        for who in ["qa-a", "qa-b"] {
+            let repo = Arc::clone(&repo);
+            let barrier = Arc::clone(&barrier);
+            let id = hold.id;
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                repo.release_hold(
+                    id,
+                    ReleaseQualityHold { released_by: who.into(), release_notes: None },
+                )
+            }));
+        }
+        let outcomes: Vec<_> = handles.into_iter().map(|h| h.join().expect("join")).collect();
+        let winners: Vec<_> = outcomes.iter().filter_map(|r| r.as_ref().ok()).collect();
+        assert_eq!(winners.len(), 1);
+        let stored = repo.get_hold(hold.id).expect("get").expect("hold");
+        assert_eq!(stored.released_by, winners[0].released_by);
+        assert_eq!(stored.released_at, winners[0].released_at);
     }
 
     #[test]

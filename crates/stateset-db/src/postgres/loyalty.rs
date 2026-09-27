@@ -323,8 +323,8 @@ impl PgLoyaltyProgramRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         // Lock the account row and fetch the current balance
-        let current_balance: i64 = sqlx::query_scalar(
-            "SELECT points_balance FROM loyalty_accounts WHERE id = $1 FOR UPDATE",
+        let (current_balance, lifetime_points): (i64, i64) = sqlx::query_as(
+            "SELECT points_balance, lifetime_points FROM loyalty_accounts WHERE id = $1 FOR UPDATE",
         )
         .bind(account_id)
         .fetch_optional(tx.as_mut())
@@ -339,29 +339,25 @@ impl PgLoyaltyProgramRepository {
             return Err(CommerceError::ValidationError("Insufficient points balance".to_string()));
         }
 
-        // Update the account balance
+        let new_lifetime = if input.points > 0 {
+            lifetime_points.checked_add(input.points).ok_or_else(|| {
+                CommerceError::ValidationError("Lifetime points overflow".to_string())
+            })?
+        } else {
+            lifetime_points
+        };
+
+        // Update both counters with values checked under the row lock.
         sqlx::query(
-            "UPDATE loyalty_accounts SET points_balance = $1, updated_at = $2 WHERE id = $3",
+            "UPDATE loyalty_accounts SET points_balance = $1, lifetime_points = $2, updated_at = $3 WHERE id = $4",
         )
         .bind(new_balance)
+        .bind(new_lifetime)
         .bind(now)
         .bind(account_id)
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-
-        // If earning points, also increment lifetime_points
-        if input.points > 0 {
-            sqlx::query(
-                "UPDATE loyalty_accounts SET lifetime_points = lifetime_points + $1
-                 WHERE id = $2",
-            )
-            .bind(input.points)
-            .bind(account_id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-        }
 
         // Insert the transaction record
         sqlx::query(

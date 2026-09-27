@@ -460,6 +460,349 @@ This covers the payment refund ledger. There is no proven automatic link from
 payments to general-ledger journal entries, so it does **not** establish a
 cross-system order-to-cash reconciliation invariant.
 
+## Manufacturing material consumption — tla/manufacturing/MaterialConsumption.tla
+
+Two workers each request two units from a three-unit reservation. With the
+read, cap check and write serialized, at most one succeeds; the split version
+shows four units consumed. SQLite consume_material now uses one immediate
+transaction, and Postgres uses a guarded arithmetic UPDATE. Both reject
+nonpositive and over-reservation consumption. SQLite uses checked addition
+so an out-of-range request returns a validation error instead of panicking.
+The SQLite material_consumption_is_bounded_and_serialized and
+material_consumption_overflow_returns_validation_error regressions exercise
+concurrent consumers and the Decimal maximum; Postgres
+postgres_material_consumption_is_bounded_and_serialized runs the same race
+against a live database in the parity matrix. lean/CommerceQuantities.lean
+proves that an accepted increment stays within the reservation and leaves an exact
+remainder. Lean uses unbounded naturals; the Decimal-maximum regression
+covers the finite representation boundary. The model does not establish that
+material is deducted from inventory: this repository records work-order
+material quantities.
+
+## Stored value — tla/stored_value/StoredValueSpend.tla
+
+The model interleaves two charges of two units against a three-unit balance
+and subsequent full refunds. Atomic charging keeps the balance nonnegative;
+both workers passing a stale balance check produces the counterexample.
+SQLite gift-card concurrent_charges_cannot_overspend and store-credit
+concurrent_applies_cannot_overspend exercise the actual serialized charges.
+The Lean equations preserve opening value through accepted charges and
+refunds. Expiry, partial refunds, manual adjustments, cross-account transfers
+and payment-provider effects are outside this model.
+
+## Receiving put-away — tla/warehouse/ReceivingPutAway.tla
+
+Two workers race to complete one two-unit task. The guarded task transition,
+stock increment and movement insert form one effect; a split version adds
+stock twice. SQLite's competing_put_away_completions_record_one_receipt
+checks that one completion succeeds and the receipt records two units.
+The Lean proof covers a task bounded by received quantity and the arithmetic
+for a fixed-size sequence of movements. It does not prove the warehouse and
+location balance tables agree in every possible operation.
+
+## Backorder allocation — tla/inventory/BackorderAllocation.tla
+
+Two two-unit allocations compete for a three-unit remainder, with a separate
+fulfillment transition. An atomic allocation cap avoids over-allocation; stale
+reads permit four units to be allocated. The SQLite and Postgres
+inventory_round5 tests exercise allocation bounds and partial fulfillment.
+Lean proves that accepted fulfillment preserves ordered = fulfilled +
+remaining. This model abstracts the underlying stock reservations and
+locations, which are checked separately.
+
+## Receivable settlement — tla/finance/ReceivableSettlement.tla
+
+Two payments, a credit and a write-off compete over a three-unit invoice.
+Atomic updates conserve invoice value and prevent the combined settlement
+from exceeding it; stale payment approval violates the cap. SQLite
+apply_payment_to_invoice_is_atomic_under_concurrency,
+apply_credit_memo_is_atomic_under_concurrency, and
+write_off_is_atomic_and_guards_double_write_off exercise the key guards.
+Lean proves conservation for any accepted payment, credit or full write-off
+step. The model does not cover invoice reversals, payment allocation across
+multiple invoices or the general-ledger posting link.
+
+These five TLC checks exhaust their stated small bounds, and each requires
+its broken configuration to fail. The Lean results cover arbitrary natural
+quantities at a common exact scale. The Rust tests connect critical paths to
+the models, but do not prove implementation equivalence.
+
+## Credit exposure — tla/finance/CreditExposure.tla
+
+Two two-unit reservations compete against a three-unit line. The guarded
+transaction keeps balance plus outstanding holds within the limit; a stale
+read permits four units of holds. SQLite `reserve_credit` uses `BEGIN IMMEDIATE`
+and Postgres locks the account row. The
+`concurrent_reservations_cannot_exceed_available_credit` and
+`two_reservations_keep_hold_amount_exact` tests exercise the relevant path.
+Lean proves available-credit arithmetic and the conversion of a charge's own
+hold into balance for arbitrary exact units. Limit reductions that deliberately
+put an account over its line are outside this reservation model.
+
+## Serial quarantine — tla/warehouse/SerialQuarantine.tla
+
+Lot quarantine and the change to its available serials must commit together.
+The split configuration exposes a quarantined lot with an available serial;
+the guarded configuration prevents that state. SQLite's
+`quarantine_lot_on` calls `quarantine_for_lot_on` in the same transaction, and
+`quarantine_is_atomic_with_its_serials` exercises rollback. Lean proves the
+sellable-to-blocked quantity transfer. This does **not** prove recall
+propagation: generic lot `update` can set `Recalled` without updating serials.
+That is an outstanding cross-record contract to define and implement.
+
+## Manufacturing yield — tla/manufacturing/YieldAccounting.tla
+
+The bounded model records one good and one scrapped unit in a single yield
+report; racing reports must not exceed the three-unit plan. Splitting the
+approval from the quantity update violates the cap. Lean proves conservation
+of good, scrap and remaining quantities for any accepted report. Current
+`WorkOrder::complete` records good units only; this change enforces its
+`quantity_completed <= quantity_to_build` contract in both backends and tests
+rejection at the boundary. A persisted scrap report tied to the same work
+order is still needed before the combined yield model describes an entire
+production operation.
+
+## Credit payment ledger — tla/finance/PaymentLedger.tla
+
+The account balance and its credit-transaction running balance move together
+for a payment. The split model exposes a recorded payment with a stale ledger
+balance. SQLite `credit::apply_payment` uses one IMMEDIATE transaction; Postgres
+uses a row lock and one transaction. Lean proves balance subtraction and
+zero-clamping. This is the **credit transaction ledger**, not the general
+ledger or an external payment processor; those links remain outside the spec.
+
+## Return disposition — tla/returns/ReturnDisposition.tla
+
+Recording a restock disposition and adding its units to on-hand stock is one
+transaction. The split model exposes a dispositioned item with no stock
+receipt. SQLite `set_item_disposition` uses `BEGIN IMMEDIATE` and Postgres uses
+a transaction; existing return disposition tests exercise the stock and
+serial effects. Lean proves restock increases sellable stock and quarantine
+increases on-hand and allocated equally. The model covers one return item and
+one restock; it does not cover bins, lot genealogy or refund settlement.
+
+Each of these five TLC models requires a counterexample in its deliberately
+broken configuration. The Lean proofs concern exact-unit transition equations,
+and the Rust tests establish behavior only for the cases they exercise.
+
+## Cycle-count completion — tla/warehouse/CycleCountCompletion.tla
+
+Two workers try to complete one count with a +1 variance. The guarded status
+transition and stock adjustment admit one completion; splitting the status
+check from the write applies the variance twice. SQLite uses an IMMEDIATE
+transaction and Postgres locks the count header. The
+`competing_cycle_count_completions_apply_variance_once` SQLite regression
+exercises the race. Lean proves the exact `current + counted - expected`
+equation when the result is nonnegative. The model has one line and does not
+cover concurrent writes to the underlying stock outside the count.
+
+## Transfer receipts — tla/warehouse/TransferReceipt.tla
+
+Shipment establishes the units a line can receive. Two clerks then compete
+for a three-unit shipped line with two-unit receipts. The guarded transaction
+keeps received at or below shipped; a stale approval admits four. The SQLite
+and Postgres `*_concurrent_receipts_respect_over_receipt_cap` tests exercise
+the race. Both backends now reject receipts before shipment and refuse to
+ship a completed or cancelled transfer order; the new lifecycle regressions
+check those guards. Lean proves receipt headroom and line-total arithmetic.
+The model does not account for physical source/destination inventory movement.
+
+## Warranty claim slots — tla/warranties/WarrantyClaimSlots.tla
+
+Two claims compete for one available slot. The guarded increment and claim
+insert are one transaction; a stale slot check admits two. SQLite's
+`create_claim_enforces_max_claims_at_record_time` and the Postgres
+`postgres_competing_claims_consume_one_available_slot` regression exercise
+the cap. Lean proves the used-plus-remaining slot equation. The model does not
+cover expiry, eligibility, claim resolution or coverage amounts.
+
+## Vendor credit applications — tla/finance/VendorCreditApplication.tla
+
+Two applications of two units race against a three-unit credit. Atomic
+balance updates conserve original = remaining + active applications while
+keeping remaining nonnegative; stale approval makes remaining negative.
+`competing_applications_cannot_exceed_vendor_credit`
+checks the SQLite path, and the Postgres regression exercises the same race;
+existing reversal tests ensure a reversed
+application cannot restore value twice. Lean proves application and reversal
+conservation. The model omits the target bill/payment obligation and currency
+conversion.
+
+## x402 credit debits — tla/x402/X402CreditDebit.tla
+
+Two debits of two units race against a three-unit balance, with one possible
+additional credit. The guarded write
+keeps the balance nonnegative and appends a transaction in the same commit;
+a stale debit drives the balance negative. SQLite and Postgres
+`*_x402_credit_concurrent_debits_never_go_negative` tests exercise this guard.
+Lean proves credit/debit conservation for accepted exact-unit operations.
+The model assumes one payer, asset and network; integer range checks and
+external x402 settlement are separate concerns.
+
+## HTTP idempotency — tla/http/HttpIdempotency.tla
+
+Two writers compete for a tenant/key response; the first successful insert
+owns the response until expiry, after which a new generation can begin. A
+split check and write overwrites the first response. The SQLite
+`concurrent_puts_preserve_one_first_response` regression and existing expiry
+boundary tests exercise the repository. SQLite and Postgres bulk expiry now
+delete rows at the same inclusive cutoff as lazy lookup; exact-cutoff
+regressions verify key reuse. Lean proves the pure first-write and
+generation-reset choices. The model does not cover the HTTP handler's request
+fingerprint comparison or atomicity of the business mutation with response
+recording; the kernel receipt gate is modeled separately.
+
+## Loyalty points — tla/loyalty/LoyaltyPoints.tla
+
+Two two-point redemptions compete for a three-point account. A guarded
+balance and transaction insert permit at most one; stale reads overdraw. The
+SQLite `concurrent_redemptions_cannot_overdraw` regression exercises the race.
+Lean proves the accounting equations for arbitrary accepted earns and
+redemptions. Both backends now check `i64` overflow in lifetime-earned points
+before changing either counter or inserting a transaction;
+`lifetime_points_overflow_preserves_balance_and_ledger` and its Postgres twin
+exercise that finite-range boundary. Tier changes and expiry remain outside
+this bounded model.
+
+## Prepayment settlement — tla/finance/PrepaymentSettlement.tla
+
+Two applications compete against a three-unit prepayment while a refund may
+close the remaining balance. Atomic transitions preserve original = remaining
++ active applications + refunded and prevent a negative remainder; stale
+approval can overapply or apply after refund. The SQLite
+`competing_applications_cannot_exceed_prepayment` regression and existing
+reversal/refund tests exercise the repository. Lean proves application and
+refund conservation in exact units. The model omits bill settlement and
+currency conversion.
+
+## Quality hold release — tla/quality/QualityHoldRelease.tla
+
+Two operators compete to release one hold. A conditional update accepts one
+release and preserves its audit owner; splitting the active check from the
+write admits two. SQLite's `release_hold_only_releases_once` and
+`competing_hold_releases_preserve_first_audit_record` regressions exercise
+these properties. Lean proves the one-release bound. The model does not claim
+that every inventory allocation path consults quality holds.
+
+## EDI terminal status — tla/edi/EdiTerminalStatus.tla
+
+Two processors compete to finish one pending document. A conditional status
+write makes `processed` and `acknowledged` immutable, so one result wins;
+stale approval can overwrite it. SQLite and Postgres now guard terminal
+updates, tested by `terminal_status_cannot_be_replaced` and
+`postgres_competing_edi_terminal_updates_choose_one_result`. Lean proves the
+one-write bound. This model covers terminal immutability, not the complete
+direction-specific EDI workflow or external partner acknowledgement.
+
+Each model checks a small bounded state space and requires a counterexample
+from its broken configuration. The Lean proofs cover arbitrary natural-unit
+amounts under their explicit preconditions. Rust regressions test the named
+paths, not full equivalence between model and implementation.
+
+## Subscription cancellation and settlement — tla/subscriptions/CancelSettlement.tla
+
+Cancelling clears the billing schedule under the same SQLite write lock used to
+settle an existing cycle. The guarded model never restores a billing date;
+settlement based on a stale pre-cancellation read does. The regression
+`settling_an_existing_cycle_after_cancel_does_not_restore_billing` checks the
+repository boundary. A cycle created before cancellation may still settle;
+the claim is about future scheduling, not reversal of an existing payment.
+Lean proves that the schedule selection returns no date for a cancelled
+subscription, for any paid period end.
+
+## Purchase-order receiving — tla/warehouse/PurchaseOrderReceipt.tla
+
+Two workers race to receive the last ordered unit while cancellation is also
+possible. The immediate transaction rechecks status and remaining quantity,
+so accepted receipts never exceed the order; stale prechecks can overreceive.
+The SQLite regressions `receive_accumulates_concurrent_partial_receipts_without_lost_updates`
+and `cancel_transitions_status` cover the quantity and terminal guards. Lean
+proves remaining quantity conservation for arbitrary accepted units. The model
+uses one line and does not cover supplier acknowledgements or invoice matching.
+
+## Fixed-asset disposal — tla/finance/AssetDisposal.tla
+
+Depreciation posting and disposal compete for the same asset. An immediate
+transaction takes the disposal book-value snapshot and prevents a subsequent
+post; a stale posting decision changes accumulated depreciation after disposal.
+The `full_lifecycle_with_schedule_totals_exact` regression checks the terminal
+post guard and frozen book value. Lean proves the book-value and proceeds split
+equations in arbitrary nonnegative units. The model omits useful-life schedule
+generation and GL account configuration.
+
+## Revenue recognition posting — tla/finance/RevenuePosting.tla
+
+Two recognizers can observe the same deferred entry, while cancellation can
+stop new recognition. The SQLite transaction changes the entry, accumulated
+recognized amount and GL journal together; a split read and commit can post
+twice. `recognize_is_idempotent_for_recognized_entries` and
+`recognize_on_draft_or_cancelled_contract_conflicts` exercise both guards.
+Lean proves recognized plus deferred conservation and a balanced journal in
+arbitrary units. One entry represents the bounded model; tax and multi-period
+scheduling are outside it.
+
+## Gift-card expiry and refund — tla/stored_value/GiftCardExpiry.tla
+
+Expiry removes spendability even when a refund restores balance. The guarded
+model keeps an expired card nonspendable; a refund that ignores expiry
+resurrects it. `refund_to_date_expired_card_does_not_restore_spendability`
+checks the Rust charge guard after a refund. Lean proves refund conservation
+and zero spendability after expiry. The model assumes a valid refund to a prior
+charge; it does not prove refund authorization or cap refund size in the public
+repository API.
+
+## Exchange-rate publication — tla/finance/RatePublication.tla
+
+The current rate and its history entry are one published fact. The guarded
+model keeps them together; a split upsert exposes a current rate without its
+history. SQLite and Postgres `set_rate` now write both inside one transaction.
+The SQLite `failed_history_insert_rolls_back_current_rate` regression injects
+a history failure. Lean proves that a published rate is recorded and that
+fixed-point division decomposes a scaled value into quotient and bounded
+remainder. The model covers one pair and one publication, not rate-source
+selection or exchange-rate market correctness.
+
+## Payment-obligation settlement — tla/finance/ObligationSettlement.tla
+
+Two payments compete for one obligation while cancellation or a manual status
+change may occur. Serialized payments stay within the amount owed, and a
+cancelled obligation cannot be reopened. Both backends now restrict manual
+status changes to scheduling/cancellation, leaving payment progress to
+`record_payment`. The SQLite
+`manual_status_cannot_forge_payment_or_reopen_terminal_obligation` regression
+checks that guard. Lean proves the outstanding-balance equation for arbitrary
+accepted amounts. The model does not link an obligation to the AP bill it may
+reference.
+
+## Cost-layer issues — tla/finance/CostLayerIssue.tla
+
+Two workers compete for the same remaining layer. Under the repository write
+lock, accepted issues cannot exceed the layer and quantity is conserved; stale
+reads can overissue. FIFO and LIFO now reject nonpositive request quantities
+on both backends, tested by `cost_layer_issue_requires_positive_quantity`.
+Existing `issue_fifo_consumes_oldest_layer_first` and
+`issue_lifo_consumes_newest_layer_first` tie the layer-order choice to Rust.
+Lean proves one- and two-layer conservation in arbitrary units. This bounded
+model uses one layer and does not cover physical stock movements.
+
+## Inbound shipment cancellation — tla/warehouse/InboundCancelReceipt.tla
+
+A final receipt and cancellation race. The guarded model makes exactly one
+terminal result possible; a stale receipt decision can resurrect a cancelled
+shipment. The existing `cancel_racing_a_full_receipt_admits_exactly_one`
+regression exercises the SQLite implementation. Lean proves expected =
+received + outstanding after an accepted partial receipt. The model represents
+one line and omits carrier events.
+
+## Vendor-return decision — tla/returns/VendorReturnDecision.tla
+
+Processing and cancellation race for one pending return. A transaction allows
+only one terminal decision; split reads let both complete. The new
+`processing_and_cancellation_choose_one_terminal_result` regression checks
+the SQLite repository. Lean proves that total line credit is additive across
+line lists. `credit_generated` is currently a status flag; this model does not
+claim that an external supplier credit or vendor-credit row was created.
+
 ## Running it
 
 ```
@@ -486,6 +829,40 @@ cargo test -p stateset-core --lib straight_line_matches_lean_minor_unit_schedule
 cargo test -p stateset-db --lib partial_credit_applications_preserve_memo_and_invoice_balances
 cargo test -p stateset-db --lib pick_quantity_claims_cannot_exceed_or_reverse_the_request
 cargo test -p stateset-db --lib billing_cycle_snapshots_price_and_discount_at_insert
+cargo test -p stateset-db --lib material_consumption_is_bounded_and_serialized
+cargo test -p stateset-db --lib material_consumption_overflow_returns_validation_error
+cargo test -p stateset-db --lib completion_cannot_exceed_planned_quantity
+cargo test -p stateset-db --lib payment_ledger_running_balance_matches_account
+cargo test -p stateset-db --lib competing_cycle_count_completions_apply_variance_once
+cargo test -p stateset-db --lib receipt_requires_shipment_and_shipping_cannot_resurrect_terminal_order
+cargo test -p stateset-db --lib competing_applications_cannot_exceed_vendor_credit
+cargo test -p stateset-db --lib concurrent_puts_preserve_one_first_response
+cargo test -p stateset-db --lib purge_expired_includes_exact_cutoff_and_frees_key
+cargo test -p stateset-db --lib concurrent_redemptions_cannot_overdraw
+cargo test -p stateset-db --lib lifetime_points_overflow_preserves_balance_and_ledger
+cargo test -p stateset-db --lib competing_applications_cannot_exceed_prepayment
+cargo test -p stateset-db --lib competing_hold_releases_preserve_first_audit_record
+cargo test -p stateset-db --lib terminal_status_cannot_be_replaced
+cargo test -p stateset-db --lib settling_an_existing_cycle_after_cancel_does_not_restore_billing
+cargo test -p stateset-db --lib receive_accumulates_concurrent_partial_receipts_without_lost_updates
+cargo test -p stateset-db --lib full_lifecycle_with_schedule_totals_exact
+cargo test -p stateset-db --lib recognize_is_idempotent_for_recognized_entries
+cargo test -p stateset-db --lib refund_to_date_expired_card_does_not_restore_spendability
+cargo test -p stateset-db --lib failed_history_insert_rolls_back_current_rate
+cargo test -p stateset-db --lib manual_status_cannot_forge_payment_or_reopen_terminal_obligation
+cargo test -p stateset-db --lib cost_layer_issue_requires_positive_quantity
+cargo test -p stateset-db --lib cancel_racing_a_full_receipt_admits_exactly_one
+cargo test -p stateset-db --lib processing_and_cancellation_choose_one_terminal_result
+cargo test -p stateset-db --no-default-features --features postgres --test postgres_formal_settlement
+cargo test -p stateset-db --lib competing_put_away_completions_record_one_receipt
+cargo test -p stateset-db --test inventory_round5_sqlite sqlite_competing_backorder_allocations_cannot_exceed_remaining
+cargo test -p stateset-db --no-default-features --features postgres --test postgres_work_order_concurrency
+cargo test -p stateset-db --features postgres --test postgres_transfer_order_receipt_race postgres_receipt_requires_shipment_and_ship_preserves_terminal_status
+cargo test -p stateset-db --features postgres --test postgres_warranty_claim_guards postgres_competing_claims_consume_one_available_slot
+cargo test -p stateset-db --features postgres --test postgres_vendor_credit_race
+cargo test -p stateset-db --features postgres --test postgres_edi_terminal_race
+cargo test -p stateset-db --features postgres --test postgres_loyalty_overflow
+cargo test -p stateset-db --features postgres --test postgres_http_idempotency_expiry
 cargo test -p stateset-sync pull_does_not_advance_cursor_when_conflict_resolution_cannot_persist
 cargo test -p stateset-db --test sqlite_payment_order_guards concurrent_captures_cannot_exceed_one_order_total
 cargo test -p stateset-embedded --test ap_money_guards_test process_payment_run_concurrent_double_process_pays_each_bill_once

@@ -2201,6 +2201,25 @@ mod tests {
     }
 
     #[test]
+    fn payment_ledger_running_balance_matches_account() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(100));
+        repo.charge_credit(cust, stateset_core::OrderId::new(), dec!(3)).expect("charge");
+        let acct = repo.apply_payment(cust, dec!(2), None).expect("payment");
+        let payments = repo
+            .list_transactions(CreditTransactionFilter {
+                customer_id: Some(cust),
+                transaction_type: Some(CreditTransactionType::Payment),
+                ..Default::default()
+            })
+            .unwrap_or_else(|_| panic!("credit payment lookup failed"));
+        assert_eq!(payments.len(), 1);
+        assert_eq!(payments[0].amount, dec!(2));
+        assert_eq!(payments[0].running_balance, acct.current_balance);
+    }
+
+    #[test]
     fn release_reservation_clamps_hold_at_zero() {
         let repo = fresh_repo();
         let cust = CustomerId::new();

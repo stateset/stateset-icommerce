@@ -592,6 +592,25 @@ mod tests {
     }
 
     #[test]
+    fn refund_to_date_expired_card_does_not_restore_spendability() {
+        let repo = test_repo();
+        let gc = create_card(&repo, "REFUND-EXPIRED", dec!(50.00));
+        repo.charge(gc.id, dec!(10.00), None).expect("charge before expiry");
+        repo.update(
+            gc.id,
+            UpdateGiftCard {
+                expires_at: Some(Some(Utc::now() - chrono::Duration::days(1))),
+                ..Default::default()
+            },
+        )
+        .expect("expire card");
+        repo.refund(gc.id, dec!(10.00), None).expect("refund");
+        let after = repo.get(gc.id).expect("get").expect("card");
+        assert_eq!(after.current_balance, dec!(50.00));
+        assert!(repo.charge(gc.id, dec!(1.00), None).is_err());
+    }
+
+    #[test]
     fn refund_rejects_nonpositive_amount() {
         let repo = test_repo();
         let gc = create_card(&repo, "REFUND-NONPOS", dec!(50.00));

@@ -86,6 +86,53 @@ async fn status(db: &PostgresDatabase, claim: &WarrantyClaim) -> ClaimStatus {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn postgres_competing_claims_consume_one_available_slot() {
+    let Some(db) = connect().await else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let customer_id = customer(&db).await;
+    let warranty = db
+        .warranties()
+        .create_async(CreateWarranty {
+            customer_id,
+            duration_months: Some(24),
+            max_claims: Some(1),
+            ..Default::default()
+        })
+        .await
+        .expect("create capped warranty");
+    let barrier = Arc::new(Barrier::new(2));
+    let mut handles = Vec::new();
+    for _ in 0..2 {
+        let db = Arc::clone(&db);
+        let barrier = Arc::clone(&barrier);
+        let warranty_id = warranty.id;
+        handles.push(tokio::spawn(async move {
+            barrier.wait().await;
+            db.warranties()
+                .create_claim_async(CreateWarrantyClaim {
+                    warranty_id,
+                    issue_description: "Concurrent claim".into(),
+                    ..Default::default()
+                })
+                .await
+        }));
+    }
+    let mut successes = 0;
+    for handle in handles {
+        if handle.await.expect("join claim").is_ok() {
+            successes += 1;
+        }
+    }
+    assert_eq!(successes, 1);
+    assert_eq!(
+        db.warranties().get_async(warranty.id).await.expect("get").expect("warranty").claims_used,
+        1
+    );
+}
+
+#[tokio::test]
 async fn postgres_terminal_claims_reject_every_further_transition_with_a_conflict() {
     let Some(db) = connect().await else {
         eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
