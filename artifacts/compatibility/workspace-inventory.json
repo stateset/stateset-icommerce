@@ -554,7 +554,7 @@
   ],
   "cli": {
     "binaryCount": 53,
-    "dependencyCount": 13,
+    "dependencyCount": 14,
     "optionalDependencyCount": 15,
     "topLevelSourceCounts": [
       {
@@ -659,6 +659,10 @@
       },
       {
         "name": "marketplace",
+        "count": 2
+      },
+      {
+        "name": "teams",
         "count": 2
       },
       {
@@ -947,10 +951,6 @@
       },
       {
         "name": "suggestions.js",
-        "count": 1
-      },
-      {
-        "name": "teams",
         "count": 1
       },
       {

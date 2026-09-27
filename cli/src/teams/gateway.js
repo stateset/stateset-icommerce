@@ -608,7 +608,10 @@ export async function startTeamsGateway({
 
     // Bot Framework messages endpoint
     if (method === 'POST' && pathname === '/api/messages') {
-      if (typeof req.headers.authorization !== 'string' || !/^Bearer [^\s]+$/i.test(req.headers.authorization)) {
+      if (
+        typeof req.headers.authorization !== 'string' ||
+        !/^Bearer [^\s]+$/i.test(req.headers.authorization)
+      ) {
         sendJson(res, 403, { error: 'Invalid Bot Connector authorization' });
         return;
       }

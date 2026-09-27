@@ -83,7 +83,7 @@ workspace membership because they require host runtimes or headers.
 | Top-level source groups | 107 |
 | Tool modules | 93 |
 | A2A modules | 61 |
-| JS dependencies | 13 |
+| JS dependencies | 14 |
 | Optional integrations | 15 |
 
 ## CLI Top-Level Source Groups
@@ -116,6 +116,7 @@ workspace membership because they require host runtimes or headers.
 | `approvals` | 2 |
 | `coverage` | 2 |
 | `marketplace` | 2 |
+| `teams` | 2 |
 | `webhooks` | 2 |
 | `whatsapp` | 2 |
 | `agent-catalog.js` | 1 |
@@ -188,7 +189,6 @@ workspace membership because they require host runtimes or headers.
 | `slack` | 1 |
 | `standalone.js` | 1 |
 | `suggestions.js` | 1 |
-| `teams` | 1 |
 | `telegram` | 1 |
 | `telemetry.js` | 1 |
 | `theme.js` | 1 |
