@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 970,
+  "totalTools": 969,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 952
+      "count": 951
     },
     {
       "name": "stateset-scaffold",
@@ -287,7 +287,7 @@
     },
     {
       "name": "segments",
-      "count": 6
+      "count": 5
     },
     {
       "name": "serials",
@@ -389,18 +389,18 @@
     },
     {
       "name": "read",
-      "count": 479
+      "count": 477
     },
     {
       "name": "write",
-      "count": 423
+      "count": 424
     }
   ],
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
-    "read": 479,
-    "write": 423
+    "read": 477,
+    "write": 424
   },
   "tools": [
     {
@@ -2511,12 +2511,12 @@
     },
     {
       "name": "assess_order_fraud",
-      "description": "Run fraud assessment on an order. Returns a risk score and matched signals.",
+      "description": "Record a fraud assessment for an order from caller-supplied signals. The engine stores the signals, sets the risk score to the highest signal score, and decides accept (or review when the risk score is 0.8 or higher). One assessment per order.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__assess_order_fraud",
       "policyDomain": "fraud",
-      "permission": "read"
+      "permission": "write"
     },
     {
       "name": "assess_wasm_connector_safety",
@@ -2642,7 +2642,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__calculate_cart_tax",
       "policyDomain": "tax",
-      "permission": "read"
+      "permission": "write"
     },
     {
       "name": "calculate_item_tax",
@@ -2655,7 +2655,7 @@
     },
     {
       "name": "calculate_shipping_rate",
-      "description": "Calculate shipping rate for a destination address and cart items.",
+      "description": "Calculate available shipping rates for a destination address.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__calculate_shipping_rate",
@@ -3276,7 +3276,7 @@
     },
     {
       "name": "convert_wishlist_to_cart",
-      "description": "Convert all items in a wishlist to a shopping cart.",
+      "description": "Create a cart for the wishlist's customer and add each wishlist item at its catalog variant price. Items that cannot be priced are reported, not added.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__convert_wishlist_to_cart",
@@ -3501,7 +3501,7 @@
     },
     {
       "name": "create_fraud_rule",
-      "description": "Create a custom fraud detection rule.",
+      "description": "Create a fraud rule: when a signal of `signalType` scores at or above `threshold`, apply `action`. Rules are created enabled.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__create_fraud_rule",
@@ -3618,7 +3618,7 @@
     },
     {
       "name": "create_loyalty_program",
-      "description": "Create a loyalty program with tiers and earning rules.",
+      "description": "Create a loyalty program with an earning rate and optional tiers.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__create_loyalty_program",
@@ -3870,7 +3870,7 @@
     },
     {
       "name": "create_shipping_method",
-      "description": "Create a shipping method within a zone (e.g., Standard, Express, Overnight).",
+      "description": "Create a shipping method within a zone (e.g., Standard, Express, Overnight). weight_based and price_based methods pick their rate from `conditions`; free always rates 0; flat and calculated use baseRate.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__create_shipping_method",
@@ -4383,7 +4383,7 @@
     },
     {
       "name": "earn_points",
-      "description": "Award loyalty points to a customer account.",
+      "description": "Award loyalty points to a customer's account in a program.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__earn_points",
@@ -4473,7 +4473,7 @@
     },
     {
       "name": "evaluate_segment_membership",
-      "description": "Check whether a customer belongs to a segment.",
+      "description": "Check whether a customer is a recorded member of a segment. Reads stored membership; rules are not re-evaluated.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__evaluate_segment_membership",
@@ -5049,7 +5049,7 @@
     },
     {
       "name": "get_fraud_assessment",
-      "description": "Get a fraud assessment by ID.",
+      "description": "Get the fraud assessment for an order.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_fraud_assessment",
@@ -5247,7 +5247,7 @@
     },
     {
       "name": "get_loyalty_account",
-      "description": "Get a customer loyalty account including points balance and tier.",
+      "description": "Get a customer's loyalty account in a program: points balance and tier.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_loyalty_account",
@@ -5256,7 +5256,7 @@
     },
     {
       "name": "get_loyalty_program",
-      "description": "Get loyalty program details including tiers and reward catalog.",
+      "description": "Get loyalty program details including its tiers.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_loyalty_program",
@@ -5616,7 +5616,7 @@
     },
     {
       "name": "get_shipping_zone",
-      "description": "Get a shipping zone by ID.",
+      "description": "Get a shipping zone by ID, including its shipping methods.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_shipping_zone",
@@ -6372,7 +6372,7 @@
     },
     {
       "name": "list_fraud_signals",
-      "description": "List fraud signals for an order or across all recent orders.",
+      "description": "List the fraud signals recorded on one order, or on the most recent assessments across orders.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_fraud_signals",
@@ -6876,7 +6876,7 @@
     },
     {
       "name": "list_rewards",
-      "description": "List available rewards in a loyalty program.",
+      "description": "List rewards in a loyalty program.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_rewards",
@@ -7415,15 +7415,6 @@
       "permission": "write"
     },
     {
-      "name": "rebuild_dynamic_segment",
-      "description": "Rebuild a dynamic segment by re-evaluating all customers against its conditions.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__rebuild_dynamic_segment",
-      "policyDomain": "segments",
-      "permission": "write"
-    },
-    {
       "name": "recalculate_cart",
       "description": "Recalculate cart totals after pricing or address changes.",
       "serverName": "stateset-commerce",
@@ -7515,7 +7506,7 @@
     },
     {
       "name": "redeem_points",
-      "description": "Redeem loyalty points for a reward or discount.",
+      "description": "Redeem loyalty points from a customer's account, optionally for a reward in the program. The engine refuses a redemption larger than the balance.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__redeem_points",
@@ -7767,7 +7758,7 @@
     },
     {
       "name": "review_flagged_order",
-      "description": "Review a flagged order and mark it as approved or rejected.",
+      "description": "Record a manual review of an order's fraud assessment: set its decision, the reviewer, and why.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__review_flagged_order",
@@ -8424,7 +8415,7 @@
     },
     {
       "name": "update_fraud_rule",
-      "description": "Update a fraud detection rule.",
+      "description": "Update a fraud rule (name, description, threshold, action, or enabled flag).",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__update_fraud_rule",
@@ -8541,7 +8532,7 @@
     },
     {
       "name": "update_subscription",
-      "description": "Update subscription fields such as payment method or metadata. Requires --apply flag.",
+      "description": "Update subscription fields (status, price, paymentMethodId, nextBillingDate, discountPercent as a 0-1 fraction, discountAmount, couponCode). Requires --apply flag.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__update_subscription",

@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:16475b8c05b2b0a130c3be7003bf72da77cc113bb266dfef557813a7fc00fefa",
+  "digest": "sha256:058c3e3650cd1527a7711356f9856357513521fa2fdb08d9e986a472715ef6ef",
   "counts": {
-    "total": 952,
-    "readOnly": 470,
-    "mutations": 482,
+    "total": 951,
+    "readOnly": 468,
+    "mutations": 483,
     "governed": 25,
     "governedComposite": 1,
-    "blocked": 456
+    "blocked": 457
   },
   "entries": [
     {
@@ -1650,9 +1650,9 @@
     },
     {
       "name": "assess_order_fraud",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {
@@ -1748,9 +1748,9 @@
     },
     {
       "name": "calculate_cart_tax",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {
@@ -5458,13 +5458,6 @@
     },
     {
       "name": "reactivate_credit_account",
-      "permission": "write",
-      "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
-    },
-    {
-      "name": "rebuild_dynamic_segment",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",

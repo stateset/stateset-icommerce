@@ -1,13 +1,9 @@
 /**
- * Fraud Detection Tools Test Suite
+ * Fraud Detection Tools — handler behaviour
  *
- * Tests for the fraudTools module (cli/src/tools/fraud.js):
- * - assess_order_fraud (read)
- * - get_fraud_assessment (read)
- * - list_fraud_signals (read)
- * - create_fraud_rule (admin)
- * - update_fraud_rule (admin)
- * - review_flagged_order (write)
+ * Mocks here define only methods the Node binding's `Fraud` class really has
+ * (checked against bindings/node/index.d.ts in fraud-tools.test.js), and each
+ * test asserts the exact arguments the binding receives.
  */
 
 import { describe, it } from 'node:test';
@@ -15,178 +11,151 @@ import assert from 'node:assert/strict';
 
 import { fraudTools } from '../../src/tools/fraud.js';
 
-// ============================================================================
-// Helper: find tool by name from a tools array
-// ============================================================================
-
-function findTool(tools, name) {
-  const tool = tools.find((t) => t.name === name);
+function findTool(name) {
+  const tool = fraudTools.find((t) => t.name === name);
   if (!tool) throw new Error(`Tool '${name}' not found`);
   return tool;
 }
 
 // ============================================================================
-// Mock data
+// Mock data — shaped like FraudAssessmentOutput / FraudRuleOutput
 // ============================================================================
 
+const ORDER_ID = '11111111-1111-4111-8111-111111111111';
+
+const mockSignal = {
+  orderId: ORDER_ID,
+  signalType: 'proxy_vpn',
+  score: 0.85,
+  details: 'known VPN exit',
+  detectedAt: '2026-02-01T00:00:00Z',
+};
+
 const mockAssessment = {
-  id: 'fa_001',
-  orderId: 'ord_001',
-  riskScore: 0.35,
-  riskLevel: 'low',
-  recommendation: 'accept',
-  signals: [{ type: 'velocity_check', score: 0.2, details: 'Normal velocity' }],
-  matchedRules: [],
-  reviewStatus: null,
-  reviewedBy: null,
-  assessedAt: '2026-02-01T00:00:00Z',
-  reviewedAt: null,
+  orderId: ORDER_ID,
+  riskScore: 0.85,
+  signals: [mockSignal],
+  decision: 'review',
+  needsReview: true,
+  createdAt: '2026-02-01T00:00:00Z',
+  updatedAt: '2026-02-01T00:00:00Z',
 };
 
 const mockRule = {
   id: 'fr_001',
-  name: 'High Value Alert',
-  description: 'Flag orders over $5000',
-  condition: { field: 'order_amount', operator: 'gt', value: 5000 },
-  action: 'review',
-  scoreAdjustment: 30,
-  priority: 50,
+  name: 'VPN',
+  signalType: 'proxy_vpn',
+  threshold: 0.7,
+  action: 'reject',
   enabled: true,
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
 };
 
-const mockSignal = {
-  id: 'fs_001',
-  orderId: 'ord_001',
-  type: 'velocity_check',
-  description: 'Normal purchase velocity',
-  severity: 'low',
-  metadata: { checkCount: 2, windowHours: 24 },
-  detectedAt: '2026-02-01T00:00:00Z',
-};
-
-// ============================================================================
-// Mock commerce factory
-// ============================================================================
-
-function makeFraudCommerce(overrides = {}) {
-  return {
-    fraud: {
-      assessOrder: async (data) => ({ ...mockAssessment, orderId: data.orderId }),
-      getAssessment: async (id) => (id === 'fa_001' ? mockAssessment : null),
-      listSignals: async (_opts) => [mockSignal],
-      createRule: async (data) => ({ ...mockRule, ...data }),
-      updateRule: async (id, data) => ({ ...mockRule, id, ...data }),
-      reviewOrder: async (data) => ({
+/** A `commerce.fraud` mock that records every call. */
+function makeCommerce(overrides = {}) {
+  const calls = [];
+  const record =
+    (name, impl) =>
+    async (...args) => {
+      calls.push({ name, args });
+      return impl(...args);
+    };
+  const fraud = {
+    createAssessment: record('createAssessment', (input) => ({
+      ...mockAssessment,
+      orderId: input.orderId,
+    })),
+    getAssessment: record('getAssessment', (orderId) =>
+      orderId === ORDER_ID ? mockAssessment : null,
+    ),
+    listAssessments: record('listAssessments', () => [
+      mockAssessment,
+      {
         ...mockAssessment,
-        assessmentId: data.assessmentId,
-        reviewStatus: data.decision,
-        reviewedBy: 'agent',
-        reviewedAt: '2026-02-01T12:00:00Z',
-      }),
-      ...overrides,
-    },
+        orderId: 'o2',
+        signals: [{ ...mockSignal, orderId: 'o2', signalType: 'address_mismatch', score: 0.3 }],
+      },
+    ]),
+    reviewAssessment: record('reviewAssessment', (orderId, decision, reviewer, notes) => ({
+      ...mockAssessment,
+      orderId,
+      decision,
+      needsReview: false,
+      reviewedBy: reviewer,
+      reviewNotes: notes,
+    })),
+    createRule: record('createRule', (input) => ({ ...mockRule, ...input })),
+    updateRule: record('updateRule', (id, input) => ({ ...mockRule, id, ...input })),
   };
+  for (const [name, impl] of Object.entries(overrides)) fraud[name] = record(name, impl);
+  return { commerce: { fraud }, calls };
 }
-
-// ============================================================================
-// Structural sanity check
-// ============================================================================
-
-describe('Fraud Tools — structure', () => {
-  it('exports an array', () => {
-    assert.ok(Array.isArray(fraudTools));
-  });
-
-  it('exports exactly 6 tools', () => {
-    assert.equal(fraudTools.length, 6);
-  });
-
-  it('every tool has name, handler, and permission', () => {
-    for (const tool of fraudTools) {
-      assert.ok(tool.name, `missing name`);
-      assert.equal(typeof tool.handler, 'function', `${tool.name} missing handler`);
-      assert.ok(tool.permission, `${tool.name} missing permission`);
-    }
-  });
-
-  it('admin tools have permission: admin', () => {
-    const adminTools = ['create_fraud_rule', 'update_fraud_rule'];
-    for (const name of adminTools) {
-      const tool = findTool(fraudTools, name);
-      assert.equal(tool.permission, 'admin', `${name} should have admin permission`);
-    }
-  });
-
-  it('read tools have permission: read', () => {
-    const readTools = ['assess_order_fraud', 'get_fraud_assessment', 'list_fraud_signals'];
-    for (const name of readTools) {
-      const tool = findTool(fraudTools, name);
-      assert.equal(tool.permission, 'read', `${name} should have read permission`);
-    }
-  });
-
-  it('review_flagged_order has permission: write', () => {
-    const tool = findTool(fraudTools, 'review_flagged_order');
-    assert.equal(tool.permission, 'write');
-  });
-});
 
 // ============================================================================
 // assess_order_fraud
 // ============================================================================
 
 describe('assess_order_fraud', () => {
-  const tool = findTool(fraudTools, 'assess_order_fraud');
+  const tool = findTool('assess_order_fraud');
+  const params = {
+    orderId: ORDER_ID,
+    signals: [{ signalType: 'proxy_vpn', score: 0.85, details: 'known VPN exit' }],
+  };
 
-  it('returns assessment with riskScore for valid order', async () => {
-    const result = await tool.handler({
-      commerce: makeFraudCommerce(),
-      params: { orderId: 'ord_001' },
-    });
+  it('previews without --apply, because the assessment is persisted', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params });
+    assert.equal(result.success, false);
+    assert.match(result.error, /--apply/);
+    assert.equal(calls.length, 0);
+  });
+
+  it('calls commerce.fraud.createAssessment with the order and signals', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params, allowApply: true });
+    assert.deepEqual(calls, [
+      {
+        name: 'createAssessment',
+        args: [
+          {
+            orderId: ORDER_ID,
+            signals: [{ signalType: 'proxy_vpn', score: 0.85, details: 'known VPN exit' }],
+          },
+        ],
+      },
+    ]);
     assert.equal(result.success, true);
-    assert.ok(result.assessment);
-    assert.equal(result.assessment.orderId, 'ord_001');
-    assert.equal(result.assessment.riskScore, 0.35);
-    assert.equal(result.assessment.riskLevel, 'low');
-    assert.ok(Array.isArray(result.assessment.signals));
+    assert.equal(result.assessment.orderId, ORDER_ID);
+    assert.equal(result.assessment.riskScore, 0.85);
+    assert.equal(result.assessment.decision, 'review');
+    assert.equal(result.assessment.needsReview, true);
+    assert.deepEqual(result.assessment.signals, [mockSignal]);
   });
 
-  it('passes all optional fields to commerce.fraud.assessOrder', async () => {
-    let calledWith;
-    const commerce = makeFraudCommerce({
-      assessOrder: async (data) => {
-        calledWith = data;
-        return { ...mockAssessment, orderId: data.orderId };
-      },
-    });
-    await tool.handler({
-      commerce,
-      params: {
-        orderId: 'ord_002',
-        customerIp: '203.0.113.42',
-        deviceFingerprint: 'fp_abc123',
-        billingAddress: { country: 'US', region: 'CA', postalCode: '90210' },
-        shippingAddress: { country: 'US', region: 'NY', postalCode: '10001' },
-      },
-    });
-    assert.equal(calledWith.orderId, 'ord_002');
-    assert.equal(calledWith.customerIp, '203.0.113.42');
-    assert.equal(calledWith.deviceFingerprint, 'fp_abc123');
-    assert.equal(calledWith.billingAddress.country, 'US');
-    assert.equal(calledWith.shippingAddress.country, 'US');
+  it('rejects an unknown signal type at the schema', () => {
+    const r = tool.inputSchema.signals.safeParse([
+      { signalType: 'velocity_check', score: 0.2, details: 'x' },
+    ]);
+    assert.equal(r.success, false);
   });
 
-  it('returns error when commerce throws', async () => {
-    const commerce = makeFraudCommerce({
-      assessOrder: async () => {
-        throw new Error('assessment engine unavailable');
+  it('rejects a score outside 0..1 at the schema', () => {
+    const r = tool.inputSchema.signals.safeParse([
+      { signalType: 'proxy_vpn', score: 35, details: 'x' },
+    ]);
+    assert.equal(r.success, false);
+  });
+
+  it('propagates binding errors', async () => {
+    const { commerce } = makeCommerce({
+      createAssessment: () => {
+        throw new Error('UNIQUE constraint failed: fraud_assessments.order_id');
       },
     });
     await assert.rejects(
-      () => tool.handler({ commerce, params: { orderId: 'ord_001' } }),
-      /assessment engine unavailable/,
+      () => tool.handler({ commerce, params, allowApply: true }),
+      /UNIQUE constraint/,
     );
   });
 });
@@ -196,42 +165,22 @@ describe('assess_order_fraud', () => {
 // ============================================================================
 
 describe('get_fraud_assessment', () => {
-  const tool = findTool(fraudTools, 'get_fraud_assessment');
+  const tool = findTool('get_fraud_assessment');
 
-  it('returns assessment details for valid ID', async () => {
-    const result = await tool.handler({
-      commerce: makeFraudCommerce(),
-      params: { assessmentId: 'fa_001' },
-    });
+  it('looks the assessment up by order ID', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params: { orderId: ORDER_ID } });
+    assert.deepEqual(calls, [{ name: 'getAssessment', args: [ORDER_ID] }]);
     assert.equal(result.success, true);
-    assert.equal(result.assessment.id, 'fa_001');
-    assert.equal(result.assessment.orderId, 'ord_001');
-    assert.equal(result.assessment.riskScore, 0.35);
-    assert.equal(result.assessment.riskLevel, 'low');
-    assert.ok(result.assessment.signals);
-    assert.ok('reviewStatus' in result.assessment);
-    assert.ok('reviewedBy' in result.assessment);
+    assert.equal(result.assessment.orderId, ORDER_ID);
+    assert.equal(result.assessment.decision, 'review');
+    assert.deepEqual(result.assessment.signals, [mockSignal]);
   });
 
-  it('returns success: false for unknown assessment ID', async () => {
-    const result = await tool.handler({
-      commerce: makeFraudCommerce(),
-      params: { assessmentId: 'fa_nope' },
-    });
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('not found'));
-  });
-
-  it('returns error when commerce throws', async () => {
-    const commerce = makeFraudCommerce({
-      getAssessment: async () => {
-        throw new Error('lookup failed');
-      },
-    });
-    await assert.rejects(
-      () => tool.handler({ commerce, params: { assessmentId: 'fa_001' } }),
-      /lookup failed/,
-    );
+  it('returns success: false when the order has no assessment', async () => {
+    const { commerce } = makeCommerce();
+    const result = await tool.handler({ commerce, params: { orderId: 'nope' } });
+    assert.deepEqual(result, { success: false, error: 'Fraud assessment not found' });
   });
 });
 
@@ -240,257 +189,122 @@ describe('get_fraud_assessment', () => {
 // ============================================================================
 
 describe('list_fraud_signals', () => {
-  const tool = findTool(fraudTools, 'list_fraud_signals');
+  const tool = findTool('list_fraud_signals');
 
-  it('returns signals with returned count', async () => {
-    const result = await tool.handler({
-      commerce: makeFraudCommerce(),
-      params: {},
-    });
-    assert.equal(result.success, true);
+  it('reads one order’s signals from its assessment', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params: { orderId: ORDER_ID, limit: 50 } });
+    assert.deepEqual(calls, [{ name: 'getAssessment', args: [ORDER_ID] }]);
     assert.equal(result.returned, 1);
-    assert.ok(Array.isArray(result.signals));
-    assert.equal(result.signals[0].id, 'fs_001');
-    assert.equal(result.signals[0].type, 'velocity_check');
+    assert.deepEqual(result.signals, [mockSignal]);
   });
 
-  it('passes orderId and riskLevel filters to commerce.fraud.listSignals', async () => {
-    let calledOpts;
-    const commerce = makeFraudCommerce({
-      listSignals: async (opts) => {
-        calledOpts = opts;
-        return [];
-      },
-    });
-    await tool.handler({
+  it('returns no signals for an order with no assessment', async () => {
+    const { commerce } = makeCommerce();
+    const result = await tool.handler({ commerce, params: { orderId: 'nope', limit: 50 } });
+    assert.deepEqual(result, { success: true, returned: 0, signals: [] });
+  });
+
+  it('filters one order’s assessment by minRiskScore', async () => {
+    const { commerce } = makeCommerce();
+    const result = await tool.handler({
       commerce,
-      params: { orderId: 'ord_001', riskLevel: 'high' },
+      params: { orderId: ORDER_ID, minRiskScore: 0.9, limit: 50 },
     });
-    assert.equal(calledOpts.orderId, 'ord_001');
-    assert.equal(calledOpts.riskLevel, 'high');
+    assert.equal(result.returned, 0);
   });
 
-  it('slices results to limit', async () => {
-    const manySignals = Array.from({ length: 20 }, (_, i) => ({
-      ...mockSignal,
-      id: `fs_${String(i).padStart(3, '0')}`,
-    }));
-    const commerce = makeFraudCommerce({
-      listSignals: async () => manySignals,
-    });
-    const result = await tool.handler({ commerce, params: { limit: 5 } });
-    assert.equal(result.returned, 5);
-    assert.equal(result.signals.length, 5);
+  it('without orderId, lists assessments with minRiskScore and limit and flattens signals', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params: { minRiskScore: 0.2, limit: 50 } });
+    assert.deepEqual(calls, [
+      { name: 'listAssessments', args: [{ minRiskScore: 0.2, limit: 50 }] },
+    ]);
+    assert.equal(result.returned, 2);
+    assert.deepEqual(
+      result.signals.map((s) => [s.orderId, s.signalType]),
+      [
+        [ORDER_ID, 'proxy_vpn'],
+        ['o2', 'address_mismatch'],
+      ],
+    );
   });
 
-  it('returns error when commerce throws', async () => {
-    const commerce = makeFraudCommerce({
-      listSignals: async () => {
-        throw new Error('signals query failed');
-      },
-    });
-    await assert.rejects(() => tool.handler({ commerce, params: {} }), /signals query failed/);
+  it('slices the flattened signals to limit', async () => {
+    const { commerce } = makeCommerce();
+    const result = await tool.handler({ commerce, params: { limit: 1 } });
+    assert.equal(result.returned, 1);
   });
 });
 
 // ============================================================================
-// create_fraud_rule
+// create_fraud_rule / update_fraud_rule
 // ============================================================================
 
 describe('create_fraud_rule', () => {
-  const tool = findTool(fraudTools, 'create_fraud_rule');
+  const tool = findTool('create_fraud_rule');
+  const params = {
+    name: 'VPN',
+    description: 'Reject VPN traffic',
+    signalType: 'proxy_vpn',
+    threshold: 0.7,
+    action: 'reject',
+  };
 
-  it('returns preview (success: false) without --apply', async () => {
-    const result = await tool.handler({
-      commerce: makeFraudCommerce(),
-      params: {
-        name: 'High Value Alert',
-        condition: { field: 'order_amount', operator: 'gt', value: 5000 },
-        action: 'review',
-      },
-      allowApply: false,
-    });
+  it('previews without --apply', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params });
     assert.equal(result.success, false);
-    assert.ok(result.error);
-    assert.ok(result.hint);
+    assert.equal(calls.length, 0);
   });
 
-  it('creates rule with --apply and returns success: true', async () => {
-    const result = await tool.handler({
-      commerce: makeFraudCommerce(),
-      params: {
-        name: 'High Value Alert',
-        condition: { field: 'order_amount', operator: 'gt', value: 5000 },
-        action: 'review',
-        scoreAdjustment: 30,
-        priority: 50,
-        enabled: true,
-      },
-      allowApply: true,
-    });
+  it('passes a CreateFraudRuleInput to commerce.fraud.createRule', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params, allowApply: true });
+    assert.deepEqual(calls, [{ name: 'createRule', args: [params] }]);
     assert.equal(result.success, true);
-    assert.ok(result.message.includes('created'));
-    assert.ok(result.rule);
-    assert.equal(result.rule.name, 'High Value Alert');
+    assert.equal(result.rule.signalType, 'proxy_vpn');
   });
 
-  it('passes all fields to commerce.fraud.createRule', async () => {
-    let calledWith;
-    const commerce = makeFraudCommerce({
-      createRule: async (data) => {
-        calledWith = data;
-        return { ...mockRule, ...data };
-      },
-    });
-    await tool.handler({
-      commerce,
-      params: {
-        name: 'Foreign IP Block',
-        description: 'Block orders from high-risk countries',
-        condition: { field: 'shipping_country', operator: 'in', value: ['CN', 'RU'] },
-        action: 'block',
-        scoreAdjustment: 80,
-        priority: 10,
-        enabled: true,
-      },
-      allowApply: true,
-    });
-    assert.equal(calledWith.name, 'Foreign IP Block');
-    assert.equal(calledWith.action, 'block');
-    assert.equal(calledWith.condition.operator, 'in');
-    assert.deepEqual(calledWith.condition.value, ['CN', 'RU']);
-    assert.equal(calledWith.priority, 10);
-  });
-
-  it('defaults priority to 50 and enabled to true when not provided', async () => {
-    let calledWith;
-    const commerce = makeFraudCommerce({
-      createRule: async (data) => {
-        calledWith = data;
-        return { ...mockRule, ...data };
-      },
-    });
-    await tool.handler({
-      commerce,
-      params: {
-        name: 'Simple Rule',
-        condition: { field: 'order_amount', operator: 'gt', value: 100 },
-        action: 'flag',
-      },
-      allowApply: true,
-    });
-    assert.equal(calledWith.priority, 50);
-    assert.equal(calledWith.enabled, true);
-  });
-
-  it('returns error when commerce throws', async () => {
-    const commerce = makeFraudCommerce({
-      createRule: async () => {
-        throw new Error('rule creation failed');
-      },
-    });
-    await assert.rejects(
-      () =>
-        tool.handler({
-          commerce,
-          params: {
-            name: 'Test Rule',
-            condition: { field: 'order_amount', operator: 'gt', value: 100 },
-            action: 'flag',
-          },
-          allowApply: true,
-        }),
-      /rule creation failed/,
-    );
+  it('only accepts FraudDecision values as the action', () => {
+    assert.equal(tool.inputSchema.action.safeParse('flag').success, false);
+    assert.equal(tool.inputSchema.action.safeParse('review').success, true);
   });
 });
 
-// ============================================================================
-// update_fraud_rule
-// ============================================================================
-
 describe('update_fraud_rule', () => {
-  const tool = findTool(fraudTools, 'update_fraud_rule');
+  const tool = findTool('update_fraud_rule');
 
-  it('returns preview (success: false) without --apply', async () => {
-    const result = await tool.handler({
-      commerce: makeFraudCommerce(),
-      params: { ruleId: 'fr_001', enabled: false },
-      allowApply: false,
-    });
+  it('previews without --apply', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params: { ruleId: 'fr_001', enabled: false } });
     assert.equal(result.success, false);
-    assert.ok(result.error);
+    assert.equal(calls.length, 0);
   });
 
-  it('updates rule with --apply and returns success: true', async () => {
+  it('passes the rule ID and an UpdateFraudRuleInput to commerce.fraud.updateRule', async () => {
+    const { commerce, calls } = makeCommerce();
     const result = await tool.handler({
-      commerce: makeFraudCommerce(),
-      params: { ruleId: 'fr_001', name: 'Updated Alert', enabled: false },
-      allowApply: true,
-    });
-    assert.equal(result.success, true);
-    assert.ok(result.message.includes('updated'));
-    assert.ok(result.rule);
-  });
-
-  it('passes ruleId and partial update data to commerce.fraud.updateRule', async () => {
-    let calledId, calledData;
-    const commerce = makeFraudCommerce({
-      updateRule: async (id, data) => {
-        calledId = id;
-        calledData = data;
-        return { ...mockRule, id, ...data };
-      },
-    });
-    await tool.handler({
       commerce,
-      params: {
-        ruleId: 'fr_001',
-        name: 'Revised Rule',
-        action: 'flag',
-        priority: 20,
-        enabled: false,
-      },
+      params: { ruleId: 'fr_001', threshold: 0.9, enabled: false },
       allowApply: true,
     });
-    assert.equal(calledId, 'fr_001');
-    assert.equal(calledData.name, 'Revised Rule');
-    assert.equal(calledData.action, 'flag');
-    assert.equal(calledData.priority, 20);
-    assert.equal(calledData.enabled, false);
-  });
-
-  it('supports updating condition', async () => {
-    let calledData;
-    const commerce = makeFraudCommerce({
-      updateRule: async (_id, data) => {
-        calledData = data;
-        return { ...mockRule, ...data };
+    assert.deepEqual(calls, [
+      {
+        name: 'updateRule',
+        args: [
+          'fr_001',
+          {
+            name: undefined,
+            description: undefined,
+            threshold: 0.9,
+            action: undefined,
+            enabled: false,
+          },
+        ],
       },
-    });
-    await tool.handler({
-      commerce,
-      params: {
-        ruleId: 'fr_001',
-        condition: { field: 'order_amount', operator: 'gte', value: 10000 },
-      },
-      allowApply: true,
-    });
-    assert.equal(calledData.condition.operator, 'gte');
-    assert.equal(calledData.condition.value, 10000);
-  });
-
-  it('returns error when commerce throws', async () => {
-    const commerce = makeFraudCommerce({
-      updateRule: async () => {
-        throw new Error('rule not found');
-      },
-    });
-    await assert.rejects(
-      () =>
-        tool.handler({ commerce, params: { ruleId: 'fr_nope', enabled: false }, allowApply: true }),
-      /rule not found/,
-    );
+    ]);
+    assert.equal(result.rule.enabled, false);
   });
 });
 
@@ -499,87 +313,66 @@ describe('update_fraud_rule', () => {
 // ============================================================================
 
 describe('review_flagged_order', () => {
-  const tool = findTool(fraudTools, 'review_flagged_order');
+  const tool = findTool('review_flagged_order');
+  const params = {
+    orderId: ORDER_ID,
+    decision: 'reject',
+    reviewer: 'ops@example.com',
+    reason: 'VPN confirmed',
+  };
 
-  it('returns preview (success: false) without --apply', async () => {
-    const result = await tool.handler({
-      commerce: makeFraudCommerce(),
-      params: { assessmentId: 'fa_001', decision: 'approve', reason: 'Verified customer' },
-      allowApply: false,
-    });
+  it('previews without --apply', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params });
     assert.equal(result.success, false);
-    assert.ok(result.error);
+    assert.equal(calls.length, 0);
   });
 
-  it('approves flagged order with --apply', async () => {
-    const result = await tool.handler({
-      commerce: makeFraudCommerce(),
-      params: { assessmentId: 'fa_001', decision: 'approve', reason: 'Verified customer identity' },
-      allowApply: true,
-    });
-    assert.equal(result.success, true);
-    assert.ok(result.message.toLowerCase().includes('approved'));
-    assert.ok(result.assessment);
-  });
-
-  it('rejects flagged order with --apply', async () => {
-    const result = await tool.handler({
-      commerce: makeFraudCommerce(),
-      params: { assessmentId: 'fa_001', decision: 'reject', reason: 'Confirmed fraud attempt' },
-      allowApply: true,
-    });
-    assert.equal(result.success, true);
-    assert.ok(result.message.toLowerCase().includes('rejected'));
-  });
-
-  it('escalates flagged order with --apply', async () => {
-    const result = await tool.handler({
-      commerce: makeFraudCommerce(),
-      params: { assessmentId: 'fa_001', decision: 'escalate', reason: 'Needs senior review' },
-      allowApply: true,
-    });
-    assert.equal(result.success, true);
-    assert.ok(result.message.toLowerCase().includes('escalated'));
-  });
-
-  it('passes all fields including optional reviewerNote to commerce.fraud.reviewOrder', async () => {
-    let calledWith;
-    const commerce = makeFraudCommerce({
-      reviewOrder: async (data) => {
-        calledWith = data;
-        return { ...mockAssessment, reviewStatus: data.decision };
+  it('calls reviewAssessment(orderId, decision, reviewer, notes)', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params, allowApply: true });
+    assert.deepEqual(calls, [
+      {
+        name: 'reviewAssessment',
+        args: [ORDER_ID, 'reject', 'ops@example.com', 'VPN confirmed'],
       },
-    });
-    await tool.handler({
-      commerce,
-      params: {
-        assessmentId: 'fa_001',
-        decision: 'approve',
-        reason: 'Customer confirmed purchase',
-        reviewerNote: 'Spoke with customer directly',
-      },
-      allowApply: true,
-    });
-    assert.equal(calledWith.assessmentId, 'fa_001');
-    assert.equal(calledWith.decision, 'approve');
-    assert.equal(calledWith.reason, 'Customer confirmed purchase');
-    assert.equal(calledWith.reviewerNote, 'Spoke with customer directly');
+    ]);
+    assert.equal(result.success, true);
+    assert.equal(result.message, 'Order rejected');
+    assert.equal(result.assessment.decision, 'reject');
+    assert.equal(result.assessment.reviewedBy, 'ops@example.com');
+    assert.equal(result.assessment.reviewNotes, 'VPN confirmed');
   });
 
-  it('returns error when commerce throws', async () => {
-    const commerce = makeFraudCommerce({
-      reviewOrder: async () => {
-        throw new Error('assessment already reviewed');
+  for (const [decision, message] of [
+    ['accept', 'Order accepted'],
+    ['review', 'Order kept in review'],
+  ]) {
+    it(`says "${message}" for ${decision}`, async () => {
+      const { commerce } = makeCommerce();
+      const result = await tool.handler({
+        commerce,
+        params: { ...params, decision },
+        allowApply: true,
+      });
+      assert.equal(result.message, message);
+    });
+  }
+
+  it('only accepts FraudDecision values', () => {
+    assert.equal(tool.inputSchema.decision.safeParse('approve').success, false);
+    assert.equal(tool.inputSchema.decision.safeParse('escalate').success, false);
+  });
+
+  it('propagates binding errors for an order with no assessment', async () => {
+    const { commerce } = makeCommerce({
+      reviewAssessment: () => {
+        throw new Error('Failed to review fraud assessment: Record not found');
       },
     });
     await assert.rejects(
-      () =>
-        tool.handler({
-          commerce,
-          params: { assessmentId: 'fa_001', decision: 'approve', reason: 'OK' },
-          allowApply: true,
-        }),
-      /assessment already reviewed/,
+      () => tool.handler({ commerce, params, allowApply: true }),
+      /Record not found/,
     );
   });
 });

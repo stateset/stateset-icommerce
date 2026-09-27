@@ -62,12 +62,19 @@ describe('Error handling consistency', () => {
       assert.ok(tool, 'get_subscription_plan tool not found');
 
       // Mock commerce that returns a plan object
-      const mockPlan = { id: 'plan-1', name: 'Pro', price: '29.99', status: 'active' };
+      const planId = '11111111-1111-4111-8111-111111111111';
+      const mockPlan = {
+        id: planId,
+        name: 'Pro',
+        price: 29.99,
+        priceExact: '29.99',
+        status: 'active',
+      };
       const mockCommerce = {
-        getSubscriptionPlan: async () => mockPlan,
+        subscriptions: { getPlan: async () => mockPlan, getPlanByCode: async () => null },
       };
 
-      const result = await tool.handler({ commerce: mockCommerce, params: { planId: 'plan-1' } });
+      const result = await tool.handler({ commerce: mockCommerce, params: { planId } });
       assert.strictEqual(result.success, true, 'Expected success: true');
       assert.deepStrictEqual(result.plan, mockPlan, 'Expected plan to be wrapped');
     });
@@ -76,7 +83,9 @@ describe('Error handling consistency', () => {
       const mod = await import('../../src/tools/subscriptions.js');
       const tool = mod.subscriptionTools.find((t) => t.name === 'get_subscription_plan');
 
-      const mockCommerce = { getSubscriptionPlan: async () => null };
+      const mockCommerce = {
+        subscriptions: { getPlan: async () => null, getPlanByCode: async () => null },
+      };
       const result = await tool.handler({ commerce: mockCommerce, params: { planId: 'xxx' } });
       assert.strictEqual(result.success, false);
       assert.ok(result.error.includes('not found'));

@@ -13,11 +13,11 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 970 |
+| Total tools | 969 |
 | MCP servers | 3 |
 | Policy domains | 89 |
-| Read tools | 479 |
-| Write tools | 423 |
+| Read tools | 477 |
+| Write tools | 424 |
 | Delete tools | 21 |
 | Admin tools | 47 |
 | Unknown permission | 0 |
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 952 | `cli/src/mcp-server.js` |
+| stateset-commerce | 951 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -100,7 +100,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | reviews | 7 |
 | scaffold | 13 |
 | search-config | 7 |
-| segments | 6 |
+| segments | 5 |
 | serials | 8 |
 | shipments | 14 |
 | shipping_zones | 7 |
@@ -130,8 +130,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | --- | --- |
 | admin | 47 |
 | delete | 21 |
-| read | 479 |
-| write | 423 |
+| read | 477 |
+| write | 424 |
 
 ## Tool Registry
 
@@ -371,7 +371,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `approve_warranty_claim` | `stateset-commerce` | `warranties` | `write` |
 | `archive_product` | `stateset-commerce` | `products` | `write` |
 | `archive_subscription_plan` | `stateset-commerce` | `subscriptions` | `delete` |
-| `assess_order_fraud` | `stateset-commerce` | `fraud` | `read` |
+| `assess_order_fraud` | `stateset-commerce` | `fraud` | `write` |
 | `assess_wasm_connector_safety` | `stateset-commerce` | `connectors` | `read` |
 | `assign_pick_task` | `stateset-commerce` | `fulfillment` | `write` |
 | `audit_export` | `stateset-commerce` | `audit` | `admin` |
@@ -385,7 +385,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `bulk_delete_integration_field_mappings` | `stateset-commerce` | `integration-field-mappings` | `write` |
 | `bulk_upsert_integration_mappings` | `stateset-commerce` | `integration-mappings` | `write` |
 | `bulk_upsert_supplier_skus` | `stateset-commerce` | `supplier_skus` | `write` |
-| `calculate_cart_tax` | `stateset-commerce` | `tax` | `read` |
+| `calculate_cart_tax` | `stateset-commerce` | `tax` | `write` |
 | `calculate_item_tax` | `stateset-commerce` | `tax` | `read` |
 | `calculate_shipping_rate` | `stateset-commerce` | `shipping_zones` | `read` |
 | `calculate_tax` | `stateset-commerce` | `tax` | `read` |
@@ -916,7 +916,6 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `quote_promotions` | `stateset-commerce` | `promotions` | `read` |
 | `quote_shipping_rates` | `stateset-commerce` | `shipments` | `read` |
 | `reactivate_credit_account` | `stateset-commerce` | `credit` | `write` |
-| `rebuild_dynamic_segment` | `stateset-commerce` | `segments` | `write` |
 | `recalculate_cart` | `stateset-commerce` | `carts` | `write` |
 | `receive_inbound_shipment_line` | `stateset-commerce` | `inbound_shipments` | `write` |
 | `receive_transfer_order_line` | `stateset-commerce` | `transfer_orders` | `write` |

@@ -70,7 +70,7 @@ function createStatefulCommerce() {
     giftCards: new Map(),
     giftCardTransactions: [],
     loyaltyPrograms: new Map(),
-    loyaltyAccounts: new Map(), // keyed by `${programId}:${customerId}`
+    loyaltyAccounts: new Map(), // keyed by account id
     loyaltyTransactions: [],
     subscriptionPlans: new Map(),
     subscriptions: new Map(),
@@ -546,86 +546,90 @@ function createStatefulCommerce() {
     format: (amount, cur) => `${cur} ${amount}`,
   };
 
-  // ---- Gift Cards ----
+  // ---- Gift Cards: mirrors the binding's `GiftCards` class ----
+  // Only methods the real binding has (no `count`); `get` is by id only and
+  // `getByCode` by code; charge/refund take (id, amount, referenceId?).
+  const giftCardTransaction = (gc, transactionType, amount, referenceId) => {
+    const tx = {
+      id: randomUUID(),
+      giftCardId: gc.id,
+      transactionType,
+      amount,
+      balanceAfter: gc.currentBalance,
+      referenceId: referenceId ?? undefined,
+      createdAt: new Date().toISOString(),
+    };
+    stores.giftCardTransactions.push(tx);
+    return tx;
+  };
   const giftCards = {
-    list: async (_filters) => [...stores.giftCards.values()],
-    get: async (identifier) =>
-      stores.giftCards.get(identifier) ||
-      [...stores.giftCards.values()].find((gc) => gc.code === identifier) ||
-      null,
+    list: async (filter = {}) => {
+      const matching = [...stores.giftCards.values()].filter(
+        (gc) =>
+          (!filter.status || gc.status === filter.status) &&
+          (!filter.code || gc.code === filter.code),
+      );
+      const offset = filter.offset ?? 0;
+      return filter.limit === undefined
+        ? matching.slice(offset)
+        : matching.slice(offset, offset + filter.limit);
+    },
+    get: async (id) => stores.giftCards.get(id) || null,
+    getByCode: async (code) =>
+      [...stores.giftCards.values()].find((gc) => gc.code === code) || null,
     create: async (data) => {
       const id = randomUUID();
-      const code = `GC-${Date.now().toString(36).toUpperCase()}`;
       const gc = {
         id,
-        code,
+        code: data.code || `GC-${id.slice(0, 8).toUpperCase()}`,
         initialBalance: data.initialBalance,
         currentBalance: data.initialBalance,
-        currency: data.currency || 'USD',
+        currency: data.currency,
         status: 'active',
-        customerId: data.customerId || null,
-        recipientEmail: data.recipientEmail || null,
-        expiresAt: data.expiresAt || null,
+        recipientEmail: data.recipientEmail,
+        senderName: data.senderName,
+        message: data.message,
+        expiresAt: data.expiresAt,
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
       stores.giftCards.set(id, gc);
       return gc;
     },
-    charge: async (data) => {
-      const gc = stores.giftCards.get(data.giftCardId);
+    charge: async (id, amount, referenceId) => {
+      const gc = stores.giftCards.get(id);
       if (!gc) throw new Error('Gift card not found');
-      const amt = parseFloat(data.amount);
-      if (parseFloat(gc.currentBalance) < amt) throw new Error('Insufficient gift card balance');
-      gc.currentBalance = String(parseFloat(gc.currentBalance) - amt);
-      const tx = {
-        id: randomUUID(),
-        giftCardId: gc.id,
-        type: 'charge',
-        amount: data.amount,
-        orderId: data.orderId || null,
-        balanceAfter: gc.currentBalance,
-        createdAt: new Date().toISOString(),
-      };
-      stores.giftCardTransactions.push(tx);
-      return tx;
+      if (parseFloat(gc.currentBalance) < parseFloat(amount))
+        throw new Error('Insufficient gift card balance');
+      gc.currentBalance = String(parseFloat(gc.currentBalance) - parseFloat(amount));
+      return giftCardTransaction(gc, 'charge', amount, referenceId);
     },
-    refund: async (data) => {
-      const gc = stores.giftCards.get(data.giftCardId);
+    refund: async (id, amount, referenceId) => {
+      const gc = stores.giftCards.get(id);
       if (!gc) throw new Error('Gift card not found');
-      gc.currentBalance = String(parseFloat(gc.currentBalance) + parseFloat(data.amount));
-      const tx = {
-        id: randomUUID(),
-        giftCardId: gc.id,
-        type: 'refund',
-        amount: data.amount,
-        orderId: data.orderId || null,
-        balanceAfter: gc.currentBalance,
-        createdAt: new Date().toISOString(),
-      };
-      stores.giftCardTransactions.push(tx);
-      return tx;
+      gc.currentBalance = String(parseFloat(gc.currentBalance) + parseFloat(amount));
+      return giftCardTransaction(gc, 'refund', amount, referenceId);
     },
-    disable: async (id, _reason) => {
+    disable: async (id) => {
       const gc = stores.giftCards.get(id);
       if (!gc) throw new Error('Gift card not found');
       gc.status = 'disabled';
       return gc;
     },
-    count: async () => stores.giftCards.size,
   };
 
-  // ---- Loyalty ----
+  // ---- Loyalty: mirrors the binding's `Loyalty` class ----
+  // Only methods the real binding has; accounts are keyed by their own id and
+  // every earn/redeem is an `adjustPoints` transaction that may not overdraw.
   const loyalty = {
     createProgram: async (data) => {
       const id = randomUUID();
       const program = {
         id,
         name: data.name,
-        description: data.description || '',
-        pointsPerDollar: data.pointsPerDollar || 1,
-        currency: data.currency || 'USD',
+        description: data.description,
+        pointsPerDollar: data.pointsPerDollar,
         tiers: data.tiers || [],
-        totalMembers: 0,
         status: 'active',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -634,79 +638,60 @@ function createStatefulCommerce() {
       return program;
     },
     getProgram: async (id) => stores.loyaltyPrograms.get(id) || null,
-    enrollCustomer: async (programId, customerId) => {
-      const key = `${programId}:${customerId}`;
-      const id = randomUUID();
+    enroll: async ({ customerId, programId }) => {
+      if (!stores.loyaltyPrograms.has(programId)) throw new Error('Record not found');
       const account = {
-        id,
+        id: randomUUID(),
         programId,
         customerId,
         pointsBalance: 0,
         lifetimePoints: 0,
-        currentTier: null,
-        nextTier: null,
-        pointsToNextTier: null,
-        enrolledAt: new Date().toISOString(),
+        tier: 'bronze',
+        createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      stores.loyaltyAccounts.set(key, account);
-      const program = stores.loyaltyPrograms.get(programId);
-      if (program) program.totalMembers += 1;
+      stores.loyaltyAccounts.set(account.id, account);
       return account;
     },
-    getAccount: async (programId, customerId) => {
-      const key = `${programId}:${customerId}`;
-      return stores.loyaltyAccounts.get(key) || null;
-    },
-    earnPoints: async (data) => {
-      const key = `${data.programId}:${data.customerId}`;
-      const account = stores.loyaltyAccounts.get(key);
-      if (!account) throw new Error('Loyalty account not found');
-      account.pointsBalance += data.points;
-      account.lifetimePoints += data.points;
+    getAccount: async (id) => stores.loyaltyAccounts.get(id) || null,
+    getAccountByCustomer: async (customerId, programId) =>
+      [...stores.loyaltyAccounts.values()].find(
+        (a) => a.customerId === customerId && a.programId === programId,
+      ) || null,
+    adjustPoints: async (input) => {
+      const account = stores.loyaltyAccounts.get(input.accountId);
+      if (!account) throw new Error('Record not found');
+      if (account.pointsBalance + input.points < 0) {
+        throw new Error('Failed to adjust points: Validation error: Insufficient points balance');
+      }
+      account.pointsBalance += input.points;
+      if (input.points > 0) account.lifetimePoints += input.points;
       account.updatedAt = new Date().toISOString();
       const tx = {
         id: randomUUID(),
-        type: 'earn',
-        programId: data.programId,
-        customerId: data.customerId,
-        points: data.points,
-        reason: data.reason || 'manual',
-        orderId: data.orderId || null,
+        accountId: input.accountId,
+        points: input.points,
+        transactionType: input.transactionType,
+        referenceId: input.referenceId,
+        description: input.description,
         createdAt: new Date().toISOString(),
       };
       stores.loyaltyTransactions.push(tx);
       return tx;
     },
-    redeemPoints: async (data) => {
-      const key = `${data.programId}:${data.customerId}`;
-      const account = stores.loyaltyAccounts.get(key);
-      if (!account) throw new Error('Loyalty account not found');
-      if (account.pointsBalance < data.points) throw new Error('Insufficient loyalty points');
-      account.pointsBalance -= data.points;
-      account.updatedAt = new Date().toISOString();
-      const tx = {
-        id: randomUUID(),
-        type: 'redeem',
-        programId: data.programId,
-        customerId: data.customerId,
-        points: data.points,
-        orderId: data.orderId || null,
-        createdAt: new Date().toISOString(),
-      };
-      stores.loyaltyTransactions.push(tx);
-      return tx;
-    },
-    listRewards: async (_programId, _opts) => [],
+    getReward: async (_id) => null,
+    listRewards: async (_filter) => [],
   };
 
-  // ---- Subscriptions (top-level methods on commerce) ----
-  // The subscription tools call commerce.createSubscriptionPlan, etc.
-  // directly, not commerce.subscriptions.*
-  const topLevelSubMethods = {
-    listSubscriptionPlans: async (_filters) => [...stores.subscriptionPlans.values()],
-    getSubscriptionPlan: async (id) => stores.subscriptionPlans.get(id) || null,
-    createSubscriptionPlan: async (data) => {
+  // ---- Subscriptions: mirrors the binding's `Subscriptions` class ----
+  // The subscription tools call commerce.subscriptions.<method>; only methods
+  // the real binding has are defined here.
+  const subscriptions = {
+    listPlans: async (_filters) => [...stores.subscriptionPlans.values()],
+    getPlan: async (id) => stores.subscriptionPlans.get(id) || null,
+    getPlanByCode: async (code) =>
+      [...stores.subscriptionPlans.values()].find((p) => p.code === code) || null,
+    createPlan: async (data) => {
       const id = randomUUID();
       const plan = {
         id,
@@ -724,27 +709,29 @@ function createStatefulCommerce() {
       stores.subscriptionPlans.set(id, plan);
       return plan;
     },
-    activateSubscriptionPlan: async (planId) => {
+    activatePlan: async (planId) => {
       const plan = stores.subscriptionPlans.get(planId);
       if (!plan) throw new Error('Plan not found');
       plan.status = 'active';
       return plan;
     },
-    archiveSubscriptionPlan: async (planId) => {
+    archivePlan: async (planId) => {
       const plan = stores.subscriptionPlans.get(planId);
       if (!plan) throw new Error('Plan not found');
       plan.status = 'archived';
       return plan;
     },
-    listSubscriptions: async (filters) => {
+    list: async (filters) => {
       let subs = [...stores.subscriptions.values()];
       if (filters?.customerId) subs = subs.filter((s) => s.customerId === filters.customerId);
       if (filters?.planId) subs = subs.filter((s) => s.planId === filters.planId);
       if (filters?.status) subs = subs.filter((s) => s.status === filters.status);
       return subs;
     },
-    getSubscription: async (id) => stores.subscriptions.get(id) || null,
-    createSubscription: async (data) => {
+    get: async (id) => stores.subscriptions.get(id) || null,
+    getByNumber: async (number) =>
+      [...stores.subscriptions.values()].find((s) => s.subscriptionNumber === number) || null,
+    subscribe: async (data) => {
       const id = randomUUID();
       subSeq += 1;
       const plan = stores.subscriptionPlans.get(data.planId);
@@ -770,7 +757,7 @@ function createStatefulCommerce() {
       });
       return sub;
     },
-    pauseSubscription: async (id, _opts) => {
+    pause: async (id, _opts) => {
       const sub = stores.subscriptions.get(id);
       if (!sub) throw new Error('Subscription not found');
       sub.status = 'paused';
@@ -781,7 +768,7 @@ function createStatefulCommerce() {
       });
       return sub;
     },
-    resumeSubscription: async (id) => {
+    resume: async (id) => {
       const sub = stores.subscriptions.get(id);
       if (!sub) throw new Error('Subscription not found');
       sub.status = 'active';
@@ -792,7 +779,7 @@ function createStatefulCommerce() {
       });
       return sub;
     },
-    cancelSubscription: async (id, opts) => {
+    cancel: async (id, opts) => {
       const sub = stores.subscriptions.get(id);
       if (!sub) throw new Error('Subscription not found');
       sub.status = 'cancelled';
@@ -803,7 +790,7 @@ function createStatefulCommerce() {
       });
       return sub;
     },
-    skipBillingCycle: async (id, _opts) => {
+    skipBilling: async (id, _opts) => {
       const sub = stores.subscriptions.get(id);
       if (!sub) throw new Error('Subscription not found');
       sub.nextBillingDate = new Date(
@@ -815,8 +802,7 @@ function createStatefulCommerce() {
       return stores.billingCycles.filter((c) => c.subscriptionId === filters?.subscriptionId);
     },
     getBillingCycle: async (id) => stores.billingCycles.find((c) => c.id === id) || null,
-    getSubscriptionEvents: async (subId, _limit) =>
-      stores.subscriptionEvents.filter((e) => e.subscriptionId === subId),
+    getEvents: async (subId) => stores.subscriptionEvents.filter((e) => e.subscriptionId === subId),
   };
 
   return {
@@ -831,8 +817,7 @@ function createStatefulCommerce() {
     currency,
     giftCards,
     loyalty,
-    // Subscription methods are top-level on commerce
-    ...topLevelSubMethods,
+    subscriptions,
     // Expose stores for direct assertions
     _stores: stores,
   };
@@ -1580,11 +1565,11 @@ describe('Workflow: Subscription Lifecycle', () => {
     assert.equal(cancelResult.subscription.status, 'cancelled');
 
     // Verify terminal state
-    const finalSub = await commerce.getSubscription(subId);
+    const finalSub = await commerce.subscriptions.get(subId);
     assert.equal(finalSub.status, 'cancelled');
 
     // Verify events were recorded
-    const events = await commerce.getSubscriptionEvents(subId);
+    const events = await commerce.subscriptions.getEvents(subId);
     assert.ok(events.length >= 3); // created, paused, resumed, cancelled
   });
 
@@ -2414,7 +2399,7 @@ describe('Workflow: Loyalty Program', () => {
         },
         ctx,
       ),
-      /Insufficient loyalty points/,
+      /Insufficient points balance/,
     );
   });
 
@@ -2444,7 +2429,7 @@ describe('Workflow: Loyalty Program', () => {
     assert.equal(getResult.program.tiers.length, 1);
   });
 
-  it('should increment totalMembers on enrollment', async () => {
+  it('should give each enrolled customer their own account', async () => {
     const prog = await callTool(
       loyaltyTools,
       'create_loyalty_program',
@@ -2475,7 +2460,7 @@ describe('Workflow: Loyalty Program', () => {
       ctx,
     );
 
-    await callTool(
+    const e1 = await callTool(
       loyaltyTools,
       'enroll_customer',
       {
@@ -2484,7 +2469,7 @@ describe('Workflow: Loyalty Program', () => {
       },
       ctx,
     );
-    await callTool(
+    const e2 = await callTool(
       loyaltyTools,
       'enroll_customer',
       {
@@ -2493,16 +2478,28 @@ describe('Workflow: Loyalty Program', () => {
       },
       ctx,
     );
+    assert.notEqual(e1.account.id, e2.account.id);
 
-    const details = await callTool(
+    await callTool(
       loyaltyTools,
-      'get_loyalty_program',
+      'earn_points',
       {
         programId: prog.program.id,
+        customerId: c1.customer.id,
+        points: 10,
       },
       ctx,
     );
-    assert.equal(details.program.totalMembers, 2);
+    const a2 = await callTool(
+      loyaltyTools,
+      'get_loyalty_account',
+      {
+        programId: prog.program.id,
+        customerId: c2.customer.id,
+      },
+      ctx,
+    );
+    assert.equal(a2.account.pointsBalance, 0);
   });
 });
 

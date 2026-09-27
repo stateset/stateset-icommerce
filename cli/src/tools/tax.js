@@ -550,32 +550,104 @@ export const taxTools = [
     description:
       'Calculate and apply tax to a cart based on its shipping address. Must set shipping address first. Returns tax breakdown and updates cart totals.',
     inputSchema: { cartId: z.string().min(1).describe('Cart ID to calculate tax for') },
-    permission: 'read',
-    handler: async ({ commerce, params }) => {
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
       const { cartId } = params;
-      const result = await commerce.calculateCartTax(cartId);
+      // The Node binding has no cart-tax entry point, so this composes the
+      // engine's `Commerce::calculate_cart_tax` from binding pieces: the same
+      // address mapping, the same line mapping (standard tax category), the
+      // cart's shipping amount, then `set_tax` with the engine's exact total.
+      const cart = await commerce.carts.get(cartId);
+      if (!cart) {
+        return { success: false, error: `Cart not found: ${cartId}` };
+      }
+      const address = cart.shippingAddress;
+      if (!address) {
+        return {
+          success: false,
+          error: 'Shipping address required to calculate tax',
+          hint: 'Set the cart shipping address first.',
+        };
+      }
+      const items = await commerce.carts.getItems(cartId);
+
+      // TaxCalculationInput takes f64 money on this binding; the exact cart
+      // strings are converted at the last step and the engine re-derives a
+      // Decimal from each.
+      const result = await commerce.tax.calculate({
+        lineItems: items.map((item) => ({
+          id: item.id,
+          sku: item.sku,
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: Number(item.unitPriceExact),
+          discountAmount: Number(item.discountAmountExact),
+          taxCategory: 'standard',
+          description: item.name,
+        })),
+        shippingAddress: {
+          line1: address.line1,
+          line2: address.line2,
+          city: address.city,
+          state: address.state,
+          postalCode: address.postalCode,
+          country: address.country,
+        },
+        customerId: cart.customerId,
+        currency: cart.currency,
+        shippingAmount: Number(cart.shippingAmountExact),
+      });
+
+      // Applying the tax writes the cart, so it honours the --apply gate like
+      // every other write; without it the calculation is a preview.
+      const updated = allowApply
+        ? await commerce.carts.setTax(cartId, undefined, result.totalTaxExact)
+        : null;
+
       return {
         success: true,
         cartId,
+        applied: Boolean(updated),
+        ...(updated
+          ? {}
+          : { hint: 'Preview only: run with --apply to write this tax to the cart.' }),
         tax: {
-          subtotal: result.subtotal,
-          totalTax: result.totalTax,
-          total: result.total,
-          taxInclusive: result.taxInclusive,
-          breakdown:
-            result.taxBreakdown?.map((b) => ({
-              jurisdiction: b.jurisdictionName,
-              rate: `${(b.rate * 100).toFixed(2)}%`,
-              taxAmount: b.taxAmount,
-            })) || [],
+          subtotal: result.subtotalExact,
+          totalTax: result.totalTaxExact,
+          shippingTax: result.shippingTaxExact,
+          total: result.totalExact,
+          exemptionsApplied: result.exemptionsApplied,
+          isEstimate: result.isEstimate,
+          breakdown: result.taxBreakdown.map((b) => ({
+            jurisdiction: b.jurisdictionName,
+            taxType: b.taxType,
+            rate: `${(b.rate * 100).toFixed(2)}%`,
+            taxableAmount: b.taxableAmountExact,
+            taxAmount: b.taxAmountExact,
+          })),
         },
-        lineItems:
-          result.lineItemTaxes?.map((item) => ({
-            id: item.lineItemId,
-            subtotal: item.subtotal,
-            taxAmount: item.taxAmount,
-            total: item.total,
-          })) || [],
+        lineItems: result.lineItemTaxes.map((item) => ({
+          id: item.lineItemId,
+          taxableAmount: item.taxableAmountExact,
+          taxAmount: item.taxAmountExact,
+          effectiveRate: item.effectiveRate,
+          isExempt: item.isExempt,
+        })),
+        cart: updated
+          ? {
+              subtotal: updated.subtotalExact,
+              taxAmount: updated.taxAmountExact,
+              shippingAmount: updated.shippingAmountExact,
+              discountAmount: updated.discountAmountExact,
+              grandTotal: updated.grandTotalExact,
+            }
+          : {
+              subtotal: cart.subtotalExact,
+              taxAmount: cart.taxAmountExact,
+              shippingAmount: cart.shippingAmountExact,
+              discountAmount: cart.discountAmountExact,
+              grandTotal: cart.grandTotalExact,
+            },
       };
     },
   },
