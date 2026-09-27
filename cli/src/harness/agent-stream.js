@@ -22,6 +22,7 @@ import {
 import { buildPromptReport, buildPromptWithHistory } from '../conversation-history.js';
 import { AGENTS } from '../agent-definitions.js';
 import { routeToAgentWithConfidence } from '../agent-router.js';
+import { businessProfilePromptAppend } from '../business-profile.js';
 import {
   resolvePolicyStorePath,
   createEventRedactors,
@@ -228,6 +229,9 @@ export async function* runAgentStreamImpl(
     agentName = resolvedSettings.agent.default;
   }
   const agentConfig = AGENTS[agentName] || AGENTS['customer-service'];
+  const systemPrompt = [agentConfig.systemPrompt, businessProfilePromptAppend(process.cwd())]
+    .filter(Boolean)
+    .join('\n\n');
 
   const shouldIncludeHistory = workingHistory.length > 0 && !resumeSessionId;
   const requestWithHistory = shouldIncludeHistory
@@ -239,7 +243,7 @@ export async function* runAgentStreamImpl(
   const promptReport = buildPromptReport({
     request: effectiveRequest,
     history: workingHistory,
-    systemPrompt: agentConfig.systemPrompt,
+    systemPrompt,
     includeHistory: shouldIncludeHistory,
     resumeSession: Boolean(resumeSessionId),
     historySource: streamHistorySource,
@@ -258,7 +262,7 @@ export async function* runAgentStreamImpl(
   const claudeEnv = buildClaudeEnv({ apiKey: apiKeyOverride });
   const options = {
     model: effectiveModel,
-    systemPrompt: agentConfig.systemPrompt,
+    systemPrompt,
     mcpServers: {
       'stateset-commerce': mcpServer,
     },

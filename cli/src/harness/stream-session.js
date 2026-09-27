@@ -26,6 +26,7 @@ import {
 import { buildPromptReport, buildPromptWithHistory } from '../conversation-history.js';
 import { AGENTS } from '../agent-definitions.js';
 import { routeToAgentWithConfidence } from '../agent-router.js';
+import { businessProfilePromptAppend } from '../business-profile.js';
 import {
   resolvePolicyStorePath,
   createEventRedactors,
@@ -170,6 +171,9 @@ export function createAgentStreamSessionImpl(options, runtime) {
   const agentName =
     agent || resolvedSettings.agent?.default || routingResult.primary.agent || 'customer-service';
   const agentConfig = AGENTS[agentName] || AGENTS['customer-service'];
+  const systemPrompt = [agentConfig.systemPrompt, businessProfilePromptAppend(process.cwd())]
+    .filter(Boolean)
+    .join('\n\n');
 
   const gate =
     permissionGate ||
@@ -348,7 +352,7 @@ export function createAgentStreamSessionImpl(options, runtime) {
     const report = buildPromptReport({
       request,
       history: conversationHistory,
-      systemPrompt: agentConfig.systemPrompt,
+      systemPrompt,
       includeHistory: conversationHistory.length > 0,
       resumeSession: false,
       historySource:
@@ -457,7 +461,7 @@ export function createAgentStreamSessionImpl(options, runtime) {
     const claudeEnv = buildClaudeEnv({ apiKey: apiKeyOverride });
     const optionsForQuery = {
       model: effectiveModel,
-      systemPrompt: agentConfig.systemPrompt,
+      systemPrompt,
       mcpServers,
       allowedTools,
       maxTurns,

@@ -1,0 +1,27 @@
+schemaVersion: 1
+business:
+  name: Financial services
+  currency: USD
+  timezone: UTC
+terminology:
+  customer: client
+  order: application
+modules:
+  orders: true
+  inventory: false
+  payments: true
+  returns: false
+policies:
+  - name: high-value-approval
+    kind: approval
+    resource: payment
+  - name: identity-review
+    kind: compliance
+    resource: customer
+workflows:
+  - name: client-onboarding
+    resource: customer
+    states: [prospect, reviewing, approved, active, closed]
+views: []
+automations: []
+integrations: []
