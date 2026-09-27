@@ -2629,7 +2629,10 @@ mod tests {
             subscription_id: Some(sub.id),
             ..Default::default()
         }) {
-            Ok(mut cycles) => cycles.remove(0),
+            Ok(cycles) => match cycles.into_iter().next() {
+                Some(cycle) => cycle,
+                None => panic!("initial billing cycle missing"),
+            },
             Err(_) => panic!("initial billing cycle lookup failed"),
         };
         assert_eq!(old.subtotal, dec!(10));
@@ -2981,7 +2984,7 @@ mod tests {
             })
             .expect("list cycles");
         cycles.sort_by_key(|c| c.cycle_number);
-        assert_eq!(cycles.len(), 2, "{cycles:?}");
+        assert_eq!(cycles.len(), 2, "expected skipped and scheduled billing cycles");
 
         assert_eq!(cycles[0].cycle_number, 1);
         assert_eq!(cycles[0].status, BillingCycleStatus::Skipped);
