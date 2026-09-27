@@ -198,6 +198,8 @@ export type PromotionTargetInput = 'order' | 'product' | 'category' | 'shipping'
 export type PromotionStacking = 'stackable' | 'exclusive' | 'selectivestack'
 /** Stacking behaviour accepted on input (case-insensitive). */
 export type PromotionStackingInput = 'stackable' | 'exclusive' | 'selective_stack' | 'selectivestack'
+/** Why a promotion or coupon was considered and not applied, as rendered on `RejectedPromotionOutput.reasonCode`. */
+export type PromotionRejectionReason = 'invalid_code' | 'expired' | 'not_yet_active' | 'usage_limit_reached' | 'customer_limit_reached' | 'minimum_not_met' | 'product_not_eligible' | 'customer_not_eligible' | 'not_stackable' | 'already_applied' | 'internal_error' | 'currency_mismatch'
 /** What a promotion condition tests; accepted on `PromotionConditionInput.conditionType` (case-insensitive) and rendered in this snake_case form on `PromotionConditionOutput.conditionType`. */
 export type PromotionConditionType = 'minimum_subtotal' | 'minimum_quantity' | 'product_in_cart' | 'category_in_cart' | 'sku_in_cart' | 'customer_group' | 'first_order' | 'customer_email_domain' | 'shipping_country' | 'shipping_state' | 'payment_method' | 'cart_item_count' | 'customer_id'
 /** How a promotion condition compares its value; accepted on `PromotionConditionInput.operator` (case-insensitive) and rendered in this snake_case form on `PromotionConditionOutput.operator`. */

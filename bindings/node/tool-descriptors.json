@@ -285,7 +285,7 @@
         "className": "X402"
       }
     ],
-    "toolCount": 751,
+    "toolCount": 752,
     "readOnlyCount": 378,
     "readOnlyPrefixes": [
       "calculate",
@@ -22995,6 +22995,32 @@
         },
         "required": [
           "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "promotions.applyToCart",
+      "module": "promotions",
+      "className": "Promotions",
+      "method": "applyToCart",
+      "description": "Evaluate a persisted cart's promotions and write the result onto it.\n\nPrices the cart's lines, its coupon and every automatic promotion, stores the discount on the cart and its lines, and returns the evaluation, including what was refused and why.",
+      "signature": "applyToCart(cartId: string): Promise<ApplyPromotionsOutput>",
+      "returnType": "Promise<ApplyPromotionsOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "cartId"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "cartId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cartId"
         ],
         "additionalProperties": false
       }

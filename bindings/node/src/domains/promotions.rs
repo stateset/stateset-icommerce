@@ -452,6 +452,34 @@ pub struct ApplyPromotionsOutput {
     /// Exact base-10 grand total, straight from the engine's `Decimal`. Prefer this field for money.
     pub grand_total_exact: String,
     pub applied_promotions: Vec<AppliedPromotionOutput>,
+    /// Promotions and coupons considered but not applied, with the reason.
+    pub rejected_promotions: Vec<RejectedPromotionOutput>,
+}
+
+/// A promotion or coupon that was considered and refused.
+#[napi(object)]
+pub struct RejectedPromotionOutput {
+    pub promotion_id: Option<String>,
+    pub coupon_code: Option<String>,
+    /// Human-readable reason.
+    pub reason: String,
+    /// Machine-readable reason.
+    #[napi(ts_type = "PromotionRejectionReason")]
+    pub reason_code: String,
+}
+
+impl From<stateset_core::RejectedPromotion> for RejectedPromotionOutput {
+    fn from(r: stateset_core::RejectedPromotion) -> Self {
+        Self {
+            promotion_id: r.promotion_id.map(|id| id.to_string()),
+            coupon_code: r.coupon_code,
+            reason: r.reason,
+            reason_code: serde_json::to_value(r.reason_code)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_else(|| format!("{:?}", r.reason_code)),
+        }
+    }
 }
 
 /// An applied promotion
@@ -518,6 +546,7 @@ impl TryFrom<stateset_core::ApplyPromotionsResult> for ApplyPromotionsOutput {
             grand_total,
             grand_total_exact,
             applied_promotions: convert_outputs(r.applied_promotions)?,
+            rejected_promotions: r.rejected_promotions.into_iter().map(Into::into).collect(),
         })
     }
 }
@@ -1128,6 +1157,23 @@ impl Promotions {
             .promotions()
             .apply(request)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to apply promotions", e))?;
+
+        convert_output(result)
+    }
+
+    /// Evaluate a persisted cart's promotions and write the result onto it.
+    ///
+    /// Prices the cart's lines, its coupon and every automatic promotion,
+    /// stores the discount on the cart and its lines, and returns the
+    /// evaluation, including what was refused and why.
+    #[napi]
+    pub async fn apply_to_cart(&self, cart_id: String) -> Result<ApplyPromotionsOutput> {
+        let commerce = self.commerce.get()?;
+        let cart_id = uuid::Uuid::parse_str(&cart_id)
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid cart UUID", e))?;
+        let result = commerce
+            .apply_cart_promotions(cart_id)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to apply cart promotions", e))?;
 
         convert_output(result)
     }

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:4e21eb4270159ebfe6c5d5dfd36697ca85ec7e89d8af716c2fee8f43927f63ca",
+  "digest": "sha256:16475b8c05b2b0a130c3be7003bf72da77cc113bb266dfef557813a7fc00fefa",
   "counts": {
-    "total": 951,
-    "readOnly": 469,
+    "total": 952,
+    "readOnly": 470,
     "mutations": 482,
     "governed": 25,
     "governedComposite": 1,
@@ -5437,6 +5437,13 @@
     },
     {
       "name": "query_agent_catalog",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "quote_promotions",
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",

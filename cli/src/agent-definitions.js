@@ -326,6 +326,7 @@ Note: All analytics tools are read-only. No --apply flag needed.`,
       'mcp__stateset-commerce__get_active_promotions',
       'mcp__stateset-commerce__check_promotion_validity',
       'mcp__stateset-commerce__apply_cart_promotions',
+      'mcp__stateset-commerce__quote_promotions',
       'mcp__stateset-commerce__record_promotion_usage',
       // Also need cart access for applying promotions
       'mcp__stateset-commerce__get_cart',
@@ -368,6 +369,7 @@ draft → active → (paused) → expired
 - get_active_promotions - Get currently running promotions
 - check_promotion_validity - Verify if a promotion can still apply
 - apply_cart_promotions - Apply discounts to cart (requires --apply)
+- quote_promotions - Price a basket and explain refused promotions, writing nothing
 - record_promotion_usage - Record applied discount usage (requires --apply)
 
 ## Safety Rules

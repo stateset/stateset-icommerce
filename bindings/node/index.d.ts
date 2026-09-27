@@ -3447,6 +3447,17 @@ export interface ApplyPromotionsOutput {
   /** Exact base-10 grand total, straight from the engine's `Decimal`. Prefer this field for money. */
   grandTotalExact: string
   appliedPromotions: Array<AppliedPromotionOutput>
+  /** Promotions and coupons considered but not applied, with the reason. */
+  rejectedPromotions: Array<RejectedPromotionOutput>
+}
+/** A promotion or coupon that was considered and refused. */
+export interface RejectedPromotionOutput {
+  promotionId?: string
+  couponCode?: string
+  /** Human-readable reason. */
+  reason: string
+  /** Machine-readable reason. */
+  reasonCode: PromotionRejectionReason
 }
 /** An applied promotion */
 export interface AppliedPromotionOutput {
@@ -6683,6 +6694,14 @@ export declare class Promotions {
   validateCoupon(code: string): Promise<CouponOutput | null>
   /** Apply promotions to cart/order items */
   apply(input: ApplyPromotionsInput): Promise<ApplyPromotionsOutput>
+  /**
+   * Evaluate a persisted cart's promotions and write the result onto it.
+   *
+   * Prices the cart's lines, its coupon and every automatic promotion,
+   * stores the discount on the cart and its lines, and returns the
+   * evaluation, including what was refused and why.
+   */
+  applyToCart(cartId: string): Promise<ApplyPromotionsOutput>
   /** Record promotion usage (after order completion) */
   recordUsage(promotionId: string, couponId: string | undefined | null, customerId: string | undefined | null, orderId: string | undefined | null, cartId: string | undefined | null, discountAmount: number, currency: string): Promise<PromotionUsageOutput>
 }
@@ -7799,6 +7818,8 @@ export type PromotionTargetInput = 'order' | 'product' | 'category' | 'shipping'
 export type PromotionStacking = 'stackable' | 'exclusive' | 'selectivestack'
 /** Stacking behaviour accepted on input (case-insensitive). */
 export type PromotionStackingInput = 'stackable' | 'exclusive' | 'selective_stack' | 'selectivestack'
+/** Why a promotion or coupon was considered and not applied, as rendered on `RejectedPromotionOutput.reasonCode`. */
+export type PromotionRejectionReason = 'invalid_code' | 'expired' | 'not_yet_active' | 'usage_limit_reached' | 'customer_limit_reached' | 'minimum_not_met' | 'product_not_eligible' | 'customer_not_eligible' | 'not_stackable' | 'already_applied' | 'internal_error' | 'currency_mismatch'
 /** What a promotion condition tests; accepted on `PromotionConditionInput.conditionType` (case-insensitive) and rendered in this snake_case form on `PromotionConditionOutput.conditionType`. */
 export type PromotionConditionType = 'minimum_subtotal' | 'minimum_quantity' | 'product_in_cart' | 'category_in_cart' | 'sku_in_cart' | 'customer_group' | 'first_order' | 'customer_email_domain' | 'shipping_country' | 'shipping_state' | 'payment_method' | 'cart_item_count' | 'customer_id'
 /** How a promotion condition compares its value; accepted on `PromotionConditionInput.operator` (case-insensitive) and rendered in this snake_case form on `PromotionConditionOutput.operator`. */

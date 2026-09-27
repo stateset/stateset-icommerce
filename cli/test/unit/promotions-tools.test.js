@@ -47,6 +47,34 @@ function makePromotion(overrides = {}) {
   };
 }
 
+/** Shaped like the binding's ApplyPromotionsOutput: money as exact strings. */
+function makeEvaluation(overrides = {}) {
+  return {
+    originalSubtotal: 100,
+    originalSubtotalExact: '100.00',
+    totalDiscount: 25,
+    totalDiscountExact: '25.00',
+    discountedSubtotal: 75,
+    discountedSubtotalExact: '75.00',
+    shippingDiscount: 0,
+    shippingDiscountExact: '0',
+    grandTotal: 75,
+    grandTotalExact: '75.00',
+    appliedPromotions: [
+      {
+        promotionId: 'promo_001',
+        promotionName: 'Summer Sale',
+        discountType: 'percentageoff',
+        discountAmount: 25,
+        discountAmountExact: '25.00',
+        couponCode: null,
+      },
+    ],
+    rejectedPromotions: [],
+    ...overrides,
+  };
+}
+
 function makeCoupon(overrides = {}) {
   return {
     id: 'coupon_001',
@@ -101,30 +129,13 @@ function makeCommerce(overrides = {}) {
       discountAmount,
       currency,
     }),
+    applyToCart: async () => makeEvaluation(),
+    apply: async () => makeEvaluation(),
     ...(overrides.promoMethods || {}),
   };
 
   return {
     promotions: () => promoMethods,
-    applyCartPromotions:
-      overrides.applyCartPromotions ||
-      (async () => ({
-        originalSubtotal: 100,
-        totalDiscount: 25,
-        discountedSubtotal: 75,
-        shippingDiscount: 0,
-        grandTotal: 75,
-        appliedPromotions: [
-          {
-            promotionName: 'Summer Sale',
-            discountType: 'PercentageOff',
-            discountAmount: 25,
-            description: '25% off',
-            couponCode: null,
-          },
-        ],
-        rejectedPromotions: [],
-      })),
     ...overrides.commerceTop,
   };
 }
@@ -134,9 +145,9 @@ function makeCommerce(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe('Promotion Tools — structure', () => {
-  it('exports an array of 16 tools', () => {
+  it('exports an array of 17 tools', () => {
     assert.ok(Array.isArray(promotionTools));
-    assert.strictEqual(promotionTools.length, 16);
+    assert.strictEqual(promotionTools.length, 17);
   });
 
   it('every tool has name, handler, permission, and inputSchema', () => {
@@ -172,6 +183,7 @@ describe('Promotion Tools — structure', () => {
         'get_active_promotions',
         'check_promotion_validity',
         'apply_cart_promotions',
+        'quote_promotions',
         'record_promotion_usage',
       ],
     );
@@ -831,30 +843,105 @@ describe('apply_cart_promotions', () => {
     assert.ok(result.wouldApplyTo);
   });
 
-  it('applies promotions when allowApply is true', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
+  it('applies promotions through promotions.applyToCart', async () => {
+    // It used to call `commerce.applyCartPromotions`, which the binding has
+    // never had: every real call threw a TypeError.
+    let calledWith;
+    const commerce = makeCommerce({
+      promoMethods: {
+        applyToCart: async (cartId) => {
+          calledWith = cartId;
+          return makeEvaluation();
+        },
+      },
+    });
+    assert.strictEqual(commerce.applyCartPromotions, undefined);
+    const result = await tool.handler({ commerce, params, allowApply: true });
+    assert.strictEqual(calledWith, 'cart_001');
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.cartId, 'cart_001');
-    assert.strictEqual(result.originalSubtotal, 100);
-    assert.strictEqual(result.totalDiscount, 25);
-    assert.strictEqual(result.grandTotal, 75);
-    assert.ok(Array.isArray(result.appliedPromotions));
-    assert.strictEqual(result.appliedPromotions.length, 1);
+    assert.strictEqual(result.originalSubtotal, '100.00');
+    assert.strictEqual(result.totalDiscount, '25.00');
+    assert.strictEqual(result.grandTotal, '75.00');
+    assert.deepStrictEqual(result.appliedPromotions, [
+      {
+        promotionId: 'promo_001',
+        name: 'Summer Sale',
+        type: 'percentageoff',
+        discountAmount: '25.00',
+        couponCode: null,
+      },
+    ]);
   });
 
-  it('returns empty rejectedPromotions when none rejected', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
-    assert.ok(Array.isArray(result.rejectedPromotions));
-    assert.strictEqual(result.rejectedPromotions.length, 0);
+  it('reports what was refused and why', async () => {
+    const commerce = makeCommerce({
+      promoMethods: {
+        applyToCart: async () =>
+          makeEvaluation({
+            rejectedPromotions: [
+              {
+                promotionId: 'promo_002',
+                couponCode: 'TENOFF',
+                reason: 'Promotion amounts are in USD but the cart is priced in JPY',
+                reasonCode: 'currency_mismatch',
+              },
+            ],
+          }),
+      },
+    });
+    const result = await tool.handler({ commerce, params, allowApply: true });
+    assert.deepStrictEqual(result.rejectedPromotions, [
+      {
+        promotionId: 'promo_002',
+        couponCode: 'TENOFF',
+        reason: 'Promotion amounts are in USD but the cart is priced in JPY',
+        reasonCode: 'currency_mismatch',
+      },
+    ]);
   });
 
   it('propagates commerce errors', async () => {
     const commerce = makeCommerce({
-      applyCartPromotions: async () => {
-        throw new Error('Cart empty');
+      promoMethods: {
+        applyToCart: async () => {
+          throw new Error('Cart empty');
+        },
       },
     });
     await assert.rejects(() => tool.handler({ commerce, params, allowApply: true }), /Cart empty/);
+  });
+});
+
+describe('quote_promotions', () => {
+  const tool = findTool('quote_promotions');
+  const params = {
+    lineItems: [{ id: 'l1', sku: 'SOCKS', quantity: 2, unitPrice: 10, lineTotal: 20 }],
+    subtotal: 20,
+    couponCodes: ['TENOFF'],
+    customerId: '5f0c6a8e-3b1d-4d8f-9a3e-2c7b1e4f6a90',
+  };
+
+  it('is read-only and needs no --apply', async () => {
+    assert.strictEqual(tool.permission, 'read');
+    let calledWith;
+    const commerce = makeCommerce({
+      promoMethods: {
+        apply: async (input) => {
+          calledWith = input;
+          return makeEvaluation();
+        },
+      },
+    });
+    const result = await tool.handler({ commerce, params, allowApply: false });
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(calledWith, params, 'the basket goes to promotions.apply untouched');
+    assert.strictEqual(result.totalDiscount, '25.00');
+  });
+
+  it('refuses a basket without lines at the schema', () => {
+    const parsed = z.object(tool.inputSchema).safeParse({ subtotal: 20 });
+    assert.strictEqual(parsed.success, false);
   });
 });
 

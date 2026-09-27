@@ -210,6 +210,7 @@ export const TOOL_PERMISSIONS = {
   list_coupons: 'read',
   check_promotion_validity: 'read',
   apply_cart_promotions: 'write',
+  quote_promotions: 'read',
   record_promotion_usage: 'write',
 
   // Subscriptions
