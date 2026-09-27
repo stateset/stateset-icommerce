@@ -37,20 +37,27 @@ impl HttpIdempotencyRepository for SqliteHttpIdempotencyRepository {
         expired_before: DateTime<Utc>,
     ) -> Result<Option<HttpIdempotencyRecord>> {
         let conn = self.conn()?;
-        // Lazy cleanup: drop an expired row for this key before reading.
-        // `<=` matches the in-memory expiry (`age >= ttl`): an entry created
-        // exactly at the cutoff is expired. With `<` and a zero TTL, a row
-        // written in the same millisecond as the lookup replayed after it
-        // should have expired (flaky under coverage instrumentation).
+        // Lazy cleanup: compare the stored millisecond and nanosecond remainder
+        // together. Legacy rows have no remainder and survive an ambiguous
+        // same-millisecond cutoff until the next millisecond.
         conn.execute(
             "DELETE FROM http_idempotency_keys
-             WHERE tenant = ?1 AND idempotency_key = ?2 AND created_at <= ?3",
-            rusqlite::params![tenant, key, expired_before.timestamp_millis()],
+             WHERE tenant = ?1 AND idempotency_key = ?2
+               AND (created_at < ?3 OR
+                    (created_at = ?3 AND created_at_sub_ms_ns IS NOT NULL
+                     AND created_at_sub_ms_ns <= ?4))",
+            rusqlite::params![
+                tenant,
+                key,
+                expired_before.timestamp_millis(),
+                i64::from(expired_before.timestamp_subsec_nanos() % 1_000_000),
+            ],
         )
         .map_err(map_err)?;
 
         conn.query_row(
-            "SELECT request_fingerprint, response_status, content_type, response_body, created_at
+            "SELECT request_fingerprint, response_status, content_type, response_body,
+                    created_at, created_at_sub_ms_ns
              FROM http_idempotency_keys
              WHERE tenant = ?1 AND idempotency_key = ?2",
             rusqlite::params![tenant, key],
@@ -61,28 +68,47 @@ impl HttpIdempotencyRepository for SqliteHttpIdempotencyRepository {
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, Vec<u8>>(3)?,
                     row.get::<_, i64>(4)?,
+                    row.get::<_, Option<i64>>(5)?,
                 ))
             },
         )
         .optional()
         .map_err(map_err)?
-        .map(|(request_fingerprint, response_status, content_type, response_body, created_ms)| {
-            let created_at =
-                DateTime::<Utc>::from_timestamp_millis(created_ms).ok_or_else(|| {
-                    CommerceError::DatabaseError(format!(
-                        "http_idempotency_keys.created_at out of range: {created_ms}"
-                    ))
-                })?;
-            Ok(HttpIdempotencyRecord {
-                tenant: tenant.to_string(),
-                idempotency_key: key.to_string(),
+        .map(
+            |(
                 request_fingerprint,
                 response_status,
                 content_type,
                 response_body,
-                created_at,
-            })
-        })
+                created_ms,
+                sub_ms_ns,
+            )| {
+                let sub_ms_ns = sub_ms_ns.unwrap_or(0);
+                if !(0..1_000_000).contains(&sub_ms_ns) {
+                    return Err(CommerceError::DatabaseError(format!(
+                        "http_idempotency_keys.created_at_sub_ms_ns out of range: {sub_ms_ns}"
+                    )));
+                }
+                let created_at = DateTime::<Utc>::from_timestamp_millis(created_ms)
+                    .and_then(|millisecond| {
+                        millisecond.checked_add_signed(chrono::Duration::nanoseconds(sub_ms_ns))
+                    })
+                    .ok_or_else(|| {
+                        CommerceError::DatabaseError(format!(
+                            "http_idempotency_keys.created_at out of range: {created_ms}"
+                        ))
+                    })?;
+                Ok(HttpIdempotencyRecord {
+                    tenant: tenant.to_string(),
+                    idempotency_key: key.to_string(),
+                    request_fingerprint,
+                    response_status,
+                    content_type,
+                    response_body,
+                    created_at,
+                })
+            },
+        )
         .transpose()
     }
 
@@ -92,8 +118,8 @@ impl HttpIdempotencyRepository for SqliteHttpIdempotencyRepository {
             .execute(
                 "INSERT INTO http_idempotency_keys
                  (tenant, idempotency_key, request_fingerprint, response_status,
-                  content_type, response_body, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                  content_type, response_body, created_at, created_at_sub_ms_ns)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(tenant, idempotency_key) DO NOTHING",
                 rusqlite::params![
                     record.tenant,
@@ -103,6 +129,7 @@ impl HttpIdempotencyRepository for SqliteHttpIdempotencyRepository {
                     record.content_type,
                     record.response_body,
                     record.created_at.timestamp_millis(),
+                    i64::from(record.created_at.timestamp_subsec_nanos() % 1_000_000),
                 ],
             )
             .map_err(map_err)?;
@@ -113,8 +140,14 @@ impl HttpIdempotencyRepository for SqliteHttpIdempotencyRepository {
         let conn = self.conn()?;
         let deleted = conn
             .execute(
-                "DELETE FROM http_idempotency_keys WHERE created_at <= ?1",
-                rusqlite::params![expired_before.timestamp_millis()],
+                "DELETE FROM http_idempotency_keys
+                 WHERE created_at < ?1 OR
+                       (created_at = ?1 AND created_at_sub_ms_ns IS NOT NULL
+                        AND created_at_sub_ms_ns <= ?2)",
+                rusqlite::params![
+                    expired_before.timestamp_millis(),
+                    i64::from(expired_before.timestamp_subsec_nanos() % 1_000_000),
+                ],
             )
             .map_err(map_err)?;
         Ok(deleted as u64)
@@ -158,8 +191,7 @@ mod tests {
         assert_eq!(loaded.response_status, 201);
         assert_eq!(loaded.content_type.as_deref(), Some("application/json"));
         assert_eq!(loaded.response_body, rec.response_body);
-        // Millisecond precision round trip.
-        assert_eq!(loaded.created_at.timestamp_millis(), now.timestamp_millis());
+        assert_eq!(loaded.created_at, now);
         // Other tenants and keys see nothing.
         assert!(repo.get("tenant-b", "k1", cutoff).unwrap().is_none());
         assert!(repo.get("tenant-a", "other", cutoff).unwrap().is_none());
@@ -238,6 +270,42 @@ mod tests {
         assert!(repo.put(&record("boundary-sweep", cutoff)).expect("put"));
         assert_eq!(repo.purge_expired(cutoff).expect("purge"), 1);
         assert!(repo.put(&record("boundary-sweep", Utc::now())).expect("reuse key"));
+    }
+
+    #[test]
+    fn same_millisecond_cutoff_does_not_expire_later_response() {
+        let repo = repo();
+        let cutoff = DateTime::<Utc>::from_timestamp(1_700_000_000, 100_000).expect("cutoff");
+        let created = DateTime::<Utc>::from_timestamp(1_700_000_000, 900_000).expect("created");
+        assert!(repo.put(&record("same-ms-get", created)).expect("put"));
+        assert!(repo.put(&record("same-ms-purge", created)).expect("put"));
+
+        let loaded = repo.get("tenant-a", "same-ms-get", cutoff).expect("get").expect("live");
+        assert_eq!(loaded.created_at, created);
+        assert_eq!(repo.purge_expired(cutoff).expect("purge"), 0);
+        assert!(repo.get("tenant-a", "same-ms-purge", cutoff).expect("get").is_some());
+
+        assert!(repo.get("tenant-a", "same-ms-get", created).expect("get").is_none());
+        assert_eq!(repo.purge_expired(created).expect("purge"), 1);
+    }
+
+    #[test]
+    fn legacy_millisecond_row_waits_for_unambiguous_expiry() {
+        let repo = repo();
+        let created_ms = DateTime::<Utc>::from_timestamp_millis(1_700_000_000_000).expect("ms");
+        assert!(repo.put(&record("legacy", created_ms)).expect("put"));
+        repo.conn()
+            .expect("connection")
+            .execute(
+                "UPDATE http_idempotency_keys SET created_at_sub_ms_ns = NULL
+                 WHERE idempotency_key = 'legacy'",
+                [],
+            )
+            .expect("simulate pre-migration row");
+
+        assert!(repo.get("tenant-a", "legacy", created_ms).expect("get").is_some());
+        assert_eq!(repo.purge_expired(created_ms).expect("purge"), 0);
+        assert_eq!(repo.purge_expired(created_ms + Duration::milliseconds(1)).expect("purge"), 1);
     }
     #[test]
     fn entry_created_exactly_at_cutoff_is_expired() {
