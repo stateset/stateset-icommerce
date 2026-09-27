@@ -39,6 +39,12 @@ const NAME = /^[a-z][a-z0-9_-]{0,62}$/;
 const CURRENCY = /^[A-Z]{3}$/;
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const SINGLE_LINE = /^[^\r\n\u2028\u2029]+$/u;
+const KERNEL_COMMAND = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
+const KERNEL_RESTRICTIONS = {
+  requiresApproval: 'requires_approval',
+  requiresMandate: 'requires_mandate',
+  requiresSignedAuthority: 'requires_signed_authority',
+};
 
 function findUnsafeKey(value, location = 'profile') {
   if (!value || typeof value !== 'object') return null;
@@ -133,10 +139,74 @@ export function validateBusinessProfile(profile) {
         } else if (typeof item.name !== 'string' || !NAME.test(item.name)) {
           errors.push(`${key} entries need a lowercase name`);
         }
+        if (key === 'policies' && item?.kind === 'kernel-restriction') {
+          if (typeof item.command !== 'string' || !KERNEL_COMMAND.test(item.command))
+            errors.push(`policy ${item.name} needs a namespaced kernel command`);
+          const allowed = new Set(['name', 'kind', 'command', ...Object.keys(KERNEL_RESTRICTIONS)]);
+          for (const field of Object.keys(item)) {
+            if (!allowed.has(field))
+              errors.push(`policy ${item.name} has unsupported field ${field}`);
+          }
+          if (!Object.keys(KERNEL_RESTRICTIONS).some((field) => item[field] === true))
+            errors.push(`policy ${item.name} must enable a kernel restriction`);
+          for (const field of Object.keys(KERNEL_RESTRICTIONS)) {
+            if (item[field] !== undefined && item[field] !== true)
+              errors.push(`policy ${item.name}.${field} must be true`);
+          }
+        }
       }
     }
   }
   return errors;
+}
+
+/**
+ * Narrow an operator-owned kernel policy using explicit profile restrictions.
+ * This never adds a command, capability, trusted key, or relaxed requirement.
+ * The returned document still needs operator review and explicit installation.
+ */
+export function compileBusinessProfileKernelPolicy(profile, basePolicy, version) {
+  const errors = validateBusinessProfile(profile);
+  if (errors.length) throw new Error(`Invalid business profile:\n- ${errors.join('\n- ')}`);
+  if (!basePolicy || typeof basePolicy !== 'object' || Array.isArray(basePolicy))
+    throw new Error('Base kernel policy must be a mapping');
+  if (typeof basePolicy.version !== 'string' || !basePolicy.version.trim())
+    throw new Error('Base kernel policy needs a version');
+  if (
+    !basePolicy.commands ||
+    typeof basePolicy.commands !== 'object' ||
+    Array.isArray(basePolicy.commands)
+  )
+    throw new Error('Base kernel policy needs a commands mapping');
+  if (
+    typeof version !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9_.:+-]*$/.test(version) ||
+    version === basePolicy.version
+  )
+    throw new Error('Compiled kernel policy needs a new, non-empty single-line version');
+
+  const restrictions = profile.policies.filter((item) => item.kind === 'kernel-restriction');
+  if (restrictions.length === 0)
+    throw new Error('Business profile has no kernel-restriction policies to compile');
+  const compiled = clone(basePolicy);
+  for (const restriction of restrictions) {
+    if (!Object.hasOwn(compiled.commands, restriction.command))
+      throw new Error(`Base kernel policy does not allow command ${restriction.command}`);
+    const rule = compiled.commands[restriction.command];
+    if (!rule || typeof rule !== 'object' || Array.isArray(rule))
+      throw new Error(`Base kernel policy has an invalid rule for ${restriction.command}`);
+    for (const [profileField, kernelField] of Object.entries(KERNEL_RESTRICTIONS)) {
+      if (restriction[profileField] === true) rule[kernelField] = true;
+    }
+    if (
+      rule.requires_signed_authority === true &&
+      (!compiled.trusted_authority_keys ||
+        Object.keys(compiled.trusted_authority_keys).length === 0)
+    )
+      throw new Error(`Signed authority for ${restriction.command} needs trusted authority keys`);
+  }
+  compiled.version = version;
+  return { policy: compiled, restrictions: restrictions.map((item) => item.name) };
 }
 
 export function loadBusinessProfile(root = process.cwd()) {

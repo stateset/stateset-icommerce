@@ -24,6 +24,8 @@ stateset-profile pack inspect --file ./profiles/wholesale.yaml
 stateset-profile pack install --file ./profiles/wholesale.yaml
 stateset-profile pack install --file ./profiles/wholesale.yaml --apply --force
 stateset-profile pack create --output ./packs/acme --name acme
+stateset-profile kernel-policy --base ./kernel-policy.json --version acme-v2 --json
+stateset-profile kernel-policy --base ./kernel-policy.json --version acme-v2 --output ./kernel-policy-v2.json --apply
 ```
 
 `apply` previews the profile changes without writing by default. Add `--apply`
@@ -34,10 +36,10 @@ operator policy and principal.
 `context` emits a compact, deterministic operating brief for agents and custom
 adapters. It includes the business vocabulary, enabled modules, declared
 workflows, and safety boundary without exposing credentials or database rows.
-In this first version, those declarations shape the agent brief and support
-review and sharing. They do not install executable policies or workflows or
-change tool authorization. Keep enforcement in the existing governed kernel
-until a declaration has an explicit compiler and validation path.
+Most declarations shape the agent brief and support review and sharing. They
+do not install executable workflows or change tool authorization. An explicit
+`kernel-restriction` policy can be compiled against an operator-owned kernel
+policy, as described below.
 
 A pack is a profile plus optional `pack.yaml` metadata. Packs are local by
 design in this first version, so a business can review a Git checkout before
@@ -83,6 +85,28 @@ workflows:
     resource: order
     states: [requested, diagnosed, approved, complete]
 ```
+
+To require approval for every refund handled by the strict kernel, add a
+restriction alongside the descriptive policies:
+
+```yaml
+policies:
+  - name: refund-review
+    kind: kernel-restriction
+    command: payments.create_refund
+    requiresApproval: true
+```
+
+`kernel-policy` requires a trusted base policy and a new version. It refuses
+commands missing from the base policy. Supported restrictions are
+`requiresApproval`, `requiresMandate`, and `requiresSignedAuthority`; each can
+only be set to `true`. The compiler preserves existing command capabilities,
+scopes, monetary limits, and trusted keys. It previews the complete resulting
+JSON without writing unless `--apply --output FILE` is given. Review the
+preview, deploy the resulting policy through the normal operator-owned
+`--kernel-policy` configuration, and provide the required approval, mandate,
+or signature evidence to the governed command path. A profile or pack never
+activates a policy just by being installed.
 
 Keep profiles in source control beside the application that owns the business.
 Use `doctor` in CI, review changes with `diff`, and pin pack versions before

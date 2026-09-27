@@ -2,11 +2,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import YAML from 'yaml';
 import {
   businessProfileDoctor,
   businessProfileContext,
+  compileBusinessProfileKernelPolicy,
   createBusinessPack,
   diffBusinessProfiles,
   initBusinessProfile,
@@ -23,7 +25,7 @@ const HELP = `
 StateSet business profiles
 
 USAGE:
-  stateset-profile <init|show|doctor|context|diff|export|apply|pack> [options]
+  stateset-profile <init|show|doctor|context|diff|export|apply|pack|kernel-policy> [options]
 
 COMMANDS:
   init                 Create .stateset/business.yaml
@@ -37,6 +39,7 @@ COMMANDS:
   pack inspect --file   Validate and inspect a pack
   pack install --file   Preview or install a local pack
   pack create --output  Fork the current profile into a pack
+  kernel-policy         Narrow a trusted kernel policy with profile restrictions
 
 OPTIONS:
   --root DIR           Project directory (default: current directory)
@@ -49,6 +52,8 @@ OPTIONS:
   --replace             Replace the current profile instead of merging a pack
   --name NAME           Pack name for pack create
   --description TEXT    Pack description for pack create
+  --base FILE           Operator-owned kernel policy for kernel-policy
+  --version VERSION     New kernel policy version for kernel-policy
 `;
 
 function readProfile(file) {
@@ -85,6 +90,8 @@ async function main() {
       replace: { type: 'boolean', default: false },
       name: { type: 'string' },
       description: { type: 'string', default: '' },
+      base: { type: 'string' },
+      version: { type: 'string' },
     },
     allowPositionals: true,
   });
@@ -125,6 +132,74 @@ async function main() {
       mode: 0o600,
     });
     return output({ ok: true, file: path.resolve(values.output) }, values.json);
+  }
+  if (command === 'kernel-policy') {
+    if (!values.base || !values.version)
+      throw new Error('kernel-policy requires --base FILE and --version VERSION');
+    const current = loadBusinessProfile(root);
+    if (!current.exists) throw new Error('kernel-policy requires an installed business profile');
+    if (current.errors?.length) throw new Error(current.errors.join('; '));
+    let basePolicy;
+    try {
+      basePolicy = JSON.parse(fs.readFileSync(path.resolve(values.base), 'utf8'));
+    } catch (error) {
+      throw new Error(`Unable to load base kernel policy: ${error.message}`);
+    }
+    const compiled = compileBusinessProfileKernelPolicy(
+      current.profile,
+      basePolicy,
+      values.version,
+    );
+    const destination = values.output ? path.resolve(values.output) : null;
+    if (!values.apply) {
+      return output(
+        {
+          ok: true,
+          preview: true,
+          destination,
+          restrictions: compiled.restrictions,
+          policy: compiled.policy,
+          message: 'Preview only. Review the policy, then re-run with --apply --output FILE.',
+        },
+        true,
+      );
+    }
+    if (!destination) throw new Error('kernel-policy --apply requires --output FILE');
+    if (fs.lstatSync(destination, { throwIfNoEntry: false })?.isSymbolicLink())
+      throw new Error('kernel-policy output must not be a symbolic link');
+    const basePath = path.resolve(values.base);
+    const baseStat = fs.statSync(basePath);
+    const destinationStat = fs.statSync(destination, { throwIfNoEntry: false });
+    if (
+      destination === basePath ||
+      (destinationStat &&
+        ((destinationStat.dev === baseStat.dev && destinationStat.ino === baseStat.ino) ||
+          fs.realpathSync(destination) === fs.realpathSync(basePath)))
+    )
+      throw new Error('kernel-policy output must differ from the operator-owned base policy');
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    const policyJson = `${JSON.stringify(compiled.policy, null, 2)}\n`;
+    if (values.force) {
+      // Replace the directory entry instead of truncating an existing inode.
+      // A hard link introduced after the checks above cannot modify its peer.
+      const temporary = path.join(
+        path.dirname(destination),
+        `.${path.basename(destination)}.${randomUUID()}.tmp`,
+      );
+      try {
+        fs.writeFileSync(temporary, policyJson, { mode: 0o600, flag: 'wx' });
+        fs.renameSync(temporary, destination);
+      } finally {
+        fs.rmSync(temporary, { force: true });
+      }
+    } else {
+      fs.writeFileSync(destination, policyJson, { mode: 0o600, flag: 'wx' });
+    }
+    fs.chmodSync(destination, 0o600);
+    return output(
+      { ok: true, preview: false, file: destination, restrictions: compiled.restrictions },
+      values.json,
+    );
   }
   if (command === 'apply') {
     if (!values.file) throw new Error('apply requires --file FILE');
