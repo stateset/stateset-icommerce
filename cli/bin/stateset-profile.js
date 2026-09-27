@@ -2,6 +2,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import YAML from 'yaml';
 import {
@@ -160,23 +161,37 @@ async function main() {
           policy: compiled.policy,
           message: 'Preview only. Review the policy, then re-run with --apply --output FILE.',
         },
-        values.json,
+        true,
       );
     }
     if (!destination) throw new Error('kernel-policy --apply requires --output FILE');
     if (fs.lstatSync(destination, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error('kernel-policy output must not be a symbolic link');
+    const basePath = path.resolve(values.base);
+    const baseStat = fs.statSync(basePath);
+    const destinationStat = fs.statSync(destination, { throwIfNoEntry: false });
     if (
-      destination === path.resolve(values.base) ||
-      (fs.existsSync(destination) &&
-        fs.realpathSync(destination) === fs.realpathSync(path.resolve(values.base)))
+      destination === basePath ||
+      (destinationStat &&
+        ((destinationStat.dev === baseStat.dev && destinationStat.ino === baseStat.ino) ||
+          fs.realpathSync(destination) === fs.realpathSync(basePath)))
     )
       throw new Error('kernel-policy output must differ from the operator-owned base policy');
     fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.writeFileSync(destination, `${JSON.stringify(compiled.policy, null, 2)}\n`, {
-      mode: 0o600,
-      flag: values.force ? 'w' : 'wx',
-    });
+    const policyJson = `${JSON.stringify(compiled.policy, null, 2)}\n`;
+    if (values.force) {
+      // Replace the directory entry instead of truncating an existing inode.
+      // A hard link introduced after the checks above cannot modify its peer.
+      const temporary = path.join(path.dirname(destination), `.${path.basename(destination)}.${randomUUID()}.tmp`);
+      try {
+        fs.writeFileSync(temporary, policyJson, { mode: 0o600, flag: 'wx' });
+        fs.renameSync(temporary, destination);
+      } finally {
+        fs.rmSync(temporary, { force: true });
+      }
+    } else {
+      fs.writeFileSync(destination, policyJson, { mode: 0o600, flag: 'wx' });
+    }
     fs.chmodSync(destination, 0o600);
     return output(
       { ok: true, preview: false, file: destination, restrictions: compiled.restrictions },

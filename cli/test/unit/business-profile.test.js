@@ -406,6 +406,13 @@ test('kernel-policy previews by default and writes a narrower policy only with -
   assert.equal(preview.status, 0, preview.stderr);
   assert.equal(JSON.parse(preview.stdout).preview, true);
   assert.equal(fs.existsSync(outputFile), false);
+  const plainPreview = spawnSync(
+    process.execPath,
+    [command, 'kernel-policy', '--root', root, '--base', baseFile, '--version', 'operator-v2'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(plainPreview.status, 0, plainPreview.stderr);
+  assert.deepEqual(JSON.parse(plainPreview.stdout).policy, JSON.parse(preview.stdout).policy);
 
   const applied = run('--apply');
   assert.equal(applied.status, 0, applied.stderr);
@@ -417,6 +424,8 @@ test('kernel-policy previews by default and writes a narrower policy only with -
   );
   assert.equal(fs.statSync(outputFile).mode & 0o777, 0o600);
   assert.notEqual(run('--apply').status, 0);
+  assert.equal(run('--apply', '--force').status, 0);
+  assert.equal(JSON.parse(fs.readFileSync(outputFile, 'utf8')).version, 'operator-v2');
   const overwriteBase = spawnSync(
     process.execPath,
     [
@@ -457,6 +466,29 @@ test('kernel-policy previews by default and writes a narrower policy only with -
   );
   assert.notEqual(overwriteAlias.status, 0);
   assert.match(overwriteAlias.stderr, /symbolic link/);
+  const hardLink = path.join(root, 'base-hardlink.json');
+  fs.linkSync(baseFile, hardLink);
+  const overwriteHardLink = spawnSync(
+    process.execPath,
+    [
+      command,
+      'kernel-policy',
+      '--root',
+      root,
+      '--base',
+      baseFile,
+      '--version',
+      'operator-v2',
+      '--output',
+      hardLink,
+      '--apply',
+      '--force',
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.notEqual(overwriteHardLink.status, 0);
+  assert.match(overwriteHardLink.stderr, /differ from the operator-owned base policy/);
+  assert.equal(JSON.parse(fs.readFileSync(baseFile, 'utf8')).version, 'operator-v1');
   const danglingTarget = path.join(root, 'unexpected-policy.json');
   const danglingLink = path.join(root, 'dangling-alias.json');
   fs.symlinkSync(danglingTarget, danglingLink);
