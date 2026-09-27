@@ -223,8 +223,9 @@ impl IdempotencyLayer {
             let mut registry =
                 self.inflight.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             // Cancelled waiters can leave weak entries behind. Sweep stale
-            // entries at this threshold without disturbing active keys.
-            if registry.len() >= 1024 {
+            // entries periodically without scanning all active keys on every
+            // request during a concurrency spike.
+            if registry.len() >= 1024 && registry.len() % 512 == 0 {
                 registry.retain(|_, lock| lock.strong_count() > 0);
             }
             if let Some(existing) = registry.get(key).and_then(Weak::upgrade) {
