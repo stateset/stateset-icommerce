@@ -26,7 +26,9 @@
 //! of the durable store: lookups consult memory first, fall back to the
 //! database, and populate memory on a durable hit. Concurrent requests for
 //! one key are serialized within a process. Separate replicas can still race
-//! on a new key until the durable store supports an in-flight reservation.
+//! on a new key, and a crash after a business mutation but before storing its
+//! response can leave a retry unprotected. An atomic durable reservation and
+//! business mutation protocol is needed to close those gaps.
 //! Durable-store failures
 //! degrade gracefully to memory-only behavior (logged, never request-fatal).
 //!
