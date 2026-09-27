@@ -20,14 +20,15 @@ assert.deepEqual(
   'Node binding lockfile peer pins must match its manifest',
 );
 
-for (const [path, entry] of Object.entries(lock.packages)) {
-  if (path.startsWith('node_modules/@stateset/embedded-')) {
-    assert.equal(
-      entry.version,
-      manifest.version,
-      `${path} must not resolve an older platform package in the release lockfile`,
-    );
-  }
+for (const name of Object.keys(manifest.optionalDependencies ?? {})) {
+  const path = `node_modules/${name}`;
+  const entry = lock.packages?.[path];
+  assert.ok(entry, `${path} must be present in the release lockfile for npm ci`);
+  assert.equal(
+    entry.version,
+    manifest.version,
+    `${path} must not resolve an older platform package in the release lockfile`,
+  );
 }
 
 console.log(`Node binding lockfile matches ${manifest.version}.`);

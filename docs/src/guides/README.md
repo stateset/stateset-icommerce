@@ -4,6 +4,7 @@ Focused guides for common workflows and operations.
 
 ## Getting Started
 - [CLI](cli.md) — Natural language interface and safety model
+- [Business profiles](business-profiles.md) — Forkable defaults, workflows, and policies
 - [MCP Tools](mcp-tools.md) — Registry-generated tool inventory via MCP
 
 ## Data & Sync

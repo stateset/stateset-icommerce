@@ -98,9 +98,10 @@ No data migration between tiers. See [Product Tiers](tiers.md).
 
 1. [What is iCommerce?](concepts/icommerce.md) — Understand the paradigm shift
 2. [Getting Started](getting-started.md) — Install and run in 60 seconds
-3. [AI Agent Quickstart](ai-agents.md) — OpenAI, Vercel AI SDK, LangChain, MCP
-4. [Policy Engine](policy/engine.md) — Safety guardrails for autonomous agents
-5. [MCP Tools](guides/mcp-tools.md) — hundreds of operations your agent can call
+3. [Business profiles](guides/business-profiles.md) — Make the operating model yours
+4. [AI Agent Quickstart](ai-agents.md) — OpenAI, Vercel AI SDK, LangChain, MCP
+5. [Policy Engine](policy/engine.md) — Safety guardrails for autonomous agents
+6. [MCP Tools](guides/mcp-tools.md) — hundreds of operations your agent can call
 
 ### I'm connecting an existing store (Shopify, Stripe, WooCommerce)
 

@@ -1,0 +1,27 @@
+schemaVersion: 1
+business:
+  name: Travel, transportation, and hospitality
+  currency: USD
+  timezone: UTC
+terminology:
+  order: booking
+  customer: guest
+modules:
+  orders: true
+  inventory: true
+  payments: true
+  returns: true
+policies:
+  - name: booking-change-window
+    kind: policy
+    resource: order
+  - name: loyalty-eligibility
+    kind: policy
+    resource: customer
+workflows:
+  - name: booking-lifecycle
+    resource: order
+    states: [inquiry, held, confirmed, fulfilled, cancelled]
+views: []
+automations: []
+integrations: []
