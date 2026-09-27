@@ -285,7 +285,7 @@
         "className": "X402"
       }
     ],
-    "toolCount": 750,
+    "toolCount": 751,
     "readOnlyCount": 378,
     "readOnlyPrefixes": [
       "calculate",
@@ -3516,7 +3516,9 @@
             "tiereddiscount",
             "bundle",
             "bundle_discount",
-            "bundlediscount"
+            "bundlediscount",
+            "first_order_discount",
+            "firstorderdiscount"
           ],
           "description": "Type: percentage_off, fixed_amount_off, buy_x_get_y, free_shipping, tiered_discount, bundle"
         },
@@ -3657,6 +3659,13 @@
             "type": "string"
           },
           "description": "Eligible customer groups"
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PromotionConditionInput"
+          },
+          "description": "Conditions the cart must meet (minimum subtotal, first order, shipping country, ...). Each is validated before anything is stored."
         },
         "currency": {
           "type": "string",
@@ -6651,6 +6660,61 @@
       },
       "additionalProperties": false
     },
+    "PromotionConditionInput": {
+      "type": "object",
+      "properties": {
+        "conditionType": {
+          "type": "string",
+          "enum": [
+            "minimum_subtotal",
+            "minimum_quantity",
+            "product_in_cart",
+            "category_in_cart",
+            "sku_in_cart",
+            "customer_group",
+            "first_order",
+            "customer_email_domain",
+            "shipping_country",
+            "shipping_state",
+            "payment_method",
+            "cart_item_count",
+            "customer_id"
+          ],
+          "description": "What is tested: minimum_subtotal, minimum_quantity, product_in_cart, category_in_cart, sku_in_cart, first_order, shipping_country, shipping_state, cart_item_count, customer_id, ..."
+        },
+        "operator": {
+          "type": "string",
+          "enum": [
+            "equals",
+            "not_equals",
+            "greater_than",
+            "greater_than_or_equal",
+            "less_than",
+            "less_than_or_equal",
+            "contains",
+            "not_contains",
+            "in",
+            "not_in"
+          ],
+          "description": "How it is compared: equals, not_equals, greater_than, in, ..."
+        },
+        "value": {
+          "type": "string",
+          "description": "The value compared against: a decimal, an integer, a boolean, or a comma-separated list, as the condition type requires."
+        },
+        "isRequired": {
+          "type": "boolean",
+          "description": "Required conditions must all be met; when optional ones exist, at least one must be. Defaults to `true`."
+        }
+      },
+      "required": [
+        "conditionType",
+        "operator",
+        "value"
+      ],
+      "additionalProperties": false,
+      "description": "A condition a cart must meet for a promotion to apply."
+    },
     "PromotionFilterInput": {
       "type": "object",
       "properties": {
@@ -6683,7 +6747,9 @@
             "tiereddiscount",
             "bundle",
             "bundle_discount",
-            "bundlediscount"
+            "bundlediscount",
+            "first_order_discount",
+            "firstorderdiscount"
           ],
           "description": "Filter by promotion type"
         },
@@ -22872,6 +22938,37 @@
         },
         "required": [
           "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "promotions.addCondition",
+      "module": "promotions",
+      "className": "Promotions",
+      "method": "addCondition",
+      "description": "Add a condition to an existing promotion.\n\nThe condition is validated — its value must parse for its type and its operator must apply to it — and then stored, so it takes part in every later evaluation.",
+      "signature": "addCondition(promotionId: string, condition: PromotionConditionInput): Promise<PromotionOutput>",
+      "returnType": "Promise<PromotionOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "promotionId",
+        "condition"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "promotionId": {
+            "type": "string"
+          },
+          "condition": {
+            "$ref": "#/definitions/PromotionConditionInput"
+          }
+        },
+        "required": [
+          "promotionId",
+          "condition"
         ],
         "additionalProperties": false
       }

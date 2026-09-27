@@ -3,6 +3,7 @@
  *
  * Tests every tool exported from src/tools/promotions.js:
  *   list_promotions, get_promotion, update_promotion, create_promotion,
+ *   add_promotion_condition,
  *   delete_promotion, activate_promotion, deactivate_promotion, create_coupon,
  *   get_coupon, validate_coupon, list_coupons, get_active_promotions,
  *   check_promotion_validity, apply_cart_promotions, record_promotion_usage
@@ -10,6 +11,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { z } from 'zod';
 
 import { promotionTools } from '../../src/tools/promotions.js';
 
@@ -132,9 +134,9 @@ function makeCommerce(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe('Promotion Tools — structure', () => {
-  it('exports an array of 15 tools', () => {
+  it('exports an array of 16 tools', () => {
     assert.ok(Array.isArray(promotionTools));
-    assert.strictEqual(promotionTools.length, 15);
+    assert.strictEqual(promotionTools.length, 16);
   });
 
   it('every tool has name, handler, permission, and inputSchema', () => {
@@ -159,6 +161,7 @@ describe('Promotion Tools — structure', () => {
         'get_promotion',
         'update_promotion',
         'create_promotion',
+        'add_promotion_condition',
         'delete_promotion',
         'activate_promotion',
         'deactivate_promotion',
@@ -384,6 +387,113 @@ describe('create_promotion', () => {
     await assert.rejects(
       () => tool.handler({ commerce, params, allowApply: true }),
       /Duplicate code/,
+    );
+  });
+});
+
+describe('create_promotion conditions', () => {
+  const tool = findTool('create_promotion');
+
+  it('passes conditions and SKU scoping through to the binding', async () => {
+    let calledWith = {};
+    const commerce = makeCommerce({
+      promoMethods: {
+        create: async (data) => {
+          calledWith = data;
+          return makePromotion(data);
+        },
+      },
+    });
+    const conditions = [
+      { conditionType: 'minimum_subtotal', operator: 'greater_than_or_equal', value: '50' },
+    ];
+    const result = await tool.handler({
+      commerce,
+      params: {
+        name: 'Welcome',
+        type: 'first_order_discount',
+        trigger: 'automatic',
+        percentageOff: 0.1,
+        applicableSkus: ['SOCKS'],
+        conditions,
+      },
+      allowApply: true,
+    });
+    assert.strictEqual(calledWith.promotionType, 'FirstOrderDiscount');
+    assert.deepStrictEqual(calledWith.applicableSkus, ['SOCKS']);
+    assert.deepStrictEqual(calledWith.conditions, conditions);
+    assert.deepStrictEqual(result.promotion.conditions, conditions);
+  });
+
+  it('refuses an unknown condition type at the schema', () => {
+    const schema = z.object(tool.inputSchema);
+    const parsed = schema.safeParse({
+      name: 'X',
+      type: 'percentage_off',
+      conditions: [{ conditionType: 'first_ordr', operator: 'equals', value: 'true' }],
+    });
+    assert.strictEqual(parsed.success, false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// add_promotion_condition
+// ---------------------------------------------------------------------------
+
+describe('add_promotion_condition', () => {
+  const tool = findTool('add_promotion_condition');
+  const params = {
+    promotionId: 'promo_001',
+    condition: { conditionType: 'first_order', operator: 'equals', value: 'true' },
+  };
+
+  it('has write permission', () => {
+    assert.strictEqual(tool.permission, 'write');
+  });
+
+  it('returns preview when allowApply is false', async () => {
+    let called = false;
+    const commerce = makeCommerce({
+      promoMethods: {
+        addCondition: async () => {
+          called = true;
+        },
+      },
+    });
+    const result = await tool.handler({ commerce, params, allowApply: false });
+    assert.strictEqual(result.success, false);
+    assert.ok(result.error.includes('--apply'));
+    assert.deepStrictEqual(result.wouldAdd, params);
+    assert.strictEqual(called, false, 'a preview writes nothing');
+  });
+
+  it('adds the condition when allowApply is true', async () => {
+    let calledWith;
+    const commerce = makeCommerce({
+      promoMethods: {
+        addCondition: async (promotionId, condition) => {
+          calledWith = { promotionId, condition };
+          return makePromotion({ id: promotionId, conditions: [condition] });
+        },
+      },
+    });
+    const result = await tool.handler({ commerce, params, allowApply: true });
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(calledWith, params);
+    assert.deepStrictEqual(result.promotion.conditions, [params.condition]);
+  });
+
+  it('propagates a refused condition', async () => {
+    const commerce = makeCommerce({
+      promoMethods: {
+        addCondition: async () => {
+          throw new Error('Invalid promotion condition value');
+        },
+      },
+    });
+    await assert.rejects(
+      () => tool.handler({ commerce, params, allowApply: true }),
+      /Invalid promotion condition value/,
     );
   });
 });

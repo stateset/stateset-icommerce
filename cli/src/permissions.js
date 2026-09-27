@@ -202,6 +202,7 @@ export const TOOL_PERMISSIONS = {
   create_promotion: 'write',
   activate_promotion: 'write',
   deactivate_promotion: 'write',
+  add_promotion_condition: 'write',
   delete_promotion: 'delete',
   create_coupon: 'write',
   get_coupon: 'read',

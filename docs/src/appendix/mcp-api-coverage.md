@@ -15,12 +15,12 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | Metric | Value |
 | --- | --- |
 | Domain tool modules | 87 |
-| Domain tools | 935 |
+| Domain tools | 936 |
 | Commerce getters | 68 |
 | Mapped getters | 68 |
 | Audited classes | 32 |
-| Audited methods | 402 |
-| Mapped audited methods | 402 |
+| Audited methods | 403 |
+| Mapped audited methods | 403 |
 | Fully covered | yes |
 
 ## Commerce Getter Coverage
@@ -67,7 +67,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `printStations` | `print-stations` | 8 |
 | `productionBatches` | `production-batches` | 8 |
 | `products` | `products` | 14 |
-| `promotions` | `promotions` | 15 |
+| `promotions` | `promotions` | 16 |
 | `purchaseOrders` | `suppliers` | 10 |
 | `purgatory` | `purgatory` | 6 |
 | `quality` | `quality` | 15 |
@@ -119,7 +119,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `Orders` | 8 | 8 | 0 | 0 | 0 |
 | `Payments` | 10 | 10 | 0 | 0 | 0 |
 | `Products` | 16 | 16 | 0 | 0 | 0 |
-| `Promotions` | 17 | 17 | 0 | 0 | 0 |
+| `Promotions` | 18 | 18 | 0 | 0 | 0 |
 | `PurchaseOrders` | 11 | 11 | 0 | 0 | 0 |
 | `Quality` | 15 | 15 | 0 | 0 | 0 |
 | `Receiving` | 9 | 9 | 0 | 0 | 0 |

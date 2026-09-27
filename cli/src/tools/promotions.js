@@ -4,6 +4,49 @@
 
 import { z } from 'zod';
 
+const CONDITION_TYPES = [
+  'minimum_subtotal',
+  'minimum_quantity',
+  'product_in_cart',
+  'category_in_cart',
+  'sku_in_cart',
+  'customer_group',
+  'first_order',
+  'customer_email_domain',
+  'shipping_country',
+  'shipping_state',
+  'payment_method',
+  'cart_item_count',
+  'customer_id',
+];
+
+const CONDITION_OPERATORS = [
+  'equals',
+  'not_equals',
+  'greater_than',
+  'greater_than_or_equal',
+  'less_than',
+  'less_than_or_equal',
+  'contains',
+  'not_contains',
+  'in',
+  'not_in',
+];
+
+const conditionSchema = z.object({
+  conditionType: z.enum(CONDITION_TYPES).describe('What the condition tests'),
+  operator: z.enum(CONDITION_OPERATORS).describe('How the value is compared'),
+  value: z
+    .string()
+    .describe(
+      'Value compared against: a decimal (minimum_subtotal), an integer (minimum_quantity, cart_item_count), true/false (first_order), or a comma-separated list (SKUs, UUIDs, countries)',
+    ),
+  isRequired: z
+    .boolean()
+    .optional()
+    .describe('Required conditions must all hold; otherwise at least one optional one must (default true)'),
+});
+
 export const promotionTools = [
   {
     name: 'list_promotions',
@@ -122,7 +165,7 @@ export const promotionTools = [
   {
     name: 'create_promotion',
     description:
-      'Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, and tiered discounts.',
+      'Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, tiered, and first-order discounts, optionally scoped to SKUs and gated by conditions.',
     inputSchema: {
       name: z.string().min(1).describe('Promotion name (e.g., "Summer Sale")'),
       type: z
@@ -132,8 +175,11 @@ export const promotionTools = [
           'buy_x_get_y',
           'free_shipping',
           'tiered_discount',
+          'first_order_discount',
         ])
-        .describe('Type of discount'),
+        .describe(
+          'Type of discount (first_order_discount applies only to a customer with no prior orders)',
+        ),
       trigger: z
         .enum(['automatic', 'coupon_code', 'both'])
         .default('automatic')
@@ -149,6 +195,14 @@ export const promotionTools = [
       description: z.string().optional().describe('Public description'),
       startsAt: z.string().optional().describe('Start date (ISO 8601)'),
       endsAt: z.string().optional().describe('End date (ISO 8601)'),
+      applicableSkus: z
+        .array(z.string().min(1))
+        .optional()
+        .describe('Only these SKUs are discounted (default: the whole order)'),
+      conditions: z
+        .array(conditionSchema)
+        .optional()
+        .describe('Conditions the cart must meet, validated before anything is stored'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -165,6 +219,7 @@ export const promotionTools = [
         buy_x_get_y: 'BuyXGetY',
         free_shipping: 'FreeShipping',
         tiered_discount: 'TieredDiscount',
+        first_order_discount: 'FirstOrderDiscount',
       };
       const triggerMap = { automatic: 'Automatic', coupon_code: 'CouponCode', both: 'Both' };
       const promotion = await commerce.promotions().create({
@@ -179,6 +234,8 @@ export const promotionTools = [
         maxDiscountAmount: params.maxDiscountAmount,
         startsAt: params.startsAt ? new Date(params.startsAt) : null,
         endsAt: params.endsAt ? new Date(params.endsAt) : null,
+        applicableSkus: params.applicableSkus,
+        conditions: params.conditions,
         priority: 1,
       });
       return {
@@ -191,6 +248,39 @@ export const promotionTools = [
           name: promotion.name,
           type: promotion.promotionType,
           status: promotion.status,
+          conditions: promotion.conditions,
+        },
+      };
+    },
+  },
+  {
+    name: 'add_promotion_condition',
+    description:
+      'Add a condition to an existing promotion (minimum subtotal, first order, shipping country, SKU in cart, ...). The condition is validated before it is stored. Requires --apply.',
+    inputSchema: {
+      promotionId: z.string().min(1).describe('Promotion ID (UUID)'),
+      condition: conditionSchema,
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply)
+        return {
+          success: false,
+          error: 'Add condition operation not allowed. The --apply flag must be set.',
+          hint: 'Run with --apply to enable write operations.',
+          wouldAdd: params,
+        };
+      const promotion = await commerce
+        .promotions()
+        .addCondition(params.promotionId, params.condition);
+      return {
+        success: true,
+        message: 'Condition added',
+        promotion: {
+          id: promotion.id,
+          name: promotion.name,
+          status: promotion.status,
+          conditions: promotion.conditions,
         },
       };
     },
