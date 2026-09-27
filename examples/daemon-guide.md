@@ -243,7 +243,7 @@ service. Configure the registered messaging endpoint with HTTPS; unsigned POSTs
 and Bot Framework Emulator tokens are rejected. The gateway checks the bot App
 ID, token issuer and lifetime, Teams signing-key endorsement, and the activity's
 service URL before handing a message to the agent.
-Direct gateway startup also defaults to preview-only writes; set `allowApply`
+All direct channel gateways default to preview-only writes; set `allowApply`
 explicitly in operator-owned configuration to enable mutations.
 
 ### Gateway Configuration (`gateway.json`)
