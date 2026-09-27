@@ -6,10 +6,14 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
-## [1.35.3] - 2026-09-24
+## [1.35.3] - 2026-09-26
 
 ### Verified commerce invariants
 
+- Expanded TLA+ models and Lean proofs across accounts payable, fulfillment,
+  billing, synchronization, order-to-cash, inventory and material consumption,
+  credit, quarantine, returns, idempotency, loyalty, prepayments, quality
+  holds, EDI, and lifecycle boundaries.
 - Added TLA+ models and Lean proofs for exchange-rate publication, payment
   obligations, FIFO/LIFO cost-layer issues, inbound shipment cancellation and
   receipt, and vendor-return decisions. The models include broken interleavings
@@ -18,6 +22,10 @@ This project follows Keep a Changelog and Semantic Versioning.
   SQLite and PostgreSQL. Manual payment-obligation status changes cannot forge
   payment progress or reopen a paid or cancelled obligation. Cost-layer issues
   reject zero and negative quantities.
+- Durable HTTP idempotency now preserves the creation timestamp to nanosecond
+  precision in SQLite and PostgreSQL. A live retry is no longer expired early
+  when its timestamp and the TTL cutoff fall within one stored millisecond or
+  microsecond.
 
 ### Changed (behaviour, needs a release note)
 
