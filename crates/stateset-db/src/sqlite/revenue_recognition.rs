@@ -799,6 +799,7 @@ mod tests {
         let c2 = repo.create_contract(create_input()).expect("create second");
         let ratable2 =
             c2.obligations.iter().find(|o| o.description == "Annual support").expect("ratable");
+        repo.generate_schedule(ratable2.id).expect("generate before cancellation");
         repo.update_contract(
             c2.id,
             UpdateRevenueContract {
@@ -809,6 +810,15 @@ mod tests {
         .expect("cancel contract");
         assert!(repo.recognize_period(ratable2.id, date(2026, 6, 30)).is_err());
         assert!(repo.generate_schedule(ratable2.id).is_err());
+        let schedule = repo.get_schedule(ratable2.id).expect("get schedule").expect("schedule");
+        assert_eq!(schedule.recognized_total(), dec!(0));
+        let obligation = repo
+            .list_obligations(c2.id)
+            .expect("obligations")
+            .into_iter()
+            .find(|o| o.id == ratable2.id)
+            .expect("obligation");
+        assert_eq!(obligation.recognized_amount, dec!(0));
     }
 
     #[test]

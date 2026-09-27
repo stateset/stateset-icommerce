@@ -2867,6 +2867,36 @@ mod tests {
     }
 
     #[test]
+    fn partial_credit_applications_preserve_memo_and_invoice_balances() {
+        // CreditAllocation.applyAll conserves the memo and cannot cross the
+        // invoice's due balance. Check the persisted amounts after each step.
+        let repo = fresh_repo();
+        let cust = Uuid::new_v4();
+        let memo = make_memo(&repo, cust, dec!(70), CreditMemoReason::ReturnedGoods);
+        let invoice_id = insert_invoice_for(&repo, cust, "INV-CREDIT-PARTS", "100");
+        let mut applied = Decimal::ZERO;
+        for amount in [dec!(12.34), dec!(17.66), dec!(40)] {
+            repo.apply_credit_memo(ApplyCreditMemo { credit_memo_id: memo.id, invoice_id, amount })
+                .expect("apply credit part");
+            applied += amount;
+            let current = repo.get_credit_memo(memo.id).expect("load memo").expect("memo");
+            assert_eq!(current.applied_amount, applied);
+            assert_eq!(current.unapplied_amount + current.applied_amount, dec!(70));
+            let balance: String = repo
+                .pool
+                .get()
+                .expect("connection")
+                .query_row(
+                    "SELECT balance_due FROM invoices WHERE id = ?1",
+                    params![invoice_id.to_string()],
+                    |row| row.get(0),
+                )
+                .expect("invoice balance");
+            assert_eq!(balance.parse::<Decimal>().expect("decimal"), dec!(100) - applied);
+        }
+    }
+
+    #[test]
     fn customer_summary_for_unknown_customer_is_none() {
         let repo = fresh_repo();
         assert!(repo.get_customer_summary(Uuid::new_v4()).expect("ok").is_none());

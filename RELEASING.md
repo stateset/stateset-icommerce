@@ -5,7 +5,7 @@ crates.io, npm, and PyPI — from a single green commit on `master`, in one
 command.
 
 ```bash
-npm run release:tag 1.35.2
+npm run release:tag 1.35.3
 ```
 
 Everything below explains what that command refuses to do, what it triggers,
@@ -34,8 +34,8 @@ admin, and Postgres matrices.
 ## Cutting the release
 
 ```bash
-npm run release:tag 1.35.2 -- --dry-run   # print what would be pushed
-npm run release:tag 1.35.2                # push v, cli-v and py-v together
+npm run release:tag 1.35.3 -- --dry-run   # print what would be pushed
+npm run release:tag 1.35.3                # push v, cli-v and py-v together
 ```
 
 `scripts/release-tag.sh` refuses to tag unless **HEAD is a commit on

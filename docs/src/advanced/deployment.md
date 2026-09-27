@@ -83,7 +83,7 @@ spec:
     spec:
       containers:
         - name: icommerce
-          image: stateset/icommerce:1.35.2
+          image: stateset/icommerce:1.35.3
           ports:
             - containerPort: 8080
           env:
@@ -131,3 +131,8 @@ pg_dump -h host -U user dbname > backup.sql
 - **Health**: `GET /health` — basic liveness
 - **Metrics**: `GET /metrics` — uptime, operation counts
 - **Heartbeat**: Periodic commerce health checks (see [Heartbeat Monitor](../guides/heartbeat.md))
+
+For a public HTTP bind, give the metrics scraper its own stable bearer token
+with `ServerBuilder::with_metrics_bearer_auth`. The API token configured with
+`with_bearer_auth` does not grant access to `/metrics`; this keeps the
+write-capable API credential out of monitoring systems.

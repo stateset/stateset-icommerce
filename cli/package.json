@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "1.35.2",
+  "version": "1.35.3",
   "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
@@ -217,15 +217,12 @@
     "@grpc/grpc-js": "^1.14.4",
     "@grpc/proto-loader": "^0.8.1",
     "@slack/bolt": "^3.17.0",
-    "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "@whiskeysockets/baileys": "7.0.0-rc14",
     "better-sqlite3": "^11.7.0",
-    "botbuilder": "^4.23.0",
     "discord.js": "^14.14.0",
     "googleapis": "^178.0.0",
     "grammy": "^1.21.0",
-    "matrix-js-sdk": "^34.0.0",
     "qrcode-terminal": "^0.12.0",
     "ws": "^8.18.0"
   },
@@ -240,7 +237,7 @@
     "form-data@2.5.5": "2.5.6",
     "form-data@4.0.5": "4.0.6",
     "protobufjs": "7.6.6",
-    "sharp": "0.35.0",
+    "sharp": "0.35.4",
     "undici": "6.28.0"
   },
   "publishConfig": {
