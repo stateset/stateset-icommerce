@@ -66,6 +66,9 @@
     "husky": "^9.1.7",
     "prettier": "^3.8.1"
   },
+  "overrides": {
+    "@humanfs/node": "0.16.8"
+  },
   "dependencies": {
     "@clack/prompts": "^1.0.1"
   }
