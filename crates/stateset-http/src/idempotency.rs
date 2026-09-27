@@ -24,7 +24,12 @@
 //! replays survive process restarts and work across replicas sharing a
 //! database. The in-process map acts as a bounded read-through cache in front
 //! of the durable store: lookups consult memory first, fall back to the
-//! database, and populate memory on a durable hit. Durable-store failures
+//! database, and populate memory on a durable hit. Concurrent requests for
+//! one key are serialized within a process. Separate replicas can still race
+//! on a new key, and a crash after a business mutation but before storing its
+//! response can leave a retry unprotected. An atomic durable reservation and
+//! business mutation protocol is needed to close those gaps.
+//! Durable-store failures
 //! degrade gracefully to memory-only behavior (logged, never request-fatal).
 //!
 //! TTL cleanup is enforced lazily on read (expired rows are deleted when
@@ -43,7 +48,7 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use axum::{
@@ -75,6 +80,9 @@ const DEFAULT_MAX_ENTRIES: usize = 10_000;
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 /// Run a bulk expiry sweep of the durable store every N durable writes.
 const SWEEP_EVERY_N_WRITES: u64 = 512;
+type CacheKey = (String, String);
+type KeyLock = tokio::sync::Mutex<()>;
+type InflightRegistry = Arc<Mutex<HashMap<CacheKey, Weak<KeyLock>>>>;
 
 /// A cached idempotent response plus the fingerprint of the originating request.
 #[derive(Clone, Debug)]
@@ -142,6 +150,8 @@ impl IdempotencyStore {
 #[derive(Clone)]
 pub struct IdempotencyLayer {
     store: Arc<Mutex<IdempotencyStore>>,
+    /// Serialize lookups and handler execution for a key within this process.
+    inflight: InflightRegistry,
     /// Commerce handle whose database backs the durable store, if any.
     durable: Option<Arc<Commerce>>,
     /// Counts durable writes to schedule opportunistic bulk expiry sweeps.
@@ -175,6 +185,7 @@ impl IdempotencyLayer {
     fn with_config(ttl: Duration, max_entries: usize) -> Self {
         Self {
             store: Arc::new(Mutex::new(IdempotencyStore::new(ttl, max_entries))),
+            inflight: Arc::new(Mutex::new(HashMap::new())),
             durable: None,
             write_count: Arc::new(AtomicU64::new(0)),
             require_keys: false,
@@ -205,6 +216,56 @@ impl IdempotencyLayer {
             .ok()
             .and_then(|ttl| now.checked_sub_signed(ttl))
             .unwrap_or(DateTime::<Utc>::MIN_UTC)
+    }
+
+    async fn lock_key(&self, key: &CacheKey) -> InflightKeyGuard {
+        let key_lock = {
+            let mut registry =
+                self.inflight.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Cancelled waiters can leave weak entries behind. Sweep stale
+            // entries periodically without scanning all active keys on every
+            // request during a concurrency spike.
+            if registry.len() >= 1024 && registry.len() % 512 == 0 {
+                registry.retain(|_, lock| lock.strong_count() > 0);
+            }
+            if let Some(existing) = registry.get(key).and_then(Weak::upgrade) {
+                existing
+            } else {
+                let lock = Arc::new(KeyLock::new(()));
+                registry.insert(key.clone(), Arc::downgrade(&lock));
+                lock
+            }
+        };
+        let guard = key_lock.clone().lock_owned().await;
+        InflightKeyGuard {
+            _guard: Some(guard),
+            key_lock,
+            key: key.clone(),
+            registry: self.inflight.clone(),
+        }
+    }
+}
+
+struct InflightKeyGuard {
+    _guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+    key_lock: Arc<KeyLock>,
+    key: CacheKey,
+    registry: InflightRegistry,
+}
+
+impl Drop for InflightKeyGuard {
+    fn drop(&mut self) {
+        // Release the async lock before looking for another holder. Waiters
+        // own an Arc, so the key remains registered while any one waits.
+        drop(self._guard.take());
+        let mut registry = self.registry.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if Arc::strong_count(&self.key_lock) == 1
+            && registry
+                .get(&self.key)
+                .is_some_and(|entry| entry.ptr_eq(&Arc::downgrade(&self.key_lock)))
+        {
+            registry.remove(&self.key);
+        }
     }
 }
 
@@ -430,6 +491,9 @@ pub(crate) async fn idempotency(
         }
     };
     let fingerprint = request_fingerprint(&parts.method, &path, &body_bytes);
+    // A second request must re-check the cache after the first finishes. The
+    // lock spans durable lookup, handler execution, and response persistence.
+    let _inflight_guard = layer.lock_key(&cache_key).await;
     let now = Utc::now();
 
     // Read-through lookup: memory first, then the durable store.
@@ -681,6 +745,73 @@ mod tests {
         // Handler ran exactly once; both responses are byte-identical.
         assert_eq!(counter.load(Ordering::SeqCst), 1);
         assert_eq!(first_body, second_body);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_requests_for_one_key_run_handler_once() {
+        let counter = Arc::new(AtomicU64::new(0));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let app = Router::new()
+            .route(
+                "/api/v1/orders",
+                post({
+                    let counter = counter.clone();
+                    let started = started.clone();
+                    let release = release.clone();
+                    move || {
+                        let counter = counter.clone();
+                        let started = started.clone();
+                        let release = release.clone();
+                        async move {
+                            let n = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                            started.notify_one();
+                            release.notified().await;
+                            (StatusCode::CREATED, format!("order-{n}"))
+                        }
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(IdempotencyLayer::new(), idempotency));
+        let request = || {
+            Request::post("/api/v1/orders")
+                .header("idempotency-key", "same-key")
+                .body(Body::from("{}"))
+                .unwrap()
+        };
+        let first = tokio::spawn(app.clone().oneshot(request()));
+        tokio::time::timeout(Duration::from_secs(5), started.notified()).await.unwrap();
+        let second = tokio::spawn(app.oneshot(request()));
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+        assert!(!second.is_finished());
+        release.notify_waiters();
+        let first =
+            tokio::time::timeout(Duration::from_secs(5), first).await.unwrap().unwrap().unwrap();
+        let second =
+            tokio::time::timeout(Duration::from_secs(5), second).await.unwrap().unwrap().unwrap();
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+        assert_eq!(first.headers()["idempotency-replayed"], "false");
+        assert_eq!(second.headers()["idempotency-replayed"], "true");
+        assert_eq!(
+            to_bytes(first.into_body(), usize::MAX).await.unwrap(),
+            to_bytes(second.into_body(), usize::MAX).await.unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn distinct_keys_have_independent_locks_and_cleanup() {
+        let layer = IdempotencyLayer::new();
+        let first_key = ("tenant".to_string(), "first".to_string());
+        let second_key = ("tenant".to_string(), "second".to_string());
+        let first = layer.lock_key(&first_key).await;
+        let second = tokio::time::timeout(Duration::from_millis(100), layer.lock_key(&second_key))
+            .await
+            .expect("a distinct key must not wait for the first handler");
+        assert_eq!(layer.inflight.lock().unwrap().len(), 2);
+        drop(first);
+        drop(second);
+        assert!(layer.inflight.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
