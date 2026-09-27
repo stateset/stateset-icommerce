@@ -44,7 +44,9 @@ const conditionSchema = z.object({
   isRequired: z
     .boolean()
     .optional()
-    .describe('Required conditions must all hold; otherwise at least one optional one must (default true)'),
+    .describe(
+      'Required conditions must all hold; otherwise at least one optional one must (default true)',
+    ),
 });
 
 export const promotionTools = [
