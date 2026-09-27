@@ -24,7 +24,7 @@ import { richMessageToPlainText } from '../channels/rich-messages.js';
  *
  * @param {Object} options
  * @param {string}   [options.dbPath='./store.db']
- * @param {boolean}  [options.allowApply=true]
+ * @param {boolean}  [options.allowApply=false]
  * @param {string}   [options.model]
  * @param {number}   [options.maxTurns=10]
  * @param {boolean}  [options.verbose=false]
@@ -38,7 +38,7 @@ import { richMessageToPlainText } from '../channels/rich-messages.js';
  */
 export async function startSignalGateway({
   dbPath = './store.db',
-  allowApply = true,
+  allowApply = false,
   model,
   maxTurns = 10,
   verbose = false,
