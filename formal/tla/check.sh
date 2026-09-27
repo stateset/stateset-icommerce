@@ -33,7 +33,7 @@ tlc() {
 fail=0
 cd "$HERE/payments"
 # A run that ends on a counterexample leaves its state directory behind.
-trap 'rm -rf "$HERE/payments/states" "$HERE/inventory/states" "$HERE/x402/states" "$HERE/returns/states" "$HERE/finance/states" "$HERE/subscriptions/states" "$HERE/warehouse/states" "$HERE/kernel/states" "$HERE/checkout/states" "$HERE/promotions/states"' EXIT
+trap 'rm -rf "$HERE/payments/states" "$HERE/inventory/states" "$HERE/x402/states" "$HERE/returns/states" "$HERE/finance/states" "$HERE/subscriptions/states" "$HERE/warehouse/states" "$HERE/kernel/states" "$HERE/checkout/states" "$HERE/promotions/states" "$HERE/sync/states"' EXIT
 
 echo "== PaymentRefunds: the implementation (Locked = TRUE) must satisfy every property"
 if tlc -config PaymentRefunds_locked.cfg PaymentRefunds.tla > locked.log 2>&1; then
@@ -98,6 +98,7 @@ check_pair() {
   rm -rf states
 }
 
+check_pair payments OrderCapture OrderCapture_atomic.cfg OrderCapture_split.cfg NoOverCapture
 check_pair inventory InventoryReservations InventoryReservations_guarded.cfg InventoryReservations_unguarded.cfg AllocatedMatchesOpen
 check_pair x402 X402Claims X402Claims_atomic.cfg X402Claims_split.cfg NoDuplicateClaim
 check_pair x402 EscrowSettlement EscrowSettlement_guarded.cfg EscrowSettlement_split.cfg NoDoubleSettlement
@@ -135,10 +136,15 @@ rm -f unprotected.log
 rm -rf states
 
 check_pair finance PeriodClose PeriodClose_atomic.cfg PeriodClose_split.cfg ClosedBalanceFrozen
+check_pair finance PaymentRun PaymentRun_atomic.cfg PaymentRun_split.cfg NoDoubleDisbursement
 check_pair subscriptions BillingClaim BillingClaim_atomic.cfg BillingClaim_split.cfg OneCyclePerKey
 check_pair subscriptions ChargeRetry ChargeRetry_atomic.cfg ChargeRetry_split.cfg AtMostOneLivePayment
+check_pair subscriptions PriceSnapshot PriceSnapshot_atomic.cfg PriceSnapshot_split.cfg NoStaleCyclePrice
 check_pair warehouse LocationMove LocationMove_atomic.cfg LocationMove_split.cfg StockConserved
 check_pair warehouse LotGenealogy LotGenealogy_complete.cfg LotGenealogy_missing.cfg TraceComplete
+check_pair warehouse PickWave PickWave_guarded.cfg PickWave_unguarded.cfg CompletedOnlyWhenFinal
+check_pair sync PullConflict PullConflict_atomic.cfg PullConflict_split.cfg CursorHasDecision
+check_pair sync PullConflict PullConflict_local.cfg PullConflict_local_split.cfg CursorHasDecision
 
 check_pair kernel ReceiptGate ReceiptGate_atomic.cfg ReceiptGate_split.cfg AtMostOneEffect
 check_pair kernel ReceiptGate ReceiptGate_atomic.cfg ReceiptGate_unprotected.cfg NoUnauthorizedEffect

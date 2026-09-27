@@ -388,6 +388,78 @@ concurrent over-application guard. The proof models exact minor units and
 does not prove the SQL transaction, invoice status checks, or cross-invoice
 allocation.
 
+## AP payment runs — `tla/finance/PaymentRun.tla` and `lean/PayableAllocation.lean`
+
+Two workers may process one approved run. The guarded TLA+ model commits the
+status claim, payment insertion and bill-balance update together; the split
+model finds a double disbursement. Lean proves that a sequence of allocations
+cannot increase the bill's total due-plus-paid amount or pay more than the
+remaining due amount. The Rust regressions
+`process_payment_run_concurrent_double_process_pays_each_bill_once` and
+`process_payment_run_skips_bill_paid_after_run_creation` exercise the actual
+transaction and bill re-read. The Lean model caps requests, whereas Rust
+rejects an oversized direct allocation. Neither model proves bank settlement
+or every SQL statement in the transaction.
+
+## Pick waves — `tla/warehouse/PickWave.tla` and `lean/PickQuantity.lean`
+
+The TLA+ model interleaves two pick finalizations and wave completion.
+`CompletedOnlyWhenFinal` holds when completion checks the actual pick rows;
+removing the guard completes a wave with open work. Lean proves that the
+quantity guard (`picked <= requested` and `short <= requested - picked`)
+is equivalent to a non-overclaiming total, for nonnegative quantities at a
+common fixed scale.
+Both SQLite and Postgres now reject negative or excessive picked/short
+quantities in `complete_pick` and `report_short`. SQLite's
+`pick_quantity_claims_cannot_exceed_or_reverse_the_request`, Postgres's
+`postgres_pick_quantity_claims_cannot_exceed_or_reverse_the_request`, and
+`complete_wave_refuses_while_picks_are_open` exercise these guards. Partial
+picks may leave an unclaimed remainder; the proof does **not** say every
+requested unit must be picked or short. It also does not prove stock movement.
+
+## Subscription price snapshots — `tla/subscriptions/PriceSnapshot.tla`
+
+A subscription price may change before or after a cycle is inserted. The
+cycle must use the subscription price observed at *insert time*; it is not
+retroactively repriced by a later update. A split read/insert produces a
+stale cycle after a concurrent price update. SQLite's
+`billing_cycle_snapshots_price_and_discount_at_insert` checks the pricing
+snapshot and that an earlier cycle stays unchanged. The model covers one
+subscription, one new cycle and two prices. It does not model proration or
+guarantee that a previously seeded upcoming cycle is repriced on a plan
+change. `lean/SubscriptionBilling.lean` separately proves that a rounded
+discount capped at the subtotal leaves a nonnegative total and conserves
+the subtotal. Decimal rounding itself is outside that proof.
+
+## Sync conflict pull — `tla/sync/PullConflict.tla`
+
+For one local/remote conflict, the remote cursor must advance only after
+applying the chosen resolution. The guarded model checks remote-wins and
+local-wins; an
+advance-first mutation finds a cursor that would skip unresolved work.
+`pull_conflict_resolution` and
+`pull_does_not_advance_cursor_when_conflict_resolution_cannot_persist`
+exercise the real ordering and storage-failure path. This is an in-process
+ordering model, **not** a proof of crash-atomic persistence across the outbox,
+buffer and runtime-state files, nor of distributed convergence.
+
+## Order-to-cash — `tla/payments/OrderCapture.tla` and `lean/CashReconciliation.lean`
+
+Two workers each try to capture two units against a three-unit order. The
+atomic order-capacity check and payment insert admit only one; a split
+read/insert counterexample captures four. SQLite and Postgres
+`*_concurrent_captures_cannot_exceed_one_order_total` test the real race.
+For any sequence of completed refunds, a capped exact-minor-unit model
+preserves `captured = refundable + refunded`; `refunds_conserve_capture`
+holds for an arbitrary list. Rust rejects an oversized refund rather than
+silently capping it. The existing `tla/payments/PaymentRefunds.tla` checks the
+concurrent reservation/complete protocol, while
+`two_partial_refunds_sum_to_exact_decimal_and_flip_to_refunded` and
+`postgres_concurrent_refunds_do_not_over_refund` connect it to both backends.
+This covers the payment refund ledger. There is no proven automatic link from
+payments to general-ledger journal entries, so it does **not** establish a
+cross-system order-to-cash reconciliation invariant.
+
 ## Running it
 
 ```
@@ -412,4 +484,9 @@ cargo test -p stateset-core --lib stacked_item_discounts_match_lean_budget_model
 cargo test -p stateset-core --lib posting_gate_matches_lean_debit_credit_model
 cargo test -p stateset-core --lib straight_line_matches_lean_minor_unit_schedule
 cargo test -p stateset-db --lib partial_credit_applications_preserve_memo_and_invoice_balances
+cargo test -p stateset-db --lib pick_quantity_claims_cannot_exceed_or_reverse_the_request
+cargo test -p stateset-db --lib billing_cycle_snapshots_price_and_discount_at_insert
+cargo test -p stateset-sync pull_does_not_advance_cursor_when_conflict_resolution_cannot_persist
+cargo test -p stateset-db --test sqlite_payment_order_guards concurrent_captures_cannot_exceed_one_order_total
+cargo test -p stateset-embedded --test ap_money_guards_test process_payment_run_concurrent_double_process_pays_each_bill_once
 ```
