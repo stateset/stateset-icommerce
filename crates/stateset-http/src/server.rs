@@ -405,6 +405,8 @@ impl ServerBuilder {
     /// Configure bearer authentication for `/api/v1/*` endpoints.
     ///
     /// Requests to API routes must include `Authorization: Bearer <token>`.
+    /// This does not change the separate `/metrics` credential. Set a stable
+    /// scrape token with [`Self::with_metrics_bearer_auth`] when exposing metrics.
     #[must_use]
     pub fn with_bearer_auth(mut self, token: impl Into<String>) -> Self {
         self.api_bearer_token = Some(token.into());

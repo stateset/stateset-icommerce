@@ -74,7 +74,10 @@ API authorization via `with_authz_engine` and rate limiting via
 actors, enforce permissions, strip client-supplied actor/forwarding headers,
 and throttle traffic before forwarding it. Public binds cannot trust
 `x-actor-id` or forwarded client IP headers without that declaration.
-See the
+`/metrics` has a separate bearer token: `with_bearer_auth` only replaces the
+API token. Configure `with_metrics_bearer_auth` with an operator-owned scrape
+token before serving; keep that credential separate from the write-capable API
+token. Without it, `/metrics` retains its generated default token. See the
 [deployment guide](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/advanced/deployment.md).
 
 ## Part of StateSet iCommerce
