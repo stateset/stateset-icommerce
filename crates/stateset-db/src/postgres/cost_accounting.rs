@@ -742,6 +742,9 @@ impl PgCostAccountingRepository {
     }
 
     pub async fn issue_fifo_async(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError("issue quantity must be positive".into()));
+        }
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut remaining = input.quantity;
         let mut transactions = Vec::new();
@@ -802,6 +805,9 @@ impl PgCostAccountingRepository {
     }
 
     pub async fn issue_lifo_async(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError("issue quantity must be positive".into()));
+        }
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut remaining = input.quantity;
         let mut transactions = Vec::new();

@@ -455,6 +455,10 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
             include_str!("../migrations/095_kernel_economic_budgets.sql"),
         ),
         ("096_kernel_outbox_tier", include_str!("../migrations/096_kernel_outbox_tier.sql")),
+        (
+            "097_http_idempotency_sub_ms",
+            include_str!("../migrations/097_http_idempotency_sub_ms.sql"),
+        ),
     ]
 }
 

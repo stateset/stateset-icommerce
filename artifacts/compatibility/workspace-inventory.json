@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.35.2",
+    "version": "1.35.3",
     "memberCount": 30,
     "defaultMemberCount": 19,
     "rustCrateCount": 22,
@@ -555,7 +555,7 @@
   "cli": {
     "binaryCount": 53,
     "dependencyCount": 14,
-    "optionalDependencyCount": 15,
+    "optionalDependencyCount": 12,
     "topLevelSourceCounts": [
       {
         "name": "tools",
@@ -594,12 +594,12 @@
         "count": 14
       },
       {
-        "name": "x402",
+        "name": "chains",
         "count": 10
       },
       {
-        "name": "chains",
-        "count": 9
+        "name": "x402",
+        "count": 10
       },
       {
         "name": "knowledge",

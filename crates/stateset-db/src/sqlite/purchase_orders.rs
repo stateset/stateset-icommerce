@@ -1692,6 +1692,22 @@ mod tests {
             .expect("create");
         let cancelled = repo.cancel(po.id).expect("cancel");
         assert_eq!(cancelled.status, PurchaseOrderStatus::Cancelled);
+        let err = repo
+            .receive(
+                po.id,
+                ReceivePurchaseOrderItems {
+                    items: vec![ReceivePurchaseOrderItem {
+                        item_id: po.items[0].id,
+                        quantity_received: dec!(1),
+                        notes: None,
+                    }],
+                    notes: None,
+                },
+            )
+            .expect_err("cancelled purchase order cannot receive goods");
+        assert!(matches!(err, CommerceError::Conflict(_)), "{err:?}");
+        let after = repo.get(po.id).expect("get").expect("purchase order");
+        assert_eq!(after.items[0].quantity_received, dec!(0));
     }
 
     /// A non-draft delete is a state conflict, not a malformed request. The

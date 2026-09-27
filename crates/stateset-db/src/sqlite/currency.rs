@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_decimal_row,
-    parse_enum_row, parse_json_row, parse_uuid_row, uuid_params,
+    parse_enum_row, parse_json_row, parse_uuid_row, uuid_params, with_immediate_transaction,
 };
 use stateset_core::{BatchResult, validate_batch_size};
 
@@ -204,11 +204,11 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         let rate =
             input.rate.round_dp_with_strategy(RATE_SCALE, RoundingStrategy::MidpointAwayFromZero);
 
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-            // Upsert the rate
-            conn.execute(
+        // The current quote and its history record are one publication. A
+        // failed history insert must roll back the upsert, and the returned
+        // quote must be the one this call actually published.
+        with_immediate_transaction(&self.pool, |tx| {
+            tx.execute(
                 "INSERT INTO exchange_rates (id, base_currency, quote_currency, rate, source, rate_at, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT (base_currency, quote_currency) DO UPDATE SET
@@ -221,16 +221,16 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
                     input.base_currency.code(),
                     input.quote_currency.code(),
                     rate.to_string(),
-                    source,
+                    &source,
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                     now.to_rfc3339()
                 ],
             )
-            .map_err(map_db_error)?;
+            ?;
 
             // Record in history
-            conn.execute(
+            tx.execute(
                 "INSERT INTO exchange_rate_history (id, base_currency, quote_currency, rate, source, rate_at)
                  VALUES (?, ?, ?, ?, ?, ?)",
                 params![
@@ -238,15 +238,19 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
                     input.base_currency.code(),
                     input.quote_currency.code(),
                     rate.to_string(),
-                    source,
+                    &source,
                     now.to_rfc3339()
                 ],
             )
-            .map_err(map_db_error)?;
-        }
+            ?;
 
-        // Fetch and return the rate
-        self.get_rate(input.base_currency, input.quote_currency)?.ok_or(CommerceError::NotFound)
+            tx.query_row(
+                "SELECT id, base_currency, quote_currency, rate, source, rate_at, created_at, updated_at
+                 FROM exchange_rates WHERE base_currency = ? AND quote_currency = ?",
+                params![input.base_currency.code(), input.quote_currency.code()],
+                Self::row_to_exchange_rate,
+            )
+        })
     }
 
     fn set_rates(&self, rates: Vec<SetExchangeRate>) -> Result<Vec<ExchangeRate>> {
@@ -548,5 +552,32 @@ mod tests {
             .expect("offset");
         assert_eq!(rest.len(), all.len() - 2, "offset must skip the first rows");
         assert_eq!(rest[0].id, all[2].id);
+    }
+
+    #[test]
+    fn failed_history_insert_rolls_back_current_rate() {
+        let repo = fresh_repo();
+        set(&repo, Currency::USD, Currency::EUR);
+        let before = repo.get_rate(Currency::USD, Currency::EUR).expect("get").expect("rate");
+        let conn = repo.pool.get().expect("conn");
+        conn.execute_batch(
+            "CREATE TRIGGER reject_rate_history BEFORE INSERT ON exchange_rate_history
+             BEGIN SELECT RAISE(ABORT, 'history unavailable'); END;",
+        )
+        .expect("install failure trigger");
+
+        assert!(
+            repo.set_rate(SetExchangeRate {
+                base_currency: Currency::USD,
+                quote_currency: Currency::EUR,
+                rate: dec!(2.5),
+                source: Some("rollback-test".into()),
+            })
+            .is_err()
+        );
+        let after = repo.get_rate(Currency::USD, Currency::EUR).expect("get").expect("rate");
+        assert_eq!(after.rate, before.rate);
+        assert_eq!(after.source, before.source);
+        assert_eq!(after.rate_at, before.rate_at);
     }
 }
