@@ -2984,7 +2984,7 @@ mod tests {
             })
             .expect("list cycles");
         cycles.sort_by_key(|c| c.cycle_number);
-        assert_eq!(cycles.len(), 2, "{cycles:?}");
+        assert_eq!(cycles.len(), 2, "expected skipped and scheduled billing cycles");
 
         assert_eq!(cycles[0].cycle_number, 1);
         assert_eq!(cycles[0].status, BillingCycleStatus::Skipped);
