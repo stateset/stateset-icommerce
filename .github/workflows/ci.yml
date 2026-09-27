@@ -795,7 +795,8 @@ jobs:
 
       - name: Security audit
         working-directory: cli
-        run: npm audit --omit=optional --audit-level=high
+        # Optional integrations ship with the CLI and must be audited too.
+        run: npm audit --audit-level=high
 
       - name: Install root tooling (ESLint, Prettier)
         # Disable husky git hook installation in CI.

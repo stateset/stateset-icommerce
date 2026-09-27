@@ -555,7 +555,7 @@
   "cli": {
     "binaryCount": 53,
     "dependencyCount": 13,
-    "optionalDependencyCount": 15,
+    "optionalDependencyCount": 14,
     "topLevelSourceCounts": [
       {
         "name": "tools",
@@ -594,12 +594,12 @@
         "count": 14
       },
       {
-        "name": "x402",
+        "name": "chains",
         "count": 10
       },
       {
-        "name": "chains",
-        "count": 9
+        "name": "x402",
+        "count": 10
       },
       {
         "name": "knowledge",
