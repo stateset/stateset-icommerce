@@ -63,12 +63,23 @@ test('PaymentObligations: full lifecycle', async (t) => {
   });
 
   await t.test('setStatus accepts a snake_case status', async () => {
-    const updated = await commerce.paymentObligations.setStatus(obligation.id, 'scheduled');
+    const pending = await commerce.paymentObligations.create({
+      supplierId,
+      amount: '1.00',
+      currency: 'USD',
+      dueDate: '2026-09-30',
+    });
+    const updated = await commerce.paymentObligations.setStatus(pending.id, 'scheduled');
     assert.equal(updated.status, 'scheduled');
     await assert.rejects(
-      () => commerce.paymentObligations.setStatus(obligation.id, 'nope'),
+      () => commerce.paymentObligations.setStatus(pending.id, 'nope'),
       /Invalid payment obligation status: nope/,
     );
+    await assert.rejects(
+      () => commerce.paymentObligations.setStatus(obligation.id, 'scheduled'),
+      (err) => err.code === 'CONFLICT' && /partially_paid to scheduled/.test(err.message),
+    );
+    await commerce.paymentObligations.setStatus(pending.id, 'cancelled');
   });
 
   await t.test('linkBill records the bill id', async () => {
