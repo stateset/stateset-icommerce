@@ -259,6 +259,10 @@ pub trait ChannelRepository: Send + Sync {
     fn set_lock(&self, id: ChannelId, locked: bool) -> Result<Channel>;
 
     /// Bulk upsert/delete channel SKU mappings. Returns the affected count.
+    ///
+    /// Refused with `Conflict` while the channel is API-locked
+    /// ([`Channel::is_mutation_blocked`](crate::Channel::is_mutation_blocked)),
+    /// and with `NotFound` for an unknown channel.
     fn sync_products(&self, id: ChannelId, items: Vec<ChannelProductSyncItem>) -> Result<u64>;
 
     /// List a channel's SKU mappings.

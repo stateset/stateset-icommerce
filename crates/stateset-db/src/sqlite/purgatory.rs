@@ -8,7 +8,7 @@ use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use stateset_core::{
-    CommerceError, IngestOrder, MapPurgatoryLine, PurgatoryFilter, PurgatoryLineItem,
+    ChannelId, CommerceError, IngestOrder, MapPurgatoryLine, PurgatoryFilter, PurgatoryLineItem,
     PurgatoryLineItemId, PurgatoryOrder, PurgatoryOrderId, PurgatoryRepository, Result,
 };
 
@@ -126,6 +126,26 @@ impl SqlitePurgatoryRepository {
     }
 }
 
+/// Refuse an ingest naming a channel that cannot ingest orders
+/// (`Channel::can_ingest`: a fulfillment-only channel) or that does not
+/// exist, on the ingest's own transaction. Worded identically in Postgres.
+fn ensure_ingesting_channel(
+    tx: &rusqlite::Connection,
+    channel_id: ChannelId,
+) -> rusqlite::Result<()> {
+    let refuse = |msg: String| {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::ValidationError(msg)))
+    };
+    match super::channels::load_channel_conn(tx, &channel_id.to_string())? {
+        None => Err(refuse(format!("cannot ingest from unknown channel {channel_id}"))),
+        Some(channel) if !channel.can_ingest() => Err(refuse(format!(
+            "channel {channel_id} is a {} and cannot ingest orders",
+            channel.channel_type
+        ))),
+        Some(_) => Ok(()),
+    }
+}
+
 impl PurgatoryRepository for SqlitePurgatoryRepository {
     fn ingest(&self, input: IngestOrder) -> Result<PurgatoryOrder> {
         if input.items.is_empty() {
@@ -139,6 +159,9 @@ impl PurgatoryRepository for SqlitePurgatoryRepository {
         let metadata_json = serde_json::to_string(&input.metadata)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         with_immediate_transaction(&self.pool, |tx| {
+            if let Some(channel_id) = input.channel_id {
+                ensure_ingesting_channel(tx, channel_id)?;
+            }
             tx.execute(
                 "INSERT INTO purgatory_orders (id, channel_id, external_order_id, external_status, is_posted, metadata, created_at, updated_at)
                  VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
