@@ -1158,7 +1158,7 @@ impl CartRepository for SqliteCartRepository {
     /// conditions such as a minimum subtotal or first order) against the cart
     /// as the write lock holds it, and the discount is written and the cart
     /// repriced in the same `BEGIN IMMEDIATE` transaction — see
-    /// [`Self::apply_discount_in_tx`].
+    /// `Self::apply_discount_in_tx`.
     fn apply_discount(&self, id: CartId, coupon_code: &str) -> Result<Cart> {
         with_immediate_transaction(&self.pool, |tx| {
             self.apply_discount_in_tx(tx, id, coupon_code).map_err(to_sql_err)

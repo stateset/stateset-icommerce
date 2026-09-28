@@ -1224,7 +1224,7 @@ impl PgCartRepository {
         }))
     }
 
-    /// Redeem `coupon_code` on the cart; see [`Self::apply_discount_in_tx`].
+    /// Redeem `coupon_code` on the cart; see `Self::apply_discount_in_tx`.
     pub async fn apply_discount_async(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let cart = self.apply_discount_in_tx(&mut tx, id, coupon_code).await?;

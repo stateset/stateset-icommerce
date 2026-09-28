@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 //! The governed storefront catalog through the embedded JSON dispatcher —
 //! the exact wire path the Node binding (`executeKernelCommand`) and the MCP
 //! strict endpoint use. Every payload below is shaped the way
