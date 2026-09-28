@@ -330,3 +330,38 @@ async fn postgres_terminal_ncrs_refuse_further_status_writes() {
         NcrStatus::Closed
     );
 }
+
+/// Closing through `update_ncr` stamps `closed_at` like `close_ncr`.
+#[tokio::test]
+async fn postgres_update_ncr_to_closed_records_the_close_time() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let ncr = db
+        .quality()
+        .create_ncr_async(CreateNonConformance {
+            inspection_id: None,
+            source: NonConformanceSource::InternalAudit,
+            severity: Severity::Minor,
+            sku: format!("NCR-UPD-{}", Uuid::new_v4().simple()),
+            lot_number: None,
+            serial_number: None,
+            quantity_affected: dec!(1),
+            description: "defect".into(),
+            assigned_to: None,
+        })
+        .await
+        .expect("create ncr");
+    let closed = db
+        .quality()
+        .update_ncr_async(
+            ncr.id,
+            UpdateNonConformance { status: Some(NcrStatus::Closed), ..Default::default() },
+        )
+        .await
+        .expect("close via update");
+    assert_eq!(closed.status, NcrStatus::Closed);
+    assert!(closed.closed_at.is_some(), "a closed NCR records when it closed");
+}

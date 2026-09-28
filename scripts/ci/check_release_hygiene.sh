@@ -147,6 +147,7 @@ node ./scripts/ci/generate_mcp_inventory.mjs --check >/dev/null
 node ./scripts/ci/generate_agent_inventory.mjs --check >/dev/null
 node ./scripts/ci/generate_api_command_coverage.mjs --check >/dev/null
 node ./scripts/ci/generate_binding_api_inventory.mjs --check >/dev/null
+node ./scripts/ci/generate_binding_parity.mjs --check >/dev/null
 node ./scripts/ci/generate_http_gateway_inventory.mjs --check >/dev/null
 node ./scripts/ci/generate_mcp_api_coverage.mjs --check >/dev/null
 node ./scripts/ci/generate_workspace_inventory.mjs --check >/dev/null

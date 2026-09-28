@@ -10,7 +10,8 @@ use super::kernel_outbox::{
 };
 use super::orders::{ShipMode, SqliteOrderRepository};
 use super::payments::{
-    SqlitePaymentRepository, check_order_capture_capacity_tx, open_captures_for_order_conn,
+    SqlitePaymentRepository, check_order_capture_capacity_tx, derive_order_payment_status_conn,
+    open_captures_for_order_conn, sync_order_payment_status_tx,
     void_in_flight_payments_for_order_conn,
 };
 use super::returns::{SqliteReturnRepository, row_to_return_item};
@@ -68,14 +69,14 @@ use stateset_core::{
     CheckoutResult, CommandEnvelope, CommerceError, CommitCheckout, ConfirmInventoryReservation,
     CreateA2AEscrow, CreateInventoryItem, CreatePayment, CreateProduct, CreateRefund,
     DisputeA2AEscrow, EconomicBudget, EconomicBudgetStatus, ExecutionMode, ExecutionReceipt,
-    ExecutionStatus, FileA2ADispute, FundA2AEscrow, InventoryItem, InventoryReservation,
-    JournalEntry, JournalEntryStatus, KernelPolicy, Money, Order, OrderStatus, Payment,
-    PaymentTransactionStatus, PostJournalEntry, Product, ProductId, ProductStatus, Refund,
-    RefundA2AEscrow, RefundStatus, ReleaseA2AEscrow, ReleaseInventoryReservation,
-    ReservationStatus, ReserveInventory, ResolveA2ADispute, Result, RetryDisposition, Return,
-    SettleX402Intent, ShipOrderCommand, SubmitA2ADisputeEvidence, SubscriptionCharge,
-    SubscriptionStatus, TransitionOrder, TransitionReturn, Validate, X402IntentStatus,
-    X402PaymentIntent,
+    ExecutionStatus, FileA2ADispute, FulfillmentStatus, FundA2AEscrow, InventoryItem,
+    InventoryReservation, JournalEntry, JournalEntryStatus, KernelPolicy, Money, Order,
+    OrderStatus, Payment, PaymentTransactionStatus, PostJournalEntry, Product, ProductId,
+    ProductStatus, Refund, RefundA2AEscrow, RefundStatus, ReleaseA2AEscrow,
+    ReleaseInventoryReservation, ReservationStatus, ReserveInventory, ResolveA2ADispute, Result,
+    RetryDisposition, Return, SettleX402Intent, ShipOrderCommand, SubmitA2ADisputeEvidence,
+    SubscriptionCharge, SubscriptionStatus, TransitionOrder, TransitionReturn, Validate,
+    X402IntentStatus, X402PaymentIntent,
 };
 use uuid::Uuid;
 
@@ -796,8 +797,16 @@ impl SqliteKernelExecutor {
             );
             append_kernel_event_tx(tx, &event)?;
             let _ = started_at;
+            let mut event_ids = vec![event.id];
+            if let Some(order_id) = input.order_id {
+                event_ids.extend(sync_order_payment_status_tx(
+                    tx,
+                    &order_id.to_string(),
+                    created_at,
+                )?);
+            }
             let mut receipt =
-                run.succeeded(payment, Some(id.to_string()), None, Some(1), vec![event.id]);
+                run.succeeded(payment, Some(id.to_string()), None, Some(1), event_ids);
             append_receipt(tx, &request_hash, &mut receipt)?;
             Ok(receipt)
         })
@@ -1481,12 +1490,35 @@ impl SqliteKernelExecutor {
                 return Ok(receipt);
             }
 
+            // Void first: the voids change the payment ledger the order's
+            // money status is derived from, and the derived value belongs in
+            // the same UPDATE (one version bump). An explicit payment_status
+            // on the command still wins.
+            let mut voided_payment_ids = Vec::new();
+            if effects.void_in_flight_payments {
+                voided_payment_ids =
+                    void_in_flight_payments_for_order_conn(tx, &order_id, started_at)?;
+            }
+            let next_payment_status =
+                if command.payload.payment_status.is_none() && !voided_payment_ids.is_empty() {
+                    derive_order_payment_status_conn(
+                        tx,
+                        &order_id,
+                        order.total_amount,
+                        effects.next_payment_status,
+                    )?
+                } else {
+                    effects.next_payment_status
+                };
+            let next_fulfillment_status = FulfillmentStatus::for_order_status(effects.next_status)
+                .unwrap_or(order.fulfillment_status);
             let rows = tx.execute(
-                "UPDATE orders SET status = ?, payment_status = ?, updated_at = ?,
-                        version = version + 1 WHERE id = ? AND version = ?",
+                "UPDATE orders SET status = ?, payment_status = ?, fulfillment_status = ?,
+                        updated_at = ?, version = version + 1 WHERE id = ? AND version = ?",
                 params![
                     effects.next_status.to_string(),
-                    effects.next_payment_status.to_string(),
+                    next_payment_status.to_string(),
+                    next_fulfillment_status.to_string(),
                     started_at.to_rfc3339(),
                     order_id,
                     version_before,
@@ -1500,11 +1532,6 @@ impl SqliteKernelExecutor {
                 }));
             }
             let mut related_event_ids = Vec::new();
-            let mut voided_payment_ids = Vec::new();
-            if effects.void_in_flight_payments {
-                voided_payment_ids =
-                    void_in_flight_payments_for_order_conn(tx, &order_id, started_at)?;
-            }
             if effects.release_holds {
                 let reservation_ids =
                     SqliteInventoryRepository::list_reservation_ids_by_reference_in_tx(
@@ -1553,8 +1580,8 @@ impl SqliteKernelExecutor {
                     "status_before": effects.status_before.to_string(),
                     "status_after": effects.next_status.to_string(),
                     "payment_status_before": effects.payment_status_before.to_string(),
-                    "payment_status_after": effects.next_payment_status.to_string(),
-                    "fulfillment_status_after": order.fulfillment_status.to_string(),
+                    "payment_status_after": next_payment_status.to_string(),
+                    "fulfillment_status_after": next_fulfillment_status.to_string(),
                     "version_before": version_before,
                     "version_after": version_before + 1,
                     "total_amount": order.total_amount.to_string(),
@@ -1720,11 +1747,16 @@ impl SqliteKernelExecutor {
                     params![delta.delta, delta.item_id],
                 )?;
             }
+            let next_fulfillment_status =
+                FulfillmentStatus::for_order_status(effects.resolved_status)
+                    .unwrap_or(order.fulfillment_status);
             let rows = tx.execute(
-                "UPDATE orders SET status = ?, tracking_number = COALESCE(?, tracking_number),
+                "UPDATE orders SET status = ?, fulfillment_status = ?,
+                        tracking_number = COALESCE(?, tracking_number),
                         updated_at = ?, version = version + 1 WHERE id = ? AND version = ?",
                 params![
                     effects.resolved_status.to_string(),
+                    next_fulfillment_status.to_string(),
                     command.payload.tracking_number,
                     started_at.to_rfc3339(),
                     order_id,
@@ -1771,7 +1803,7 @@ impl SqliteKernelExecutor {
                 serde_json::json!({
                     "order_id": order_id, "status_before": effects.status_before.to_string(),
                     "status_after": effects.resolved_status.to_string(), "payment_status_before": order.payment_status.to_string(),
-                    "payment_status_after": order.payment_status.to_string(), "fulfillment_status_after": order.fulfillment_status.to_string(),
+                    "payment_status_after": order.payment_status.to_string(), "fulfillment_status_after": next_fulfillment_status.to_string(),
                     "version_before": version_before, "version_after": version_before + 1, "total_amount": order.total_amount.to_string(),
                 }),
             );
