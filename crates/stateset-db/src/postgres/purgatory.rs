@@ -111,6 +111,29 @@ impl PgPurgatoryRepository {
         let id = PurgatoryOrderId::new();
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        if let Some(channel_id) = input.channel_id {
+            // `Channel::can_ingest`, decided on the ingest's own transaction.
+            // Worded identically in the SQLite backend.
+            match super::channels::PgChannelRepository::load_channel_for_share_in_tx(
+                &mut tx,
+                channel_id.into(),
+            )
+            .await?
+            {
+                None => {
+                    return Err(CommerceError::ValidationError(format!(
+                        "cannot ingest from unknown channel {channel_id}"
+                    )));
+                }
+                Some(channel) if !channel.can_ingest() => {
+                    return Err(CommerceError::ValidationError(format!(
+                        "channel {channel_id} is a {} and cannot ingest orders",
+                        channel.channel_type
+                    )));
+                }
+                Some(_) => {}
+            }
+        }
 
         sqlx::query(
             "INSERT INTO purgatory_orders (id, channel_id, external_order_id, external_status, is_posted, metadata, created_at, updated_at)

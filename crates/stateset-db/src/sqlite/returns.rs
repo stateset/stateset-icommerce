@@ -1068,7 +1068,7 @@ impl ReturnRepository for SqliteReturnRepository {
         with_immediate_transaction(&self.pool, |tx| {
             let current = load_return_conn(tx, &id.to_string())?
                 .ok_or_else(|| smuggle(CommerceError::ReturnNotFound(id.into())))?;
-            if current.status != ReturnStatus::Requested {
+            if !current.can_approve() {
                 return Err(smuggle(CommerceError::ReturnCannotBeApproved(
                     current.status.to_string(),
                 )));
