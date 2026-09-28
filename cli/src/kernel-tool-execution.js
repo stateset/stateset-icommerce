@@ -69,6 +69,22 @@ export const KERNEL_OPTIONAL_TOOLS = Object.freeze(
   ]),
 );
 
+/**
+ * The key a tool's legacy handler returns its entity under. A governed call of
+ * the same tool answers with that key too (holding the receipt's result), so a
+ * caller reads `create_customer` the same way whether or not a kernel is
+ * configured. Only tools whose receipt result is the same kind of entity.
+ */
+const LEGACY_ENTITY_KEY_BY_TOOL = Object.freeze({
+  create_customer: 'customer',
+  create_cart: 'cart',
+  set_cart_shipping_address: 'cart',
+  complete_payment: 'payment',
+  create_shipment: 'shipment',
+  create_return: 'return',
+  add_return_tracking: 'return',
+});
+
 /** serde spellings of the carriers whose strum aliases differ. */
 const SHIPPING_CARRIER_ALIASES = Object.freeze({
   fedex: 'fed_ex',
@@ -557,19 +573,25 @@ export function createKernelToolExecutor({ commerce, kernel, allowApply, agentCo
         : executionOptions.authority || null;
 
     const receipt = await commerce.executeKernelCommand(command, kernelConfig.policy);
-    return {
+    // Copies, not aliases of `receipt.result`: replay/audit compaction treats a
+    // second reference to the same object as a cycle and truncates it, which
+    // left callers of `executeTool` with `result: '[truncated]'`.
+    const copyResult = () =>
+      receipt?.result === undefined || receipt?.result === null
+        ? null
+        : structuredClone(receipt.result);
+    const response = {
       success: receipt?.status === 'succeeded' || receipt?.status === 'previewed',
       kernel: true,
       commandType,
       preview: receipt?.status === 'previewed',
       receipt,
-      // A copy, not an alias of `receipt.result`: replay/audit compaction
-      // treats a second reference to the same object as a cycle and truncates
-      // it, which left callers of `executeTool` with `result: '[truncated]'`.
-      result:
-        receipt?.result === undefined || receipt?.result === null
-          ? null
-          : structuredClone(receipt.result),
+      result: copyResult(),
     };
+    const entityKey = LEGACY_ENTITY_KEY_BY_TOOL[toolName];
+    if (entityKey && receipt?.status === 'succeeded' && response.result) {
+      response[entityKey] = copyResult();
+    }
+    return response;
   };
 }
