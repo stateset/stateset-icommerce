@@ -33,11 +33,11 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 
 | Binding | Evidence | Gated | Exposed | Coverage | Parity vs Node |
 | --- | --- | --- | --- | --- | --- |
-| Node.js | traced: #[napi] methods -> engine calls | yes | 728/1216 | 59.9% | reference |
-| Python | traced: #[pymethods] methods -> engine calls | yes | 585/1216 | 48.1% | 79.5% |
+| Node.js | traced: #[napi] methods -> engine calls | yes | 729/1216 | 60% | reference |
+| Python | traced: #[pymethods] methods -> engine calls | yes | 587/1216 | 48.3% | 79.7% |
 | Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1216 | 6.6% | 11% |
-| .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1216 | 3.9% | 6.5% |
-| Java | native reach: engine calls anywhere in the Rust layer | no | 77/1216 | 6.3% | 9.8% |
+| .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1216 | 3.9% | 6.4% |
+| Java | native reach: engine calls anywhere in the Rust layer | no | 77/1216 | 6.3% | 9.7% |
 | Kotlin | native reach: engine calls anywhere in the Rust layer | no | 59/1216 | 4.9% | 8.1% |
 | PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1216 | 14.6% | 22.1% |
 | Ruby | native reach: engine calls anywhere in the Rust layer | no | 0/1216 | 0% | 0% |
@@ -105,7 +105,7 @@ Cells are exposed / applicable engine methods.
 | `promotions` | 18 | 0 | 18/18 | 16/18 | 0/18 | 0/18 | 0/18 | 0/18 | 9/18 | 0/18 | 0/18 | 0/18 |
 | `purchase_orders` | 26 | 0 | 11/26 | 11/26 | 10/26 | 0/26 | 0/26 | 0/26 | 11/26 | 0/26 | 0/26 | 0/26 |
 | `purgatory` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
-| `quality` | 33 | 0 | 15/33 | 8/33 | 0/33 | 1/33 | 4/33 | 2/33 | 4/33 | 0/33 | 2/33 | 0/33 |
+| `quality` | 33 | 0 | 16/33 | 10/33 | 0/33 | 1/33 | 4/33 | 2/33 | 4/33 | 0/33 | 2/33 | 0/33 |
 | `receiving` | 24 | 0 | 9/24 | 5/24 | 0/24 | 0/24 | 4/24 | 0/24 | 4/24 | 0/24 | 0/24 | 0/24 |
 | `returns` | 15 | 0 | 13/15 | 6/15 | 6/15 | 2/15 | 6/15 | 6/15 | 5/15 | 0/15 | 2/15 | 0/15 |
 | `revenue_recognition` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
@@ -150,8 +150,8 @@ unless `--allow-loss` is also passed. Gated bindings: `node`, `python`, `go`
 
 | Binding | Known gaps vs Node (baseline) |
 | --- | --- |
-| python | 149 |
-| go | 648 |
+| python | 148 |
+| go | 649 |
 
 ## Exemptions
 
@@ -285,7 +285,7 @@ purchase orders and promotions. They are not a CI failure; review each one.
 | Location | Struct literal | Field |
 | --- | --- | --- |
 | `bindings/node/src/domains/accounts_payable.rs:271` | `stateset_core::CreateBill` | `items: vec![]` |
-| `bindings/node/src/domains/quality.rs:308` | `stateset_core::CreateInspection` | `items: vec![]` |
+| `bindings/node/src/domains/quality.rs:416` | `stateset_core::CreateInspection` | `items: vec![]` |
 | `bindings/node/src/domains/receiving.rs:138` | `stateset_core::CreateReceipt` | `items: vec![]` |
 
 ## Unmatched host methods (name-matched surfaces)
@@ -1275,7 +1275,7 @@ purchase orders and promotions. They are not a CI failure; review each one.
 | Engine method | Node.js | Python | Go |
 | --- | --- | --- | --- |
 | `cancel_ncr` | — | — | — |
-| `close_ncr` | yes | — | — |
+| `close_ncr` | yes | yes | — |
 | `complete_inspection` | yes | yes | — |
 | `count_active_holds` | yes | — | — |
 | `count_inspections` | — | — | — |
@@ -1306,7 +1306,7 @@ purchase orders and promotions. They are not a CI failure; review each one.
 | `release_hold` | yes | yes | — |
 | `start_inspection` | yes | — | — |
 | `update_inspection` | — | — | — |
-| `update_ncr` | — | — | — |
+| `update_ncr` | yes | yes | — |
 
 ### `commerce.receiving()`
 

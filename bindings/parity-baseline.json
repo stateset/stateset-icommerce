@@ -615,7 +615,8 @@
         "list_inspections",
         "list_ncrs",
         "release_hold",
-        "start_inspection"
+        "start_inspection",
+        "update_ncr"
       ],
       "receiving": [
         "cancel_receipt",
@@ -1378,6 +1379,7 @@
         "post"
       ],
       "quality": [
+        "close_ncr",
         "complete_inspection",
         "create_hold",
         "create_inspection",
@@ -1385,7 +1387,8 @@
         "get_inspection",
         "list_inspections",
         "list_ncrs",
-        "release_hold"
+        "release_hold",
+        "update_ncr"
       ],
       "receiving": [
         "complete_receiving",
@@ -1875,7 +1878,6 @@
         "update"
       ],
       "quality": [
-        "close_ncr",
         "count_active_holds",
         "get_active_holds",
         "get_hold",
@@ -2458,7 +2460,8 @@
         "list_inspections",
         "list_ncrs",
         "release_hold",
-        "start_inspection"
+        "start_inspection",
+        "update_ncr"
       ],
       "receiving": [
         "cancel_receipt",

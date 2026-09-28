@@ -100,8 +100,19 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
     }
 
     case 'close-ncr': {
-      const ncrId = args[0];
-      if (!ncrId) throw new Error('Usage: quality close-ncr <ncrId>');
+      // Closing requires a disposition; pass one to record it and close in one step.
+      const [ncrId, disposition, dispositionQuantity] = args;
+      const usage = 'Usage: quality close-ncr <ncrId> [disposition] [dispositionQuantity]';
+      if (!ncrId) throw new Error(usage);
+      if (dispositionQuantity !== undefined && !/^\d+(\.\d+)?$/.test(dispositionQuantity)) {
+        throw new Error(`dispositionQuantity must be a decimal string. ${usage}`);
+      }
+      if (disposition) {
+        await commerce.quality.updateNcr(ncrId, {
+          disposition,
+          dispositionQuantityExact: dispositionQuantity,
+        });
+      }
       const ncr = await commerce.quality.closeNcr(ncrId);
       return { ncr, formatted: `Closed NCR ${ncr.id}` };
     }
@@ -176,7 +187,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
           '  ncrs                                                                   List NCRs\n' +
           '  ncr <ncrId>                                                            Get NCR\n' +
           '  create-ncr <source> <severity> <sku> <quantityAffected> <description> [lotNumber] [locationId]\n' +
-          '  close-ncr <ncrId>                                                      Close NCR\n' +
+          '  close-ncr <ncrId> [disposition] [dispositionQuantity]                  Close NCR (needs a disposition)\n' +
           '  holds                                                                  List quality holds\n' +
           '  hold <holdId>                                                          Get quality hold\n' +
           '  create-hold <sku> [lotNumber] <quantityHeld> <reason> <holdType> [placedBy] [locationId]\n' +
@@ -309,7 +320,10 @@ export const metadata = {
         '[locationId]',
       ],
     },
-    'close-ncr': { description: 'Close NCR', args: ['<ncrId>'] },
+    'close-ncr': {
+      description: 'Close NCR (records the disposition first when given; one is required)',
+      args: ['<ncrId>', '[disposition]', '[dispositionQuantity]'],
+    },
     holds: { description: 'List quality holds', args: [] },
     hold: { description: 'Get quality hold', args: ['<holdId>'] },
     'create-hold': {

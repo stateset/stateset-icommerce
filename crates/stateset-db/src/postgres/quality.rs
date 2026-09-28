@@ -1056,6 +1056,11 @@ impl PgQualityRepository {
 
         let existing = Self::load_ncr_on(&mut tx, id).await?;
         Self::ensure_ncr_open(&existing, "update")?;
+        // Judge the NCR as this update leaves it: an update that sets the
+        // disposition may also close.
+        if input.status == Some(NcrStatus::Closed) && input.disposition.is_none() {
+            existing.ensure_closable()?;
+        }
 
         let updated = sqlx::query(
             r#"
@@ -1117,6 +1122,9 @@ impl PgQualityRepository {
             return Ok(ncr); // Idempotent.
         }
         Self::ensure_ncr_open(&ncr, if to == NcrStatus::Closed { "close" } else { "cancel" })?;
+        if to == NcrStatus::Closed {
+            ncr.ensure_closable()?;
+        }
 
         let closed_at = (to == NcrStatus::Closed).then_some(now);
         let updated = sqlx::query(

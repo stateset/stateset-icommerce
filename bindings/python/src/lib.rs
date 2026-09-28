@@ -10452,6 +10452,25 @@ pub struct NonConformance {
     severity: String,
     #[pyo3(get)]
     quantity_affected: f64,
+    /// What was decided for the material (Rust `Debug` form, e.g. `Scrap`).
+    /// Closing requires one.
+    #[pyo3(get)]
+    disposition: Option<String>,
+    #[pyo3(get)]
+    disposition_quantity: Option<f64>,
+    /// Exact base-10 twin of `disposition_quantity`.
+    #[pyo3(get)]
+    disposition_quantity_exact: Option<String>,
+    #[pyo3(get)]
+    root_cause: Option<String>,
+    #[pyo3(get)]
+    corrective_action: Option<String>,
+    #[pyo3(get)]
+    preventive_action: Option<String>,
+    #[pyo3(get)]
+    assigned_to: Option<String>,
+    #[pyo3(get)]
+    closed_at: Option<String>,
 }
 
 impl TryFrom<stateset_core::NonConformance> for NonConformance {
@@ -10470,6 +10489,17 @@ impl TryFrom<stateset_core::NonConformance> for NonConformance {
                 n.quantity_affected,
                 "non-conformance quantity affected",
             )?,
+            disposition: n.disposition.map(|d| format!("{d:?}")),
+            disposition_quantity: optional_to_f64_result(
+                n.disposition_quantity,
+                "non-conformance disposition quantity",
+            )?,
+            disposition_quantity_exact: n.disposition_quantity.map(|q| q.to_string()),
+            root_cause: n.root_cause,
+            corrective_action: n.corrective_action,
+            preventive_action: n.preventive_action,
+            assigned_to: n.assigned_to,
+            closed_at: n.closed_at.map(|t| t.to_rfc3339()),
         })
     }
 }
@@ -10503,6 +10533,101 @@ impl TryFrom<stateset_core::QualityHold> for QualityHold {
             hold_type: format!("{:?}", h.hold_type),
             placed_by: h.placed_by,
         })
+    }
+}
+
+/// Lowercase with `_`, `-` and spaces removed, so `corrective_action`,
+/// `CorrectiveAction` and `corrective-action` compare equal.
+fn variant_key(s: &str) -> String {
+    s.chars().filter(|c| !matches!(c, '_' | '-' | ' ')).flat_map(char::to_lowercase).collect()
+}
+
+fn parse_ncr_status(s: &str) -> PyResult<stateset_core::NcrStatus> {
+    use stateset_core::NcrStatus;
+    Ok(match variant_key(s).as_str() {
+        "open" => NcrStatus::Open,
+        "underreview" => NcrStatus::UnderReview,
+        "pendingdisposition" => NcrStatus::PendingDisposition,
+        "correctiveaction" => NcrStatus::CorrectiveAction,
+        "preventiveaction" => NcrStatus::PreventiveAction,
+        "verification" => NcrStatus::Verification,
+        "closed" => NcrStatus::Closed,
+        "cancelled" | "canceled" => NcrStatus::Cancelled,
+        _ => {
+            return Err(unknown_variant(
+                "NCR status",
+                s,
+                &[
+                    "open",
+                    "under_review",
+                    "pending_disposition",
+                    "corrective_action",
+                    "preventive_action",
+                    "verification",
+                    "closed",
+                    "cancelled",
+                ],
+            ));
+        }
+    })
+}
+
+fn parse_ncr_disposition(s: &str) -> PyResult<stateset_core::Disposition> {
+    use stateset_core::Disposition;
+    Ok(match variant_key(s).as_str() {
+        "useasis" => Disposition::UseAsIs,
+        "rework" => Disposition::Rework,
+        "repair" => Disposition::Repair,
+        "scrap" => Disposition::Scrap,
+        "returntovendor" => Disposition::ReturnToVendor,
+        "downgrade" => Disposition::Downgrade,
+        "sortandscreen" => Disposition::SortAndScreen,
+        _ => {
+            return Err(unknown_variant(
+                "NCR disposition",
+                s,
+                &[
+                    "use_as_is",
+                    "rework",
+                    "repair",
+                    "scrap",
+                    "return_to_vendor",
+                    "downgrade",
+                    "sort_and_screen",
+                ],
+            ));
+        }
+    })
+}
+
+fn parse_ncr_severity(s: &str) -> PyResult<stateset_core::Severity> {
+    Ok(match s.to_lowercase().as_str() {
+        "critical" => stateset_core::Severity::Critical,
+        "major" => stateset_core::Severity::Major,
+        "minor" => stateset_core::Severity::Minor,
+        "observation" => stateset_core::Severity::Observation,
+        other => {
+            return Err(unknown_variant(
+                "severity",
+                other,
+                &["critical", "major", "minor", "observation"],
+            ));
+        }
+    })
+}
+
+/// An NCR write the engine refused on validation (e.g. closing one with no
+/// disposition) is a bad argument (`ValueError`); anything else is a runtime
+/// failure.
+fn ncr_write_error(context: &str, error: stateset_core::CommerceError) -> PyErr {
+    match error {
+        stateset_core::CommerceError::ValidationError(message) => {
+            PyValueError::new_err(format!("{context}: {message}"))
+        }
+        stateset_core::CommerceError::NotFound => {
+            PyValueError::new_err(format!("{context}: NCR not found"))
+        }
+        other => PyRuntimeError::new_err(format!("{context}: {other}")),
     }
 }
 
@@ -10780,6 +10905,76 @@ impl QualityApi {
             .list_ncrs(filter)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         convert_outputs(ncrs)
+    }
+
+    /// Update an open NCR. Omitted arguments are left unchanged. Setting
+    /// `status="closed"` requires a disposition, already recorded or set in
+    /// the same call; the engine's refusal raises `ValueError`.
+    #[pyo3(signature = (
+        id,
+        status=None,
+        severity=None,
+        root_cause=None,
+        corrective_action=None,
+        preventive_action=None,
+        disposition=None,
+        disposition_quantity=None,
+        disposition_quantity_exact=None,
+        assigned_to=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn update_ncr(
+        &self,
+        id: String,
+        status: Option<String>,
+        severity: Option<String>,
+        root_cause: Option<String>,
+        corrective_action: Option<String>,
+        preventive_action: Option<String>,
+        disposition: Option<String>,
+        disposition_quantity: Option<f64>,
+        disposition_quantity_exact: Option<String>,
+        assigned_to: Option<String>,
+    ) -> PyResult<NonConformance> {
+        let uuid = parse_uuid_str(&id, "id")?;
+        let disposition_quantity = match disposition_quantity_exact.as_deref() {
+            Some(exact) => parse_decimal_arg(Some(exact), "disposition_quantity_exact")?,
+            None => optional_decimal_from_f64(disposition_quantity, "disposition_quantity")?,
+        };
+        let update = stateset_core::UpdateNonConformance {
+            status: status.as_deref().map(parse_ncr_status).transpose()?,
+            severity: severity.as_deref().map(parse_ncr_severity).transpose()?,
+            root_cause,
+            corrective_action,
+            preventive_action,
+            disposition: disposition.as_deref().map(parse_ncr_disposition).transpose()?,
+            disposition_quantity,
+            assigned_to,
+        };
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let ncr = commerce
+            .quality()
+            .update_ncr(uuid, update)
+            .map_err(|e| ncr_write_error("Failed to update NCR", e))?;
+        convert_output(ncr)
+    }
+
+    /// Close an NCR. It must have a disposition (see `update_ncr`); one
+    /// without raises `ValueError`. Re-closing a closed NCR is a no-op.
+    fn close_ncr(&self, id: String) -> PyResult<NonConformance> {
+        let uuid = parse_uuid_str(&id, "id")?;
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let ncr = commerce
+            .quality()
+            .close_ncr(uuid)
+            .map_err(|e| ncr_write_error("Failed to close NCR", e))?;
+        convert_output(ncr)
     }
 
     fn create_hold(&self, sku: String, reason: String, quantity: f64) -> PyResult<QualityHold> {

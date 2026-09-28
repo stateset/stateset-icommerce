@@ -285,7 +285,7 @@
         "className": "X402"
       }
     ],
-    "toolCount": 752,
+    "toolCount": 753,
     "readOnlyCount": 378,
     "readOnlyPrefixes": [
       "calculate",
@@ -8675,6 +8675,87 @@
         }
       },
       "additionalProperties": false
+    },
+    "UpdateNcrInput": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "under_review",
+            "pending_disposition",
+            "corrective_action",
+            "preventive_action",
+            "verification",
+            "closed",
+            "cancelled",
+            "Open",
+            "UnderReview",
+            "PendingDisposition",
+            "CorrectiveAction",
+            "PreventiveAction",
+            "Verification",
+            "Closed",
+            "Cancelled"
+          ],
+          "description": "Non-conformance report status as rendered on `NcrOutput.status` (Rust `Debug` form)."
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "critical",
+            "major",
+            "minor",
+            "observation"
+          ],
+          "description": "Non-conformance severity accepted by `CreateNcrInput.severity` (case-insensitive)."
+        },
+        "rootCause": {
+          "type": "string"
+        },
+        "correctiveAction": {
+          "type": "string"
+        },
+        "preventiveAction": {
+          "type": "string"
+        },
+        "disposition": {
+          "type": "string",
+          "enum": [
+            "use_as_is",
+            "rework",
+            "repair",
+            "scrap",
+            "return_to_vendor",
+            "downgrade",
+            "sort_and_screen",
+            "UseAsIs",
+            "Rework",
+            "Repair",
+            "Scrap",
+            "ReturnToVendor",
+            "Downgrade",
+            "SortAndScreen"
+          ],
+          "description": "NCR disposition as rendered on `NcrOutput.disposition` (Rust `Debug` form)."
+        },
+        "dispositionQuantity": {
+          "type": "number",
+          "x-money": "float",
+          "description": "@deprecated Use the `dispositionQuantityExact` twin; float quantities will be removed in 2.0. Float money field; prefer the `dispositionQuantityExact` string for exact amounts."
+        },
+        "dispositionQuantityExact": {
+          "type": "string",
+          "x-money": "exact",
+          "description": "Exact base-10 quantity the disposition covers. Wins over the float."
+        },
+        "assignedTo": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Fields for `Quality.updateNcr`. Every field is optional; omitted fields are left unchanged. Closing (`status: 'closed'`) requires a disposition, already recorded or set in the same call."
     },
     "UpdatePriceLevelInput": {
       "type": "object",
@@ -23939,7 +24020,7 @@
       "module": "quality",
       "className": "Quality",
       "method": "closeNcr",
-      "description": "Close an NCR",
+      "description": "Close an NCR. It must have a disposition (see `updateNcr`); an NCR without one is refused with a validation error. Re-closing a closed NCR is a no-op.",
       "signature": "closeNcr(id: string): Promise<NcrOutput>",
       "returnType": "Promise<NcrOutput>",
       "readOnly": false,
@@ -24326,6 +24407,37 @@
         },
         "required": [
           "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "quality.updateNcr",
+      "module": "quality",
+      "className": "Quality",
+      "method": "updateNcr",
+      "description": "Update an open NCR: root cause, actions, disposition, status and so on. Omitted fields are left unchanged. Setting `status: 'closed'` requires a disposition, already recorded or set in the same call.",
+      "signature": "updateNcr(id: string, input: UpdateNcrInput): Promise<NcrOutput>",
+      "returnType": "Promise<NcrOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/definitions/UpdateNcrInput"
+          }
+        },
+        "required": [
+          "id",
+          "input"
         ],
         "additionalProperties": false
       }
