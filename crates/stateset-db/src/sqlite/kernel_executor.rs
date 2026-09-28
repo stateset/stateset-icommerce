@@ -1588,24 +1588,23 @@ impl SqliteKernelExecutor {
 
             // Void first: the voids change the payment ledger the order's
             // money status is derived from, and the derived value belongs in
-            // the same UPDATE (one version bump). An explicit payment_status
-            // on the command still wins.
+            // the same UPDATE (one version bump). A command never declares a
+            // payment status (`transition_order_guard` refuses one).
             let mut voided_payment_ids = Vec::new();
             if effects.void_in_flight_payments {
                 voided_payment_ids =
                     void_in_flight_payments_for_order_conn(tx, &order_id, started_at)?;
             }
-            let next_payment_status =
-                if command.payload.payment_status.is_none() && !voided_payment_ids.is_empty() {
-                    derive_order_payment_status_conn(
-                        tx,
-                        &order_id,
-                        order.total_amount,
-                        effects.next_payment_status,
-                    )?
-                } else {
-                    effects.next_payment_status
-                };
+            let next_payment_status = if voided_payment_ids.is_empty() {
+                effects.next_payment_status
+            } else {
+                derive_order_payment_status_conn(
+                    tx,
+                    &order_id,
+                    order.total_amount,
+                    effects.next_payment_status,
+                )?
+            };
             let next_fulfillment_status = FulfillmentStatus::for_order_status(effects.next_status)
                 .unwrap_or(order.fulfillment_status);
             let rows = tx.execute(
@@ -1890,6 +1889,23 @@ impl SqliteKernelExecutor {
                     if !event_ids.contains(&event_id) {
                         event_ids.push(event_id);
                     }
+                }
+            }
+            // Same rule as `OrderRepository::ship`: a full shipment carries
+            // the order's open shipment records to `shipped`, and their facts
+            // carry this command's context like the reservation facts above.
+            if effects.resolved_status == OrderStatus::Shipped
+                && effects.status_before != OrderStatus::Shipped
+            {
+                let tracking =
+                    command.payload.tracking_number.as_deref().or(order.tracking_number.as_deref());
+                for event_id in super::shipments::ship_open_shipments_for_order_in_tx(
+                    tx, &order_id, tracking, started_at,
+                )? {
+                    tx.execute("UPDATE kernel_outbox SET command_id = ?, idempotency_key = ?, principal_type = ?, principal_id = ?, correlation_id = ?, causation_id = ? WHERE id = ?",
+                        params![command.command_id.to_string(), command.idempotency_key, principal_kind_name(command), command.principal.id,
+                            command.correlation_id.map(|id| id.to_string()), command.causation_id.map(|id| id.to_string()), event_id.to_string()])?;
+                    event_ids.push(event_id);
                 }
             }
             let event = run.event(

@@ -739,16 +739,12 @@ fn refunded_cannot_be_reached_through_update() {
     let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD);
     let p = completed_payment(&db, Some(order_id), dec!(100.00));
     set_status(&db, p.id, PaymentTransactionStatus::Disputed).expect("dispute");
-
-    // Disputed -> Refunded is a legal state-machine edge, but as a status
-    // flip it leaves amount_refunded at 0 and the capture "outstanding".
-    let err = set_status(&db, p.id, PaymentTransactionStatus::Refunded)
-        .expect_err("refund by status flip is refused");
-    assert_validation_mentioning(&err, "complete_refund");
-    assert_eq!(status(&db, p.id), PaymentTransactionStatus::Disputed);
     assert_eq!(db.payments().open_captures_for_order(order_id).unwrap().len(), 1);
+    // (`Disputed -> Refunded` is a lost chargeback, recorded on the ledger by
+    // the status write itself — see `sqlite_chargeback_lost.rs`.)
 
-    // Same for Completed -> Refunded / PartiallyRefunded.
+    // Completed -> Refunded / PartiallyRefunded as a bare flip would leave
+    // amount_refunded at 0 and the capture "outstanding".
     set_status(&db, p.id, PaymentTransactionStatus::Completed).expect("dispute won");
     for target in [PaymentTransactionStatus::Refunded, PaymentTransactionStatus::PartiallyRefunded]
     {

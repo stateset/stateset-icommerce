@@ -112,11 +112,16 @@ fn statuses_allowing_transition_to(target: PaymentTransactionStatus) -> String {
 /// order could never be cancelled or deleted cleanly. A no-op write (already
 /// in that status) is still allowed so metadata patches on refunded payments
 /// keep working. Worded identically in the Postgres backend.
+///
+/// `Disputed -> Refunded` is the one exception: it is a lost chargeback, and
+/// the caller records it on the ledger with [`record_lost_chargeback_tx`] in
+/// the same transaction.
 pub(crate) fn ensure_not_refund_by_status_flip(
     current: PaymentTransactionStatus,
     target: PaymentTransactionStatus,
 ) -> Result<()> {
     if current != target
+        && !current.is_lost_chargeback(target)
         && matches!(
             target,
             PaymentTransactionStatus::Refunded | PaymentTransactionStatus::PartiallyRefunded
@@ -340,6 +345,82 @@ pub(crate) fn create_refund_in_tx(
                 "status": RefundStatus::Pending.to_string(),
             }),
             idempotency_key.map(str::to_string),
+        ),
+    )?;
+    Ok(id)
+}
+
+/// Record a lost chargeback on `payment` (currently `Disputed`, being moved to
+/// `Refunded` by the caller's status write) inside the caller's transaction.
+///
+/// The card network has already reversed the charge, so the payment's whole
+/// remaining balance (`amount - amount_refunded`) has left the merchant. It is
+/// recorded where every other money-out is: a `completed` refund-ledger row
+/// for that balance, stamped `reason =`
+/// [`stateset_core::LOST_CHARGEBACK_REFUND_REASON`] so it is distinguishable
+/// from a refund the merchant issued, and `amount_refunded = amount`. That
+/// keeps `amount_refunded == Σ completed refunds`, makes the payment
+/// unrefundable (nothing remains to refund), frees the order for cancel/delete
+/// guards, and lets the caller's `sync_order_payment_status_tx` re-derive the
+/// order from the ledger (full order lost -> `refunded`, part ->
+/// `partially_refunded`). Emits `payments.chargeback_lost.v1`. Returns the
+/// ledger row's id. Mirrored exactly in the Postgres backend.
+pub(crate) fn record_lost_chargeback_tx(
+    tx: &rusqlite::Transaction<'_>,
+    payment: &Payment,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<Uuid> {
+    let reversed = (payment.amount - payment.amount_refunded).max(rust_decimal::Decimal::ZERO);
+    let id = Uuid::new_v4();
+    let refund_number = generate_refund_number();
+    tx.execute(
+        "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason,
+                              external_id, idempotency_key, notes, refunded_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)",
+        params![
+            id.to_string(),
+            refund_number,
+            payment.id.to_string(),
+            RefundStatus::Completed.to_string(),
+            reversed.to_string(),
+            payment.currency,
+            stateset_core::LOST_CHARGEBACK_REFUND_REASON,
+            "chargeback lost: the card network reversed the charge",
+            now.to_rfc3339(),
+            now.to_rfc3339(),
+            now.to_rfc3339(),
+        ],
+    )?;
+    let rows = tx.execute(
+        "UPDATE payments SET amount_refunded = ?, updated_at = ? WHERE id = ? AND status = ?",
+        params![
+            payment.amount.to_string(),
+            now.to_rfc3339(),
+            payment.id.to_string(),
+            PaymentTransactionStatus::Refunded.to_string(),
+        ],
+    )?;
+    if rows == 0 {
+        return Err(domain_err(transition_conflict(
+            PaymentTransactionStatus::Disputed,
+            PaymentTransactionStatus::Refunded,
+        )));
+    }
+    append_kernel_event_tx(
+        tx,
+        &KernelOutboxEvent::domain(
+            "payments.chargeback_lost.v1",
+            "payment",
+            payment.id.to_string(),
+            serde_json::json!({
+                "payment_id": payment.id.to_string(),
+                "order_id": payment.order_id.map(|id| id.to_string()),
+                "refund_id": id.to_string(),
+                "refund_number": refund_number,
+                "amount": reversed.to_string(),
+                "currency": payment.currency.as_str(),
+            }),
+            None,
         ),
     )?;
     Ok(id)
@@ -983,6 +1064,9 @@ impl PaymentRepository for SqlitePaymentRepository {
                 }
             }
 
+            // A lost chargeback is recorded on the ledger after the status
+            // write; keep the pre-write payment for it.
+            let chargeback = current.is_lost_chargeback(target).then(|| payment.clone());
             let sql = format!(
                 "UPDATE payments SET status = ?, external_id = ?, failure_reason = ?,
                  failure_code = ?, metadata = ?, updated_at = ? WHERE id = ? AND status IN ({})",
@@ -1002,6 +1086,9 @@ impl PaymentRepository for SqlitePaymentRepository {
             )?;
             if rows == 0 {
                 return Err(domain_err(transition_conflict(current, target)));
+            }
+            if let Some(disputed) = &chargeback {
+                record_lost_chargeback_tx(tx, disputed, now)?;
             }
             if current != target {
                 if let Some(order_id) = payment.order_id {
@@ -1739,6 +1826,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                     .map_err(map_db_error)?;
                 }
             }
+            let chargeback = current.is_lost_chargeback(target).then(|| payment.clone());
             let sql = format!(
                 "UPDATE payments SET status = ?, external_id = ?, failure_reason = ?,
                  failure_code = ?, metadata = ?, updated_at = ? WHERE id = ? AND status IN ({})",
@@ -1760,6 +1848,9 @@ impl PaymentRepository for SqlitePaymentRepository {
                 .map_err(map_db_error)?;
             if rows == 0 {
                 return Err(transition_conflict(current, target));
+            }
+            if let Some(disputed) = &chargeback {
+                record_lost_chargeback_tx(&tx, disputed, now).map_err(map_db_error)?;
             }
             if current != target {
                 if let Some(order_id) = payment.order_id {

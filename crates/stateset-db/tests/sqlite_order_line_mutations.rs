@@ -585,34 +585,53 @@ fn line_edits_write_kernel_outbox_events_in_the_same_transaction() {
 
 #[test]
 fn delete_refuses_an_order_whose_payment_status_holds_money() {
+    use stateset_core::{
+        CreatePayment, CreateRefund, PaymentMethodType, PaymentRepository, PaymentStatus,
+    };
     let (db, customer_id) = setup();
     let order = order_with_order_level_money(&db, customer_id);
-    db.orders()
-        .update(
-            order.id,
-            UpdateOrder {
-                payment_status: Some(stateset_core::PaymentStatus::Paid),
-                ..Default::default()
-            },
-        )
-        .expect("mark paid");
+    // Record a real payment for the whole total: the order derives `paid`.
+    let payment = db
+        .payments()
+        .create(CreatePayment {
+            order_id: Some(order.id),
+            payment_method: PaymentMethodType::CreditCard,
+            amount: order.total_amount,
+            ..Default::default()
+        })
+        .expect("create payment");
+    db.payments().mark_completed(payment.id).expect("complete payment");
+    assert_eq!(db.orders().get(order.id).unwrap().unwrap().payment_status, PaymentStatus::Paid);
 
     let err = db.orders().delete(order.id).expect_err("paid orders are records");
     assert!(matches!(err, CommerceError::Conflict(ref m) if m.contains("paid")), "{err:?}");
     assert!(db.orders().get(order.id).unwrap().is_some(), "order survives");
     assert_eq!(open_reserved_qty(&db, order.id), dec!(2), "nothing released on a refused delete");
 
-    // A cancelled-but-paid order is refused too (status alone would allow it).
-    db.orders()
+    // A cancelled-but-partially-refunded order is refused too (status alone
+    // would allow it): refund part, then force the cancel past the settled
+    // capture.
+    let refund = db
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(5.00)),
+            ..Default::default()
+        })
+        .expect("create refund");
+    db.payments().complete_refund(refund.id).expect("complete refund");
+    let cancelled = db
+        .orders()
         .update(
             order.id,
             UpdateOrder {
                 status: Some(OrderStatus::Cancelled),
-                payment_status: Some(stateset_core::PaymentStatus::PartiallyRefunded),
+                void_payments: true,
                 ..Default::default()
             },
         )
         .expect("cancel");
+    assert_eq!(cancelled.payment_status, PaymentStatus::PartiallyRefunded);
     let err = db.orders().delete(order.id).expect_err("partially refunded orders are records");
     assert!(matches!(err, CommerceError::Conflict(_)), "{err:?}");
     assert!(db.orders().get(order.id).unwrap().is_some());

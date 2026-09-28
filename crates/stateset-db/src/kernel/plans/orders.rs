@@ -4,7 +4,8 @@ use super::PlanOutcome;
 use crate::kernel::envelope::GuardRejection;
 use rust_decimal::Decimal;
 use stateset_core::{
-    CommandEnvelope, Order, OrderStatus, Payment, PaymentStatus, ShipOrderCommand, TransitionOrder,
+    CommandEnvelope, DIRECT_PAYMENT_STATUS_REFUSED, Order, OrderStatus, Payment, PaymentStatus,
+    ShipOrderCommand, TransitionOrder,
 };
 use uuid::Uuid;
 
@@ -21,6 +22,14 @@ pub fn transition_order_guard(payload: &TransitionOrder) -> Option<GuardRejectio
         return Some(GuardRejection::never(
             "commerce.shipment_command_required",
             "shipment transitions must use orders.ship",
+        ));
+    }
+    // An order's payment status is derived from its payment ledger, never
+    // declared (see `UpdateOrder::payment_status`).
+    if payload.payment_status.is_some() {
+        return Some(GuardRejection::never(
+            "commerce.payment_status_derived",
+            DIRECT_PAYMENT_STATUS_REFUSED,
         ));
     }
     None
@@ -94,9 +103,10 @@ pub fn plan_order_transition(
             format!("order cannot transition from {} to {}", order.status, next_status),
         ));
     }
-    let next_payment_status = command.payload.payment_status.unwrap_or(order.payment_status);
-    // Refundability is judged on the payment status the order already has,
-    // never on one the same command declares.
+    // The payment status is derived, never declared (a declaring command is
+    // refused by `transition_order_guard`); the transition itself keeps it.
+    let next_payment_status = order.payment_status;
+    // Refundability is judged on the payment status the order already has.
     if next_status == OrderStatus::Refunded
         && !matches!(
             order.payment_status,

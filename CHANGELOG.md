@@ -75,6 +75,45 @@ This project follows Keep a Changelog and Semantic Versioning.
   and `stateset quality close-ncr` take an optional `disposition` (plus an
   exact `dispositionQuantity`) that they record before closing.
 
+- **Shipping an order in full ships its open shipment records.** When an
+  order becomes fully `shipped` (`orders.ship`, a `Shipped` status update, or
+  the kernel `orders.ship` command; SQLite and PostgreSQL), every shipment of
+  that order still `pending`, `processing` or `ready_to_ship` moves to
+  `shipped` in the same transaction, with `shipped_at` set. A shipment with
+  no tracking number adopts the order's (and the carrier's tracking URL); one
+  with its own keeps it. `on_hold`, `cancelled` and already shipped/delivered
+  shipments are untouched, and a partial shipment moves none (which package
+  carried which units is not knowable from the order lines -- ship those with
+  `shipments.ship`). Each moved shipment records a `shipment.status_changed`
+  outbox fact; under the kernel the facts carry the command's context and
+  are listed on its receipt.
+- **A lost chargeback moves the order out of `paid`.** Resolving a
+  `disputed` payment against the merchant (`payments.update` to `refunded`)
+  was refused as a "refund by status flip", so the order kept reading `paid`
+  after the network had taken the money back. The write is now accepted and
+  records the loss in the same transaction: a completed refund-ledger row for
+  the payment's whole remaining balance with `reason = "chargeback_lost"`
+  (so reports can tell it from a refund the merchant issued),
+  `amount_refunded = amount`, a `payments.chargeback_lost.v1` event, and the
+  order's payment status re-derived from the ledger (whole order lost ->
+  `refunded`, part of it -> `partially_refunded`). The charged-back payment
+  cannot be refunded again. A won dispute (`disputed` -> `completed`) changes
+  nothing else. Every other bare flip to `refunded` / `partially_refunded` is
+  still refused.
+- **An order's payment status can only be changed by recording payments.**
+  `orders.update` with a `payment_status` (and the kernel `orders.transition`
+  with one) let any caller declare an order paid or refunded. Both backends
+  now refuse it with a `ValidationError` ("order payment_status is derived
+  from the order's payments and refunds ...") and the kernel rejects the
+  command with `commerce.payment_status_derived`; the field stays on
+  `UpdateOrder` / `TransitionOrder` for compatibility but must be `None`.
+  Record a payment (create + complete) or a refund (`create_refund` +
+  `complete_refund`) instead. `orders.update_status(id, Refunded)` (Rust,
+  Node, Python, Go and the other FFI bindings, and the `update_order_status`
+  MCP tool) no longer forces `payment_status = refunded`: it moves the order
+  status only, and the payment status keeps saying what the ledger holds --
+  record the refund first if it should read `refunded`.
+
 ### Fixed
 
 - Three SQLite cart writes (`set_shipping_address`, `set_payment`,

@@ -216,7 +216,10 @@ function payloadFor(toolName, params, issuedAt = new Date(), actorAddress = null
       return {
         order_id: params.orderId,
         status: params.status,
-        payment_status: params.paymentStatus || null,
+        // An order's payment status is derived from its payments and refunds;
+        // the kernel rejects a command that declares one
+        // (`commerce.payment_status_derived`), so none is ever forwarded.
+        payment_status: null,
       };
     case 'ship_order':
       return {
