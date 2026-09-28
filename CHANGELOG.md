@@ -20,6 +20,13 @@ This project follows Keep a Changelog and Semantic Versioning.
   previous handlers. Promotions stay merchant configuration: a strict agent
   can redeem a coupon but cannot create one.
 
+- **An order can only be refunded if it was paid.** The refund guard (SQLite,
+  PostgreSQL and the kernel) read the payment status supplied in the same
+  update, and `orders.update_status(id, Refunded)` supplies `Refunded`
+  itself, so any order -- including one never paid -- could be marked
+  refunded. Refundability is now judged on the order's stored payment status;
+  record the payment first, then refund.
+
 ### Fixed
 
 - Three SQLite cart writes (`set_shipping_address`, `set_payment`,

@@ -1322,9 +1322,10 @@ impl SqliteOrderRepository {
                     )));
                 }
 
+                // Refundability is judged on the payment status the order
+                // already has, never on one the same update declares.
                 if status == OrderStatus::Refunded {
-                    let effective_payment_status =
-                        input.payment_status.unwrap_or(current_payment_status);
+                    let effective_payment_status = current_payment_status;
                     if !matches!(
                         effective_payment_status,
                         PaymentStatus::Paid
