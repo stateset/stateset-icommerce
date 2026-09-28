@@ -462,6 +462,9 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         // Hyphenate the ids 008/009/011 seeded as bare hex, so seeded tax
         // rates match their jurisdictions and seeded plans are found by id.
         ("098_seeded_uuid_ids", include_str!("../migrations/098_seeded_uuid_ids.sql")),
+        // GST no longer stacks on HST; Nova Scotia 14%; NL, PE and the
+        // territories; QST no longer compounds on GST.
+        ("099_canadian_sales_tax", include_str!("../migrations/099_canadian_sales_tax.sql")),
     ]
 }
 

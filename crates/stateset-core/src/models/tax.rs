@@ -1877,15 +1877,52 @@ pub fn get_canadian_tax_info(province_code: &str) -> Option<CanadianTaxInfo> {
             qst_rate: None,
             total_rate: Decimal::new(12, 2),
         }),
+        // 15% until 2025-03-31; 14% from 2025-04-01.
         "NS" => Some(CanadianTaxInfo {
             province_code: "NS".into(),
             province_name: "Nova Scotia".into(),
+            gst_rate: Decimal::ZERO,
+            pst_rate: None,
+            hst_rate: Some(Decimal::new(14, 2)),
+            qst_rate: None,
+            total_rate: Decimal::new(14, 2),
+        }),
+        "NL" => Some(CanadianTaxInfo {
+            province_code: "NL".into(),
+            province_name: "Newfoundland and Labrador".into(),
             gst_rate: Decimal::ZERO,
             pst_rate: None,
             hst_rate: Some(Decimal::new(15, 2)),
             qst_rate: None,
             total_rate: Decimal::new(15, 2),
         }),
+        "PE" => Some(CanadianTaxInfo {
+            province_code: "PE".into(),
+            province_name: "Prince Edward Island".into(),
+            gst_rate: Decimal::ZERO,
+            pst_rate: None,
+            hst_rate: Some(Decimal::new(15, 2)),
+            qst_rate: None,
+            total_rate: Decimal::new(15, 2),
+        }),
+        // The territories charge GST and no territorial sales tax.
+        "NT" | "NU" | "YT" => {
+            let code = province_code.to_uppercase();
+            let name = match code.as_str() {
+                "NT" => "Northwest Territories",
+                "NU" => "Nunavut",
+                _ => "Yukon",
+            };
+            Some(CanadianTaxInfo {
+                province_code: code,
+                province_name: name.into(),
+                gst_rate: gst,
+                pst_rate: None,
+                hst_rate: None,
+                qst_rate: None,
+                total_rate: gst,
+            })
+        }
         "NB" => Some(CanadianTaxInfo {
             province_code: "NB".into(),
             province_name: "New Brunswick".into(),
