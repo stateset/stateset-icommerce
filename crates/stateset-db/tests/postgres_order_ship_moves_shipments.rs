@@ -144,7 +144,11 @@ async fn postgres_full_order_ship_carries_open_shipments_but_partial_does_not() 
         .expect("partial ship");
     assert_eq!(partial.status, OrderStatus::PartiallyShipped);
     for id in [pending, processing, ready, labelled] {
-        assert_ne!(load(&db, id).await.status, ShipmentStatus::Shipped, "partial moved {id}");
+        assert_ne!(
+            load(&db, id).await.status,
+            ShipmentStatus::Shipped,
+            "a partial ship moved an open shipment"
+        );
         assert!(facts(&db, id).await.is_empty());
     }
     assert_eq!(load(&db, pending).await.tracking_number, None);
@@ -161,7 +165,11 @@ async fn postgres_full_order_ship_carries_open_shipments_but_partial_does_not() 
 
     for id in [pending, processing, ready] {
         let moved = load(&db, id).await;
-        assert_eq!(moved.status, ShipmentStatus::Shipped, "{id} should follow the order");
+        assert_eq!(
+            moved.status,
+            ShipmentStatus::Shipped,
+            "an open shipment should follow the order"
+        );
         assert_eq!(moved.tracking_number.as_deref(), Some("1Z-PG-FOLLOW"));
         assert!(moved.tracking_url.as_deref().is_some_and(|u| u.contains("1Z-PG-FOLLOW")));
         assert!(moved.shipped_at.is_some());

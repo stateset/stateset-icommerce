@@ -556,7 +556,11 @@ fn full_order_ship_carries_open_shipments_but_partial_does_not() {
     assert_eq!(partial.status, OrderStatus::PartiallyShipped);
     for id in [pending.id, processing.id, ready.id, prelabelled.id] {
         let shipment = load_shipment(&db, id);
-        assert_ne!(shipment.status, ShipmentStatus::Shipped, "partial ship moved {id}");
+        assert_ne!(
+            shipment.status,
+            ShipmentStatus::Shipped,
+            "a partial ship moved an open shipment"
+        );
         assert!(shipment_facts(&db, id).is_empty());
     }
     assert_eq!(load_shipment(&db, pending.id).tracking_number, None);
