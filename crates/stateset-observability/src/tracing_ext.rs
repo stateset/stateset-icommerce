@@ -141,7 +141,8 @@ pub fn init_tracing_otel(config: &TracingConfig) -> Result<()> {
     // The tonic exporter needs a Tokio reactor, so batch on the Tokio runtime
     // (as `install_batch(runtime::Tokio)` did) rather than on the SDK's own
     // background thread.
-    let processor = BatchSpanProcessor::builder(exporter, opentelemetry_sdk::runtime::Tokio).build();
+    let processor =
+        BatchSpanProcessor::builder(exporter, opentelemetry_sdk::runtime::Tokio).build();
     let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
         .with_span_processor(processor)
         .with_resource(resource)
