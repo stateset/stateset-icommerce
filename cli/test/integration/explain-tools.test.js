@@ -47,6 +47,9 @@ async function call(name, params) {
   return r.result;
 }
 
+/** A governed tool answers with its receipt's result; a legacy tool with its own shape. */
+const entity = (response, key) => response[key] ?? response.receipt?.result ?? response.result;
+
 const ADDRESS = {
   firstName: 'Ada',
   lastName: 'Lovelace',
@@ -79,9 +82,10 @@ before(async () => {
     },
   });
 
-  journey.customer = (
-    await call('create_customer', { email: 'ada@example.com', firstName: 'Ada', lastName: 'L' })
-  ).customer;
+  journey.customer = entity(
+    await call('create_customer', { email: 'ada@example.com', firstName: 'Ada', lastName: 'L' }),
+    'customer',
+  );
   await call('create_inventory_item', { sku: 'W-1', name: 'Widget', initialQuantity: '10' });
   const promotion = (
     await call('create_promotion', {
@@ -95,8 +99,10 @@ before(async () => {
   await call('activate_promotion', { promotionId: promotion.id });
   await call('create_coupon', { promotionId: promotion.id, code: 'WELCOME10' });
 
-  const cartId = (await call('create_cart', { customerId: journey.customer.id, currency: 'USD' }))
-    .cart.id;
+  const cartId = entity(
+    await call('create_cart', { customerId: journey.customer.id, currency: 'USD' }),
+    'cart',
+  ).id;
   journey.cartId = cartId;
   await call('add_cart_item', { cartId, sku: 'W-1', name: 'Widget', quantity: 2, unitPrice: 50 });
   await call('set_cart_shipping_address', { cartId, ...ADDRESS });
@@ -138,7 +144,7 @@ before(async () => {
     reason: 'defective',
     items: [{ orderItemId: journey.order.items[0].id, quantity: 1 }],
   });
-  journey.returnId = ret.return?.id ?? ret.id;
+  journey.returnId = entity(ret, 'return')?.id ?? ret.id ?? ret.receipt?.aggregate_id;
   await call('approve_return', { returnId: journey.returnId });
   await call('add_return_tracking', { returnId: journey.returnId, trackingNumber: 'RET-1Z' });
   await call('mark_return_received', { returnId: journey.returnId });
@@ -151,9 +157,10 @@ before(async () => {
   });
 
   // A returning customer's next cart: the first-order coupon no longer applies.
-  const nextCartId = (
-    await call('create_cart', { customerId: journey.customer.id, currency: 'USD' })
-  ).cart.id;
+  const nextCartId = entity(
+    await call('create_cart', { customerId: journey.customer.id, currency: 'USD' }),
+    'cart',
+  ).id;
   await call('add_cart_item', {
     cartId: nextCartId,
     sku: 'W-1',
