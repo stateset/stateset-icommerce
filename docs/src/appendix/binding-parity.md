@@ -150,8 +150,8 @@ unless `--allow-loss` is also passed. Gated bindings: `node`, `python`, `go`
 
 | Binding | Known gaps vs Node (baseline) |
 | --- | --- |
-| python | 149 |
-| go | 648 |
+| python | 151 |
+| go | 657 |
 
 ## Exemptions
 
