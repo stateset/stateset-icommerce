@@ -182,6 +182,7 @@
         "update"
       ],
       "commerce": [
+        "apply_cart_promotions",
         "economic_budget_status",
         "execute_kernel_command",
         "list_webhooks",
@@ -559,6 +560,7 @@
       ],
       "promotions": [
         "activate",
+        "add_condition",
         "apply",
         "create",
         "create_coupon",
@@ -1023,6 +1025,7 @@
         "update"
       ],
       "commerce": [
+        "apply_cart_promotions",
         "economic_budget_status",
         "execute_kernel_command",
         "provision_economic_budget"
@@ -1336,6 +1339,7 @@
       ],
       "promotions": [
         "activate",
+        "add_condition",
         "apply",
         "create",
         "create_coupon",
@@ -1681,6 +1685,7 @@
         "void"
       ],
       "orders": [
+        "cancel",
         "create",
         "get",
         "list",
@@ -2063,6 +2068,7 @@
         "update"
       ],
       "commerce": [
+        "apply_cart_promotions",
         "economic_budget_status",
         "execute_kernel_command",
         "list_webhooks",
@@ -2319,7 +2325,6 @@
         "supports_backup"
       ],
       "orders": [
-        "cancel",
         "count",
         "create_from_cart",
         "ship"
@@ -2408,6 +2413,7 @@
       ],
       "promotions": [
         "activate",
+        "add_condition",
         "apply",
         "create",
         "create_coupon",
