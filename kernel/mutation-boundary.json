@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:058c3e3650cd1527a7711356f9856357513521fa2fdb08d9e986a472715ef6ef",
+  "digest": "sha256:0750b25d6eb991f089807e5f71094ac2ba3754e4db5b972d22e54c94d9de5e5f",
   "counts": {
-    "total": 951,
-    "readOnly": 468,
+    "total": 953,
+    "readOnly": 470,
     "mutations": 483,
     "governed": 25,
     "governedComposite": 1,
@@ -3200,6 +3200,20 @@
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "explain_cart_pricing",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "explain_order",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
       "commandType": null
     },
     {

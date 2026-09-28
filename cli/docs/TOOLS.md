@@ -5,7 +5,7 @@
 
 Source of truth: `cli/src/tools/domain-registry.js`.
 
-**936 tools** across **87 domains**.
+**938 tools** across **88 domains**.
 
 ## Domains
 
@@ -98,6 +98,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [production-batches](#production-batches) | 8 |
 | [supplier-skus](#supplier-skus) | 7 |
 | [inbound-shipments](#inbound-shipments) | 8 |
+| [explain](#explain) | 2 |
 
 ## customers
 
@@ -1469,3 +1470,10 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `mark_inbound_shipment_arrived` | write | Mark an inbound shipment as arrived. |
 | `receive_inbound_shipment_line` | write | Receive a quantity against an inbound shipment line. |
 | `cancel_inbound_shipment` | write | Cancel an inbound shipment. |
+
+## explain
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `explain_order` | read | Explain an order to a customer or merchant: one chronological timeline (checkout, payments, shipments, returns, refunds, fraud, activity), the money charged/refunded/net as exact strings, tax recomputed from the address, and flags for inconsistencies (e.g. paid but paymentStatus pending, refunded more than charged). Read-only; lists what it cannot see. |
+| `explain_cart_pricing` | read | Explain why a cart costs what it costs: lines, subtotal, promotions applied and REFUSED with reason codes, tax by jurisdiction, shipping, and a check that the explained total equals the stored grand total. Pass couponCodes to ask why a code does or does not apply. Read-only: nothing is written to the cart. |
