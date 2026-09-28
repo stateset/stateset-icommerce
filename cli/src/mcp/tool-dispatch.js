@@ -25,6 +25,13 @@ import { buildDeterministicMutationManifest } from './mutation-manifest.js';
 import { normalizeToolName } from './policy-helpers.js';
 import { compactReplayValue } from './replay-sanitizer.js';
 import { isMutationPermission } from '../kernel-boundary.js';
+import {
+  RAW_TOOL_RESULT,
+  attachContractToResponse,
+  normalizeStepOutcome,
+  normalizeToolError,
+  normalizeToolResult,
+} from './tool-result-contract.js';
 
 /**
  * Build the dispatch helpers for one server instance.
@@ -74,6 +81,25 @@ export function createToolDispatch({
   executeGovernedTool,
   sdkTool = sdkToolImpl,
 }) {
+  /**
+   * A gate refusal (hook, policy, permission, payment, treasury) or a
+   * preview, as an MCP response that carries the result contract. A preview
+   * is not an error: `isError` is set only when the contract says `ok: false`.
+   */
+  const gateResponse = (payload, status, startedAt, toolMeta, isError) =>
+    attachContractToResponse(
+      buildToolResultResponse(payload, status, startedAt, toolMeta, isError),
+      normalizeStepOutcome(
+        {
+          status,
+          error: payload?.error,
+          remediation: payload?.remediation,
+          permission: { preview: status === 'preview' },
+        },
+        payload,
+      ),
+    );
+
   const wrapTool = (name, description, schema, handler, policyDomain = null) => {
     return sdkTool(name, description, schema, async (args, extra) => {
       const startedAt = Date.now();
@@ -176,7 +202,7 @@ export function createToolDispatch({
                 },
               },
             });
-            return buildToolResultResponse(
+            return gateResponse(
               payload,
               'blocked',
               startedAt,
@@ -222,7 +248,7 @@ export function createToolDispatch({
             error: payload.error,
             remediation: payload.remediation,
           });
-          return buildToolResultResponse(
+          return gateResponse(
             payload,
             'policy_block',
             startedAt,
@@ -269,7 +295,7 @@ export function createToolDispatch({
               error: payload.error,
             });
           }
-          return buildToolResultResponse(
+          return gateResponse(
             payload,
             permission.preview ? 'preview' : 'permission_block',
             startedAt,
@@ -312,7 +338,7 @@ export function createToolDispatch({
             },
             error: mpp?.verification?.reason || MPP_JSONRPC_PAYMENT_REQUIRED_MESSAGE,
           });
-          return buildToolResultResponse(
+          return gateResponse(
             {
               ...mpp.errorPayload,
               tool: name,
@@ -355,7 +381,7 @@ export function createToolDispatch({
             },
             error: charge.reason || 'Treasury charge blocked',
           });
-          return buildToolResultResponse(
+          return gateResponse(
             {
               error: charge.reason || 'Treasury charge blocked',
               tool: name,
@@ -407,7 +433,12 @@ export function createToolDispatch({
             sessionId: effectiveSessionId,
           });
         }
-        const replayEvent = await logEvent('success', {
+        // The adapted handler attached the contract; a tool whose own result
+        // says it failed is logged and labelled as an error, not a success.
+        const contractOutcome =
+          result && typeof result === 'object' ? result.structuredContent : null;
+        const resultStatus = contractOutcome && contractOutcome.ok === false ? 'error' : 'success';
+        const replayEvent = await logEvent(resultStatus, {
           params: nextArgs,
           permission,
           charge,
@@ -419,15 +450,20 @@ export function createToolDispatch({
             decisionBundle: policy.policyDecisionBundle || null,
           },
         });
-        let maybeStructured = attachStructuredToolMetadataToResponse(result, 'success', startedAt, {
-          requestId: baseToolContext.requestId,
-          sessionId: baseToolContext.sessionId,
-          policy,
-          permission,
-          charge,
-          mutationManifest: buildMutationManifest(nextArgs, policy, permission, 'success'),
-          name,
-        });
+        let maybeStructured = attachStructuredToolMetadataToResponse(
+          result,
+          resultStatus,
+          startedAt,
+          {
+            requestId: baseToolContext.requestId,
+            sessionId: baseToolContext.sessionId,
+            policy,
+            permission,
+            charge,
+            mutationManifest: buildMutationManifest(nextArgs, policy, permission, resultStatus),
+            name,
+          },
+        );
         if (mpp?.authorized && charge?.charged) {
           maybeStructured = attachPaymentMetadataToResponse(maybeStructured, {
             protocol: 'mpp',
@@ -525,14 +561,28 @@ export function createToolDispatch({
       agentic: true,
     });
 
+    // The tool result contract (./tool-result-contract.js) decides `ok`; the
+    // legacy `success` flag is kept and now also turns false when the tool's
+    // own result says it failed (e.g. a rejected kernel receipt).
+    const rawResult = outcome[RAW_TOOL_RESULT];
+    const contract = normalizeStepOutcome(outcome, rawResult);
+    const { [RAW_TOOL_RESULT]: _raw, ...record } = outcome;
+    const statusSucceeded =
+      outcome.status === 'success' ||
+      outcome.status === 'dry_run_success' ||
+      outcome.status === 'rollback_success';
     return {
-      success:
-        outcome.status === 'success' ||
-        outcome.status === 'dry_run_success' ||
-        outcome.status === 'rollback_success',
+      success: statusSucceeded && contract.ok,
       requestId,
       sessionId,
-      ...outcome,
+      ...record,
+      // The uncompacted result: replay logs keep the bounded copy.
+      ...(rawResult !== undefined ? { result: rawResult } : {}),
+      error: record.error ?? (contract.ok ? null : contract.error.message),
+      ok: contract.ok,
+      preview: contract.preview,
+      failure: contract.ok ? null : contract.error,
+      ...(contract.notice ? { notice: contract.notice } : {}),
     };
   };
 
@@ -574,15 +624,27 @@ export function createToolDispatch({
             params: args,
             extra,
           }));
-        return {
-          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-        };
+        return attachContractToResponse(
+          { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] },
+          normalizeToolResult(result),
+        );
       } catch (error) {
-        return {
-          content: [
-            { type: 'text', text: JSON.stringify({ success: false, error: error.message }) },
-          ],
-        };
+        const outcome = normalizeToolError(error);
+        return attachContractToResponse(
+          {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: false,
+                  error: outcome.error.message,
+                  code: outcome.error.code,
+                }),
+              },
+            ],
+          },
+          outcome,
+        );
       }
     });
   };

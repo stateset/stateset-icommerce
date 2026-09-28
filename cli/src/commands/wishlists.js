@@ -2,6 +2,8 @@
  * Wishlists Commands Module
  */
 
+import { convertWishlistToCart } from '../tools/wishlists.js';
+
 function parseJsonArg(value, label) {
   try {
     return JSON.parse(value);
@@ -35,10 +37,14 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
 
     case 'create': {
       const [customerId, name = 'My Wishlist', visibility = 'private'] = args;
-      if (!customerId) {
-        throw new Error('Usage: wishlists create <customerId> [name] [visibility]');
+      if (!customerId || !['public', 'private'].includes(visibility)) {
+        throw new Error('Usage: wishlists create <customerId> [name] [public|private]');
       }
-      const wishlist = await commerce.wishlists.create({ customerId, name, visibility });
+      const wishlist = await commerce.wishlists.create({
+        customerId,
+        name,
+        isPublic: visibility === 'public',
+      });
       return {
         wishlist,
         formatted: `Created wishlist ${wishlist.id}`,
@@ -56,25 +62,29 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       );
       return {
         item,
-        formatted: `Added item ${item.id || item.productId} to wishlist ${wishlistId}`,
+        formatted: `Added product ${item.productId} to wishlist ${wishlistId}`,
       };
     }
 
     case 'remove-item': {
-      const [wishlistId, itemId] = args;
-      if (!wishlistId || !itemId) {
-        throw new Error('Usage: wishlists remove-item <wishlistId> <itemId>');
+      // Wishlist items are keyed by product: there is no separate item ID.
+      const [wishlistId, productId] = args;
+      if (!wishlistId || !productId) {
+        throw new Error('Usage: wishlists remove-item <wishlistId> <productId>');
       }
-      await commerce.wishlists.removeItem(wishlistId, itemId);
-      return { formatted: `Removed item ${itemId} from wishlist ${wishlistId}` };
+      await commerce.wishlists.removeItem(wishlistId, productId);
+      return { formatted: `Removed product ${productId} from wishlist ${wishlistId}` };
     }
 
     case 'convert': {
       const [wishlistId, clearWishlistRaw] = args;
       if (!wishlistId) throw new Error('Usage: wishlists convert <wishlistId> [clearWishlist]');
-      const result = await commerce.wishlists.convertToCart(wishlistId, {
+      const result = await convertWishlistToCart(commerce, wishlistId, {
         clearWishlist: parseBoolean(clearWishlistRaw),
       });
+      if (result.error === 'Wishlist not found') {
+        throw new Error(`Wishlist not found: ${wishlistId}`);
+      }
       return formatConversion(wishlistId, result, { jsonOutput });
     }
 
@@ -84,9 +94,9 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
           'Available actions:\n' +
           '  list <customerId> [limit]             List wishlists\n' +
           '  get <wishlistId>                      Get wishlist\n' +
-          '  create <customerId> [name] [visibility]  Create wishlist\n' +
+          '  create <customerId> [name] [public|private]  Create wishlist\n' +
           '  add-item <wishlistId> <payloadJson>   Add item to wishlist\n' +
-          '  remove-item <wishlistId> <itemId>     Remove item from wishlist\n' +
+          '  remove-item <wishlistId> <productId>  Remove item from wishlist\n' +
           '  convert <wishlistId> [clearWishlist]  Convert wishlist to cart',
       );
   }
@@ -95,7 +105,14 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
 function formatWishlistList(wishlists, { output, jsonOutput }) {
   if (jsonOutput) return wishlists;
   if (wishlists.length === 0) return { formatted: 'No wishlists found.' };
-  const formatted = output.table(wishlists, [
+  const rows = wishlists.map((w) => ({
+    id: w.id,
+    name: w.name,
+    customerId: w.customerId,
+    visibility: w.isPublic ? 'public' : 'private',
+    itemCount: w.items.length,
+  }));
+  const formatted = output.table(rows, [
     { key: 'id', header: 'ID' },
     { key: 'name', header: 'Name' },
     { key: 'customerId', header: 'Customer' },
@@ -112,9 +129,9 @@ function formatWishlistDetail(wishlist, { output, jsonOutput }) {
     items.length === 0
       ? 'No items'
       : output.table(items, [
-          { key: 'id', header: 'Item' },
           { key: 'productId', header: 'Product' },
           { key: 'variantId', header: 'Variant' },
+          { key: 'quantity', header: 'Qty', align: 'right' },
           { key: 'priority', header: 'Priority', align: 'right' },
         ]);
   return {
@@ -124,8 +141,8 @@ function formatWishlistDetail(wishlist, { output, jsonOutput }) {
       `${'-'.repeat(34)}\n` +
       `ID:           ${wishlist.id}\n` +
       `Customer:     ${wishlist.customerId}\n` +
-      `Visibility:   ${wishlist.visibility}\n` +
-      `Item count:   ${wishlist.itemCount ?? items.length}\n\n` +
+      `Visibility:   ${wishlist.isPublic ? 'public' : 'private'}\n` +
+      `Item count:   ${items.length}\n\n` +
       itemsTable,
   };
 }
@@ -138,9 +155,10 @@ function formatConversion(wishlistId, result, { jsonOutput }) {
     formatted:
       `Converted wishlist ${wishlistId}\n` +
       `${'-'.repeat(34)}\n` +
-      `Cart ID:            ${result.cartId}\n` +
+      `Cart ID:            ${result.cartId ?? 'none (no item could be priced)'}\n` +
       `Items added:        ${result.itemsAdded}\n` +
-      `Items unavailable:  ${result.itemsUnavailable}`,
+      `Items unavailable:  ${result.itemsUnavailable.length}` +
+      result.itemsUnavailable.map((u) => `\n  ${u.productId}: ${u.reason}`).join(''),
   };
 }
 
@@ -151,9 +169,15 @@ export const metadata = {
   actions: {
     list: { description: 'List wishlists', args: ['<customerId>', '[limit]'] },
     get: { description: 'Get wishlist', args: ['<wishlistId>'] },
-    create: { description: 'Create wishlist', args: ['<customerId>', '[name]', '[visibility]'] },
+    create: {
+      description: 'Create wishlist',
+      args: ['<customerId>', '[name]', '[public|private]'],
+    },
     'add-item': { description: 'Add item to wishlist', args: ['<wishlistId>', '<payloadJson>'] },
-    'remove-item': { description: 'Remove item from wishlist', args: ['<wishlistId>', '<itemId>'] },
+    'remove-item': {
+      description: 'Remove item from wishlist',
+      args: ['<wishlistId>', '<productId>'],
+    },
     convert: { description: 'Convert wishlist to cart', args: ['<wishlistId>', '[clearWishlist]'] },
   },
 };

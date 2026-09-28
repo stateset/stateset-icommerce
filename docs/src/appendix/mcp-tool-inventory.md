@@ -13,10 +13,10 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 969 |
+| Total tools | 971 |
 | MCP servers | 3 |
-| Policy domains | 89 |
-| Read tools | 477 |
+| Policy domains | 90 |
+| Read tools | 479 |
 | Write tools | 424 |
 | Delete tools | 21 |
 | Admin tools | 47 |
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 951 | `cli/src/mcp-server.js` |
+| stateset-commerce | 953 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -65,6 +65,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | cycle_counts | 7 |
 | edi_documents | 5 |
 | erc8004 | 5 |
+| explain | 2 |
 | fixed_assets | 9 |
 | fraud | 6 |
 | fulfillment | 14 |
@@ -130,7 +131,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | --- | --- |
 | admin | 47 |
 | delete | 21 |
-| read | 477 |
+| read | 479 |
 | write | 424 |
 
 ## Tool Registry
@@ -593,6 +594,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `execute_wasm_connector` | `stateset-commerce` | `connectors` | `write` |
 | `expire_backorder_allocations` | `stateset-commerce` | `backorders` | `write` |
 | `expire_cart` | `stateset-commerce` | `carts` | `write` |
+| `explain_cart_pricing` | `stateset-commerce` | `explain` | `read` |
+| `explain_order` | `stateset-commerce` | `explain` | `read` |
 | `explain_policy_denial` | `stateset-commerce` | `policies` | `read` |
 | `export_agent_catalog` | `stateset-commerce` | `catalog` | `read` |
 | `export_audit_trail` | `stateset-commerce` | `compliance` | `admin` |

@@ -77,6 +77,7 @@ export const DOMAIN_TIERS = Object.freeze({
   promotions: 'core',
   'gift-cards': 'core',
   'store-credits': 'core',
+  explain: 'core',
 
   // extended -- real, specialised domains
   'custom-objects': 'extended',

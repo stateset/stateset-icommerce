@@ -74,7 +74,7 @@ function makeDispatch(overrides = {}) {
         permission: { allowed: true },
         charge: null,
         params: input.params,
-        result: { ok: true },
+        result: overrides.stepResult ?? { ok: true },
         error: null,
       };
     },
@@ -136,6 +136,7 @@ describe('wrapTool', () => {
     assert.equal(out.status, 'blocked');
     assert.equal(out.isError, true);
     assert.equal(out.result.error, 'hooked');
+    assert.equal(out.structuredContent.error.code, 'HOOK_BLOCKED');
     assert.equal(hook.events[0].status, 'blocked');
 
     const policy = makeDispatch({
@@ -144,6 +145,8 @@ describe('wrapTool', () => {
     out = await policy.wrapTool('t', 'd', {}, async () => ({})).handler({}, {});
     assert.equal(out.status, 'policy_block');
     assert.equal(out.result.error, 'pol');
+    assert.equal(out.isError, true);
+    assert.equal(out.structuredContent.error.code, 'POLICY_DENIED');
     assert.equal(policy.events[0].status, 'policy_block');
 
     const preview = makeDispatch({
@@ -160,12 +163,19 @@ describe('wrapTool', () => {
     assert.equal(out.status, 'preview');
     assert.deepEqual(out.result.wouldDo, { a: 1 });
     assert.equal(preview.events[0].status, 'preview');
+    // A preview is not an error: it is ok, flagged preview, and says why.
+    assert.equal(out.isError, undefined);
+    assert.equal(out.structuredContent.ok, true);
+    assert.equal(out.structuredContent.preview, true);
+    assert.equal(out.structuredContent.notice.code, 'APPLY_REQUIRED');
 
     const denied = makeDispatch({
       deps: { checkPermission: async () => ({ allowed: false, preview: false, reason: 'no' }) },
     });
     out = await denied.wrapTool('t', 'd', {}, async () => ({})).handler({}, {});
     assert.equal(out.status, 'permission_block');
+    assert.equal(out.isError, true);
+    assert.equal(out.structuredContent.error.code, 'PERMISSION_DENIED');
 
     const treasury = makeDispatch({
       deps: {
@@ -175,6 +185,7 @@ describe('wrapTool', () => {
     out = await treasury.wrapTool('t', 'd', {}, async () => ({})).handler({}, {});
     assert.equal(out.status, 'treasury_block');
     assert.equal(out.result.error, 'broke');
+    assert.equal(out.structuredContent.error.code, 'TREASURY_BLOCKED');
   });
 
   it('returns payment_required for priced, unauthorized calls', async () => {
@@ -193,6 +204,8 @@ describe('wrapTool', () => {
     assert.equal(out.result.paymentRequired, true);
     assert.equal(out.toolMeta.charge.paymentRequired, true);
     assert.equal(d.events[0].status, 'payment_required');
+    assert.equal(out.isError, true);
+    assert.equal(out.structuredContent.error.code, 'PAYMENT_REQUIRED');
   });
 
   it('logs and re-throws handler errors', async () => {
@@ -233,6 +246,40 @@ describe('executeTool', () => {
     const out = await d.executeTool('create_order');
     assert.equal(out.success, false);
     assert.match(out.requestId, /^[0-9a-f-]{36}$/);
+    assert.equal(out.ok, false);
+    assert.equal(out.failure.code, 'POLICY_DENIED');
+  });
+
+  it('reports ok=false with the receipt code when a kernel receipt was rejected', async () => {
+    const d = makeDispatch({
+      stepResult: {
+        success: false,
+        kernel: true,
+        receipt: {
+          receipt_id: 'r',
+          status: 'rejected',
+          error_code: 'commerce.order.invalid_transition',
+          error_message: 'order cannot transition from confirmed to shipped',
+          retry: 'never',
+        },
+      },
+    });
+    const out = await d.executeTool('create_order');
+    assert.equal(out.success, false);
+    assert.equal(out.ok, false);
+    assert.equal(out.preview, false);
+    assert.equal(out.failure.code, 'commerce.order.invalid_transition');
+    assert.equal(out.error, 'order cannot transition from confirmed to shipped');
+  });
+
+  it('marks a preview ok and preview, never success', async () => {
+    const d = makeDispatch({ stepStatus: 'preview', stepResult: null });
+    const out = await d.executeTool('create_order');
+    assert.equal(out.success, false);
+    assert.equal(out.ok, true);
+    assert.equal(out.preview, true);
+    assert.equal(out.failure, null);
+    assert.equal(out.notice.code, 'APPLY_REQUIRED');
   });
 });
 
@@ -266,6 +313,44 @@ describe('adaptTool', () => {
       },
     });
     const bad = await badTool.handler({}, {});
-    assert.deepEqual(JSON.parse(bad.content[0].text), { success: false, error: 'handler failed' });
+    assert.deepEqual(JSON.parse(bad.content[0].text), {
+      success: false,
+      error: 'handler failed',
+      code: 'TOOL_ERROR',
+    });
+    assert.equal(bad.isError, true);
+    assert.deepEqual(bad.structuredContent, {
+      ok: false,
+      preview: false,
+      error: { code: 'TOOL_ERROR', message: 'handler failed', retryable: false },
+    });
+    assert.equal(ok.isError, undefined);
+    assert.equal(ok.structuredContent.ok, true);
+  });
+
+  it('flags a rejected kernel receipt as an error with the receipt code', async () => {
+    const d = makeDispatch();
+    const tool = d.adaptTool({
+      name: 'create_order',
+      description: 'd',
+      inputSchema: {},
+      handler: async () => ({
+        success: false,
+        kernel: true,
+        receipt: {
+          receipt_id: 'r-1',
+          command_type: 'commerce.order.ship',
+          status: 'rejected',
+          error_code: 'commerce.order.invalid_transition',
+          error_message: 'order cannot transition from confirmed to shipped',
+          retry: 'never',
+        },
+      }),
+    });
+    const response = await tool.handler({}, {});
+    assert.equal(response.isError, true);
+    assert.equal(response.structuredContent.ok, false);
+    assert.equal(response.structuredContent.error.code, 'commerce.order.invalid_transition');
+    assert.equal(response.structuredContent.error.retryable, false);
   });
 });
