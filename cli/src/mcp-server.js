@@ -49,7 +49,11 @@ import {
   createSimulateMutationToolCall,
 } from './mcp/mutation-simulator.js';
 // Aug 2026 extraction — orchestration factories (see each module's header).
-import { createA2AServiceBinding, initializeIntelligenceServices } from './mcp/a2a-service.js';
+import {
+  createA2AServiceBinding,
+  disposeA2AServices,
+  initializeIntelligenceServices,
+} from './mcp/a2a-service.js';
 import { buildReadOnlyToolSet, createCheckPermission } from './mcp/permission-gating.js';
 import { createPreparePaymentForTool, createResolveMppPaymentContext } from './mcp/mpp-payment.js';
 import { createToolCatalogHelpers } from './mcp/tool-catalog.js';
@@ -282,11 +286,29 @@ export function createStatesetMcpServer({
   // ---------------------------------------------------------------------------
   // Lazy-loaded (body in ./mcp/a2a-service.js) so a failing module never
   // blocks startup.
-  initializeIntelligenceServices({
+  // A2A agent checkpoints are files; keep them beside the policy store /
+  // replay log, and only when there is somewhere durable to put them.
+  const isFileBackedDb =
+    typeof dbPath === 'string' &&
+    dbPath !== '' &&
+    dbPath !== ':memory:' &&
+    !dbPath.startsWith('file::memory:');
+  const a2aStateDir =
+    policyStorePath ||
+    (isFileBackedDb ? path.join(path.dirname(path.resolve(dbPath)), '.stateset') : null);
+  const a2aServicesReady = initializeIntelligenceServices({
     commerceWithA2A,
     a2aStore,
     setA2AServiceFactory: a2aBinding.setFactory,
+    agentConfig,
+    checkpointDir: a2aStateDir ? path.join(a2aStateDir, 'a2a-checkpoints') : null,
   });
+  // Stops service loops/timers. Re-run after init settles so a dispose that
+  // races initialization still stops what initialization attaches.
+  const disposeA2A = () => {
+    disposeA2AServices(commerceWithA2A);
+    a2aServicesReady.then(() => disposeA2AServices(commerceWithA2A));
+  };
 
   // ---------------------------------------------------------------------------
   // Permission helpers — body in ./mcp/permission-gating.js
@@ -618,7 +640,14 @@ export function createStatesetMcpServer({
   server.executeTool = executeTool;
   server.executeToolWithPayment = executeToolWithPayment;
   server.connect = (...args) => server.instance.connect(...args);
-  server.close = (...args) => server.instance.server.close(...args);
+  server.close = (...args) => {
+    disposeA2A();
+    return server.instance.server.close(...args);
+  };
+  /** Resolves once the A2A intelligence/automation services are attached. */
+  server.servicesReady = a2aServicesReady;
+  /** Stop A2A service loops and timers without closing the transport. */
+  server.dispose = disposeA2A;
   server.getRuntimeContract = getAgenticRuntimeContract;
   server.simulatePlan = simulateAgenticPlan;
   server.executePlan = executeAgenticPlan;

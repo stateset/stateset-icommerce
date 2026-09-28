@@ -2,14 +2,6 @@
   "_why": "MCP tools known to crash on a fresh store (see test/integration/mcp-tool-smoke.test.js). This list only shrinks: fix a tool, then remove it here.",
   "defects": [
     {
-      "tool": "a2a_list_webhook_dlq",
-      "reason": "store.listDLQ is not a function"
-    },
-    {
-      "tool": "a2a_dlq_count",
-      "reason": "store.countDLQ is not a function"
-    },
-    {
       "tool": "a2a_billing_tick",
       "reason": "Billing executor not initialized"
     },
@@ -26,66 +18,6 @@
       "reason": "Billing executor not initialized"
     },
     {
-      "tool": "a2a_dispute_resolver_tick",
-      "reason": "Dispute resolver not initialized"
-    },
-    {
-      "tool": "a2a_dispute_resolver_start",
-      "reason": "Dispute resolver not initialized"
-    },
-    {
-      "tool": "a2a_dispute_resolver_metrics",
-      "reason": "Dispute resolver not initialized"
-    },
-    {
-      "tool": "a2a_sla_enforce",
-      "reason": "SLA service not initialized"
-    },
-    {
-      "tool": "a2a_sla_enforce_all",
-      "reason": "SLA service not initialized"
-    },
-    {
-      "tool": "a2a_marketplace_auto_award",
-      "reason": "Marketplace service not initialized"
-    },
-    {
-      "tool": "a2a_marketplace_maintenance",
-      "reason": "Marketplace service not initialized"
-    },
-    {
-      "tool": "a2a_notification_retry_all",
-      "reason": "Notification service not initialized"
-    },
-    {
-      "tool": "a2a_saga_execute",
-      "reason": "Saga orchestrator not initialized"
-    },
-    {
-      "tool": "a2a_saga_status",
-      "reason": "Saga orchestrator not initialized"
-    },
-    {
-      "tool": "a2a_saga_list",
-      "reason": "Saga orchestrator not initialized"
-    },
-    {
-      "tool": "a2a_saga_cancel",
-      "reason": "Saga orchestrator not initialized"
-    },
-    {
-      "tool": "a2a_escrow_process_all",
-      "reason": "Escrow service not initialized"
-    },
-    {
-      "tool": "a2a_handshake",
-      "reason": "Handshake service not initialized"
-    },
-    {
-      "tool": "a2a_my_capabilities",
-      "reason": "Handshake service not initialized"
-    },
-    {
       "tool": "a2a_batch_pay",
       "reason": "Batch service not initialized"
     },
@@ -94,48 +26,8 @@
       "reason": "Batch service not initialized"
     },
     {
-      "tool": "a2a_save_checkpoint",
-      "reason": "Checkpoint service not initialized"
-    },
-    {
-      "tool": "a2a_load_checkpoint",
-      "reason": "Checkpoint service not initialized"
-    },
-    {
-      "tool": "a2a_list_checkpoints",
-      "reason": "Checkpoint service not initialized"
-    },
-    {
-      "tool": "a2a_export_agent_data",
-      "reason": "Data export service not initialized"
-    },
-    {
-      "tool": "a2a_commerce_report",
-      "reason": "Data export service not initialized"
-    },
-    {
-      "tool": "a2a_data_stats",
-      "reason": "Data export service not initialized"
-    },
-    {
       "tool": "a2a_tick_metrics",
       "reason": "Tick optimizer not initialized"
-    },
-    {
-      "tool": "a2a_scatter",
-      "reason": "Fan-out coordinator not initialized"
-    },
-    {
-      "tool": "a2a_coordination_status",
-      "reason": "Fan-out coordinator not initialized"
-    },
-    {
-      "tool": "a2a_submit_response",
-      "reason": "Fan-out coordinator not initialized"
-    },
-    {
-      "tool": "a2a_join_results",
-      "reason": "Fan-out coordinator not initialized"
     }
   ]
 }
