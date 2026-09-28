@@ -13,6 +13,8 @@
     "format": "prettier --write 'cli/{src,bin}/**/*.js'",
     "format:check": "prettier --check 'cli/{src,bin}/**/*.js'",
     "check:env": "node scripts/check-node.mjs 20.20.0 10.0.0",
+    "regen": "npm run check:env && node ./scripts/regen.mjs",
+    "regen:check": "npm run check:env && node ./scripts/regen.mjs --check",
     "generate:agent-inventory": "npm run check:env && node ./scripts/ci/generate_agent_inventory.mjs",
     "generate:api-command-coverage": "npm run check:env && node ./scripts/ci/generate_api_command_coverage.mjs",
     "generate:binding-api-inventory": "npm run check:env && node ./scripts/ci/generate_binding_api_inventory.mjs",

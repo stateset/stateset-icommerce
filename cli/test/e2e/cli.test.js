@@ -12,6 +12,8 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
+import { startupBudgetMs } from '../helpers/startup-budget.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI_DIR = path.join(__dirname, '..', '..', 'bin');
 const TEST_DB = path.join(os.tmpdir(), `stateset-e2e-${Date.now()}.db`);
@@ -23,7 +25,7 @@ function execCli(command, args = [], options = {}) {
   return new Promise((resolve, reject) => {
     const proc = spawn(process.execPath, [path.join(CLI_DIR, command), ...args], {
       env: { ...process.env, ...options.env },
-      timeout: options.timeout || 30000
+      timeout: options.timeout || startupBudgetMs(30000)
     });
 
     let stdout = '';

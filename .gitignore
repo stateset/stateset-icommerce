@@ -51,7 +51,13 @@ Thumbs.db
 
 # Build artifacts
 *.dSYM/
-/artifacts/
+# Local evidence and reports land under /artifacts/ (recovery drill, golden path,
+# registry drift). The subdirectories below are TRACKED generated files that
+# `npm run regen` and CI rewrite; un-ignoring them keeps their changes visible
+# and lets a plain `git add` stage them without -f.
+/artifacts/*
+!/artifacts/compatibility/
+!/artifacts/perf-regression/
 examples/go/go
 examples/go/go.exe
 bindings/go/example/example
