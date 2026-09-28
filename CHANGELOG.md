@@ -6,6 +6,26 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Changed (behaviour, needs a release note)
+
+- **Strict kernel endpoints can run a checkout end to end.** Eleven storefront
+  writes are now governed kernel commands, each with a sealed, policy-checked,
+  audit-hashed receipt: `customers.create`, `carts.create`, `carts.item.add`,
+  `carts.shipping_address.set`, `carts.payment_method.set`,
+  `carts.coupon.apply`, `carts.tax.calculate`, `payments.complete`,
+  `shipments.create`, `returns.create` and `returns.tracking.add`. **A
+  deployment with a kernel configured now routes these tools through it, so
+  its policy and principal must grant the new capabilities** (see
+  `kernel/examples/strict-*.json`). Without a kernel the tools keep their
+  previous handlers. Promotions stay merchant configuration: a strict agent
+  can redeem a coupon but cannot create one.
+
+### Fixed
+
+- Three SQLite cart writes (`set_shipping_address`, `set_payment`,
+  `apply_discount`) ran outside a transaction; they now run in one.
+- `executeTool` returned `result: '[truncated]'` for every governed tool.
+
 ## [1.35.3] - 2026-09-26
 
 ### Verified commerce invariants
