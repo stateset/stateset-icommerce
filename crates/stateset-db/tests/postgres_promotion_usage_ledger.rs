@@ -211,7 +211,7 @@ async fn postgres_failed_conditions_carry_a_class_specific_rejection_code() {
             .iter()
             .find(|r| r.promotion_id == Some(id))
             .map(|r| r.reason_code)
-            .unwrap_or_else(|| panic!("{id} not rejected: {result:?}"))
+            .unwrap_or_else(|| panic!("{id} not rejected"))
     };
     assert_eq!(code_for(ids[0]), RejectionReason::CustomerNotEligible);
     assert_eq!(code_for(ids[1]), RejectionReason::ProductNotEligible);

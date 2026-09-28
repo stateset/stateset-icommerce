@@ -2956,7 +2956,7 @@ mod tests {
                 .iter()
                 .find(|r| r.promotion_id == Some(id))
                 .map(|r| r.reason_code)
-                .unwrap_or_else(|| panic!("{id} not rejected: {result:?}"))
+                .unwrap_or_else(|| panic!("{id} not rejected"))
         };
         assert_eq!(code_for(first_order), RejectionReason::CustomerNotEligible);
         assert_eq!(code_for(sku), RejectionReason::ProductNotEligible);
