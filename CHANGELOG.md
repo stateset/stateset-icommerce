@@ -8,6 +8,18 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Changed (behaviour, needs a release note)
 
+- **Strict kernel endpoints can run a checkout end to end.** Eleven storefront
+  writes are now governed kernel commands, each with a sealed, policy-checked,
+  audit-hashed receipt: `customers.create`, `carts.create`, `carts.item.add`,
+  `carts.shipping_address.set`, `carts.payment_method.set`,
+  `carts.coupon.apply`, `carts.tax.calculate`, `payments.complete`,
+  `shipments.create`, `returns.create` and `returns.tracking.add`. **A
+  deployment with a kernel configured now routes these tools through it, so
+  its policy and principal must grant the new capabilities** (see
+  `kernel/examples/strict-*.json`). Without a kernel the tools keep their
+  previous handlers. Promotions stay merchant configuration: a strict agent
+  can redeem a coupon but cannot create one.
+
 - **An order can only be refunded if it was paid.** The refund guard (SQLite,
   PostgreSQL and the kernel) read the payment status supplied in the same
   update, and `orders.update_status(id, Refunded)` supplies `Refunded`
@@ -62,6 +74,12 @@ This project follows Keep a Changelog and Semantic Versioning.
   `NonConformance` now carry the disposition, and the `close_ncr` MCP tool
   and `stateset quality close-ncr` take an optional `disposition` (plus an
   exact `dispositionQuantity`) that they record before closing.
+
+### Fixed
+
+- Three SQLite cart writes (`set_shipping_address`, `set_payment`,
+  `apply_discount`) ran outside a transaction; they now run in one.
+- `executeTool` returned `result: '[truncated]'` for every governed tool.
 
 ## [1.35.3] - 2026-09-26
 

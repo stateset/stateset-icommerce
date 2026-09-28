@@ -8,6 +8,17 @@
     "checkout.commit",
     "payments.create",
     "payments.create_refund",
-    "products.create"
+    "products.create",
+    "customers.create",
+    "carts.create",
+    "carts.item.add",
+    "carts.shipping_address.set",
+    "carts.payment_method.set",
+    "carts.coupon.apply",
+    "carts.tax.calculate",
+    "payments.complete",
+    "shipments.create",
+    "returns.create",
+    "returns.tracking.add"
   ]
 }

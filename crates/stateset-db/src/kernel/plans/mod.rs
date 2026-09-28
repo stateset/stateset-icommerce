@@ -8,6 +8,7 @@ pub mod inventory;
 pub mod orders;
 pub mod payments;
 pub mod returns;
+pub mod storefront;
 
 use crate::kernel::envelope::GuardRejection;
 
