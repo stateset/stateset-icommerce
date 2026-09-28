@@ -654,7 +654,8 @@ describe('commands integration', () => {
         assert.ok(meta.actions.create);
         assert.ok(meta.actions.update);
         assert.ok(meta.actions.evaluate);
-        assert.ok(meta.actions.rebuild);
+        // Nothing in the engine evaluates dynamic segment rules.
+        assert.equal(meta.actions.rebuild, undefined);
       });
     });
 

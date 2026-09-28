@@ -2,20 +2,30 @@
  * Promotions Commands Module
  */
 
+// `commerce.promotions` is a property on the binding: calling it as a function
+// works only through the MCP adapter's callable Proxy, and throws on the raw
+// `Commerce` that `executeCommand` callers pass.
+
+// `get` / `getCoupon` reject a non-UUID argument and answer null for an unknown
+// UUID; either way the identifier may still be a code.
 async function getPromotionByIdentifier(commerce, identifier) {
+  let promotion = null;
   try {
-    return await commerce.promotions().get(identifier);
+    promotion = await commerce.promotions.get(identifier);
   } catch {
-    return commerce.promotions().getByCode(identifier);
+    // not an ID; fall through to the code lookup
   }
+  return promotion ?? commerce.promotions.getByCode(identifier);
 }
 
 async function getCouponByIdentifier(commerce, identifier) {
+  let coupon = null;
   try {
-    return await commerce.promotions().getCoupon(identifier);
+    coupon = await commerce.promotions.getCoupon(identifier);
   } catch {
-    return commerce.promotions().getCouponByCode(identifier);
+    // not an ID; fall through to the code lookup
   }
+  return coupon ?? commerce.promotions.getCouponByCode(identifier);
 }
 
 export async function execute(action, args, { commerce, output, jsonOutput }) {
@@ -25,7 +35,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       const filter = {};
       if (status) filter.status = status;
       if (type) filter.promotionType = type;
-      const promotions = await commerce.promotions().list(filter);
+      const promotions = await commerce.promotions.list(filter);
       return formatPromotionList(promotions, { output, jsonOutput });
     }
 
@@ -38,7 +48,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
     }
 
     case 'active': {
-      const promotions = await commerce.promotions().getActive();
+      const promotions = await commerce.promotions.getActive();
       return formatPromotionList(promotions, { output, jsonOutput });
     }
 
@@ -53,7 +63,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
     case 'validate': {
       const code = args[0];
       if (!code) throw new Error('Usage: promotions validate <code>');
-      const coupon = await commerce.promotions().validateCoupon(code.toUpperCase());
+      const coupon = await commerce.promotions.validateCoupon(code.toUpperCase());
       if (!coupon) {
         return jsonOutput
           ? { valid: false, code }
@@ -67,14 +77,14 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       const filter = {};
       if (promotionId) filter.promotionId = promotionId;
       if (status) filter.status = status;
-      const coupons = await commerce.promotions().listCoupons(filter);
+      const coupons = await commerce.promotions.listCoupons(filter);
       return formatCouponList(coupons, { output, jsonOutput });
     }
 
     case 'activate': {
       const promotionId = args[0];
       if (!promotionId) throw new Error('Usage: promotions activate <promotionId>');
-      const promotion = await commerce.promotions().activate(promotionId);
+      const promotion = await commerce.promotions.activate(promotionId);
       return {
         promotion,
         formatted: `Activated promotion ${promotion.name || promotion.id}`,
@@ -84,7 +94,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
     case 'deactivate': {
       const promotionId = args[0];
       if (!promotionId) throw new Error('Usage: promotions deactivate <promotionId>');
-      const promotion = await commerce.promotions().deactivate(promotionId);
+      const promotion = await commerce.promotions.deactivate(promotionId);
       return {
         promotion,
         formatted: `Deactivated promotion ${promotion.name || promotion.id}`,
@@ -94,7 +104,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
     case 'apply': {
       const cartId = args[0];
       if (!cartId) throw new Error('Usage: promotions apply <cartId>');
-      const result = await commerce.promotions().applyToCart(cartId);
+      const result = await commerce.promotions.applyToCart(cartId);
       return formatApplyResult(cartId, result, { output, jsonOutput });
     }
 
@@ -191,10 +201,10 @@ function formatApplyResult(cartId, result, { output: _output, jsonOutput }) {
     formatted:
       `Applied promotions to cart ${cartId}\n` +
       `${'-'.repeat(36)}\n` +
-      `Original subtotal:   ${result.originalSubtotal}\n` +
-      `Discount:            ${result.totalDiscount}\n` +
-      `Discounted subtotal: ${result.discountedSubtotal}\n` +
-      `Grand total:         ${result.grandTotal}`,
+      `Original subtotal:   ${result.originalSubtotalExact}\n` +
+      `Discount:            ${result.totalDiscountExact}\n` +
+      `Discounted subtotal: ${result.discountedSubtotalExact}\n` +
+      `Grand total:         ${result.grandTotalExact}`,
   };
 }
 

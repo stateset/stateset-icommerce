@@ -10,11 +10,24 @@ function parseJsonArg(value, label) {
   }
 }
 
+/** The engine caps a single `segments.list` page at 1000 rows (default 500). */
+const SEGMENT_PAGE_SIZE = 1000;
+
+/** Every segment matching `filter`, paging past the engine's per-call limit. */
+async function listAllSegments(commerce, filter) {
+  const all = [];
+  for (let offset = 0; ; offset += SEGMENT_PAGE_SIZE) {
+    const page = await commerce.segments.list({ ...filter, limit: SEGMENT_PAGE_SIZE, offset });
+    all.push(...page);
+    if (page.length < SEGMENT_PAGE_SIZE) return all;
+  }
+}
+
 export async function execute(action, args, { commerce, output, jsonOutput }) {
   switch (action) {
     case 'list': {
       const [type, limitRaw] = args;
-      const segments = await commerce.segments.list({ type: type || undefined });
+      const segments = await listAllSegments(commerce, { segmentType: type || undefined });
       const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
       const limited = Number.isInteger(limit) && limit > 0 ? segments.slice(0, limit) : segments;
       return formatSegmentList(limited, { output, jsonOutput });
@@ -58,28 +71,20 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       if (!segmentId || !customerId) {
         throw new Error('Usage: segments evaluate <segmentId> <customerId>');
       }
-      const result = await commerce.segments.evaluateMembership(segmentId, customerId);
-      return formatEvaluation(segmentId, customerId, result, { jsonOutput });
-    }
-
-    case 'rebuild': {
-      const segmentId = args[0];
-      if (!segmentId) throw new Error('Usage: segments rebuild <segmentId>');
-      const result = await commerce.segments.rebuild(segmentId);
-      return {
-        result,
-        formatted:
-          `Rebuilt segment ${segmentId}\n` +
-          `${'-'.repeat(30)}\n` +
-          `Members:   ${result.memberCount}\n` +
-          `Added:     ${result.added}\n` +
-          `Removed:   ${result.removed}`,
-      };
+      // Stored membership: nothing in the engine evaluates segment rules, so this
+      // reports whether the customer is recorded as a member.
+      const isMember = await commerce.segments.isMember(segmentId, customerId);
+      return formatEvaluation(
+        segmentId,
+        customerId,
+        { isMember, basis: 'stored_membership' },
+        { jsonOutput },
+      );
     }
 
     case 'count': {
       const type = args[0];
-      const count = await commerce.segments.count({ type: type || undefined });
+      const count = (await listAllSegments(commerce, { segmentType: type || undefined })).length;
       return { count, formatted: `Segment count: ${count}` };
     }
 
@@ -91,8 +96,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
           '  get <segmentId>                     Get segment\n' +
           '  create <payloadJson>                Create segment\n' +
           '  update <segmentId> <updatesJson>    Update segment\n' +
-          '  evaluate <segmentId> <customerId>   Evaluate customer membership\n' +
-          '  rebuild <segmentId>                 Rebuild dynamic segment\n' +
+          '  evaluate <segmentId> <customerId>   Check stored customer membership\n' +
           '  count [type]                        Count segments',
       );
   }
@@ -104,9 +108,8 @@ function formatSegmentList(segments, { output, jsonOutput }) {
   const formatted = output.table(segments, [
     { key: 'id', header: 'ID' },
     { key: 'name', header: 'Name' },
-    { key: 'type', header: 'Type' },
+    { key: 'segmentType', header: 'Type' },
     { key: 'memberCount', header: 'Members', align: 'right' },
-    { key: 'status', header: 'Status' },
   ]);
   return { segments, formatted };
 }
@@ -119,11 +122,9 @@ function formatSegmentDetail(segment, { jsonOutput }) {
       `Segment: ${segment.name}\n` +
       `${'-'.repeat(34)}\n` +
       `ID:           ${segment.id}\n` +
-      `Type:         ${segment.type}\n` +
-      `Logic:        ${segment.conditionLogic || 'all'}\n` +
-      `Members:      ${segment.memberCount ?? 'N/A'}\n` +
-      `Status:       ${segment.status || 'N/A'}\n` +
-      `Conditions:   ${Array.isArray(segment.conditions) ? segment.conditions.length : 0}`,
+      `Type:         ${segment.segmentType}\n` +
+      `Members:      ${segment.memberCount}\n` +
+      `Rules:        ${Array.isArray(segment.rules) ? segment.rules.length : 0} (all must match)`,
   };
 }
 
@@ -138,8 +139,7 @@ function formatEvaluation(segmentId, customerId, result, { jsonOutput }) {
       `${'-'.repeat(28)}\n` +
       `Segment:      ${segmentId}\n` +
       `Customer:     ${customerId}\n` +
-      `Is member:    ${result.isMember ? 'yes' : 'no'}\n` +
-      `Matched:      ${Array.isArray(result.matchedConditions) ? result.matchedConditions.length : 0}`,
+      `Is member:    ${result.isMember ? 'yes' : 'no'} (stored membership)`,
   };
 }
 
@@ -153,10 +153,9 @@ export const metadata = {
     create: { description: 'Create segment', args: ['<payloadJson>'] },
     update: { description: 'Update segment', args: ['<segmentId>', '<updatesJson>'] },
     evaluate: {
-      description: 'Evaluate customer membership',
+      description: 'Check stored customer membership',
       args: ['<segmentId>', '<customerId>'],
     },
-    rebuild: { description: 'Rebuild dynamic segment', args: ['<segmentId>'] },
     count: { description: 'Count segments', args: ['[type]'] },
   },
 };
