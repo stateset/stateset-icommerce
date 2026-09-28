@@ -87,7 +87,10 @@ fn a_disabled_rule_decides_nothing_and_the_fallback_still_holds() {
         .update_rule(reject.id, UpdateFraudRule { enabled: Some(false), ..Default::default() })
         .expect("disable");
 
-    assert_eq!(assess(&commerce, vec![signal(FraudSignalType::ProxyVpn, 0.75)]), FraudDecision::Accept);
+    assert_eq!(
+        assess(&commerce, vec![signal(FraudSignalType::ProxyVpn, 0.75)]),
+        FraudDecision::Accept
+    );
     assert_eq!(
         assess(&commerce, vec![signal(FraudSignalType::ProxyVpn, 0.85)]),
         FraudDecision::Review,
