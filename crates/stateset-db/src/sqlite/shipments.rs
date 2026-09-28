@@ -140,119 +140,127 @@ impl SqliteShipmentRepository {
     }
 }
 
-impl ShipmentRepository for SqliteShipmentRepository {
-    fn create(&self, input: CreateShipment) -> Result<Shipment> {
-        let id = Uuid::new_v4();
-        let shipment_number = Shipment::generate_shipment_number();
-        let now = Utc::now();
-        let carrier = input.carrier.unwrap_or_default();
-        let method = input.shipping_method.unwrap_or_default();
-        let tracking_url = input.tracking_number.as_ref().and_then(|tn| carrier.tracking_url(tn));
+/// Insert a shipment (and its lines) on the caller's transaction (shared by
+/// [`ShipmentRepository::create`] and the governed `shipments.create` kernel
+/// command).
+pub(crate) fn create_shipment_tx(
+    tx: &rusqlite::Connection,
+    input: CreateShipment,
+) -> Result<Shipment> {
+    let id = Uuid::new_v4();
+    let shipment_number = Shipment::generate_shipment_number();
+    let now = Utc::now();
+    let carrier = input.carrier.unwrap_or_default();
+    let method = input.shipping_method.unwrap_or_default();
+    let tracking_url = input.tracking_number.as_ref().and_then(|tn| carrier.tracking_url(tn));
 
-        let mut items = Vec::new();
-        {
-            let mut conn =
-                self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            let tx = super::begin_immediate(&mut conn)
+    let mut items = Vec::new();
+    {
+        tx.execute(
+            "INSERT INTO shipments (id, shipment_number, order_id, status, carrier, shipping_method,
+             tracking_number, tracking_url, recipient_name, recipient_email, recipient_phone,
+             shipping_address, weight_kg, dimensions, shipping_cost, insurance_amount,
+             signature_required, estimated_delivery, notes, created_at, updated_at)
+             VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                id.to_string(),
+                shipment_number,
+                input.order_id.to_string(),
+                carrier.to_string(),
+                method.to_string(),
+                input.tracking_number,
+                tracking_url,
+                input.recipient_name,
+                input.recipient_email,
+                input.recipient_phone,
+                input.shipping_address,
+                input.weight_kg.map(|w| w.to_string()),
+                input.dimensions,
+                input.shipping_cost.map(|c| c.to_string()),
+                input.insurance_amount.map(|a| a.to_string()),
+                i32::from(input.signature_required.unwrap_or(false)),
+                input.estimated_delivery.map(|dt| dt.to_rfc3339()),
+                input.notes,
+                now.to_rfc3339(),
+                now.to_rfc3339(),
+            ],
+        )
+        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        if let Some(item_inputs) = &input.items {
+            for item_input in item_inputs {
+                let item_id = Uuid::new_v4();
+
+                tx.execute(
+                    "INSERT INTO shipment_items (id, shipment_id, order_item_id, product_id, sku, name, quantity, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        item_id.to_string(),
+                        id.to_string(),
+                        item_input.order_item_id.map(|u| u.to_string()),
+                        item_input.product_id.map(|u| u.to_string()),
+                        item_input.sku,
+                        item_input.name,
+                        item_input.quantity,
+                        now.to_rfc3339(),
+                        now.to_rfc3339(),
+                    ],
+                )
                 .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            tx.execute(
-                "INSERT INTO shipments (id, shipment_number, order_id, status, carrier, shipping_method,
-                 tracking_number, tracking_url, recipient_name, recipient_email, recipient_phone,
-                 shipping_address, weight_kg, dimensions, shipping_cost, insurance_amount,
-                 signature_required, estimated_delivery, notes, created_at, updated_at)
-                 VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                rusqlite::params![
-                    id.to_string(),
-                    shipment_number,
-                    input.order_id.to_string(),
-                    carrier.to_string(),
-                    method.to_string(),
-                    input.tracking_number,
-                    tracking_url,
-                    input.recipient_name,
-                    input.recipient_email,
-                    input.recipient_phone,
-                    input.shipping_address,
-                    input.weight_kg.map(|w| w.to_string()),
-                    input.dimensions,
-                    input.shipping_cost.map(|c| c.to_string()),
-                    input.insurance_amount.map(|a| a.to_string()),
-                    i32::from(input.signature_required.unwrap_or(false)),
-                    input.estimated_delivery.map(|dt| dt.to_rfc3339()),
-                    input.notes,
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                ],
-            )
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-            if let Some(item_inputs) = &input.items {
-                for item_input in item_inputs {
-                    let item_id = Uuid::new_v4();
-
-                    tx.execute(
-                        "INSERT INTO shipment_items (id, shipment_id, order_item_id, product_id, sku, name, quantity, created_at, updated_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        rusqlite::params![
-                            item_id.to_string(),
-                            id.to_string(),
-                            item_input.order_item_id.map(|u| u.to_string()),
-                            item_input.product_id.map(|u| u.to_string()),
-                            item_input.sku,
-                            item_input.name,
-                            item_input.quantity,
-                            now.to_rfc3339(),
-                            now.to_rfc3339(),
-                        ],
-                    )
-                    .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-                    items.push(ShipmentItem {
-                        id: item_id,
-                        shipment_id: ShipmentId::from(id),
-                        order_item_id: item_input.order_item_id,
-                        product_id: item_input.product_id,
-                        sku: item_input.sku.clone(),
-                        name: item_input.name.clone(),
-                        quantity: item_input.quantity,
-                        created_at: now,
-                        updated_at: now,
-                    });
-                }
+                items.push(ShipmentItem {
+                    id: item_id,
+                    shipment_id: ShipmentId::from(id),
+                    order_item_id: item_input.order_item_id,
+                    product_id: item_input.product_id,
+                    sku: item_input.sku.clone(),
+                    name: item_input.name.clone(),
+                    quantity: item_input.quantity,
+                    created_at: now,
+                    updated_at: now,
+                });
             }
-
-            tx.commit().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         }
+    }
 
-        Ok(Shipment {
-            id: ShipmentId::from(id),
-            shipment_number,
-            order_id: input.order_id,
-            status: ShipmentStatus::Pending,
-            carrier,
-            shipping_method: method,
-            tracking_number: input.tracking_number,
-            tracking_url,
-            recipient_name: input.recipient_name,
-            recipient_email: input.recipient_email,
-            recipient_phone: input.recipient_phone,
-            shipping_address: input.shipping_address,
-            weight_kg: input.weight_kg,
-            dimensions: input.dimensions,
-            shipping_cost: input.shipping_cost,
-            insurance_amount: input.insurance_amount,
-            signature_required: input.signature_required.unwrap_or(false),
-            shipped_at: None,
-            estimated_delivery: input.estimated_delivery,
-            delivered_at: None,
-            notes: input.notes,
-            items,
-            events: vec![],
-            version: 1,
-            created_at: now,
-            updated_at: now,
-        })
+    Ok(Shipment {
+        id: ShipmentId::from(id),
+        shipment_number,
+        order_id: input.order_id,
+        status: ShipmentStatus::Pending,
+        carrier,
+        shipping_method: method,
+        tracking_number: input.tracking_number,
+        tracking_url,
+        recipient_name: input.recipient_name,
+        recipient_email: input.recipient_email,
+        recipient_phone: input.recipient_phone,
+        shipping_address: input.shipping_address,
+        weight_kg: input.weight_kg,
+        dimensions: input.dimensions,
+        shipping_cost: input.shipping_cost,
+        insurance_amount: input.insurance_amount,
+        signature_required: input.signature_required.unwrap_or(false),
+        shipped_at: None,
+        estimated_delivery: input.estimated_delivery,
+        delivered_at: None,
+        notes: input.notes,
+        items,
+        events: vec![],
+        version: 1,
+        created_at: now,
+        updated_at: now,
+    })
+}
+
+impl ShipmentRepository for SqliteShipmentRepository {
+    fn create(&self, input: CreateShipment) -> Result<Shipment> {
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = super::begin_immediate(&mut conn)
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let shipment = create_shipment_tx(&tx, input)?;
+        tx.commit().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        Ok(shipment)
     }
 
     fn get(&self, id: ShipmentId) -> Result<Option<Shipment>> {

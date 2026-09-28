@@ -560,6 +560,66 @@ struct PaymentMethodRow {
     updated_at: DateTime<Utc>,
 }
 
+/// Capture payment `id` on the caller's transaction (shared by
+/// [`PgPaymentRepository::mark_completed_async`] and the governed
+/// `payments.complete` kernel command).
+pub(crate) async fn mark_completed_pg(
+    conn: &mut sqlx::PgConnection,
+    id: Uuid,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    let target = PaymentTransactionStatus::Completed;
+
+    // Two guards, in this order (same as SQLite):
+    //   1. the state machine — only a payment that may legally reach
+    //      `Completed` may be completed (never a cancelled/failed/refunded
+    //      one);
+    //   2. the order's capacity, re-checked at completion time: a payment
+    //      that was failed/cancelled while still in flight (and so released
+    //      its slice of the total) must not be completed on top of captures
+    //      made since.
+    let (raw_status, order_id, amount, currency): (String, Option<Uuid>, Decimal, CurrencyCode) =
+        sqlx::query_as(
+            "SELECT status, order_id, amount, currency FROM payments WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+    let current: PaymentTransactionStatus = raw_status.parse().map_err(|_| {
+        CommerceError::DatabaseError(format!("Invalid payment status '{raw_status}'"))
+    })?;
+    if !payment_transition_allowed(current, target) {
+        return Err(transition_conflict(current, target));
+    }
+
+    if let Some(order_id) = order_id {
+        check_order_capture_capacity_pg(&mut *conn, order_id, Some(id), amount, currency).await?;
+    }
+
+    let rows = sqlx::query(
+        "UPDATE payments SET status = $1, paid_at = $2, updated_at = $3
+         WHERE id = $4 AND status = ANY($5)",
+    )
+    .bind(target.to_string())
+    .bind(now)
+    .bind(now)
+    .bind(id)
+    .bind(statuses_allowing_transition_to(target))
+    .execute(&mut *conn)
+    .await
+    .map_err(map_db_error)?
+    .rows_affected();
+    if rows == 0 {
+        return Err(transition_conflict(current, target));
+    }
+    if let Some(order_id) = order_id {
+        sync_order_payment_status_pg(&mut *conn, order_id, now).await?;
+    }
+    Ok(())
+}
+
 impl PgPaymentRepository {
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -1112,62 +1172,8 @@ impl PgPaymentRepository {
 
     /// Mark payment as completed (async)
     pub async fn mark_completed_async(&self, id: Uuid) -> Result<Payment> {
-        let now = Utc::now();
-        let target = PaymentTransactionStatus::Completed;
-
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        // Two guards, in this order (same as SQLite):
-        //   1. the state machine — only a payment that may legally reach
-        //      `Completed` may be completed (never a cancelled/failed/refunded
-        //      one);
-        //   2. the order's capacity, re-checked at completion time: a payment
-        //      that was failed/cancelled while still in flight (and so released
-        //      its slice of the total) must not be completed on top of captures
-        //      made since.
-        let (raw_status, order_id, amount, currency): (
-            String,
-            Option<Uuid>,
-            Decimal,
-            CurrencyCode,
-        ) = sqlx::query_as(
-            "SELECT status, order_id, amount, currency FROM payments WHERE id = $1 FOR UPDATE",
-        )
-        .bind(id)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?
-        .ok_or(CommerceError::NotFound)?;
-        let current: PaymentTransactionStatus = raw_status.parse().map_err(|_| {
-            CommerceError::DatabaseError(format!("Invalid payment status '{raw_status}'"))
-        })?;
-        if !payment_transition_allowed(current, target) {
-            return Err(transition_conflict(current, target));
-        }
-
-        if let Some(order_id) = order_id {
-            check_order_capture_capacity_pg(tx.as_mut(), order_id, Some(id), amount, currency)
-                .await?;
-        }
-
-        let rows = sqlx::query(
-            "UPDATE payments SET status = $1, paid_at = $2, updated_at = $3
-             WHERE id = $4 AND status = ANY($5)",
-        )
-        .bind(target.to_string())
-        .bind(now)
-        .bind(now)
-        .bind(id)
-        .bind(statuses_allowing_transition_to(target))
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?
-        .rows_affected();
-        if rows == 0 {
-            return Err(transition_conflict(current, target));
-        }
-        if let Some(order_id) = order_id {
-            sync_order_payment_status_pg(tx.as_mut(), order_id, now).await?;
-        }
+        mark_completed_pg(tx.as_mut(), id, Utc::now()).await?;
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)

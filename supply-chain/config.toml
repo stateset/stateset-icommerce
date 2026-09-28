@@ -145,14 +145,6 @@ criteria = "safe-to-deploy"
 version = "0.4.41"
 criteria = "safe-to-deploy"
 
-[[exemptions.async-stream]]
-version = "0.3.6"
-criteria = "safe-to-deploy"
-
-[[exemptions.async-stream-impl]]
-version = "0.3.6"
-criteria = "safe-to-deploy"
-
 [[exemptions.async-trait]]
 version = "0.1.89"
 criteria = "safe-to-deploy"
@@ -166,15 +158,7 @@ version = "1.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.axum]]
-version = "0.6.20"
-criteria = "safe-to-deploy"
-
-[[exemptions.axum]]
 version = "0.8.8"
-criteria = "safe-to-deploy"
-
-[[exemptions.axum-core]]
-version = "0.3.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.axum-core]]
@@ -254,7 +238,7 @@ version = "1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.cmov]]
-version = "0.5.2"
+version = "0.5.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.colorchoice]]
@@ -478,7 +462,7 @@ version = "0.5.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.h2]]
-version = "0.3.27"
+version = "0.4.19"
 criteria = "safe-to-deploy"
 
 [[exemptions.half]]
@@ -509,10 +493,6 @@ criteria = "safe-to-deploy"
 version = "1.4.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.http-body]]
-version = "0.4.6"
-criteria = "safe-to-deploy"
-
 [[exemptions.http-body-util]]
 version = "0.1.3"
 criteria = "safe-to-deploy"
@@ -526,10 +506,6 @@ version = "0.4.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.hyper]]
-version = "0.14.32"
-criteria = "safe-to-deploy"
-
-[[exemptions.hyper]]
 version = "1.8.1"
 criteria = "safe-to-deploy"
 
@@ -538,7 +514,7 @@ version = "0.27.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.hyper-timeout]]
-version = "0.4.1"
+version = "0.5.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.hyper-util]]
@@ -551,10 +527,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.id-arena]]
 version = "2.3.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.indexmap]]
-version = "1.9.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.indexmap]]
@@ -638,10 +610,6 @@ version = "0.1.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.matchit]]
-version = "0.7.3"
-criteria = "safe-to-deploy"
-
-[[exemptions.matchit]]
 version = "0.8.4"
 criteria = "safe-to-deploy"
 
@@ -718,23 +686,19 @@ version = "0.2.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.opentelemetry]]
-version = "0.23.0"
+version = "0.33.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.opentelemetry-otlp]]
-version = "0.16.0"
+version = "0.33.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.opentelemetry-proto]]
-version = "0.6.0"
+version = "0.33.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.opentelemetry_sdk]]
-version = "0.23.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.ordered-float]]
-version = "4.6.0"
+version = "0.33.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.parking_lot]]
@@ -818,11 +782,15 @@ version = "0.5.1"
 criteria = "safe-to-run"
 
 [[exemptions.prost]]
-version = "0.12.6"
+version = "0.14.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.prost-derive]]
-version = "0.12.6"
+version = "0.14.4"
+criteria = "safe-to-deploy"
+
+[[exemptions.prost-types]]
+version = "0.14.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.protobuf]]
@@ -1070,10 +1038,6 @@ version = "0.4.12"
 criteria = "safe-to-deploy"
 
 [[exemptions.socket2]]
-version = "0.5.10"
-criteria = "safe-to-deploy"
-
-[[exemptions.socket2]]
 version = "0.6.3"
 criteria = "safe-to-deploy"
 
@@ -1173,10 +1137,6 @@ criteria = "safe-to-deploy"
 version = "1.50.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.tokio-io-timeout]]
-version = "1.2.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.tokio-macros]]
 version = "2.6.1"
 criteria = "safe-to-deploy"
@@ -1214,11 +1174,15 @@ version = "1.1.2+spec-1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.tonic]]
-version = "0.11.0"
+version = "0.14.6"
 criteria = "safe-to-deploy"
 
-[[exemptions.tower]]
-version = "0.4.13"
+[[exemptions.tonic-prost]]
+version = "0.14.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.tonic-types]]
+version = "0.14.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.tower]]
@@ -1250,7 +1214,7 @@ version = "0.1.36"
 criteria = "safe-to-deploy"
 
 [[exemptions.tracing-opentelemetry]]
-version = "0.24.0"
+version = "0.34.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.tracing-subscriber]]

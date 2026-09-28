@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:0750b25d6eb991f089807e5f71094ac2ba3754e4db5b972d22e54c94d9de5e5f",
+  "digest": "sha256:a83a60cb4ccd7b348ef9f439982896c91b5d1632b3bb54853376fe67f6e6c571",
   "counts": {
     "total": 953,
     "readOnly": 470,
     "mutations": 483,
-    "governed": 25,
+    "governed": 36,
     "governedComposite": 1,
-    "blocked": 457
+    "blocked": 446
   },
   "entries": [
     {
@@ -1022,8 +1022,8 @@
       "name": "add_cart_item",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "carts.item.add"
     },
     {
       "name": "add_customer_address",
@@ -1057,8 +1057,8 @@
       "name": "add_return_tracking",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "returns.tracking.add"
     },
     {
       "name": "add_to_wishlist",
@@ -1568,8 +1568,8 @@
       "name": "apply_cart_discount",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "carts.coupon.apply"
     },
     {
       "name": "apply_cart_promotions",
@@ -1750,8 +1750,8 @@
       "name": "calculate_cart_tax",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "carts.tax.calculate"
     },
     {
       "name": "calculate_item_tax",
@@ -2163,8 +2163,8 @@
       "name": "complete_payment",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "payments.complete"
     },
     {
       "name": "complete_print_job",
@@ -2331,8 +2331,8 @@
       "name": "create_cart",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "carts.create"
     },
     {
       "name": "create_channel",
@@ -2394,8 +2394,8 @@
       "name": "create_customer",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "customers.create"
     },
     {
       "name": "create_cycle_count",
@@ -2646,8 +2646,8 @@
       "name": "create_return",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "returns.create"
     },
     {
       "name": "create_revenue_contract",
@@ -2695,8 +2695,8 @@
       "name": "create_shipment",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "shipments.create"
     },
     {
       "name": "create_shipping_label",
@@ -5817,8 +5817,8 @@
       "name": "set_cart_payment",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "carts.payment_method.set"
     },
     {
       "name": "set_cart_shipping",
@@ -5831,8 +5831,8 @@
       "name": "set_cart_shipping_address",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "carts.shipping_address.set"
     },
     {
       "name": "set_cart_tax",

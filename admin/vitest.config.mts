@@ -7,6 +7,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // Vitest 4's vi.restoreAllMocks() only restores spies; it no longer clears
+    // the call history of vi.fn() mocks. Clear it before every test so a
+    // `not.toHaveBeenCalled()` never sees an earlier test's calls.
+    clearMocks: true,
     setupFiles: ['./tests/setup.ts'],
     include: ['tests/**/*.test.{ts,tsx}'],
     // Inline @stateset/design and its (nested) Radix deps so Vitest transforms
@@ -77,11 +81,15 @@ export default defineConfig({
         'src/**/index.ts',
         'node_modules',
       ],
+      // Recalibrated for Vitest 4, whose V8 coverage remaps onto the AST and
+      // counts branches more strictly: the same 992 tests measured 81/82/81/81
+      // (statements/branches/functions/lines) under Vitest 3 and 78/68/72/79
+      // under Vitest 4. The floors keep the same code at the same gate.
       thresholds: {
-        statements: 80,
-        branches: 70,
-        functions: 70,
-        lines: 80,
+        statements: 78,
+        branches: 68,
+        functions: 72,
+        lines: 79,
       },
     },
   },

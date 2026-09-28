@@ -67,12 +67,68 @@
       "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "conditional_release"]
     },
     {
+      "name": "carts.coupon.apply",
+      "risk": "high",
+      "capability": "carts.coupon.apply",
+      "sqliteExecutor": "execute_apply_cart_coupon",
+      "postgresExecutor": "execute_apply_cart_coupon_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+    },
+    {
+      "name": "carts.create",
+      "risk": "high",
+      "capability": "carts.create",
+      "sqliteExecutor": "execute_create_cart",
+      "postgresExecutor": "execute_create_cart_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+    },
+    {
+      "name": "carts.item.add",
+      "risk": "high",
+      "capability": "carts.item.add",
+      "sqliteExecutor": "execute_add_cart_item",
+      "postgresExecutor": "execute_add_cart_item_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+    },
+    {
+      "name": "carts.payment_method.set",
+      "risk": "high",
+      "capability": "carts.payment_method.set",
+      "sqliteExecutor": "execute_set_cart_payment_method",
+      "postgresExecutor": "execute_set_cart_payment_method_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "secret_redaction"]
+    },
+    {
+      "name": "carts.shipping_address.set",
+      "risk": "high",
+      "capability": "carts.shipping_address.set",
+      "sqliteExecutor": "execute_set_cart_shipping_address",
+      "postgresExecutor": "execute_set_cart_shipping_address_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint"]
+    },
+    {
+      "name": "carts.tax.calculate",
+      "risk": "high",
+      "capability": "carts.tax.calculate",
+      "sqliteExecutor": "execute_calculate_cart_tax",
+      "postgresExecutor": "execute_calculate_cart_tax_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "observed_basis"]
+    },
+    {
       "name": "checkout.commit",
       "risk": "critical",
       "capability": "checkout.commit",
       "sqliteExecutor": "execute_commit_checkout",
       "postgresExecutor": "execute_commit_checkout_async",
       "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "observed_amount", "durable_budget", "atomic_inventory"]
+    },
+    {
+      "name": "customers.create",
+      "risk": "high",
+      "capability": "customers.create",
+      "sqliteExecutor": "execute_create_customer",
+      "postgresExecutor": "execute_create_customer_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "semantic_uniqueness"]
     },
     {
       "name": "inventory.item.create",
@@ -131,6 +187,14 @@
       "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "expected_version", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint"]
     },
     {
+      "name": "payments.complete",
+      "risk": "critical",
+      "capability": "payments.complete",
+      "sqliteExecutor": "execute_complete_payment",
+      "postgresExecutor": "execute_complete_payment_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "observed_amount"]
+    },
+    {
       "name": "payments.create",
       "risk": "critical",
       "capability": "payments.create",
@@ -155,12 +219,36 @@
       "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money", "atomic_variants", "semantic_uniqueness"]
     },
     {
+      "name": "returns.create",
+      "risk": "high",
+      "capability": "returns.create",
+      "sqliteExecutor": "execute_create_return",
+      "postgresExecutor": "execute_create_return_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+    },
+    {
+      "name": "returns.tracking.add",
+      "risk": "high",
+      "capability": "returns.tracking.add",
+      "sqliteExecutor": "execute_add_return_tracking",
+      "postgresExecutor": "execute_add_return_tracking_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint"]
+    },
+    {
       "name": "returns.transition",
       "risk": "high",
       "capability": "returns.transition",
       "sqliteExecutor": "execute_transition_return",
       "postgresExecutor": "execute_transition_return_async",
       "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "expected_version", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
+    },
+    {
+      "name": "shipments.create",
+      "risk": "high",
+      "capability": "shipments.create",
+      "sqliteExecutor": "execute_create_shipment",
+      "postgresExecutor": "execute_create_shipment_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint"]
     },
     {
       "name": "subscriptions.charge",

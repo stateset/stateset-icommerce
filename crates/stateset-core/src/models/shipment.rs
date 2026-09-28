@@ -273,7 +273,7 @@ pub struct ShipmentEvent {
 }
 
 /// Input for creating a new shipment
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateShipment {
     pub order_id: OrderId,
     pub carrier: Option<ShippingCarrier>,
@@ -294,7 +294,7 @@ pub struct CreateShipment {
 }
 
 /// Input for creating a shipment item
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateShipmentItem {
     pub order_item_id: Option<Uuid>,
     pub product_id: Option<ProductId>,
