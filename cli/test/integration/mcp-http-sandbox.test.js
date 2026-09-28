@@ -174,6 +174,21 @@ describe('mcp http — protocol 2026-07-28, stateless', () => {
     assert.ok(emails.includes(marker), 'a later request must see the earlier write');
   });
 
+  it('carries the result contract on the wire: isError and structuredContent', async () => {
+    const ok = (await callTool(BASE, 'list_customers', {}, 12)).json.result;
+    assert.notEqual(ok.isError, true);
+    assert.equal(ok.structuredContent.ok, true);
+    assert.equal(ok.structuredContent.preview, false);
+
+    // A malformed id is refused by the engine with a stable binding code.
+    const refused = (await callTool(BASE, 'get_order', { identifier: 'not-a-uuid' }, 13)).json
+      .result;
+    assert.equal(refused.isError, true, JSON.stringify(refused).slice(0, 400));
+    assert.equal(refused.structuredContent.ok, false);
+    assert.equal(refused.structuredContent.error.code, 'VALIDATION');
+    assert.equal(typeof refused.structuredContent.error.retryable, 'boolean');
+  });
+
   it('refuses the 2025 session verbs GET and DELETE', async () => {
     for (const method of ['GET', 'DELETE']) {
       const res = await fetch(`${BASE}/mcp`, { method });

@@ -2,11 +2,61 @@
  * Gift Card Tools Module
  *
  * MCP tool definitions for gift card creation, redemption, and balance management.
- * Modularized from mcp-server.js for better maintainability.
+ * Every call here targets the real `GiftCards` class of `@stateset/embedded`:
+ * `create`, `get`, `getByCode`, `list`, `charge(id, amount, referenceId?)`,
+ * `refund(id, amount, referenceId?)`, `disable(id)`. Money crosses the binding
+ * as exact decimal strings.
  */
 
 import { z } from 'zod';
 import { applyRequired } from '../utils/apply-guard.js';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Page size used to count every matching row; below the engine's list cap. */
+const LIST_PAGE_SIZE = 500;
+
+/**
+ * Resolve a gift card from an ID (UUID) or a redemption code.
+ * @param {any} commerce
+ * @param {string} identifier
+ */
+async function findGiftCard(commerce, identifier) {
+  if (UUID_RE.test(identifier)) {
+    const byId = await commerce.giftCards.get(identifier);
+    if (byId) return byId;
+  }
+  return commerce.giftCards.getByCode(identifier);
+}
+
+/**
+ * Read every gift card matching `filter`, page by page, so the reported total
+ * is the real total rather than whatever one page returned.
+ * @param {any} commerce
+ * @param {object} filter
+ */
+async function listAllGiftCards(commerce, filter) {
+  const all = [];
+  for (let offset = 0; ; offset += LIST_PAGE_SIZE) {
+    const page = await commerce.giftCards.list({ ...filter, limit: LIST_PAGE_SIZE, offset });
+    all.push(...page);
+    if (page.length < LIST_PAGE_SIZE) return all;
+  }
+}
+
+function summarizeGiftCard(giftCard) {
+  return {
+    id: giftCard.id,
+    code: giftCard.code,
+    initialBalance: giftCard.initialBalance,
+    currentBalance: giftCard.currentBalance,
+    currency: giftCard.currency,
+    status: giftCard.status,
+    recipientEmail: giftCard.recipientEmail,
+    expiresAt: giftCard.expiresAt,
+    createdAt: giftCard.createdAt,
+  };
+}
 
 /**
  * Gift card tool definitions
@@ -24,19 +74,20 @@ export const giftCardTools = [
         .optional()
         .default('USD')
         .describe('Currency code (default: USD)'),
-      customerId: z
+      code: z
         .string()
         .min(1)
+        .max(100)
         .optional()
-        .describe('Customer ID to associate the gift card with'),
+        .describe('Redemption code (auto-generated if omitted)'),
       recipientEmail: z
         .string()
         .email()
         .optional()
         .describe('Recipient email for digital delivery'),
-      recipientName: z.string().min(1).max(200).optional().describe('Recipient name'),
+      senderName: z.string().min(1).max(200).optional().describe('Sender name'),
       message: z.string().max(500).optional().describe('Personal message to include'),
-      expiresAt: z.string().optional().describe('Expiration date (ISO 8601)'),
+      expiresAt: z.string().optional().describe('Expiration date (RFC 3339)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -45,11 +96,11 @@ export const giftCardTools = [
       }
 
       const giftCard = await commerce.giftCards.create({
+        code: params.code,
         initialBalance: String(params.initialBalance),
         currency: params.currency || 'USD',
-        customerId: params.customerId,
         recipientEmail: params.recipientEmail,
-        recipientName: params.recipientName,
+        senderName: params.senderName,
         message: params.message,
         expiresAt: params.expiresAt,
       });
@@ -65,27 +116,13 @@ export const giftCardTools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const { identifier } = params;
-      const giftCard = await commerce.giftCards.get(identifier);
+      const giftCard = await findGiftCard(commerce, params.identifier);
 
       if (!giftCard) {
         return { success: false, error: 'Gift card not found' };
       }
 
-      return {
-        success: true,
-        giftCard: {
-          id: giftCard.id,
-          code: giftCard.code,
-          initialBalance: giftCard.initialBalance,
-          currentBalance: giftCard.currentBalance,
-          currency: giftCard.currency,
-          status: giftCard.status,
-          customerId: giftCard.customerId,
-          expiresAt: giftCard.expiresAt,
-          createdAt: giftCard.createdAt,
-        },
-      };
+      return { success: true, giftCard: summarizeGiftCard(giftCard) };
     },
   },
 
@@ -94,10 +131,10 @@ export const giftCardTools = [
     description: 'List all gift cards with optional filters.',
     inputSchema: {
       status: z
-        .enum(['active', 'disabled', 'expired', 'fully_redeemed'])
+        .enum(['active', 'depleted', 'expired', 'disabled'])
         .optional()
         .describe('Filter by status'),
-      customerId: z.string().min(1).optional().describe('Filter by customer ID'),
+      code: z.string().min(1).optional().describe('Filter by redemption code'),
       limit: z
         .number()
         .int()
@@ -109,26 +146,15 @@ export const giftCardTools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const { status, customerId, limit } = params;
-      const giftCards = await commerce.giftCards.list({ status, customerId });
-      const count = await commerce.giftCards.count({ status, customerId });
+      const { status, code, limit } = params;
+      const giftCards = await listAllGiftCards(commerce, { status, code });
       const limited = giftCards.slice(0, limit);
 
       return {
         success: true,
-        totalCount: count,
+        totalCount: giftCards.length,
         returned: limited.length,
-        giftCards: limited.map((gc) => ({
-          id: gc.id,
-          code: gc.code,
-          initialBalance: gc.initialBalance,
-          currentBalance: gc.currentBalance,
-          currency: gc.currency,
-          status: gc.status,
-          customerId: gc.customerId,
-          expiresAt: gc.expiresAt,
-          createdAt: gc.createdAt,
-        })),
+        giftCards: limited.map(summarizeGiftCard),
       };
     },
   },
@@ -139,8 +165,11 @@ export const giftCardTools = [
     inputSchema: {
       giftCardId: z.string().min(1).describe('Gift card ID'),
       amount: z.number().positive().describe('Amount to charge'),
-      orderId: z.string().min(1).optional().describe('Order ID for the charge'),
-      note: z.string().max(500).optional().describe('Note for the transaction'),
+      orderId: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Order ID for the charge (recorded as the transaction reference)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -148,12 +177,11 @@ export const giftCardTools = [
         return applyRequired('Charge gift card', params);
       }
 
-      const transaction = await commerce.giftCards.charge({
-        giftCardId: params.giftCardId,
-        amount: String(params.amount),
-        orderId: params.orderId,
-        note: params.note,
-      });
+      const transaction = await commerce.giftCards.charge(
+        params.giftCardId,
+        String(params.amount),
+        params.orderId,
+      );
       return { success: true, message: 'Gift card charged', transaction };
     },
   },
@@ -164,8 +192,11 @@ export const giftCardTools = [
     inputSchema: {
       giftCardId: z.string().min(1).describe('Gift card ID'),
       amount: z.number().positive().describe('Amount to refund'),
-      orderId: z.string().min(1).optional().describe('Order ID associated with the refund'),
-      reason: z.string().max(500).optional().describe('Reason for the refund'),
+      orderId: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Order ID associated with the refund (recorded as the transaction reference)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -173,12 +204,11 @@ export const giftCardTools = [
         return applyRequired('Refund to gift card', params);
       }
 
-      const transaction = await commerce.giftCards.refund({
-        giftCardId: params.giftCardId,
-        amount: String(params.amount),
-        orderId: params.orderId,
-        reason: params.reason,
-      });
+      const transaction = await commerce.giftCards.refund(
+        params.giftCardId,
+        String(params.amount),
+        params.orderId,
+      );
       return { success: true, message: 'Refund applied to gift card', transaction };
     },
   },
@@ -188,7 +218,6 @@ export const giftCardTools = [
     description: 'Disable a gift card so it can no longer be used.',
     inputSchema: {
       giftCardId: z.string().min(1).describe('Gift card ID'),
-      reason: z.string().max(500).optional().describe('Reason for disabling'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -196,7 +225,7 @@ export const giftCardTools = [
         return applyRequired('Disable gift card', params);
       }
 
-      const giftCard = await commerce.giftCards.disable(params.giftCardId, params.reason);
+      const giftCard = await commerce.giftCards.disable(params.giftCardId);
       return { success: true, message: 'Gift card disabled', giftCard };
     },
   },
@@ -209,8 +238,7 @@ export const giftCardTools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const { identifier } = params;
-      const giftCard = await commerce.giftCards.get(identifier);
+      const giftCard = await findGiftCard(commerce, params.identifier);
 
       if (!giftCard) {
         return { success: false, error: 'Gift card not found' };

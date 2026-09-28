@@ -29,48 +29,113 @@ function findTool(tools, name) {
 // Mock data
 // ============================================================================
 
+// Shape of the binding's WishlistOutput. Items have no id; they are keyed by
+// productId.
 const mockWishlist = {
   id: 'wl_001',
   customerId: 'cust_001',
   name: 'Birthday Ideas',
-  visibility: 'private',
   isPublic: false,
-  itemCount: 3,
-  items: [{ id: 'wli_001', productId: 'prod_001', variantId: null, note: null, priority: 1 }],
+  items: [
+    { productId: 'prod_001', quantity: 1, addedAt: '2026-02-01T00:00:00Z' },
+    { productId: 'prod_multi', quantity: 1, addedAt: '2026-02-01T00:00:00Z' },
+    { productId: 'prod_draft', quantity: 1, addedAt: '2026-02-01T00:00:00Z' },
+  ],
   createdAt: '2026-02-01T00:00:00Z',
   updatedAt: '2026-02-01T00:00:00Z',
 };
 
-const mockCartResult = {
-  cartId: 'cart_001',
-  itemsAdded: 3,
-  itemsUnavailable: 0,
+// Shape of the binding's WishlistItemOutput.
+const mockWishlistItem = {
+  productId: 'prod_002',
+  quantity: 1,
+  addedAt: '2026-02-01T00:00:00Z',
 };
 
-const mockWishlistItem = {
-  id: 'wli_002',
-  wishlistId: 'wl_001',
-  productId: 'prod_002',
-  variantId: null,
-  note: null,
-  priority: null,
-  addedAt: '2026-02-01T00:00:00Z',
+const products = {
+  prod_001: { id: 'prod_001', name: 'Widget', status: 'active' },
+  prod_multi: { id: 'prod_multi', name: 'Gadget', status: 'active' },
+  prod_draft: { id: 'prod_draft', name: 'Draft', status: 'draft' },
+};
+const variantsByProduct = {
+  prod_001: [
+    {
+      id: 'var_w',
+      productId: 'prod_001',
+      sku: 'W-1',
+      name: '',
+      priceExact: '19.99',
+      isDefault: true,
+    },
+  ],
+  // Several variants and none marked default: cannot be priced honestly.
+  prod_multi: [
+    {
+      id: 'var_g1',
+      productId: 'prod_multi',
+      sku: 'G-1',
+      name: 'S',
+      priceExact: '5.00',
+      isDefault: false,
+    },
+    {
+      id: 'var_g2',
+      productId: 'prod_multi',
+      sku: 'G-2',
+      name: 'L',
+      priceExact: '6.00',
+      isDefault: false,
+    },
+  ],
+  prod_draft: [
+    {
+      id: 'var_d',
+      productId: 'prod_draft',
+      sku: 'D-1',
+      name: '',
+      priceExact: '1.00',
+      isDefault: true,
+    },
+  ],
 };
 
 // ============================================================================
 // Mock commerce factory
 // ============================================================================
 
-function makeWishlistCommerce(overrides = {}) {
+function makeWishlistCommerce(overrides = {}, cartOverrides = {}) {
+  const calls = [];
+  // Only methods the real Wishlists / Products / Carts binding classes have.
   return {
+    calls,
     wishlists: {
       create: async (data) => ({ ...mockWishlist, ...data }),
       get: async (id) => (id === 'wl_001' ? mockWishlist : null),
-      addItem: async (wishlistId, data) => ({ ...mockWishlistItem, wishlistId, ...data }),
-      removeItem: async (_wishlistId, _itemId) => undefined,
+      addItem: async (_wishlistId, data) => ({ ...mockWishlistItem, ...data }),
+      removeItem: async (wishlistId, productId) => {
+        calls.push(['wishlists.removeItem', wishlistId, productId]);
+      },
       list: async () => [mockWishlist],
-      convertToCart: async (_wishlistId, _opts) => mockCartResult,
       ...overrides,
+    },
+    products: {
+      get: async (id) => products[id] ?? null,
+      getVariant: async (id) =>
+        Object.values(variantsByProduct)
+          .flat()
+          .find((v) => v.id === id) ?? null,
+      getVariants: async (productId) => variantsByProduct[productId] ?? [],
+    },
+    carts: {
+      create: async (input) => {
+        calls.push(['carts.create', input]);
+        return { id: 'cart_001', customerId: input.customerId };
+      },
+      addItemExact: async (cartId, item) => {
+        calls.push(['carts.addItemExact', cartId, item]);
+        return { id: `ci_${item.sku}`, cartId, ...item };
+      },
+      ...cartOverrides,
     },
   };
 }
@@ -163,7 +228,8 @@ describe('create_wishlist', () => {
     });
     assert.equal(calledWith.customerId, 'cust_002');
     assert.equal(calledWith.name, 'Gift Ideas');
-    assert.equal(calledWith.visibility, 'public');
+    assert.equal(calledWith.isPublic, true);
+    assert.ok(!('visibility' in calledWith), 'CreateWishlistInput has no visibility');
   });
 
   it('uses default name and visibility when not provided', async () => {
@@ -180,7 +246,24 @@ describe('create_wishlist', () => {
       allowApply: true,
     });
     assert.ok(calledWith.name);
-    assert.ok(calledWith.visibility);
+    assert.equal(calledWith.isPublic, false);
+  });
+
+  it("refuses visibility 'shared', which the engine cannot represent", async () => {
+    let called = false;
+    const commerce = makeWishlistCommerce({
+      create: async () => {
+        called = true;
+      },
+    });
+    const result = await tool.handler({
+      commerce,
+      params: { customerId: 'cust_001', visibility: 'shared' },
+      allowApply: true,
+    });
+    assert.equal(result.success, false);
+    assert.match(result.error, /shared/);
+    assert.equal(called, false);
   });
 
   it('returns error when commerce throws', async () => {
@@ -338,20 +421,21 @@ describe('remove_from_wishlist', () => {
   });
 
   it('calls commerce.wishlists.removeItem with correct args', async () => {
-    let calledWishlistId, calledItemId;
+    let calledWishlistId, calledProductId;
     const commerce = makeWishlistCommerce({
-      removeItem: async (wid, iid) => {
+      removeItem: async (wid, productId) => {
         calledWishlistId = wid;
-        calledItemId = iid;
+        calledProductId = productId;
       },
     });
+    // Wishlist items are keyed by product; itemId carries the product ID.
     await tool.handler({
       commerce,
-      params: { wishlistId: 'wl_001', itemId: 'wli_001' },
+      params: { wishlistId: 'wl_001', itemId: 'prod_001' },
       allowApply: true,
     });
     assert.equal(calledWishlistId, 'wl_001');
-    assert.equal(calledItemId, 'wli_001');
+    assert.equal(calledProductId, 'prod_001');
   });
 
   it('returns error when commerce throws', async () => {
@@ -400,21 +484,17 @@ describe('list_wishlists', () => {
         return [];
       },
     });
-    await tool.handler({ commerce, params: { customerId: 'cust_999' } });
-    assert.equal(calledFilter.customerId, 'cust_999');
+    await tool.handler({ commerce, params: { customerId: 'cust_999', limit: 20 } });
+    assert.deepStrictEqual(calledFilter, { customerId: 'cust_999', limit: 20 });
   });
 
-  it('slices results to limit', async () => {
-    const manyWishlists = Array.from({ length: 30 }, (_, i) => ({
-      ...mockWishlist,
-      id: `wl_${String(i).padStart(3, '0')}`,
-    }));
-    const commerce = makeWishlistCommerce({
-      list: async () => manyWishlists,
+  it('derives visibility and itemCount from the real output fields', async () => {
+    const result = await tool.handler({
+      commerce: makeWishlistCommerce(),
+      params: { customerId: 'cust_001', limit: 5 },
     });
-    const result = await tool.handler({ commerce, params: { customerId: 'cust_001', limit: 5 } });
-    assert.equal(result.returned, 5);
-    assert.equal(result.wishlists.length, 5);
+    assert.equal(result.wishlists[0].visibility, 'private');
+    assert.equal(result.wishlists[0].itemCount, 3);
   });
 
   it('returns error when commerce throws', async () => {
@@ -447,59 +527,110 @@ describe('convert_wishlist_to_cart', () => {
     assert.ok(result.error);
   });
 
-  it('converts wishlist to cart with --apply and returns success: true', async () => {
+  it('prices each line from the catalog and reports unpriceable items', async () => {
+    const commerce = makeWishlistCommerce();
     const result = await tool.handler({
-      commerce: makeWishlistCommerce(),
+      commerce,
       params: { wishlistId: 'wl_001' },
       allowApply: true,
     });
     assert.equal(result.success, true);
     assert.ok(result.message.includes('converted'));
     assert.equal(result.cartId, 'cart_001');
-    assert.equal(result.itemsAdded, 3);
-    assert.equal(result.itemsUnavailable, 0);
+    assert.equal(result.itemsAdded, 1);
+    assert.deepStrictEqual(
+      result.itemsUnavailable.map((u) => u.productId),
+      ['prod_multi', 'prod_draft'],
+    );
+    assert.match(result.itemsUnavailable[0].reason, /none is default/);
+    assert.match(result.itemsUnavailable[1].reason, /draft/);
+    assert.deepStrictEqual(commerce.calls, [
+      ['carts.create', { customerId: 'cust_001' }],
+      [
+        'carts.addItemExact',
+        'cart_001',
+        {
+          productId: 'prod_001',
+          variantId: 'var_w',
+          sku: 'W-1',
+          name: 'Widget',
+          quantity: 1,
+          unitPrice: '19.99',
+        },
+      ],
+    ]);
+    assert.deepStrictEqual(result.removedFromWishlist, []);
   });
 
-  it('passes clearWishlist option to commerce.wishlists.convertToCart', async () => {
-    let calledWishlistId, calledOpts;
+  it('uses the wishlist item variant when one is named', async () => {
     const commerce = makeWishlistCommerce({
-      convertToCart: async (wid, opts) => {
-        calledWishlistId = wid;
-        calledOpts = opts;
-        return mockCartResult;
-      },
+      get: async () => ({
+        ...mockWishlist,
+        items: [{ productId: 'prod_multi', variantId: 'var_g2', quantity: 3, addedAt: 'x' }],
+      }),
     });
-    await tool.handler({
-      commerce,
-      params: { wishlistId: 'wl_001', clearWishlist: true },
-      allowApply: true,
-    });
-    assert.equal(calledWishlistId, 'wl_001');
-    assert.equal(calledOpts.clearWishlist, true);
-  });
-
-  it('defaults clearWishlist to false', async () => {
-    let calledOpts;
-    const commerce = makeWishlistCommerce({
-      convertToCart: async (_wid, opts) => {
-        calledOpts = opts;
-        return mockCartResult;
-      },
-    });
-    await tool.handler({
+    const result = await tool.handler({
       commerce,
       params: { wishlistId: 'wl_001' },
       allowApply: true,
     });
-    assert.equal(calledOpts.clearWishlist, false);
+    assert.equal(result.itemsAdded, 1);
+    const [, , line] = commerce.calls.find((c) => c[0] === 'carts.addItemExact');
+    assert.equal(line.sku, 'G-2');
+    assert.equal(line.unitPrice, '6.00');
+    assert.equal(line.quantity, 3);
   });
 
-  it('returns error when commerce throws', async () => {
-    const commerce = makeWishlistCommerce({
-      convertToCart: async () => {
-        throw new Error('cart creation failed');
-      },
+  it('clearWishlist removes only the lines that reached the cart', async () => {
+    const commerce = makeWishlistCommerce();
+    const result = await tool.handler({
+      commerce,
+      params: { wishlistId: 'wl_001', clearWishlist: true },
+      allowApply: true,
     });
+    assert.deepStrictEqual(result.removedFromWishlist, ['prod_001']);
+    assert.deepStrictEqual(
+      commerce.calls.filter((c) => c[0] === 'wishlists.removeItem'),
+      [['wishlists.removeItem', 'wl_001', 'prod_001']],
+    );
+  });
+
+  it('creates no cart when no item can be priced', async () => {
+    const commerce = makeWishlistCommerce({
+      get: async () => ({
+        ...mockWishlist,
+        items: [{ productId: 'prod_draft', quantity: 1, addedAt: 'x' }],
+      }),
+    });
+    const result = await tool.handler({
+      commerce,
+      params: { wishlistId: 'wl_001' },
+      allowApply: true,
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.itemsAdded, 0);
+    assert.equal(commerce.calls.length, 0);
+  });
+
+  it('returns not found for a missing wishlist', async () => {
+    const result = await tool.handler({
+      commerce: makeWishlistCommerce(),
+      params: { wishlistId: 'wl_missing' },
+      allowApply: true,
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.error, 'Wishlist not found');
+  });
+
+  it('propagates a cart creation failure', async () => {
+    const commerce = makeWishlistCommerce(
+      {},
+      {
+        create: async () => {
+          throw new Error('cart creation failed');
+        },
+      },
+    );
     await assert.rejects(
       () => tool.handler({ commerce, params: { wishlistId: 'wl_001' }, allowApply: true }),
       /cart creation failed/,

@@ -1,380 +1,208 @@
 /**
- * Store Credit Tools Test Suite
- *
- * Tests for cli/src/tools/store-credits.js
- * Covers: create_store_credit, get_store_credit, list_store_credits,
- *         adjust_store_credit, apply_store_credit
+ * Store credit tool handlers against a recording mock of the binding's
+ * `StoreCredits` class. The mock defines only methods the binding declares
+ * (checked below), and every test asserts the exact call the handler makes.
  */
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { storeCreditTools } from '../../src/tools/store-credits.js';
+import { createCallableApiAccessor } from '../../src/mcp/commerce-adapter.js';
+import { bindingClassMethods } from '../helpers/binding-class-methods.js';
 
-// ============================================================================
-// Helper: find tool by name
-// ============================================================================
+const byName = Object.fromEntries(storeCreditTools.map((t) => [t.name, t]));
 
-function findTool(tools, name) {
-  const tool = tools.find((t) => t.name === name);
-  if (!tool) throw new Error(`Tool '${name}' not found`);
-  return tool;
-}
-
-// ============================================================================
-// Mock factory
-// ============================================================================
-
-const mockCredit = {
-  id: 'sc_001',
-  customerId: 'cust_001',
-  originalAmount: '50.00',
-  currentBalance: '35.00',
-  currency: 'USD',
-  reason: 'refund',
-  status: 'active',
-  expiresAt: null,
-  createdAt: '2026-02-21T00:00:00Z',
-  updatedAt: '2026-02-21T00:00:00Z',
-};
-
-const mockTx = {
-  id: 'tx_001',
-  creditId: 'sc_001',
-  orderId: 'ord_001',
-  amount: '20.00',
-  type: 'apply',
-  createdAt: '2026-02-21T00:00:00Z',
-};
-
-function makeStoreCreditCommerce(overrides = {}) {
+/** A StoreCreditOutput, exactly as the binding shapes it. */
+function credit(overrides = {}) {
   return {
-    storeCredits: {
-      create: async (data) => ({ ...mockCredit, ...data }),
-      get: async (_id) => mockCredit,
-      list: async () => [mockCredit],
-      count: async () => 1,
-      adjust: async (_data) => ({ ...mockCredit, currentBalance: '45.00' }),
-      apply: async (_data) => mockTx,
-      ...overrides,
-    },
+    id: 'sc-1',
+    customerId: 'cust-1',
+    originalBalance: '40',
+    currentBalance: '37.5',
+    currency: 'USD',
+    status: 'active',
+    reason: 'compensation',
+    note: 'late',
+    createdAt: '2026-09-27T00:00:00+00:00',
+    updatedAt: '2026-09-27T00:00:00+00:00',
+    ...overrides,
   };
 }
 
-// ============================================================================
-// Structural sanity check
-// ============================================================================
+/** Recording mock: `{ storeCredits, calls }`, with `calls` as `[method, ...args]`. */
+function makeStoreCredits(impls = {}) {
+  const calls = [];
+  const defaults = {
+    create: async (input) => credit({ originalBalance: input.amount }),
+    get: async () => credit(),
+    list: async () => [credit()],
+    adjust: async () => credit(),
+    apply: async (id, amount, referenceId) => ({
+      id: 'tx-1',
+      storeCreditId: id,
+      amount: `-${amount}`,
+      balanceAfter: '30.0',
+      transactionType: 'apply',
+      referenceId,
+      createdAt: '2026-09-27T00:00:00+00:00',
+    }),
+  };
+  const storeCredits = {};
+  for (const [name, fn] of Object.entries({ ...defaults, ...impls })) {
+    storeCredits[name] = async (...args) => {
+      calls.push([name, ...args]);
+      return fn(...args);
+    };
+  }
+  return { storeCredits, calls };
+}
 
-describe('Store Credit Tools — structure', () => {
-  it('exports an array', () => {
-    assert.ok(Array.isArray(storeCreditTools));
-  });
-
-  it('has at least 5 tools', () => {
-    assert.ok(storeCreditTools.length >= 5, `Expected >= 5, got ${storeCreditTools.length}`);
-  });
-
-  it('every tool has name, handler, and permission', () => {
-    for (const tool of storeCreditTools) {
-      assert.ok(tool.name, 'tool missing name');
-      assert.equal(typeof tool.handler, 'function', `${tool.name} missing handler`);
-      assert.ok(tool.permission, `${tool.name} missing permission`);
+describe('store credit mock', () => {
+  it('defines only methods the binding’s StoreCredits class declares', () => {
+    const real = bindingClassMethods('StoreCredits');
+    for (const name of Object.keys(makeStoreCredits().storeCredits)) {
+      assert.ok(real.has(name), `mock invents storeCredits.${name}`);
     }
   });
 });
-
-// ============================================================================
-// create_store_credit
-// ============================================================================
 
 describe('create_store_credit', () => {
-  const tool = findTool(storeCreditTools, 'create_store_credit');
-
-  it('is a write tool', () => {
-    assert.equal(tool.permission, 'write');
-  });
-
-  it('returns preview when allowApply is false', async () => {
-    const result = await tool.handler({
-      commerce: makeStoreCreditCommerce(),
-      params: { customerId: 'cust_001', amount: 50 },
-      allowApply: false,
-    });
-    assert.equal(result.success, false);
-    assert.ok(result.hint, 'expected hint field from applyRequired');
-  });
-
-  it('creates store credit with allowApply: true', async () => {
-    const result = await tool.handler({
-      commerce: makeStoreCreditCommerce(),
-      params: { customerId: 'cust_001', amount: 50, currency: 'USD', reason: 'refund' },
+  it('sends CreateStoreCreditInput with an exact amount string', async () => {
+    const { storeCredits, calls } = makeStoreCredits();
+    const result = await byName.create_store_credit.handler({
+      commerce: { storeCredits },
+      params: {
+        customerId: 'cust-1',
+        amount: 40,
+        currency: 'USD',
+        reason: 'compensation',
+        referenceId: 'ret-1',
+        note: 'late',
+      },
       allowApply: true,
     });
-    assert.equal(result.success, true);
-    assert.ok(result.message.toLowerCase().includes('issued'));
-    assert.ok(result.credit);
-    assert.equal(result.credit.customerId, 'cust_001');
+    assert.deepEqual(calls, [
+      [
+        'create',
+        {
+          customerId: 'cust-1',
+          amount: '40',
+          currency: 'USD',
+          reason: 'compensation',
+          referenceId: 'ret-1',
+          note: 'late',
+          expiresAt: undefined,
+        },
+      ],
+    ]);
+    assert.equal(result.credit.originalBalance, '40');
   });
 
-  it('returns error when commerce.storeCredits.create throws', async () => {
-    const commerce = makeStoreCreditCommerce({
-      create: async () => {
-        throw new Error('Customer not found');
-      },
+  it('leaves reason unset so the engine default (return) applies', async () => {
+    const { storeCredits, calls } = makeStoreCredits();
+    await byName.create_store_credit.handler({
+      commerce: { storeCredits },
+      params: { customerId: 'cust-1', amount: 10 },
+      allowApply: true,
     });
-    try {
-      await tool.handler({
-        commerce,
-        params: { customerId: 'bad_id', amount: 50 },
-        allowApply: true,
-      });
-      assert.fail('expected throw');
-    } catch (err) {
-      assert.ok(err.message.includes('Customer not found'));
-    }
+    assert.equal(calls[0][1].reason, undefined);
+    assert.equal(calls[0][1].currency, 'USD');
   });
 });
-
-// ============================================================================
-// get_store_credit
-// ============================================================================
 
 describe('get_store_credit', () => {
-  const tool = findTool(storeCreditTools, 'get_store_credit');
-
-  it('is a read tool', () => {
-    assert.equal(tool.permission, 'read');
+  it('maps the real StoreCreditOutput fields', async () => {
+    const { storeCredits, calls } = makeStoreCredits();
+    const result = await byName.get_store_credit.handler({
+      commerce: { storeCredits },
+      params: { creditId: 'sc-1' },
+    });
+    assert.deepEqual(calls, [['get', 'sc-1']]);
+    assert.equal(result.credit.originalBalance, '40');
+    assert.equal(result.credit.currentBalance, '37.5');
+    assert.equal(result.credit.reason, 'compensation');
+    assert.equal('originalAmount' in result.credit, false);
   });
 
-  it('returns credit for valid ID', async () => {
-    const result = await tool.handler({
-      commerce: makeStoreCreditCommerce(),
-      params: { creditId: 'sc_001' },
+  it('reports not found', async () => {
+    const { storeCredits } = makeStoreCredits({ get: async () => null });
+    const result = await byName.get_store_credit.handler({
+      commerce: { storeCredits },
+      params: { creditId: 'nope' },
     });
-    assert.equal(result.success, true);
-    assert.equal(result.credit.id, 'sc_001');
-    assert.equal(result.credit.customerId, 'cust_001');
-    assert.equal(result.credit.originalAmount, '50.00');
-    assert.equal(result.credit.currentBalance, '35.00');
-    assert.equal(result.credit.currency, 'USD');
-    assert.equal(result.credit.reason, 'refund');
-    assert.equal(result.credit.status, 'active');
-  });
-
-  it('returns success: false when credit not found', async () => {
-    const commerce = makeStoreCreditCommerce({ get: async () => null });
-    const result = await tool.handler({
-      commerce,
-      params: { creditId: 'NONEXISTENT' },
-    });
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('not found'));
-  });
-
-  it('returns error when get throws', async () => {
-    const commerce = makeStoreCreditCommerce({
-      get: async () => {
-        throw new Error('DB lookup failed');
-      },
-    });
-    try {
-      await tool.handler({ commerce, params: { creditId: 'sc_001' } });
-      assert.fail('expected throw');
-    } catch (err) {
-      assert.ok(err.message.includes('DB lookup failed'));
-    }
+    assert.deepEqual(result, { success: false, error: 'Store credit not found' });
   });
 });
-
-// ============================================================================
-// list_store_credits
-// ============================================================================
 
 describe('list_store_credits', () => {
-  const tool = findTool(storeCreditTools, 'list_store_credits');
-
-  it('is a read tool', () => {
-    assert.equal(tool.permission, 'read');
+  it('passes a real StoreCreditFilterInput with an explicit page limit', async () => {
+    const { storeCredits, calls } = makeStoreCredits();
+    await byName.list_store_credits.handler({
+      commerce: { storeCredits },
+      params: { customerId: 'cust-1', status: 'active', reason: 'return', limit: 50 },
+    });
+    assert.deepEqual(calls, [
+      ['list', { customerId: 'cust-1', status: 'active', reason: 'return', limit: 500, offset: 0 }],
+    ]);
   });
 
-  it('returns list with totalCount and returned', async () => {
-    const result = await tool.handler({
-      commerce: makeStoreCreditCommerce(),
-      params: {},
+  it('pages until a short page, so totalCount is the real total', async () => {
+    const credits = Array.from({ length: 734 }, (_, i) => credit({ id: `sc-${i}` }));
+    const { storeCredits, calls } = makeStoreCredits({
+      list: async ({ limit, offset }) => credits.slice(offset, offset + limit),
     });
-    assert.equal(result.success, true);
-    assert.equal(result.totalCount, 1);
-    assert.equal(result.returned, 1);
-    assert.equal(result.credits.length, 1);
-    assert.equal(result.credits[0].id, 'sc_001');
-  });
-
-  it('maps all expected fields on each credit', async () => {
-    const result = await tool.handler({
-      commerce: makeStoreCreditCommerce(),
-      params: {},
+    const result = await byName.list_store_credits.handler({
+      commerce: { storeCredits },
+      params: { limit: 2 },
     });
-    const c = result.credits[0];
-    assert.ok('id' in c);
-    assert.ok('customerId' in c);
-    assert.ok('originalAmount' in c);
-    assert.ok('currentBalance' in c);
-    assert.ok('currency' in c);
-    assert.ok('reason' in c);
-    assert.ok('status' in c);
-    assert.ok('expiresAt' in c);
-    assert.ok('createdAt' in c);
-  });
-
-  it('returns error when list throws', async () => {
-    const commerce = makeStoreCreditCommerce({
-      list: async () => {
-        throw new Error('DB error');
-      },
-    });
-    try {
-      await tool.handler({ commerce, params: {} });
-      assert.fail('expected throw');
-    } catch (err) {
-      assert.ok(err.message.includes('DB error'));
-    }
+    assert.equal(calls.length, 2);
+    assert.equal(result.totalCount, 734);
+    assert.equal(result.returned, 2);
+    assert.deepEqual(
+      result.credits.map((c) => c.id),
+      ['sc-0', 'sc-1'],
+    );
   });
 });
-
-// ============================================================================
-// adjust_store_credit
-// ============================================================================
 
 describe('adjust_store_credit', () => {
-  const tool = findTool(storeCreditTools, 'adjust_store_credit');
-
-  it('is a write tool', () => {
-    assert.equal(tool.permission, 'write');
-  });
-
-  it('returns preview when allowApply is false', async () => {
-    const result = await tool.handler({
-      commerce: makeStoreCreditCommerce(),
-      params: { creditId: 'sc_001', amount: 10, reason: 'goodwill' },
-      allowApply: false,
-    });
-    assert.equal(result.success, false);
-    assert.ok(result.hint);
-  });
-
-  it('adjusts credit with allowApply: true (positive amount)', async () => {
-    const result = await tool.handler({
-      commerce: makeStoreCreditCommerce(),
-      params: { creditId: 'sc_001', amount: 10, reason: 'goodwill compensation' },
+  it('adjust(id, { amount, note, referenceId }) with a signed exact amount', async () => {
+    const { storeCredits, calls } = makeStoreCredits();
+    await byName.adjust_store_credit.handler({
+      commerce: { storeCredits },
+      params: { creditId: 'sc-1', amount: -2.5, reason: 'fix' },
       allowApply: true,
     });
-    assert.equal(result.success, true);
-    assert.ok(result.message.toLowerCase().includes('adjusted'));
-    assert.ok(result.credit);
-  });
-
-  it('adjusts credit with negative amount (deduction)', async () => {
-    let calledWith = null;
-    const commerce = makeStoreCreditCommerce({
-      adjust: async (data) => {
-        calledWith = data;
-        return { ...mockCredit, currentBalance: '25.00' };
-      },
-    });
-    const result = await tool.handler({
-      commerce,
-      params: { creditId: 'sc_001', amount: -10, reason: 'correction' },
-      allowApply: true,
-    });
-    assert.equal(result.success, true);
-    assert.equal(calledWith.amount, '-10');
-  });
-
-  it('returns error when adjust throws', async () => {
-    const commerce = makeStoreCreditCommerce({
-      adjust: async () => {
-        throw new Error('Balance would go negative');
-      },
-    });
-    try {
-      await tool.handler({
-        commerce,
-        params: { creditId: 'sc_001', amount: -999, reason: 'test' },
-        allowApply: true,
-      });
-      assert.fail('expected throw');
-    } catch (err) {
-      assert.ok(err.message.includes('Balance would go negative'));
-    }
+    assert.deepEqual(calls, [
+      ['adjust', 'sc-1', { amount: '-2.5', note: 'fix', referenceId: undefined }],
+    ]);
   });
 });
 
-// ============================================================================
-// apply_store_credit
-// ============================================================================
-
 describe('apply_store_credit', () => {
-  const tool = findTool(storeCreditTools, 'apply_store_credit');
-
-  it('is a write tool', () => {
-    assert.equal(tool.permission, 'write');
-  });
-
-  it('returns preview when allowApply is false', async () => {
-    const result = await tool.handler({
-      commerce: makeStoreCreditCommerce(),
-      params: { creditId: 'sc_001', orderId: 'ord_001', amount: 20 },
-      allowApply: false,
-    });
-    assert.equal(result.success, false);
-    assert.ok(result.hint);
-  });
-
-  it('applies credit to order with allowApply: true', async () => {
-    const result = await tool.handler({
-      commerce: makeStoreCreditCommerce(),
-      params: { creditId: 'sc_001', orderId: 'ord_001', amount: 20 },
+  it('apply(id, amount, referenceId) on a plain StoreCredits object', async () => {
+    const { storeCredits, calls } = makeStoreCredits();
+    const result = await byName.apply_store_credit.handler({
+      commerce: { storeCredits },
+      params: { creditId: 'sc-1', orderId: 'ord-2', amount: 7.5 },
       allowApply: true,
     });
+    assert.deepEqual(calls, [['apply', 'sc-1', '7.5', 'ord-2']]);
+    assert.equal(result.transaction.referenceId, 'ord-2');
+  });
+
+  it('reaches the binding’s apply through the MCP adapter’s callable accessor', async () => {
+    // On the adapter's Proxy, `.apply` is Function.prototype.apply; calling it
+    // as a method threw "CreateListFromArrayLike called on non-object".
+    const { storeCredits, calls } = makeStoreCredits();
+    const accessor = createCallableApiAccessor(() => storeCredits);
+    const result = await byName.apply_store_credit.handler({
+      commerce: { storeCredits: accessor },
+      params: { creditId: 'sc-1', orderId: 'ord-2', amount: 7.5 },
+      allowApply: true,
+    });
+    assert.deepEqual(calls, [['apply', 'sc-1', '7.5', 'ord-2']]);
     assert.equal(result.success, true);
-    assert.ok(result.message.toLowerCase().includes('applied'));
-    assert.ok(result.transaction);
-    assert.equal(result.transaction.orderId, 'ord_001');
-  });
-
-  it('passes correct amount string to apply()', async () => {
-    let calledWith = null;
-    const commerce = makeStoreCreditCommerce({
-      apply: async (data) => {
-        calledWith = data;
-        return mockTx;
-      },
-    });
-    await tool.handler({
-      commerce,
-      params: { creditId: 'sc_001', orderId: 'ord_001', amount: 20.5 },
-      allowApply: true,
-    });
-    assert.equal(calledWith.amount, '20.5');
-    assert.equal(calledWith.creditId, 'sc_001');
-    assert.equal(calledWith.orderId, 'ord_001');
-  });
-
-  it('returns error when apply throws', async () => {
-    const commerce = makeStoreCreditCommerce({
-      apply: async () => {
-        throw new Error('Order not found');
-      },
-    });
-    try {
-      await tool.handler({
-        commerce,
-        params: { creditId: 'sc_001', orderId: 'bad_ord', amount: 20 },
-        allowApply: true,
-      });
-      assert.fail('expected throw');
-    } catch (err) {
-      assert.ok(err.message.includes('Order not found'));
-    }
   });
 });

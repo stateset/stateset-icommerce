@@ -519,6 +519,8 @@ jobs:
         run: bash ./scripts/ci/check_release_guard.test.sh
       - name: Test the published embedded dependency range
         run: node --test ./scripts/ci/set_embedded_registry_range.test.mjs
+      - name: Test the binding parity report and gate
+        run: node --test ./scripts/ci/generate_binding_parity.test.mjs
 
   rust:
     name: Rust

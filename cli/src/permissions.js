@@ -179,7 +179,7 @@ export const TOOL_PERMISSIONS = {
   get_tax_exemption: 'read',
   create_tax_exemption: 'write',
   check_customer_tax_exempt: 'read',
-  calculate_cart_tax: 'read',
+  calculate_cart_tax: 'write',
   update_tax_settings: 'write',
   set_tax_enabled: 'write',
   check_tax_enabled: 'read',
@@ -202,6 +202,7 @@ export const TOOL_PERMISSIONS = {
   create_promotion: 'write',
   activate_promotion: 'write',
   deactivate_promotion: 'write',
+  add_promotion_condition: 'write',
   delete_promotion: 'delete',
   create_coupon: 'write',
   get_coupon: 'read',
@@ -209,6 +210,7 @@ export const TOOL_PERMISSIONS = {
   list_coupons: 'read',
   check_promotion_validity: 'read',
   apply_cart_promotions: 'write',
+  quote_promotions: 'read',
   record_promotion_usage: 'write',
 
   // Subscriptions
@@ -862,7 +864,6 @@ export const TOOL_PERMISSIONS = {
   list_segments: 'read',
   update_segment: 'write',
   evaluate_segment_membership: 'read',
-  rebuild_dynamic_segment: 'write',
 
   // Shipping Zones & Methods
   create_shipping_zone: 'write',
@@ -901,12 +902,16 @@ export const TOOL_PERMISSIONS = {
   create_reward: 'admin',
 
   // Fraud Detection
-  assess_order_fraud: 'read',
+  assess_order_fraud: 'write',
   get_fraud_assessment: 'read',
   list_fraud_signals: 'read',
   create_fraud_rule: 'admin',
   update_fraud_rule: 'admin',
   review_flagged_order: 'write',
+
+  // Explainability (read-only narratives assembled from other domains)
+  explain_order: 'read',
+  explain_cart_pricing: 'read',
 
   // Agentic Runtime
   discover_tools: 'read',

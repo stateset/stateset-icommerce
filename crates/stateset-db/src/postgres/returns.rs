@@ -1279,7 +1279,7 @@ impl PgReturnRepository {
         self.transition_async(
             id,
             |current| {
-                if current.status == ReturnStatus::Requested {
+                if current.can_approve() {
                     Ok(())
                 } else {
                     Err(CommerceError::ReturnCannotBeApproved(current.status.to_string()))

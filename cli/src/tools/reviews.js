@@ -8,6 +8,38 @@
 import { z } from 'zod';
 import { applyRequired } from '../utils/apply-guard.js';
 
+/** The engine caps a single `reviews.list` page at 1000 rows (default 500). */
+const REVIEW_PAGE_SIZE = 1000;
+
+/**
+ * Collect every review matching `filter`, paging past the engine's per-call
+ * limit. The binding has no `count`, so an exact total needs the full set.
+ */
+async function listAllReviews(commerce, filter) {
+  const all = [];
+  for (let offset = 0; ; offset += REVIEW_PAGE_SIZE) {
+    const page = await commerce.reviews.list({ ...filter, limit: REVIEW_PAGE_SIZE, offset });
+    all.push(...page);
+    if (page.length < REVIEW_PAGE_SIZE) return all;
+  }
+}
+
+/** Public projection of a binding `ReviewOutput`. */
+function projectReview(r) {
+  return {
+    id: r.id,
+    productId: r.productId,
+    customerId: r.customerId,
+    rating: r.rating,
+    title: r.title,
+    status: r.status,
+    verifiedPurchase: r.verifiedPurchase,
+    helpfulCount: r.helpfulCount,
+    reportedCount: r.reportedCount,
+    createdAt: r.createdAt,
+  };
+}
+
 /**
  * Review tool definitions
  */
@@ -67,7 +99,8 @@ export const reviewTools = [
           body: review.body,
           status: review.status,
           verifiedPurchase: review.verifiedPurchase,
-          flagged: review.flagged,
+          helpfulCount: review.helpfulCount,
+          reportedCount: review.reportedCount,
           createdAt: review.createdAt,
           updatedAt: review.updatedAt,
         },
@@ -99,37 +132,18 @@ export const reviewTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { productId, customerId, status, minRating, maxRating, limit } = params;
-      const reviews = await commerce.reviews.list({
-        productId,
-        customerId,
-        status,
-        minRating,
-        maxRating,
-      });
-      const count = await commerce.reviews.count({
-        productId,
-        customerId,
-        status,
-        minRating,
-        maxRating,
-      });
-      const limited = reviews.slice(0, limit);
+      // The engine filter has no maxRating; apply it here, over the full set,
+      // so totalCount stays exact.
+      const matching = (
+        await listAllReviews(commerce, { productId, customerId, status, minRating })
+      ).filter((r) => maxRating === undefined || r.rating <= maxRating);
+      const limited = matching.slice(0, limit);
 
       return {
         success: true,
-        totalCount: count,
+        totalCount: matching.length,
         returned: limited.length,
-        reviews: limited.map((r) => ({
-          id: r.id,
-          productId: r.productId,
-          customerId: r.customerId,
-          rating: r.rating,
-          title: r.title,
-          status: r.status,
-          verifiedPurchase: r.verifiedPurchase,
-          flagged: r.flagged,
-          createdAt: r.createdAt,
-        })),
+        reviews: limited.map(projectReview),
       };
     },
   },
@@ -146,7 +160,7 @@ export const reviewTools = [
         return applyRequired('Approve review', params);
       }
 
-      const review = await commerce.reviews.approve(params.reviewId);
+      const review = await commerce.reviews.update(params.reviewId, { status: 'approved' });
       return { success: true, message: 'Review approved', review };
     },
   },
@@ -164,8 +178,15 @@ export const reviewTools = [
         return applyRequired('Reject review', params);
       }
 
-      const review = await commerce.reviews.reject(params.reviewId, params.reason);
-      return { success: true, message: 'Review rejected', review };
+      // The engine stores no rejection reason; it is echoed back, not persisted.
+      const review = await commerce.reviews.update(params.reviewId, { status: 'rejected' });
+      return {
+        success: true,
+        message: 'Review rejected',
+        review,
+        reason: params.reason,
+        reasonPersisted: false,
+      };
     },
   },
 
@@ -179,10 +200,11 @@ export const reviewTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { productId } = params;
+      // Aggregates approved reviews only; ratingDistribution[0] is the 1-star count.
       const summary = await commerce.reviews.getSummary(productId);
 
-      if (!summary) {
-        return { success: false, error: 'No reviews found for this product' };
+      if (!summary || summary.totalReviews === 0) {
+        return { success: false, error: 'No approved reviews found for this product' };
       }
 
       return {
@@ -192,8 +214,6 @@ export const reviewTools = [
           totalReviews: summary.totalReviews,
           averageRating: summary.averageRating,
           ratingDistribution: summary.ratingDistribution,
-          verifiedPurchaseCount: summary.verifiedPurchaseCount,
-          recommendedPercentage: summary.recommendedPercentage,
         },
       };
     },
@@ -215,11 +235,19 @@ export const reviewTools = [
         return applyRequired('Flag review', params);
       }
 
-      const review = await commerce.reviews.flag(params.reviewId, {
+      // markReported bumps the report counter; setting status 'flagged' is what
+      // puts the review in the moderation queue (list_reviews status=flagged).
+      // The engine stores no flag reason or details; they are echoed back only.
+      await commerce.reviews.markReported(params.reviewId);
+      const review = await commerce.reviews.update(params.reviewId, { status: 'flagged' });
+      return {
+        success: true,
+        message: 'Review flagged for moderation',
+        review,
         reason: params.reason,
         details: params.details,
-      });
-      return { success: true, message: 'Review flagged for moderation', review };
+        reasonPersisted: false,
+      };
     },
   },
 ];

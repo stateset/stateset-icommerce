@@ -67,6 +67,7 @@ const STEPS = [
     ['agent inventory', 'generate_agent_inventory.mjs', 'agent-inventory'],
     ['API command coverage', 'generate_api_command_coverage.mjs', 'api-command-coverage'],
     ['binding API inventory', 'generate_binding_api_inventory.mjs', 'binding-api-inventory'],
+    ['binding parity report', 'generate_binding_parity.mjs', 'binding-parity'],
     ['HTTP gateway inventory', 'generate_http_gateway_inventory.mjs', 'http-gateway-inventory'],
     ['MCP API coverage', 'generate_mcp_api_coverage.mjs', 'mcp-api-coverage'],
   ].map(([name, script, stem]) => inventoryStep(name, script, stem, 'none')),

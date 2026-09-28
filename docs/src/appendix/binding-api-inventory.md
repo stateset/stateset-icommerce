@@ -40,7 +40,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | Kotlin | Maven | `com.stateset:embedded-kotlin` | `1.35.3` | `package-manifest` | manifest coverage |
 | Node.js | npm | `@stateset/embedded` | `1.35.3` | `detailed` | 9 export entrypoints |
 | PHP | Composer | `stateset/embedded` | `1.35.3` | `package-manifest` | manifest coverage |
-| Python | PyPI | `stateset-embedded` | `1.35.3` | `detailed` | 254 public symbols |
+| Python | PyPI | `stateset-embedded` | `1.35.3` | `detailed` | 257 public symbols |
 | Ruby | RubyGems | `stateset_embedded` | `1.35.3` | `package-manifest` | manifest coverage |
 | Swift | SwiftPM | `StateSet` | — | `detailed` | 71 API methods |
 | WASM | npm | `@stateset/embedded-wasm` | `1.35.3` | `package-manifest` | manifest coverage |
@@ -829,6 +829,9 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `Products` |
 | `ProductSearchResult` |
 | `ProductVariant` |
+| `PromotionCondition` |
+| `PromotionConditionInput` |
+| `PromotionLineItemInput` |
 | `PurchaseOrder` |
 | `PurchaseOrders` |
 | `Purgatory` |

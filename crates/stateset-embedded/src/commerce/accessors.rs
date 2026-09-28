@@ -1592,7 +1592,8 @@ impl Commerce {
             currency: cart.currency,
             coupon_codes,
             line_items,
-            is_first_order: false, // Could check customer order history
+            // Settled from the customer's order history by the repository.
+            is_first_order: false,
         };
 
         // Apply promotions

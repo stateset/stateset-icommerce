@@ -575,9 +575,14 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`ProductionBatchFilterInput`](#productionbatchfilterinput)
   - [`ProductionBatchOutput`](#productionbatchoutput)
   - [`ProductionBatchStatus`](#productionbatchstatus)
+  - [`PromotionConditionInput`](#promotionconditioninput)
+  - [`PromotionConditionOperator`](#promotionconditionoperator)
+  - [`PromotionConditionOutput`](#promotionconditionoutput)
+  - [`PromotionConditionType`](#promotionconditiontype)
   - [`PromotionFilterInput`](#promotionfilterinput)
   - [`PromotionLineItemInput`](#promotionlineiteminput)
   - [`PromotionOutput`](#promotionoutput)
+  - [`PromotionRejectionReason`](#promotionrejectionreason)
   - [`PromotionStacking`](#promotionstacking)
   - [`PromotionStackingInput`](#promotionstackinginput)
   - [`PromotionStatus`](#promotionstatus)
@@ -614,6 +619,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`RecordPaymentInput`](#recordpaymentinput)
   - [`RefundOutput`](#refundoutput)
   - [`RefundStatus`](#refundstatus)
+  - [`RejectedPromotionOutput`](#rejectedpromotionoutput)
   - [`ReservationOutput`](#reservationoutput)
   - [`ReservationStatus`](#reservationstatus)
   - [`RestoreOptionsInput`](#restoreoptionsinput)
@@ -2453,6 +2459,16 @@ Promotions API for managing discounts and coupon codes
 
   Types: [`PromotionOutput`](#promotionoutput)
 
+- **`addCondition(promotionId: string, condition: PromotionConditionInput): Promise<PromotionOutput>`**
+
+  Add a condition to an existing promotion.
+
+  The condition is validated — its value must parse for its type and
+  its operator must apply to it — and then stored, so it takes part in
+  every later evaluation.
+
+  Types: [`PromotionConditionInput`](#promotionconditioninput), [`PromotionOutput`](#promotionoutput)
+
 - **`getActive(): Promise<Array<PromotionOutput>>`**
 
   Get all currently active promotions
@@ -2498,6 +2514,16 @@ Promotions API for managing discounts and coupon codes
   Apply promotions to cart/order items
 
   Types: [`ApplyPromotionsInput`](#applypromotionsinput), [`ApplyPromotionsOutput`](#applypromotionsoutput)
+
+- **`applyToCart(cartId: string): Promise<ApplyPromotionsOutput>`**
+
+  Evaluate a persisted cart's promotions and write the result onto it.
+
+  Prices the cart's lines, its coupon and every automatic promotion,
+  stores the discount on the cart and its lines, and returns the
+  evaluation, including what was refused and why.
+
+  Types: [`ApplyPromotionsOutput`](#applypromotionsoutput)
 
 - **`recordUsage(promotionId: string, couponId: string | undefined | null, customerId: string | undefined | null, orderId: string | undefined | null, cartId: string | undefined | null, discountAmount: number, currency: string): Promise<PromotionUsageOutput>`**
 
@@ -5622,6 +5648,7 @@ Result of applying promotions
 | `grandTotal` | `number` | **Deprecated.** Use the `grandTotalExact` twin; float money will be removed in 2.0. |
 | `grandTotalExact` | `string` | Exact base-10 grand total, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `appliedPromotions` | `Array<AppliedPromotionOutput>` | Types: [`AppliedPromotionOutput`](#appliedpromotionoutput) |
+| `rejectedPromotions` | `Array<RejectedPromotionOutput>` | Promotions and coupons considered but not applied, with the reason. Types: [`RejectedPromotionOutput`](#rejectedpromotionoutput) |
 
 ### ApplyVendorCreditInput
 
@@ -7334,6 +7361,7 @@ Input for creating a promotion
 | `excludedCategoryIds?` | `Array<string>` | Excluded category IDs |
 | `eligibleCustomerIds?` | `Array<string>` | Eligible customer IDs |
 | `eligibleCustomerGroups?` | `Array<string>` | Eligible customer groups |
+| `conditions?` | `Array<PromotionConditionInput>` | Conditions the cart must meet (minimum subtotal, first order, shipping country, ...). Each is validated before anything is stored. Types: [`PromotionConditionInput`](#promotionconditioninput) |
 | `currency?` | `string` | Currency code |
 | `priority?` | `number` | Priority (lower = applied first) |
 | `metadata?` | `string` | Metadata as JSON |
@@ -10802,6 +10830,49 @@ type ProductionBatchStatus = 'planned' | 'in_progress' | 'completed' | 'cancelle
 
 One of: `'planned'`, `'in_progress'`, `'completed'`, `'cancelled'`.
 
+### PromotionConditionInput
+
+A condition a cart must meet for a promotion to apply.
+
+| Field | Type | Description |
+|---|---|---|
+| `conditionType` | `PromotionConditionType` | What is tested: minimum_subtotal, minimum_quantity, product_in_cart, category_in_cart, sku_in_cart, first_order, shipping_country, shipping_state, cart_item_count, customer_id, ... Types: [`PromotionConditionType`](#promotionconditiontype) |
+| `operator` | `PromotionConditionOperator` | How it is compared: equals, not_equals, greater_than, in, ... Types: [`PromotionConditionOperator`](#promotionconditionoperator) |
+| `value` | `string` | The value compared against: a decimal, an integer, a boolean, or a comma-separated list, as the condition type requires. |
+| `isRequired?` | `boolean` | Required conditions must all be met; when optional ones exist, at least one must be. Defaults to `true`. |
+
+### PromotionConditionOperator
+
+How a promotion condition compares its value; accepted on `PromotionConditionInput.operator` (case-insensitive) and rendered in this snake_case form on `PromotionConditionOutput.operator`.
+
+```ts
+type PromotionConditionOperator = 'equals' | 'not_equals' | 'greater_than' | 'greater_than_or_equal' | 'less_than' | 'less_than_or_equal' | 'contains' | 'not_contains' | 'in' | 'not_in'
+```
+
+One of: `'equals'`, `'not_equals'`, `'greater_than'`, `'greater_than_or_equal'`, `'less_than'`, `'less_than_or_equal'`, `'contains'`, `'not_contains'`, `'in'`, `'not_in'`.
+
+### PromotionConditionOutput
+
+A condition attached to a promotion.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `conditionType` | `PromotionConditionType` | Types: [`PromotionConditionType`](#promotionconditiontype) |
+| `operator` | `PromotionConditionOperator` | Types: [`PromotionConditionOperator`](#promotionconditionoperator) |
+| `value` | `string` |  |
+| `isRequired` | `boolean` |  |
+
+### PromotionConditionType
+
+What a promotion condition tests; accepted on `PromotionConditionInput.conditionType` (case-insensitive) and rendered in this snake_case form on `PromotionConditionOutput.conditionType`.
+
+```ts
+type PromotionConditionType = 'minimum_subtotal' | 'minimum_quantity' | 'product_in_cart' | 'category_in_cart' | 'sku_in_cart' | 'customer_group' | 'first_order' | 'customer_email_domain' | 'shipping_country' | 'shipping_state' | 'payment_method' | 'cart_item_count' | 'customer_id'
+```
+
+One of: `'minimum_subtotal'`, `'minimum_quantity'`, `'product_in_cart'`, `'category_in_cart'`, `'sku_in_cart'`, `'customer_group'`, `'first_order'`, `'customer_email_domain'`, `'shipping_country'`, `'shipping_state'`, `'payment_method'`, `'cart_item_count'`, `'customer_id'`.
+
 ### PromotionFilterInput
 
 Filter for listing promotions
@@ -10863,8 +10934,19 @@ Promotion output
 | `currency` | `string` |  |
 | `priority` | `number` |  |
 | `metadata?` | `string` |  |
+| `conditions` | `Array<PromotionConditionOutput>` | Conditions the cart must meet for this promotion to apply. Types: [`PromotionConditionOutput`](#promotionconditionoutput) |
 | `createdAt` | `string` |  |
 | `updatedAt` | `string` |  |
+
+### PromotionRejectionReason
+
+Why a promotion or coupon was considered and not applied, as rendered on `RejectedPromotionOutput.reasonCode`.
+
+```ts
+type PromotionRejectionReason = 'invalid_code' | 'expired' | 'not_yet_active' | 'usage_limit_reached' | 'customer_limit_reached' | 'minimum_not_met' | 'product_not_eligible' | 'customer_not_eligible' | 'not_stackable' | 'already_applied' | 'internal_error' | 'currency_mismatch'
+```
+
+One of: `'invalid_code'`, `'expired'`, `'not_yet_active'`, `'usage_limit_reached'`, `'customer_limit_reached'`, `'minimum_not_met'`, `'product_not_eligible'`, `'customer_not_eligible'`, `'not_stackable'`, `'already_applied'`, `'internal_error'`, `'currency_mismatch'`.
 
 ### PromotionStacking
 
@@ -10951,10 +11033,10 @@ One of: `'percentageoff'`, `'fixedamountoff'`, `'buyxgety'`, `'freeshipping'`, `
 Promotion type accepted on input (case-insensitive).
 
 ```ts
-type PromotionTypeInput = 'percentage_off' | 'percentageoff' | 'fixed_amount_off' | 'fixedamountoff' | 'buy_x_get_y' | 'buyxgety' | 'bogo' | 'free_shipping' | 'freeshipping' | 'tiered_discount' | 'tiereddiscount' | 'bundle' | 'bundle_discount' | 'bundlediscount'
+type PromotionTypeInput = 'percentage_off' | 'percentageoff' | 'fixed_amount_off' | 'fixedamountoff' | 'buy_x_get_y' | 'buyxgety' | 'bogo' | 'free_shipping' | 'freeshipping' | 'tiered_discount' | 'tiereddiscount' | 'bundle' | 'bundle_discount' | 'bundlediscount' | 'first_order_discount' | 'firstorderdiscount'
 ```
 
-One of: `'percentage_off'`, `'percentageoff'`, `'fixed_amount_off'`, `'fixedamountoff'`, `'buy_x_get_y'`, `'buyxgety'`, `'bogo'`, `'free_shipping'`, `'freeshipping'`, `'tiered_discount'`, `'tiereddiscount'`, `'bundle'`, `'bundle_discount'`, `'bundlediscount'`.
+One of: `'percentage_off'`, `'percentageoff'`, `'fixed_amount_off'`, `'fixedamountoff'`, `'buy_x_get_y'`, `'buyxgety'`, `'bogo'`, `'free_shipping'`, `'freeshipping'`, `'tiered_discount'`, `'tiereddiscount'`, `'bundle'`, `'bundle_discount'`, `'bundlediscount'`, `'first_order_discount'`, `'firstorderdiscount'`.
 
 ### PromotionUsageOutput
 
@@ -11271,6 +11353,17 @@ type RefundStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancell
 ```
 
 One of: `'pending'`, `'processing'`, `'completed'`, `'failed'`, `'cancelled'`.
+
+### RejectedPromotionOutput
+
+A promotion or coupon that was considered and refused.
+
+| Field | Type | Description |
+|---|---|---|
+| `promotionId?` | `string` |  |
+| `couponCode?` | `string` |  |
+| `reason` | `string` | Human-readable reason. |
+| `reasonCode` | `PromotionRejectionReason` | Machine-readable reason. Types: [`PromotionRejectionReason`](#promotionrejectionreason) |
 
 ### ReservationOutput
 

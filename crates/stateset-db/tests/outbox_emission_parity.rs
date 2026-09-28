@@ -498,7 +498,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("promotions.rs", "create"),
     ("promotions.rs", "update"),
     ("promotions.rs", "delete"),
-    ("promotions.rs", "create_condition"),
     ("promotions.rs", "create_coupon"),
     ("promotions.rs", "consume_cart_promotions_in_tx"),
     ("promotions.rs", "record_usage_in_tx"),

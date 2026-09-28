@@ -50,7 +50,9 @@ export function buildToolDocs() {
     '',
     '| Domain | Tools |',
     '| --- | ---: |',
-    ...domains.map(([name, tools]) => `| [${name}](#${name.replace(/[^a-z0-9-]/g, '')}) | ${tools.length} |`),
+    ...domains.map(
+      ([name, tools]) => `| [${name}](#${name.replace(/[^a-z0-9-]/g, '')}) | ${tools.length} |`,
+    ),
     '',
   ];
 
@@ -67,7 +69,8 @@ export function buildToolDocs() {
   return `${lines.join('\n').trimEnd()}\n`;
 }
 
-const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const invokedDirectly =
+  process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
   const markdown = buildToolDocs();
   if (process.argv.includes('--stdout')) {

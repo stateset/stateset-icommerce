@@ -5,7 +5,7 @@
 
 Source of truth: `cli/src/tools/domain-registry.js`.
 
-**935 tools** across **87 domains**.
+**938 tools** across **88 domains**.
 
 ## Domains
 
@@ -21,7 +21,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [analytics](#analytics) | 14 |
 | [currency](#currency) | 13 |
 | [tax](#tax) | 29 |
-| [promotions](#promotions) | 15 |
+| [promotions](#promotions) | 17 |
 | [subscriptions](#subscriptions) | 17 |
 | [sync](#sync) | 20 |
 | [manufacturing](#manufacturing) | 11 |
@@ -42,7 +42,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [vector](#vector) | 16 |
 | [gift-cards](#gift-cards) | 7 |
 | [store-credits](#store-credits) | 5 |
-| [segments](#segments) | 6 |
+| [segments](#segments) | 5 |
 | [shipping-zones](#shipping-zones) | 7 |
 | [units-of-measure](#units-of-measure) | 10 |
 | [stock-snapshots](#stock-snapshots) | 5 |
@@ -98,6 +98,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [production-batches](#production-batches) | 8 |
 | [supplier-skus](#supplier-skus) | 7 |
 | [inbound-shipments](#inbound-shipments) | 8 |
+| [explain](#explain) | 2 |
 
 ## customers
 
@@ -281,7 +282,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `get_tax_exemption` | read | Get a tax exemption by ID. |
 | `create_tax_exemption` | write | Create a tax exemption certificate for a customer. |
 | `check_customer_tax_exempt` | read | Check whether a customer is currently tax exempt. |
-| `calculate_cart_tax` | read | Calculate and apply tax to a cart based on its shipping address. Must set shipping address first. Returns tax breakdown and updates cart totals. |
+| `calculate_cart_tax` | write | Calculate and apply tax to a cart based on its shipping address. Must set shipping address first. Returns tax breakdown and updates cart totals. |
 | `list_tax_providers` | read | List tax providers and capabilities for quote, commit, and void workflows. |
 | `update_tax_settings` | write | Update store tax settings. Requires --apply flag. |
 | `set_tax_enabled` | write | Enable or disable tax calculation. Requires --apply flag. |
@@ -303,7 +304,8 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `list_promotions` | read | List all promotions. Shows active, paused, and scheduled promotions with their discount details. |
 | `get_promotion` | read | Get a promotion by ID or internal code. |
 | `update_promotion` | write | Update an existing promotion. Requires --apply flag. |
-| `create_promotion` | write | Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, and tiered discounts. |
+| `create_promotion` | write | Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, tiered, and first-order discounts, optionally scoped to SKUs and gated by conditions. |
+| `add_promotion_condition` | write | Add a condition to an existing promotion (minimum subtotal, first order, shipping country, SKU in cart, ...). The condition is validated before it is stored. Requires --apply. |
 | `delete_promotion` | delete | Delete a promotion. Requires --apply flag. |
 | `activate_promotion` | write | Activate a promotion to make it available for use. |
 | `deactivate_promotion` | write | Pause/deactivate a promotion. |
@@ -314,6 +316,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `get_active_promotions` | read | Get all currently active promotions. |
 | `check_promotion_validity` | read | Check whether a promotion is currently valid and eligible to apply. |
 | `apply_cart_promotions` | write | Calculate and apply all applicable promotions to a cart. Uses coupon codes on the cart and automatic promotions. |
+| `quote_promotions` | read | Price a basket against every active promotion and the given coupon codes WITHOUT writing anything: returns the discount, what applied, and what was refused and why. Use it before a cart exists, or to explain why a coupon does not apply. |
 | `record_promotion_usage` | write | Record promotion usage after checkout completion. Requires --apply flag. |
 
 ## subscriptions
@@ -330,7 +333,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `get_subscription` | read | Get details for a specific subscription. |
 | `create_subscription` | write | Create a new subscription for a customer. Requires --apply flag. |
 | `pause_subscription` | write | Pause a subscription (stops billing, can resume later). Requires --apply flag. |
-| `update_subscription` | write | Update subscription fields such as payment method or metadata. Requires --apply flag. |
+| `update_subscription` | write | Update subscription fields (status, price, paymentMethodId, nextBillingDate, discountPercent as a 0-1 fraction, discountAmount, couponCode). Requires --apply flag. |
 | `resume_subscription` | write | Resume a paused subscription. Requires --apply flag. |
 | `cancel_subscription` | delete | Cancel a subscription. By default cancels at end of period. Requires --apply flag. |
 | `skip_billing_cycle` | write | Skip the next billing cycle for a subscription. Requires --apply flag. |
@@ -694,19 +697,18 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `get_segment` | read | Get a segment by ID including its conditions and member count. |
 | `list_segments` | read | List all customer segments. |
 | `update_segment` | write | Update a segment name, description, or conditions. |
-| `evaluate_segment_membership` | read | Check whether a customer belongs to a segment. |
-| `rebuild_dynamic_segment` | write | Rebuild a dynamic segment by re-evaluating all customers against its conditions. |
+| `evaluate_segment_membership` | read | Check whether a customer is a recorded member of a segment. Reads stored membership; rules are not re-evaluated. |
 
 ## shipping-zones
 
 | Tool | Permission | Description |
 | --- | --- | --- |
 | `create_shipping_zone` | write | Create a shipping zone with country/region rules. |
-| `get_shipping_zone` | read | Get a shipping zone by ID. |
+| `get_shipping_zone` | read | Get a shipping zone by ID, including its shipping methods. |
 | `list_shipping_zones` | read | List all shipping zones. |
 | `update_shipping_zone` | write | Update a shipping zone name, countries, or regions. |
-| `create_shipping_method` | write | Create a shipping method within a zone (e.g., Standard, Express, Overnight). |
-| `calculate_shipping_rate` | read | Calculate shipping rate for a destination address and cart items. |
+| `create_shipping_method` | write | Create a shipping method within a zone (e.g., Standard, Express, Overnight). weight_based and price_based methods pick their rate from `conditions`; free always rates 0; flat and calculated use baseRate. |
+| `calculate_shipping_rate` | read | Calculate available shipping rates for a destination address. |
 | `list_shipping_methods` | read | List shipping methods for a specific zone. |
 
 ## units-of-measure
@@ -837,31 +839,31 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `add_to_wishlist` | write | Add a product to a wishlist. |
 | `remove_from_wishlist` | write | Remove a product from a wishlist. |
 | `list_wishlists` | read | List wishlists for a customer. |
-| `convert_wishlist_to_cart` | write | Convert all items in a wishlist to a shopping cart. |
+| `convert_wishlist_to_cart` | write | Create a cart for the wishlist's customer and add each wishlist item at its catalog variant price. Items that cannot be priced are reported, not added. |
 
 ## loyalty
 
 | Tool | Permission | Description |
 | --- | --- | --- |
-| `create_loyalty_program` | admin | Create a loyalty program with tiers and earning rules. |
-| `get_loyalty_program` | read | Get loyalty program details including tiers and reward catalog. |
+| `create_loyalty_program` | admin | Create a loyalty program with an earning rate and optional tiers. |
+| `get_loyalty_program` | read | Get loyalty program details including its tiers. |
 | `enroll_customer` | write | Enroll a customer in a loyalty program. |
-| `get_loyalty_account` | read | Get a customer loyalty account including points balance and tier. |
-| `earn_points` | write | Award loyalty points to a customer account. |
-| `redeem_points` | write | Redeem loyalty points for a reward or discount. |
-| `list_rewards` | read | List available rewards in a loyalty program. |
+| `get_loyalty_account` | read | Get a customer's loyalty account in a program: points balance and tier. |
+| `earn_points` | write | Award loyalty points to a customer's account in a program. |
+| `redeem_points` | write | Redeem loyalty points from a customer's account, optionally for a reward in the program. The engine refuses a redemption larger than the balance. |
+| `list_rewards` | read | List rewards in a loyalty program. |
 | `create_reward` | admin | Create a redeemable reward in a loyalty program. |
 
 ## fraud
 
 | Tool | Permission | Description |
 | --- | --- | --- |
-| `assess_order_fraud` | read | Run fraud assessment on an order. Returns a risk score and matched signals. |
-| `get_fraud_assessment` | read | Get a fraud assessment by ID. |
-| `list_fraud_signals` | read | List fraud signals for an order or across all recent orders. |
-| `create_fraud_rule` | admin | Create a custom fraud detection rule. |
-| `update_fraud_rule` | admin | Update a fraud detection rule. |
-| `review_flagged_order` | write | Review a flagged order and mark it as approved or rejected. |
+| `assess_order_fraud` | write | Record a fraud assessment for an order from caller-supplied signals. The engine stores the signals, sets the risk score to the highest signal score, and decides accept (or review when the risk score is 0.8 or higher). One assessment per order. |
+| `get_fraud_assessment` | read | Get the fraud assessment for an order. |
+| `list_fraud_signals` | read | List the fraud signals recorded on one order, or on the most recent assessments across orders. |
+| `create_fraud_rule` | admin | Create a fraud rule: when a signal of `signalType` scores at or above `threshold`, apply `action`. Rules are created enabled. |
+| `update_fraud_rule` | admin | Update a fraud rule (name, description, threshold, action, or enabled flag). |
+| `review_flagged_order` | write | Record a manual review of an order's fraud assessment: set its decision, the reviewer, and why. |
 
 ## connectors
 
@@ -1258,7 +1260,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 
 | Tool | Permission | Description |
 | --- | --- | --- |
-| `agent_receipt_purchase` | write | Execute a verifiable agent-to-agent purchase end-to-end: buyer agent locks ssUSD in OrderEscrow, sequencer commits VES events, STARK proof attests order_total ≤ policy cap, SetRegistry anchors the commitment + proof on Set Chain L2, buyer marks delivered, seller releases. Returns the signed Agent Receipt JSON with on-chain tx hashes. Requires the local stack (anvil + sequencer + postgres + deployed contracts) to be running — see /home/dom/icommerce-app/setup.sh. |
+| `agent_receipt_purchase` | write | Execute a verifiable agent-to-agent purchase end-to-end: buyer agent locks ssUSD in OrderEscrow, sequencer commits VES events, STARK proof attests order_total ≤ policy cap, SetRegistry anchors the commitment + proof on Set Chain L2, buyer marks delivered, seller releases. Returns the signed Agent Receipt JSON with on-chain tx hashes. Requires the local stack (anvil + sequencer + postgres + deployed contracts) to be running, configured by AGENT_RECEIPT_DEMO_DIR. |
 | `agent_receipt_status` | read | Read the on-chain escrow state for an order. Returns buyer, seller, amount, deadlines, delivery receipt hash, and current status (None / Locked / Delivered / Disputed / Released / Refunded). |
 | `agent_receipt_dispute` | write | Buyer raises an on-chain dispute on a Delivered order. Funds freeze in escrow until the operator resolves. The plain-text reason is hashed (keccak256) and stored on-chain as proof of the filing. |
 | `agent_receipt_resolve` | admin | Operator (sequencer / arbiter) resolves a Disputed order. Routes the locked funds either to the seller (in_favor_of_seller=true) or refunds the buyer (false). Emits DisputeResolved + Released/Refunded. |
@@ -1282,7 +1284,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `write_off_fixed_asset` | write | Write off a fixed asset. |
 | `generate_depreciation_schedule` | write | Generate the depreciation schedule for a fixed asset. |
 | `get_depreciation_schedule` | read | Get the depreciation schedule for a fixed asset. |
-| `post_depreciation` | write | Post depreciation for a period. |
+| `post_depreciation` | write | Post the next scheduled depreciation entries for a fixed asset (generate the schedule first). |
 
 ## maintenance
 
@@ -1300,10 +1302,10 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | --- | --- | --- |
 | `list_revenue_contracts` | read | List revenue recognition contracts. |
 | `get_revenue_contract` | read | Get a revenue recognition contract by ID. |
-| `create_revenue_contract` | write | Create a revenue recognition contract. |
-| `generate_revenue_schedule` | write | Generate the revenue recognition schedule for a contract. |
-| `get_revenue_schedule` | read | Get the revenue recognition schedule for a contract. |
-| `recognize_revenue` | write | Recognize revenue for a contract period. |
+| `create_revenue_contract` | write | Create a revenue recognition (ASC 606) contract with its performance obligations. The obligations' allocated amounts must sum to the transaction price. |
+| `generate_revenue_schedule` | write | Generate the revenue recognition schedule for a performance obligation (ids are on the contract's obligations). |
+| `get_revenue_schedule` | read | Get the revenue recognition schedule for a performance obligation. |
+| `recognize_revenue` | write | Recognize deferred revenue for a performance obligation: every scheduled entry whose period starts on or before `through`. |
 
 ## cycle-counts
 
@@ -1311,7 +1313,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | --- | --- | --- |
 | `list_cycle_counts` | read | List cycle counts. |
 | `get_cycle_count` | read | Get a cycle count by ID. |
-| `create_cycle_count` | write | Create a cycle count. |
+| `create_cycle_count` | write | Create a draft cycle count for a warehouse with the SKUs to count and the quantity the system expects for each. |
 | `start_cycle_count` | write | Start a cycle count. |
 | `record_cycle_counts` | write | Record counted quantities for a cycle count. |
 | `complete_cycle_count` | write | Complete a cycle count. |
@@ -1468,3 +1470,10 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `mark_inbound_shipment_arrived` | write | Mark an inbound shipment as arrived. |
 | `receive_inbound_shipment_line` | write | Receive a quantity against an inbound shipment line. |
 | `cancel_inbound_shipment` | write | Cancel an inbound shipment. |
+
+## explain
+
+| Tool | Permission | Description |
+| --- | --- | --- |
+| `explain_order` | read | Explain an order to a customer or merchant: one chronological timeline (checkout, payments, shipments, returns, refunds, fraud, activity), the money charged/refunded/net as exact strings, tax recomputed from the address, and flags for inconsistencies (e.g. paid but paymentStatus pending, refunded more than charged). Read-only; lists what it cannot see. |
+| `explain_cart_pricing` | read | Explain why a cart costs what it costs: lines, subtotal, promotions applied and REFUSED with reason codes, tax by jurisdiction, shipping, and a check that the explained total equals the stored grand total. Pass couponCodes to ask why a code does or does not apply. Read-only: nothing is written to the cart. |

@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:3f0c6fbe29810eda9a5b15a3eb40980b7d34521ce7ba551ef2551928f8fcefa5",
+  "digest": "sha256:0750b25d6eb991f089807e5f71094ac2ba3754e4db5b972d22e54c94d9de5e5f",
   "counts": {
-    "total": 950,
-    "readOnly": 469,
-    "mutations": 481,
+    "total": 953,
+    "readOnly": 470,
+    "mutations": 483,
     "governed": 25,
     "governedComposite": 1,
-    "blocked": 455
+    "blocked": 457
   },
   "entries": [
     {
@@ -1047,6 +1047,13 @@
       "commandType": null
     },
     {
+      "name": "add_promotion_condition",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "add_return_tracking",
       "permission": "write",
       "mutation": true,
@@ -1643,9 +1650,9 @@
     },
     {
       "name": "assess_order_fraud",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {
@@ -1741,9 +1748,9 @@
     },
     {
       "name": "calculate_cart_tax",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {
@@ -3193,6 +3200,20 @@
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "explain_cart_pricing",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "explain_order",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
       "commandType": null
     },
     {
@@ -5436,6 +5457,13 @@
       "commandType": null
     },
     {
+      "name": "quote_promotions",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
       "name": "quote_shipping_rates",
       "permission": "read",
       "mutation": false,
@@ -5444,13 +5472,6 @@
     },
     {
       "name": "reactivate_credit_account",
-      "permission": "write",
-      "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
-    },
-    {
-      "name": "rebuild_dynamic_segment",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",

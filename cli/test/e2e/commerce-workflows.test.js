@@ -57,7 +57,7 @@ function createStatefulCommerce() {
   const stores = {
     customers: new Map(),
     products: new Map(),
-    inventory: new Map(),      // keyed by SKU
+    inventory: new Map(), // keyed by SKU
     reservations: new Map(),
     orders: new Map(),
     payments: new Map(),
@@ -70,7 +70,7 @@ function createStatefulCommerce() {
     giftCards: new Map(),
     giftCardTransactions: [],
     loyaltyPrograms: new Map(),
-    loyaltyAccounts: new Map(), // keyed by `${programId}:${customerId}`
+    loyaltyAccounts: new Map(), // keyed by account id
     loyaltyTransactions: [],
     subscriptionPlans: new Map(),
     subscriptions: new Map(),
@@ -153,7 +153,9 @@ function createStatefulCommerce() {
       const item = stores.inventory.get(sku);
       if (!item) throw new Error(`Inventory not found for SKU ${sku}`);
       if (item.totalAvailable < quantity)
-        throw new Error(`Insufficient stock for ${sku}: need ${quantity}, have ${item.totalAvailable}`);
+        throw new Error(
+          `Insufficient stock for ${sku}: need ${quantity}, have ${item.totalAvailable}`,
+        );
       const resId = randomUUID();
       item.totalAllocated += quantity;
       item.totalAvailable -= quantity;
@@ -191,7 +193,10 @@ function createStatefulCommerce() {
   // ---- Orders ----
   const orders = {
     list: async () => [...stores.orders.values()],
-    get: async (id) => stores.orders.get(id) || [...stores.orders.values()].find((o) => o.orderNumber === id) || null,
+    get: async (id) =>
+      stores.orders.get(id) ||
+      [...stores.orders.values()].find((o) => o.orderNumber === id) ||
+      null,
     create: async (data) => {
       const id = randomUUID();
       orderSeq += 1;
@@ -356,7 +361,8 @@ function createStatefulCommerce() {
   const carts = {
     list: async () => [...stores.carts.values()],
     get: async (id) => stores.carts.get(id) || null,
-    getByNumber: async (num) => [...stores.carts.values()].find((c) => c.cartNumber === num) || null,
+    getByNumber: async (num) =>
+      [...stores.carts.values()].find((c) => c.cartNumber === num) || null,
     create: async (data) => {
       const id = randomUUID();
       cartSeq += 1;
@@ -431,8 +437,22 @@ function createStatefulCommerce() {
       return cart;
     },
     getShippingRates: async (_cartId) => [
-      { id: 'rate-1', carrier: 'USPS', service: 'Priority', price: 9.99, currency: 'USD', estimatedDays: 3 },
-      { id: 'rate-2', carrier: 'FedEx', service: 'Ground', price: 7.99, currency: 'USD', estimatedDays: 5 },
+      {
+        id: 'rate-1',
+        carrier: 'USPS',
+        service: 'Priority',
+        price: 9.99,
+        currency: 'USD',
+        estimatedDays: 3,
+      },
+      {
+        id: 'rate-2',
+        carrier: 'FedEx',
+        service: 'Ground',
+        price: 7.99,
+        currency: 'USD',
+        estimatedDays: 5,
+      },
     ],
     complete: async (cartId) => {
       const cart = stores.carts.get(cartId);
@@ -526,87 +546,90 @@ function createStatefulCommerce() {
     format: (amount, cur) => `${cur} ${amount}`,
   };
 
-  // ---- Gift Cards ----
+  // ---- Gift Cards: mirrors the binding's `GiftCards` class ----
+  // Only methods the real binding has (no `count`); `get` is by id only and
+  // `getByCode` by code; charge/refund take (id, amount, referenceId?).
+  const giftCardTransaction = (gc, transactionType, amount, referenceId) => {
+    const tx = {
+      id: randomUUID(),
+      giftCardId: gc.id,
+      transactionType,
+      amount,
+      balanceAfter: gc.currentBalance,
+      referenceId: referenceId ?? undefined,
+      createdAt: new Date().toISOString(),
+    };
+    stores.giftCardTransactions.push(tx);
+    return tx;
+  };
   const giftCards = {
-    list: async (_filters) => [...stores.giftCards.values()],
-    get: async (identifier) =>
-      stores.giftCards.get(identifier) ||
-      [...stores.giftCards.values()].find((gc) => gc.code === identifier) ||
-      null,
+    list: async (filter = {}) => {
+      const matching = [...stores.giftCards.values()].filter(
+        (gc) =>
+          (!filter.status || gc.status === filter.status) &&
+          (!filter.code || gc.code === filter.code),
+      );
+      const offset = filter.offset ?? 0;
+      return filter.limit === undefined
+        ? matching.slice(offset)
+        : matching.slice(offset, offset + filter.limit);
+    },
+    get: async (id) => stores.giftCards.get(id) || null,
+    getByCode: async (code) =>
+      [...stores.giftCards.values()].find((gc) => gc.code === code) || null,
     create: async (data) => {
       const id = randomUUID();
-      const code = `GC-${Date.now().toString(36).toUpperCase()}`;
       const gc = {
         id,
-        code,
+        code: data.code || `GC-${id.slice(0, 8).toUpperCase()}`,
         initialBalance: data.initialBalance,
         currentBalance: data.initialBalance,
-        currency: data.currency || 'USD',
+        currency: data.currency,
         status: 'active',
-        customerId: data.customerId || null,
-        recipientEmail: data.recipientEmail || null,
-        expiresAt: data.expiresAt || null,
+        recipientEmail: data.recipientEmail,
+        senderName: data.senderName,
+        message: data.message,
+        expiresAt: data.expiresAt,
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
       stores.giftCards.set(id, gc);
       return gc;
     },
-    charge: async (data) => {
-      const gc = stores.giftCards.get(data.giftCardId);
+    charge: async (id, amount, referenceId) => {
+      const gc = stores.giftCards.get(id);
       if (!gc) throw new Error('Gift card not found');
-      const amt = parseFloat(data.amount);
-      if (parseFloat(gc.currentBalance) < amt)
+      if (parseFloat(gc.currentBalance) < parseFloat(amount))
         throw new Error('Insufficient gift card balance');
-      gc.currentBalance = String(parseFloat(gc.currentBalance) - amt);
-      const tx = {
-        id: randomUUID(),
-        giftCardId: gc.id,
-        type: 'charge',
-        amount: data.amount,
-        orderId: data.orderId || null,
-        balanceAfter: gc.currentBalance,
-        createdAt: new Date().toISOString(),
-      };
-      stores.giftCardTransactions.push(tx);
-      return tx;
+      gc.currentBalance = String(parseFloat(gc.currentBalance) - parseFloat(amount));
+      return giftCardTransaction(gc, 'charge', amount, referenceId);
     },
-    refund: async (data) => {
-      const gc = stores.giftCards.get(data.giftCardId);
+    refund: async (id, amount, referenceId) => {
+      const gc = stores.giftCards.get(id);
       if (!gc) throw new Error('Gift card not found');
-      gc.currentBalance = String(parseFloat(gc.currentBalance) + parseFloat(data.amount));
-      const tx = {
-        id: randomUUID(),
-        giftCardId: gc.id,
-        type: 'refund',
-        amount: data.amount,
-        orderId: data.orderId || null,
-        balanceAfter: gc.currentBalance,
-        createdAt: new Date().toISOString(),
-      };
-      stores.giftCardTransactions.push(tx);
-      return tx;
+      gc.currentBalance = String(parseFloat(gc.currentBalance) + parseFloat(amount));
+      return giftCardTransaction(gc, 'refund', amount, referenceId);
     },
-    disable: async (id, _reason) => {
+    disable: async (id) => {
       const gc = stores.giftCards.get(id);
       if (!gc) throw new Error('Gift card not found');
       gc.status = 'disabled';
       return gc;
     },
-    count: async () => stores.giftCards.size,
   };
 
-  // ---- Loyalty ----
+  // ---- Loyalty: mirrors the binding's `Loyalty` class ----
+  // Only methods the real binding has; accounts are keyed by their own id and
+  // every earn/redeem is an `adjustPoints` transaction that may not overdraw.
   const loyalty = {
     createProgram: async (data) => {
       const id = randomUUID();
       const program = {
         id,
         name: data.name,
-        description: data.description || '',
-        pointsPerDollar: data.pointsPerDollar || 1,
-        currency: data.currency || 'USD',
+        description: data.description,
+        pointsPerDollar: data.pointsPerDollar,
         tiers: data.tiers || [],
-        totalMembers: 0,
         status: 'active',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -615,80 +638,60 @@ function createStatefulCommerce() {
       return program;
     },
     getProgram: async (id) => stores.loyaltyPrograms.get(id) || null,
-    enrollCustomer: async (programId, customerId) => {
-      const key = `${programId}:${customerId}`;
-      const id = randomUUID();
+    enroll: async ({ customerId, programId }) => {
+      if (!stores.loyaltyPrograms.has(programId)) throw new Error('Record not found');
       const account = {
-        id,
+        id: randomUUID(),
         programId,
         customerId,
         pointsBalance: 0,
         lifetimePoints: 0,
-        currentTier: null,
-        nextTier: null,
-        pointsToNextTier: null,
-        enrolledAt: new Date().toISOString(),
+        tier: 'bronze',
+        createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      stores.loyaltyAccounts.set(key, account);
-      const program = stores.loyaltyPrograms.get(programId);
-      if (program) program.totalMembers += 1;
+      stores.loyaltyAccounts.set(account.id, account);
       return account;
     },
-    getAccount: async (programId, customerId) => {
-      const key = `${programId}:${customerId}`;
-      return stores.loyaltyAccounts.get(key) || null;
-    },
-    earnPoints: async (data) => {
-      const key = `${data.programId}:${data.customerId}`;
-      const account = stores.loyaltyAccounts.get(key);
-      if (!account) throw new Error('Loyalty account not found');
-      account.pointsBalance += data.points;
-      account.lifetimePoints += data.points;
+    getAccount: async (id) => stores.loyaltyAccounts.get(id) || null,
+    getAccountByCustomer: async (customerId, programId) =>
+      [...stores.loyaltyAccounts.values()].find(
+        (a) => a.customerId === customerId && a.programId === programId,
+      ) || null,
+    adjustPoints: async (input) => {
+      const account = stores.loyaltyAccounts.get(input.accountId);
+      if (!account) throw new Error('Record not found');
+      if (account.pointsBalance + input.points < 0) {
+        throw new Error('Failed to adjust points: Validation error: Insufficient points balance');
+      }
+      account.pointsBalance += input.points;
+      if (input.points > 0) account.lifetimePoints += input.points;
       account.updatedAt = new Date().toISOString();
       const tx = {
         id: randomUUID(),
-        type: 'earn',
-        programId: data.programId,
-        customerId: data.customerId,
-        points: data.points,
-        reason: data.reason || 'manual',
-        orderId: data.orderId || null,
+        accountId: input.accountId,
+        points: input.points,
+        transactionType: input.transactionType,
+        referenceId: input.referenceId,
+        description: input.description,
         createdAt: new Date().toISOString(),
       };
       stores.loyaltyTransactions.push(tx);
       return tx;
     },
-    redeemPoints: async (data) => {
-      const key = `${data.programId}:${data.customerId}`;
-      const account = stores.loyaltyAccounts.get(key);
-      if (!account) throw new Error('Loyalty account not found');
-      if (account.pointsBalance < data.points)
-        throw new Error('Insufficient loyalty points');
-      account.pointsBalance -= data.points;
-      account.updatedAt = new Date().toISOString();
-      const tx = {
-        id: randomUUID(),
-        type: 'redeem',
-        programId: data.programId,
-        customerId: data.customerId,
-        points: data.points,
-        orderId: data.orderId || null,
-        createdAt: new Date().toISOString(),
-      };
-      stores.loyaltyTransactions.push(tx);
-      return tx;
-    },
-    listRewards: async (_programId, _opts) => [],
+    getReward: async (_id) => null,
+    listRewards: async (_filter) => [],
   };
 
-  // ---- Subscriptions (top-level methods on commerce) ----
-  // The subscription tools call commerce.createSubscriptionPlan, etc.
-  // directly, not commerce.subscriptions.*
-  const topLevelSubMethods = {
-    listSubscriptionPlans: async (_filters) => [...stores.subscriptionPlans.values()],
-    getSubscriptionPlan: async (id) => stores.subscriptionPlans.get(id) || null,
-    createSubscriptionPlan: async (data) => {
+  // ---- Subscriptions: mirrors the binding's `Subscriptions` class ----
+  // The subscription tools call commerce.subscriptions.<method>; only methods
+  // the real binding has are defined here.
+  const subscriptions = {
+    listPlans: async (_filters) => [...stores.subscriptionPlans.values()],
+    getPlan: async (id) => stores.subscriptionPlans.get(id) || null,
+    getPlanByCode: async (code) =>
+      [...stores.subscriptionPlans.values()].find((p) => p.code === code) || null,
+    createPlan: async (data) => {
       const id = randomUUID();
       const plan = {
         id,
@@ -706,27 +709,29 @@ function createStatefulCommerce() {
       stores.subscriptionPlans.set(id, plan);
       return plan;
     },
-    activateSubscriptionPlan: async (planId) => {
+    activatePlan: async (planId) => {
       const plan = stores.subscriptionPlans.get(planId);
       if (!plan) throw new Error('Plan not found');
       plan.status = 'active';
       return plan;
     },
-    archiveSubscriptionPlan: async (planId) => {
+    archivePlan: async (planId) => {
       const plan = stores.subscriptionPlans.get(planId);
       if (!plan) throw new Error('Plan not found');
       plan.status = 'archived';
       return plan;
     },
-    listSubscriptions: async (filters) => {
+    list: async (filters) => {
       let subs = [...stores.subscriptions.values()];
       if (filters?.customerId) subs = subs.filter((s) => s.customerId === filters.customerId);
       if (filters?.planId) subs = subs.filter((s) => s.planId === filters.planId);
       if (filters?.status) subs = subs.filter((s) => s.status === filters.status);
       return subs;
     },
-    getSubscription: async (id) => stores.subscriptions.get(id) || null,
-    createSubscription: async (data) => {
+    get: async (id) => stores.subscriptions.get(id) || null,
+    getByNumber: async (number) =>
+      [...stores.subscriptions.values()].find((s) => s.subscriptionNumber === number) || null,
+    subscribe: async (data) => {
       const id = randomUUID();
       subSeq += 1;
       const plan = stores.subscriptionPlans.get(data.planId);
@@ -752,28 +757,40 @@ function createStatefulCommerce() {
       });
       return sub;
     },
-    pauseSubscription: async (id, _opts) => {
+    pause: async (id, _opts) => {
       const sub = stores.subscriptions.get(id);
       if (!sub) throw new Error('Subscription not found');
       sub.status = 'paused';
-      stores.subscriptionEvents.push({ subscriptionId: id, type: 'paused', at: new Date().toISOString() });
+      stores.subscriptionEvents.push({
+        subscriptionId: id,
+        type: 'paused',
+        at: new Date().toISOString(),
+      });
       return sub;
     },
-    resumeSubscription: async (id) => {
+    resume: async (id) => {
       const sub = stores.subscriptions.get(id);
       if (!sub) throw new Error('Subscription not found');
       sub.status = 'active';
-      stores.subscriptionEvents.push({ subscriptionId: id, type: 'resumed', at: new Date().toISOString() });
+      stores.subscriptionEvents.push({
+        subscriptionId: id,
+        type: 'resumed',
+        at: new Date().toISOString(),
+      });
       return sub;
     },
-    cancelSubscription: async (id, opts) => {
+    cancel: async (id, opts) => {
       const sub = stores.subscriptions.get(id);
       if (!sub) throw new Error('Subscription not found');
       sub.status = 'cancelled';
-      stores.subscriptionEvents.push({ subscriptionId: id, type: 'cancelled', at: new Date().toISOString() });
+      stores.subscriptionEvents.push({
+        subscriptionId: id,
+        type: 'cancelled',
+        at: new Date().toISOString(),
+      });
       return sub;
     },
-    skipBillingCycle: async (id, _opts) => {
+    skipBilling: async (id, _opts) => {
       const sub = stores.subscriptions.get(id);
       if (!sub) throw new Error('Subscription not found');
       sub.nextBillingDate = new Date(
@@ -785,8 +802,7 @@ function createStatefulCommerce() {
       return stores.billingCycles.filter((c) => c.subscriptionId === filters?.subscriptionId);
     },
     getBillingCycle: async (id) => stores.billingCycles.find((c) => c.id === id) || null,
-    getSubscriptionEvents: async (subId, _limit) =>
-      stores.subscriptionEvents.filter((e) => e.subscriptionId === subId),
+    getEvents: async (subId) => stores.subscriptionEvents.filter((e) => e.subscriptionId === subId),
   };
 
   return {
@@ -801,8 +817,7 @@ function createStatefulCommerce() {
     currency,
     giftCards,
     loyalty,
-    // Subscription methods are top-level on commerce
-    ...topLevelSubMethods,
+    subscriptions,
     // Expose stores for direct assertions
     _stores: stores,
   };
@@ -835,100 +850,155 @@ describe('Workflow: Order-to-Cash', () => {
   });
 
   it('should create a customer', async () => {
-    const result = await callTool(customerTools, 'create_customer', {
-      email: 'alice@example.com',
-      firstName: 'Alice',
-      lastName: 'Johnson',
-    }, ctx);
+    const result = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'alice@example.com',
+        firstName: 'Alice',
+        lastName: 'Johnson',
+      },
+      ctx,
+    );
     assert.equal(result.success, true);
     assert.ok(result.customer.id);
     assert.equal(result.customer.email, 'alice@example.com');
   });
 
   it('should create a product', async () => {
-    const result = await callTool(productTools, 'create_product', {
-      name: 'Widget Pro',
-      sku: 'WIDGET-001',
-      price: 29.99,
-      description: 'A professional widget',
-    }, ctx);
+    const result = await callTool(
+      productTools,
+      'create_product',
+      {
+        name: 'Widget Pro',
+        sku: 'WIDGET-001',
+        price: 29.99,
+        description: 'A professional widget',
+      },
+      ctx,
+    );
     assert.equal(result.success, true);
     assert.ok(result.product.id);
   });
 
   it('should add inventory for a product', async () => {
-    const result = await callTool(inventoryTools, 'create_inventory_item', {
-      sku: 'WIDGET-001',
-      name: 'Widget Pro',
-      initialQuantity: 100,
-    }, ctx);
+    const result = await callTool(
+      inventoryTools,
+      'create_inventory_item',
+      {
+        sku: 'WIDGET-001',
+        name: 'Widget Pro',
+        initialQuantity: 100,
+      },
+      ctx,
+    );
     assert.equal(result.success, true);
     assert.equal(result.item.sku, 'WIDGET-001');
   });
 
   it('should complete the full order-to-cash lifecycle', async () => {
     // Step 1: Create customer
-    const custResult = await callTool(customerTools, 'create_customer', {
-      email: 'bob@example.com',
-      firstName: 'Bob',
-      lastName: 'Smith',
-    }, ctx);
+    const custResult = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'bob@example.com',
+        firstName: 'Bob',
+        lastName: 'Smith',
+      },
+      ctx,
+    );
     const customerId = custResult.customer.id;
 
     // Step 2: Create product
-    await callTool(productTools, 'create_product', {
-      name: 'Gadget X',
-      sku: 'GADGET-X',
-      price: 49.99,
-    }, ctx);
+    await callTool(
+      productTools,
+      'create_product',
+      {
+        name: 'Gadget X',
+        sku: 'GADGET-X',
+        price: 49.99,
+      },
+      ctx,
+    );
 
     // Step 3: Add inventory
-    await callTool(inventoryTools, 'create_inventory_item', {
-      sku: 'GADGET-X',
-      name: 'Gadget X',
-      initialQuantity: 50,
-    }, ctx);
+    await callTool(
+      inventoryTools,
+      'create_inventory_item',
+      {
+        sku: 'GADGET-X',
+        name: 'Gadget X',
+        initialQuantity: 50,
+      },
+      ctx,
+    );
 
     // Step 4: Create order
-    const orderResult = await callTool(orderTools, 'create_order', {
-      customerId,
-      items: [{ sku: 'GADGET-X', name: 'Gadget X', quantity: 2, unitPrice: 49.99 }],
-    }, ctx);
+    const orderResult = await callTool(
+      orderTools,
+      'create_order',
+      {
+        customerId,
+        items: [{ sku: 'GADGET-X', name: 'Gadget X', quantity: 2, unitPrice: 49.99 }],
+      },
+      ctx,
+    );
     assert.equal(orderResult.success, true);
     const orderId = orderResult.order.id;
     assert.equal(orderResult.order.status, 'pending');
     assert.equal(orderResult.order.totalAmount, 99.98);
 
     // Step 5: Create payment
-    const payResult = await callTool(paymentTools, 'create_payment', {
-      orderId,
-      amount: 99.98,
-      method: 'credit_card',
-    }, ctx);
+    const payResult = await callTool(
+      paymentTools,
+      'create_payment',
+      {
+        orderId,
+        amount: 99.98,
+        method: 'credit_card',
+      },
+      ctx,
+    );
     assert.equal(payResult.success, true);
     const paymentId = payResult.payment.id;
     assert.equal(payResult.payment.status, 'pending');
 
     // Step 6: Complete payment
-    const completePayResult = await callTool(paymentTools, 'complete_payment', {
-      paymentId,
-    }, ctx);
+    const completePayResult = await callTool(
+      paymentTools,
+      'complete_payment',
+      {
+        paymentId,
+      },
+      ctx,
+    );
     assert.equal(completePayResult.success, true);
     assert.equal(completePayResult.payment.status, 'completed');
 
     // Step 7: Create shipment
-    const shipResult = await callTool(shipmentTools, 'create_shipment', {
-      orderId,
-      carrier: 'FedEx',
-    }, ctx);
+    const shipResult = await callTool(
+      shipmentTools,
+      'create_shipment',
+      {
+        orderId,
+        carrier: 'FedEx',
+      },
+      ctx,
+    );
     assert.equal(shipResult.success, true);
     const shipmentId = shipResult.shipment.id;
     assert.equal(shipResult.shipment.status, 'in_transit');
 
     // Step 8: Deliver shipment
-    const deliverResult = await callTool(shipmentTools, 'deliver_shipment', {
-      shipmentId,
-    }, ctx);
+    const deliverResult = await callTool(
+      shipmentTools,
+      'deliver_shipment',
+      {
+        shipmentId,
+      },
+      ctx,
+    );
     assert.equal(deliverResult.success, true);
     assert.equal(deliverResult.shipment.status, 'delivered');
 
@@ -941,26 +1011,49 @@ describe('Workflow: Order-to-Cash', () => {
 
   it('should block writes without --apply flag', async () => {
     const noApplyCtx = makeCtx(commerce, { allowApply: false });
-    const result = await callTool(customerTools, 'create_customer', {
-      email: 'blocked@example.com',
-      firstName: 'No',
-      lastName: 'Apply',
-    }, noApplyCtx);
+    const result = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'blocked@example.com',
+        firstName: 'No',
+        lastName: 'Apply',
+      },
+      noApplyCtx,
+    );
     assert.equal(result.success, false);
     assert.ok(result.error.includes('--apply'));
   });
 
   it('should verify order state after payment and before shipment', async () => {
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'eve@example.com', firstName: 'Eve', lastName: 'Chen',
-    }, ctx);
-    const order = await callTool(orderTools, 'create_order', {
-      customerId: cust.customer.id,
-      items: [{ sku: 'SKU-A', name: 'Item A', quantity: 1, unitPrice: 10 }],
-    }, ctx);
-    const pay = await callTool(paymentTools, 'create_payment', {
-      orderId: order.order.id, amount: 10,
-    }, ctx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'eve@example.com',
+        firstName: 'Eve',
+        lastName: 'Chen',
+      },
+      ctx,
+    );
+    const order = await callTool(
+      orderTools,
+      'create_order',
+      {
+        customerId: cust.customer.id,
+        items: [{ sku: 'SKU-A', name: 'Item A', quantity: 1, unitPrice: 10 }],
+      },
+      ctx,
+    );
+    const pay = await callTool(
+      paymentTools,
+      'create_payment',
+      {
+        orderId: order.order.id,
+        amount: 10,
+      },
+      ctx,
+    );
     await callTool(paymentTools, 'complete_payment', { paymentId: pay.payment.id }, ctx);
 
     const fetched = await commerce.orders.get(order.order.id);
@@ -984,32 +1077,53 @@ describe('Workflow: Return-to-Refund', () => {
 
   it('should process a full return-to-refund cycle', async () => {
     // Setup: create customer + order + payment + shipment + delivery
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'carol@example.com', firstName: 'Carol', lastName: 'Davis',
-    }, ctx);
-    const order = await callTool(orderTools, 'create_order', {
-      customerId: cust.customer.id,
-      items: [
-        { sku: 'SHOE-001', name: 'Running Shoes', quantity: 1, unitPrice: 89.99 },
-      ],
-    }, ctx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'carol@example.com',
+        firstName: 'Carol',
+        lastName: 'Davis',
+      },
+      ctx,
+    );
+    const order = await callTool(
+      orderTools,
+      'create_order',
+      {
+        customerId: cust.customer.id,
+        items: [{ sku: 'SHOE-001', name: 'Running Shoes', quantity: 1, unitPrice: 89.99 }],
+      },
+      ctx,
+    );
     const orderId = order.order.id;
     const orderItemId = commerce._stores.orders.get(orderId).items[0].id;
 
-    const pay = await callTool(paymentTools, 'create_payment', {
-      orderId, amount: 89.99,
-    }, ctx);
+    const pay = await callTool(
+      paymentTools,
+      'create_payment',
+      {
+        orderId,
+        amount: 89.99,
+      },
+      ctx,
+    );
     await callTool(paymentTools, 'complete_payment', { paymentId: pay.payment.id }, ctx);
 
     const ship = await callTool(shipmentTools, 'create_shipment', { orderId }, ctx);
     await callTool(shipmentTools, 'deliver_shipment', { shipmentId: ship.shipment.id }, ctx);
 
     // Step 1: Create return
-    const retResult = await callTool(returnTools, 'create_return', {
-      orderId,
-      reason: 'wrong_item',
-      items: [{ orderItemId, quantity: 1 }],
-    }, ctx);
+    const retResult = await callTool(
+      returnTools,
+      'create_return',
+      {
+        orderId,
+        reason: 'wrong_item',
+        items: [{ orderItemId, quantity: 1 }],
+      },
+      ctx,
+    );
     assert.equal(retResult.success, true);
     assert.equal(retResult.return.status, 'pending');
     const returnId = retResult.return.id;
@@ -1020,11 +1134,16 @@ describe('Workflow: Return-to-Refund', () => {
     assert.equal(approveResult.return.status, 'approved');
 
     // Step 3: Issue refund
-    const refundResult = await callTool(paymentTools, 'create_refund', {
-      paymentId: pay.payment.id,
-      amount: 89.99,
-      reason: 'Wrong item sent to customer',
-    }, ctx);
+    const refundResult = await callTool(
+      paymentTools,
+      'create_refund',
+      {
+        paymentId: pay.payment.id,
+        amount: 89.99,
+        reason: 'Wrong item sent to customer',
+      },
+      ctx,
+    );
     assert.equal(refundResult.success, true);
     assert.equal(refundResult.refund.status, 'completed');
     assert.equal(refundResult.refund.amount, '89.99');
@@ -1035,45 +1154,83 @@ describe('Workflow: Return-to-Refund', () => {
   });
 
   it('should allow partial refund on a return', async () => {
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'dan@example.com', firstName: 'Dan', lastName: 'Lee',
-    }, ctx);
-    const order = await callTool(orderTools, 'create_order', {
-      customerId: cust.customer.id,
-      items: [
-        { sku: 'SHIRT-001', name: 'T-Shirt', quantity: 3, unitPrice: 25.00 },
-      ],
-    }, ctx);
-    const pay = await callTool(paymentTools, 'create_payment', {
-      orderId: order.order.id, amount: 75.00,
-    }, ctx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'dan@example.com',
+        firstName: 'Dan',
+        lastName: 'Lee',
+      },
+      ctx,
+    );
+    const order = await callTool(
+      orderTools,
+      'create_order',
+      {
+        customerId: cust.customer.id,
+        items: [{ sku: 'SHIRT-001', name: 'T-Shirt', quantity: 3, unitPrice: 25.0 }],
+      },
+      ctx,
+    );
+    const pay = await callTool(
+      paymentTools,
+      'create_payment',
+      {
+        orderId: order.order.id,
+        amount: 75.0,
+      },
+      ctx,
+    );
     await callTool(paymentTools, 'complete_payment', { paymentId: pay.payment.id }, ctx);
 
     // Partial refund for 1 item
-    const refund = await callTool(paymentTools, 'create_refund', {
-      paymentId: pay.payment.id,
-      amount: 25.00,
-      reason: 'Customer returned 1 of 3 shirts',
-    }, ctx);
+    const refund = await callTool(
+      paymentTools,
+      'create_refund',
+      {
+        paymentId: pay.payment.id,
+        amount: 25.0,
+        reason: 'Customer returned 1 of 3 shirts',
+      },
+      ctx,
+    );
     assert.equal(refund.success, true);
     assert.equal(parseFloat(refund.refund.amount), 25);
   });
 
   it('should list returns after creation', async () => {
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'faye@example.com', firstName: 'Faye', lastName: 'Wong',
-    }, ctx);
-    const order = await callTool(orderTools, 'create_order', {
-      customerId: cust.customer.id,
-      items: [{ sku: 'HAT-001', name: 'Hat', quantity: 1, unitPrice: 15 }],
-    }, ctx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'faye@example.com',
+        firstName: 'Faye',
+        lastName: 'Wong',
+      },
+      ctx,
+    );
+    const order = await callTool(
+      orderTools,
+      'create_order',
+      {
+        customerId: cust.customer.id,
+        items: [{ sku: 'HAT-001', name: 'Hat', quantity: 1, unitPrice: 15 }],
+      },
+      ctx,
+    );
     const orderItemId = commerce._stores.orders.get(order.order.id).items[0].id;
 
-    await callTool(returnTools, 'create_return', {
-      orderId: order.order.id,
-      reason: 'damaged',
-      items: [{ orderItemId, quantity: 1 }],
-    }, ctx);
+    await callTool(
+      returnTools,
+      'create_return',
+      {
+        orderId: order.order.id,
+        reason: 'damaged',
+        items: [{ orderItemId, quantity: 1 }],
+      },
+      ctx,
+    );
 
     const listResult = await callTool(returnTools, 'list_returns', {}, ctx);
     assert.equal(listResult.success, true);
@@ -1097,55 +1254,87 @@ describe('Workflow: Cart-to-Checkout', () => {
 
   it('should complete a full cart-to-checkout flow', async () => {
     // Step 1: Create customer
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'grace@example.com', firstName: 'Grace', lastName: 'Hopper',
-    }, ctx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'grace@example.com',
+        firstName: 'Grace',
+        lastName: 'Hopper',
+      },
+      ctx,
+    );
 
     // Step 2: Create cart
-    const cartResult = await callTool(cartTools, 'create_cart', {
-      customerId: cust.customer.id,
-      customerEmail: 'grace@example.com',
-    }, ctx);
+    const cartResult = await callTool(
+      cartTools,
+      'create_cart',
+      {
+        customerId: cust.customer.id,
+        customerEmail: 'grace@example.com',
+      },
+      ctx,
+    );
     assert.equal(cartResult.success, true);
     const cartId = cartResult.cart.id;
 
     // Step 3: Add multiple items
-    const item1 = await callTool(cartTools, 'add_cart_item', {
-      cartId,
-      sku: 'LAPTOP-001',
-      name: 'Laptop Pro',
-      quantity: 1,
-      unitPrice: 999.99,
-    }, ctx);
+    const item1 = await callTool(
+      cartTools,
+      'add_cart_item',
+      {
+        cartId,
+        sku: 'LAPTOP-001',
+        name: 'Laptop Pro',
+        quantity: 1,
+        unitPrice: 999.99,
+      },
+      ctx,
+    );
     assert.equal(item1.success, true);
 
-    const item2 = await callTool(cartTools, 'add_cart_item', {
-      cartId,
-      sku: 'MOUSE-001',
-      name: 'Wireless Mouse',
-      quantity: 2,
-      unitPrice: 29.99,
-    }, ctx);
+    const item2 = await callTool(
+      cartTools,
+      'add_cart_item',
+      {
+        cartId,
+        sku: 'MOUSE-001',
+        name: 'Wireless Mouse',
+        quantity: 2,
+        unitPrice: 29.99,
+      },
+      ctx,
+    );
     assert.equal(item2.success, true);
 
     // Step 4: Set shipping address
-    const addrResult = await callTool(cartTools, 'set_cart_shipping_address', {
-      cartId,
-      firstName: 'Grace',
-      lastName: 'Hopper',
-      line1: '123 Computing Ave',
-      city: 'New York',
-      state: 'NY',
-      postalCode: '10001',
-      country: 'US',
-    }, ctx);
+    const addrResult = await callTool(
+      cartTools,
+      'set_cart_shipping_address',
+      {
+        cartId,
+        firstName: 'Grace',
+        lastName: 'Hopper',
+        line1: '123 Computing Ave',
+        city: 'New York',
+        state: 'NY',
+        postalCode: '10001',
+        country: 'US',
+      },
+      ctx,
+    );
     assert.equal(addrResult.success, true);
 
     // Step 5: Apply discount
-    const discResult = await callTool(cartTools, 'apply_cart_discount', {
-      cartId,
-      couponCode: 'SAVE10',
-    }, ctx);
+    const discResult = await callTool(
+      cartTools,
+      'apply_cart_discount',
+      {
+        cartId,
+        couponCode: 'SAVE10',
+      },
+      ctx,
+    );
     assert.equal(discResult.success, true);
     assert.ok(discResult.cart.discountAmount > 0);
 
@@ -1167,15 +1356,38 @@ describe('Workflow: Cart-to-Checkout', () => {
   });
 
   it('should calculate correct totals with items and discount', async () => {
-    const cart = await callTool(cartTools, 'create_cart', { customerEmail: 'test@example.com' }, ctx);
+    const cart = await callTool(
+      cartTools,
+      'create_cart',
+      { customerEmail: 'test@example.com' },
+      ctx,
+    );
     const cartId = cart.cart.id;
 
-    await callTool(cartTools, 'add_cart_item', {
-      cartId, sku: 'A', name: 'Item A', quantity: 3, unitPrice: 10,
-    }, ctx);
-    await callTool(cartTools, 'add_cart_item', {
-      cartId, sku: 'B', name: 'Item B', quantity: 1, unitPrice: 50,
-    }, ctx);
+    await callTool(
+      cartTools,
+      'add_cart_item',
+      {
+        cartId,
+        sku: 'A',
+        name: 'Item A',
+        quantity: 3,
+        unitPrice: 10,
+      },
+      ctx,
+    );
+    await callTool(
+      cartTools,
+      'add_cart_item',
+      {
+        cartId,
+        sku: 'B',
+        name: 'Item B',
+        quantity: 1,
+        unitPrice: 50,
+      },
+      ctx,
+    );
 
     // Before discount: subtotal should be 80
     let cartState = await commerce.carts.get(cartId);
@@ -1190,9 +1402,14 @@ describe('Workflow: Cart-to-Checkout', () => {
 
   it('should get shipping rates for a cart', async () => {
     const cart = await callTool(cartTools, 'create_cart', { customerEmail: 'rates@test.com' }, ctx);
-    const ratesResult = await callTool(cartTools, 'get_shipping_rates', {
-      cartId: cart.cart.id,
-    }, ctx);
+    const ratesResult = await callTool(
+      cartTools,
+      'get_shipping_rates',
+      {
+        cartId: cart.cart.id,
+      },
+      ctx,
+    );
     assert.equal(ratesResult.success, true);
     assert.ok(ratesResult.rates.length >= 2);
     assert.ok(ratesResult.rates[0].carrier);
@@ -1201,16 +1418,26 @@ describe('Workflow: Cart-to-Checkout', () => {
 
   it('should set payment method on cart', async () => {
     const cart = await callTool(cartTools, 'create_cart', { customerEmail: 'pay@test.com' }, ctx);
-    const payResult = await callTool(cartTools, 'set_cart_payment', {
-      cartId: cart.cart.id,
-      paymentMethod: 'credit_card',
-    }, ctx);
+    const payResult = await callTool(
+      cartTools,
+      'set_cart_payment',
+      {
+        cartId: cart.cart.id,
+        paymentMethod: 'credit_card',
+      },
+      ctx,
+    );
     assert.equal(payResult.success, true);
     assert.equal(payResult.cart.paymentMethod, 'credit_card');
   });
 
   it('should cancel a cart', async () => {
-    const cart = await callTool(cartTools, 'create_cart', { customerEmail: 'cancel@test.com' }, ctx);
+    const cart = await callTool(
+      cartTools,
+      'create_cart',
+      { customerEmail: 'cancel@test.com' },
+      ctx,
+    );
     const cancelResult = await callTool(cartTools, 'cancel_cart', { cartId: cart.cart.id }, ctx);
     assert.equal(cancelResult.success, true);
     assert.equal(cancelResult.cart.status, 'cancelled');
@@ -1232,134 +1459,255 @@ describe('Workflow: Subscription Lifecycle', () => {
 
   it('should complete the full subscription lifecycle', async () => {
     // Step 1: Create plan
-    const planResult = await callTool(subscriptionTools, 'create_subscription_plan', {
-      name: 'Coffee Club Monthly',
-      billingInterval: 'monthly',
-      price: 29.99,
-      trialDays: 14,
-    }, ctx);
+    const planResult = await callTool(
+      subscriptionTools,
+      'create_subscription_plan',
+      {
+        name: 'Coffee Club Monthly',
+        billingInterval: 'monthly',
+        price: 29.99,
+        trialDays: 14,
+      },
+      ctx,
+    );
     assert.equal(planResult.success, true);
     const planId = planResult.plan.id;
     assert.equal(planResult.plan.status, 'draft');
 
     // Step 2: Activate plan
-    const activateResult = await callTool(subscriptionTools, 'activate_subscription_plan', {
-      planId,
-    }, ctx);
+    const activateResult = await callTool(
+      subscriptionTools,
+      'activate_subscription_plan',
+      {
+        planId,
+      },
+      ctx,
+    );
     assert.equal(activateResult.success, true);
     assert.equal(activateResult.plan.status, 'active');
 
     // Step 3: Create customer
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'subscriber@example.com', firstName: 'Sub', lastName: 'User',
-    }, ctx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'subscriber@example.com',
+        firstName: 'Sub',
+        lastName: 'User',
+      },
+      ctx,
+    );
 
     // Step 4: Subscribe customer
-    const subResult = await callTool(subscriptionTools, 'create_subscription', {
-      customerId: cust.customer.id,
-      planId,
-    }, ctx);
+    const subResult = await callTool(
+      subscriptionTools,
+      'create_subscription',
+      {
+        customerId: cust.customer.id,
+        planId,
+      },
+      ctx,
+    );
     assert.equal(subResult.success, true);
     const subId = subResult.subscription.id;
     // Should start in trial since plan has trialDays
     assert.equal(subResult.subscription.status, 'trial');
 
     // Step 5: Verify subscription exists
-    const getResult = await callTool(subscriptionTools, 'get_subscription', {
-      subscriptionId: subId,
-    }, ctx);
+    const getResult = await callTool(
+      subscriptionTools,
+      'get_subscription',
+      {
+        subscriptionId: subId,
+      },
+      ctx,
+    );
     assert.ok(getResult.id);
     assert.equal(getResult.status, 'trial');
 
     // Step 6: Pause subscription
-    const pauseResult = await callTool(subscriptionTools, 'pause_subscription', {
-      subscriptionId: subId,
-      reason: 'Going on vacation',
-    }, ctx);
+    const pauseResult = await callTool(
+      subscriptionTools,
+      'pause_subscription',
+      {
+        subscriptionId: subId,
+        reason: 'Going on vacation',
+      },
+      ctx,
+    );
     assert.equal(pauseResult.success, true);
     assert.equal(pauseResult.subscription.status, 'paused');
 
     // Step 7: Resume subscription
-    const resumeResult = await callTool(subscriptionTools, 'resume_subscription', {
-      subscriptionId: subId,
-    }, ctx);
+    const resumeResult = await callTool(
+      subscriptionTools,
+      'resume_subscription',
+      {
+        subscriptionId: subId,
+      },
+      ctx,
+    );
     assert.equal(resumeResult.success, true);
     assert.equal(resumeResult.subscription.status, 'active');
 
     // Step 8: Cancel subscription
-    const cancelResult = await callTool(subscriptionTools, 'cancel_subscription', {
-      subscriptionId: subId,
-      immediate: true,
-      reason: 'No longer needed',
-    }, ctx);
+    const cancelResult = await callTool(
+      subscriptionTools,
+      'cancel_subscription',
+      {
+        subscriptionId: subId,
+        immediate: true,
+        reason: 'No longer needed',
+      },
+      ctx,
+    );
     assert.equal(cancelResult.success, true);
     assert.equal(cancelResult.subscription.status, 'cancelled');
 
     // Verify terminal state
-    const finalSub = await commerce.getSubscription(subId);
+    const finalSub = await commerce.subscriptions.get(subId);
     assert.equal(finalSub.status, 'cancelled');
 
     // Verify events were recorded
-    const events = await commerce.getSubscriptionEvents(subId);
+    const events = await commerce.subscriptions.getEvents(subId);
     assert.ok(events.length >= 3); // created, paused, resumed, cancelled
   });
 
   it('should list subscription plans by status', async () => {
-    await callTool(subscriptionTools, 'create_subscription_plan', {
-      name: 'Plan A', billingInterval: 'monthly', price: 10,
-    }, ctx);
-    const planB = await callTool(subscriptionTools, 'create_subscription_plan', {
-      name: 'Plan B', billingInterval: 'annual', price: 100,
-    }, ctx);
-    await callTool(subscriptionTools, 'activate_subscription_plan', {
-      planId: planB.plan.id,
-    }, ctx);
+    await callTool(
+      subscriptionTools,
+      'create_subscription_plan',
+      {
+        name: 'Plan A',
+        billingInterval: 'monthly',
+        price: 10,
+      },
+      ctx,
+    );
+    const planB = await callTool(
+      subscriptionTools,
+      'create_subscription_plan',
+      {
+        name: 'Plan B',
+        billingInterval: 'annual',
+        price: 100,
+      },
+      ctx,
+    );
+    await callTool(
+      subscriptionTools,
+      'activate_subscription_plan',
+      {
+        planId: planB.plan.id,
+      },
+      ctx,
+    );
 
     const allPlans = await callTool(subscriptionTools, 'list_subscription_plans', {}, ctx);
     assert.equal(allPlans.count, 2);
   });
 
   it('should skip trial when skipTrial is set', async () => {
-    const plan = await callTool(subscriptionTools, 'create_subscription_plan', {
-      name: 'Trial Plan', billingInterval: 'monthly', price: 19.99, trialDays: 7,
-    }, ctx);
+    const plan = await callTool(
+      subscriptionTools,
+      'create_subscription_plan',
+      {
+        name: 'Trial Plan',
+        billingInterval: 'monthly',
+        price: 19.99,
+        trialDays: 7,
+      },
+      ctx,
+    );
     await callTool(subscriptionTools, 'activate_subscription_plan', { planId: plan.plan.id }, ctx);
 
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'notrial@example.com', firstName: 'No', lastName: 'Trial',
-    }, ctx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'notrial@example.com',
+        firstName: 'No',
+        lastName: 'Trial',
+      },
+      ctx,
+    );
 
-    const sub = await callTool(subscriptionTools, 'create_subscription', {
-      customerId: cust.customer.id,
-      planId: plan.plan.id,
-      skipTrial: true,
-    }, ctx);
+    const sub = await callTool(
+      subscriptionTools,
+      'create_subscription',
+      {
+        customerId: cust.customer.id,
+        planId: plan.plan.id,
+        skipTrial: true,
+      },
+      ctx,
+    );
     assert.equal(sub.subscription.status, 'active');
   });
 
   it('should list subscriptions filtered by customer', async () => {
-    const plan = await callTool(subscriptionTools, 'create_subscription_plan', {
-      name: 'Filter Plan', billingInterval: 'monthly', price: 5,
-    }, ctx);
+    const plan = await callTool(
+      subscriptionTools,
+      'create_subscription_plan',
+      {
+        name: 'Filter Plan',
+        billingInterval: 'monthly',
+        price: 5,
+      },
+      ctx,
+    );
     await callTool(subscriptionTools, 'activate_subscription_plan', { planId: plan.plan.id }, ctx);
 
-    const cust1 = await callTool(customerTools, 'create_customer', {
-      email: 'c1@test.com', firstName: 'C', lastName: 'One',
-    }, ctx);
-    const cust2 = await callTool(customerTools, 'create_customer', {
-      email: 'c2@test.com', firstName: 'C', lastName: 'Two',
-    }, ctx);
+    const cust1 = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'c1@test.com',
+        firstName: 'C',
+        lastName: 'One',
+      },
+      ctx,
+    );
+    const cust2 = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'c2@test.com',
+        firstName: 'C',
+        lastName: 'Two',
+      },
+      ctx,
+    );
 
-    await callTool(subscriptionTools, 'create_subscription', {
-      customerId: cust1.customer.id, planId: plan.plan.id, skipTrial: true,
-    }, ctx);
-    await callTool(subscriptionTools, 'create_subscription', {
-      customerId: cust2.customer.id, planId: plan.plan.id, skipTrial: true,
-    }, ctx);
+    await callTool(
+      subscriptionTools,
+      'create_subscription',
+      {
+        customerId: cust1.customer.id,
+        planId: plan.plan.id,
+        skipTrial: true,
+      },
+      ctx,
+    );
+    await callTool(
+      subscriptionTools,
+      'create_subscription',
+      {
+        customerId: cust2.customer.id,
+        planId: plan.plan.id,
+        skipTrial: true,
+      },
+      ctx,
+    );
 
-    const c1Subs = await callTool(subscriptionTools, 'list_subscriptions', {
-      customerId: cust1.customer.id,
-    }, ctx);
+    const c1Subs = await callTool(
+      subscriptionTools,
+      'list_subscriptions',
+      {
+        customerId: cust1.customer.id,
+      },
+      ctx,
+    );
     assert.equal(c1Subs.count, 1);
     assert.equal(c1Subs.subscriptions[0].customerId, cust1.customer.id);
   });
@@ -1380,15 +1728,36 @@ describe('Workflow: Inventory Management', () => {
 
   it('should create multiple SKUs and manage stock', async () => {
     // Create three inventory items
-    await callTool(inventoryTools, 'create_inventory_item', {
-      sku: 'SKU-A', name: 'Item A', initialQuantity: 100,
-    }, ctx);
-    await callTool(inventoryTools, 'create_inventory_item', {
-      sku: 'SKU-B', name: 'Item B', initialQuantity: 50,
-    }, ctx);
-    await callTool(inventoryTools, 'create_inventory_item', {
-      sku: 'SKU-C', name: 'Item C', initialQuantity: 0,
-    }, ctx);
+    await callTool(
+      inventoryTools,
+      'create_inventory_item',
+      {
+        sku: 'SKU-A',
+        name: 'Item A',
+        initialQuantity: 100,
+      },
+      ctx,
+    );
+    await callTool(
+      inventoryTools,
+      'create_inventory_item',
+      {
+        sku: 'SKU-B',
+        name: 'Item B',
+        initialQuantity: 50,
+      },
+      ctx,
+    );
+    await callTool(
+      inventoryTools,
+      'create_inventory_item',
+      {
+        sku: 'SKU-C',
+        name: 'Item C',
+        initialQuantity: 0,
+      },
+      ctx,
+    );
 
     // Verify initial state
     let stockA = await callTool(inventoryTools, 'get_stock', { sku: 'SKU-A' }, ctx);
@@ -1396,12 +1765,26 @@ describe('Workflow: Inventory Management', () => {
     assert.equal(stockA.stock.totalAvailable, 100);
 
     // Adjust stock
-    await callTool(inventoryTools, 'adjust_inventory', {
-      sku: 'SKU-A', quantity: -20, reason: 'Damaged goods',
-    }, ctx);
-    await callTool(inventoryTools, 'adjust_inventory', {
-      sku: 'SKU-C', quantity: 75, reason: 'Received shipment',
-    }, ctx);
+    await callTool(
+      inventoryTools,
+      'adjust_inventory',
+      {
+        sku: 'SKU-A',
+        quantity: -20,
+        reason: 'Damaged goods',
+      },
+      ctx,
+    );
+    await callTool(
+      inventoryTools,
+      'adjust_inventory',
+      {
+        sku: 'SKU-C',
+        quantity: 75,
+        reason: 'Received shipment',
+      },
+      ctx,
+    );
 
     stockA = await callTool(inventoryTools, 'get_stock', { sku: 'SKU-A' }, ctx);
     assert.equal(stockA.stock.totalOnHand, 80);
@@ -1411,17 +1794,29 @@ describe('Workflow: Inventory Management', () => {
   });
 
   it('should reserve and confirm inventory', async () => {
-    await callTool(inventoryTools, 'create_inventory_item', {
-      sku: 'RESERVE-SKU', name: 'Reserved Item', initialQuantity: 30,
-    }, ctx);
+    await callTool(
+      inventoryTools,
+      'create_inventory_item',
+      {
+        sku: 'RESERVE-SKU',
+        name: 'Reserved Item',
+        initialQuantity: 30,
+      },
+      ctx,
+    );
 
     // Reserve 10 units
-    const resResult = await callTool(inventoryTools, 'reserve_inventory', {
-      sku: 'RESERVE-SKU',
-      quantity: 10,
-      referenceType: 'order',
-      referenceId: 'ord-123',
-    }, ctx);
+    const resResult = await callTool(
+      inventoryTools,
+      'reserve_inventory',
+      {
+        sku: 'RESERVE-SKU',
+        quantity: 10,
+        referenceType: 'order',
+        referenceId: 'ord-123',
+      },
+      ctx,
+    );
     assert.equal(resResult.success, true);
     assert.equal(resResult.reservation.status, 'reserved');
 
@@ -1432,9 +1827,14 @@ describe('Workflow: Inventory Management', () => {
     assert.equal(stock.stock.totalAvailable, 20);
 
     // Confirm reservation: deducts from on-hand
-    await callTool(inventoryTools, 'confirm_reservation', {
-      reservationId: resResult.reservation.id,
-    }, ctx);
+    await callTool(
+      inventoryTools,
+      'confirm_reservation',
+      {
+        reservationId: resResult.reservation.id,
+      },
+      ctx,
+    );
 
     stock = await callTool(inventoryTools, 'get_stock', { sku: 'RESERVE-SKU' }, ctx);
     assert.equal(stock.stock.totalOnHand, 20);
@@ -1443,17 +1843,29 @@ describe('Workflow: Inventory Management', () => {
   });
 
   it('should fail to reserve more than available', async () => {
-    await callTool(inventoryTools, 'create_inventory_item', {
-      sku: 'LIMITED', name: 'Limited Item', initialQuantity: 5,
-    }, ctx);
+    await callTool(
+      inventoryTools,
+      'create_inventory_item',
+      {
+        sku: 'LIMITED',
+        name: 'Limited Item',
+        initialQuantity: 5,
+      },
+      ctx,
+    );
 
     await assert.rejects(
-      callTool(inventoryTools, 'reserve_inventory', {
-        sku: 'LIMITED',
-        quantity: 10,
-        referenceType: 'order',
-        referenceId: 'ord-456',
-      }, ctx),
+      callTool(
+        inventoryTools,
+        'reserve_inventory',
+        {
+          sku: 'LIMITED',
+          quantity: 10,
+          referenceType: 'order',
+          referenceId: 'ord-456',
+        },
+        ctx,
+      ),
       /Insufficient stock/,
     );
   });
@@ -1465,16 +1877,39 @@ describe('Workflow: Inventory Management', () => {
   });
 
   it('should handle concurrent reservations on same SKU', async () => {
-    await callTool(inventoryTools, 'create_inventory_item', {
-      sku: 'SHARED', name: 'Shared Item', initialQuantity: 20,
-    }, ctx);
+    await callTool(
+      inventoryTools,
+      'create_inventory_item',
+      {
+        sku: 'SHARED',
+        name: 'Shared Item',
+        initialQuantity: 20,
+      },
+      ctx,
+    );
 
-    const r1 = await callTool(inventoryTools, 'reserve_inventory', {
-      sku: 'SHARED', quantity: 8, referenceType: 'order', referenceId: 'ord-1',
-    }, ctx);
-    const r2 = await callTool(inventoryTools, 'reserve_inventory', {
-      sku: 'SHARED', quantity: 7, referenceType: 'order', referenceId: 'ord-2',
-    }, ctx);
+    const r1 = await callTool(
+      inventoryTools,
+      'reserve_inventory',
+      {
+        sku: 'SHARED',
+        quantity: 8,
+        referenceType: 'order',
+        referenceId: 'ord-1',
+      },
+      ctx,
+    );
+    const r2 = await callTool(
+      inventoryTools,
+      'reserve_inventory',
+      {
+        sku: 'SHARED',
+        quantity: 7,
+        referenceType: 'order',
+        referenceId: 'ord-2',
+      },
+      ctx,
+    );
 
     assert.equal(r1.success, true);
     assert.equal(r2.success, true);
@@ -1500,28 +1935,43 @@ describe('Workflow: Multi-Currency Order', () => {
 
   it('should set exchange rate and convert currency', async () => {
     // Set USD -> EUR rate
-    const rateResult = await callTool(currencyTools, 'set_exchange_rate', {
-      baseCurrency: 'USD',
-      quoteCurrency: 'EUR',
-      rate: 0.92,
-    }, ctx);
+    const rateResult = await callTool(
+      currencyTools,
+      'set_exchange_rate',
+      {
+        baseCurrency: 'USD',
+        quoteCurrency: 'EUR',
+        rate: 0.92,
+      },
+      ctx,
+    );
     assert.equal(rateResult.success, true);
     assert.equal(rateResult.rate.rate, 0.92);
 
     // Get the rate
-    const getResult = await callTool(currencyTools, 'get_exchange_rate', {
-      from: 'USD',
-      to: 'EUR',
-    }, ctx);
+    const getResult = await callTool(
+      currencyTools,
+      'get_exchange_rate',
+      {
+        from: 'USD',
+        to: 'EUR',
+      },
+      ctx,
+    );
     assert.equal(getResult.success, true);
     assert.equal(getResult.rate.rate, 0.92);
 
     // Convert $100 USD to EUR
-    const convertResult = await callTool(currencyTools, 'convert_currency', {
-      from: 'USD',
-      to: 'EUR',
-      amount: 100,
-    }, ctx);
+    const convertResult = await callTool(
+      currencyTools,
+      'convert_currency',
+      {
+        from: 'USD',
+        to: 'EUR',
+        amount: 100,
+      },
+      ctx,
+    );
     assert.equal(convertResult.success, true);
     assert.equal(convertResult.conversion.convertedAmount, 92);
     assert.equal(convertResult.conversion.originalAmount, 100);
@@ -1531,46 +1981,89 @@ describe('Workflow: Multi-Currency Order', () => {
 
   it('should create product and verify multi-currency total', async () => {
     // Set rate
-    await callTool(currencyTools, 'set_exchange_rate', {
-      baseCurrency: 'USD',
-      quoteCurrency: 'EUR',
-      rate: 0.92,
-    }, ctx);
+    await callTool(
+      currencyTools,
+      'set_exchange_rate',
+      {
+        baseCurrency: 'USD',
+        quoteCurrency: 'EUR',
+        rate: 0.92,
+      },
+      ctx,
+    );
 
     // Create product at $49.99
-    await callTool(productTools, 'create_product', {
-      name: 'Euro Widget',
-      sku: 'EUR-WIDGET',
-      price: 49.99,
-    }, ctx);
+    await callTool(
+      productTools,
+      'create_product',
+      {
+        name: 'Euro Widget',
+        sku: 'EUR-WIDGET',
+        price: 49.99,
+      },
+      ctx,
+    );
 
     // Create customer
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'euro@example.com', firstName: 'Euro', lastName: 'Customer',
-    }, ctx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'euro@example.com',
+        firstName: 'Euro',
+        lastName: 'Customer',
+      },
+      ctx,
+    );
 
     // Create order in EUR by converting the price
-    const convertResult = await callTool(currencyTools, 'convert_currency', {
-      from: 'USD', to: 'EUR', amount: 49.99,
-    }, ctx);
+    const convertResult = await callTool(
+      currencyTools,
+      'convert_currency',
+      {
+        from: 'USD',
+        to: 'EUR',
+        amount: 49.99,
+      },
+      ctx,
+    );
     const eurPrice = convertResult.conversion.convertedAmount;
 
-    const order = await callTool(orderTools, 'create_order', {
-      customerId: cust.customer.id,
-      items: [{ sku: 'EUR-WIDGET', name: 'Euro Widget', quantity: 1, unitPrice: eurPrice }],
-      currency: 'EUR',
-    }, ctx);
+    const order = await callTool(
+      orderTools,
+      'create_order',
+      {
+        customerId: cust.customer.id,
+        items: [{ sku: 'EUR-WIDGET', name: 'Euro Widget', quantity: 1, unitPrice: eurPrice }],
+        currency: 'EUR',
+      },
+      ctx,
+    );
     assert.equal(order.success, true);
     assert.equal(order.order.totalAmount, eurPrice);
   });
 
   it('should list exchange rates', async () => {
-    await callTool(currencyTools, 'set_exchange_rate', {
-      baseCurrency: 'USD', quoteCurrency: 'EUR', rate: 0.92,
-    }, ctx);
-    await callTool(currencyTools, 'set_exchange_rate', {
-      baseCurrency: 'USD', quoteCurrency: 'GBP', rate: 0.79,
-    }, ctx);
+    await callTool(
+      currencyTools,
+      'set_exchange_rate',
+      {
+        baseCurrency: 'USD',
+        quoteCurrency: 'EUR',
+        rate: 0.92,
+      },
+      ctx,
+    );
+    await callTool(
+      currencyTools,
+      'set_exchange_rate',
+      {
+        baseCurrency: 'USD',
+        quoteCurrency: 'GBP',
+        rate: 0.79,
+      },
+      ctx,
+    );
 
     const listResult = await callTool(currencyTools, 'list_exchange_rates', {}, ctx);
     assert.equal(listResult.success, true);
@@ -1599,53 +2092,91 @@ describe('Workflow: Gift Card', () => {
 
   it('should create, charge, and check balance on a gift card', async () => {
     // Step 1: Create gift card with $50 balance
-    const createResult = await callTool(giftCardTools, 'create_gift_card', {
-      initialBalance: 50,
-      recipientEmail: 'friend@example.com',
-    }, ctx);
+    const createResult = await callTool(
+      giftCardTools,
+      'create_gift_card',
+      {
+        initialBalance: 50,
+        recipientEmail: 'friend@example.com',
+      },
+      ctx,
+    );
     assert.equal(createResult.success, true);
     assert.ok(createResult.giftCard.code);
     const gcId = createResult.giftCard.id;
 
     // Step 2: Check balance
-    const getResult = await callTool(giftCardTools, 'get_gift_card', {
-      identifier: gcId,
-    }, ctx);
+    const getResult = await callTool(
+      giftCardTools,
+      'get_gift_card',
+      {
+        identifier: gcId,
+      },
+      ctx,
+    );
     assert.equal(getResult.success, true);
     assert.equal(getResult.giftCard.currentBalance, '50');
     assert.equal(getResult.giftCard.status, 'active');
 
     // Step 3: Charge $30 to the gift card (apply to order)
-    const chargeResult = await callTool(giftCardTools, 'charge_gift_card', {
-      giftCardId: gcId,
-      amount: 30,
-      orderId: 'order-gc-001',
-    }, ctx);
+    const chargeResult = await callTool(
+      giftCardTools,
+      'charge_gift_card',
+      {
+        giftCardId: gcId,
+        amount: 30,
+        orderId: 'order-gc-001',
+      },
+      ctx,
+    );
     assert.equal(chargeResult.success, true);
     assert.equal(chargeResult.transaction.balanceAfter, '20');
 
     // Step 4: Verify reduced balance
-    const checkResult = await callTool(giftCardTools, 'get_gift_card', {
-      identifier: gcId,
-    }, ctx);
+    const checkResult = await callTool(
+      giftCardTools,
+      'get_gift_card',
+      {
+        identifier: gcId,
+      },
+      ctx,
+    );
     assert.equal(checkResult.giftCard.currentBalance, '20');
   });
 
   it('should refund to a gift card', async () => {
-    const gc = await callTool(giftCardTools, 'create_gift_card', {
-      initialBalance: 100,
-    }, ctx);
+    const gc = await callTool(
+      giftCardTools,
+      'create_gift_card',
+      {
+        initialBalance: 100,
+      },
+      ctx,
+    );
     const gcId = gc.giftCard.id;
 
     // Charge $60
-    await callTool(giftCardTools, 'charge_gift_card', {
-      giftCardId: gcId, amount: 60,
-    }, ctx);
+    await callTool(
+      giftCardTools,
+      'charge_gift_card',
+      {
+        giftCardId: gcId,
+        amount: 60,
+      },
+      ctx,
+    );
 
     // Refund $20
-    const refundResult = await callTool(giftCardTools, 'refund_to_gift_card', {
-      giftCardId: gcId, amount: 20, reason: 'Partial return',
-    }, ctx);
+    const refundResult = await callTool(
+      giftCardTools,
+      'refund_to_gift_card',
+      {
+        giftCardId: gcId,
+        amount: 20,
+        reason: 'Partial return',
+      },
+      ctx,
+    );
     assert.equal(refundResult.success, true);
     assert.equal(refundResult.transaction.balanceAfter, '60'); // 100 - 60 + 20
 
@@ -1654,14 +2185,25 @@ describe('Workflow: Gift Card', () => {
   });
 
   it('should fail to charge more than the balance', async () => {
-    const gc = await callTool(giftCardTools, 'create_gift_card', {
-      initialBalance: 10,
-    }, ctx);
+    const gc = await callTool(
+      giftCardTools,
+      'create_gift_card',
+      {
+        initialBalance: 10,
+      },
+      ctx,
+    );
 
     await assert.rejects(
-      callTool(giftCardTools, 'charge_gift_card', {
-        giftCardId: gc.giftCard.id, amount: 50,
-      }, ctx),
+      callTool(
+        giftCardTools,
+        'charge_gift_card',
+        {
+          giftCardId: gc.giftCard.id,
+          amount: 50,
+        },
+        ctx,
+      ),
       /Insufficient gift card balance/,
     );
   });
@@ -1691,136 +2233,273 @@ describe('Workflow: Loyalty Program', () => {
 
   it('should complete the full loyalty program lifecycle', async () => {
     // Step 1: Create loyalty program
-    const progResult = await callTool(loyaltyTools, 'create_loyalty_program', {
-      name: 'Rewards Club',
-      pointsPerDollar: 2,
-      tiers: [
-        { name: 'Bronze', minPoints: 0, multiplier: 1 },
-        { name: 'Silver', minPoints: 500, multiplier: 1.5 },
-        { name: 'Gold', minPoints: 2000, multiplier: 2 },
-      ],
-    }, ctx);
+    const progResult = await callTool(
+      loyaltyTools,
+      'create_loyalty_program',
+      {
+        name: 'Rewards Club',
+        pointsPerDollar: 2,
+        tiers: [
+          { name: 'Bronze', minPoints: 0, multiplier: 1 },
+          { name: 'Silver', minPoints: 500, multiplier: 1.5 },
+          { name: 'Gold', minPoints: 2000, multiplier: 2 },
+        ],
+      },
+      ctx,
+    );
     assert.equal(progResult.success, true);
     const programId = progResult.program.id;
 
     // Step 2: Create customer
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'loyal@example.com', firstName: 'Loyal', lastName: 'Customer',
-    }, ctx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'loyal@example.com',
+        firstName: 'Loyal',
+        lastName: 'Customer',
+      },
+      ctx,
+    );
     const customerId = cust.customer.id;
 
     // Step 3: Enroll customer
-    const enrollResult = await callTool(loyaltyTools, 'enroll_customer', {
-      programId,
-      customerId,
-    }, ctx);
+    const enrollResult = await callTool(
+      loyaltyTools,
+      'enroll_customer',
+      {
+        programId,
+        customerId,
+      },
+      ctx,
+    );
     assert.equal(enrollResult.success, true);
     assert.equal(enrollResult.account.pointsBalance, 0);
 
     // Step 4: Earn points from a purchase
-    const earnResult = await callTool(loyaltyTools, 'earn_points', {
-      programId,
-      customerId,
-      points: 200,
-      reason: 'purchase',
-      orderId: 'order-loyalty-001',
-    }, ctx);
+    const earnResult = await callTool(
+      loyaltyTools,
+      'earn_points',
+      {
+        programId,
+        customerId,
+        points: 200,
+        reason: 'purchase',
+        orderId: 'order-loyalty-001',
+      },
+      ctx,
+    );
     assert.equal(earnResult.success, true);
     assert.ok(earnResult.message.includes('200'));
 
     // Step 5: Check balance
-    const accountResult = await callTool(loyaltyTools, 'get_loyalty_account', {
-      programId,
-      customerId,
-    }, ctx);
+    const accountResult = await callTool(
+      loyaltyTools,
+      'get_loyalty_account',
+      {
+        programId,
+        customerId,
+      },
+      ctx,
+    );
     assert.equal(accountResult.success, true);
     assert.equal(accountResult.account.pointsBalance, 200);
     assert.equal(accountResult.account.lifetimePoints, 200);
 
     // Step 6: Earn more points
-    await callTool(loyaltyTools, 'earn_points', {
-      programId, customerId, points: 150, reason: 'referral',
-    }, ctx);
+    await callTool(
+      loyaltyTools,
+      'earn_points',
+      {
+        programId,
+        customerId,
+        points: 150,
+        reason: 'referral',
+      },
+      ctx,
+    );
 
     // Step 7: Redeem points
-    const redeemResult = await callTool(loyaltyTools, 'redeem_points', {
-      programId,
-      customerId,
-      points: 100,
-      orderId: 'order-loyalty-002',
-    }, ctx);
+    const redeemResult = await callTool(
+      loyaltyTools,
+      'redeem_points',
+      {
+        programId,
+        customerId,
+        points: 100,
+        orderId: 'order-loyalty-002',
+      },
+      ctx,
+    );
     assert.equal(redeemResult.success, true);
     assert.ok(redeemResult.message.includes('100'));
 
     // Step 8: Verify final balance: 200 + 150 - 100 = 250
-    const finalAccount = await callTool(loyaltyTools, 'get_loyalty_account', {
-      programId,
-      customerId,
-    }, ctx);
+    const finalAccount = await callTool(
+      loyaltyTools,
+      'get_loyalty_account',
+      {
+        programId,
+        customerId,
+      },
+      ctx,
+    );
     assert.equal(finalAccount.account.pointsBalance, 250);
     assert.equal(finalAccount.account.lifetimePoints, 350);
   });
 
   it('should fail to redeem more points than balance', async () => {
-    const prog = await callTool(loyaltyTools, 'create_loyalty_program', {
-      name: 'Test Program', pointsPerDollar: 1,
-    }, ctx);
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'poor@example.com', firstName: 'Poor', lastName: 'Points',
-    }, ctx);
-    await callTool(loyaltyTools, 'enroll_customer', {
-      programId: prog.program.id, customerId: cust.customer.id,
-    }, ctx);
-    await callTool(loyaltyTools, 'earn_points', {
-      programId: prog.program.id, customerId: cust.customer.id, points: 50,
-    }, ctx);
+    const prog = await callTool(
+      loyaltyTools,
+      'create_loyalty_program',
+      {
+        name: 'Test Program',
+        pointsPerDollar: 1,
+      },
+      ctx,
+    );
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'poor@example.com',
+        firstName: 'Poor',
+        lastName: 'Points',
+      },
+      ctx,
+    );
+    await callTool(
+      loyaltyTools,
+      'enroll_customer',
+      {
+        programId: prog.program.id,
+        customerId: cust.customer.id,
+      },
+      ctx,
+    );
+    await callTool(
+      loyaltyTools,
+      'earn_points',
+      {
+        programId: prog.program.id,
+        customerId: cust.customer.id,
+        points: 50,
+      },
+      ctx,
+    );
 
     await assert.rejects(
-      callTool(loyaltyTools, 'redeem_points', {
-        programId: prog.program.id, customerId: cust.customer.id, points: 100,
-      }, ctx),
-      /Insufficient loyalty points/,
+      callTool(
+        loyaltyTools,
+        'redeem_points',
+        {
+          programId: prog.program.id,
+          customerId: cust.customer.id,
+          points: 100,
+        },
+        ctx,
+      ),
+      /Insufficient points balance/,
     );
   });
 
   it('should get loyalty program details', async () => {
-    const prog = await callTool(loyaltyTools, 'create_loyalty_program', {
-      name: 'VIP Rewards',
-      pointsPerDollar: 3,
-      tiers: [{ name: 'Member', minPoints: 0, multiplier: 1 }],
-    }, ctx);
+    const prog = await callTool(
+      loyaltyTools,
+      'create_loyalty_program',
+      {
+        name: 'VIP Rewards',
+        pointsPerDollar: 3,
+        tiers: [{ name: 'Member', minPoints: 0, multiplier: 1 }],
+      },
+      ctx,
+    );
 
-    const getResult = await callTool(loyaltyTools, 'get_loyalty_program', {
-      programId: prog.program.id,
-    }, ctx);
+    const getResult = await callTool(
+      loyaltyTools,
+      'get_loyalty_program',
+      {
+        programId: prog.program.id,
+      },
+      ctx,
+    );
     assert.equal(getResult.success, true);
     assert.equal(getResult.program.name, 'VIP Rewards');
     assert.equal(getResult.program.pointsPerDollar, 3);
     assert.equal(getResult.program.tiers.length, 1);
   });
 
-  it('should increment totalMembers on enrollment', async () => {
-    const prog = await callTool(loyaltyTools, 'create_loyalty_program', {
-      name: 'Count Program', pointsPerDollar: 1,
-    }, ctx);
-    const c1 = await callTool(customerTools, 'create_customer', {
-      email: 'a@x.com', firstName: 'A', lastName: 'A',
-    }, ctx);
-    const c2 = await callTool(customerTools, 'create_customer', {
-      email: 'b@x.com', firstName: 'B', lastName: 'B',
-    }, ctx);
+  it('should give each enrolled customer their own account', async () => {
+    const prog = await callTool(
+      loyaltyTools,
+      'create_loyalty_program',
+      {
+        name: 'Count Program',
+        pointsPerDollar: 1,
+      },
+      ctx,
+    );
+    const c1 = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'a@x.com',
+        firstName: 'A',
+        lastName: 'A',
+      },
+      ctx,
+    );
+    const c2 = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'b@x.com',
+        firstName: 'B',
+        lastName: 'B',
+      },
+      ctx,
+    );
 
-    await callTool(loyaltyTools, 'enroll_customer', {
-      programId: prog.program.id, customerId: c1.customer.id,
-    }, ctx);
-    await callTool(loyaltyTools, 'enroll_customer', {
-      programId: prog.program.id, customerId: c2.customer.id,
-    }, ctx);
+    const e1 = await callTool(
+      loyaltyTools,
+      'enroll_customer',
+      {
+        programId: prog.program.id,
+        customerId: c1.customer.id,
+      },
+      ctx,
+    );
+    const e2 = await callTool(
+      loyaltyTools,
+      'enroll_customer',
+      {
+        programId: prog.program.id,
+        customerId: c2.customer.id,
+      },
+      ctx,
+    );
+    assert.notEqual(e1.account.id, e2.account.id);
 
-    const details = await callTool(loyaltyTools, 'get_loyalty_program', {
-      programId: prog.program.id,
-    }, ctx);
-    assert.equal(details.program.totalMembers, 2);
+    await callTool(
+      loyaltyTools,
+      'earn_points',
+      {
+        programId: prog.program.id,
+        customerId: c1.customer.id,
+        points: 10,
+      },
+      ctx,
+    );
+    const a2 = await callTool(
+      loyaltyTools,
+      'get_loyalty_account',
+      {
+        programId: prog.program.id,
+        customerId: c2.customer.id,
+      },
+      ctx,
+    );
+    assert.equal(a2.account.pointsBalance, 0);
   });
 });
 
@@ -1839,21 +2518,39 @@ describe('Cross-Workflow Integration', () => {
 
   it('should handle order + return + gift card refund flow', async () => {
     // Create customer
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'cross@example.com', firstName: 'Cross', lastName: 'Flow',
-    }, ctx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'cross@example.com',
+        firstName: 'Cross',
+        lastName: 'Flow',
+      },
+      ctx,
+    );
 
     // Create order
-    const order = await callTool(orderTools, 'create_order', {
-      customerId: cust.customer.id,
-      items: [{ sku: 'CROSS-001', name: 'Cross Item', quantity: 1, unitPrice: 50 }],
-    }, ctx);
+    const order = await callTool(
+      orderTools,
+      'create_order',
+      {
+        customerId: cust.customer.id,
+        items: [{ sku: 'CROSS-001', name: 'Cross Item', quantity: 1, unitPrice: 50 }],
+      },
+      ctx,
+    );
     const orderId = order.order.id;
 
     // Pay for order
-    const pay = await callTool(paymentTools, 'create_payment', {
-      orderId, amount: 50,
-    }, ctx);
+    const pay = await callTool(
+      paymentTools,
+      'create_payment',
+      {
+        orderId,
+        amount: 50,
+      },
+      ctx,
+    );
     await callTool(paymentTools, 'complete_payment', { paymentId: pay.payment.id }, ctx);
 
     // Ship and deliver
@@ -1862,93 +2559,189 @@ describe('Cross-Workflow Integration', () => {
 
     // Create return
     const orderItemId = commerce._stores.orders.get(orderId).items[0].id;
-    const ret = await callTool(returnTools, 'create_return', {
-      orderId, reason: 'defective', items: [{ orderItemId, quantity: 1 }],
-    }, ctx);
+    const ret = await callTool(
+      returnTools,
+      'create_return',
+      {
+        orderId,
+        reason: 'defective',
+        items: [{ orderItemId, quantity: 1 }],
+      },
+      ctx,
+    );
     await callTool(returnTools, 'approve_return', { returnId: ret.return.id }, ctx);
 
     // Issue refund as gift card credit instead of cash
-    const gc = await callTool(giftCardTools, 'create_gift_card', {
-      initialBalance: 50,
-      customerId: cust.customer.id,
-    }, ctx);
+    const gc = await callTool(
+      giftCardTools,
+      'create_gift_card',
+      {
+        initialBalance: 50,
+        customerId: cust.customer.id,
+      },
+      ctx,
+    );
     assert.equal(gc.giftCard.currentBalance, '50');
     assert.ok(gc.giftCard.id);
   });
 
   it('should handle cart checkout + loyalty points earning', async () => {
     // Create loyalty program
-    const prog = await callTool(loyaltyTools, 'create_loyalty_program', {
-      name: 'Shop Rewards', pointsPerDollar: 1,
-    }, ctx);
+    const prog = await callTool(
+      loyaltyTools,
+      'create_loyalty_program',
+      {
+        name: 'Shop Rewards',
+        pointsPerDollar: 1,
+      },
+      ctx,
+    );
 
     // Create customer and enroll
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'shopper@example.com', firstName: 'Happy', lastName: 'Shopper',
-    }, ctx);
-    await callTool(loyaltyTools, 'enroll_customer', {
-      programId: prog.program.id, customerId: cust.customer.id,
-    }, ctx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'shopper@example.com',
+        firstName: 'Happy',
+        lastName: 'Shopper',
+      },
+      ctx,
+    );
+    await callTool(
+      loyaltyTools,
+      'enroll_customer',
+      {
+        programId: prog.program.id,
+        customerId: cust.customer.id,
+      },
+      ctx,
+    );
 
     // Create cart, add items, checkout
-    const cart = await callTool(cartTools, 'create_cart', {
-      customerId: cust.customer.id,
-    }, ctx);
-    await callTool(cartTools, 'add_cart_item', {
-      cartId: cart.cart.id, sku: 'REWARD-001', name: 'Reward Item',
-      quantity: 1, unitPrice: 75,
-    }, ctx);
-    const checkout = await callTool(cartTools, 'complete_checkout', {
-      cartId: cart.cart.id,
-    }, ctx);
+    const cart = await callTool(
+      cartTools,
+      'create_cart',
+      {
+        customerId: cust.customer.id,
+      },
+      ctx,
+    );
+    await callTool(
+      cartTools,
+      'add_cart_item',
+      {
+        cartId: cart.cart.id,
+        sku: 'REWARD-001',
+        name: 'Reward Item',
+        quantity: 1,
+        unitPrice: 75,
+      },
+      ctx,
+    );
+    const checkout = await callTool(
+      cartTools,
+      'complete_checkout',
+      {
+        cartId: cart.cart.id,
+      },
+      ctx,
+    );
     assert.equal(checkout.success, true);
 
     // Award loyalty points for the purchase
-    await callTool(loyaltyTools, 'earn_points', {
-      programId: prog.program.id,
-      customerId: cust.customer.id,
-      points: 75, // 1 point per dollar
-      reason: 'purchase',
-      orderId: checkout.result.orderId,
-    }, ctx);
+    await callTool(
+      loyaltyTools,
+      'earn_points',
+      {
+        programId: prog.program.id,
+        customerId: cust.customer.id,
+        points: 75, // 1 point per dollar
+        reason: 'purchase',
+        orderId: checkout.result.orderId,
+      },
+      ctx,
+    );
 
-    const account = await callTool(loyaltyTools, 'get_loyalty_account', {
-      programId: prog.program.id, customerId: cust.customer.id,
-    }, ctx);
+    const account = await callTool(
+      loyaltyTools,
+      'get_loyalty_account',
+      {
+        programId: prog.program.id,
+        customerId: cust.customer.id,
+      },
+      ctx,
+    );
     assert.equal(account.account.pointsBalance, 75);
   });
 
   it('should handle multi-currency cart checkout', async () => {
     // Set exchange rate
-    await callTool(currencyTools, 'set_exchange_rate', {
-      baseCurrency: 'USD', quoteCurrency: 'GBP', rate: 0.79,
-    }, ctx);
+    await callTool(
+      currencyTools,
+      'set_exchange_rate',
+      {
+        baseCurrency: 'USD',
+        quoteCurrency: 'GBP',
+        rate: 0.79,
+      },
+      ctx,
+    );
 
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'uk@example.com', firstName: 'British', lastName: 'Buyer',
-    }, ctx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'uk@example.com',
+        firstName: 'British',
+        lastName: 'Buyer',
+      },
+      ctx,
+    );
 
     // Create cart in GBP
-    const cart = await callTool(cartTools, 'create_cart', {
-      customerId: cust.customer.id,
-      currency: 'GBP',
-    }, ctx);
+    const cart = await callTool(
+      cartTools,
+      'create_cart',
+      {
+        customerId: cust.customer.id,
+        currency: 'GBP',
+      },
+      ctx,
+    );
 
     // Convert price and add to cart
-    const converted = await callTool(currencyTools, 'convert_currency', {
-      from: 'USD', to: 'GBP', amount: 100,
-    }, ctx);
-    await callTool(cartTools, 'add_cart_item', {
-      cartId: cart.cart.id,
-      sku: 'UK-001',
-      name: 'British Widget',
-      quantity: 1,
-      unitPrice: converted.conversion.convertedAmount,
-    }, ctx);
+    const converted = await callTool(
+      currencyTools,
+      'convert_currency',
+      {
+        from: 'USD',
+        to: 'GBP',
+        amount: 100,
+      },
+      ctx,
+    );
+    await callTool(
+      cartTools,
+      'add_cart_item',
+      {
+        cartId: cart.cart.id,
+        sku: 'UK-001',
+        name: 'British Widget',
+        quantity: 1,
+        unitPrice: converted.conversion.convertedAmount,
+      },
+      ctx,
+    );
 
-    const checkout = await callTool(cartTools, 'complete_checkout', {
-      cartId: cart.cart.id,
-    }, ctx);
+    const checkout = await callTool(
+      cartTools,
+      'complete_checkout',
+      {
+        cartId: cart.cart.id,
+      },
+      ctx,
+    );
     assert.equal(checkout.success, true);
     assert.equal(checkout.result.currency, 'GBP');
   });
@@ -1987,47 +2780,86 @@ describe('Edge Cases and Validation', () => {
   });
 
   it('should get non-existent entities gracefully', async () => {
-    const custResult = await callTool(customerTools, 'get_customer', {
-      identifier: 'nonexistent-id',
-    }, ctx);
+    const custResult = await callTool(
+      customerTools,
+      'get_customer',
+      {
+        identifier: 'nonexistent-id',
+      },
+      ctx,
+    );
     assert.equal(custResult.success, false);
 
-    const orderResult = await callTool(orderTools, 'get_order', {
-      identifier: 'nonexistent-id',
-    }, ctx);
+    const orderResult = await callTool(
+      orderTools,
+      'get_order',
+      {
+        identifier: 'nonexistent-id',
+      },
+      ctx,
+    );
     assert.equal(orderResult.success, false);
 
-    const returnResult = await callTool(returnTools, 'get_return', {
-      returnId: 'nonexistent-id',
-    }, ctx);
+    const returnResult = await callTool(
+      returnTools,
+      'get_return',
+      {
+        returnId: 'nonexistent-id',
+      },
+      ctx,
+    );
     assert.equal(returnResult.success, false);
   });
 
   it('should look up customer by email', async () => {
-    await callTool(customerTools, 'create_customer', {
-      email: 'lookup@example.com', firstName: 'Look', lastName: 'Up',
-    }, ctx);
+    await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'lookup@example.com',
+        firstName: 'Look',
+        lastName: 'Up',
+      },
+      ctx,
+    );
 
-    const result = await callTool(customerTools, 'get_customer', {
-      identifier: 'lookup@example.com',
-    }, ctx);
+    const result = await callTool(
+      customerTools,
+      'get_customer',
+      {
+        identifier: 'lookup@example.com',
+      },
+      ctx,
+    );
     assert.equal(result.success, true);
     assert.equal(result.customer.email, 'lookup@example.com');
     assert.equal(result.customer.firstName, 'Look');
   });
 
   it('should create order with multiple line items and verify totals', async () => {
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'multi@example.com', firstName: 'Multi', lastName: 'Item',
-    }, ctx);
-    const order = await callTool(orderTools, 'create_order', {
-      customerId: cust.customer.id,
-      items: [
-        { sku: 'A', name: 'Item A', quantity: 3, unitPrice: 10 },
-        { sku: 'B', name: 'Item B', quantity: 1, unitPrice: 25.50 },
-        { sku: 'C', name: 'Item C', quantity: 2, unitPrice: 7.99 },
-      ],
-    }, ctx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'multi@example.com',
+        firstName: 'Multi',
+        lastName: 'Item',
+      },
+      ctx,
+    );
+    const order = await callTool(
+      orderTools,
+      'create_order',
+      {
+        customerId: cust.customer.id,
+        items: [
+          { sku: 'A', name: 'Item A', quantity: 3, unitPrice: 10 },
+          { sku: 'B', name: 'Item B', quantity: 1, unitPrice: 25.5 },
+          { sku: 'C', name: 'Item C', quantity: 2, unitPrice: 7.99 },
+        ],
+      },
+      ctx,
+    );
     assert.equal(order.success, true);
     // 30 + 25.50 + 15.98 = 71.48
     assert.equal(order.order.totalAmount, 71.48);
@@ -2035,13 +2867,25 @@ describe('Edge Cases and Validation', () => {
 
   it('should block order creation without --apply', async () => {
     const noApplyCtx = makeCtx(commerce, { allowApply: false });
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'blocked@example.com', firstName: 'B', lastName: 'B',
-    }, ctx);
-    const result = await callTool(orderTools, 'create_order', {
-      customerId: cust.customer.id,
-      items: [{ sku: 'X', name: 'X', quantity: 1, unitPrice: 10 }],
-    }, noApplyCtx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'blocked@example.com',
+        firstName: 'B',
+        lastName: 'B',
+      },
+      ctx,
+    );
+    const result = await callTool(
+      orderTools,
+      'create_order',
+      {
+        customerId: cust.customer.id,
+        items: [{ sku: 'X', name: 'X', quantity: 1, unitPrice: 10 }],
+      },
+      noApplyCtx,
+    );
     assert.equal(result.success, false);
     assert.ok(result.error.includes('--apply'));
     assert.ok(result.wouldCreate);
@@ -2049,120 +2893,247 @@ describe('Edge Cases and Validation', () => {
 
   it('should block cart operations without --apply', async () => {
     const noApplyCtx = makeCtx(commerce, { allowApply: false });
-    const cartResult = await callTool(cartTools, 'create_cart', {
-      customerEmail: 'nope@test.com',
-    }, noApplyCtx);
+    const cartResult = await callTool(
+      cartTools,
+      'create_cart',
+      {
+        customerEmail: 'nope@test.com',
+      },
+      noApplyCtx,
+    );
     assert.equal(cartResult.success, false);
     assert.ok(cartResult.hint.includes('--apply'));
   });
 
   it('should handle inventory adjust negative and positive', async () => {
-    await callTool(inventoryTools, 'create_inventory_item', {
-      sku: 'ADJ-SKU', name: 'Adjustable', initialQuantity: 50,
-    }, ctx);
+    await callTool(
+      inventoryTools,
+      'create_inventory_item',
+      {
+        sku: 'ADJ-SKU',
+        name: 'Adjustable',
+        initialQuantity: 50,
+      },
+      ctx,
+    );
 
     // Add 20
-    let result = await callTool(inventoryTools, 'adjust_inventory', {
-      sku: 'ADJ-SKU', quantity: 20, reason: 'Received',
-    }, ctx);
+    let result = await callTool(
+      inventoryTools,
+      'adjust_inventory',
+      {
+        sku: 'ADJ-SKU',
+        quantity: 20,
+        reason: 'Received',
+      },
+      ctx,
+    );
     assert.equal(result.stock.totalOnHand, 70);
 
     // Remove 30
-    result = await callTool(inventoryTools, 'adjust_inventory', {
-      sku: 'ADJ-SKU', quantity: -30, reason: 'Sold',
-    }, ctx);
+    result = await callTool(
+      inventoryTools,
+      'adjust_inventory',
+      {
+        sku: 'ADJ-SKU',
+        quantity: -30,
+        reason: 'Sold',
+      },
+      ctx,
+    );
     assert.equal(result.stock.totalOnHand, 40);
   });
 
   it('should update order status through lifecycle', async () => {
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'lifecycle@test.com', firstName: 'Life', lastName: 'Cycle',
-    }, ctx);
-    const order = await callTool(orderTools, 'create_order', {
-      customerId: cust.customer.id,
-      items: [{ sku: 'LC-1', name: 'Lifecycle Item', quantity: 1, unitPrice: 10 }],
-    }, ctx);
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'lifecycle@test.com',
+        firstName: 'Life',
+        lastName: 'Cycle',
+      },
+      ctx,
+    );
+    const order = await callTool(
+      orderTools,
+      'create_order',
+      {
+        customerId: cust.customer.id,
+        items: [{ sku: 'LC-1', name: 'Lifecycle Item', quantity: 1, unitPrice: 10 }],
+      },
+      ctx,
+    );
     const orderId = order.order.id;
 
     // pending -> confirmed -> processing
-    let result = await callTool(orderTools, 'update_order_status', {
-      orderId, status: 'confirmed',
-    }, ctx);
+    let result = await callTool(
+      orderTools,
+      'update_order_status',
+      {
+        orderId,
+        status: 'confirmed',
+      },
+      ctx,
+    );
     assert.equal(result.order.status, 'confirmed');
 
-    result = await callTool(orderTools, 'update_order_status', {
-      orderId, status: 'processing',
-    }, ctx);
+    result = await callTool(
+      orderTools,
+      'update_order_status',
+      {
+        orderId,
+        status: 'processing',
+      },
+      ctx,
+    );
     assert.equal(result.order.status, 'processing');
   });
 
   it('should handle gift card full lifecycle: create, charge, refund, disable', async () => {
-    const gc = await callTool(giftCardTools, 'create_gift_card', {
-      initialBalance: 200,
-      currency: 'USD',
-      recipientEmail: 'full@gc.com',
-      recipientName: 'Full Test',
-      message: 'Happy testing!',
-    }, ctx);
+    const gc = await callTool(
+      giftCardTools,
+      'create_gift_card',
+      {
+        initialBalance: 200,
+        currency: 'USD',
+        recipientEmail: 'full@gc.com',
+        recipientName: 'Full Test',
+        message: 'Happy testing!',
+      },
+      ctx,
+    );
     assert.equal(gc.giftCard.currency, 'USD');
 
     // Charge
-    await callTool(giftCardTools, 'charge_gift_card', {
-      giftCardId: gc.giftCard.id, amount: 100,
-    }, ctx);
+    await callTool(
+      giftCardTools,
+      'charge_gift_card',
+      {
+        giftCardId: gc.giftCard.id,
+        amount: 100,
+      },
+      ctx,
+    );
 
     // Refund part
-    await callTool(giftCardTools, 'refund_to_gift_card', {
-      giftCardId: gc.giftCard.id, amount: 30,
-    }, ctx);
+    await callTool(
+      giftCardTools,
+      'refund_to_gift_card',
+      {
+        giftCardId: gc.giftCard.id,
+        amount: 30,
+      },
+      ctx,
+    );
 
     // Check: 200 - 100 + 30 = 130
-    const check = await callTool(giftCardTools, 'get_gift_card', {
-      identifier: gc.giftCard.id,
-    }, ctx);
+    const check = await callTool(
+      giftCardTools,
+      'get_gift_card',
+      {
+        identifier: gc.giftCard.id,
+      },
+      ctx,
+    );
     assert.equal(check.giftCard.currentBalance, '130');
 
     // Disable
-    const disableResult = await callTool(giftCardTools, 'disable_gift_card', {
-      giftCardId: gc.giftCard.id, reason: 'Fraud detected',
-    }, ctx);
+    const disableResult = await callTool(
+      giftCardTools,
+      'disable_gift_card',
+      {
+        giftCardId: gc.giftCard.id,
+        reason: 'Fraud detected',
+      },
+      ctx,
+    );
     assert.equal(disableResult.success, true);
     assert.equal(disableResult.giftCard.status, 'disabled');
   });
 
   it('should archive a subscription plan', async () => {
-    const plan = await callTool(subscriptionTools, 'create_subscription_plan', {
-      name: 'Archive Me', billingInterval: 'monthly', price: 9.99,
-    }, ctx);
-    await callTool(subscriptionTools, 'activate_subscription_plan', {
-      planId: plan.plan.id,
-    }, ctx);
+    const plan = await callTool(
+      subscriptionTools,
+      'create_subscription_plan',
+      {
+        name: 'Archive Me',
+        billingInterval: 'monthly',
+        price: 9.99,
+      },
+      ctx,
+    );
+    await callTool(
+      subscriptionTools,
+      'activate_subscription_plan',
+      {
+        planId: plan.plan.id,
+      },
+      ctx,
+    );
 
-    const archiveResult = await callTool(subscriptionTools, 'archive_subscription_plan', {
-      planId: plan.plan.id,
-    }, ctx);
+    const archiveResult = await callTool(
+      subscriptionTools,
+      'archive_subscription_plan',
+      {
+        planId: plan.plan.id,
+      },
+      ctx,
+    );
     assert.equal(archiveResult.success, true);
     assert.equal(archiveResult.plan.status, 'archived');
   });
 
   it('should skip a billing cycle', async () => {
-    const plan = await callTool(subscriptionTools, 'create_subscription_plan', {
-      name: 'Skip Plan', billingInterval: 'monthly', price: 15,
-    }, ctx);
-    await callTool(subscriptionTools, 'activate_subscription_plan', {
-      planId: plan.plan.id,
-    }, ctx);
-    const cust = await callTool(customerTools, 'create_customer', {
-      email: 'skip@test.com', firstName: 'Skip', lastName: 'User',
-    }, ctx);
-    const sub = await callTool(subscriptionTools, 'create_subscription', {
-      customerId: cust.customer.id, planId: plan.plan.id, skipTrial: true,
-    }, ctx);
+    const plan = await callTool(
+      subscriptionTools,
+      'create_subscription_plan',
+      {
+        name: 'Skip Plan',
+        billingInterval: 'monthly',
+        price: 15,
+      },
+      ctx,
+    );
+    await callTool(
+      subscriptionTools,
+      'activate_subscription_plan',
+      {
+        planId: plan.plan.id,
+      },
+      ctx,
+    );
+    const cust = await callTool(
+      customerTools,
+      'create_customer',
+      {
+        email: 'skip@test.com',
+        firstName: 'Skip',
+        lastName: 'User',
+      },
+      ctx,
+    );
+    const sub = await callTool(
+      subscriptionTools,
+      'create_subscription',
+      {
+        customerId: cust.customer.id,
+        planId: plan.plan.id,
+        skipTrial: true,
+      },
+      ctx,
+    );
 
     const origDate = sub.subscription.nextBillingDate;
-    const skipResult = await callTool(subscriptionTools, 'skip_billing_cycle', {
-      subscriptionId: sub.subscription.id, reason: 'Vacation',
-    }, ctx);
+    const skipResult = await callTool(
+      subscriptionTools,
+      'skip_billing_cycle',
+      {
+        subscriptionId: sub.subscription.id,
+        reason: 'Vacation',
+      },
+      ctx,
+    );
     assert.equal(skipResult.success, true);
     // Next billing date should have moved forward
     assert.ok(new Date(skipResult.nextBillingDate) > new Date(origDate));

@@ -24,6 +24,25 @@ const variantInput = {
     .describe('Exact decimal string compare-at price'),
 };
 
+/**
+ * Map a tool-level variant (price as exact decimal string or legacy number) onto
+ * the binding's `CreateProductVariantInput`: strings go to the exact-money
+ * `priceExact` / `compareAtPriceExact` fields, numbers to the float `price` /
+ * `compareAtPrice` fields, and absent optionals are omitted (never null).
+ * @param {Record<string, unknown>} variant
+ */
+export function toVariantInput(variant) {
+  const { price, compareAtPrice, ...rest } = variant;
+  const out = { ...rest };
+  if (typeof price === 'string') out.priceExact = price;
+  else if (typeof price === 'number') out.price = price;
+  if (typeof compareAtPrice === 'string') out.compareAtPriceExact = compareAtPrice;
+  else if (typeof compareAtPrice === 'number') out.compareAtPrice = compareAtPrice;
+  for (const key of Object.keys(out))
+    if (out[key] === undefined || out[key] === null) delete out[key];
+  return out;
+}
+
 function productSummary(product) {
   return {
     id: product.id,
@@ -184,7 +203,10 @@ export const productTools = withPolicyDomain('products', [
         };
       }
 
-      const product = await commerce.products.create(params);
+      const product = await commerce.products.create({
+        ...params,
+        variants: params.variants ? params.variants.map(toVariantInput) : undefined,
+      });
       if (autoIndexEntity) autoIndexEntity('product', product);
       return {
         success: true,
@@ -300,7 +322,7 @@ export const productTools = withPolicyDomain('products', [
       }
 
       const { productId, ...variant } = params;
-      const created = await commerce.products.addVariant(productId, variant);
+      const created = await commerce.products.addVariant(productId, toVariantInput(variant));
       return { success: true, message: 'Variant added', variant: created };
     },
   },
@@ -319,7 +341,7 @@ export const productTools = withPolicyDomain('products', [
       }
 
       const { variantId, ...variant } = params;
-      const updated = await commerce.products.updateVariant(variantId, variant);
+      const updated = await commerce.products.updateVariant(variantId, toVariantInput(variant));
       return { success: true, message: 'Variant updated', variant: updated };
     },
   },

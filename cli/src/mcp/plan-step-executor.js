@@ -19,6 +19,7 @@ import { replayEventHash } from './audit-envelope.js';
 import { buildDeterministicMutationManifest } from './mutation-manifest.js';
 import { normalizeToolName } from './policy-helpers.js';
 import { compactReplayValue } from './replay-sanitizer.js';
+import { RAW_TOOL_RESULT, normalizeToolResult } from './tool-result-contract.js';
 
 /**
  * Build `executeToolStepInPlan` for one server instance.
@@ -482,8 +483,13 @@ export function createExecuteToolStepInPlan({
         });
       }
 
-      const failed = !!(result && typeof result === 'object' && result.error);
-      const failure = failed ? result.error : null;
+      // A tool reports failure in its own result -- `{ success: false }`, a
+      // truthy `error`, or a kernel receipt that was rejected -- and the
+      // contract reads every one of those shapes.
+      const judged = normalizeToolResult(result);
+      const legacyFailed = !!(result && typeof result === 'object' && result.error);
+      const failed = legacyFailed || !judged.ok;
+      const failure = legacyFailed ? result.error : failed ? judged.error.message : null;
       const finalStatus = isRollback
         ? failed
           ? 'rollback_failed'
@@ -528,6 +534,7 @@ export function createExecuteToolStepInPlan({
         error: failure,
         isRollback: Boolean(isRollback),
         requestId,
+        [RAW_TOOL_RESULT]: result,
       };
     } catch (error) {
       if (includeHooks && hookRunner?.hasHooks?.('after_tool_call')) {
@@ -579,6 +586,12 @@ export function createExecuteToolStepInPlan({
         simulation: false,
         mutationManifest: buildStepMutationManifest(nextArgs, policy, permission, 'error'),
         error: error.message,
+        // Keep the thrown error's stable code (binding `NOT_FOUND`, `CONFLICT`, …)
+        // so the result contract can report it instead of parsing prose.
+        ...(typeof error?.code === 'string' ? { errorCode: error.code } : {}),
+        ...(error?.details && typeof error.details === 'object'
+          ? { errorDetails: error.details }
+          : {}),
         isRollback: Boolean(isRollback),
       };
     }

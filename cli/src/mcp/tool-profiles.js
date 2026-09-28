@@ -21,6 +21,7 @@ export const MCP_TOOL_PROFILES = Object.freeze({
     'reviews',
     'wishlists',
     'loyalty',
+    'explain',
   ],
   operations: [
     'inventory',

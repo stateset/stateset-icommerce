@@ -11,7 +11,8 @@ function parseJsonArg(value, label) {
 }
 
 function parseOptionalRating(value, usage) {
-  if (value === undefined) return undefined;
+  // '' skips a positional filter, e.g. `reviews count '' '' approved`.
+  if (value === undefined || value === '') return undefined;
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 5) {
     throw new Error(usage);
@@ -30,6 +31,24 @@ function buildFilters(args, usage) {
   };
 }
 
+/** The engine caps a single `reviews.list` page at 1000 rows (default 500). */
+const REVIEW_PAGE_SIZE = 1000;
+
+/**
+ * Every review matching the filters, paging past the engine's per-call limit.
+ * The binding has no `count` and its filter has no `maxRating`, so both are
+ * computed here over the full set.
+ */
+async function listMatchingReviews(commerce, { maxRating, ...filter }) {
+  const all = [];
+  for (let offset = 0; ; offset += REVIEW_PAGE_SIZE) {
+    const page = await commerce.reviews.list({ ...filter, limit: REVIEW_PAGE_SIZE, offset });
+    all.push(...page);
+    if (page.length < REVIEW_PAGE_SIZE) break;
+  }
+  return maxRating === undefined ? all : all.filter((r) => r.rating <= maxRating);
+}
+
 export async function execute(action, args, { commerce, output, jsonOutput }) {
   switch (action) {
     case 'list': {
@@ -40,7 +59,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
         [productId, customerId, status, minRatingRaw, maxRatingRaw],
         usage,
       );
-      const reviews = await commerce.reviews.list(filters);
+      const reviews = await listMatchingReviews(commerce, filters);
       const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
       const limited = Number.isInteger(limit) && limit > 0 ? reviews.slice(0, limit) : reviews;
       return formatReviewList(limited, { output, jsonOutput });
@@ -69,7 +88,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
     case 'approve': {
       const reviewId = args[0];
       if (!reviewId) throw new Error('Usage: reviews approve <reviewId>');
-      const review = await commerce.reviews.approve(reviewId);
+      const review = await commerce.reviews.update(reviewId, { status: 'approved' });
       return {
         review,
         formatted: `Approved review ${review.id}`,
@@ -81,18 +100,25 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       if (!reviewId || reasonParts.length === 0) {
         throw new Error('Usage: reviews reject <reviewId> <reason>');
       }
-      const review = await commerce.reviews.reject(reviewId, reasonParts.join(' '));
+      // The engine stores no rejection reason; it is echoed back, not persisted.
+      const reason = reasonParts.join(' ');
+      const review = await commerce.reviews.update(reviewId, { status: 'rejected' });
       return {
         review,
-        formatted: `Rejected review ${review.id}`,
+        reason,
+        reasonPersisted: false,
+        formatted: `Rejected review ${review.id} (reason not stored: ${reason})`,
       };
     }
 
     case 'summary': {
       const productId = args[0];
       if (!productId) throw new Error('Usage: reviews summary <productId>');
+      // Aggregates approved reviews only; ratingDistribution[0] is the 1-star count.
       const summary = await commerce.reviews.getSummary(productId);
-      if (!summary) throw new Error(`No reviews found for product: ${productId}`);
+      if (!summary || summary.totalReviews === 0) {
+        throw new Error(`No approved reviews found for product: ${productId}`);
+      }
       return formatSummary(productId, summary, { jsonOutput });
     }
 
@@ -101,12 +127,16 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       if (!reviewId || !reason) {
         throw new Error('Usage: reviews flag <reviewId> <reason> [details]');
       }
-      const review = await commerce.reviews.flag(reviewId, {
-        reason,
-        details: detailParts.join(' ') || undefined,
-      });
+      // markReported bumps the report counter; status 'flagged' is what puts the
+      // review in the moderation queue. The engine stores no flag reason or
+      // details; they are echoed back only.
+      await commerce.reviews.markReported(reviewId);
+      const review = await commerce.reviews.update(reviewId, { status: 'flagged' });
       return {
         review,
+        reason,
+        details: detailParts.join(' ') || undefined,
+        reasonPersisted: false,
         formatted: `Flagged review ${review.id} for moderation`,
       };
     }
@@ -114,7 +144,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
     case 'count': {
       const usage =
         'Usage: reviews count [productId] [customerId] [status] [minRating] [maxRating]';
-      const count = await commerce.reviews.count(buildFilters(args, usage));
+      const count = (await listMatchingReviews(commerce, buildFilters(args, usage))).length;
       return { count, formatted: `Review count: ${count}` };
     }
 
@@ -143,7 +173,7 @@ function formatReviewList(reviews, { output, jsonOutput }) {
     { key: 'customerId', header: 'Customer' },
     { key: 'rating', header: 'Rating', align: 'right' },
     { key: 'status', header: 'Status' },
-    { key: 'flagged', header: 'Flagged' },
+    { key: 'reportedCount', header: 'Reports', align: 'right' },
   ]);
   return { reviews, formatted };
 }
@@ -160,7 +190,7 @@ function formatReviewDetail(review, { jsonOutput }) {
       `Rating:       ${review.rating}\n` +
       `Status:       ${review.status}\n` +
       `Verified:     ${review.verifiedPurchase ? 'yes' : 'no'}\n` +
-      `Flagged:      ${review.flagged ? 'yes' : 'no'}\n` +
+      `Reports:      ${review.reportedCount}\n` +
       `Title:        ${review.title || 'N/A'}\n` +
       `Body:         ${review.body || 'N/A'}`,
   };
@@ -174,10 +204,9 @@ function formatSummary(productId, summary, { jsonOutput }) {
     formatted:
       `Review summary for ${productId}\n` +
       `${'-'.repeat(36)}\n` +
-      `Total reviews:    ${summary.totalReviews ?? 'N/A'}\n` +
-      `Average rating:   ${summary.averageRating ?? 'N/A'}\n` +
-      `Verified count:   ${summary.verifiedPurchaseCount ?? 'N/A'}\n` +
-      `Recommended:      ${summary.recommendedPercentage ?? 'N/A'}`,
+      `Total reviews:    ${summary.totalReviews}\n` +
+      `Average rating:   ${summary.averageRating}\n` +
+      `Distribution:     ${summary.ratingDistribution.map((n, i) => `${i + 1}*: ${n}`).join('  ')}`,
   };
 }
 
