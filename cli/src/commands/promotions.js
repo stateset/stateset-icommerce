@@ -94,7 +94,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
     case 'apply': {
       const cartId = args[0];
       if (!cartId) throw new Error('Usage: promotions apply <cartId>');
-      const result = await commerce.applyCartPromotions(cartId);
+      const result = await commerce.promotions().applyToCart(cartId);
       return formatApplyResult(cartId, result, { output, jsonOutput });
     }
 

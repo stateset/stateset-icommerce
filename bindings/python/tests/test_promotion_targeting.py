@@ -13,6 +13,7 @@ from decimal import Decimal
 import pytest
 
 from stateset_embedded import (
+    AddCartItemInput,
     Commerce,
     CreateOrderItemInput,
     PromotionConditionInput,
@@ -166,3 +167,39 @@ def test_malformed_line_item_ids_are_refused(commerce):
             10.0,
             line_items=[PromotionLineItemInput("l1", 1, 10.0, 10.0, product_id="nope")],
         )
+
+
+def test_a_fixed_amount_is_refused_in_another_currency_and_says_why(commerce):
+    activate(
+        commerce,
+        commerce.promotions.create(
+            "Ten dollars off", promotion_type="fixed_amount_off", trigger="automatic",
+            fixed_amount_off=10.0, currency="USD",
+        ),
+    )
+    items = [line("A", 1, 5000.0)]
+    usd = commerce.promotions.apply(5000.0, line_items=items, currency="USD")
+    assert discount(usd) == Decimal("10")
+    assert usd.rejected_promotions == []
+
+    jpy = commerce.promotions.apply(5000.0, line_items=items, currency="JPY")
+    assert discount(jpy) == 0
+    assert [r.reason_code for r in jpy.rejected_promotions] == ["currency_mismatch"]
+
+
+def test_apply_to_cart_prices_a_persisted_cart(commerce):
+    activate(
+        commerce,
+        commerce.promotions.create(
+            "Ten percent", promotion_type="percentage_off", trigger="automatic",
+            percentage_off=0.10,
+        ),
+    )
+    cart = commerce.carts.create(customer_email="apply@example.com")
+    commerce.carts.add_item(cart.id, AddCartItemInput("A", "Widget", 2, 25.0))
+
+    result = commerce.promotions.apply_to_cart(cart.id)
+    assert discount(result) == Decimal("5.00")
+    assert len(result.applied_promotions) == 1
+    with pytest.raises(ValueError, match="cart_id"):
+        commerce.promotions.apply_to_cart("not-a-uuid")

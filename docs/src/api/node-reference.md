@@ -582,6 +582,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`PromotionFilterInput`](#promotionfilterinput)
   - [`PromotionLineItemInput`](#promotionlineiteminput)
   - [`PromotionOutput`](#promotionoutput)
+  - [`PromotionRejectionReason`](#promotionrejectionreason)
   - [`PromotionStacking`](#promotionstacking)
   - [`PromotionStackingInput`](#promotionstackinginput)
   - [`PromotionStatus`](#promotionstatus)
@@ -618,6 +619,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`RecordPaymentInput`](#recordpaymentinput)
   - [`RefundOutput`](#refundoutput)
   - [`RefundStatus`](#refundstatus)
+  - [`RejectedPromotionOutput`](#rejectedpromotionoutput)
   - [`ReservationOutput`](#reservationoutput)
   - [`ReservationStatus`](#reservationstatus)
   - [`RestoreOptionsInput`](#restoreoptionsinput)
@@ -2512,6 +2514,16 @@ Promotions API for managing discounts and coupon codes
   Apply promotions to cart/order items
 
   Types: [`ApplyPromotionsInput`](#applypromotionsinput), [`ApplyPromotionsOutput`](#applypromotionsoutput)
+
+- **`applyToCart(cartId: string): Promise<ApplyPromotionsOutput>`**
+
+  Evaluate a persisted cart's promotions and write the result onto it.
+
+  Prices the cart's lines, its coupon and every automatic promotion,
+  stores the discount on the cart and its lines, and returns the
+  evaluation, including what was refused and why.
+
+  Types: [`ApplyPromotionsOutput`](#applypromotionsoutput)
 
 - **`recordUsage(promotionId: string, couponId: string | undefined | null, customerId: string | undefined | null, orderId: string | undefined | null, cartId: string | undefined | null, discountAmount: number, currency: string): Promise<PromotionUsageOutput>`**
 
@@ -5636,6 +5648,7 @@ Result of applying promotions
 | `grandTotal` | `number` | **Deprecated.** Use the `grandTotalExact` twin; float money will be removed in 2.0. |
 | `grandTotalExact` | `string` | Exact base-10 grand total, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `appliedPromotions` | `Array<AppliedPromotionOutput>` | Types: [`AppliedPromotionOutput`](#appliedpromotionoutput) |
+| `rejectedPromotions` | `Array<RejectedPromotionOutput>` | Promotions and coupons considered but not applied, with the reason. Types: [`RejectedPromotionOutput`](#rejectedpromotionoutput) |
 
 ### ApplyVendorCreditInput
 
@@ -10925,6 +10938,16 @@ Promotion output
 | `createdAt` | `string` |  |
 | `updatedAt` | `string` |  |
 
+### PromotionRejectionReason
+
+Why a promotion or coupon was considered and not applied, as rendered on `RejectedPromotionOutput.reasonCode`.
+
+```ts
+type PromotionRejectionReason = 'invalid_code' | 'expired' | 'not_yet_active' | 'usage_limit_reached' | 'customer_limit_reached' | 'minimum_not_met' | 'product_not_eligible' | 'customer_not_eligible' | 'not_stackable' | 'already_applied' | 'internal_error' | 'currency_mismatch'
+```
+
+One of: `'invalid_code'`, `'expired'`, `'not_yet_active'`, `'usage_limit_reached'`, `'customer_limit_reached'`, `'minimum_not_met'`, `'product_not_eligible'`, `'customer_not_eligible'`, `'not_stackable'`, `'already_applied'`, `'internal_error'`, `'currency_mismatch'`.
+
 ### PromotionStacking
 
 Stacking behaviour as rendered on `PromotionOutput.stacking` (lower-cased Rust `Debug` form).
@@ -11330,6 +11353,17 @@ type RefundStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancell
 ```
 
 One of: `'pending'`, `'processing'`, `'completed'`, `'failed'`, `'cancelled'`.
+
+### RejectedPromotionOutput
+
+A promotion or coupon that was considered and refused.
+
+| Field | Type | Description |
+|---|---|---|
+| `promotionId?` | `string` |  |
+| `couponCode?` | `string` |  |
+| `reason` | `string` | Human-readable reason. |
+| `reasonCode` | `PromotionRejectionReason` | Machine-readable reason. Types: [`PromotionRejectionReason`](#promotionrejectionreason) |
 
 ### ReservationOutput
 

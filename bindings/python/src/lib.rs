@@ -8657,6 +8657,42 @@ pub struct ApplyPromotionsResult {
     grand_total_exact: String,
     #[pyo3(get)]
     applied_promotions: Vec<AppliedPromotion>,
+    /// Promotions and coupons considered but not applied, with the reason.
+    #[pyo3(get)]
+    rejected_promotions: Vec<RejectedPromotion>,
+}
+
+/// A promotion or coupon that was considered and refused.
+///
+/// `reason_code` is one of invalid_code, expired, not_yet_active,
+/// usage_limit_reached, customer_limit_reached, minimum_not_met,
+/// product_not_eligible, customer_not_eligible, not_stackable,
+/// already_applied, internal_error, currency_mismatch.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct RejectedPromotion {
+    #[pyo3(get)]
+    promotion_id: Option<String>,
+    #[pyo3(get)]
+    coupon_code: Option<String>,
+    #[pyo3(get)]
+    reason: String,
+    #[pyo3(get)]
+    reason_code: String,
+}
+
+impl From<stateset_core::RejectedPromotion> for RejectedPromotion {
+    fn from(r: stateset_core::RejectedPromotion) -> Self {
+        Self {
+            promotion_id: r.promotion_id.map(|id| id.to_string()),
+            coupon_code: r.coupon_code,
+            reason: r.reason,
+            reason_code: serde_json::to_value(r.reason_code)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_else(|| format!("{:?}", r.reason_code)),
+        }
+    }
 }
 
 impl TryFrom<stateset_core::ApplyPromotionsResult> for ApplyPromotionsResult {
@@ -8685,6 +8721,7 @@ impl TryFrom<stateset_core::ApplyPromotionsResult> for ApplyPromotionsResult {
             grand_total: to_f64_result(r.grand_total, "promotion grand total")?,
             grand_total_exact,
             applied_promotions: convert_outputs(r.applied_promotions)?,
+            rejected_promotions: r.rejected_promotions.into_iter().map(Into::into).collect(),
         })
     }
 }
@@ -9344,6 +9381,24 @@ impl PromotionsApi {
             .promotions()
             .apply(request)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to apply promotions: {}", e)))?;
+
+        convert_output(result)
+    }
+
+    /// Evaluate a persisted cart's promotions and write the result onto it.
+    ///
+    /// Prices the cart's lines, its coupon and every automatic promotion,
+    /// stores the discount on the cart and its lines, and returns the
+    /// evaluation, including what was refused and why.
+    fn apply_to_cart(&self, cart_id: String) -> PyResult<ApplyPromotionsResult> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let cart_id = parse_uuid_str(&cart_id, "cart_id")?;
+        let result = commerce
+            .apply_cart_promotions(cart_id)
+            .map_err(|e| promotion_write_error("Failed to apply cart promotions", e))?;
 
         convert_output(result)
     }
@@ -14390,6 +14445,7 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PromotionConditionInput>()?;
     m.add_class::<Coupon>()?;
     m.add_class::<ApplyPromotionsResult>()?;
+    m.add_class::<RejectedPromotion>()?;
     m.add_class::<AppliedPromotion>()?;
     m.add_class::<PromotionUsage>()?;
 

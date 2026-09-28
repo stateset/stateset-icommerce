@@ -13,10 +13,10 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 969 |
+| Total tools | 970 |
 | MCP servers | 3 |
 | Policy domains | 89 |
-| Read tools | 478 |
+| Read tools | 479 |
 | Write tools | 423 |
 | Delete tools | 21 |
 | Admin tools | 47 |
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 951 | `cli/src/mcp-server.js` |
+| stateset-commerce | 952 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -90,7 +90,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | print-stations | 8 |
 | production_batches | 8 |
 | products | 14 |
-| promotions | 16 |
+| promotions | 17 |
 | proofs | 7 |
 | purgatory | 6 |
 | quality | 15 |
@@ -130,7 +130,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | --- | --- |
 | admin | 47 |
 | delete | 21 |
-| read | 478 |
+| read | 479 |
 | write | 423 |
 
 ## Tool Registry
@@ -913,6 +913,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `quarantine_lot` | `stateset-commerce` | `lots` | `write` |
 | `quarantine_serial` | `stateset-commerce` | `serials` | `write` |
 | `query_agent_catalog` | `stateset-commerce` | `catalog` | `read` |
+| `quote_promotions` | `stateset-commerce` | `promotions` | `read` |
 | `quote_shipping_rates` | `stateset-commerce` | `shipments` | `read` |
 | `reactivate_credit_account` | `stateset-commerce` | `credit` | `write` |
 | `rebuild_dynamic_segment` | `stateset-commerce` | `segments` | `write` |

@@ -428,3 +428,36 @@ test('apply defaults to the store base currency, not USD', async () => {
   });
   assert.equal(result.totalDiscountExact, '123');
 });
+
+test('a fixed amount in one currency is refused on a cart in another, and the refusal says why', async () => {
+  // "$10 off" used to take 10 of whatever the cart was priced in.
+  const commerce = new Commerce(':memory:');
+  await activePromotion(commerce, { name: 'Ten dollars off', promotionType: 'fixed_amount_off', fixedAmountOff: 10, currency: 'USD' });
+  const lineItems = [{ id: 'l1', sku: 'A', quantity: 1, unitPrice: 5000, lineTotal: 5000 }];
+
+  const usd = await commerce.promotions.apply({ lineItems, subtotal: 5000, currency: 'USD' });
+  assert.equal(usd.totalDiscountExact, '10');
+  assert.deepEqual(usd.rejectedPromotions, []);
+
+  const jpy = await commerce.promotions.apply({ lineItems, subtotal: 5000, currency: 'JPY' });
+  assert.equal(jpy.totalDiscountExact, '0');
+  assert.equal(jpy.rejectedPromotions.length, 1);
+  assert.equal(jpy.rejectedPromotions[0].reasonCode, 'currency_mismatch');
+  assert.match(jpy.rejectedPromotions[0].reason, /USD.*JPY/);
+});
+
+test('applyToCart prices a persisted cart and writes the discount onto it', async () => {
+  const commerce = new Commerce(':memory:');
+  await activePromotion(commerce, { name: 'Ten percent', promotionType: 'percentage_off', percentageOff: 0.1 });
+  const cart = await commerce.carts.create({ customerEmail: 'apply@example.com' });
+  await commerce.carts.addItem(cart.id, { sku: 'A', name: 'Widget', quantity: 2, unitPrice: 25 });
+
+  const result = await commerce.promotions.applyToCart(cart.id);
+  // Exact, at the scale the engine computes it (25 x 2 x 0.1 = 5.0).
+  assert.equal(Number(result.totalDiscountExact), 5);
+  assert.equal(result.appliedPromotions.length, 1);
+  const stored = await commerce.carts.get(cart.id);
+  assert.equal(Number(stored.discountAmountExact), 5, 'the discount is written onto the cart');
+
+  await assert.rejects(commerce.promotions.applyToCart('not-a-uuid'), (err) => err.code === 'VALIDATION');
+});

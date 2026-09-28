@@ -442,6 +442,9 @@ pub fn validate_coupon_redemption(
     }
     coupon.redeemability_at(now).map_err(CommerceError::ValidationError)?;
     promotion.redeemability_at(now).map_err(CommerceError::ValidationError)?;
+    if let Some(reason) = promotion.currency_mismatch(request) {
+        return Err(CommerceError::ValidationError(reason));
+    }
     if let Some(reason) = promotion.check_conditions(request)? {
         return Err(CommerceError::ValidationError(format!(
             "Promotion conditions not met: {reason}"
@@ -621,6 +624,8 @@ pub enum RejectionReason {
     NotStackable,
     AlreadyApplied,
     InternalError,
+    /// The promotion's amounts are in a different currency from the cart.
+    CurrencyMismatch,
 }
 
 /// Discount applied to a specific line item
@@ -1393,6 +1398,33 @@ impl CreatePromotion {
 }
 
 impl Promotion {
+    /// Why this promotion cannot price `request`'s currency, if it cannot.
+    ///
+    /// A fixed amount, a discount cap, a bundle amount, tier thresholds and a
+    /// minimum-subtotal condition are all sums of money in the promotion's
+    /// currency; applied to a cart priced in another currency they were read
+    /// as that currency, so "$10 off" took 10 yen off a yen cart and a $50
+    /// minimum admitted a 50-yen cart. A promotion carrying any of them is
+    /// refused for another currency. A pure percentage means the same thing in
+    /// every currency and still applies.
+    #[must_use]
+    pub fn currency_mismatch(&self, request: &ApplyPromotionsRequest) -> Option<String> {
+        if self.currency == request.currency {
+            return None;
+        }
+        let carries_money = self.fixed_amount_off.is_some()
+            || self.max_discount_amount.is_some()
+            || self.bundle_discount.is_some()
+            || self.promotion_type == PromotionType::TieredDiscount
+            || self.conditions.iter().any(|c| c.condition_type == ConditionType::MinimumSubtotal);
+        carries_money.then(|| {
+            format!(
+                "Promotion amounts are in {} but the cart is priced in {}",
+                self.currency, request.currency
+            )
+        })
+    }
+
     /// Line items of `request` that belong to this promotion's bundle.
     fn bundle_items<'a>(
         &'a self,
@@ -1634,6 +1666,11 @@ pub fn evaluate_promotions(
         // filter, so a coupon on a draft/expired promotion lands here.
         if !promo.is_active() {
             reject("Promotion is not active".into(), RejectionReason::Expired);
+            continue;
+        }
+
+        if let Some(reason) = promo.currency_mismatch(request) {
+            reject(reason, RejectionReason::CurrencyMismatch);
             continue;
         }
 
@@ -1900,6 +1937,105 @@ mod tests {
         )
         .expect("evaluate");
         result
+    }
+
+    fn in_currency(
+        mut req: ApplyPromotionsRequest,
+        currency: CurrencyCode,
+    ) -> ApplyPromotionsRequest {
+        req.currency = currency;
+        req
+    }
+
+    #[test]
+    fn a_fixed_amount_is_refused_in_another_currency() {
+        // "$10 off" used to grant 10 of whatever the cart was priced in:
+        // 10 yen, 10 euros, 10 bitcoin.
+        let mut p = promo(PromotionType::FixedAmountOff, StackingBehavior::Stackable, 1);
+        p.fixed_amount_off = Some(Decimal::new(1000, 2));
+        let cart = request(vec![item("A", 1, Decimal::new(500000, 2))], Decimal::ZERO);
+
+        let usd = evaluate(&cart, vec![p.clone()]);
+        assert_eq!(usd.total_discount, Decimal::new(1000, 2));
+
+        let jpy = evaluate(&in_currency(cart, CurrencyCode::JPY), vec![p]);
+        assert_eq!(jpy.total_discount, Decimal::ZERO);
+        assert_eq!(jpy.rejected_promotions.len(), 1);
+        assert_eq!(jpy.rejected_promotions[0].reason_code, RejectionReason::CurrencyMismatch);
+    }
+
+    #[test]
+    fn a_pure_percentage_applies_in_any_currency() {
+        let mut p = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 1);
+        p.percentage_off = Some(Decimal::new(1, 1));
+        let cart = request(vec![item("A", 1, Decimal::new(10000, 2))], Decimal::ZERO);
+        let eur = evaluate(&in_currency(cart, CurrencyCode::EUR), vec![p]);
+        assert_eq!(eur.total_discount, Decimal::new(1000, 2));
+    }
+
+    #[test]
+    fn money_carried_by_a_cap_or_a_condition_is_currency_bound() {
+        let cart = in_currency(
+            request(vec![item("A", 1, Decimal::new(10000, 2))], Decimal::ZERO),
+            CurrencyCode::EUR,
+        );
+
+        let mut capped = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 1);
+        capped.percentage_off = Some(Decimal::new(1, 1));
+        capped.max_discount_amount = Some(Decimal::new(500, 2));
+        assert_eq!(evaluate(&cart, vec![capped]).total_discount, Decimal::ZERO, "a USD cap");
+
+        let mut minimum = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 2);
+        minimum.percentage_off = Some(Decimal::new(1, 1));
+        minimum.conditions = vec![
+            CreatePromotionCondition {
+                condition_type: ConditionType::MinimumSubtotal,
+                operator: ConditionOperator::GreaterThanOrEqual,
+                value: "50".into(),
+                is_required: true,
+            }
+            .into_condition(minimum.id),
+        ];
+        assert_eq!(evaluate(&cart, vec![minimum]).total_discount, Decimal::ZERO, "a USD minimum");
+
+        let mut tiered = promo(PromotionType::TieredDiscount, StackingBehavior::Stackable, 3);
+        tiered.tiers = Some(vec![DiscountTier {
+            min_value: Decimal::new(5000, 2),
+            max_value: None,
+            percentage_off: Some(Decimal::new(1, 1)),
+            fixed_amount_off: None,
+        }]);
+        assert_eq!(evaluate(&cart, vec![tiered]).total_discount, Decimal::ZERO, "USD thresholds");
+    }
+
+    #[test]
+    fn a_coupon_is_not_redeemable_in_another_currency() {
+        let mut p = promo(PromotionType::FixedAmountOff, StackingBehavior::Stackable, 1);
+        p.fixed_amount_off = Some(Decimal::new(1000, 2));
+        let now = Utc::now();
+        let coupon = CouponCode {
+            id: Uuid::new_v4(),
+            promotion_id: p.id,
+            code: "TENOFF".into(),
+            status: CouponStatus::Active,
+            usage_limit: None,
+            per_customer_limit: None,
+            usage_count: 0,
+            starts_at: None,
+            ends_at: None,
+            metadata: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let cart = request(vec![item("A", 1, Decimal::new(500000, 2))], Decimal::ZERO);
+        validate_coupon_redemption(&coupon, &p, &cart, now).expect("same currency");
+        let err =
+            validate_coupon_redemption(&coupon, &p, &in_currency(cart, CurrencyCode::JPY), now)
+                .expect_err("another currency");
+        assert!(
+            matches!(err, CommerceError::ValidationError(ref m) if m.contains("USD")),
+            "{err:?}"
+        );
     }
 
     #[test]

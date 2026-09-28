@@ -49,6 +49,30 @@ const conditionSchema = z.object({
     ),
 });
 
+/** The parts of a promotion evaluation an agent acts on, money as exact strings. */
+function summarizeEvaluation(result) {
+  return {
+    originalSubtotal: result.originalSubtotalExact,
+    totalDiscount: result.totalDiscountExact,
+    discountedSubtotal: result.discountedSubtotalExact,
+    shippingDiscount: result.shippingDiscountExact,
+    grandTotal: result.grandTotalExact,
+    appliedPromotions: result.appliedPromotions.map((p) => ({
+      promotionId: p.promotionId,
+      name: p.promotionName,
+      type: p.discountType,
+      discountAmount: p.discountAmountExact,
+      couponCode: p.couponCode,
+    })),
+    rejectedPromotions: (result.rejectedPromotions || []).map((p) => ({
+      promotionId: p.promotionId,
+      couponCode: p.couponCode,
+      reason: p.reason,
+      reasonCode: p.reasonCode,
+    })),
+  };
+}
+
 export const promotionTools = [
   {
     name: 'list_promotions',
@@ -521,28 +545,44 @@ export const promotionTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldApplyTo: cartId,
         };
-      const result = await commerce.applyCartPromotions(cartId);
-      return {
-        success: true,
-        cartId,
-        originalSubtotal: result.originalSubtotal,
-        totalDiscount: result.totalDiscount,
-        discountedSubtotal: result.discountedSubtotal,
-        shippingDiscount: result.shippingDiscount,
-        grandTotal: result.grandTotal,
-        appliedPromotions: result.appliedPromotions.map((p) => ({
-          name: p.promotionName,
-          type: p.discountType,
-          discountAmount: p.discountAmount,
-          description: p.description,
-          couponCode: p.couponCode,
-        })),
-        rejectedPromotions:
-          result.rejectedPromotions?.map((p) => ({
-            name: p.promotionName,
-            reason: p.rejectionReason,
-          })) || [],
-      };
+      const result = await commerce.promotions().applyToCart(cartId);
+      return { success: true, cartId, ...summarizeEvaluation(result) };
+    },
+  },
+  {
+    name: 'quote_promotions',
+    description:
+      'Price a basket against every active promotion and the given coupon codes WITHOUT writing anything: returns the discount, what applied, and what was refused and why. Use it before a cart exists, or to explain why a coupon does not apply.',
+    inputSchema: {
+      lineItems: z
+        .array(
+          z.object({
+            id: z.string().min(1).describe('Line identifier'),
+            sku: z.string().optional(),
+            productId: z.string().optional().describe('Product UUID'),
+            variantId: z.string().optional().describe('Variant UUID'),
+            categoryIds: z.array(z.string()).optional().describe('Category UUIDs'),
+            quantity: z.number().int().positive(),
+            unitPrice: z.number().nonnegative(),
+            lineTotal: z.number().nonnegative(),
+          }),
+        )
+        .describe('Basket lines'),
+      subtotal: z.number().nonnegative().describe('Basket subtotal'),
+      couponCodes: z.array(z.string().min(1)).optional(),
+      shippingAmount: z.number().nonnegative().optional(),
+      customerId: z
+        .string()
+        .optional()
+        .describe('Customer UUID; enables customer-targeted and first-order promotions'),
+      shippingCountry: z.string().optional(),
+      shippingState: z.string().optional(),
+      currency: z.string().optional().describe('ISO 4217 code (default: the store base currency)'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const result = await commerce.promotions().apply(params);
+      return { success: true, ...summarizeEvaluation(result) };
     },
   },
   {

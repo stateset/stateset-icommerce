@@ -5,7 +5,7 @@
 
 Source of truth: `cli/src/tools/domain-registry.js`.
 
-**936 tools** across **87 domains**.
+**937 tools** across **87 domains**.
 
 ## Domains
 
@@ -21,7 +21,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [analytics](#analytics) | 14 |
 | [currency](#currency) | 13 |
 | [tax](#tax) | 29 |
-| [promotions](#promotions) | 16 |
+| [promotions](#promotions) | 17 |
 | [subscriptions](#subscriptions) | 17 |
 | [sync](#sync) | 20 |
 | [manufacturing](#manufacturing) | 11 |
@@ -315,6 +315,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `get_active_promotions` | read | Get all currently active promotions. |
 | `check_promotion_validity` | read | Check whether a promotion is currently valid and eligible to apply. |
 | `apply_cart_promotions` | write | Calculate and apply all applicable promotions to a cart. Uses coupon codes on the cart and automatic promotions. |
+| `quote_promotions` | read | Price a basket against every active promotion and the given coupon codes WITHOUT writing anything: returns the discount, what applied, and what was refused and why. Use it before a cart exists, or to explain why a coupon does not apply. |
 | `record_promotion_usage` | write | Record promotion usage after checkout completion. Requires --apply flag. |
 
 ## subscriptions

@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 969,
+  "totalTools": 970,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 951
+      "count": 952
     },
     {
       "name": "stateset-scaffold",
@@ -247,7 +247,7 @@
     },
     {
       "name": "promotions",
-      "count": 16
+      "count": 17
     },
     {
       "name": "proofs",
@@ -389,7 +389,7 @@
     },
     {
       "name": "read",
-      "count": 478
+      "count": 479
     },
     {
       "name": "write",
@@ -399,7 +399,7 @@
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
-    "read": 478,
+    "read": 479,
     "write": 423
   },
   "tools": [
@@ -7385,6 +7385,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__query_agent_catalog",
       "policyDomain": "catalog",
+      "permission": "read"
+    },
+    {
+      "name": "quote_promotions",
+      "description": "Price a basket against every active promotion and the given coupon codes WITHOUT writing anything: returns the discount, what applied, and what was refused and why. Use it before a cart exists, or to explain why a coupon does not apply.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__quote_promotions",
+      "policyDomain": "promotions",
       "permission": "read"
     },
     {
