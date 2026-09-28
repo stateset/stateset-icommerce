@@ -50,6 +50,116 @@
       "allowed_store_ids": ["store:replace-me"],
       "requires_agent_delegation": true,
       "requires_signed_authority": false
+    },
+    "customers.create": {
+      "required_capabilities": ["customers.create"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "carts.create": {
+      "required_capabilities": ["carts.create"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "carts.item.add": {
+      "required_capabilities": ["carts.item.add"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "carts.shipping_address.set": {
+      "required_capabilities": ["carts.shipping_address.set"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "carts.payment_method.set": {
+      "required_capabilities": ["carts.payment_method.set"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "carts.coupon.apply": {
+      "required_capabilities": ["carts.coupon.apply"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "carts.tax.calculate": {
+      "required_capabilities": ["carts.tax.calculate"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "payments.complete": {
+      "required_capabilities": ["payments.complete"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "shipments.create": {
+      "required_capabilities": ["shipments.create"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "returns.create": {
+      "required_capabilities": ["returns.create"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "returns.tracking.add": {
+      "required_capabilities": ["returns.tracking.add"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
     }
   },
   "trusted_authority_keys": {}

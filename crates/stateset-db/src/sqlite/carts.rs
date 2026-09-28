@@ -476,122 +476,10 @@ pub(crate) fn cap_discount(cart: &Cart, amount: Decimal) -> Decimal {
 
 impl CartRepository for SqliteCartRepository {
     fn create(&self, input: CreateCart) -> Result<Cart> {
-        // Validate currency if provided
-        if let Some(ref currency) = input.currency {
-            validate_currency_code(currency.as_str())?;
-        }
-
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-        let id = CartId::new();
-        let cart_number = Self::generate_cart_number();
-        let now = Utc::now();
-        let currency = resolve_currency_with_conn(input.currency, &tx)?;
-
-        let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
-
-        let shipping_address_json =
-            input.shipping_address.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default());
-        let billing_address_json =
-            input.billing_address.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default());
-        let metadata_json =
-            input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
-
-        tx.execute(
-            "INSERT INTO carts (id, cart_number, customer_id, status, currency,
-                               subtotal, tax_amount, shipping_amount, discount_amount, grand_total,
-                               customer_email, customer_name, shipping_address, billing_address,
-                               notes, metadata, expires_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            rusqlite::params![
-                id.to_string(),
-                &cart_number,
-                input.customer_id.map(|c| c.to_string()),
-                "active",
-                &currency,
-                "0",
-                "0",
-                "0",
-                "0",
-                "0",
-                &input.customer_email,
-                &input.customer_name,
-                &shipping_address_json,
-                &billing_address_json,
-                &input.notes,
-                &metadata_json,
-                expires_at.map(|e| e.to_rfc3339()),
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        // Add initial items if provided
-        let mut items = vec![];
-        if let Some(input_items) = &input.items {
-            for item_input in input_items {
-                validate_add_item_money(currency, item_input)?;
-                // Same line guard as `add_item`: `create` used to reach
-                // `add_item_internal` directly, so a withdrawn catalogue SKU
-                // (and a client-chosen price) entered the cart unchecked.
-                guard_cart_line_with_conn(
-                    &tx,
-                    item_input.variant_id,
-                    &item_input.sku,
-                    item_input.unit_price,
-                )?;
-                let item = self.add_item_internal(&tx, id, item_input.clone())?;
-                items.push(item);
-            }
-            self.update_cart_totals(&tx, id)?;
-        }
-
+        let cart = self.create_in_tx(&tx, input)?;
         tx.commit().map_err(map_db_error)?;
-
-        let mut cart = Cart {
-            id,
-            cart_number,
-            customer_id: input.customer_id,
-            status: CartStatus::Active,
-            currency,
-            items,
-            subtotal: Decimal::ZERO,
-            tax_amount: Decimal::ZERO,
-            shipping_amount: Decimal::ZERO,
-            discount_amount: Decimal::ZERO,
-            grand_total: Decimal::ZERO,
-            customer_email: input.customer_email,
-            customer_phone: None,
-            customer_name: input.customer_name,
-            shipping_address: input.shipping_address,
-            billing_address: input.billing_address,
-            billing_same_as_shipping: true,
-            fulfillment_type: None,
-            shipping_method: None,
-            shipping_carrier: None,
-            estimated_delivery: None,
-            payment_method: None,
-            payment_token: None,
-            payment_status: CartPaymentStatus::None,
-            coupon_code: None,
-            discount_description: None,
-            order_id: None,
-            order_number: None,
-            notes: input.notes,
-            metadata: input.metadata,
-            inventory_reserved: false,
-            reservation_expires_at: None,
-            x402_payment: None,
-            expires_at,
-            completed_at: None,
-            created_at: now,
-            updated_at: now,
-        };
-
-        // Recalculate totals
-        cart.recalculate_totals();
-
         Ok(cart)
     }
 
@@ -789,27 +677,9 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn add_item(&self, cart_id: CartId, item: AddCartItem) -> Result<CartItem> {
-        // Validate item quantity (must be positive)
-        if item.quantity <= 0 {
-            return Err(CommerceError::ValidationError(format!(
-                "Item quantity must be positive, got {} for '{}'",
-                item.quantity, item.name
-            )));
-        }
-
-        // Validate item price
-        validate_price(item.unit_price)?;
-        if let Some(original_price) = item.original_price {
-            validate_price(original_price)?;
-        }
-
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-        let currency = Self::cart_currency_with_conn(&tx, cart_id)?;
-        validate_add_item_money(currency, &item)?;
-        guard_cart_line_with_conn(&tx, item.variant_id, &item.sku, item.unit_price)?;
-        let result = self.add_item_internal(&tx, cart_id, item)?;
-        self.update_cart_totals(&tx, cart_id)?;
+        let result = self.add_item_in_tx(&tx, cart_id, item)?;
         tx.commit().map_err(map_db_error)?;
         Ok(result)
     }
@@ -1036,18 +906,9 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn set_shipping_address(&self, id: CartId, address: CartAddress) -> Result<Cart> {
-        let address_json = serde_json::to_string(&address).unwrap_or_default();
-
-        {
-            let conn = self.conn()?;
-            conn.execute(
-                "UPDATE carts SET shipping_address = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![address_json, Utc::now().to_rfc3339(), id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        }
-
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        with_immediate_transaction(&self.pool, |tx| {
+            Self::set_shipping_address_in_tx(tx, id, &address).map_err(to_sql_err)
+        })
     }
 
     fn set_billing_address(&self, id: CartId, address: CartAddress) -> Result<Cart> {
@@ -1140,28 +1001,9 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn set_payment(&self, id: CartId, payment: SetCartPayment) -> Result<Cart> {
-        let billing_json = payment
-            .billing_address
-            .as_ref()
-            .map(|addr| serde_json::to_string(addr).unwrap_or_default());
-
-        {
-            let conn = self.conn()?;
-            conn.execute(
-                "UPDATE carts SET payment_method = ?, payment_token = ?, payment_status = 'method_selected',
-                 billing_address = COALESCE(?, billing_address), updated_at = ? WHERE id = ?",
-                rusqlite::params![
-                    payment.payment_method,
-                    payment.payment_token,
-                    billing_json,
-                    Utc::now().to_rfc3339(),
-                    id.to_string()
-                ],
-            )
-            .map_err(map_db_error)?;
-        }
-
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        with_immediate_transaction(&self.pool, |tx| {
+            Self::set_payment_in_tx(tx, id, &payment).map_err(to_sql_err)
+        })
     }
 
     fn set_x402_payment(&self, id: CartId, payment: SetCartX402Payment) -> Result<Cart> {
@@ -1310,45 +1152,17 @@ impl CartRepository for SqliteCartRepository {
         }))
     }
 
+    /// Redeem `coupon_code` on the cart.
+    ///
+    /// The coupon is resolved and validated (window, status, usage limits,
+    /// conditions such as a minimum subtotal or first order) against the cart
+    /// as the write lock holds it, and the discount is written and the cart
+    /// repriced in the same `BEGIN IMMEDIATE` transaction — see
+    /// [`Self::apply_discount_in_tx`].
     fn apply_discount(&self, id: CartId, coupon_code: &str) -> Result<Cart> {
-        // Get the cart first to calculate discount
-        let mut cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
-
-        // Resolve the coupon and its promotion, and refuse anything that is
-        // not redeemable right now: inactive/expired/exhausted coupon,
-        // draft/paused/expired/exhausted promotion, unmet conditions (e.g.
-        // minimum subtotal), or a per-customer limit already reached. The
-        // checks live in `stateset-core` + the promotions repo so both
-        // backends and promotion evaluation agree.
-        let promo_repo = SqlitePromotionRepository::new(self.pool.clone());
-        let (_coupon, promotion) =
-            promo_repo.validate_coupon_for_cart(&cart, coupon_code, Utc::now())?;
-
-        cart.coupon_code = Some(coupon_code.to_uppercase());
-        let discount_amount = coupon_discount_amount(&promotion, &cart);
-
-        let discount_description = Some(promotion.name);
-
-        // Update the cart with the discount
-        {
-            let conn = self.conn()?;
-            conn.execute(
-                "UPDATE carts SET coupon_code = ?, discount_amount = ?, discount_description = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![
-                    // Persist the canonical (uppercased) code: checkout consumes
-                    // the coupon by this value and codes are stored uppercased.
-                    coupon_code.to_uppercase(),
-                    discount_amount.to_string(),
-                    discount_description,
-                    Utc::now().to_rfc3339(),
-                    id.to_string()
-                ],
-            )
-            .map_err(map_db_error)?;
-        }
-
-        // Recalculate totals and return
-        self.recalculate(id)
+        with_immediate_transaction(&self.pool, |tx| {
+            self.apply_discount_in_tx(tx, id, coupon_code).map_err(to_sql_err)
+        })
     }
 
     fn remove_discount(&self, id: CartId) -> Result<Cart> {
@@ -1626,18 +1440,9 @@ impl CartRepository for SqliteCartRepository {
     fn set_tax(&self, id: CartId, tax_amount: Decimal) -> Result<Cart> {
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-        let cart = Self::load_cart_with_conn(&tx, id)?.ok_or(CommerceError::NotFound)?;
-        cart.ensure_money_settable("tax", tax_amount)?;
-        tx.execute(
-            "UPDATE carts SET tax_amount = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![tax_amount.to_string(), Utc::now().to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
-        // Reprice inside the same transaction, under the same lock.
-        self.update_cart_totals(&tx, id)?;
+        let cart = self.set_tax_in_tx(&tx, id, tax_amount)?;
         tx.commit().map_err(map_db_error)?;
-
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        Ok(cart)
     }
 
     fn get_abandoned(&self) -> Result<Vec<Cart>> {
@@ -2010,6 +1815,237 @@ impl CartRepository for SqliteCartRepository {
         }
 
         Ok(result)
+    }
+}
+
+fn to_sql_err(error: CommerceError) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+}
+
+// Cart mutations on a caller's transaction. The public `CartRepository`
+// methods and the governed kernel commands (`carts.*`) share these bodies, so
+// a governed mutation applies exactly the business rules an ungoverned one
+// does, inside the kernel's receipt transaction.
+impl SqliteCartRepository {
+    /// Load cart `id` (with its lines) on `conn`.
+    pub(crate) fn load_cart_in_tx(conn: &rusqlite::Connection, id: CartId) -> Result<Cart> {
+        Self::load_cart_with_conn(conn, id)?.ok_or(CommerceError::NotFound)
+    }
+
+    /// Create a cart (and any initial lines) on `tx`.
+    pub(crate) fn create_in_tx(
+        &self,
+        tx: &rusqlite::Connection,
+        input: CreateCart,
+    ) -> Result<Cart> {
+        if let Some(ref currency) = input.currency {
+            validate_currency_code(currency.as_str())?;
+        }
+
+        let id = CartId::new();
+        let cart_number = Self::generate_cart_number();
+        let now = Utc::now();
+        let currency = resolve_currency_with_conn(input.currency, tx)?;
+
+        let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
+
+        let shipping_address_json =
+            input.shipping_address.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default());
+        let billing_address_json =
+            input.billing_address.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default());
+        let metadata_json =
+            input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
+
+        tx.execute(
+            "INSERT INTO carts (id, cart_number, customer_id, status, currency,
+                               subtotal, tax_amount, shipping_amount, discount_amount, grand_total,
+                               customer_email, customer_name, shipping_address, billing_address,
+                               notes, metadata, expires_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                id.to_string(),
+                &cart_number,
+                input.customer_id.map(|c| c.to_string()),
+                "active",
+                &currency,
+                "0",
+                "0",
+                "0",
+                "0",
+                "0",
+                &input.customer_email,
+                &input.customer_name,
+                &shipping_address_json,
+                &billing_address_json,
+                &input.notes,
+                &metadata_json,
+                expires_at.map(|e| e.to_rfc3339()),
+                now.to_rfc3339(),
+                now.to_rfc3339(),
+            ],
+        )
+        .map_err(map_db_error)?;
+
+        // Add initial items if provided
+        if let Some(input_items) = &input.items {
+            for item_input in input_items {
+                validate_add_item_money(currency, item_input)?;
+                // Same line guard as `add_item`: `create` used to reach
+                // `add_item_internal` directly, so a withdrawn catalogue SKU
+                // (and a client-chosen price) entered the cart unchecked.
+                guard_cart_line_with_conn(
+                    tx,
+                    item_input.variant_id,
+                    &item_input.sku,
+                    item_input.unit_price,
+                )?;
+                self.add_item_internal(tx, id, item_input.clone())?;
+            }
+            self.update_cart_totals(tx, id)?;
+        }
+
+        Self::load_cart_in_tx(tx, id)
+    }
+
+    /// Add one line to cart `cart_id` on `tx` and reprice the cart.
+    pub(crate) fn add_item_in_tx(
+        &self,
+        tx: &rusqlite::Connection,
+        cart_id: CartId,
+        item: AddCartItem,
+    ) -> Result<CartItem> {
+        // Validate item quantity (must be positive)
+        if item.quantity <= 0 {
+            return Err(CommerceError::ValidationError(format!(
+                "Item quantity must be positive, got {} for '{}'",
+                item.quantity, item.name
+            )));
+        }
+
+        // Validate item price
+        validate_price(item.unit_price)?;
+        if let Some(original_price) = item.original_price {
+            validate_price(original_price)?;
+        }
+
+        let currency = Self::cart_currency_with_conn(tx, cart_id)?;
+        validate_add_item_money(currency, &item)?;
+        guard_cart_line_with_conn(tx, item.variant_id, &item.sku, item.unit_price)?;
+        let result = self.add_item_internal(tx, cart_id, item)?;
+        self.update_cart_totals(tx, cart_id)?;
+        Ok(result)
+    }
+
+    /// Set the shipping address of cart `id` on `tx`.
+    pub(crate) fn set_shipping_address_in_tx(
+        tx: &rusqlite::Connection,
+        id: CartId,
+        address: &CartAddress,
+    ) -> Result<Cart> {
+        let address_json = serde_json::to_string(address).unwrap_or_default();
+        let rows = tx
+            .execute(
+                "UPDATE carts SET shipping_address = ?, updated_at = ? WHERE id = ?",
+                rusqlite::params![address_json, Utc::now().to_rfc3339(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        if rows == 0 {
+            return Err(CommerceError::NotFound);
+        }
+        Self::load_cart_in_tx(tx, id)
+    }
+
+    /// Record the payment method (and optional billing address) of cart `id` on `tx`.
+    pub(crate) fn set_payment_in_tx(
+        tx: &rusqlite::Connection,
+        id: CartId,
+        payment: &SetCartPayment,
+    ) -> Result<Cart> {
+        let billing_json = payment
+            .billing_address
+            .as_ref()
+            .map(|addr| serde_json::to_string(addr).unwrap_or_default());
+        let rows = tx
+            .execute(
+                "UPDATE carts SET payment_method = ?, payment_token = ?, payment_status = 'method_selected',
+                 billing_address = COALESCE(?, billing_address), updated_at = ? WHERE id = ?",
+                rusqlite::params![
+                    payment.payment_method,
+                    payment.payment_token,
+                    billing_json,
+                    Utc::now().to_rfc3339(),
+                    id.to_string()
+                ],
+            )
+            .map_err(map_db_error)?;
+        if rows == 0 {
+            return Err(CommerceError::NotFound);
+        }
+        Self::load_cart_in_tx(tx, id)
+    }
+
+    /// Redeem `coupon_code` on cart `id` on `tx` and reprice the cart.
+    ///
+    /// Resolve the coupon and its promotion, and refuse anything that is not
+    /// redeemable right now: inactive/expired/exhausted coupon,
+    /// draft/paused/expired/exhausted promotion, unmet conditions (e.g.
+    /// minimum subtotal, first order), or a per-customer limit already
+    /// reached. The checks live in `stateset-core` + the promotions repo so
+    /// both backends and promotion evaluation agree.
+    pub(crate) fn apply_discount_in_tx(
+        &self,
+        tx: &rusqlite::Connection,
+        id: CartId,
+        coupon_code: &str,
+    ) -> Result<Cart> {
+        let mut cart = Self::load_cart_in_tx(tx, id)?;
+        let promo_repo = SqlitePromotionRepository::new(self.pool.clone());
+        let (_coupon, promotion) =
+            promo_repo.validate_coupon_for_cart_with_conn(tx, &cart, coupon_code, Utc::now())?;
+
+        cart.coupon_code = Some(coupon_code.to_uppercase());
+        let discount_amount = coupon_discount_amount(&promotion, &cart);
+        let discount_description = Some(promotion.name);
+
+        tx.execute(
+            "UPDATE carts SET coupon_code = ?, discount_amount = ?, discount_description = ?, updated_at = ? WHERE id = ?",
+            rusqlite::params![
+                // Persist the canonical (uppercased) code: checkout consumes
+                // the coupon by this value and codes are stored uppercased.
+                coupon_code.to_uppercase(),
+                discount_amount.to_string(),
+                discount_description,
+                Utc::now().to_rfc3339(),
+                id.to_string()
+            ],
+        )
+        .map_err(map_db_error)?;
+
+        // Reprice (grand_total reflects the new discount) under the same lock.
+        self.update_cart_totals(tx, id)?;
+        Self::load_cart_in_tx(tx, id)
+    }
+
+    /// Set the tax amount of cart `id` on `tx` and reprice the cart.
+    ///
+    /// Guarded by [`Cart::ensure_money_settable`] — non-negative, expressible
+    /// in the cart's currency, and only while the cart is still active.
+    pub(crate) fn set_tax_in_tx(
+        &self,
+        tx: &rusqlite::Connection,
+        id: CartId,
+        tax_amount: Decimal,
+    ) -> Result<Cart> {
+        let cart = Self::load_cart_in_tx(tx, id)?;
+        cart.ensure_money_settable("tax", tax_amount)?;
+        tx.execute(
+            "UPDATE carts SET tax_amount = ?, updated_at = ? WHERE id = ?",
+            rusqlite::params![tax_amount.to_string(), Utc::now().to_rfc3339(), id.to_string()],
+        )
+        .map_err(map_db_error)?;
+        // Reprice inside the same transaction, under the same lock.
+        self.update_cart_totals(tx, id)?;
+        Self::load_cart_in_tx(tx, id)
     }
 }
 

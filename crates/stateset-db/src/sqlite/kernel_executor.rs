@@ -2,6 +2,7 @@
 
 use super::backorder::cancel_backorders_for_order_in_tx;
 use super::carts::SqliteCartRepository;
+use super::customers::SqliteCustomerRepository;
 use super::general_ledger::SqliteGeneralLedgerRepository;
 use super::inventory::SqliteInventoryRepository;
 use super::kernel_outbox::{
@@ -9,15 +10,20 @@ use super::kernel_outbox::{
     sealed_audit_entry_tx,
 };
 use super::orders::{ShipMode, SqliteOrderRepository};
+use super::payments::mark_completed_tx;
 use super::payments::{
     SqlitePaymentRepository, check_order_capture_capacity_tx, open_captures_for_order_conn,
     void_in_flight_payments_for_order_conn,
 };
-use super::returns::{SqliteReturnRepository, row_to_return_item};
+use super::returns::{
+    SqliteReturnRepository, apply_update_tx, insert_return_tx, row_to_return_item,
+};
+use super::shipments::create_shipment_tx;
 use super::subscriptions::SqliteSubscriptionRepository;
+use super::tax::SqliteTaxRepository;
 use super::x402_payment_intents::SqliteX402PaymentIntentRepository;
 use super::{
-    parse_datetime_opt_row, parse_datetime_row, parse_decimal_row, parse_uuid_row,
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row, parse_uuid_row,
     resolve_currency_with_conn, with_immediate_transaction,
 };
 use crate::kernel::plans::PlanOutcome;
@@ -46,6 +52,14 @@ use crate::kernel::plans::payments::{
     plan_refund,
 };
 use crate::kernel::plans::returns::transition_return_guard;
+use crate::kernel::plans::storefront::{
+    DomainOutcome, PAYMENT_UNVERSIONED, RETURN_TRACKING_UNVERSIONED, SealDecision,
+    StorefrontAggregate, add_cart_item_guard, add_return_tracking_guard, apply_cart_coupon_guard,
+    calculate_cart_tax_guard, cart_tax_request, complete_payment_guard, create_cart_guard,
+    create_customer_guard, create_return_guard, create_shipment_guard, domain_rejection,
+    order_status_refuses_shipment, outcome, redact_payment_token, refuse_recapture, seal_decision,
+    set_cart_payment_method_guard, set_cart_shipping_address_guard, tax_basis, tax_basis_changed,
+};
 use crate::kernel::receipt::{
     attach_command_context, checkout_error_code, preview_receipt, principal_kind_name,
     receipt_record, rejected_receipt, succeeded_receipt,
@@ -77,6 +91,11 @@ use stateset_core::{
     SubscriptionStatus, TransitionOrder, TransitionReturn, Validate, X402IntentStatus,
     X402PaymentIntent,
 };
+use stateset_core::{
+    AddCartItemCommand, AddReturnTracking, ApplyCartCoupon, CalculateCartTax, Cart, CartRepository,
+    CartTaxCalculated, CompletePayment, CreateCart, CreateCustomer, CreateReturn, CreateShipment,
+    Customer, SetCartPaymentMethod, SetCartShippingAddress, Shipment, UpdateReturn,
+};
 use uuid::Uuid;
 
 const CREATE_PAYMENT_COMMAND: &str = "payments.create";
@@ -101,9 +120,86 @@ const REFUND_A2A_ESCROW_COMMAND: &str = "a2a.escrow.refund";
 const FILE_A2A_DISPUTE_COMMAND: &str = "a2a.dispute.file";
 const SUBMIT_A2A_EVIDENCE_COMMAND: &str = "a2a.dispute.evidence.submit";
 const RESOLVE_A2A_DISPUTE_COMMAND: &str = "a2a.dispute.resolve";
+const CREATE_CUSTOMER_COMMAND: &str = "customers.create";
+const CREATE_CART_COMMAND: &str = "carts.create";
+const ADD_CART_ITEM_COMMAND: &str = "carts.item.add";
+const SET_CART_SHIPPING_ADDRESS_COMMAND: &str = "carts.shipping_address.set";
+const SET_CART_PAYMENT_METHOD_COMMAND: &str = "carts.payment_method.set";
+const APPLY_CART_COUPON_COMMAND: &str = "carts.coupon.apply";
+const CALCULATE_CART_TAX_COMMAND: &str = "carts.tax.calculate";
+const COMPLETE_PAYMENT_COMMAND: &str = "payments.complete";
+const CREATE_SHIPMENT_COMMAND: &str = "shipments.create";
+const CREATE_RETURN_COMMAND: &str = "returns.create";
+const ADD_RETURN_TRACKING_COMMAND: &str = "returns.tracking.add";
 
 fn to_sql_err(error: CommerceError) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+}
+
+/// Run a storefront domain step inside a savepoint and seal its outcome.
+///
+/// The step is the same repository function the ungoverned API calls, run on
+/// the kernel transaction. A business refusal rolls the savepoint back and is
+/// sealed as a typed rejection; a preview rolls it back only after the step
+/// proved it would apply; an apply releases it, appends the command-context
+/// event and seals success — all in the receipt's transaction. The decision
+/// itself is `kernel::plans::storefront::seal_decision`, shared with Postgres.
+fn seal_storefront_step<C: Serialize, T: Serialize>(
+    tx: &rusqlite::Transaction<'_>,
+    run: &CommandRun<'_, C>,
+    request_hash: &str,
+    aggregate: StorefrontAggregate,
+    target_id: Option<String>,
+    step: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<DomainOutcome<T>>,
+) -> rusqlite::Result<ExecutionReceipt<T>> {
+    tx.execute_batch("SAVEPOINT kernel_storefront_step")?;
+    let decision = match seal_decision(aggregate, step(tx), run.is_preview()) {
+        Ok(decision) => decision,
+        Err(error) => {
+            tx.execute_batch(
+                "ROLLBACK TO SAVEPOINT kernel_storefront_step; RELEASE SAVEPOINT kernel_storefront_step",
+            )?;
+            return Err(to_sql_err(error));
+        }
+    };
+    let mut receipt = match decision {
+        SealDecision::Reject(rejection) => {
+            tx.execute_batch(
+                "ROLLBACK TO SAVEPOINT kernel_storefront_step; RELEASE SAVEPOINT kernel_storefront_step",
+            )?;
+            let mut receipt = run.rejected_by(&rejection);
+            receipt.aggregate_id = target_id;
+            receipt
+        }
+        SealDecision::Preview(outcome) => {
+            tx.execute_batch(
+                "ROLLBACK TO SAVEPOINT kernel_storefront_step; RELEASE SAVEPOINT kernel_storefront_step",
+            )?;
+            let mut receipt = run.previewed();
+            receipt.aggregate_id = target_id;
+            receipt.version_before = outcome.version_before;
+            receipt
+        }
+        SealDecision::Apply(outcome) => {
+            tx.execute_batch("RELEASE SAVEPOINT kernel_storefront_step")?;
+            let event = run.event(
+                outcome.event_type,
+                aggregate.label(),
+                outcome.aggregate_id.clone(),
+                outcome.event_payload,
+            );
+            append_kernel_event_tx(tx, &event)?;
+            run.succeeded(
+                outcome.result,
+                Some(outcome.aggregate_id),
+                outcome.version_before,
+                outcome.version_after,
+                vec![event.id],
+            )
+        }
+    };
+    append_receipt(tx, request_hash, &mut receipt)?;
+    Ok(receipt)
 }
 
 type EconomicBudgetSqliteRow =
@@ -3947,6 +4043,643 @@ impl SqliteKernelExecutor {
             };
             append_receipt(tx, &request_hash, &mut receipt)?;
             Ok(receipt)
+        })
+    }
+
+    /// Preview or atomically create a customer (`customers.create`).
+    pub fn execute_create_customer(
+        &self,
+        command: &CommandEnvelope<CreateCustomer>,
+    ) -> Result<ExecutionReceipt<Customer>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_CUSTOMER_COMMAND),
+            "customer",
+        )?
+        .then_guard(|_| create_customer_guard(input));
+        let request_hash = run.request_hash.clone();
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "customer")?
+            {
+                return Ok(stored);
+            }
+            if let Some(mut receipt) = run.guard_receipt() {
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            seal_storefront_step(
+                tx,
+                &run,
+                &request_hash,
+                StorefrontAggregate::Customer,
+                None,
+                |tx| {
+                    SqliteCustomerRepository::validate_create(input)?;
+                    let customer = SqliteCustomerRepository::insert_customer_tx(tx, input)
+                        .map_err(map_db_error)?;
+                    let payload = serde_json::json!({
+                        "customer_id": customer.id.to_string(),
+                        "email": &customer.email,
+                    });
+                    outcome(
+                        customer.clone(),
+                        customer.id.to_string(),
+                        "customers.created.v1",
+                        payload,
+                    )
+                },
+            )
+        })
+    }
+
+    /// Preview or atomically create a cart and any initial lines (`carts.create`).
+    pub fn execute_create_cart(
+        &self,
+        command: &CommandEnvelope<CreateCart>,
+    ) -> Result<ExecutionReceipt<Cart>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_CART_COMMAND),
+            "cart",
+        )?
+        .then_guard(|_| create_cart_guard(input));
+        let request_hash = run.request_hash.clone();
+        let carts = SqliteCartRepository::new(self.pool.clone());
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "cart")?
+            {
+                return Ok(stored);
+            }
+            if let Some(mut receipt) = run.guard_receipt() {
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            seal_storefront_step(tx, &run, &request_hash, StorefrontAggregate::Cart, None, |tx| {
+                let cart = carts.create_in_tx(tx, input.clone())?;
+                let payload = serde_json::json!({
+                    "cart_id": cart.id.to_string(),
+                    "cart_number": &cart.cart_number,
+                    "customer_id": cart.customer_id.map(|id| id.to_string()),
+                    "currency": cart.currency.as_str(),
+                    "grand_total": cart.grand_total.to_string(),
+                });
+                outcome(cart.clone(), cart.id.to_string(), "carts.created.v1", payload)
+            })
+        })
+    }
+
+    /// Preview or atomically add a line to an active cart (`carts.item.add`).
+    pub fn execute_add_cart_item(
+        &self,
+        command: &CommandEnvelope<AddCartItemCommand>,
+    ) -> Result<ExecutionReceipt<Cart>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(ADD_CART_ITEM_COMMAND, CART_UNVERSIONED),
+            "cart",
+        )?
+        .then_guard(|_| add_cart_item_guard(input));
+        let request_hash = run.request_hash.clone();
+        let carts = SqliteCartRepository::new(self.pool.clone());
+        let target = Some(input.cart_id.to_string());
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "cart")?
+            {
+                return Ok(stored);
+            }
+            if let Some(mut receipt) = run.guard_receipt() {
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            seal_storefront_step(
+                tx,
+                &run,
+                &request_hash,
+                StorefrontAggregate::Cart,
+                target.clone(),
+                |tx| {
+                    let item = carts.add_item_in_tx(tx, input.cart_id, input.item.clone())?;
+                    let cart = SqliteCartRepository::load_cart_in_tx(tx, input.cart_id)?;
+                    let payload = serde_json::json!({
+                        "cart_id": cart.id.to_string(),
+                        "item_id": item.id.to_string(),
+                        "sku": &item.sku,
+                        "quantity": item.quantity,
+                        "unit_price": item.unit_price.to_string(),
+                        "subtotal": cart.subtotal.to_string(),
+                        "grand_total": cart.grand_total.to_string(),
+                    });
+                    outcome(cart, input.cart_id.to_string(), "carts.item_added.v1", payload)
+                },
+            )
+        })
+    }
+
+    /// Preview or atomically set a cart's shipping address
+    /// (`carts.shipping_address.set`).
+    pub fn execute_set_cart_shipping_address(
+        &self,
+        command: &CommandEnvelope<SetCartShippingAddress>,
+    ) -> Result<ExecutionReceipt<Cart>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(SET_CART_SHIPPING_ADDRESS_COMMAND, CART_UNVERSIONED),
+            "cart",
+        )?
+        .then_guard(|_| set_cart_shipping_address_guard(input));
+        let request_hash = run.request_hash.clone();
+        let target = Some(input.cart_id.to_string());
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "cart")?
+            {
+                return Ok(stored);
+            }
+            if let Some(mut receipt) = run.guard_receipt() {
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            seal_storefront_step(
+                tx,
+                &run,
+                &request_hash,
+                StorefrontAggregate::Cart,
+                target.clone(),
+                |tx| {
+                    let cart = SqliteCartRepository::set_shipping_address_in_tx(
+                        tx,
+                        input.cart_id,
+                        &input.address,
+                    )?;
+                    let payload = serde_json::json!({
+                        "cart_id": cart.id.to_string(),
+                        "country": &input.address.country,
+                        "postal_code": &input.address.postal_code,
+                    });
+                    outcome(
+                        cart,
+                        input.cart_id.to_string(),
+                        "carts.shipping_address_set.v1",
+                        payload,
+                    )
+                },
+            )
+        })
+    }
+
+    /// Preview or atomically record a cart's payment method
+    /// (`carts.payment_method.set`). The token is redacted on the receipt.
+    pub fn execute_set_cart_payment_method(
+        &self,
+        command: &CommandEnvelope<SetCartPaymentMethod>,
+    ) -> Result<ExecutionReceipt<Cart>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(SET_CART_PAYMENT_METHOD_COMMAND, CART_UNVERSIONED),
+            "cart",
+        )?
+        .then_guard(|_| set_cart_payment_method_guard(input));
+        let request_hash = run.request_hash.clone();
+        let target = Some(input.cart_id.to_string());
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "cart")?
+            {
+                return Ok(stored);
+            }
+            if let Some(mut receipt) = run.guard_receipt() {
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            seal_storefront_step(
+                tx,
+                &run,
+                &request_hash,
+                StorefrontAggregate::Cart,
+                target.clone(),
+                |tx| {
+                    let cart =
+                        SqliteCartRepository::set_payment_in_tx(tx, input.cart_id, &input.payment)?;
+                    let payload = serde_json::json!({
+                        "cart_id": cart.id.to_string(),
+                        "payment_method": &input.payment.payment_method,
+                    });
+                    outcome(
+                        redact_payment_token(cart),
+                        input.cart_id.to_string(),
+                        "carts.payment_method_set.v1",
+                        payload,
+                    )
+                },
+            )
+        })
+    }
+
+    /// Preview or atomically redeem a coupon on a cart (`carts.coupon.apply`).
+    pub fn execute_apply_cart_coupon(
+        &self,
+        command: &CommandEnvelope<ApplyCartCoupon>,
+    ) -> Result<ExecutionReceipt<Cart>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(APPLY_CART_COUPON_COMMAND, CART_UNVERSIONED),
+            "cart",
+        )?
+        .then_guard(|_| apply_cart_coupon_guard(input));
+        let request_hash = run.request_hash.clone();
+        let carts = SqliteCartRepository::new(self.pool.clone());
+        let target = Some(input.cart_id.to_string());
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "cart")?
+            {
+                return Ok(stored);
+            }
+            if let Some(mut receipt) = run.guard_receipt() {
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            seal_storefront_step(
+                tx,
+                &run,
+                &request_hash,
+                StorefrontAggregate::Cart,
+                target.clone(),
+                |tx| {
+                    let cart = carts.apply_discount_in_tx(tx, input.cart_id, &input.coupon_code)?;
+                    let payload = serde_json::json!({
+                        "cart_id": cart.id.to_string(),
+                        "coupon_code": &cart.coupon_code,
+                        "discount_amount": cart.discount_amount.to_string(),
+                        "grand_total": cart.grand_total.to_string(),
+                    });
+                    outcome(cart, input.cart_id.to_string(), "carts.coupon_applied.v1", payload)
+                },
+            )
+        })
+    }
+
+    /// Preview or atomically price a cart's tax and write it onto the cart
+    /// (`carts.tax.calculate`).
+    ///
+    /// The tax is priced from reference data (settings, rates, exemptions)
+    /// before the write lock is taken; under the lock the cart is re-read and
+    /// its tax request must equal the one that was priced, or the command is
+    /// refused (`commerce.conflict`, retry after conflict) instead of writing
+    /// a tax computed on a cart that has since changed.
+    pub fn execute_calculate_cart_tax(
+        &self,
+        command: &CommandEnvelope<CalculateCartTax>,
+    ) -> Result<ExecutionReceipt<CartTaxCalculated>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(CALCULATE_CART_TAX_COMMAND, CART_UNVERSIONED),
+            "cart",
+        )?
+        .then_guard(|_| calculate_cart_tax_guard(input));
+        let carts = SqliteCartRepository::new(self.pool.clone());
+        // Price before the write lock; a business refusal (no cart, no
+        // shipping address) is sealed as the command's rejection, an
+        // infrastructure failure aborts without a receipt.
+        let mut priced = None;
+        let mut infrastructure = None;
+        let run = run.then_guard(|_| {
+            let attempt = carts.get(input.cart_id).and_then(|cart| {
+                let request = cart_tax_request(&cart.ok_or(CommerceError::NotFound)?)?;
+                let calculation =
+                    SqliteTaxRepository::new(self.pool.clone()).calculate_tax(request.clone())?;
+                Ok((tax_basis(&request)?, calculation))
+            });
+            match attempt {
+                Ok(value) => {
+                    priced = Some(value);
+                    None
+                }
+                Err(error) => domain_rejection(StorefrontAggregate::Cart, &error).or_else(|| {
+                    infrastructure = Some(error);
+                    None
+                }),
+            }
+        });
+        if let Some(error) = infrastructure {
+            return Err(error);
+        }
+        let request_hash = run.request_hash.clone();
+        let target = Some(input.cart_id.to_string());
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "cart")?
+            {
+                return Ok(stored);
+            }
+            if let Some(mut receipt) = run.guard_receipt() {
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            seal_storefront_step(
+                tx,
+                &run,
+                &request_hash,
+                StorefrontAggregate::Cart,
+                target.clone(),
+                |tx| {
+                    let (basis, calculation) = priced.clone().ok_or_else(|| {
+                        CommerceError::Internal(
+                            "cart tax was not priced before the write lock".into(),
+                        )
+                    })?;
+                    let current = SqliteCartRepository::load_cart_in_tx(tx, input.cart_id)?;
+                    if tax_basis(&cart_tax_request(&current)?)? != basis {
+                        return Err(tax_basis_changed());
+                    }
+                    let cart = carts.set_tax_in_tx(tx, input.cart_id, calculation.total_tax)?;
+                    let payload = serde_json::json!({
+                        "cart_id": cart.id.to_string(),
+                        "total_tax": calculation.total_tax.to_string(),
+                        "tax_amount": cart.tax_amount.to_string(),
+                        "grand_total": cart.grand_total.to_string(),
+                    });
+                    outcome(
+                        CartTaxCalculated { cart, calculation },
+                        input.cart_id.to_string(),
+                        "carts.tax_calculated.v1",
+                        payload,
+                    )
+                },
+            )
+        })
+    }
+
+    /// Preview or atomically capture a pending payment (`payments.complete`).
+    pub fn execute_complete_payment(
+        &self,
+        command: &CommandEnvelope<CompletePayment>,
+    ) -> Result<ExecutionReceipt<Payment>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(COMPLETE_PAYMENT_COMMAND, PAYMENT_UNVERSIONED),
+            "payment",
+        )?
+        .then_guard(|_| complete_payment_guard(input));
+        let request_hash = run.request_hash.clone();
+        let target = Some(input.payment_id.to_string());
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "payment")?
+            {
+                return Ok(stored);
+            }
+            if let Some(mut receipt) = run.guard_receipt() {
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            seal_storefront_step(
+                tx,
+                &run,
+                &request_hash,
+                StorefrontAggregate::Payment,
+                target.clone(),
+                |tx| {
+                    let status: String = tx
+                        .query_row(
+                            "SELECT status FROM payments WHERE id = ?",
+                            [input.payment_id.to_string()],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .map_err(map_db_error)?
+                        .ok_or(CommerceError::NotFound)?;
+                    refuse_recapture(&status)?;
+                    mark_completed_tx(tx, input.payment_id, Utc::now()).map_err(map_db_error)?;
+                    let payment = tx
+                        .query_row(
+                            "SELECT * FROM payments WHERE id = ?",
+                            [input.payment_id.to_string()],
+                            SqlitePaymentRepository::row_to_payment,
+                        )
+                        .map_err(map_db_error)?;
+                    let payload = serde_json::json!({
+                        "payment_id": payment.id.to_string(),
+                        "order_id": payment.order_id.map(|value| value.to_string()),
+                        "amount": payment.amount.to_string(),
+                        "currency": payment.currency.as_str(),
+                        "status": payment.status.to_string(),
+                    });
+                    outcome(payment, input.payment_id.to_string(), "payments.completed.v1", payload)
+                },
+            )
+        })
+    }
+
+    /// Preview or atomically create a shipment for an order (`shipments.create`).
+    pub fn execute_create_shipment(
+        &self,
+        command: &CommandEnvelope<CreateShipment>,
+    ) -> Result<ExecutionReceipt<Shipment>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_SHIPMENT_COMMAND),
+            "shipment",
+        )?
+        .then_guard(|_| create_shipment_guard(input));
+        let request_hash = run.request_hash.clone();
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "shipment")?
+            {
+                return Ok(stored);
+            }
+            if let Some(mut receipt) = run.guard_receipt() {
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            seal_storefront_step(
+                tx,
+                &run,
+                &request_hash,
+                StorefrontAggregate::Shipment,
+                None,
+                |tx| {
+                    let status: String = tx
+                        .query_row(
+                            "SELECT status FROM orders WHERE id = ?",
+                            [input.order_id.to_string()],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .map_err(map_db_error)?
+                        .ok_or(CommerceError::OrderNotFound(input.order_id.into_uuid()))?;
+                    if order_status_refuses_shipment(&status) {
+                        return Err(CommerceError::ValidationError(format!(
+                            "cannot create a shipment for a {status} order"
+                        )));
+                    }
+                    let shipment = create_shipment_tx(tx, input.clone())?;
+                    let payload = serde_json::json!({
+                        "shipment_id": shipment.id.to_string(),
+                        "shipment_number": &shipment.shipment_number,
+                        "order_id": shipment.order_id.to_string(),
+                        "carrier": shipment.carrier.to_string(),
+                        "tracking_number": &shipment.tracking_number,
+                    });
+                    outcome(
+                        shipment.clone(),
+                        shipment.id.to_string(),
+                        "shipments.created.v1",
+                        payload,
+                    )
+                },
+            )
+        })
+    }
+
+    /// Preview or atomically open a return request (`returns.create`).
+    pub fn execute_create_return(
+        &self,
+        command: &CommandEnvelope<CreateReturn>,
+    ) -> Result<ExecutionReceipt<Return>> {
+        let mut input = command.payload.clone();
+        if input.idempotency_key.is_none() {
+            input.idempotency_key = Some(command.idempotency_key.clone());
+        }
+        let run = CommandRun::prepare(
+            command,
+            &input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_RETURN_COMMAND)
+                .with_payload_key(input.idempotency_key.as_deref()),
+            "return",
+        )?
+        .then_guard(|_| create_return_guard(&input));
+        let request_hash = run.request_hash.clone();
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "return")?
+            {
+                return Ok(stored);
+            }
+            if let Some(mut receipt) = run.guard_receipt() {
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            seal_storefront_step(tx, &run, &request_hash, StorefrontAggregate::Return, None, |tx| {
+                let returned = insert_return_tx(tx, &input, Utc::now()).map_err(map_db_error)?;
+                let payload = serde_json::json!({
+                    "return_id": returned.id.to_string(),
+                    "order_id": returned.order_id.to_string(),
+                    "status": returned.status.to_string(),
+                    "refund_amount": returned.refund_amount.map(|amount| amount.to_string()),
+                });
+                let mut done = outcome(
+                    returned.clone(),
+                    returned.id.to_string(),
+                    "returns.requested.v1",
+                    payload,
+                )?;
+                done.version_after = Some(returned.version);
+                Ok(done)
+            })
+        })
+    }
+
+    /// Preview or atomically record a return's shipment tracking and move it
+    /// to `in_transit` (`returns.tracking.add`).
+    pub fn execute_add_return_tracking(
+        &self,
+        command: &CommandEnvelope<AddReturnTracking>,
+    ) -> Result<ExecutionReceipt<Return>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(ADD_RETURN_TRACKING_COMMAND, RETURN_TRACKING_UNVERSIONED),
+            "return",
+        )?
+        .then_guard(|_| add_return_tracking_guard(input));
+        let request_hash = run.request_hash.clone();
+        let target = Some(input.return_id.to_string());
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+                && let Replay::Return(stored) =
+                    replay_or_conflict(tx, command, &request_hash, existing, "return")?
+            {
+                return Ok(stored);
+            }
+            if let Some(mut receipt) = run.guard_receipt() {
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            seal_storefront_step(
+                tx,
+                &run,
+                &request_hash,
+                StorefrontAggregate::Return,
+                target.clone(),
+                |tx| {
+                    let update = UpdateReturn {
+                        tracking_number: Some(input.tracking_number.clone()),
+                        status: Some(stateset_core::ReturnStatus::InTransit),
+                        ..Default::default()
+                    };
+                    let returned = apply_update_tx(tx, input.return_id, &update, Utc::now())
+                        .map_err(map_db_error)?;
+                    let payload = serde_json::json!({
+                        "return_id": returned.id.to_string(),
+                        "tracking_number": &input.tracking_number,
+                        "status": returned.status.to_string(),
+                    });
+                    let mut done = outcome(
+                        returned.clone(),
+                        returned.id.to_string(),
+                        "returns.tracking_added.v1",
+                        payload,
+                    )?;
+                    done.version_before = Some(returned.version - 1);
+                    done.version_after = Some(returned.version);
+                    Ok(done)
+                },
+            )
         })
     }
 }

@@ -381,6 +381,15 @@ pub struct TransitionReturn {
     pub status: ReturnStatus,
 }
 
+/// Kernel command payload recording the customer's return-shipment tracking
+/// number, which moves an approved return to `in_transit`
+/// (`returns.tracking.add`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AddReturnTracking {
+    pub return_id: ReturnId,
+    pub tracking_number: String,
+}
+
 /// Return filter for querying
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReturnFilter {

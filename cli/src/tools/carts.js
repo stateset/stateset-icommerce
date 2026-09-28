@@ -247,7 +247,11 @@ export const cartTools = [
       sku: z.string().min(1).max(100).describe('Product SKU'),
       name: z.string().min(1).max(255).describe('Product name'),
       quantity: z.number().int().min(1).describe('Quantity to add'),
-      unitPrice: z.number().positive().describe('Unit price'),
+      unitPrice: z
+        .union([z.string().regex(/^\d+(?:\.\d+)?$/), z.number().positive()])
+        .describe(
+          'Exact decimal string unit price (legacy numeric input is supported outside strict mode)',
+        ),
       description: z.string().max(1000).optional().describe('Item description'),
       imageUrl: z.string().url().optional().describe('Product image URL'),
     },
@@ -264,7 +268,7 @@ export const cartTools = [
             name: params.name,
             quantity: params.quantity,
             unitPrice: params.unitPrice,
-            lineTotal: params.quantity * params.unitPrice,
+            lineTotal: params.quantity * Number(params.unitPrice),
           },
         };
       }
@@ -272,7 +276,9 @@ export const cartTools = [
         sku: params.sku,
         name: params.name,
         quantity: params.quantity,
-        unitPrice: params.unitPrice,
+        ...(typeof params.unitPrice === 'string'
+          ? { unitPriceExact: params.unitPrice }
+          : { unitPrice: params.unitPrice }),
         description: params.description,
         imageUrl: params.imageUrl,
       });

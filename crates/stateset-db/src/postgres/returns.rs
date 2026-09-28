@@ -299,7 +299,7 @@ async fn replay_by_key(
 /// Insert a return (header + lines + kernel event) on the caller's
 /// transaction and return it as stored. Honours `idempotency_key` inside the
 /// transaction (see [`replay_by_key`]).
-async fn insert_return_pg(
+pub(crate) async fn insert_return_pg(
     conn: &mut PgConnection,
     input: &CreateReturn,
     now: DateTime<Utc>,
@@ -471,7 +471,7 @@ async fn settle_refund_pg(
 /// Apply an update (field changes and/or a status transition) on the caller's
 /// transaction with every guard in force, returning the stored return. Every
 /// status write in this module goes through here.
-async fn apply_update_pg(
+pub(crate) async fn apply_update_pg(
     conn: &mut PgConnection,
     id: Uuid,
     input: &UpdateReturn,

@@ -896,12 +896,14 @@ describe('agent-toolkit', () => {
     const names = toolkit.getRawTools().map((tool) => tool.name);
     assert.ok(names.includes('list_customers'));
     assert.ok(names.includes('create_payment'));
-    assert.ok(!names.includes('create_customer'));
+    // The storefront journey is governed: customer creation is a typed command.
+    assert.ok(names.includes('create_customer'));
+    assert.ok(!names.includes('update_customer'));
     assert.ok(!names.includes('delete_customer'));
     assert.ok(!names.includes('backup_database'));
     assert.ok(!names.includes('set_exchange_rate'));
     await assert.rejects(
-      toolkit.executeTool('create_customer', { email: 'blocked@example.com' }),
+      toolkit.executeTool('update_customer', { customerId: 'cust_test_1', firstName: 'Blocked' }),
       /outside this toolkit's capability scope/,
     );
   });
