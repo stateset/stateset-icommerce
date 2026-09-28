@@ -109,6 +109,7 @@ const TOOL_MODULES = {
   'production-batches': namedLoader('./production-batches.js', 'productionBatchTools'),
   'supplier-skus': namedLoader('./supplier-skus.js', 'supplierSkuTools'),
   'inbound-shipments': namedLoader('./inbound-shipments.js', 'inboundShipmentTools'),
+  explain: namedLoader('./explain.js', 'explainTools'),
   'agentic-runtime': () => import('../mcp-server.js').then((m) => m.getStaticAgenticRuntimeTools()),
 };
 
@@ -260,6 +261,7 @@ export class ToolRegistry {
 export const AGENT_TOOL_CATEGORIES = {
   'customer-service': [...ALL_TOOL_CATEGORIES],
   checkout: [
+    'explain',
     'carts',
     'customers',
     'products',
@@ -270,14 +272,14 @@ export const AGENT_TOOL_CATEGORIES = {
     'payments',
     'vector',
   ],
-  orders: ['orders', 'customers', 'inventory', 'shipments', 'payments', 'vector'],
+  orders: ['explain', 'orders', 'customers', 'inventory', 'shipments', 'payments', 'vector'],
   inventory: ['inventory', 'products', 'manufacturing', 'suppliers', 'vector'],
-  returns: ['returns', 'orders', 'customers', 'inventory', 'warranties'],
+  returns: ['explain', 'returns', 'orders', 'customers', 'inventory', 'warranties'],
   analytics: ['analytics', 'vector'],
-  promotions: ['promotions', 'products', 'carts', 'vector'],
+  promotions: ['explain', 'promotions', 'products', 'carts', 'vector'],
   subscriptions: ['subscriptions', 'customers', 'payments'],
   manufacturing: ['manufacturing', 'inventory', 'products'],
-  payments: ['payments', 'orders', 'customers'],
+  payments: ['explain', 'payments', 'orders', 'customers'],
   shipments: ['shipments', 'orders', 'inventory'],
   suppliers: ['suppliers', 'inventory', 'products', 'analytics'],
   invoices: ['invoices', 'customers', 'orders'],
