@@ -143,6 +143,7 @@ export const promotionTools = [
           trigger: p.trigger,
           percentageOff: p.percentageOff,
           fixedAmountOff: p.fixedAmountOff,
+          fixedAmountOffExact: p.fixedAmountOffExact,
           startsAt: p.startsAt,
           endsAt: p.endsAt,
           usageCount: p.usageCount,
@@ -181,7 +182,9 @@ export const promotionTools = [
           target: promotion.target,
           percentageOff: promotion.percentageOff,
           fixedAmountOff: promotion.fixedAmountOff,
+          fixedAmountOffExact: promotion.fixedAmountOffExact,
           maxDiscount: promotion.maxDiscountAmount,
+          maxDiscountExact: promotion.maxDiscountAmountExact,
           startsAt: promotion.startsAt,
           endsAt: promotion.endsAt,
           usageCount: promotion.usageCount,
@@ -491,6 +494,7 @@ export const promotionTools = [
           discountType: promotion?.promotionType,
           percentageOff: promotion?.percentageOff,
           fixedAmountOff: promotion?.fixedAmountOff,
+          fixedAmountOffExact: promotion?.fixedAmountOffExact,
           usageRemaining: coupon.usageLimit ? coupon.usageLimit - coupon.usageCount : 'unlimited',
         },
       };
@@ -546,6 +550,7 @@ export const promotionTools = [
           trigger: p.trigger,
           percentageOff: p.percentageOff,
           fixedAmountOff: p.fixedAmountOff,
+          fixedAmountOffExact: p.fixedAmountOffExact,
           endsAt: p.endsAt,
         })),
       };

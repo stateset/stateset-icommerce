@@ -13,7 +13,8 @@ use super::orders::{OrderItemRow, OrderRow, PgOrderRepository, ShipMode};
 use super::payments::mark_completed_pg;
 use super::payments::{
     PaymentRow, PgPaymentRepository, RefundRow, check_order_capture_capacity_pg,
-    open_captures_for_order_pg, void_in_flight_payments_for_order_pg,
+    derive_order_payment_status_pg, open_captures_for_order_pg, sync_order_payment_status_pg,
+    void_in_flight_payments_for_order_pg,
 };
 use super::resolve_currency_with_executor;
 use super::returns::{
@@ -76,14 +77,14 @@ use stateset_core::{
     CheckoutResult, CommandEnvelope, CommerceError, CommitCheckout, ConfirmInventoryReservation,
     CreateA2AEscrow, CreateInventoryItem, CreatePayment, CreateProduct, CreateRefund,
     DisputeA2AEscrow, EconomicBudget, EconomicBudgetStatus, ExecutionMode, ExecutionReceipt,
-    ExecutionStatus, FileA2ADispute, FundA2AEscrow, InventoryItem, InventoryReservation,
-    JournalEntry, JournalEntryStatus, KernelPolicy, Money, Order, OrderStatus, Payment,
-    PaymentTransactionStatus, PostJournalEntry, Product, ProductId, ProductStatus, Refund,
-    RefundA2AEscrow, RefundStatus, ReleaseA2AEscrow, ReleaseInventoryReservation,
-    ReservationStatus, ReserveInventory, ResolveA2ADispute, Result, RetryDisposition, Return,
-    SettleX402Intent, ShipOrderCommand, SubmitA2ADisputeEvidence, SubscriptionCharge,
-    SubscriptionStatus, TransitionOrder, TransitionReturn, Validate, X402IntentStatus,
-    X402PaymentIntent,
+    ExecutionStatus, FileA2ADispute, FulfillmentStatus, FundA2AEscrow, InventoryItem,
+    InventoryReservation, JournalEntry, JournalEntryStatus, KernelPolicy, Money, Order,
+    OrderStatus, Payment, PaymentTransactionStatus, PostJournalEntry, Product, ProductId,
+    ProductStatus, Refund, RefundA2AEscrow, RefundStatus, ReleaseA2AEscrow,
+    ReleaseInventoryReservation, ReservationStatus, ReserveInventory, ResolveA2ADispute, Result,
+    RetryDisposition, Return, SettleX402Intent, ShipOrderCommand, SubmitA2ADisputeEvidence,
+    SubscriptionCharge, SubscriptionStatus, TransitionOrder, TransitionReturn, Validate,
+    X402IntentStatus, X402PaymentIntent,
 };
 use stateset_core::{
     AddCartItemCommand, AddReturnTracking, ApplyCartCoupon, CalculateCartTax, Cart,
@@ -824,8 +825,13 @@ impl PgKernelExecutor {
             }),
         );
         append_kernel_event_tx(tx.as_mut(), &event).await?;
-        let mut receipt =
-            run.succeeded(payment, Some(id.to_string()), None, Some(1), vec![event.id]);
+        let mut event_ids = vec![event.id];
+        if let Some(order_id) = input.order_id {
+            event_ids.extend(
+                sync_order_payment_status_pg(tx.as_mut(), order_id.into_uuid(), created_at).await?,
+            );
+        }
+        let mut receipt = run.succeeded(payment, Some(id.to_string()), None, Some(1), event_ids);
         append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
         tx.commit().await.map_err(pg_err)?;
         Ok(receipt)
@@ -1614,8 +1620,32 @@ impl PgKernelExecutor {
             return Ok(receipt);
         }
 
-        let updated = sqlx::query("UPDATE orders SET status = $1, payment_status = $2, updated_at = $3, version = version + 1 WHERE id = $4 AND version = $5")
-            .bind(effects.next_status.to_string()).bind(effects.next_payment_status.to_string()).bind(started_at)
+        // Void first: the voids change the payment ledger the order's money
+        // status is derived from, and the derived value belongs in the same
+        // UPDATE (one version bump). An explicit payment_status on the command
+        // still wins. Mirrors the SQLite executor.
+        let mut voided_payment_ids = Vec::new();
+        if effects.void_in_flight_payments {
+            voided_payment_ids =
+                void_in_flight_payments_for_order_pg(tx.as_mut(), order_uuid, started_at).await?;
+        }
+        let next_payment_status =
+            if command.payload.payment_status.is_none() && !voided_payment_ids.is_empty() {
+                derive_order_payment_status_pg(
+                    tx.as_mut(),
+                    order_uuid,
+                    order.total_amount,
+                    effects.next_payment_status,
+                )
+                .await?
+            } else {
+                effects.next_payment_status
+            };
+        let next_fulfillment_status = FulfillmentStatus::for_order_status(effects.next_status)
+            .unwrap_or(order.fulfillment_status);
+        let updated = sqlx::query("UPDATE orders SET status = $1, payment_status = $2, fulfillment_status = $3, updated_at = $4, version = version + 1 WHERE id = $5 AND version = $6")
+            .bind(effects.next_status.to_string()).bind(next_payment_status.to_string())
+            .bind(next_fulfillment_status.to_string()).bind(started_at)
             .bind(order_uuid).bind(version_before)
             .execute(tx.as_mut()).await.map_err(pg_err)?;
         if updated.rows_affected() == 0 {
@@ -1626,11 +1656,6 @@ impl PgKernelExecutor {
             });
         }
         let mut related_event_ids = Vec::new();
-        let mut voided_payment_ids = Vec::new();
-        if effects.void_in_flight_payments {
-            voided_payment_ids =
-                void_in_flight_payments_for_order_pg(tx.as_mut(), order_uuid, started_at).await?;
-        }
         if effects.release_holds {
             let inventory = PgInventoryRepository::new(self.pool.clone());
             let reservations = inventory
@@ -1687,8 +1712,8 @@ impl PgKernelExecutor {
                 "status_before": effects.status_before.to_string(),
                 "status_after": effects.next_status.to_string(),
                 "payment_status_before": effects.payment_status_before.to_string(),
-                "payment_status_after": effects.next_payment_status.to_string(),
-                "fulfillment_status_after": order.fulfillment_status.to_string(),
+                "payment_status_after": next_payment_status.to_string(),
+                "fulfillment_status_after": next_fulfillment_status.to_string(),
                 "version_before": version_before,
                 "version_after": version_before + 1,
                 "total_amount": order.total_amount.to_string(),
@@ -1887,8 +1912,11 @@ impl PgKernelExecutor {
             .await
             .map_err(pg_err)?;
         }
-        let updated = sqlx::query("UPDATE orders SET status = $1, tracking_number = COALESCE($2, tracking_number), updated_at = $3, version = version + 1 WHERE id = $4 AND version = $5")
-            .bind(effects.resolved_status.to_string()).bind(&command.payload.tracking_number).bind(started_at)
+        let next_fulfillment_status = FulfillmentStatus::for_order_status(effects.resolved_status)
+            .unwrap_or(order.fulfillment_status);
+        let updated = sqlx::query("UPDATE orders SET status = $1, fulfillment_status = $2, tracking_number = COALESCE($3, tracking_number), updated_at = $4, version = version + 1 WHERE id = $5 AND version = $6")
+            .bind(effects.resolved_status.to_string()).bind(next_fulfillment_status.to_string())
+            .bind(&command.payload.tracking_number).bind(started_at)
             .bind(order_uuid).bind(version_before).execute(tx.as_mut()).await
             .map_err(pg_err)?;
         if updated.rows_affected() == 0 {
@@ -1921,7 +1949,7 @@ impl PgKernelExecutor {
             order_id.clone(),
             serde_json::json!({"order_id": order_id, "status_before": effects.status_before.to_string(),
                 "status_after": effects.resolved_status.to_string(), "payment_status_before": order.payment_status.to_string(),
-                "payment_status_after": order.payment_status.to_string(), "fulfillment_status_after": order.fulfillment_status.to_string(),
+                "payment_status_after": order.payment_status.to_string(), "fulfillment_status_after": next_fulfillment_status.to_string(),
                 "version_before": version_before, "version_after": version_before + 1, "total_amount": order.total_amount.to_string()}),
         );
         append_kernel_event_tx(tx.as_mut(), &event).await?;

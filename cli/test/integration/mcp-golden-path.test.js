@@ -54,15 +54,18 @@ function journeyFor(strict) {
   const dbPath = path.join(dir, 'store.db');
   const state = { journey: {}, server: null, seq: 0, governed: [] };
 
-  /** Call a tool; fail with the tool's own error when it (or its receipt) says it failed. */
+  /**
+   * Call a tool; fail with the tool's own error when it (or its receipt) says
+   * it failed. The result contract (`ok`, `failure`) already reads every
+   * failure shape, a rejected kernel receipt included.
+   */
   async function call(name, params) {
     const r = await state.server.executeTool(name, params, {
       idempotencyKey: `golden-${name}-${++state.seq}`,
     });
-    const failed = !r.success || r.result?.success === false;
-    if (failed) {
-      const why = r.error ?? r.result?.error ?? r.result?.receipt?.error_message ?? r;
-      assert.fail(`${name} failed: ${typeof why === 'string' ? why : JSON.stringify(why)}`);
+    if (!r.ok || r.preview) {
+      const why = r.failure ? `${r.failure.code}: ${r.failure.message}` : 'preview only';
+      assert.fail(`${name} failed: ${why}`);
     }
     if (r.result?.kernel) state.governed.push({ tool: name, receipt: r.result.receipt });
     return r.result;

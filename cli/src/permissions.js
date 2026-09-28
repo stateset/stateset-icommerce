@@ -909,6 +909,10 @@ export const TOOL_PERMISSIONS = {
   update_fraud_rule: 'admin',
   review_flagged_order: 'write',
 
+  // Explainability (read-only narratives assembled from other domains)
+  explain_order: 'read',
+  explain_cart_pricing: 'read',
+
   // Agentic Runtime
   discover_tools: 'read',
   delegate_to_agent: 'write',

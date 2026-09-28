@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs';
 
 import { runSmoke } from '../../scripts/mcp-tool-smoke.mjs';
 import { ALL_DOMAIN_TOOLS } from '../../src/tools/domain-registry.js';
+import { validateToolResultContract } from '../../src/mcp/tool-result-contract.js';
 
 const backlog = JSON.parse(
   readFileSync(new URL('../fixtures/mcp-tool-smoke-backlog.json', import.meta.url), 'utf8'),
@@ -47,6 +48,14 @@ describe('every MCP tool works or refuses cleanly on a fresh store', { skip: !ro
       .filter((r) => (r.kind === 'defect' || r.kind === 'timeout') && !known.has(r.tool))
       .map((r) => `${r.tool}: ${r.kind}: ${r.message}`);
     assert.deepEqual(fresh, [], 'these tools crash on a fresh store');
+  });
+
+  it('answers every call with a valid result contract (see mcp-result-contract.test.js)', () => {
+    const bad = rows
+      .filter((r) => r.contract)
+      .map((r) => ({ tool: r.tool, problems: validateToolResultContract(r.contract) }))
+      .filter((r) => r.problems.length > 0);
+    assert.deepEqual(bad, []);
   });
 
   it('keeps the backlog honest: a fixed tool must leave it', () => {

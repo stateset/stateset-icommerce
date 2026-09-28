@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 969,
+  "totalTools": 971,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 951
+      "count": 953
     },
     {
       "name": "stateset-scaffold",
@@ -19,7 +19,7 @@
       "count": 5
     }
   ],
-  "domainCount": 89,
+  "domainCount": 90,
   "domains": [
     {
       "name": "a2a",
@@ -144,6 +144,10 @@
     {
       "name": "erc8004",
       "count": 5
+    },
+    {
+      "name": "explain",
+      "count": 2
     },
     {
       "name": "fixed_assets",
@@ -389,7 +393,7 @@
     },
     {
       "name": "read",
-      "count": 477
+      "count": 479
     },
     {
       "name": "write",
@@ -399,7 +403,7 @@
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
-    "read": 477,
+    "read": 479,
     "write": 424
   },
   "tools": [
@@ -4506,6 +4510,24 @@
       "qualifiedName": "mcp__stateset-commerce__expire_cart",
       "policyDomain": "carts",
       "permission": "write"
+    },
+    {
+      "name": "explain_cart_pricing",
+      "description": "Explain why a cart costs what it costs: lines, subtotal, promotions applied and REFUSED with reason codes, tax by jurisdiction, shipping, and a check that the explained total equals the stored grand total. Pass couponCodes to ask why a code does or does not apply. Read-only: nothing is written to the cart.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__explain_cart_pricing",
+      "policyDomain": "explain",
+      "permission": "read"
+    },
+    {
+      "name": "explain_order",
+      "description": "Explain an order to a customer or merchant: one chronological timeline (checkout, payments, shipments, returns, refunds, fraud, activity), the money charged/refunded/net as exact strings, tax recomputed from the address, and flags for inconsistencies (e.g. paid but paymentStatus pending, refunded more than charged). Read-only; lists what it cannot see.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__explain_order",
+      "policyDomain": "explain",
+      "permission": "read"
     },
     {
       "name": "explain_policy_denial",

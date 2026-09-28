@@ -19,11 +19,12 @@ import { randomUUID } from 'node:crypto';
 
 import { createStatesetMcpServer } from '../src/mcp-server.js';
 import { ALL_DOMAIN_TOOLS } from '../src/tools/domain-registry.js';
+import { toToolResultContract } from '../src/mcp/tool-result-contract.js';
 
 /** Messages that mean the tool itself is broken, whatever its input. */
 export const DEFECT_PATTERNS = [
   /is not a function/i,
-  /Cannot read propert(?:y|ies) of (?:undefined|null)/i,
+  /Cannot read (?:property|properties) of (?:undefined|null)/i,
   /Cannot destructure/i,
   /is not defined/i,
   /is not iterable/i,
@@ -34,11 +35,16 @@ export const DEFECT_PATTERNS = [
   /\bexpect(?:ed)? .* but got\b/i,
 ];
 
+/**
+ * Classify one call from its result contract (src/mcp/tool-result-contract.js):
+ * `ok` -> 'ok' (a preview is ok too); a refusal with a crash-shaped message ->
+ * 'defect'; any other `ok: false` -> 'refused'.
+ */
 export function classifyOutcome(outcome) {
   if (outcome.timedOut) return 'timeout';
   if (outcome.threw)
     return DEFECT_PATTERNS.some((p) => p.test(outcome.message)) ? 'defect' : 'refused';
-  if (outcome.success) return 'ok';
+  if (outcome.contract?.ok ?? outcome.success) return 'ok';
   return DEFECT_PATTERNS.some((p) => p.test(outcome.message ?? '')) ? 'defect' : 'refused';
 }
 
@@ -164,18 +170,15 @@ async function callWithTimeout(server, name, params, ms) {
   const call = server
     .executeTool(name, params)
     .then((result) => {
-      // A tool can succeed at the dispatch layer while its own result says it
-      // failed ({ success: false, error } -- including a kernel receipt that
-      // was rejected). Judge the tool by its own result.
-      const inner = result?.result;
-      const innerFailed = inner && typeof inner === 'object' && inner.success === false;
-      const message =
-        result?.error?.message ??
-        (typeof result?.error === 'string' ? result.error : undefined) ??
-        (typeof inner?.error === 'string' ? inner.error : inner?.error?.message) ??
-        inner?.receipt?.error_message ??
-        (result?.success && !innerFailed ? undefined : JSON.stringify(result).slice(0, 300));
-      return { success: result?.success === true && !innerFailed, message };
+      // The contract judges the tool by its own result too: `{ success: false }`
+      // and a rejected kernel receipt are `ok: false`.
+      const contract = toToolResultContract(result);
+      return {
+        success: contract.ok,
+        contract,
+        code: contract.error?.code,
+        message: contract.error?.message,
+      };
     })
     .catch((error) => ({ threw: true, message: String(error?.stack ?? error) }));
   const outcome = await Promise.race([call, timeout]);
@@ -183,10 +186,14 @@ async function callWithTimeout(server, name, params, ms) {
   return outcome;
 }
 
-export async function runSmoke({ only = null, timeoutMs = 20_000 } = {}) {
+/**
+ * @param {{ only?: Set<string>|null, timeoutMs?: number, allowApply?: boolean }} [options]
+ *   `allowApply: false` runs the sweep in preview mode (writes are previews).
+ */
+export async function runSmoke({ only = null, timeoutMs = 20_000, allowApply = true } = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'mcp-smoke-'));
   const dbPath = path.join(dir, 'store.db');
-  const server = createStatesetMcpServer({ dbPath, allowApply: true });
+  const server = createStatesetMcpServer({ dbPath, allowApply });
   const rows = [];
   try {
     for (const tool of ALL_DOMAIN_TOOLS) {
@@ -202,6 +209,9 @@ export async function runSmoke({ only = null, timeoutMs = 20_000 } = {}) {
       rows.push({
         tool: tool.name,
         kind: classifyOutcome(outcome),
+        code: outcome.code,
+        preview: outcome.contract?.preview,
+        contract: outcome.contract,
         message: outcome.message?.split('\n')[0]?.slice(0, 240),
       });
     }
@@ -222,6 +232,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   for (const r of rows.filter((r) => r.kind === 'defect' || r.kind === 'timeout')) {
     console.log(`${r.kind.padEnd(8)} ${r.tool.padEnd(40)} ${r.message ?? ''}`);
   }
-  if (jsonAt >= 0) writeFileSync(args[jsonAt + 1], JSON.stringify(rows, null, 2));
+  if (jsonAt >= 0) {
+    const slim = rows.map(({ contract: _contract, ...row }) => row);
+    writeFileSync(args[jsonAt + 1], JSON.stringify(slim, null, 2));
+  }
   process.exit(0);
 }

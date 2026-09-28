@@ -10,9 +10,10 @@ use sqlx::FromRow;
 use sqlx::postgres::PgPool;
 use stateset_core::{
     BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CurrencyCode,
-    CustomerId, InvoiceId, OrderId, OrderStatus, Payment, PaymentFilter, PaymentId, PaymentMethod,
-    PaymentMethodType, PaymentRepository, PaymentTransactionStatus, Refund, RefundStatus, Result,
-    UpdatePayment, Validate, generate_payment_number, generate_refund_number, validate_batch_size,
+    CustomerId, InvoiceId, OrderId, OrderPaymentLedger, OrderStatus, Payment, PaymentFilter,
+    PaymentId, PaymentMethod, PaymentMethodType, PaymentRepository, PaymentStatus,
+    PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment, Validate,
+    generate_payment_number, generate_refund_number, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -327,6 +328,125 @@ pub(crate) async fn void_in_flight_payments_for_order_pg(
     Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
+/// The order's payment ledger (every payment row against `order_id`), summed
+/// in exact `Decimal`. Mirrors the SQLite `order_payment_ledger_conn`.
+pub(crate) async fn order_payment_ledger_pg(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+) -> Result<OrderPaymentLedger> {
+    let rows: Vec<(String, Decimal, Decimal)> =
+        sqlx::query_as("SELECT status, amount, amount_refunded FROM payments WHERE order_id = $1")
+            .bind(order_id)
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+    let mut ledger = OrderPaymentLedger::default();
+    for (raw_status, amount, refunded) in rows {
+        let status: PaymentTransactionStatus = raw_status.parse().map_err(|_| {
+            CommerceError::DatabaseError(format!("Invalid payment status '{raw_status}'"))
+        })?;
+        ledger.record(status, amount, refunded);
+    }
+    Ok(ledger)
+}
+
+/// The payment status `order_id`'s ledger implies, given the order's stored
+/// `total` and `current` payment status ([`PaymentStatus::derive`]).
+pub(crate) async fn derive_order_payment_status_pg(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+    total: Decimal,
+    current: PaymentStatus,
+) -> Result<PaymentStatus> {
+    Ok(PaymentStatus::derive(total, &order_payment_ledger_pg(conn, order_id).await?, current))
+}
+
+/// Recompute `orders.payment_status` for `order_id` from its payment ledger,
+/// on the caller's transaction, and write it when it changed (bumping the
+/// order's `version` and `updated_at`, and emitting
+/// `orders.payment_status_changed.v1` in the same commit).
+///
+/// The order row is locked `FOR UPDATE` BEFORE the ledger is read, so two
+/// concurrent payment/refund writes on one order serialize here and the second
+/// derives from a ledger that includes the first's committed change (READ
+/// COMMITTED re-reads per statement). A payment whose `order_id` does not
+/// resolve to an order is a no-op. Returns the emitted event's id, or `None`
+/// when nothing changed. Mirrors the SQLite `sync_order_payment_status_tx`.
+pub(crate) async fn sync_order_payment_status_pg(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+    now: DateTime<Utc>,
+) -> Result<Option<Uuid>> {
+    let order: Option<(Decimal, String, i32)> = sqlx::query_as(
+        "SELECT total_amount, payment_status, version FROM orders WHERE id = $1 FOR UPDATE",
+    )
+    .bind(order_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    let Some((total, raw_status, version)) = order else { return Ok(None) };
+    let before: PaymentStatus = raw_status.parse().map_err(|_| {
+        CommerceError::DatabaseError(format!("Invalid order.payment_status '{raw_status}'"))
+    })?;
+    let after = derive_order_payment_status_pg(conn, order_id, total, before).await?;
+    if after == before {
+        return Ok(None);
+    }
+    let rows = sqlx::query(
+        "UPDATE orders SET payment_status = $1, updated_at = $2, version = version + 1
+         WHERE id = $3 AND version = $4",
+    )
+    .bind(after.to_string())
+    .bind(now)
+    .bind(order_id)
+    .bind(version)
+    .execute(&mut *conn)
+    .await
+    .map_err(map_db_error)?
+    .rows_affected();
+    if rows == 0 {
+        return Err(CommerceError::VersionConflict {
+            entity: "order".to_string(),
+            id: order_id.to_string(),
+            expected_version: version,
+        });
+    }
+    let event = KernelOutboxEvent::domain(
+        "orders.payment_status_changed.v1",
+        "order",
+        order_id.to_string(),
+        serde_json::json!({
+            "order_id": order_id.to_string(),
+            "payment_status_before": before.to_string(),
+            "payment_status_after": after.to_string(),
+            "version_before": version,
+            "version_after": version + 1,
+            "total_amount": total.to_string(),
+        }),
+        None,
+    );
+    append_kernel_event_tx(conn, &event).await?;
+    Ok(Some(event.id))
+}
+
+/// [`sync_order_payment_status_pg`] for the order `payment_id` belongs to.
+pub(crate) async fn sync_order_payment_status_for_payment_pg(
+    conn: &mut sqlx::PgConnection,
+    payment_id: Uuid,
+    now: DateTime<Utc>,
+) -> Result<Option<Uuid>> {
+    let order_id: Option<Option<Uuid>> =
+        sqlx::query_scalar("SELECT order_id FROM payments WHERE id = $1")
+            .bind(payment_id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+    match order_id.flatten() {
+        Some(order_id) => sync_order_payment_status_pg(conn, order_id, now).await,
+        None => Ok(None),
+    }
+}
+
 /// Whether any payment row references `order_id`, on the caller's connection.
 /// The orders module consults it inside its delete transaction.
 pub(crate) async fn order_has_payments_pg(
@@ -493,6 +613,9 @@ pub(crate) async fn mark_completed_pg(
     .rows_affected();
     if rows == 0 {
         return Err(transition_conflict(current, target));
+    }
+    if let Some(order_id) = order_id {
+        sync_order_payment_status_pg(&mut *conn, order_id, now).await?;
     }
     Ok(())
 }
@@ -790,6 +913,9 @@ impl PgPaymentRepository {
             return Err(err);
         }
         append_kernel_event_tx(tx.as_mut(), &outbox_event).await?;
+        if let Some(order_id) = input.order_id {
+            sync_order_payment_status_pg(tx.as_mut(), order_id.into_uuid(), now).await?;
+        }
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
@@ -938,6 +1064,11 @@ impl PgPaymentRepository {
         .rows_affected();
         if rows == 0 {
             return Err(transition_conflict(current, target));
+        }
+        if current != target {
+            if let Some(order_id) = payment.order_id {
+                sync_order_payment_status_pg(tx.as_mut(), order_id.into_uuid(), now).await?;
+            }
         }
         tx.commit().await.map_err(map_db_error)?;
 
@@ -1093,6 +1224,7 @@ impl PgPaymentRepository {
         if rows == 0 {
             return Err(transition_conflict(current, target));
         }
+        sync_order_payment_status_for_payment_pg(tx.as_mut(), id, now).await?;
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
@@ -1373,6 +1505,7 @@ impl PgPaymentRepository {
         if rows == 0 {
             return Err(transition_conflict(payment_status, new_status));
         }
+        sync_order_payment_status_for_payment_pg(tx.as_mut(), payment_id, now).await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -1696,6 +1829,9 @@ impl PgPaymentRepository {
                 input.idempotency_key.clone(),
             );
             append_kernel_event_tx(tx.as_mut(), &outbox_event).await?;
+            if let Some(order_id) = input.order_id {
+                sync_order_payment_status_pg(tx.as_mut(), order_id.into_uuid(), now).await?;
+            }
 
             payments.push(Payment {
                 id: PaymentId::from(id),
@@ -1833,6 +1969,11 @@ impl PgPaymentRepository {
             .rows_affected();
             if rows == 0 {
                 return Err(transition_conflict(current, target));
+            }
+            if current != target {
+                if let Some(order_id) = payment.order_id {
+                    sync_order_payment_status_pg(tx.as_mut(), order_id.into_uuid(), now).await?;
+                }
             }
 
             // Fetch the updated payment
