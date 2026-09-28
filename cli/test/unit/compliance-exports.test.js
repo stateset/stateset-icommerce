@@ -1198,3 +1198,45 @@ describe('edge cases', () => {
     }
   });
 });
+
+// ============================================================================
+// A fresh A2A store: the schema the store itself creates, nothing seeded
+// ============================================================================
+
+describe('compliance on a fresh A2A store', () => {
+  it('runs every export against the schema the A2A store creates', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { A2AStore } = await import('../../src/a2a/store.js');
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'compliance-fresh-'));
+    const store = new A2AStore({ dbPath: path.join(dir, 'a2a.db') });
+    store.init();
+    const svc = createComplianceService(store, { commerceDbPath: path.join(dir, 'store.db') });
+    try {
+      // agent_cards, the circuit-breaker tables and the dispute/SLA column
+      // names used to be assumed; each of these threw "no such table/column".
+      svc.exportAuditTrail({ agentName: 'agent-a' });
+      svc.generateComplianceSummary({ agentName: 'agent-a' });
+      assert.deepEqual(svc.generateGDPRExport('0xabc').personalData ?? [], []);
+      svc.deleteGDPRData('0xabc');
+      svc.deleteGDPRData('0xabc', { keepTransactions: true });
+      const soc2 = svc.generateSOC2Evidence({
+        controls: [
+          'access_control',
+          'change_management',
+          'encryption',
+          'monitoring',
+          'incident_response',
+        ],
+      });
+      assert.deepEqual(
+        (soc2.evidence ?? []).filter((e) => e.status === 'error'),
+        [],
+      );
+    } finally {
+      svc.close?.();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
