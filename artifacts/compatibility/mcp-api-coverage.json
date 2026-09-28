@@ -4,7 +4,7 @@
     "coverageModel": "cli/src/coverage/mcp-api-coverage.js"
   },
   "totalDomainModules": 87,
-  "totalDomainTools": 937,
+  "totalDomainTools": 936,
   "totalCommerceGetters": 68,
   "mappedCommerceGetters": 68,
   "uncoveredCommerceGetters": [],
@@ -258,7 +258,7 @@
     {
       "getter": "segments",
       "module": "segments",
-      "toolCount": 6
+      "toolCount": 5
     },
     {
       "getter": "serials",

@@ -35,6 +35,26 @@ function createConfiguredOutbox(db) {
   return createOutbox(db, getAgentKeyManagerOptions());
 }
 
+/**
+ * The SQLite handle the sync outbox and engine run on.
+ *
+ * The outbox is a better-sqlite3-style store (`prepare`/`exec`/`transaction`).
+ * The `@stateset/embedded` N-API `Commerce` does not expose one -- there is no
+ * `commerce.db` on the binding -- so on a binding-backed server these tools
+ * fail here with an explanation instead of a TypeError deep inside the outbox.
+ * @param {any} commerce
+ */
+function requireSyncDb(commerce) {
+  const db = commerce?.db;
+  if (!db || typeof db.prepare !== 'function') {
+    throw new Error(
+      'Sync tools need a SQLite database handle (commerce.db); the @stateset/embedded ' +
+        'Commerce binding does not expose one, so the local sync outbox is unavailable here.',
+    );
+  }
+  return db;
+}
+
 function formatPulledEvent(event, { includePayloads = false } = {}) {
   const encrypted = Number(event.payloadKind ?? 0) === 1 && !!event.payloadEncrypted;
 
@@ -116,7 +136,7 @@ export const syncTools = [
         };
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const outbox = createConfiguredOutbox(commerce.db);
+      const outbox = createConfiguredOutbox(requireSyncDb(commerce));
       const stats = outbox.getStats();
       const syncState = outbox.getSyncState();
       let remoteHead = syncState.headSequence;
@@ -182,7 +202,7 @@ export const syncTools = [
           hint: 'Run "stateset-sync init" to set up sync.',
         };
       if (!dryRun && !allowApply) {
-        const outbox = createConfiguredOutbox(commerce.db);
+        const outbox = createConfiguredOutbox(requireSyncDb(commerce));
         const pending = outbox.getPending(batchSize);
         return {
           success: false,
@@ -200,7 +220,7 @@ export const syncTools = [
       }
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(commerce), config });
       await engine.initialize();
       const result = await engine.push({ batchSize, dryRun });
       await engine.shutdown();
@@ -279,7 +299,7 @@ export const syncTools = [
         };
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(commerce), config });
       await engine.initialize();
       const includeEvents = requestedIncludeEvents || includePayloads || decryptPayloads;
       const result = await engine.pull({ fromSequence, limit, includeEvents });
@@ -342,12 +362,13 @@ export const syncTools = [
           error: 'Sync not configured',
           hint: 'Run "stateset-sync init" to set up sync.',
         };
-      const outbox = createConfiguredOutbox(commerce.db);
+      const db = requireSyncDb(commerce);
+      const outbox = createConfiguredOutbox(db);
       outbox.initialize();
       const stmt =
         status === 'all'
-          ? commerce.db.prepare('SELECT * FROM _ves_outbox ORDER BY local_seq DESC LIMIT ?')
-          : commerce.db.prepare(
+          ? db.prepare('SELECT * FROM _ves_outbox ORDER BY local_seq DESC LIMIT ?')
+          : db.prepare(
               'SELECT * FROM _ves_outbox WHERE sync_status = ? ORDER BY local_seq DESC LIMIT ?',
             );
       const rows = status === 'all' ? stmt.all(limit) : stmt.all(status, limit);
@@ -407,7 +428,7 @@ export const syncTools = [
       try {
         const rawConfig = loadSyncConfig();
         const config = new SyncConfig(rawConfig);
-        const engine = createSyncEngine({ db: commerce.db, config });
+        const engine = createSyncEngine({ db: requireSyncDb(commerce), config });
         const events = engine.getPulledEvents(limit);
         const formatted = await collectFormattedPulledEvents(engine, events, {
           includePayloads,
@@ -481,7 +502,7 @@ export const syncTools = [
       try {
         const rawConfig = loadSyncConfig();
         const config = new SyncConfig(rawConfig);
-        const engine = createSyncEngine({ db: commerce.db, config });
+        const engine = createSyncEngine({ db: requireSyncDb(commerce), config });
         const decrypted = await engine.decryptStoredEvent({
           eventId,
           sequenceNumber,
@@ -518,7 +539,7 @@ export const syncTools = [
           hint: 'Run "stateset-sync init" to set up sync.',
         };
       if (!allowApply) {
-        const outbox = createConfiguredOutbox(commerce.db);
+        const outbox = createConfiguredOutbox(requireSyncDb(commerce));
         const stats = outbox.getStats();
         return {
           success: false,
@@ -527,7 +548,7 @@ export const syncTools = [
           failedCount: stats.failed,
         };
       }
-      const outbox = createConfiguredOutbox(commerce.db);
+      const outbox = createConfiguredOutbox(requireSyncDb(commerce));
       const retriedCount = outbox.retryFailed();
       return {
         success: true,
@@ -596,7 +617,7 @@ export const syncTools = [
 
       if (source === 'local') {
         try {
-          const engine = createSyncEngine({ db: commerce.db, config });
+          const engine = createSyncEngine({ db: requireSyncDb(commerce), config });
           const events = engine.getPulledEventsForEntity(entityType, entityId, limit);
           const formatted = await collectFormattedPulledEvents(engine, events, {
             includePayloads,
@@ -675,13 +696,13 @@ export const syncTools = [
         };
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(commerce), config });
       await engine.initialize();
       let pushResult = { success: true, pushed: 0, rejected: 0 };
       if (allowApply) {
         pushResult = await engine.push({ batchSize: pushBatchSize });
       } else {
-        const outbox = createConfiguredOutbox(commerce.db);
+        const outbox = createConfiguredOutbox(requireSyncDb(commerce));
         pushResult = {
           success: false,
           pushed: 0,
@@ -711,7 +732,7 @@ export const syncTools = [
         };
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(commerce), config });
       await engine.initialize();
       const conflicts = await engine.getConflicts();
       await engine.shutdown();
@@ -766,7 +787,7 @@ export const syncTools = [
         };
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(commerce), config });
       await engine.initialize();
       const result = await engine.resolveConflict(conflictId, strategy);
       await engine.shutdown();
@@ -799,7 +820,7 @@ export const syncTools = [
         };
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(commerce), config });
       await engine.initialize();
       const conflicts = await engine.getConflicts();
       if (!allowApply) {

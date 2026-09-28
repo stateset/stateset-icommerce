@@ -8,6 +8,52 @@
 import { z } from 'zod';
 import { applyRequired } from '../utils/apply-guard.js';
 
+/** Public projection of a binding `WishlistOutput`. */
+function projectWishlist(w, { withItems = false } = {}) {
+  return {
+    id: w.id,
+    customerId: w.customerId,
+    name: w.name,
+    visibility: w.isPublic ? 'public' : 'private',
+    itemCount: w.items.length,
+    ...(withItems ? { items: w.items } : {}),
+    createdAt: w.createdAt,
+    updatedAt: w.updatedAt,
+  };
+}
+
+/**
+ * Resolve the priced variant a wishlist item refers to. Returns
+ * `{ product, variant }`, or `{ reason }` when the item cannot be priced
+ * honestly (missing/inactive product, unknown variant, or no single default).
+ */
+async function resolvePricedVariant(commerce, item) {
+  const product = await commerce.products.get(item.productId);
+  if (!product) return { reason: 'product not found' };
+  if (product.status !== 'active') return { reason: `product is ${product.status}` };
+
+  if (item.variantId) {
+    const variant = await commerce.products.getVariant(item.variantId);
+    if (!variant || variant.productId !== item.productId) {
+      return { reason: 'variant not found for product' };
+    }
+    return { product, variant };
+  }
+
+  const variants = await commerce.products.getVariants(item.productId);
+  const variant =
+    variants.find((v) => v.isDefault) ?? (variants.length === 1 ? variants[0] : undefined);
+  if (!variant) {
+    return {
+      reason:
+        variants.length === 0
+          ? 'product has no priced variant'
+          : 'product has several variants and none is default; wishlist item names no variant',
+    };
+  }
+  return { product, variant };
+}
+
 /**
  * Wishlist tool definitions
  */
@@ -30,10 +76,18 @@ export const wishlistTools = [
         return applyRequired('Create wishlist', params);
       }
 
+      const visibility = params.visibility || 'private';
+      if (visibility === 'shared') {
+        return {
+          success: false,
+          error: "visibility 'shared' is not supported by the engine; use 'private' or 'public'",
+        };
+      }
+
       const wishlist = await commerce.wishlists.create({
         customerId: params.customerId,
         name: params.name || 'My Wishlist',
-        visibility: params.visibility || 'private',
+        isPublic: visibility === 'public',
       });
       return { success: true, message: 'Wishlist created', wishlist };
     },
@@ -54,19 +108,7 @@ export const wishlistTools = [
         return { success: false, error: 'Wishlist not found' };
       }
 
-      return {
-        success: true,
-        wishlist: {
-          id: wishlist.id,
-          customerId: wishlist.customerId,
-          name: wishlist.name,
-          visibility: wishlist.visibility,
-          itemCount: wishlist.itemCount,
-          items: wishlist.items,
-          createdAt: wishlist.createdAt,
-          updatedAt: wishlist.updatedAt,
-        },
-      };
+      return { success: true, wishlist: projectWishlist(wishlist, { withItems: true }) };
     },
   },
 
@@ -107,7 +149,12 @@ export const wishlistTools = [
     description: 'Remove a product from a wishlist.',
     inputSchema: {
       wishlistId: z.string().min(1).describe('Wishlist ID'),
-      itemId: z.string().min(1).describe('Wishlist item ID to remove'),
+      itemId: z
+        .string()
+        .min(1)
+        .describe(
+          'Product ID of the wishlist item to remove (wishlist items are keyed by product)',
+        ),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -137,28 +184,21 @@ export const wishlistTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { customerId, limit } = params;
-      const wishlists = await commerce.wishlists.list({ customerId });
-      const limited = wishlists.slice(0, limit);
+      const wishlists = await commerce.wishlists.list({ customerId, limit });
 
       return {
         success: true,
         customerId,
-        returned: limited.length,
-        wishlists: limited.map((w) => ({
-          id: w.id,
-          name: w.name,
-          visibility: w.visibility,
-          itemCount: w.itemCount,
-          createdAt: w.createdAt,
-          updatedAt: w.updatedAt,
-        })),
+        returned: wishlists.length,
+        wishlists: wishlists.map((w) => projectWishlist(w)),
       };
     },
   },
 
   {
     name: 'convert_wishlist_to_cart',
-    description: 'Convert all items in a wishlist to a shopping cart.',
+    description:
+      "Create a cart for the wishlist's customer and add each wishlist item at its catalog variant price. Items that cannot be priced are reported, not added.",
     inputSchema: {
       wishlistId: z.string().min(1).describe('Wishlist ID to convert'),
       clearWishlist: z
@@ -173,15 +213,77 @@ export const wishlistTools = [
         return applyRequired('Convert wishlist to cart', params);
       }
 
-      const result = await commerce.wishlists.convertToCart(params.wishlistId, {
-        clearWishlist: params.clearWishlist || false,
-      });
+      const wishlist = await commerce.wishlists.get(params.wishlistId);
+      if (!wishlist) {
+        return { success: false, error: 'Wishlist not found' };
+      }
+
+      // Price every line before creating anything, so an unpriceable wishlist
+      // never leaves an empty cart behind.
+      const lines = [];
+      const itemsUnavailable = [];
+      for (const item of wishlist.items) {
+        const resolved = await resolvePricedVariant(commerce, item);
+        if (resolved.reason) {
+          itemsUnavailable.push({
+            productId: item.productId,
+            variantId: item.variantId,
+            reason: resolved.reason,
+          });
+        } else {
+          lines.push({ item, ...resolved });
+        }
+      }
+      if (lines.length === 0) {
+        return {
+          success: false,
+          error: 'No wishlist items could be priced; no cart was created',
+          itemsAdded: 0,
+          itemsUnavailable,
+        };
+      }
+
+      const cart = await commerce.carts.create({ customerId: wishlist.customerId });
+      const added = [];
+      for (const { item, product, variant } of lines) {
+        try {
+          await commerce.carts.addItemExact(cart.id, {
+            productId: product.id,
+            variantId: variant.id,
+            sku: variant.sku,
+            name: variant.name ? `${product.name} - ${variant.name}` : product.name,
+            quantity: item.quantity,
+            unitPrice: variant.priceExact,
+          });
+          added.push(item);
+        } catch (err) {
+          itemsUnavailable.push({
+            productId: item.productId,
+            variantId: item.variantId,
+            reason: `add to cart failed: ${err?.message ?? String(err)}`,
+          });
+        }
+      }
+
+      const removedFromWishlist = [];
+      if (params.clearWishlist) {
+        // Only the lines that actually reached the cart leave the wishlist.
+        for (const item of added) {
+          await commerce.wishlists.removeItem(wishlist.id, item.productId);
+          removedFromWishlist.push(item.productId);
+        }
+      }
+
       return {
-        success: true,
-        message: 'Wishlist converted to cart',
-        cartId: result.cartId,
-        itemsAdded: result.itemsAdded,
-        itemsUnavailable: result.itemsUnavailable,
+        success: added.length > 0,
+        message:
+          added.length > 0
+            ? 'Wishlist converted to cart'
+            : 'Cart created but no items could be added',
+        cartId: cart.id,
+        itemsAdded: added.length,
+        itemsUnavailable,
+        removedFromWishlist,
       };
     },
   },

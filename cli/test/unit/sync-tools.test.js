@@ -22,6 +22,7 @@ import path from 'path';
 
 // We need to import syncTools, but the module also imports sync config/outbox/engine/client.
 // These are just function imports and do not execute at import time.
+import Database from 'better-sqlite3';
 import { syncTools } from '../../src/tools/sync.js';
 
 // ---------------------------------------------------------------------------
@@ -390,4 +391,72 @@ describe('Sync Tools — "not configured" handler path', () => {
       );
     });
   }
+});
+
+describe('Sync Tools — sync_outbox database handle', () => {
+  let originalCwd;
+  let tempDir;
+
+  before(() => {
+    // isSyncConfigured() only checks that .stateset/sync.json exists.
+    originalCwd = process.cwd();
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-outbox-db-'));
+    fs.mkdirSync(path.join(tempDir, '.stateset'));
+    fs.writeFileSync(path.join(tempDir, '.stateset', 'sync.json'), '{}');
+    process.chdir(tempDir);
+  });
+
+  after(() => {
+    process.chdir(originalCwd);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('explains that the binding Commerce has no commerce.db instead of a TypeError', async () => {
+    // The @stateset/embedded Commerce exposes no `db`; this is its shape here.
+    const bindingShapedCommerce = { orders: {}, customers: {} };
+    await assert.rejects(
+      findTool('sync_outbox').handler({ commerce: bindingShapedCommerce, params: {} }),
+      /Sync tools need a SQLite database handle \(commerce\.db\)/,
+    );
+  });
+
+  it('reads _ves_outbox through a better-sqlite3 handle, filtered and limited', async () => {
+    const db = new Database(':memory:');
+    try {
+      const all = await findTool('sync_outbox').handler({ commerce: { db }, params: {} });
+      assert.deepEqual(all, { count: 0, filter: 'all', events: [] });
+
+      db.prepare(
+        `INSERT INTO _ves_outbox (event_id, tenant_id, store_id, entity_type, entity_id,
+           event_type, payload, payload_plain_hash, payload_cipher_hash, agent_key_id,
+           agent_signature, source_agent, sync_status)
+         VALUES (?, 't', 's', 'order', 'ord-1', 'order.created', '{}', 'h', 'h', 1, '0x', 'agent-1', ?)`,
+      ).run('evt-pending', 'pending');
+      db.prepare(
+        `INSERT INTO _ves_outbox (event_id, tenant_id, store_id, entity_type, entity_id,
+           event_type, payload, payload_plain_hash, payload_cipher_hash, agent_key_id,
+           agent_signature, source_agent, sync_status)
+         VALUES (?, 't', 's', 'order', 'ord-2', 'order.updated', '{}', 'h', 'h', 1, '0x', 'agent-1', ?)`,
+      ).run('evt-failed', 'failed');
+
+      const failed = await findTool('sync_outbox').handler({
+        commerce: { db },
+        params: { status: 'failed', limit: 5 },
+      });
+      assert.equal(failed.count, 1);
+      assert.equal(failed.events[0].eventId, 'evt-failed');
+      assert.equal(failed.events[0].syncStatus, 'failed');
+
+      const limited = await findTool('sync_outbox').handler({
+        commerce: { db },
+        params: { status: 'all', limit: 1 },
+      });
+      assert.deepEqual(
+        limited.events.map((e) => e.eventId),
+        ['evt-failed'],
+      );
+    } finally {
+      db.close();
+    }
+  });
 });

@@ -40,12 +40,16 @@ export function createCallableApiAccessor(resolveValue) {
         return resolveValue();
       },
       get(target, prop, receiver) {
-        if (prop in target) {
-          return Reflect.get(target, prop, receiver);
-        }
+        // The API's own members win. The accessor is a function, so checking
+        // it first answered `apply`, `call`, `bind`, `name` and `length` with
+        // Function.prototype's — `commerce.storeCredits.apply(...)` called
+        // Function.prototype.apply instead of the binding's method.
         const api = resolveValue();
-        const value = api?.[prop];
-        return typeof value === 'function' ? value.bind(api) : value;
+        if (api !== null && api !== undefined && prop in Object(api)) {
+          const value = api[prop];
+          return typeof value === 'function' ? value.bind(api) : value;
+        }
+        return Reflect.get(target, prop, receiver);
       },
       has(_target, prop) {
         const api = resolveValue();

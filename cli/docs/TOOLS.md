@@ -5,7 +5,7 @@
 
 Source of truth: `cli/src/tools/domain-registry.js`.
 
-**937 tools** across **87 domains**.
+**936 tools** across **87 domains**.
 
 ## Domains
 
@@ -42,7 +42,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [vector](#vector) | 16 |
 | [gift-cards](#gift-cards) | 7 |
 | [store-credits](#store-credits) | 5 |
-| [segments](#segments) | 6 |
+| [segments](#segments) | 5 |
 | [shipping-zones](#shipping-zones) | 7 |
 | [units-of-measure](#units-of-measure) | 10 |
 | [stock-snapshots](#stock-snapshots) | 5 |
@@ -281,7 +281,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `get_tax_exemption` | read | Get a tax exemption by ID. |
 | `create_tax_exemption` | write | Create a tax exemption certificate for a customer. |
 | `check_customer_tax_exempt` | read | Check whether a customer is currently tax exempt. |
-| `calculate_cart_tax` | read | Calculate and apply tax to a cart based on its shipping address. Must set shipping address first. Returns tax breakdown and updates cart totals. |
+| `calculate_cart_tax` | write | Calculate and apply tax to a cart based on its shipping address. Must set shipping address first. Returns tax breakdown and updates cart totals. |
 | `list_tax_providers` | read | List tax providers and capabilities for quote, commit, and void workflows. |
 | `update_tax_settings` | write | Update store tax settings. Requires --apply flag. |
 | `set_tax_enabled` | write | Enable or disable tax calculation. Requires --apply flag. |
@@ -332,7 +332,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `get_subscription` | read | Get details for a specific subscription. |
 | `create_subscription` | write | Create a new subscription for a customer. Requires --apply flag. |
 | `pause_subscription` | write | Pause a subscription (stops billing, can resume later). Requires --apply flag. |
-| `update_subscription` | write | Update subscription fields such as payment method or metadata. Requires --apply flag. |
+| `update_subscription` | write | Update subscription fields (status, price, paymentMethodId, nextBillingDate, discountPercent as a 0-1 fraction, discountAmount, couponCode). Requires --apply flag. |
 | `resume_subscription` | write | Resume a paused subscription. Requires --apply flag. |
 | `cancel_subscription` | delete | Cancel a subscription. By default cancels at end of period. Requires --apply flag. |
 | `skip_billing_cycle` | write | Skip the next billing cycle for a subscription. Requires --apply flag. |
@@ -696,19 +696,18 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `get_segment` | read | Get a segment by ID including its conditions and member count. |
 | `list_segments` | read | List all customer segments. |
 | `update_segment` | write | Update a segment name, description, or conditions. |
-| `evaluate_segment_membership` | read | Check whether a customer belongs to a segment. |
-| `rebuild_dynamic_segment` | write | Rebuild a dynamic segment by re-evaluating all customers against its conditions. |
+| `evaluate_segment_membership` | read | Check whether a customer is a recorded member of a segment. Reads stored membership; rules are not re-evaluated. |
 
 ## shipping-zones
 
 | Tool | Permission | Description |
 | --- | --- | --- |
 | `create_shipping_zone` | write | Create a shipping zone with country/region rules. |
-| `get_shipping_zone` | read | Get a shipping zone by ID. |
+| `get_shipping_zone` | read | Get a shipping zone by ID, including its shipping methods. |
 | `list_shipping_zones` | read | List all shipping zones. |
 | `update_shipping_zone` | write | Update a shipping zone name, countries, or regions. |
-| `create_shipping_method` | write | Create a shipping method within a zone (e.g., Standard, Express, Overnight). |
-| `calculate_shipping_rate` | read | Calculate shipping rate for a destination address and cart items. |
+| `create_shipping_method` | write | Create a shipping method within a zone (e.g., Standard, Express, Overnight). weight_based and price_based methods pick their rate from `conditions`; free always rates 0; flat and calculated use baseRate. |
+| `calculate_shipping_rate` | read | Calculate available shipping rates for a destination address. |
 | `list_shipping_methods` | read | List shipping methods for a specific zone. |
 
 ## units-of-measure
@@ -839,31 +838,31 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `add_to_wishlist` | write | Add a product to a wishlist. |
 | `remove_from_wishlist` | write | Remove a product from a wishlist. |
 | `list_wishlists` | read | List wishlists for a customer. |
-| `convert_wishlist_to_cart` | write | Convert all items in a wishlist to a shopping cart. |
+| `convert_wishlist_to_cart` | write | Create a cart for the wishlist's customer and add each wishlist item at its catalog variant price. Items that cannot be priced are reported, not added. |
 
 ## loyalty
 
 | Tool | Permission | Description |
 | --- | --- | --- |
-| `create_loyalty_program` | admin | Create a loyalty program with tiers and earning rules. |
-| `get_loyalty_program` | read | Get loyalty program details including tiers and reward catalog. |
+| `create_loyalty_program` | admin | Create a loyalty program with an earning rate and optional tiers. |
+| `get_loyalty_program` | read | Get loyalty program details including its tiers. |
 | `enroll_customer` | write | Enroll a customer in a loyalty program. |
-| `get_loyalty_account` | read | Get a customer loyalty account including points balance and tier. |
-| `earn_points` | write | Award loyalty points to a customer account. |
-| `redeem_points` | write | Redeem loyalty points for a reward or discount. |
-| `list_rewards` | read | List available rewards in a loyalty program. |
+| `get_loyalty_account` | read | Get a customer's loyalty account in a program: points balance and tier. |
+| `earn_points` | write | Award loyalty points to a customer's account in a program. |
+| `redeem_points` | write | Redeem loyalty points from a customer's account, optionally for a reward in the program. The engine refuses a redemption larger than the balance. |
+| `list_rewards` | read | List rewards in a loyalty program. |
 | `create_reward` | admin | Create a redeemable reward in a loyalty program. |
 
 ## fraud
 
 | Tool | Permission | Description |
 | --- | --- | --- |
-| `assess_order_fraud` | read | Run fraud assessment on an order. Returns a risk score and matched signals. |
-| `get_fraud_assessment` | read | Get a fraud assessment by ID. |
-| `list_fraud_signals` | read | List fraud signals for an order or across all recent orders. |
-| `create_fraud_rule` | admin | Create a custom fraud detection rule. |
-| `update_fraud_rule` | admin | Update a fraud detection rule. |
-| `review_flagged_order` | write | Review a flagged order and mark it as approved or rejected. |
+| `assess_order_fraud` | write | Record a fraud assessment for an order from caller-supplied signals. The engine stores the signals, sets the risk score to the highest signal score, and decides accept (or review when the risk score is 0.8 or higher). One assessment per order. |
+| `get_fraud_assessment` | read | Get the fraud assessment for an order. |
+| `list_fraud_signals` | read | List the fraud signals recorded on one order, or on the most recent assessments across orders. |
+| `create_fraud_rule` | admin | Create a fraud rule: when a signal of `signalType` scores at or above `threshold`, apply `action`. Rules are created enabled. |
+| `update_fraud_rule` | admin | Update a fraud rule (name, description, threshold, action, or enabled flag). |
+| `review_flagged_order` | write | Record a manual review of an order's fraud assessment: set its decision, the reviewer, and why. |
 
 ## connectors
 

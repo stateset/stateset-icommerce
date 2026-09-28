@@ -2,11 +2,59 @@
  * Store Credit Tools Module
  *
  * MCP tool definitions for store credit issuance, adjustment, and application.
- * Modularized from mcp-server.js for better maintainability.
+ * Every call here targets the real `StoreCredits` class of `@stateset/embedded`:
+ * `create`, `get`, `list`, `adjust(id, { amount, note, referenceId })`,
+ * `apply(id, amount, referenceId?)`. Money crosses the binding as exact
+ * decimal strings.
  */
 
 import { z } from 'zod';
 import { applyRequired } from '../utils/apply-guard.js';
+
+const STORE_CREDIT_STATUSES = ['active', 'depleted', 'expired', 'voided'];
+const STORE_CREDIT_REASONS = [
+  'return',
+  'loyalty',
+  'compensation',
+  'promotion',
+  'manual',
+  'gift_card',
+];
+
+/** Page size used to count every matching row; below the engine's list cap. */
+const LIST_PAGE_SIZE = 500;
+
+/**
+ * Read every store credit matching `filter`, page by page, so the reported
+ * total is the real total rather than whatever one page returned.
+ * @param {any} commerce
+ * @param {object} filter
+ */
+async function listAllStoreCredits(commerce, filter) {
+  const all = [];
+  for (let offset = 0; ; offset += LIST_PAGE_SIZE) {
+    const page = await commerce.storeCredits.list({ ...filter, limit: LIST_PAGE_SIZE, offset });
+    all.push(...page);
+    if (page.length < LIST_PAGE_SIZE) return all;
+  }
+}
+
+function summarizeCredit(credit) {
+  return {
+    id: credit.id,
+    customerId: credit.customerId,
+    originalBalance: credit.originalBalance,
+    currentBalance: credit.currentBalance,
+    currency: credit.currency,
+    reason: credit.reason,
+    status: credit.status,
+    referenceId: credit.referenceId,
+    note: credit.note,
+    expiresAt: credit.expiresAt,
+    createdAt: credit.createdAt,
+    updatedAt: credit.updatedAt,
+  };
+}
 
 /**
  * Store credit tool definitions
@@ -26,11 +74,16 @@ export const storeCreditTools = [
         .default('USD')
         .describe('Currency code (default: USD)'),
       reason: z
-        .enum(['refund', 'goodwill', 'promotion', 'return', 'loyalty', 'other'])
+        .enum(STORE_CREDIT_REASONS)
         .optional()
-        .describe('Reason for issuing credit'),
+        .describe('Reason for issuing credit (engine default: return)'),
+      referenceId: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Source reference (e.g. the return or order ID)'),
       note: z.string().max(500).optional().describe('Internal note'),
-      expiresAt: z.string().optional().describe('Expiration date (ISO 8601)'),
+      expiresAt: z.string().optional().describe('Expiration date (RFC 3339)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -42,7 +95,8 @@ export const storeCreditTools = [
         customerId: params.customerId,
         amount: String(params.amount),
         currency: params.currency || 'USD',
-        reason: params.reason || 'other',
+        reason: params.reason,
+        referenceId: params.referenceId,
         note: params.note,
         expiresAt: params.expiresAt,
       });
@@ -58,28 +112,13 @@ export const storeCreditTools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const { creditId } = params;
-      const credit = await commerce.storeCredits.get(creditId);
+      const credit = await commerce.storeCredits.get(params.creditId);
 
       if (!credit) {
         return { success: false, error: 'Store credit not found' };
       }
 
-      return {
-        success: true,
-        credit: {
-          id: credit.id,
-          customerId: credit.customerId,
-          originalAmount: credit.originalAmount,
-          currentBalance: credit.currentBalance,
-          currency: credit.currency,
-          reason: credit.reason,
-          status: credit.status,
-          expiresAt: credit.expiresAt,
-          createdAt: credit.createdAt,
-          updatedAt: credit.updatedAt,
-        },
-      };
+      return { success: true, credit: summarizeCredit(credit) };
     },
   },
 
@@ -88,7 +127,8 @@ export const storeCreditTools = [
     description: 'List store credits with optional filters.',
     inputSchema: {
       customerId: z.string().min(1).optional().describe('Filter by customer ID'),
-      status: z.enum(['active', 'expired', 'fully_used']).optional().describe('Filter by status'),
+      status: z.enum(STORE_CREDIT_STATUSES).optional().describe('Filter by status'),
+      reason: z.enum(STORE_CREDIT_REASONS).optional().describe('Filter by reason'),
       limit: z
         .number()
         .int()
@@ -100,26 +140,15 @@ export const storeCreditTools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const { customerId, status, limit } = params;
-      const credits = await commerce.storeCredits.list({ customerId, status });
-      const count = await commerce.storeCredits.count({ customerId, status });
+      const { customerId, status, reason, limit } = params;
+      const credits = await listAllStoreCredits(commerce, { customerId, status, reason });
       const limited = credits.slice(0, limit);
 
       return {
         success: true,
-        totalCount: count,
+        totalCount: credits.length,
         returned: limited.length,
-        credits: limited.map((c) => ({
-          id: c.id,
-          customerId: c.customerId,
-          originalAmount: c.originalAmount,
-          currentBalance: c.currentBalance,
-          currency: c.currency,
-          reason: c.reason,
-          status: c.status,
-          expiresAt: c.expiresAt,
-          createdAt: c.createdAt,
-        })),
+        credits: limited.map(summarizeCredit),
       };
     },
   },
@@ -130,7 +159,12 @@ export const storeCreditTools = [
     inputSchema: {
       creditId: z.string().min(1).describe('Store credit ID'),
       amount: z.number().describe('Adjustment amount (positive to add, negative to subtract)'),
-      reason: z.string().min(1).max(500).describe('Reason for the adjustment'),
+      reason: z
+        .string()
+        .min(1)
+        .max(500)
+        .describe('Reason for the adjustment (recorded as the ledger note)'),
+      referenceId: z.string().min(1).optional().describe('Reference for the adjustment'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -138,10 +172,10 @@ export const storeCreditTools = [
         return applyRequired('Adjust store credit', params);
       }
 
-      const credit = await commerce.storeCredits.adjust({
-        creditId: params.creditId,
+      const credit = await commerce.storeCredits.adjust(params.creditId, {
         amount: String(params.amount),
-        reason: params.reason,
+        note: params.reason,
+        referenceId: params.referenceId,
       });
       return { success: true, message: 'Store credit adjusted', credit };
     },
@@ -152,7 +186,10 @@ export const storeCreditTools = [
     description: 'Apply store credit to an order.',
     inputSchema: {
       creditId: z.string().min(1).describe('Store credit ID'),
-      orderId: z.string().min(1).describe('Order ID to apply credit to'),
+      orderId: z
+        .string()
+        .min(1)
+        .describe('Order ID to apply credit to (recorded as the transaction reference)'),
       amount: z.number().positive().describe('Amount of credit to apply'),
     },
     permission: 'write',
@@ -161,11 +198,11 @@ export const storeCreditTools = [
         return applyRequired('Apply store credit', params);
       }
 
-      const transaction = await commerce.storeCredits.apply({
-        creditId: params.creditId,
-        orderId: params.orderId,
-        amount: String(params.amount),
-      });
+      const transaction = await commerce.storeCredits.apply(
+        params.creditId,
+        String(params.amount),
+        params.orderId,
+      );
       return { success: true, message: 'Store credit applied to order', transaction };
     },
   },

@@ -2,11 +2,51 @@
  * Fraud Detection Tools Module
  *
  * MCP tool definitions for fraud assessment, rule management, and order review.
- * Modularized from mcp-server.js for better maintainability.
+ *
+ * The engine does not detect fraud signals itself: the caller supplies the
+ * signals (type + 0.0-1.0 confidence score) and the engine records them,
+ * derives the risk score (the highest signal score) and the initial decision.
+ * Assessments are keyed by order ID -- there is no separate assessment ID.
  */
 
 import { z } from 'zod';
 import { applyRequired } from '../utils/apply-guard.js';
+
+/** Every `FraudSignalType` the binding accepts. */
+const FRAUD_SIGNAL_TYPES = [
+  'velocity_spike',
+  'address_mismatch',
+  'high_value_first_order',
+  'geo_ip_anomaly',
+  'bin_country_mismatch',
+  'device_fingerprint',
+  'proxy_vpn',
+  'disposable_email',
+  'payment_retries',
+  'unusual_time',
+];
+
+/** Every `FraudDecision` the binding accepts. */
+const FRAUD_DECISIONS = ['accept', 'review', 'reject'];
+
+const signalTypeSchema = z.enum(FRAUD_SIGNAL_TYPES);
+const decisionSchema = z.enum(FRAUD_DECISIONS);
+const scoreSchema = z.number().min(0).max(1);
+
+/** Shape a `FraudAssessmentOutput` for a tool response. */
+function formatAssessment(assessment) {
+  return {
+    orderId: assessment.orderId,
+    riskScore: assessment.riskScore,
+    decision: assessment.decision,
+    needsReview: assessment.needsReview,
+    signals: assessment.signals,
+    reviewedBy: assessment.reviewedBy,
+    reviewNotes: assessment.reviewNotes,
+    createdAt: assessment.createdAt,
+    updatedAt: assessment.updatedAt,
+  };
+}
 
 /**
  * Fraud tool definitions
@@ -14,97 +54,71 @@ import { applyRequired } from '../utils/apply-guard.js';
 export const fraudTools = [
   {
     name: 'assess_order_fraud',
-    description: 'Run fraud assessment on an order. Returns a risk score and matched signals.',
+    description:
+      'Record a fraud assessment for an order from caller-supplied signals. The engine stores the ' +
+      'signals, sets the risk score to the highest signal score, and decides accept (or review ' +
+      'when the risk score is 0.8 or higher). One assessment per order.',
     inputSchema: {
       orderId: z.string().min(1).describe('Order ID to assess'),
-      customerIp: z.string().max(45).optional().describe('Customer IP address'),
-      deviceFingerprint: z.string().max(500).optional().describe('Device fingerprint hash'),
-      billingAddress: z
-        .object({
-          country: z.string().min(2).max(3).describe('Billing country code'),
-          region: z.string().max(100).optional().describe('Billing state/province'),
-          postalCode: z.string().max(20).optional().describe('Billing postal code'),
-        })
-        .optional()
-        .describe('Billing address for geo-mismatch detection'),
-      shippingAddress: z
-        .object({
-          country: z.string().min(2).max(3).describe('Shipping country code'),
-          region: z.string().max(100).optional().describe('Shipping state/province'),
-          postalCode: z.string().max(20).optional().describe('Shipping postal code'),
-        })
-        .optional()
-        .describe('Shipping address for geo-mismatch detection'),
+      signals: z
+        .array(
+          z.object({
+            signalType: signalTypeSchema.describe('Kind of fraud signal observed'),
+            score: scoreSchema.describe('Signal confidence score (0.0 - 1.0)'),
+            details: z.string().min(1).max(1000).describe('What was observed'),
+          }),
+        )
+        .max(50)
+        .describe('Fraud signals observed for the order (empty = no signals, risk score 0)'),
     },
-    permission: 'read',
-    handler: async ({ commerce, params }) => {
-      const assessment = await commerce.fraud.assessOrder({
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      // The assessment is persisted, so it goes through the apply gate even
+      // though the tool is classified read.
+      if (!allowApply) {
+        return applyRequired('Record fraud assessment', params);
+      }
+
+      const assessment = await commerce.fraud.createAssessment({
         orderId: params.orderId,
-        customerIp: params.customerIp,
-        deviceFingerprint: params.deviceFingerprint,
-        billingAddress: params.billingAddress,
-        shippingAddress: params.shippingAddress,
+        signals: params.signals.map((s) => ({
+          signalType: s.signalType,
+          score: s.score,
+          details: s.details,
+        })),
       });
 
-      return {
-        success: true,
-        assessment: {
-          id: assessment.id,
-          orderId: assessment.orderId,
-          riskScore: assessment.riskScore,
-          riskLevel: assessment.riskLevel,
-          recommendation: assessment.recommendation,
-          signals: assessment.signals,
-          matchedRules: assessment.matchedRules,
-          assessedAt: assessment.assessedAt,
-        },
-      };
+      return { success: true, assessment: formatAssessment(assessment) };
     },
   },
 
   {
     name: 'get_fraud_assessment',
-    description: 'Get a fraud assessment by ID.',
+    description: 'Get the fraud assessment for an order.',
     inputSchema: {
-      assessmentId: z.string().min(1).describe('Fraud assessment ID'),
+      orderId: z.string().min(1).describe('Order ID whose assessment to fetch'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const { assessmentId } = params;
-      const assessment = await commerce.fraud.getAssessment(assessmentId);
+      const assessment = await commerce.fraud.getAssessment(params.orderId);
 
       if (!assessment) {
         return { success: false, error: 'Fraud assessment not found' };
       }
 
-      return {
-        success: true,
-        assessment: {
-          id: assessment.id,
-          orderId: assessment.orderId,
-          riskScore: assessment.riskScore,
-          riskLevel: assessment.riskLevel,
-          recommendation: assessment.recommendation,
-          signals: assessment.signals,
-          matchedRules: assessment.matchedRules,
-          reviewStatus: assessment.reviewStatus,
-          reviewedBy: assessment.reviewedBy,
-          assessedAt: assessment.assessedAt,
-          reviewedAt: assessment.reviewedAt,
-        },
-      };
+      return { success: true, assessment: formatAssessment(assessment) };
     },
   },
 
   {
     name: 'list_fraud_signals',
-    description: 'List fraud signals for an order or across all recent orders.',
+    description:
+      'List the fraud signals recorded on one order, or on the most recent assessments across orders.',
     inputSchema: {
-      orderId: z.string().min(1).optional().describe('Filter by order ID'),
-      riskLevel: z
-        .enum(['low', 'medium', 'high', 'critical'])
+      orderId: z.string().min(1).optional().describe('Only signals for this order'),
+      minRiskScore: scoreSchema
         .optional()
-        .describe('Filter by risk level'),
+        .describe('Only signals from assessments whose risk score is at least this (0.0 - 1.0)'),
       limit: z
         .number()
         .int()
@@ -116,20 +130,32 @@ export const fraudTools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const { orderId, riskLevel, limit } = params;
-      const signals = await commerce.fraud.listSignals({ orderId, riskLevel });
-      const limited = signals.slice(0, limit);
+      const { orderId, minRiskScore } = params;
+      const limit = params.limit ?? 50;
+
+      let assessments;
+      if (orderId) {
+        const assessment = await commerce.fraud.getAssessment(orderId);
+        assessments = assessment ? [assessment] : [];
+        if (minRiskScore !== undefined) {
+          assessments = assessments.filter((a) => a.riskScore >= minRiskScore);
+        }
+      } else {
+        // `limit` also bounds the assessment query; assessments that carry no
+        // signals can make the result shorter than `limit`.
+        assessments = await commerce.fraud.listAssessments({ minRiskScore, limit });
+      }
+
+      const signals = assessments.flatMap((a) => a.signals).slice(0, limit);
 
       return {
         success: true,
-        returned: limited.length,
-        signals: limited.map((s) => ({
-          id: s.id,
+        returned: signals.length,
+        signals: signals.map((s) => ({
           orderId: s.orderId,
-          type: s.type,
-          description: s.description,
-          severity: s.severity,
-          metadata: s.metadata,
+          signalType: s.signalType,
+          score: s.score,
+          details: s.details,
           detectedAt: s.detectedAt,
         })),
       };
@@ -138,43 +164,15 @@ export const fraudTools = [
 
   {
     name: 'create_fraud_rule',
-    description: 'Create a custom fraud detection rule.',
+    description:
+      'Create a fraud rule: when a signal of `signalType` scores at or above `threshold`, apply ' +
+      '`action`. Rules are created enabled.',
     inputSchema: {
       name: z.string().min(1).max(255).describe('Rule name'),
       description: z.string().max(1000).optional().describe('Rule description'),
-      condition: z
-        .object({
-          field: z
-            .string()
-            .min(1)
-            .describe('Field to evaluate (e.g., order_amount, shipping_country, email_domain)'),
-          operator: z
-            .enum(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in', 'matches'])
-            .describe('Comparison operator'),
-          value: z
-            .union([z.string(), z.number(), z.boolean(), z.array(z.string())])
-            .describe('Value to compare against'),
-        })
-        .describe('Rule condition'),
-      action: z
-        .enum(['flag', 'block', 'review', 'score_adjust'])
-        .describe('Action to take when rule matches'),
-      scoreAdjustment: z
-        .number()
-        .int()
-        .min(-100)
-        .max(100)
-        .optional()
-        .describe('Score adjustment points (for score_adjust action)'),
-      priority: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .optional()
-        .default(50)
-        .describe('Rule priority (1=highest)'),
-      enabled: z.boolean().optional().default(true).describe('Whether rule is active'),
+      signalType: signalTypeSchema.describe('Signal type the rule evaluates'),
+      threshold: scoreSchema.describe('Signal score (0.0 - 1.0) at or above which the rule fires'),
+      action: decisionSchema.describe('Decision to apply when the rule fires'),
     },
     permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
@@ -185,11 +183,9 @@ export const fraudTools = [
       const rule = await commerce.fraud.createRule({
         name: params.name,
         description: params.description,
-        condition: params.condition,
+        signalType: params.signalType,
+        threshold: params.threshold,
         action: params.action,
-        scoreAdjustment: params.scoreAdjustment,
-        priority: params.priority || 50,
-        enabled: params.enabled !== false,
       });
       return { success: true, message: 'Fraud rule created', rule };
     },
@@ -197,35 +193,13 @@ export const fraudTools = [
 
   {
     name: 'update_fraud_rule',
-    description: 'Update a fraud detection rule.',
+    description: 'Update a fraud rule (name, description, threshold, action, or enabled flag).',
     inputSchema: {
       ruleId: z.string().min(1).describe('Fraud rule ID'),
       name: z.string().min(1).max(255).optional().describe('Updated rule name'),
       description: z.string().max(1000).optional().describe('Updated description'),
-      condition: z
-        .object({
-          field: z.string().min(1).describe('Field to evaluate'),
-          operator: z
-            .enum(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in', 'matches'])
-            .describe('Comparison operator'),
-          value: z
-            .union([z.string(), z.number(), z.boolean(), z.array(z.string())])
-            .describe('Value to compare against'),
-        })
-        .optional()
-        .describe('Updated condition'),
-      action: z
-        .enum(['flag', 'block', 'review', 'score_adjust'])
-        .optional()
-        .describe('Updated action'),
-      scoreAdjustment: z
-        .number()
-        .int()
-        .min(-100)
-        .max(100)
-        .optional()
-        .describe('Updated score adjustment'),
-      priority: z.number().int().min(1).max(100).optional().describe('Updated priority'),
+      threshold: scoreSchema.optional().describe('Updated score threshold (0.0 - 1.0)'),
+      action: decisionSchema.optional().describe('Updated decision'),
       enabled: z.boolean().optional().describe('Enable or disable the rule'),
     },
     permission: 'admin',
@@ -237,10 +211,8 @@ export const fraudTools = [
       const rule = await commerce.fraud.updateRule(params.ruleId, {
         name: params.name,
         description: params.description,
-        condition: params.condition,
+        threshold: params.threshold,
         action: params.action,
-        scoreAdjustment: params.scoreAdjustment,
-        priority: params.priority,
         enabled: params.enabled,
       });
       return { success: true, message: 'Fraud rule updated', rule };
@@ -249,12 +221,17 @@ export const fraudTools = [
 
   {
     name: 'review_flagged_order',
-    description: 'Review a flagged order and mark it as approved or rejected.',
+    description:
+      "Record a manual review of an order's fraud assessment: set its decision, the reviewer, and why.",
     inputSchema: {
-      assessmentId: z.string().min(1).describe('Fraud assessment ID'),
-      decision: z.enum(['approve', 'reject', 'escalate']).describe('Review decision'),
-      reason: z.string().min(1).max(500).describe('Reason for the decision'),
-      reviewerNote: z.string().max(1000).optional().describe('Internal reviewer note'),
+      orderId: z.string().min(1).describe('Order ID whose assessment is being reviewed'),
+      decision: decisionSchema.describe('Review decision: accept, review (escalate), or reject'),
+      reviewer: z.string().min(1).max(255).describe('Who made the decision'),
+      reason: z
+        .string()
+        .min(1)
+        .max(1000)
+        .describe('Reason for the decision (stored as review notes)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -262,16 +239,19 @@ export const fraudTools = [
         return applyRequired('Review flagged order', params);
       }
 
-      const result = await commerce.fraud.reviewOrder({
-        assessmentId: params.assessmentId,
-        decision: params.decision,
-        reason: params.reason,
-        reviewerNote: params.reviewerNote,
-      });
+      const assessment = await commerce.fraud.reviewAssessment(
+        params.orderId,
+        params.decision,
+        params.reviewer,
+        params.reason,
+      );
+      const verb = { accept: 'accepted', reject: 'rejected', review: 'kept in review' }[
+        params.decision
+      ];
       return {
         success: true,
-        message: `Order ${params.decision === 'approve' ? 'approved' : params.decision === 'reject' ? 'rejected' : 'escalated'}`,
-        assessment: result,
+        message: `Order ${verb}`,
+        assessment: formatAssessment(assessment),
       };
     },
   },

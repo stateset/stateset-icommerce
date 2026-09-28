@@ -15,7 +15,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | Metric | Value |
 | --- | --- |
 | Domain tool modules | 87 |
-| Domain tools | 937 |
+| Domain tools | 936 |
 | Commerce getters | 68 |
 | Mapped getters | 68 |
 | Audited classes | 32 |
@@ -76,7 +76,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `revenueRecognition` | `revenue-recognition` | 6 |
 | `reviews` | `reviews` | 7 |
 | `searchConfig` | `search-config` | 7 |
-| `segments` | `segments` | 6 |
+| `segments` | `segments` | 5 |
 | `serials` | `serials` | 8 |
 | `shipments` | `shipments` | 14 |
 | `shippingZones` | `shipping-zones` | 7 |
