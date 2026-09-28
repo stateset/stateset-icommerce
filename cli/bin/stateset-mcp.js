@@ -21,6 +21,7 @@ import { parseArgs } from 'node:util';
 import { runMain } from '../src/graceful-shutdown.js';
 import { CLI_VERSION } from '../src/config.js';
 import { loadKernelConfig } from '../src/kernel-config.js';
+import { DEFAULT_MCP_TOOL_PROFILE } from '../src/mcp/default-tool-profile.js';
 
 const HELP = `
 StateSet Commerce MCP Server (stdio)  v${CLI_VERSION}
@@ -32,7 +33,8 @@ OPTIONS:
   --db <path>                SQLite database path (default: ./store.db, env DB_PATH)
   --apply                    Enable write tools (default: preview-only)
   --structured-tool-results  Emit structured content blocks in tool results
-  --profile <name>           Tool profile: core, operations, finance, agents, all (default: all)
+  --profile <name>           Tool profile: core, operations, finance, agents, all
+                             (default: core -- the stable tier; all = every tier)
   --domains <a,b,...>        Add specific tool domains to the selected profile
   --strict-protocol          Serve ONLY 2026-07-28; reject 2025-era clients
   --kernel-policy <path>     Trusted kernel policy JSON (env STATESET_KERNEL_POLICY)
@@ -55,7 +57,7 @@ async function main() {
       db: { type: 'string' },
       apply: { type: 'boolean', default: false },
       'structured-tool-results': { type: 'boolean', default: false },
-      profile: { type: 'string', default: 'all' },
+      profile: { type: 'string', default: DEFAULT_MCP_TOOL_PROFILE },
       domains: { type: 'string' },
       'strict-protocol': { type: 'boolean', default: false },
       'kernel-policy': { type: 'string' },

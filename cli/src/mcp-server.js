@@ -67,12 +67,8 @@ import { selectStrictKernelToolDefinitions } from './kernel-boundary.js';
 import { buildMppServiceInfo } from './mpp/index.js';
 
 // Domain tool registry
-import {
-  ALL_DOMAIN_TOOLS,
-  TOOL_MODULE_BY_NAME,
-  TOOL_POLICY_DOMAIN_BY_NAME,
-} from './tools/domain-registry.js';
-import { resolveMcpToolDomains } from './mcp/tool-profiles.js';
+import { ALL_DOMAIN_TOOLS, TOOL_POLICY_DOMAIN_BY_NAME } from './tools/domain-registry.js';
+import { resolveMcpToolFilter } from './mcp/tool-profiles.js';
 
 // AGENTIC_TOOL_RESULT_SCHEMA_VERSION lives in ./mcp/result-builders.js. We
 // re-alias it locally so existing call sites in this file (and any reverse
@@ -238,11 +234,8 @@ export function createStatesetMcpServer({
   toolDomains = [],
 }) {
   const strictKernelBoundary = Boolean(kernel && kernel.strict !== false);
-  const selectedDomains = resolveMcpToolDomains({ profile: toolProfile, domains: toolDomains });
-  const profileToolDefs = ALL_TOOL_DEFS.filter(
-    (tool) =>
-      !TOOL_MODULE_BY_NAME[tool.name] || selectedDomains.has(TOOL_MODULE_BY_NAME[tool.name]),
-  );
+  const isToolInProfile = resolveMcpToolFilter({ profile: toolProfile, domains: toolDomains });
+  const profileToolDefs = ALL_TOOL_DEFS.filter((tool) => isToolInProfile(tool.name));
   const exposedToolDefs = strictKernelBoundary
     ? selectStrictKernelToolDefinitions(profileToolDefs, KERNEL_CAPABILITY_BY_TOOL)
     : profileToolDefs;

@@ -54,9 +54,11 @@ For Claude Desktop, Cursor, Windsurf, or any MCP client:
 }
 ```
 
-**Writes are preview-only by default.** The `core` profile keeps the
-model-facing catalog small; `finance`, `operations`, `agents`, and `all` open
-it up, and `--domains a2a,x402` adds individual domains. Give an agent apply
+**Writes are preview-only by default.** The `core` profile — the default —
+exposes only the smoke-gated core tier (196 tools); `finance`, `operations`,
+`agents`, and `all` open it up, and `--domains a2a,x402` adds individual
+domains. Each tool's tier (`core`, `extended`, `experimental`) is listed in
+[`cli/docs/TOOLS.md`](cli/docs/TOOLS.md). Give an agent apply
 authority only through operator-owned files, never through tool arguments:
 
 ```json

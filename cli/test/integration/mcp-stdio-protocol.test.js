@@ -17,8 +17,18 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { ALL_DOMAIN_TOOLS } from '../../src/tools/domain-registry.js';
+import { AGENTIC_RUNTIME_TOOLS } from '../../src/mcp/agentic-runtime-tools.js';
+import { toolTier } from '../../src/tools/tool-tiers.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(__dirname, '../../bin/stateset-mcp.js');
+
+const EVERY_TOOL = [...ALL_DOMAIN_TOOLS, ...AGENTIC_RUNTIME_TOOLS];
+/** What a server started with no --profile must expose: the core tier, exactly. */
+const CORE_TIER = EVERY_TOOL.filter((tool) => toolTier(tool.name) === 'core')
+  .map((tool) => tool.name)
+  .sort();
 
 /** The per-request envelope every 2026-07-28 message carries. */
 const ENVELOPE = {
@@ -104,13 +114,10 @@ describe('mcp stdio — protocol 2026-07-28', () => {
 
   after(() => client?.close());
 
-  it('lists tools with no handshake', async () => {
+  it('lists tools with no handshake -- by default, exactly the core tier', async () => {
     const res = await modern(client, 1, 'tools/list');
     assert.ok(!res.error, `tools/list failed: ${res.error?.message}`);
-    assert.ok(
-      res.result.tools.length > 500,
-      `expected the full surface, got ${res.result.tools.length}`,
-    );
+    assert.deepEqual(res.result.tools.map((tool) => tool.name).sort(), CORE_TIER);
   });
 
   it('calls a tool', async () => {
@@ -147,7 +154,27 @@ describe('mcp stdio — 2025-era clients', () => {
   it('serves the same tool surface as the modern era', async () => {
     client.notify({ jsonrpc: '2.0', method: 'notifications/initialized' });
     const res = await client.request({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
-    assert.ok(res.result.tools.length > 500);
+    assert.deepEqual(res.result.tools.map((tool) => tool.name).sort(), CORE_TIER);
+  });
+});
+
+describe('mcp stdio — --profile all', () => {
+  let client;
+
+  before(() => {
+    client = createClient(['--db', ':memory:', '--profile', 'all']);
+  });
+
+  after(() => client?.close());
+
+  it('exposes every tier', { timeout: 150_000 }, async () => {
+    // Rendering ~950 schemas is the slowest list there is; allow for a loaded host.
+    const res = await client.request(
+      { jsonrpc: '2.0', id: 1, method: 'tools/list', params: { _meta: ENVELOPE } },
+      120_000,
+    );
+    assert.ok(!res.error, `tools/list failed: ${res.error?.message}`);
+    assert.equal(res.result.tools.length, EVERY_TOOL.length);
   });
 });
 
@@ -180,6 +207,6 @@ describe('mcp stdio — --strict-protocol', () => {
       !res.error,
       `modern traffic must survive a rejected legacy opening: ${res.error?.message}`,
     );
-    assert.ok(res.result.tools.length > 500);
+    assert.deepEqual(res.result.tools.map((tool) => tool.name).sort(), CORE_TIER);
   });
 });
