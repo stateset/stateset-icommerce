@@ -104,6 +104,12 @@ fn sqlite_allows_refund_with_payment_status() {
     set_status(&db, order.id, OrderStatus::Processing);
     set_status(&db, order.id, OrderStatus::Shipped);
     set_status(&db, order.id, OrderStatus::Delivered);
+    db.orders()
+        .update(
+            order.id,
+            UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
+        )
+        .expect("record payment");
 
     let updated = db
         .orders()
@@ -118,6 +124,37 @@ fn sqlite_allows_refund_with_payment_status() {
         .expect("refund order");
 
     assert_eq!(updated.status, OrderStatus::Refunded);
+}
+
+/// An unpaid order cannot be refunded by declaring it paid in the refunding
+/// update itself: refundability is judged on the stored payment status.
+#[test]
+fn sqlite_refund_ignores_payment_status_declared_in_the_same_update() {
+    let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
+    let customer = create_customer(&db, "refund-declared@example.com");
+    let order = create_order(&db, customer.id);
+
+    set_status(&db, order.id, OrderStatus::Confirmed);
+    set_status(&db, order.id, OrderStatus::Processing);
+    set_status(&db, order.id, OrderStatus::Shipped);
+    set_status(&db, order.id, OrderStatus::Delivered);
+
+    for declared in [PaymentStatus::Paid, PaymentStatus::Refunded] {
+        let result = db.orders().update(
+            order.id,
+            UpdateOrder {
+                status: Some(OrderStatus::Refunded),
+                payment_status: Some(declared),
+                ..Default::default()
+            },
+        );
+        assert!(
+            matches!(result, Err(CommerceError::OrderCannotBeRefunded(_))),
+            "declaring {declared} must not make an unpaid order refundable: {result:?}"
+        );
+    }
+    let stored = db.orders().get(order.id).expect("get").expect("order");
+    assert_eq!(stored.status, OrderStatus::Delivered);
 }
 
 #[test]
