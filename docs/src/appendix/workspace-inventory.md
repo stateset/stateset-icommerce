@@ -81,7 +81,7 @@ workspace membership because they require host runtimes or headers.
 | Metric | Value |
 | --- | --- |
 | Top-level source groups | 108 |
-| Tool modules | 94 |
+| Tool modules | 95 |
 | A2A modules | 61 |
 | JS dependencies | 14 |
 | Optional integrations | 12 |
@@ -90,7 +90,7 @@ workspace membership because they require host runtimes or headers.
 
 | Group | Files |
 | --- | --- |
-| `tools` | 94 |
+| `tools` | 95 |
 | `commands` | 88 |
 | `a2a` | 61 |
 | `mcp` | 32 |

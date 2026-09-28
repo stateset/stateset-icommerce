@@ -5,17 +5,18 @@
     "commandRegistry": "cli/src/commands/index.js"
   },
   "summary": {
-    "totalToolModules": 88,
+    "totalToolModules": 89,
     "totalCommandModulesOnDisk": 87,
     "totalCommandRegistryModules": 87,
     "totalToolBackedCommandModules": 8,
-    "uncoveredToolModules": 1,
+    "uncoveredToolModules": 2,
     "uncoveredToolBackedActions": 0,
     "commandOnlyModules": 0,
     "registryMismatches": 0,
     "fullyCovered": false
   },
   "uncoveredToolModules": [
+    "scoped-store",
     "tool-tiers"
   ],
   "commandOnlyModules": [],
