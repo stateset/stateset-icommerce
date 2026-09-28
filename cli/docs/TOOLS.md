@@ -1259,7 +1259,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 
 | Tool | Permission | Description |
 | --- | --- | --- |
-| `agent_receipt_purchase` | write | Execute a verifiable agent-to-agent purchase end-to-end: buyer agent locks ssUSD in OrderEscrow, sequencer commits VES events, STARK proof attests order_total ≤ policy cap, SetRegistry anchors the commitment + proof on Set Chain L2, buyer marks delivered, seller releases. Returns the signed Agent Receipt JSON with on-chain tx hashes. Requires the local stack (anvil + sequencer + postgres + deployed contracts) to be running — see /home/dom/icommerce-app/setup.sh. |
+| `agent_receipt_purchase` | write | Execute a verifiable agent-to-agent purchase end-to-end: buyer agent locks ssUSD in OrderEscrow, sequencer commits VES events, STARK proof attests order_total ≤ policy cap, SetRegistry anchors the commitment + proof on Set Chain L2, buyer marks delivered, seller releases. Returns the signed Agent Receipt JSON with on-chain tx hashes. Requires the local stack (anvil + sequencer + postgres + deployed contracts) to be running, configured by AGENT_RECEIPT_DEMO_DIR. |
 | `agent_receipt_status` | read | Read the on-chain escrow state for an order. Returns buyer, seller, amount, deadlines, delivery receipt hash, and current status (None / Locked / Delivered / Disputed / Released / Refunded). |
 | `agent_receipt_dispute` | write | Buyer raises an on-chain dispute on a Delivered order. Funds freeze in escrow until the operator resolves. The plain-text reason is hashed (keccak256) and stored on-chain as proof of the filing. |
 | `agent_receipt_resolve` | admin | Operator (sequencer / arbiter) resolves a Disputed order. Routes the locked funds either to the seller (in_favor_of_seller=true) or refunds the buyer (false). Emits DisputeResolved + Released/Refunded. |
@@ -1283,7 +1283,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `write_off_fixed_asset` | write | Write off a fixed asset. |
 | `generate_depreciation_schedule` | write | Generate the depreciation schedule for a fixed asset. |
 | `get_depreciation_schedule` | read | Get the depreciation schedule for a fixed asset. |
-| `post_depreciation` | write | Post depreciation for a period. |
+| `post_depreciation` | write | Post the next scheduled depreciation entries for a fixed asset (generate the schedule first). |
 
 ## maintenance
 
@@ -1301,10 +1301,10 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | --- | --- | --- |
 | `list_revenue_contracts` | read | List revenue recognition contracts. |
 | `get_revenue_contract` | read | Get a revenue recognition contract by ID. |
-| `create_revenue_contract` | write | Create a revenue recognition contract. |
-| `generate_revenue_schedule` | write | Generate the revenue recognition schedule for a contract. |
-| `get_revenue_schedule` | read | Get the revenue recognition schedule for a contract. |
-| `recognize_revenue` | write | Recognize revenue for a contract period. |
+| `create_revenue_contract` | write | Create a revenue recognition (ASC 606) contract with its performance obligations. The obligations' allocated amounts must sum to the transaction price. |
+| `generate_revenue_schedule` | write | Generate the revenue recognition schedule for a performance obligation (ids are on the contract's obligations). |
+| `get_revenue_schedule` | read | Get the revenue recognition schedule for a performance obligation. |
+| `recognize_revenue` | write | Recognize deferred revenue for a performance obligation: every scheduled entry whose period starts on or before `through`. |
 
 ## cycle-counts
 
@@ -1312,7 +1312,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | --- | --- | --- |
 | `list_cycle_counts` | read | List cycle counts. |
 | `get_cycle_count` | read | Get a cycle count by ID. |
-| `create_cycle_count` | write | Create a cycle count. |
+| `create_cycle_count` | write | Create a draft cycle count for a warehouse with the SKUs to count and the quantity the system expects for each. |
 | `start_cycle_count` | write | Start a cycle count. |
 | `record_cycle_counts` | write | Record counted quantities for a cycle count. |
 | `complete_cycle_count` | write | Complete a cycle count. |

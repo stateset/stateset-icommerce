@@ -4,6 +4,37 @@
 
 import { z } from 'zod';
 
+/**
+ * Normalise an optional ISO-8601 date/datetime to the RFC 3339 string the
+ * binding parses. Absent stays `undefined` (the binding's `Option<String>`
+ * refuses `null`); an unparseable value throws a validation error.
+ * @param {string | undefined} value
+ * @param {string} field
+ * @returns {string | undefined}
+ */
+function toRfc3339(value, field) {
+  if (value === undefined || value === null || value === '') return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`${field} must be an ISO 8601 date or datetime, got "${value}"`);
+  }
+  return date.toISOString();
+}
+
+/**
+ * Drop undefined/null keys so absent optionals reach the binding as absent.
+ * @template {Record<string, unknown>} T
+ * @param {T} input
+ * @returns {T}
+ */
+function omitAbsent(input) {
+  return /** @type {T} */ (
+    Object.fromEntries(
+      Object.entries(input).filter(([, value]) => value !== undefined && value !== null),
+    )
+  );
+}
+
 const CONDITION_TYPES = [
   'minimum_subtotal',
   'minimum_quantity',
@@ -239,31 +270,26 @@ export const promotionTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: params,
         };
-      const typeMap = {
-        percentage_off: 'PercentageOff',
-        fixed_amount_off: 'FixedAmountOff',
-        buy_x_get_y: 'BuyXGetY',
-        free_shipping: 'FreeShipping',
-        tiered_discount: 'TieredDiscount',
-        first_order_discount: 'FirstOrderDiscount',
-      };
-      const triggerMap = { automatic: 'Automatic', coupon_code: 'CouponCode', both: 'Both' };
-      const promotion = await commerce.promotions().create({
-        name: params.name,
-        description: params.description,
-        promotionType: typeMap[params.type],
-        trigger: triggerMap[params.trigger],
-        target: 'Order',
-        stacking: 'Stackable',
-        percentageOff: params.percentageOff,
-        fixedAmountOff: params.fixedAmountOff,
-        maxDiscountAmount: params.maxDiscountAmount,
-        startsAt: params.startsAt ? new Date(params.startsAt) : null,
-        endsAt: params.endsAt ? new Date(params.endsAt) : null,
-        applicableSkus: params.applicableSkus,
-        conditions: params.conditions,
-        priority: 1,
-      });
+      // The tool's snake_case enums are the binding's PromotionTypeInput /
+      // PromotionTriggerInput literals verbatim.
+      const promotion = await commerce.promotions().create(
+        omitAbsent({
+          name: params.name,
+          description: params.description,
+          promotionType: params.type,
+          trigger: params.trigger ?? 'automatic',
+          target: 'order',
+          stacking: 'stackable',
+          percentageOff: params.percentageOff,
+          fixedAmountOff: params.fixedAmountOff,
+          maxDiscountAmount: params.maxDiscountAmount,
+          startsAt: toRfc3339(params.startsAt, 'startsAt'),
+          endsAt: toRfc3339(params.endsAt, 'endsAt'),
+          applicableSkus: params.applicableSkus,
+          conditions: params.conditions,
+          priority: 1,
+        }),
+      );
       return {
         success: true,
         message: 'Promotion created successfully (status: draft)',
@@ -378,8 +404,13 @@ export const promotionTools = [
     inputSchema: {
       promotionId: z.string().min(1).describe('Promotion ID to create coupon for'),
       code: z.string().min(1).describe('Coupon code (e.g., "SUMMER25")'),
-      usageLimit: z.number().optional().describe('Maximum number of times this coupon can be used'),
-      perCustomerLimit: z.number().optional().describe('Max uses per customer'),
+      usageLimit: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Maximum number of times this coupon can be used'),
+      perCustomerLimit: z.number().int().positive().optional().describe('Max uses per customer'),
       startsAt: z.string().optional().describe('Coupon valid from (ISO 8601)'),
       endsAt: z.string().optional().describe('Coupon valid until (ISO 8601)'),
     },
@@ -392,14 +423,16 @@ export const promotionTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: params,
         };
-      const coupon = await commerce.promotions().createCoupon({
-        promotionId: params.promotionId,
-        code: params.code.toUpperCase(),
-        usageLimit: params.usageLimit,
-        perCustomerLimit: params.perCustomerLimit,
-        startsAt: params.startsAt ? new Date(params.startsAt) : null,
-        endsAt: params.endsAt ? new Date(params.endsAt) : null,
-      });
+      const coupon = await commerce.promotions().createCoupon(
+        omitAbsent({
+          promotionId: params.promotionId,
+          code: params.code.toUpperCase(),
+          usageLimit: params.usageLimit,
+          perCustomerLimit: params.perCustomerLimit,
+          startsAt: toRfc3339(params.startsAt, 'startsAt'),
+          endsAt: toRfc3339(params.endsAt, 'endsAt'),
+        }),
+      );
       return {
         success: true,
         message: 'Coupon code created',

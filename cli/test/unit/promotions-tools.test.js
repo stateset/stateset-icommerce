@@ -373,7 +373,7 @@ describe('create_promotion', () => {
     assert.ok(result.hint.includes('activate_promotion'));
   });
 
-  it('maps type enum to PascalCase', async () => {
+  it('sends the exact binding CreatePromotionInput with absent optionals omitted', async () => {
     let calledWith = {};
     const commerce = makeCommerce({
       promoMethods: {
@@ -383,9 +383,59 @@ describe('create_promotion', () => {
         },
       },
     });
-    await tool.handler({ commerce, params, allowApply: true });
-    assert.strictEqual(calledWith.promotionType, 'PercentageOff');
-    assert.strictEqual(calledWith.trigger, 'Automatic');
+    await tool.handler({
+      commerce,
+      params: { name: 'Min', type: 'free_shipping' },
+      allowApply: true,
+    });
+    // No null anywhere: the binding's Option<String> fields refuse null.
+    assert.deepStrictEqual(calledWith, {
+      name: 'Min',
+      promotionType: 'free_shipping',
+      trigger: 'automatic',
+      target: 'order',
+      stacking: 'stackable',
+      priority: 1,
+    });
+  });
+
+  it('sends dates as RFC 3339 strings, never Date objects', async () => {
+    let calledWith = {};
+    const commerce = makeCommerce({
+      promoMethods: {
+        create: async (data) => {
+          calledWith = data;
+          return makePromotion(data);
+        },
+      },
+    });
+    await tool.handler({
+      commerce,
+      params: { ...params, startsAt: '2026-06-01', endsAt: '2026-08-31T23:59:59Z' },
+      allowApply: true,
+    });
+    assert.strictEqual(calledWith.promotionType, 'percentage_off');
+    assert.strictEqual(calledWith.trigger, 'automatic');
+    assert.strictEqual(calledWith.percentageOff, 0.2);
+    assert.strictEqual(calledWith.startsAt, '2026-06-01T00:00:00.000Z');
+    assert.strictEqual(calledWith.endsAt, '2026-08-31T23:59:59.000Z');
+  });
+
+  it('refuses an unparseable date before calling the binding', async () => {
+    let called = false;
+    const commerce = makeCommerce({
+      promoMethods: {
+        create: async (data) => {
+          called = true;
+          return makePromotion(data);
+        },
+      },
+    });
+    await assert.rejects(
+      () => tool.handler({ commerce, params: { ...params, startsAt: 'soon' }, allowApply: true }),
+      /startsAt must be an ISO 8601/,
+    );
+    assert.strictEqual(called, false);
   });
 
   it('propagates commerce errors', async () => {
@@ -431,7 +481,7 @@ describe('create_promotion conditions', () => {
       },
       allowApply: true,
     });
-    assert.strictEqual(calledWith.promotionType, 'FirstOrderDiscount');
+    assert.strictEqual(calledWith.promotionType, 'first_order_discount');
     assert.deepStrictEqual(calledWith.applicableSkus, ['SOCKS']);
     assert.deepStrictEqual(calledWith.conditions, conditions);
     assert.deepStrictEqual(result.promotion.conditions, conditions);
@@ -634,6 +684,32 @@ describe('create_coupon', () => {
     });
     await tool.handler({ commerce, params, allowApply: true });
     assert.strictEqual(calledWith.code, 'SAVE25');
+  });
+
+  it('omits absent optionals and sends dates as RFC 3339 strings', async () => {
+    const calls = [];
+    const commerce = makeCommerce({
+      promoMethods: {
+        createCoupon: async (data) => {
+          calls.push(data);
+          return makeCoupon(data);
+        },
+      },
+    });
+    await tool.handler({
+      commerce,
+      params: { promotionId: 'promo_001', code: 'min' },
+      allowApply: true,
+    });
+    await tool.handler({
+      commerce,
+      params: { promotionId: 'promo_001', code: 'dated', startsAt: '2026-06-01T00:00:00Z' },
+      allowApply: true,
+    });
+    assert.deepStrictEqual(calls, [
+      { promotionId: 'promo_001', code: 'MIN' },
+      { promotionId: 'promo_001', code: 'DATED', startsAt: '2026-06-01T00:00:00.000Z' },
+    ]);
   });
 });
 
