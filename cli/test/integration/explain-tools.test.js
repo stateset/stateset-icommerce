@@ -100,8 +100,9 @@ before(async () => {
   journey.cartId = cartId;
   await call('add_cart_item', { cartId, sku: 'W-1', name: 'Widget', quantity: 2, unitPrice: 50 });
   await call('set_cart_shipping_address', { cartId, ...ADDRESS });
-  await call('calculate_cart_tax', { cartId });
+  // Coupon first, then tax: tax is charged on the discounted price.
   await call('apply_cart_discount', { cartId, couponCode: 'WELCOME10' });
+  await call('calculate_cart_tax', { cartId });
   await call('set_cart_payment', { cartId, paymentMethod: 'credit_card', paymentToken: 'tok' });
   journey.cart = (await call('get_cart', { identifier: cartId })).cart;
   // Priced before checkout: the coupon is live, and a bogus code is refused.
@@ -202,8 +203,10 @@ describe('explain_order through the MCP server', () => {
   it('sums the money exactly: charged is the order total, net = charged - refunded', () => {
     const { money } = journey.explained;
     assert.equal(money.currency, 'USD');
-    assert.equal(money.orderTotal, '90.00');
-    assert.equal(money.charged, '90.00');
+    // 2 x 50.00 - 10% coupon + the seeded Los Angeles sales tax.
+    assert.equal(compareDecimals(money.orderTotal, String(journey.order.totalAmount)), 0);
+    assert.equal(compareDecimals(money.orderTotal, '90.00'), 1, 'the seeded CA tax applies');
+    assert.equal(money.charged, money.orderTotal);
     assert.equal(money.discount, '10.00');
     assert.equal(money.couponCode, 'WELCOME10');
     assert.equal(money.explainedTotal, money.orderTotal);
@@ -221,14 +224,17 @@ describe('explain_order through the MCP server', () => {
     { todo: 'refund amounts are not readable through the Node binding' },
     () => {
       assert.equal(journey.explained.money.refunded, '10.00');
-      assert.equal(journey.explained.money.net, '80.00');
+      assert.equal(
+        journey.explained.money.net,
+        subtractDecimals(journey.explained.money.charged, '10.00'),
+      );
     },
   );
 
-  it('flags the order statuses nothing maintains after payment and shipment', () => {
+  it('finds the order statuses kept in step with payment and shipment', () => {
     const codes = journey.explained.flags.map((f) => f.code);
-    assert.ok(codes.includes('order_payment_status_stale'), codes.join(','));
-    assert.ok(codes.includes('order_fulfillment_status_stale'), codes.join(','));
+    assert.ok(!codes.includes('order_payment_status_stale'), codes.join(','));
+    assert.ok(!codes.includes('order_fulfillment_status_stale'), codes.join(','));
     assert.ok(codes.includes('return_refund_unverifiable'), codes.join(','));
     assert.ok(!codes.includes('over_captured'));
     assert.ok(!codes.includes('order_total_differs_from_cart'));
@@ -260,7 +266,8 @@ describe('explain_order through the MCP server', () => {
 describe('explain_cart_pricing through the MCP server', () => {
   it('reconciles the explained total with the stored grand total', () => {
     const { total, stored, subtotal } = journey.cartExplained;
-    assert.equal(stored.grandTotal, '90.00');
+    assert.equal(compareDecimals(stored.grandTotal, '90.00'), 1, 'the seeded CA tax applies');
+    assert.equal(compareDecimals(stored.tax, '0'), 1);
     assert.equal(Number(stored.grandTotal), Number(journey.cart.grandTotal));
     assert.equal(total.explainedTotal, stored.grandTotal);
     assert.equal(total.matches, true);

@@ -33,13 +33,13 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 
 | Binding | Evidence | Gated | Exposed | Coverage | Parity vs Node |
 | --- | --- | --- | --- | --- | --- |
-| Node.js | traced: #[napi] methods -> engine calls | yes | 726/1216 | 59.7% | reference |
-| Python | traced: #[pymethods] methods -> engine calls | yes | 583/1216 | 47.9% | 79.5% |
-| Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 79/1216 | 6.5% | 10.9% |
+| Node.js | traced: #[napi] methods -> engine calls | yes | 728/1216 | 59.9% | reference |
+| Python | traced: #[pymethods] methods -> engine calls | yes | 585/1216 | 48.1% | 79.5% |
+| Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1216 | 6.6% | 11% |
 | .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1216 | 3.9% | 6.5% |
 | Java | native reach: engine calls anywhere in the Rust layer | no | 77/1216 | 6.3% | 9.8% |
 | Kotlin | native reach: engine calls anywhere in the Rust layer | no | 59/1216 | 4.9% | 8.1% |
-| PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1216 | 14.6% | 22.2% |
+| PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1216 | 14.6% | 22.1% |
 | Ruby | native reach: engine calls anywhere in the Rust layer | no | 0/1216 | 0% | 0% |
 | Swift | native reach: engine calls anywhere in the Rust layer | no | 51/1216 | 4.2% | 7% |
 | WASM | native reach: engine calls anywhere in the Rust layer | no | 0/1216 | 0% | 0% |
@@ -61,7 +61,7 @@ Cells are exposed / applicable engine methods.
 
 | Domain | Engine methods | Exempt | Node.js | Python | Go | .NET | Java | Kotlin | PHP | Ruby | Swift | WASM |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `commerce` | 21 | 4 | 7/17 | 3/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 |
+| `commerce` | 21 | 4 | 8/17 | 4/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 |
 | `accounts_payable` | 38 | 0 | 12/38 | 8/38 | 0/38 | 2/38 | 3/38 | 3/38 | 4/38 | 0/38 | 3/38 | 0/38 |
 | `accounts_receivable` | 28 | 0 | 8/28 | 3/28 | 0/28 | 2/28 | 3/28 | 2/28 | 3/28 | 0/28 | 2/28 | 0/28 |
 | `activity_logs` | 5 | 0 | 5/5 | 5/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
@@ -93,7 +93,7 @@ Cells are exposed / applicable engine methods.
 | `lots` | 35 | 0 | 12/35 | 6/35 | 0/35 | 2/35 | 4/35 | 2/35 | 5/35 | 0/35 | 2/35 | 0/35 |
 | `loyalty` | 14 | 0 | 14/14 | 14/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 |
 | `maintenance` | 10 | 0 | 7/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 |
-| `orders` | 18 | 0 | 8/18 | 7/18 | 4/18 | 4/18 | 8/18 | 6/18 | 8/18 | 0/18 | 4/18 | 0/18 |
+| `orders` | 18 | 0 | 8/18 | 7/18 | 5/18 | 4/18 | 8/18 | 6/18 | 8/18 | 0/18 | 4/18 | 0/18 |
 | `payment_obligations` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `payments` | 23 | 0 | 8/23 | 7/23 | 6/23 | 1/23 | 1/23 | 3/23 | 1/23 | 0/23 | 1/23 | 0/23 |
 | `prepayments` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
@@ -102,7 +102,7 @@ Cells are exposed / applicable engine methods.
 | `print_stations` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `production_batches` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `products` | 17 | 0 | 16/17 | 6/17 | 4/17 | 3/17 | 4/17 | 3/17 | 5/17 | 0/17 | 3/17 | 0/17 |
-| `promotions` | 18 | 0 | 17/18 | 15/18 | 0/18 | 0/18 | 0/18 | 0/18 | 9/18 | 0/18 | 0/18 | 0/18 |
+| `promotions` | 18 | 0 | 18/18 | 16/18 | 0/18 | 0/18 | 0/18 | 0/18 | 9/18 | 0/18 | 0/18 | 0/18 |
 | `purchase_orders` | 26 | 0 | 11/26 | 11/26 | 10/26 | 0/26 | 0/26 | 0/26 | 11/26 | 0/26 | 0/26 | 0/26 |
 | `purgatory` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
 | `quality` | 33 | 0 | 15/33 | 8/33 | 0/33 | 1/33 | 4/33 | 2/33 | 4/33 | 0/33 | 2/33 | 0/33 |
@@ -151,7 +151,7 @@ unless `--allow-loss` is also passed. Gated bindings: `node`, `python`, `go`
 | Binding | Known gaps vs Node (baseline) |
 | --- | --- |
 | python | 149 |
-| go | 647 |
+| go | 648 |
 
 ## Exemptions
 
@@ -217,8 +217,6 @@ name-matched surfaces.
 | go | `AnalyticsAPI.GetTopCustomers` | `analytics.top_customers` | yes |
 | go | `AnalyticsAPI.GetTopProducts` | `analytics.top_products` | yes |
 | go | `InventoryAPI.GetLevel` | `inventory.get_stock` | yes |
-| go | `OrdersAPI.Cancel` | `orders.update_status` | no |
-| go | `OrdersAPI.Ship` | `orders.update_status` | no |
 | go | `PaymentsAPI.Complete` | `payments.mark_completed` | yes |
 | go | `PaymentsAPI.Fail` | `payments.mark_failed` | yes |
 | go | `PaymentsAPI.Refund` | `payments.create_refund` | yes |
@@ -249,6 +247,7 @@ name-matched surfaces.
 | node | `Orders.createExact` | `orders.create`, `orders.create_from_cart` | no |
 | node | `Payments.createExact` | `payments.create` | no |
 | node | `Payments.createRefundExact` | `payments.create_refund`, `payments.get` | no |
+| node | `Promotions.applyToCart` | `commerce.apply_cart_promotions` | no |
 | node | `RevenueRecognition.recognize` | `revenue_recognition.recognize_period` | yes |
 | node | `Shipments.deliver` | `shipments.mark_delivered` | yes |
 | node | `Subscriptions.skipBilling` | `subscriptions.skip_next_cycle` | yes |
@@ -271,6 +270,7 @@ name-matched surfaces.
 | python | `Payments.complete` | `payments.mark_completed` | yes |
 | python | `Payments.create_exact` | `payments.create` | no |
 | python | `Payments.create_refund_exact` | `payments.create_refund`, `payments.get` | no |
+| python | `PromotionsApi.apply_to_cart` | `commerce.apply_cart_promotions` | no |
 | python | `RevenueRecognition.recognize` | `revenue_recognition.recognize_period` | yes |
 | python | `VectorSearch.index_all_customers` | `vector.index_customers` | yes |
 | python | `VectorSearch.index_all_products` | `vector.index_products` | yes |
@@ -287,7 +287,6 @@ purchase orders and promotions. They are not a CI failure; review each one.
 | `bindings/node/src/domains/accounts_payable.rs:271` | `stateset_core::CreateBill` | `items: vec![]` |
 | `bindings/node/src/domains/quality.rs:308` | `stateset_core::CreateInspection` | `items: vec![]` |
 | `bindings/node/src/domains/receiving.rs:138` | `stateset_core::CreateReceipt` | `items: vec![]` |
-| `bindings/python/src/lib.rs:9098` | `stateset_core::ApplyPromotionsRequest` | `line_items: vec![]` |
 
 ## Unmatched host methods (name-matched surfaces)
 
@@ -321,7 +320,7 @@ purchase orders and promotions. They are not a CI failure; review each one.
 
 | Engine method | Node.js | Python | Go |
 | --- | --- | --- | --- |
-| `apply_cart_promotions` | — | — | — |
+| `apply_cart_promotions` | yes | yes | — |
 | `backend` | — | — | — |
 | `calculate_cart_tax` | — | — | — |
 | `database` | exempt | exempt | exempt |
@@ -1055,7 +1054,7 @@ purchase orders and promotions. They are not a CI failure; review each one.
 | Engine method | Node.js | Python | Go |
 | --- | --- | --- | --- |
 | `add_item` | — | — | — |
-| `cancel` | yes | yes | — |
+| `cancel` | yes | yes | yes |
 | `cancel_with` | — | — | — |
 | `count` | yes | yes | — |
 | `create` | yes | yes | yes |
@@ -1210,7 +1209,7 @@ purchase orders and promotions. They are not a CI failure; review each one.
 | Engine method | Node.js | Python | Go |
 | --- | --- | --- | --- |
 | `activate` | yes | yes | — |
-| `add_condition` | — | — | — |
+| `add_condition` | yes | yes | — |
 | `apply` | yes | yes | — |
 | `create` | yes | yes | — |
 | `create_coupon` | yes | yes | — |
