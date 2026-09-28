@@ -1426,16 +1426,18 @@ impl PgOrderRepository {
             });
         }
 
+        // Refundability is judged on the payment status the order already
+        // has, never on one the same update declares.
         if new_status == OrderStatus::Refunded
             && !matches!(
-                new_payment_status,
+                current_payment_status,
                 PaymentStatus::Paid
                     | PaymentStatus::PartiallyPaid
                     | PaymentStatus::Refunded
                     | PaymentStatus::PartiallyRefunded
             )
         {
-            return Err(CommerceError::OrderCannotBeRefunded(new_payment_status.to_string()));
+            return Err(CommerceError::OrderCannotBeRefunded(current_payment_status.to_string()));
         }
 
         if is_ship {
