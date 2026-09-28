@@ -14,6 +14,27 @@ This project follows Keep a Changelog and Semantic Versioning.
   itself, so any order -- including one never paid -- could be marked
   refunded. Refundability is now judged on the order's stored payment status;
   record the payment first, then refund.
+- **x402 batch inclusion proofs are verified before they are recorded.**
+  `mark_batched` stored any Merkle root and proof it was handed. It now takes
+  an `X402BatchInclusion` (`merkle_root`, `inclusion_proof`, `leaf_index`,
+  `total_leaves`) instead of `(batch_merkle_root, inclusion_proof)`, rebuilds
+  the leaf from the stored intent (`X402PaymentIntent::batch_leaf_hash`, the
+  same leaf `X402PaymentReceipt::verify_inclusion` checks) and verifies the
+  proof inside the write transaction (SQLite and PostgreSQL). A wrong root,
+  tampered proof, wrong leaf index, or a proof for another intent is refused
+  with `ValidationError` and the intent stays `Sequenced`.
+  `X402BatchInclusion::from_leaves` builds the evidence for a batcher.
+  `mark_settled` still accepts `Sequenced` as well as `Batched` intents (the
+  documented direct on-chain settlement path).
+- **Agent cards govern who may buy and sell in A2A commerce.** A2A
+  `create_quote` / `create_purchase` accepted any `buyer_agent_id` /
+  `seller_agent_id`. The buyer must now be a registered, active,
+  non-suspended agent card that can buy (`buy` / `request_quote` skill) and
+  the seller one that can sell (`sell` / `quote` skill); otherwise the call is
+  refused with a `ValidationError` naming the side. The cards are read inside
+  the insert's write transaction (PostgreSQL: `FOR SHARE`), and SQLite
+  `create_quote` now runs in a `BEGIN IMMEDIATE` transaction. Register agent
+  cards before creating quotes or purchases.
 
 ## [1.35.3] - 2026-09-26
 

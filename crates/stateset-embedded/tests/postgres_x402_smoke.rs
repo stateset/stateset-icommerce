@@ -7,7 +7,8 @@ use stateset_core::{
     A2APurchaseFilter, A2ASkill, CreateA2APurchase, CreateA2AQuote, CreateAgentCard,
     CreateX402PaymentIntent, CurrencyCode, ItemAvailability, PurchaseStatus, QuoteStatus,
     QuotedItem, SignX402PaymentIntent, SkillQuoteFilter, TrustLevel, X402_DEFAULT_SIGNATURE_SCHEME,
-    X402Asset, X402CreditDirection, X402CreditTransactionFilter, X402IntentStatus, X402Network,
+    X402Asset, X402BatchInclusion, X402CreditDirection, X402CreditTransactionFilter,
+    X402IntentStatus, X402Network,
 };
 #[cfg(feature = "postgres")]
 use stateset_crypto::pqc::generate_hybrid_signing_keypair;
@@ -143,12 +144,14 @@ async fn postgres_async_x402_payment_intent_smoke() {
         x402.mark_sequenced(intent.id, 42, Uuid::new_v4()).await.expect("mark intent sequenced");
     assert_eq!(sequenced.status, X402IntentStatus::Sequenced);
 
-    let batched = x402
-        .mark_batched(intent.id, "0xroot", vec!["0xproof".into()])
-        .await
-        .expect("mark intent batched");
+    let inclusion = X402BatchInclusion::from_leaves(
+        &[sequenced.batch_leaf_hash().expect("batch leaf"), [5u8; 32]],
+        0,
+    )
+    .expect("inclusion proof");
+    let batched = x402.mark_batched(intent.id, &inclusion).await.expect("mark intent batched");
     assert_eq!(batched.status, X402IntentStatus::Batched);
-    assert_eq!(batched.batch_merkle_root.as_deref(), Some("0xroot"));
+    assert_eq!(batched.batch_merkle_root.as_deref(), Some(inclusion.merkle_root.as_str()));
 
     let settled = x402
         .mark_settled(intent.id, &format!("0xsettled-{}", Uuid::new_v4().as_simple()), 123_456)
@@ -244,7 +247,17 @@ async fn postgres_async_x402_agents_a2a_credit_smoke() {
     let reactivated = x402.reactivate_agent(card.id).await.expect("reactivate agent");
     assert!(reactivated.active, "agent should be reactivated");
 
-    let buyer_id = Uuid::new_v4();
+    let buyer_id = x402
+        .register_agent(CreateAgentCard {
+            name: "A2A Buyer".to_string(),
+            wallet_address: format!("0xagent-buyer-{}", Uuid::new_v4().as_simple()),
+            public_key: "buyer-public-key".to_string(),
+            a2a_skills: Some(vec![A2ASkill::Buy]),
+            ..Default::default()
+        })
+        .await
+        .expect("register buyer agent")
+        .id;
     let now = Utc::now();
     let quote = x402
         .create_quote(CreateA2AQuote {
@@ -505,7 +518,17 @@ async fn postgres_async_a2a_state_guards() {
         .await
         .expect("register wrong seller");
 
-    let buyer_id = Uuid::new_v4();
+    let buyer_id = x402
+        .register_agent(CreateAgentCard {
+            name: "A2A Buyer".to_string(),
+            wallet_address: format!("0xagent-buyer-{}", Uuid::new_v4().as_simple()),
+            public_key: "buyer-public-key".to_string(),
+            a2a_skills: Some(vec![A2ASkill::Buy]),
+            ..Default::default()
+        })
+        .await
+        .expect("register buyer agent")
+        .id;
     let now = Utc::now();
     let quote = x402
         .create_quote(CreateA2AQuote {
@@ -748,7 +771,17 @@ async fn postgres_async_a2a_state_lifecycle_controls() {
         .await
         .expect("register lifecycle async seller");
 
-    let buyer_id = Uuid::new_v4();
+    let buyer_id = x402
+        .register_agent(CreateAgentCard {
+            name: "A2A Buyer".to_string(),
+            wallet_address: format!("0xagent-buyer-{}", Uuid::new_v4().as_simple()),
+            public_key: "buyer-public-key".to_string(),
+            a2a_skills: Some(vec![A2ASkill::Buy]),
+            ..Default::default()
+        })
+        .await
+        .expect("register buyer agent")
+        .id;
 
     let make_quote = |buyer_id: Uuid, seller_id: Uuid| CreateA2AQuote {
         buyer_agent_id: buyer_id,
@@ -825,8 +858,19 @@ async fn postgres_async_a2a_state_lifecycle_controls() {
             .is_err()
     );
 
+    let disputed_buyer_id = x402
+        .register_agent(CreateAgentCard {
+            name: "A2A Disputing Buyer".to_string(),
+            wallet_address: format!("0xagent-buyer-{}", Uuid::new_v4().as_simple()),
+            public_key: "buyer-public-key".to_string(),
+            a2a_skills: Some(vec![A2ASkill::Buy]),
+            ..Default::default()
+        })
+        .await
+        .expect("register disputing buyer agent")
+        .id;
     let disputed_quote = x402
-        .create_quote(make_quote(Uuid::new_v4(), seller.id))
+        .create_quote(make_quote(disputed_buyer_id, seller.id))
         .await
         .expect("create async disputed quote");
     let disputed_quote = x402
