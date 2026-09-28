@@ -91,7 +91,7 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 | `revenue-recognition` | tool-backed | 6 | 0 | - |
 | `reviews` | custom | 8 | 2 | - |
 | `search-config` | tool-backed | 7 | 0 | - |
-| `segments` | custom | 7 | 2 | - |
+| `segments` | custom | 6 | 2 | - |
 | `serials` | custom | 8 | 2 | - |
 | `shipments` | custom | 13 | 3 | - |
 | `shipping-zones` | custom | 7 | 2 | - |
@@ -112,7 +112,7 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 | `vendor-returns` | tool-backed | 6 | 0 | - |
 | `warehouse` | custom | 9 | 2 | - |
 | `warranties` | custom | 7 | 2 | - |
-| `wishlists` | custom | 6 | 2 | - |
+| `wishlists` | tool-backed | 6 | 2 | - |
 | `x402` | tool-backed | 14 | 1 | 14/14 |
 
 ## Uncovered Tool Modules
