@@ -7,25 +7,23 @@
 
 import { z } from 'zod';
 
+import { scopedService } from './scoped-store.js';
+
 // ---------------------------------------------------------------------------
 // Lazy singleton — initialised on first tool call
 // ---------------------------------------------------------------------------
 
-let _checkoutSvc = null;
-
 /**
- * Get or create the express checkout service singleton.
- * Uses the same A2AStore pattern for database access.
+ * The express checkout service over the server's store (`--db`), one per
+ * database. Payment links live in that database's `payment_links` table.
+ * @param {object} ctx - tool handler context
  * @returns {Promise<ReturnType<import('../checkout/express.js').createExpressCheckout>>}
  */
-async function getCheckoutSvc() {
-  if (_checkoutSvc) return _checkoutSvc;
-  const { A2AStore } = await import('../a2a/store.js');
-  const { createExpressCheckout } = await import('../checkout/express.js');
-  const store = new A2AStore();
-  store.init();
-  _checkoutSvc = createExpressCheckout(store);
-  return _checkoutSvc;
+async function getCheckoutSvc(ctx) {
+  return scopedService(ctx, 'checkout', async (store) => {
+    const { createExpressCheckout } = await import('../checkout/express.js');
+    return createExpressCheckout(store);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -68,9 +66,9 @@ export const checkoutTools = [
       metadata: z.record(z.string()).optional().describe('Custom key-value metadata'),
     },
     permission: 'write',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getCheckoutSvc();
+        const svc = await getCheckoutSvc(ctx);
         const result = svc.createPaymentLink(params);
         return { success: true, ...result };
       } catch (err) {
@@ -90,9 +88,9 @@ export const checkoutTools = [
       linkId: z.string().min(1).describe('Payment link ID (UUID) or short code'),
     },
     permission: 'read',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getCheckoutSvc();
+        const svc = await getCheckoutSvc(ctx);
         const result = svc.resolvePaymentLink(params.linkId);
         if (!result) {
           return { success: false, error: `Payment link not found: ${params.linkId}` };
@@ -117,9 +115,9 @@ export const checkoutTools = [
       paymentMethod: z.string().optional().describe('Payment method (e.g. card, wallet, crypto)'),
     },
     permission: 'write',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getCheckoutSvc();
+        const svc = await getCheckoutSvc(ctx);
         const result = svc.expressCheckout(params);
         return { success: true, ...result };
       } catch (err) {
@@ -143,9 +141,9 @@ export const checkoutTools = [
       currency: z.string().min(1).max(6).default('USD').describe('Currency code'),
     },
     permission: 'write',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getCheckoutSvc();
+        const svc = await getCheckoutSvc(ctx);
         const result = svc.agentCheckout(params);
         return { success: true, ...result };
       } catch (err) {
@@ -164,9 +162,9 @@ export const checkoutTools = [
       linkId: z.string().min(1).describe('Payment link ID or short code'),
     },
     permission: 'read',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getCheckoutSvc();
+        const svc = await getCheckoutSvc(ctx);
         const result = svc.getPaymentLinkStatus(params.linkId);
         if (!result) {
           return { success: false, error: `Payment link not found: ${params.linkId}` };
@@ -194,9 +192,9 @@ export const checkoutTools = [
       offset: z.number().int().min(0).optional().default(0).describe('Offset for pagination'),
     },
     permission: 'read',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getCheckoutSvc();
+        const svc = await getCheckoutSvc(ctx);
         const links = svc.listPaymentLinks(params);
         return { success: true, count: links.length, links };
       } catch (err) {
@@ -215,9 +213,9 @@ export const checkoutTools = [
       linkId: z.string().min(1).describe('Payment link ID or short code to revoke'),
     },
     permission: 'write',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getCheckoutSvc();
+        const svc = await getCheckoutSvc(ctx);
         const result = svc.revokePaymentLink(params.linkId);
         return { success: true, ...result };
       } catch (err) {
@@ -244,9 +242,9 @@ export const checkoutTools = [
       customerId: z.string().min(1).optional().describe('Customer ID'),
     },
     permission: 'write',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getCheckoutSvc();
+        const svc = await getCheckoutSvc(ctx);
         const result = svc.expressCheckout({
           linkId: params.linkId,
           customerId: params.customerId,

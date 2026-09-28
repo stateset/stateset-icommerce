@@ -560,8 +560,28 @@ export function createStatesetMcpServer({
   /**
    * Context object passed to every domain tool handler.
    */
+  // Tools read and write this server's store, never a per-machine default
+  // under ~/.stateset: two servers on one machine must not see each other's
+  // records. `a2aStore` is opened on `dbPath` (see above); the audit log is a
+  // sibling of it (`store.db` -> `store.audit.db`, src/audit-store.js), or the
+  // permission gate's log when one is attached, since that is where this
+  // server's permission checks are recorded.
+  let memoryAuditStore = null;
+  const getScopedAuditStore = async () => {
+    if (permissionGate?.auditStore) return permissionGate.auditStore;
+    const { auditDbPathFor, getAuditStoreForDb } = await import('./audit-store.js');
+    if (auditDbPathFor(dbPath) === ':memory:') {
+      memoryAuditStore ??= getAuditStoreForDb(dbPath);
+      return memoryAuditStore;
+    }
+    return getAuditStoreForDb(dbPath);
+  };
+
   const toolContext = {
     commerce: commerceWithA2A,
+    a2aStore,
+    dbPath,
+    getAuditStore: getScopedAuditStore,
     allowApply,
     autonomousEngine,
     autoIndexEntity,

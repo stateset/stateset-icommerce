@@ -7,28 +7,22 @@
 
 import { z } from 'zod';
 
-let _complianceSvc = null;
+import { scopedService } from './scoped-store.js';
 
 /**
- * Lazy-initialize the compliance service singleton.
- * Uses dynamic imports to avoid circular dependencies.
- * Passes both the A2A store and the commerce database path for full GDPR coverage.
+ * The compliance service over the server's store (`--db`), one per database.
+ *
+ * The server opens its A2A store on the commerce database itself, so the A2A
+ * tables and the commerce tables (customers, orders, ...) share one
+ * connection: GDPR exports and erasure cover both without guessing a sibling
+ * `store.db` path.
+ * @param {object} ctx - tool handler context
  */
-async function getComplianceSvc() {
-  if (_complianceSvc) return _complianceSvc;
-  const { A2AStore } = await import('../a2a/store.js');
-  const { createComplianceService } = await import('../compliance/exports.js');
-  const path = await import('node:path');
-  const store = new A2AStore();
-  store.init();
-
-  // Derive the commerce DB path from the A2A store path
-  const commerceDbPath = store.dbPath
-    ? path.resolve(path.dirname(store.dbPath), 'store.db')
-    : './store.db';
-
-  _complianceSvc = createComplianceService(store, { commerceDbPath });
-  return _complianceSvc;
+async function getComplianceSvc(ctx) {
+  return scopedService(ctx, 'compliance', async (store) => {
+    const { createComplianceService } = await import('../compliance/exports.js');
+    return createComplianceService(store, { _commerceDbOverride: store.db });
+  });
 }
 
 /**
@@ -57,9 +51,9 @@ export const complianceTools = [
         .describe('Maximum number of records to return'),
     },
     permission: 'admin',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getComplianceSvc();
+        const svc = await getComplianceSvc(ctx);
         const result = svc.exportAuditTrail(params);
         return { success: true, ...result };
       } catch (err) {
@@ -80,9 +74,9 @@ export const complianceTools = [
       agentAddress: z.string().min(1).describe('Agent wallet address (payee)'),
     },
     permission: 'admin',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getComplianceSvc();
+        const svc = await getComplianceSvc(ctx);
         const result = svc.generate1099K(params);
         return { success: true, ...result };
       } catch (err) {
@@ -105,9 +99,9 @@ export const complianceTools = [
         .describe('Customer or agent identifier (wallet address, agent ID, or name)'),
     },
     permission: 'admin',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getComplianceSvc();
+        const svc = await getComplianceSvc(ctx);
         const result = svc.generateGDPRExport(params.customerId);
         return { success: true, ...result };
       } catch (err) {
@@ -131,9 +125,9 @@ export const complianceTools = [
         .describe('If true, keep payment/dispute records but anonymize personal fields'),
     },
     permission: 'admin',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getComplianceSvc();
+        const svc = await getComplianceSvc(ctx);
         const result = svc.deleteGDPRData(params.customerId, {
           keepTransactions: params.keepTransactions,
         });
@@ -159,9 +153,9 @@ export const complianceTools = [
       agentName: z.string().optional().describe('Filter by agent name or address'),
     },
     permission: 'read',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getComplianceSvc();
+        const svc = await getComplianceSvc(ctx);
         const result = svc.generateComplianceSummary(params);
         return { success: true, ...result };
       } catch (err) {
@@ -192,9 +186,9 @@ export const complianceTools = [
         .describe('SOC2 control IDs to gather evidence for'),
     },
     permission: 'admin',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getComplianceSvc();
+        const svc = await getComplianceSvc(ctx);
         const result = svc.generateSOC2Evidence(params);
         return { success: true, ...result };
       } catch (err) {

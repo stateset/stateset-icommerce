@@ -355,6 +355,45 @@ export function getAuditStore(options) {
   return _instance;
 }
 
+/** Audit stores scoped to a commerce database, keyed by absolute path. */
+const _scopedInstances = new Map();
+
+/**
+ * Where the audit log for a commerce database lives: a sibling file next to
+ * it (`store.db` -> `store.audit.db`). The commerce schema already has an
+ * `audit_log` table of a different shape, so this log cannot share the file.
+ *
+ * @param {string} commerceDbPath
+ * @returns {string}
+ */
+export function auditDbPathFor(commerceDbPath) {
+  if (!commerceDbPath || commerceDbPath === ':memory:') return ':memory:';
+  const resolved = path.resolve(commerceDbPath);
+  const ext = path.extname(resolved);
+  const stem = ext ? resolved.slice(0, -ext.length) : resolved;
+  return `${stem}.audit.db`;
+}
+
+/**
+ * The audit store for a commerce database (see `auditDbPathFor`), one per
+ * file. An in-memory commerce database gets a fresh in-memory log per call,
+ * so callers that need one log per server must hold on to it.
+ *
+ * @param {string} commerceDbPath
+ * @param {object} [options] - extra AuditStore options
+ * @returns {AuditStore}
+ */
+export function getAuditStoreForDb(commerceDbPath, options = {}) {
+  const dbPath = auditDbPathFor(commerceDbPath);
+  if (dbPath === ':memory:') return new AuditStore({ ...options, dbPath });
+  let store = _scopedInstances.get(dbPath);
+  if (!store) {
+    store = new AuditStore({ ...options, dbPath });
+    _scopedInstances.set(dbPath, store);
+  }
+  return store;
+}
+
 /**
  * Reset the singleton (for testing).
  */

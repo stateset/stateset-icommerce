@@ -12,8 +12,8 @@ Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/t
 | Tier | Tools | Meaning |
 | --- | ---: | --- |
 | core | 198 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
-| extended | 479 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
-| experimental | 276 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
+| extended | 491 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
+| experimental | 264 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
 
 ## Profiles
 
@@ -83,8 +83,8 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [proofs](#proofs) | extended | 7 |
 | [circuit-breaker](#circuit-breaker) | experimental | 8 |
 | [checkout](#checkout) | experimental | 8 |
-| [compliance](#compliance) | experimental | 6 |
-| [catalog](#catalog) | experimental | 6 |
+| [compliance](#compliance) | extended | 6 |
+| [catalog](#catalog) | extended | 6 |
 | [a2a-automation](#a2a-automation) | experimental | 32 |
 | [a2a-observability](#a2a-observability) | experimental | 15 |
 | [a2a-platform](#a2a-platform) | experimental | 16 |
@@ -1023,7 +1023,7 @@ Tier: **extended**
 
 ## circuit-breaker
 
-Tier: **experimental** — agent spending breakers; state lives in ~/.stateset/a2a.db, not the --db store
+Tier: **experimental** — breaker state is held in process memory, not the store: a tripped breaker is closed again after a restart
 
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
@@ -1038,7 +1038,7 @@ Tier: **experimental** — agent spending breakers; state lives in ~/.stateset/a
 
 ## checkout
 
-Tier: **experimental** — payment links and crypto checkout; state lives in ~/.stateset/a2a.db, not the --db store
+Tier: **experimental** — converting a payment link mints order, payment and escrow ids without creating any of them in the store; link totals are floats
 
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
@@ -1053,29 +1053,29 @@ Tier: **experimental** — payment links and crypto checkout; state lives in ~/.
 
 ## compliance
 
-Tier: **experimental** — reads ~/.stateset/a2a.db, not the --db store; GDPR/SOC2 exports crash (smoke backlog)
+Tier: **extended**
 
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
-| `export_audit_trail` | experimental | admin | Export a complete audit trail of agent transactions and events for compliance review. Supports JSON and CSV formats with date range, agent, and event type filters. |
-| `generate_1099k` | experimental | admin | Generate a 1099-K tax report for an agent. Summarizes gross payment amounts, transaction counts, and monthly breakdowns for a given tax year. |
-| `export_gdpr_data` | experimental | admin | Export all personal data for a customer or agent (GDPR Article 20 — data portability). Returns personal data, payments, communications, and disputes. |
-| `delete_gdpr_data` | experimental | admin | Delete personal data for GDPR right to erasure (Article 17). Optionally retains anonymized transaction records for legal/accounting requirements. |
-| `compliance_summary` | experimental | read | Generate a compliance dashboard summary with transaction volume, dispute rates, policy violations, and top agents for a given period. |
-| `soc2_evidence` | experimental | admin | Generate a SOC2 audit evidence package. Gathers structured evidence for requested controls: access_control, change_management, encryption, monitoring, incident_response. |
+| `export_audit_trail` | extended | admin | Export a complete audit trail of agent transactions and events for compliance review. Supports JSON and CSV formats with date range, agent, and event type filters. |
+| `generate_1099k` | extended | admin | Generate a 1099-K tax report for an agent. Summarizes gross payment amounts, transaction counts, and monthly breakdowns for a given tax year. |
+| `export_gdpr_data` | extended | admin | Export all personal data for a customer or agent (GDPR Article 20 — data portability). Returns personal data, payments, communications, and disputes. |
+| `delete_gdpr_data` | extended | admin | Delete personal data for GDPR right to erasure (Article 17). Optionally retains anonymized transaction records for legal/accounting requirements. |
+| `compliance_summary` | extended | read | Generate a compliance dashboard summary with transaction volume, dispute rates, policy violations, and top agents for a given period. |
+| `soc2_evidence` | extended | admin | Generate a SOC2 audit evidence package. Gathers structured evidence for requested controls: access_control, change_management, encryption, monitoring, incident_response. |
 
 ## catalog
 
-Tier: **experimental** — agent product catalog; state lives in ~/.stateset/a2a.db, not the --db store
+Tier: **extended**
 
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
-| `publish_product_catalog` | experimental | write | Publish a product to the machine-readable agent catalog. Makes products discoverable by AI agents with capability-based matching, trust levels, and machine-readable specs. |
-| `query_agent_catalog` | experimental | read | Query the agent catalog for products matching filters. Supports capability, trust level, price, fulfillment chain, and category filtering. |
-| `get_product_spec` | experimental | read | Get the full machine-readable spec for a catalog product. Returns capabilities, requirements, pricing, trust level, and a JSON Schema fragment. |
-| `match_agent_to_products` | experimental | read | Find catalog products compatible with an agent based on its capabilities and trust level. Returns products sorted by relevance (capability overlap). |
-| `match_product_to_agents` | experimental | read | Find agents compatible with a specific product. Filters available agents by the product's required trust level and capabilities. |
-| `export_agent_catalog` | experimental | read | Export the agent catalog in JSON or OpenAPI format. Useful for sharing the catalog with other systems or generating API documentation. |
+| `publish_product_catalog` | extended | write | Publish a product to the machine-readable agent catalog. Makes products discoverable by AI agents with capability-based matching, trust levels, and machine-readable specs. |
+| `query_agent_catalog` | extended | read | Query the agent catalog for products matching filters. Supports capability, trust level, price, fulfillment chain, and category filtering. |
+| `get_product_spec` | extended | read | Get the full machine-readable spec for a catalog product. Returns capabilities, requirements, pricing, trust level, and a JSON Schema fragment. |
+| `match_agent_to_products` | extended | read | Find catalog products compatible with an agent based on its capabilities and trust level. Returns products sorted by relevance (capability overlap). |
+| `match_product_to_agents` | extended | read | Find agents compatible with a specific product. Filters available agents by the product's required trust level and capabilities. |
+| `export_agent_catalog` | extended | read | Export the agent catalog in JSON or OpenAPI format. Useful for sharing the catalog with other systems or generating API documentation. |
 
 ## a2a-automation
 
