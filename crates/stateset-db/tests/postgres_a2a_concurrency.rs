@@ -15,12 +15,36 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::{
-    A2APurchaseFilter, CommerceError, CreateA2APurchase, CreateA2AQuote, ItemAvailability,
-    QuoteStatus, QuotedItem,
+    A2APurchaseFilter, A2ASkill, CommerceError, CreateA2APurchase, CreateA2AQuote, CreateAgentCard,
+    ItemAvailability, QuoteStatus, QuotedItem,
 };
 use stateset_db::PostgresDatabase;
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// Register an agent card that may buy (A2A quotes/purchases require one).
+async fn buyer(db: &PostgresDatabase) -> Uuid {
+    agent(db, A2ASkill::Buy).await
+}
+
+/// Register an agent card that may sell.
+async fn seller(db: &PostgresDatabase) -> Uuid {
+    agent(db, A2ASkill::Sell).await
+}
+
+async fn agent(db: &PostgresDatabase, skill: A2ASkill) -> Uuid {
+    db.agent_cards()
+        .create_async(CreateAgentCard {
+            name: format!("{skill} agent"),
+            wallet_address: format!("0xagent-{}", Uuid::new_v4().as_simple()),
+            public_key: "test-public-key".into(),
+            a2a_skills: Some(vec![skill]),
+            ..Default::default()
+        })
+        .await
+        .expect("register agent card")
+        .id
+}
 
 fn postgres_url() -> Option<String> {
     std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
@@ -76,7 +100,7 @@ async fn postgres_a2a_second_purchase_of_consumed_quote_is_refused() {
         return;
     };
     let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
-    let (buyer, seller) = (Uuid::new_v4(), Uuid::new_v4());
+    let (buyer, seller) = (buyer(&db).await, seller(&db).await);
     let quote_id = quoted_quote(&db, buyer, seller).await;
 
     let first = db
@@ -106,7 +130,7 @@ async fn postgres_a2a_concurrent_purchases_consume_quote_exactly_once() {
         return;
     };
     let db = Arc::new(PostgresDatabase::connect(&url).await.expect("connect + migrate"));
-    let (buyer, seller) = (Uuid::new_v4(), Uuid::new_v4());
+    let (buyer, seller) = (buyer(&db).await, seller(&db).await);
     let quote_id = quoted_quote(&db, buyer, seller).await;
 
     let contenders = 16;
@@ -158,8 +182,8 @@ async fn shipped_purchase(db: &PostgresDatabase) -> Uuid {
     let repo = db.a2a_purchases();
     let purchase = repo
         .create_purchase_async(CreateA2APurchase {
-            buyer_agent_id: Uuid::new_v4(),
-            seller_agent_id: Uuid::new_v4(),
+            buyer_agent_id: buyer(db).await,
+            seller_agent_id: seller(db).await,
             items: vec![item()],
             total: dec!(10),
             ..Default::default()
@@ -219,7 +243,7 @@ async fn postgres_a2a_quote_accept_vs_reject_exactly_one_wins() {
     };
     let db = Arc::new(PostgresDatabase::connect(&url).await.expect("connect + migrate"));
     for round in 0..10 {
-        let quote_id = quoted_quote(&db, Uuid::new_v4(), Uuid::new_v4()).await;
+        let quote_id = quoted_quote(&db, buyer(&db).await, seller(&db).await).await;
         let barrier = Arc::new(tokio::sync::Barrier::new(2));
         let spawn = |target: QuoteStatus| {
             let (db, barrier) = (Arc::clone(&db), Arc::clone(&barrier));
@@ -316,7 +340,7 @@ async fn postgres_a2a_quoted_quote_may_move_to_purchased() {
         return;
     };
     let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
-    let quote_id = quoted_quote(&db, Uuid::new_v4(), Uuid::new_v4()).await;
+    let quote_id = quoted_quote(&db, buyer(&db).await, seller(&db).await).await;
     let purchased = db
         .a2a_quotes()
         .update_quote_status_async(quote_id, QuoteStatus::Purchased)

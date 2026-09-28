@@ -12,9 +12,10 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{OptionalExtension, Row, params};
 use stateset_core::{
     BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CurrencyCode,
-    CustomerId, InvoiceId, OrderId, OrderStatus, Payment, PaymentFilter, PaymentId, PaymentMethod,
-    PaymentRepository, PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment,
-    Validate, generate_payment_number, generate_refund_number, validate_batch_size,
+    CustomerId, InvoiceId, OrderId, OrderPaymentLedger, OrderStatus, Payment, PaymentFilter,
+    PaymentId, PaymentMethod, PaymentRepository, PaymentStatus, PaymentTransactionStatus, Refund,
+    RefundStatus, Result, UpdatePayment, Validate, generate_payment_number, generate_refund_number,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -398,6 +399,118 @@ pub(crate) fn order_has_payments_conn(
     })
 }
 
+/// The order's payment ledger (every payment row against `order_id`), summed
+/// in exact `Decimal` — `amount`/`amount_refunded` are TEXT money columns, so
+/// nothing is added in SQL.
+pub(crate) fn order_payment_ledger_conn(
+    conn: &rusqlite::Connection,
+    order_id: &str,
+) -> rusqlite::Result<OrderPaymentLedger> {
+    let mut stmt =
+        conn.prepare("SELECT status, amount, amount_refunded FROM payments WHERE order_id = ?")?;
+    let rows = stmt.query_map([order_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+    })?;
+    let mut ledger = OrderPaymentLedger::default();
+    for row in rows {
+        let (status, amount, refunded) = row?;
+        ledger.record(
+            parse_enum_row(&status, "payment", "status")?,
+            parse_decimal_row(&amount, "payment", "amount")?,
+            parse_decimal_row(&refunded, "payment", "amount_refunded")?,
+        );
+    }
+    Ok(ledger)
+}
+
+/// The payment status `order_id`'s ledger implies, given the order's stored
+/// `total` and `current` payment status ([`PaymentStatus::derive`]).
+pub(crate) fn derive_order_payment_status_conn(
+    conn: &rusqlite::Connection,
+    order_id: &str,
+    total: rust_decimal::Decimal,
+    current: PaymentStatus,
+) -> rusqlite::Result<PaymentStatus> {
+    Ok(PaymentStatus::derive(total, &order_payment_ledger_conn(conn, order_id)?, current))
+}
+
+/// Recompute `orders.payment_status` for `order_id` from its payment ledger,
+/// on the caller's transaction, and write it when it changed (bumping the
+/// order's `version` and `updated_at` like every other order write, and
+/// emitting `orders.payment_status_changed.v1` in the same commit).
+///
+/// Every payment/refund write that moves money on an order calls this before
+/// its transaction commits, so the order never disagrees with its ledger.
+/// A payment whose `order_id` does not resolve to an order is a no-op.
+/// Returns the emitted event's id, or `None` when nothing changed. Mirrored
+/// exactly in the Postgres backend (`sync_order_payment_status_pg`).
+pub(crate) fn sync_order_payment_status_tx(
+    tx: &rusqlite::Transaction<'_>,
+    order_id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<Option<Uuid>> {
+    let Some((raw_total, raw_status, version)) = tx
+        .query_row(
+            "SELECT total_amount, payment_status, version FROM orders WHERE id = ?",
+            [order_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i32>(2)?)),
+        )
+        .optional()?
+    else {
+        return Ok(None);
+    };
+    let total = parse_decimal_row(&raw_total, "order", "total_amount")?;
+    let before: PaymentStatus = parse_enum_row(&raw_status, "order", "payment_status")?;
+    let after = derive_order_payment_status_conn(tx, order_id, total, before)?;
+    if after == before {
+        return Ok(None);
+    }
+    let rows = tx.execute(
+        "UPDATE orders SET payment_status = ?, updated_at = ?, version = version + 1
+         WHERE id = ? AND version = ?",
+        params![after.to_string(), now.to_rfc3339(), order_id, version],
+    )?;
+    if rows == 0 {
+        return Err(domain_err(CommerceError::VersionConflict {
+            entity: "order".to_string(),
+            id: order_id.to_string(),
+            expected_version: version,
+        }));
+    }
+    let event = KernelOutboxEvent::domain(
+        "orders.payment_status_changed.v1",
+        "order",
+        order_id,
+        serde_json::json!({
+            "order_id": order_id,
+            "payment_status_before": before.to_string(),
+            "payment_status_after": after.to_string(),
+            "version_before": version,
+            "version_after": version + 1,
+            "total_amount": total.to_string(),
+        }),
+        None,
+    );
+    append_kernel_event_tx(tx, &event)?;
+    Ok(Some(event.id))
+}
+
+/// [`sync_order_payment_status_tx`] for the order `payment_id` belongs to.
+pub(crate) fn sync_order_payment_status_for_payment_tx(
+    tx: &rusqlite::Transaction<'_>,
+    payment_id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<Option<Uuid>> {
+    let order_id: Option<String> = tx
+        .query_row("SELECT order_id FROM payments WHERE id = ?", [payment_id], |row| row.get(0))
+        .optional()?
+        .flatten();
+    match order_id {
+        Some(order_id) => sync_order_payment_status_tx(tx, &order_id, now),
+        None => Ok(None),
+    }
+}
+
 #[derive(Debug)]
 pub struct SqlitePaymentRepository {
     pool: Pool<SqliteConnectionManager>,
@@ -620,6 +733,65 @@ impl SqlitePaymentRepository {
     }
 }
 
+/// Capture payment `id` on the caller's transaction (shared by
+/// [`PaymentRepository::mark_completed`] and the governed `payments.complete`
+/// kernel command).
+///
+/// Two guards, in this order:
+///   1. the state machine — only a payment that may legally reach `Completed`
+///      may be completed (never a cancelled/failed/refunded one);
+///   2. the order's capacity, re-checked at completion time: a payment that
+///      was failed/cancelled while still in flight (and so released its slice
+///      of the total) must not be completed on top of captures made since.
+pub(crate) fn mark_completed_tx(
+    tx: &rusqlite::Transaction<'_>,
+    id: PaymentId,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<()> {
+    let target = PaymentTransactionStatus::Completed;
+    let (raw_status, order_id, raw_amount, currency): (
+        String,
+        Option<String>,
+        String,
+        CurrencyCode,
+    ) = tx
+        .query_row(
+            "SELECT status, order_id, amount, currency FROM payments WHERE id = ?",
+            [id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => domain_err(CommerceError::NotFound),
+            other => other,
+        })?;
+    let current: PaymentTransactionStatus = parse_enum_row(&raw_status, "payment", "status")?;
+    if !payment_transition_allowed(current, target) {
+        return Err(domain_err(transition_conflict(current, target)));
+    }
+
+    if let Some(order_id) = &order_id {
+        let amount = parse_decimal_row(&raw_amount, "payment", "amount")?;
+        check_order_capture_capacity_tx(tx, order_id, Some(&id.to_string()), amount, currency)?;
+    }
+
+    let sql = format!(
+        "UPDATE payments SET status = ?, paid_at = ?, updated_at = ?
+         WHERE id = ? AND status IN ({})",
+        statuses_allowing_transition_to(target)
+    );
+    let rows = tx.execute(
+        &sql,
+        params![target.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
+    )?;
+    if rows == 0 {
+        return Err(domain_err(transition_conflict(current, target)));
+    }
+    if let Some(order_id) = order_id {
+        sync_order_payment_status_tx(tx, &order_id, now)?;
+    }
+    Ok(())
+}
+
 impl PaymentRepository for SqlitePaymentRepository {
     fn create(&self, input: CreatePayment) -> Result<Payment> {
         input.validate()?;
@@ -700,6 +872,9 @@ impl PaymentRepository for SqlitePaymentRepository {
                 ],
             )?;
             append_kernel_event_tx(tx, &outbox_event)?;
+            if let Some(order_id) = input.order_id {
+                sync_order_payment_status_tx(tx, &order_id.to_string(), now)?;
+            }
             Ok(())
         });
 
@@ -828,6 +1003,11 @@ impl PaymentRepository for SqlitePaymentRepository {
             if rows == 0 {
                 return Err(domain_err(transition_conflict(current, target)));
             }
+            if current != target {
+                if let Some(order_id) = payment.order_id {
+                    sync_order_payment_status_tx(tx, &order_id.to_string(), now)?;
+                }
+            }
             Ok(())
         })?;
 
@@ -899,65 +1079,7 @@ impl PaymentRepository for SqlitePaymentRepository {
 
     fn mark_completed(&self, id: PaymentId) -> Result<Payment> {
         let now = chrono::Utc::now();
-
-        let target = PaymentTransactionStatus::Completed;
-
-        with_immediate_transaction(&self.pool, |tx| {
-            // Two guards, in this order:
-            //   1. the state machine — only a payment that may legally reach
-            //      `Completed` may be completed (never a cancelled/failed/
-            //      refunded one);
-            //   2. the order's capacity, re-checked at completion time: a
-            //      payment that was failed/cancelled while still in flight (and
-            //      so released its slice of the total) must not be completed on
-            //      top of captures made since.
-            let (raw_status, order_id, raw_amount, currency): (
-                String,
-                Option<String>,
-                String,
-                CurrencyCode,
-            ) = tx
-                .query_row(
-                    "SELECT status, order_id, amount, currency FROM payments WHERE id = ?",
-                    [id.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                )
-                .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => domain_err(CommerceError::NotFound),
-                    other => other,
-                })?;
-            let current: PaymentTransactionStatus =
-                parse_enum_row(&raw_status, "payment", "status")?;
-            if !payment_transition_allowed(current, target) {
-                return Err(domain_err(transition_conflict(current, target)));
-            }
-
-            if let Some(order_id) = order_id {
-                let amount = parse_decimal_row(&raw_amount, "payment", "amount")?;
-                check_order_capture_capacity_tx(
-                    tx,
-                    &order_id,
-                    Some(&id.to_string()),
-                    amount,
-                    currency,
-                )?;
-            }
-
-            let sql = format!(
-                "UPDATE payments SET status = ?, paid_at = ?, updated_at = ?
-                 WHERE id = ? AND status IN ({})",
-                statuses_allowing_transition_to(target)
-            );
-            let rows = tx.execute(
-                &sql,
-                params![target.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-            )?;
-            if rows == 0 {
-                return Err(domain_err(transition_conflict(current, target)));
-            }
-            Ok(())
-        })?;
-
+        with_immediate_transaction(&self.pool, |tx| mark_completed_tx(tx, id, now))?;
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
@@ -995,6 +1117,7 @@ impl PaymentRepository for SqlitePaymentRepository {
             if rows == 0 {
                 return Err(domain_err(transition_conflict(current, target)));
             }
+            sync_order_payment_status_for_payment_tx(tx, &id.to_string(), now)?;
             Ok(())
         })?;
 
@@ -1251,6 +1374,7 @@ impl PaymentRepository for SqlitePaymentRepository {
             if rows == 0 {
                 return Err(domain_err(transition_conflict(payment_status, new_status)));
             }
+            sync_order_payment_status_for_payment_tx(tx, &refund.payment_id.to_string(), now)?;
 
             Ok(())
         })?;
@@ -1496,6 +1620,10 @@ impl PaymentRepository for SqlitePaymentRepository {
                 input.idempotency_key.clone(),
             );
             append_kernel_event_tx(&tx, &outbox_event).map_err(map_db_error)?;
+            if let Some(order_id) = input.order_id {
+                sync_order_payment_status_tx(&tx, &order_id.to_string(), now)
+                    .map_err(map_db_error)?;
+            }
 
             results.push(Payment {
                 id: PaymentId::from(id),
@@ -1632,6 +1760,12 @@ impl PaymentRepository for SqlitePaymentRepository {
                 .map_err(map_db_error)?;
             if rows == 0 {
                 return Err(transition_conflict(current, target));
+            }
+            if current != target {
+                if let Some(order_id) = payment.order_id {
+                    sync_order_payment_status_tx(&tx, &order_id.to_string(), now)
+                        .map_err(map_db_error)?;
+                }
             }
 
             // Fetch the updated payment

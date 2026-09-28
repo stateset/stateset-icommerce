@@ -137,6 +137,10 @@ pub trait IntegrationFieldMappingRepository: Send + Sync {
 #[auto_impl::auto_impl(&, Box, Arc)]
 pub trait PurgatoryRepository: Send + Sync {
     /// Ingest an order into purgatory (non-posted).
+    ///
+    /// A `channel_id`, when given, must name an existing channel that can
+    /// ingest orders ([`Channel::can_ingest`](crate::Channel::can_ingest));
+    /// otherwise the ingest is refused with `ValidationError`.
     fn ingest(&self, input: IngestOrder) -> Result<PurgatoryOrder>;
 
     /// Get a purgatory order by ID (with line items).

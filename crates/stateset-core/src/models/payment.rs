@@ -662,6 +662,14 @@ pub struct Refund {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Kernel command payload marking a pending/processing payment captured
+/// (`payments.complete`). The state machine and the order's capture capacity
+/// are re-checked under the payment row lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompletePayment {
+    pub payment_id: PaymentId,
+}
+
 /// Input for creating a refund
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]

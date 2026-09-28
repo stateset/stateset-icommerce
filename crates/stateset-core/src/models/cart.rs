@@ -465,6 +465,51 @@ pub struct CommitCheckout {
     pub expected_cart_fingerprint: Option<String>,
 }
 
+/// Governed request to add one line to an active cart (`carts.item.add`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddCartItemCommand {
+    pub cart_id: CartId,
+    pub item: AddCartItem,
+}
+
+/// Governed request to set a cart's shipping address
+/// (`carts.shipping_address.set`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetCartShippingAddress {
+    pub cart_id: CartId,
+    pub address: CartAddress,
+}
+
+/// Governed request to record a cart's payment method
+/// (`carts.payment_method.set`). The token is never echoed on the receipt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetCartPaymentMethod {
+    pub cart_id: CartId,
+    pub payment: SetCartPayment,
+}
+
+/// Governed request to redeem a coupon on a cart (`carts.coupon.apply`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplyCartCoupon {
+    pub cart_id: CartId,
+    pub coupon_code: String,
+}
+
+/// Governed request to price a cart's tax from its shipping address and
+/// write the total onto the cart (`carts.tax.calculate`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalculateCartTax {
+    pub cart_id: CartId,
+}
+
+/// Receipt result of `carts.tax.calculate`: the repriced cart and the tax
+/// breakdown written onto it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CartTaxCalculated {
+    pub cart: Cart,
+    pub calculation: super::tax::TaxCalculationResult,
+}
+
 impl CommitCheckout {
     /// Legacy checkout behavior with optional quote constraints unset.
     #[must_use]

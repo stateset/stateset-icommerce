@@ -1676,3 +1676,62 @@ describe('Saga Framework -- Module Exports', () => {
     assert.ok(mod.default.RFQ_SAGA);
   });
 });
+
+// ===========================================================================
+// Money safety: escrow is released only on proven fulfillment
+// ===========================================================================
+
+describe('PURCHASE_SAGA -- escrow release requires fulfillment', () => {
+  const step = (name) => PURCHASE_SAGA.steps.find((s) => s.name === name);
+
+  it('await_fulfillment fails when the conditions are not met', async () => {
+    // It used to return { fulfilled: false } and let release_escrow pay the
+    // seller for an order that was never fulfilled.
+    const ctx = {
+      create_escrow: { escrow: { id: 'esc-1' } },
+      services: { a2a: { checkPaymentConditions: async () => ({ allMet: false }) } },
+    };
+    await assert.rejects(() => step('await_fulfillment').execute(ctx), /not met/);
+  });
+
+  it('await_fulfillment passes when every condition is met', async () => {
+    const ctx = {
+      create_escrow: { escrow: { id: 'esc-1' } },
+      services: { a2a: { checkPaymentConditions: async () => ({ allMet: true }) } },
+    };
+    const result = await step('await_fulfillment').execute(ctx);
+    assert.equal(result.fulfilled, true);
+  });
+
+  it('release_escrow refuses without proven fulfillment and never settles', async () => {
+    let settled = false;
+    const services = {
+      a2a: {
+        settleConditionalPayment: async () => {
+          settled = true;
+          return { released: true };
+        },
+      },
+    };
+    const release = step('release_escrow');
+    for (const awaitFulfillment of [undefined, { fulfilled: false }]) {
+      await assert.rejects(
+        () =>
+          release.execute({
+            create_escrow: { escrow: { id: 'esc-1' } },
+            await_fulfillment: awaitFulfillment,
+            services,
+          }),
+        /without proven fulfillment/,
+      );
+    }
+    assert.equal(settled, false, 'no settlement was attempted');
+
+    await release.execute({
+      create_escrow: { escrow: { id: 'esc-1' } },
+      await_fulfillment: { fulfilled: true },
+      services,
+    });
+    assert.equal(settled, true);
+  });
+});

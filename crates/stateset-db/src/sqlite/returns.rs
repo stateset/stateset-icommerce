@@ -337,7 +337,7 @@ fn same_return_request(existing: &Return, input: &CreateReturn) -> bool {
 /// transaction and return it as stored. Honours `idempotency_key` inside the
 /// transaction: an existing return with the key is returned as-is when the
 /// request matches it, and a `Conflict` is raised when it does not.
-fn insert_return_tx(
+pub(crate) fn insert_return_tx(
     tx: &rusqlite::Transaction<'_>,
     input: &CreateReturn,
     now: DateTime<Utc>,
@@ -507,7 +507,7 @@ fn settle_refund_tx(
 /// Apply an update (field changes and/or a status transition) on the caller's
 /// transaction with every guard in force, returning the stored return. Every
 /// status write in this module goes through here.
-fn apply_update_tx(
+pub(crate) fn apply_update_tx(
     tx: &rusqlite::Transaction<'_>,
     id: ReturnId,
     input: &UpdateReturn,
@@ -1068,7 +1068,7 @@ impl ReturnRepository for SqliteReturnRepository {
         with_immediate_transaction(&self.pool, |tx| {
             let current = load_return_conn(tx, &id.to_string())?
                 .ok_or_else(|| smuggle(CommerceError::ReturnNotFound(id.into())))?;
-            if current.status != ReturnStatus::Requested {
+            if !current.can_approve() {
                 return Err(smuggle(CommerceError::ReturnCannotBeApproved(
                     current.status.to_string(),
                 )));

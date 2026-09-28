@@ -1199,7 +1199,7 @@ Tier: **extended**
 | `list_ncrs` | extended | read | List non-conformance reports, optionally filtered by source, severity, status, SKU, lot, assignee or date range. |
 | `get_ncr` | extended | read | Get a non-conformance report by ID. |
 | `create_ncr` | extended | write | Create a non-conformance report. |
-| `close_ncr` | extended | write | Close a non-conformance report. |
+| `close_ncr` | extended | write | Close a non-conformance report. Closing requires a disposition (what was done with the non-conforming material): pass `disposition` (and optionally `dispositionQuantity`) to record it and close in one step. An NCR with no disposition recorded is refused. |
 | `list_quality_holds` | extended | read | List quality holds. |
 | `get_quality_hold` | extended | read | Get a quality hold by ID. |
 | `create_quality_hold` | extended | write | Create a quality hold. |

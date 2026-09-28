@@ -963,7 +963,10 @@ pub extern "C" fn stateset_order_ship(
     let result = use_handle(handle, |commerce| {
         commerce
             .orders()
-            .update_status(uuid.into(), OrderStatus::Shipped)
+            // The engine's ship path: advances a pending/confirmed order,
+            // deducts stock and settles reservations. A bare status update
+            // does none of that.
+            .ship(uuid.into(), None)
             .map_err(|e| e.to_string())
     });
 
@@ -991,10 +994,7 @@ pub extern "C" fn stateset_order_cancel(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce
-            .orders()
-            .update_status(uuid.into(), OrderStatus::Cancelled)
-            .map_err(|e| e.to_string())
+        commerce.orders().cancel(uuid.into()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -4913,5 +4913,68 @@ mod tests {
         assert!(get_handle(second).is_some());
 
         destroy_handle(second);
+    }
+
+    fn pending_order(commerce: &RustCommerce, sku: &str) -> String {
+        let customer = commerce
+            .customers()
+            .create(stateset_embedded::CreateCustomer {
+                email: format!("{sku}@example.com"),
+                first_name: "Go".into(),
+                last_name: "Binding".into(),
+                ..Default::default()
+            })
+            .expect("customer");
+        commerce
+            .orders()
+            .create(stateset_embedded::CreateOrder {
+                customer_id: customer.id,
+                items: vec![stateset_embedded::CreateOrderItem {
+                    product_id: uuid::Uuid::new_v4().into(),
+                    sku: sku.into(),
+                    name: "Widget".into(),
+                    quantity: 1,
+                    unit_price: rust_decimal::Decimal::new(1000, 2),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .expect("order")
+            .id
+            .to_string()
+    }
+
+    fn order_status(json: *mut c_char) -> String {
+        assert!(!json.is_null(), "the call returned no order");
+        let text = unsafe { std::ffi::CStr::from_ptr(json) }.to_str().expect("utf8").to_owned();
+        stateset_free_string(json);
+        let value: serde_json::Value = serde_json::from_str(&text).expect("json");
+        value["status"].as_str().expect("status").to_owned()
+    }
+
+    /// Ship goes through the engine's ship path, which advances a pending
+    /// order; a bare status update refused Pending -> Shipped outright.
+    #[test]
+    fn ship_uses_the_engine_ship_path() {
+        let commerce = RustCommerce::new(":memory:").expect("in-memory commerce");
+        let id = pending_order(&commerce, "GO-SHIP");
+        let handle = create_handle(commerce);
+        let c_id = CString::new(id).expect("cstring");
+
+        let status = order_status(stateset_order_ship(handle, c_id.as_ptr()));
+        assert_eq!(status, "shipped");
+        destroy_handle(handle);
+    }
+
+    #[test]
+    fn cancel_cancels_a_pending_order() {
+        let commerce = RustCommerce::new(":memory:").expect("in-memory commerce");
+        let id = pending_order(&commerce, "GO-CANCEL");
+        let handle = create_handle(commerce);
+        let c_id = CString::new(id).expect("cstring");
+
+        let status = order_status(stateset_order_cancel(handle, c_id.as_ptr()));
+        assert_eq!(status, "cancelled");
+        destroy_handle(handle);
     }
 }

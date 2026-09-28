@@ -4,6 +4,7 @@ use super::{
     map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row,
     parse_json_opt_row, parse_json_row, parse_uuid_opt_row, parse_uuid_row,
 };
+use crate::a2a_participants::{A2ASide, ensure_participant};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -577,6 +578,20 @@ impl SqliteA2ARepository {
         Ok(())
     }
 
+    /// Agent-card governance: the buyer must hold a card that can buy and the
+    /// seller one that can sell. Runs on the caller's write transaction so
+    /// the cards are read under the same `BEGIN IMMEDIATE` lock as the insert.
+    fn ensure_participants(
+        conn: &rusqlite::Connection,
+        buyer_agent_id: Uuid,
+        seller_agent_id: Uuid,
+    ) -> Result<()> {
+        let buyer = super::SqliteAgentCardRepository::get_on(conn, buyer_agent_id)?;
+        ensure_participant(buyer.as_ref(), buyer_agent_id, A2ASide::Buyer)?;
+        let seller = super::SqliteAgentCardRepository::get_on(conn, seller_agent_id)?;
+        ensure_participant(seller.as_ref(), seller_agent_id, A2ASide::Seller)
+    }
+
     fn normalize_currency(raw: Option<CurrencyCode>) -> CurrencyCode {
         raw.unwrap_or_default()
     }
@@ -679,8 +694,10 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         let discount_amount = input.discount_amount.unwrap_or(Decimal::ZERO);
         let now_str = now.to_rfc3339();
 
-        let conn = self.conn()?;
-        conn.execute(
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        Self::ensure_participants(&tx, input.buyer_agent_id, input.seller_agent_id)?;
+        tx.execute(
             r"
             INSERT INTO a2a_quotes (
                 id, quote_number, status, buyer_agent_id, seller_agent_id, items,
@@ -719,7 +736,9 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_quote(id)?.ok_or(CommerceError::NotFound)
+        let quote = Self::get_quote_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(quote)
     }
 
     fn get_quote(&self, id: Uuid) -> Result<Option<SkillQuote>> {
@@ -840,6 +859,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         // UPDATE carried no status predicate, so both buyers won).
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        Self::ensure_participants(&tx, input.buyer_agent_id, input.seller_agent_id)?;
 
         let quote_status = match quote_id {
             Some(quote_id) => {

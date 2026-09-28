@@ -12,8 +12,8 @@ use rusqlite::{OptionalExtension, TransactionBehavior};
 use rust_decimal::Decimal;
 use stateset_core::{
     BatchResult, CommerceError, CreateX402PaymentIntent, Result, SignX402PaymentIntent,
-    X402_DEFAULT_VALIDITY_SECONDS, X402IntentStatus, X402PaymentIntent, X402PaymentIntentFilter,
-    X402PaymentIntentRepository, X402SignatureScheme, validate_batch_size,
+    X402_DEFAULT_VALIDITY_SECONDS, X402BatchInclusion, X402IntentStatus, X402PaymentIntent,
+    X402PaymentIntentFilter, X402PaymentIntentRepository, X402SignatureScheme, validate_batch_size,
 };
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -620,18 +620,13 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         Self::finish_transition(tx, id, affected, "sequence")
     }
 
-    fn mark_batched(
-        &self,
-        id: Uuid,
-        batch_merkle_root: &str,
-        inclusion_proof: Vec<String>,
-    ) -> Result<X402PaymentIntent> {
-        if batch_merkle_root.trim().is_empty() {
+    fn mark_batched(&self, id: Uuid, inclusion: &X402BatchInclusion) -> Result<X402PaymentIntent> {
+        if inclusion.merkle_root.trim().is_empty() {
             return Err(CommerceError::ValidationError(
                 "batch_merkle_root is required to batch an x402 intent".to_string(),
             ));
         }
-        let proof_json = serde_json::to_string(&inclusion_proof)
+        let proof_json = serde_json::to_string(&inclusion.inclusion_proof)
             .map_err(|e| CommerceError::ValidationError(e.to_string()))?;
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
@@ -639,6 +634,13 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         // A commitment published after the validity window is meaningless
         // on-chain, exactly like a late settlement.
         Self::ensure_not_expired(&intent, "batch")?;
+        // The leaf is rebuilt from the stored intent, never from the caller:
+        // a root/proof that does not prove *this* intent is refused.
+        intent.verify_batch_inclusion(inclusion).map_err(|reason| {
+            CommerceError::ValidationError(format!(
+                "x402 intent {id} batch inclusion proof rejected: {reason}"
+            ))
+        })?;
 
         let affected = tx
             .execute(
@@ -647,7 +649,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
              WHERE id = ? AND status = ?",
                 rusqlite::params![
                     X402IntentStatus::Batched.to_string(),
-                    batch_merkle_root,
+                    inclusion.merkle_root.trim(),
                     proof_json,
                     Utc::now().to_rfc3339(),
                     id.to_string(),

@@ -43,6 +43,12 @@ export type NcrSeverity = 'Critical' | 'Major' | 'Minor' | 'Observation'
 export type NcrSeverityInput = 'critical' | 'major' | 'minor' | 'observation'
 /** Non-conformance report status as rendered on `NcrOutput.status` (Rust `Debug` form). */
 export type NcrStatus = 'Open' | 'UnderReview' | 'PendingDisposition' | 'CorrectiveAction' | 'PreventiveAction' | 'Verification' | 'Closed' | 'Cancelled'
+/** Non-conformance report status accepted by `UpdateNcrInput.status` (case-insensitive; `_` optional). */
+export type NcrStatusInput = 'open' | 'under_review' | 'pending_disposition' | 'corrective_action' | 'preventive_action' | 'verification' | 'closed' | 'cancelled' | NcrStatus
+/** NCR disposition as rendered on `NcrOutput.disposition` (Rust `Debug` form). */
+export type NcrDisposition = 'UseAsIs' | 'Rework' | 'Repair' | 'Scrap' | 'ReturnToVendor' | 'Downgrade' | 'SortAndScreen'
+/** NCR disposition accepted by `UpdateNcrInput.disposition` (case-insensitive; `_` optional). */
+export type NcrDispositionInput = 'use_as_is' | 'rework' | 'repair' | 'scrap' | 'return_to_vendor' | 'downgrade' | 'sort_and_screen' | NcrDisposition
 /** Quality hold type as rendered on `QualityHoldOutput.holdType` (Rust `Debug` form). */
 export type QualityHoldType = 'QualityInspection' | 'CustomerReturn' | 'Recall' | 'Damaged' | 'Expired' | 'Quarantine' | 'RegulatoryHold' | 'InvestigationHold'
 /** Quality hold type accepted by `CreateQualityHoldInput.holdType` (case-insensitive). */

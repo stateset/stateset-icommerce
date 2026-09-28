@@ -2,6 +2,7 @@
 
 use super::backorder::PgBackorderRepository;
 use super::carts::PgCartRepository;
+use super::customers::PgCustomerRepository;
 use super::general_ledger::{JournalEntryLineRow, JournalEntryRow, PgGeneralLedgerRepository};
 use super::inventory::{PgInventoryRepository, ReservationConfirmOutcome, ReservationRow};
 use super::kernel_outbox::{
@@ -9,13 +10,19 @@ use super::kernel_outbox::{
     sealed_audit_entry_tx,
 };
 use super::orders::{OrderItemRow, OrderRow, PgOrderRepository, ShipMode};
+use super::payments::mark_completed_pg;
 use super::payments::{
     PaymentRow, PgPaymentRepository, RefundRow, check_order_capture_capacity_pg,
-    open_captures_for_order_pg, void_in_flight_payments_for_order_pg,
+    derive_order_payment_status_pg, open_captures_for_order_pg, sync_order_payment_status_pg,
+    void_in_flight_payments_for_order_pg,
 };
 use super::resolve_currency_with_executor;
-use super::returns::{PgReturnRepository, ReturnItemRow, ReturnRow};
+use super::returns::{
+    PgReturnRepository, ReturnItemRow, ReturnRow, apply_update_pg, insert_return_pg,
+};
+use super::shipments::create_shipment_pg;
 use super::subscriptions::{BillingCycleRow, PgSubscriptionRepository};
+use super::tax::PgTaxRepository;
 use super::x402_payment_intents::{IntentRow, PgX402PaymentIntentRepository};
 use crate::kernel::plans::PlanOutcome;
 use crate::kernel::plans::catalog::{create_inventory_item_guard, create_product_guard};
@@ -43,6 +50,14 @@ use crate::kernel::plans::payments::{
     plan_refund,
 };
 use crate::kernel::plans::returns::transition_return_guard;
+use crate::kernel::plans::storefront::{
+    DomainOutcome, PAYMENT_UNVERSIONED, RETURN_TRACKING_UNVERSIONED, SealDecision,
+    StorefrontAggregate, add_cart_item_guard, add_return_tracking_guard, apply_cart_coupon_guard,
+    calculate_cart_tax_guard, cart_tax_request, complete_payment_guard, create_cart_guard,
+    create_customer_guard, create_return_guard, create_shipment_guard, domain_rejection,
+    order_status_refuses_shipment, outcome, redact_payment_token, refuse_recapture, seal_decision,
+    set_cart_payment_method_guard, set_cart_shipping_address_guard, tax_basis, tax_basis_changed,
+};
 use crate::kernel::receipt::{
     attach_command_context, checkout_error_code, preview_receipt, principal_kind_name,
     receipt_record, rejected_receipt, succeeded_receipt,
@@ -62,14 +77,19 @@ use stateset_core::{
     CheckoutResult, CommandEnvelope, CommerceError, CommitCheckout, ConfirmInventoryReservation,
     CreateA2AEscrow, CreateInventoryItem, CreatePayment, CreateProduct, CreateRefund,
     DisputeA2AEscrow, EconomicBudget, EconomicBudgetStatus, ExecutionMode, ExecutionReceipt,
-    ExecutionStatus, FileA2ADispute, FundA2AEscrow, InventoryItem, InventoryReservation,
-    JournalEntry, JournalEntryStatus, KernelPolicy, Money, Order, OrderStatus, Payment,
-    PaymentTransactionStatus, PostJournalEntry, Product, ProductId, ProductStatus, Refund,
-    RefundA2AEscrow, RefundStatus, ReleaseA2AEscrow, ReleaseInventoryReservation,
-    ReservationStatus, ReserveInventory, ResolveA2ADispute, Result, RetryDisposition, Return,
-    SettleX402Intent, ShipOrderCommand, SubmitA2ADisputeEvidence, SubscriptionCharge,
-    SubscriptionStatus, TransitionOrder, TransitionReturn, Validate, X402IntentStatus,
-    X402PaymentIntent,
+    ExecutionStatus, FileA2ADispute, FulfillmentStatus, FundA2AEscrow, InventoryItem,
+    InventoryReservation, JournalEntry, JournalEntryStatus, KernelPolicy, Money, Order,
+    OrderStatus, Payment, PaymentTransactionStatus, PostJournalEntry, Product, ProductId,
+    ProductStatus, Refund, RefundA2AEscrow, RefundStatus, ReleaseA2AEscrow,
+    ReleaseInventoryReservation, ReservationStatus, ReserveInventory, ResolveA2ADispute, Result,
+    RetryDisposition, Return, SettleX402Intent, ShipOrderCommand, SubmitA2ADisputeEvidence,
+    SubscriptionCharge, SubscriptionStatus, TransitionOrder, TransitionReturn, Validate,
+    X402IntentStatus, X402PaymentIntent,
+};
+use stateset_core::{
+    AddCartItemCommand, AddReturnTracking, ApplyCartCoupon, CalculateCartTax, Cart,
+    CartTaxCalculated, CompletePayment, CreateCart, CreateCustomer, CreateReturn, CreateShipment,
+    Customer, SetCartPaymentMethod, SetCartShippingAddress, Shipment, UpdateReturn,
 };
 use uuid::Uuid;
 
@@ -95,6 +115,17 @@ const REFUND_A2A_ESCROW_COMMAND: &str = "a2a.escrow.refund";
 const FILE_A2A_DISPUTE_COMMAND: &str = "a2a.dispute.file";
 const SUBMIT_A2A_EVIDENCE_COMMAND: &str = "a2a.dispute.evidence.submit";
 const RESOLVE_A2A_DISPUTE_COMMAND: &str = "a2a.dispute.resolve";
+const CREATE_CUSTOMER_COMMAND: &str = "customers.create";
+const CREATE_CART_COMMAND: &str = "carts.create";
+const ADD_CART_ITEM_COMMAND: &str = "carts.item.add";
+const SET_CART_SHIPPING_ADDRESS_COMMAND: &str = "carts.shipping_address.set";
+const SET_CART_PAYMENT_METHOD_COMMAND: &str = "carts.payment_method.set";
+const APPLY_CART_COUPON_COMMAND: &str = "carts.coupon.apply";
+const CALCULATE_CART_TAX_COMMAND: &str = "carts.tax.calculate";
+const COMPLETE_PAYMENT_COMMAND: &str = "payments.complete";
+const CREATE_SHIPMENT_COMMAND: &str = "shipments.create";
+const CREATE_RETURN_COMMAND: &str = "returns.create";
+const ADD_RETURN_TRACKING_COMMAND: &str = "returns.tracking.add";
 
 #[derive(Clone, Copy)]
 enum InventoryLifecycleAction {
@@ -166,6 +197,63 @@ struct EconomicBudgetRow {
     currency: stateset_core::CurrencyCode,
     valid_from: chrono::DateTime<Utc>,
     expires_at: chrono::DateTime<Utc>,
+}
+
+/// Finish a storefront domain step that ran in the savepoint `step`.
+///
+/// The step is the same repository function the ungoverned API calls, run on
+/// the kernel transaction. A business refusal rolls the savepoint back and is
+/// a typed rejection; a preview rolls it back only after the step proved it
+/// would apply; an apply appends the command-context event and releases the
+/// savepoint. The caller seals the returned receipt on the outer transaction.
+/// The decision itself is `kernel::plans::storefront::seal_decision`, shared
+/// with SQLite.
+async fn finish_storefront_step_pg<C: Serialize, T: Serialize>(
+    mut step: sqlx::Transaction<'_, sqlx::Postgres>,
+    run: &CommandRun<'_, C>,
+    aggregate: StorefrontAggregate,
+    target_id: Option<String>,
+    attempted: Result<DomainOutcome<T>>,
+) -> Result<ExecutionReceipt<T>> {
+    let decision = match seal_decision(aggregate, attempted, run.is_preview()) {
+        Ok(decision) => decision,
+        Err(error) => {
+            step.rollback().await.map_err(pg_err)?;
+            return Err(error);
+        }
+    };
+    Ok(match decision {
+        SealDecision::Reject(rejection) => {
+            step.rollback().await.map_err(pg_err)?;
+            let mut receipt = run.rejected_by(&rejection);
+            receipt.aggregate_id = target_id;
+            receipt
+        }
+        SealDecision::Preview(outcome) => {
+            step.rollback().await.map_err(pg_err)?;
+            let mut receipt = run.previewed();
+            receipt.aggregate_id = target_id;
+            receipt.version_before = outcome.version_before;
+            receipt
+        }
+        SealDecision::Apply(outcome) => {
+            let event = run.event(
+                outcome.event_type,
+                aggregate.label(),
+                outcome.aggregate_id.clone(),
+                outcome.event_payload,
+            );
+            append_kernel_event_tx(step.as_mut(), &event).await?;
+            step.commit().await.map_err(pg_err)?;
+            run.succeeded(
+                outcome.result,
+                Some(outcome.aggregate_id),
+                outcome.version_before,
+                outcome.version_after,
+                vec![event.id],
+            )
+        }
+    })
 }
 
 /// Async kernel executor with transactionally durable receipts.
@@ -737,8 +825,13 @@ impl PgKernelExecutor {
             }),
         );
         append_kernel_event_tx(tx.as_mut(), &event).await?;
-        let mut receipt =
-            run.succeeded(payment, Some(id.to_string()), None, Some(1), vec![event.id]);
+        let mut event_ids = vec![event.id];
+        if let Some(order_id) = input.order_id {
+            event_ids.extend(
+                sync_order_payment_status_pg(tx.as_mut(), order_id.into_uuid(), created_at).await?,
+            );
+        }
+        let mut receipt = run.succeeded(payment, Some(id.to_string()), None, Some(1), event_ids);
         append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
         tx.commit().await.map_err(pg_err)?;
         Ok(receipt)
@@ -1527,8 +1620,32 @@ impl PgKernelExecutor {
             return Ok(receipt);
         }
 
-        let updated = sqlx::query("UPDATE orders SET status = $1, payment_status = $2, updated_at = $3, version = version + 1 WHERE id = $4 AND version = $5")
-            .bind(effects.next_status.to_string()).bind(effects.next_payment_status.to_string()).bind(started_at)
+        // Void first: the voids change the payment ledger the order's money
+        // status is derived from, and the derived value belongs in the same
+        // UPDATE (one version bump). An explicit payment_status on the command
+        // still wins. Mirrors the SQLite executor.
+        let mut voided_payment_ids = Vec::new();
+        if effects.void_in_flight_payments {
+            voided_payment_ids =
+                void_in_flight_payments_for_order_pg(tx.as_mut(), order_uuid, started_at).await?;
+        }
+        let next_payment_status =
+            if command.payload.payment_status.is_none() && !voided_payment_ids.is_empty() {
+                derive_order_payment_status_pg(
+                    tx.as_mut(),
+                    order_uuid,
+                    order.total_amount,
+                    effects.next_payment_status,
+                )
+                .await?
+            } else {
+                effects.next_payment_status
+            };
+        let next_fulfillment_status = FulfillmentStatus::for_order_status(effects.next_status)
+            .unwrap_or(order.fulfillment_status);
+        let updated = sqlx::query("UPDATE orders SET status = $1, payment_status = $2, fulfillment_status = $3, updated_at = $4, version = version + 1 WHERE id = $5 AND version = $6")
+            .bind(effects.next_status.to_string()).bind(next_payment_status.to_string())
+            .bind(next_fulfillment_status.to_string()).bind(started_at)
             .bind(order_uuid).bind(version_before)
             .execute(tx.as_mut()).await.map_err(pg_err)?;
         if updated.rows_affected() == 0 {
@@ -1539,11 +1656,6 @@ impl PgKernelExecutor {
             });
         }
         let mut related_event_ids = Vec::new();
-        let mut voided_payment_ids = Vec::new();
-        if effects.void_in_flight_payments {
-            voided_payment_ids =
-                void_in_flight_payments_for_order_pg(tx.as_mut(), order_uuid, started_at).await?;
-        }
         if effects.release_holds {
             let inventory = PgInventoryRepository::new(self.pool.clone());
             let reservations = inventory
@@ -1600,8 +1712,8 @@ impl PgKernelExecutor {
                 "status_before": effects.status_before.to_string(),
                 "status_after": effects.next_status.to_string(),
                 "payment_status_before": effects.payment_status_before.to_string(),
-                "payment_status_after": effects.next_payment_status.to_string(),
-                "fulfillment_status_after": order.fulfillment_status.to_string(),
+                "payment_status_after": next_payment_status.to_string(),
+                "fulfillment_status_after": next_fulfillment_status.to_string(),
                 "version_before": version_before,
                 "version_after": version_before + 1,
                 "total_amount": order.total_amount.to_string(),
@@ -1800,8 +1912,11 @@ impl PgKernelExecutor {
             .await
             .map_err(pg_err)?;
         }
-        let updated = sqlx::query("UPDATE orders SET status = $1, tracking_number = COALESCE($2, tracking_number), updated_at = $3, version = version + 1 WHERE id = $4 AND version = $5")
-            .bind(effects.resolved_status.to_string()).bind(&command.payload.tracking_number).bind(started_at)
+        let next_fulfillment_status = FulfillmentStatus::for_order_status(effects.resolved_status)
+            .unwrap_or(order.fulfillment_status);
+        let updated = sqlx::query("UPDATE orders SET status = $1, fulfillment_status = $2, tracking_number = COALESCE($3, tracking_number), updated_at = $4, version = version + 1 WHERE id = $5 AND version = $6")
+            .bind(effects.resolved_status.to_string()).bind(next_fulfillment_status.to_string())
+            .bind(&command.payload.tracking_number).bind(started_at)
             .bind(order_uuid).bind(version_before).execute(tx.as_mut()).await
             .map_err(pg_err)?;
         if updated.rows_affected() == 0 {
@@ -1834,7 +1949,7 @@ impl PgKernelExecutor {
             order_id.clone(),
             serde_json::json!({"order_id": order_id, "status_before": effects.status_before.to_string(),
                 "status_after": effects.resolved_status.to_string(), "payment_status_before": order.payment_status.to_string(),
-                "payment_status_after": order.payment_status.to_string(), "fulfillment_status_after": order.fulfillment_status.to_string(),
+                "payment_status_after": order.payment_status.to_string(), "fulfillment_status_after": next_fulfillment_status.to_string(),
                 "version_before": version_before, "version_after": version_before + 1, "total_amount": order.total_amount.to_string()}),
         );
         append_kernel_event_tx(tx.as_mut(), &event).await?;
@@ -4151,6 +4266,738 @@ impl PgKernelExecutor {
         };
         append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
         tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        Ok(receipt)
+    }
+
+    /// Preview or atomically create a customer (`customers.create`).
+    pub async fn execute_create_customer_async(
+        &self,
+        command: &CommandEnvelope<CreateCustomer>,
+    ) -> Result<ExecutionReceipt<Customer>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_CUSTOMER_COMMAND),
+            "customer",
+        )?
+        .then_guard(|_| create_customer_guard(input));
+        let request_hash = run.request_hash.clone();
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
+        if let Some(existing) =
+            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "customer")
+                    .await?
+        {
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
+        }
+        if let Some(mut receipt) = run.guard_receipt() {
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        let mut step = sqlx::Acquire::begin(&mut tx).await.map_err(pg_err)?;
+        let attempted = async {
+            PgCustomerRepository::validate_customer_input(input)?;
+            let customer = PgCustomerRepository::insert_customer_tx(step.as_mut(), input).await?;
+            let payload = serde_json::json!({
+                "customer_id": customer.id.to_string(),
+                "email": &customer.email,
+            });
+            outcome(customer.clone(), customer.id.to_string(), "customers.created.v1", payload)
+        }
+        .await;
+        let mut receipt =
+            finish_storefront_step_pg(step, &run, StorefrontAggregate::Customer, None, attempted)
+                .await?;
+        append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+        tx.commit().await.map_err(pg_err)?;
+        Ok(receipt)
+    }
+
+    /// Preview or atomically create a cart and any initial lines (`carts.create`).
+    pub async fn execute_create_cart_async(
+        &self,
+        command: &CommandEnvelope<CreateCart>,
+    ) -> Result<ExecutionReceipt<Cart>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_CART_COMMAND),
+            "cart",
+        )?
+        .then_guard(|_| create_cart_guard(input));
+        let request_hash = run.request_hash.clone();
+        let carts = PgCartRepository::new(self.pool.clone());
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
+        if let Some(existing) =
+            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "cart").await?
+        {
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
+        }
+        if let Some(mut receipt) = run.guard_receipt() {
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        let mut step = sqlx::Acquire::begin(&mut tx).await.map_err(pg_err)?;
+        let attempted = async {
+            let cart = carts.create_in_tx(&mut step, input.clone()).await?;
+            let payload = serde_json::json!({
+                "cart_id": cart.id.to_string(),
+                "cart_number": &cart.cart_number,
+                "customer_id": cart.customer_id.map(|id| id.to_string()),
+                "currency": cart.currency.as_str(),
+                "grand_total": cart.grand_total.to_string(),
+            });
+            outcome(cart.clone(), cart.id.to_string(), "carts.created.v1", payload)
+        }
+        .await;
+        let mut receipt =
+            finish_storefront_step_pg(step, &run, StorefrontAggregate::Cart, None, attempted)
+                .await?;
+        append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+        tx.commit().await.map_err(pg_err)?;
+        Ok(receipt)
+    }
+
+    /// Preview or atomically add a line to an active cart (`carts.item.add`).
+    pub async fn execute_add_cart_item_async(
+        &self,
+        command: &CommandEnvelope<AddCartItemCommand>,
+    ) -> Result<ExecutionReceipt<Cart>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(ADD_CART_ITEM_COMMAND, CART_UNVERSIONED),
+            "cart",
+        )?
+        .then_guard(|_| add_cart_item_guard(input));
+        let request_hash = run.request_hash.clone();
+        let carts = PgCartRepository::new(self.pool.clone());
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
+        if let Some(existing) =
+            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "cart").await?
+        {
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
+        }
+        if let Some(mut receipt) = run.guard_receipt() {
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        let mut step = sqlx::Acquire::begin(&mut tx).await.map_err(pg_err)?;
+        let attempted = async {
+            let cart_id = input.cart_id.into_uuid();
+            let item = carts.add_item_in_tx(&mut step, cart_id, input.item.clone()).await?;
+            let cart = PgCartRepository::load_cart_in_tx(&mut step, cart_id).await?;
+            let payload = serde_json::json!({
+                "cart_id": cart.id.to_string(),
+                "item_id": item.id.to_string(),
+                "sku": &item.sku,
+                "quantity": item.quantity,
+                "unit_price": item.unit_price.to_string(),
+                "subtotal": cart.subtotal.to_string(),
+                "grand_total": cart.grand_total.to_string(),
+            });
+            outcome(cart, input.cart_id.to_string(), "carts.item_added.v1", payload)
+        }
+        .await;
+        let mut receipt = finish_storefront_step_pg(
+            step,
+            &run,
+            StorefrontAggregate::Cart,
+            Some(input.cart_id.to_string()),
+            attempted,
+        )
+        .await?;
+        append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+        tx.commit().await.map_err(pg_err)?;
+        Ok(receipt)
+    }
+
+    /// Preview or atomically set a cart's shipping address
+    /// (`carts.shipping_address.set`).
+    pub async fn execute_set_cart_shipping_address_async(
+        &self,
+        command: &CommandEnvelope<SetCartShippingAddress>,
+    ) -> Result<ExecutionReceipt<Cart>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(SET_CART_SHIPPING_ADDRESS_COMMAND, CART_UNVERSIONED),
+            "cart",
+        )?
+        .then_guard(|_| set_cart_shipping_address_guard(input));
+        let request_hash = run.request_hash.clone();
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
+        if let Some(existing) =
+            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "cart").await?
+        {
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
+        }
+        if let Some(mut receipt) = run.guard_receipt() {
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        let mut step = sqlx::Acquire::begin(&mut tx).await.map_err(pg_err)?;
+        let attempted = async {
+            let cart = PgCartRepository::set_shipping_address_in_tx(
+                &mut step,
+                input.cart_id.into_uuid(),
+                &input.address,
+            )
+            .await?;
+            let payload = serde_json::json!({
+                "cart_id": cart.id.to_string(),
+                "country": &input.address.country,
+                "postal_code": &input.address.postal_code,
+            });
+            outcome(cart, input.cart_id.to_string(), "carts.shipping_address_set.v1", payload)
+        }
+        .await;
+        let mut receipt = finish_storefront_step_pg(
+            step,
+            &run,
+            StorefrontAggregate::Cart,
+            Some(input.cart_id.to_string()),
+            attempted,
+        )
+        .await?;
+        append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+        tx.commit().await.map_err(pg_err)?;
+        Ok(receipt)
+    }
+
+    /// Preview or atomically record a cart's payment method
+    /// (`carts.payment_method.set`). The token is redacted on the receipt.
+    pub async fn execute_set_cart_payment_method_async(
+        &self,
+        command: &CommandEnvelope<SetCartPaymentMethod>,
+    ) -> Result<ExecutionReceipt<Cart>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(SET_CART_PAYMENT_METHOD_COMMAND, CART_UNVERSIONED),
+            "cart",
+        )?
+        .then_guard(|_| set_cart_payment_method_guard(input));
+        let request_hash = run.request_hash.clone();
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
+        if let Some(existing) =
+            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "cart").await?
+        {
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
+        }
+        if let Some(mut receipt) = run.guard_receipt() {
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        let mut step = sqlx::Acquire::begin(&mut tx).await.map_err(pg_err)?;
+        let attempted = async {
+            let cart = PgCartRepository::set_payment_in_tx(
+                &mut step,
+                input.cart_id.into_uuid(),
+                &input.payment,
+            )
+            .await?;
+            let payload = serde_json::json!({
+                "cart_id": cart.id.to_string(),
+                "payment_method": &input.payment.payment_method,
+            });
+            outcome(
+                redact_payment_token(cart),
+                input.cart_id.to_string(),
+                "carts.payment_method_set.v1",
+                payload,
+            )
+        }
+        .await;
+        let mut receipt = finish_storefront_step_pg(
+            step,
+            &run,
+            StorefrontAggregate::Cart,
+            Some(input.cart_id.to_string()),
+            attempted,
+        )
+        .await?;
+        append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+        tx.commit().await.map_err(pg_err)?;
+        Ok(receipt)
+    }
+
+    /// Preview or atomically redeem a coupon on a cart (`carts.coupon.apply`).
+    pub async fn execute_apply_cart_coupon_async(
+        &self,
+        command: &CommandEnvelope<ApplyCartCoupon>,
+    ) -> Result<ExecutionReceipt<Cart>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(APPLY_CART_COUPON_COMMAND, CART_UNVERSIONED),
+            "cart",
+        )?
+        .then_guard(|_| apply_cart_coupon_guard(input));
+        let request_hash = run.request_hash.clone();
+        let carts = PgCartRepository::new(self.pool.clone());
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
+        if let Some(existing) =
+            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "cart").await?
+        {
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
+        }
+        if let Some(mut receipt) = run.guard_receipt() {
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        let mut step = sqlx::Acquire::begin(&mut tx).await.map_err(pg_err)?;
+        let attempted = async {
+            let cart = carts
+                .apply_discount_in_tx(&mut step, input.cart_id.into_uuid(), &input.coupon_code)
+                .await?;
+            let payload = serde_json::json!({
+                "cart_id": cart.id.to_string(),
+                "coupon_code": &cart.coupon_code,
+                "discount_amount": cart.discount_amount.to_string(),
+                "grand_total": cart.grand_total.to_string(),
+            });
+            outcome(cart, input.cart_id.to_string(), "carts.coupon_applied.v1", payload)
+        }
+        .await;
+        let mut receipt = finish_storefront_step_pg(
+            step,
+            &run,
+            StorefrontAggregate::Cart,
+            Some(input.cart_id.to_string()),
+            attempted,
+        )
+        .await?;
+        append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+        tx.commit().await.map_err(pg_err)?;
+        Ok(receipt)
+    }
+
+    /// Preview or atomically price a cart's tax and write it onto the cart
+    /// (`carts.tax.calculate`).
+    ///
+    /// The tax is priced from reference data (settings, rates, exemptions)
+    /// before the row lock is taken; under the lock the cart is re-read and
+    /// its tax request must equal the one that was priced, or the command is
+    /// refused (`commerce.conflict`, retry after conflict) instead of writing
+    /// a tax computed on a cart that has since changed.
+    pub async fn execute_calculate_cart_tax_async(
+        &self,
+        command: &CommandEnvelope<CalculateCartTax>,
+    ) -> Result<ExecutionReceipt<CartTaxCalculated>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(CALCULATE_CART_TAX_COMMAND, CART_UNVERSIONED),
+            "cart",
+        )?
+        .then_guard(|_| calculate_cart_tax_guard(input));
+        let carts = PgCartRepository::new(self.pool.clone());
+        // Price before the row lock; a business refusal (no cart, no shipping
+        // address) is sealed as the command's rejection, an infrastructure
+        // failure aborts without a receipt.
+        let attempt = if run.guard.is_none() {
+            Some(
+                async {
+                    let cart = carts
+                        .get_async(input.cart_id.into_uuid())
+                        .await?
+                        .ok_or(CommerceError::NotFound)?;
+                    let request = cart_tax_request(&cart)?;
+                    let calculation = PgTaxRepository::new(self.pool.clone())
+                        .calculate_tax_async(request.clone())
+                        .await?;
+                    Ok::<_, CommerceError>((tax_basis(&request)?, calculation))
+                }
+                .await,
+            )
+        } else {
+            None
+        };
+        let mut priced = None;
+        let mut infrastructure = None;
+        let run = run.then_guard(|_| match attempt {
+            Some(Ok(value)) => {
+                priced = Some(value);
+                None
+            }
+            Some(Err(error)) => domain_rejection(StorefrontAggregate::Cart, &error).or_else(|| {
+                infrastructure = Some(error);
+                None
+            }),
+            None => None,
+        });
+        if let Some(error) = infrastructure {
+            return Err(error);
+        }
+        let request_hash = run.request_hash.clone();
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
+        if let Some(existing) =
+            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "cart").await?
+        {
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
+        }
+        if let Some(mut receipt) = run.guard_receipt() {
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        let mut step = sqlx::Acquire::begin(&mut tx).await.map_err(pg_err)?;
+        let attempted = async {
+            let (basis, calculation) = priced.ok_or_else(|| {
+                CommerceError::Internal("cart tax was not priced before the row lock".into())
+            })?;
+            let cart_id = input.cart_id.into_uuid();
+            let current = PgCartRepository::load_cart_in_tx(&mut step, cart_id).await?;
+            if tax_basis(&cart_tax_request(&current)?)? != basis {
+                return Err(tax_basis_changed());
+            }
+            let cart = carts.set_tax_in_tx(&mut step, cart_id, calculation.total_tax).await?;
+            let payload = serde_json::json!({
+                "cart_id": cart.id.to_string(),
+                "total_tax": calculation.total_tax.to_string(),
+                "tax_amount": cart.tax_amount.to_string(),
+                "grand_total": cart.grand_total.to_string(),
+            });
+            outcome(
+                CartTaxCalculated { cart, calculation },
+                input.cart_id.to_string(),
+                "carts.tax_calculated.v1",
+                payload,
+            )
+        }
+        .await;
+        let mut receipt = finish_storefront_step_pg(
+            step,
+            &run,
+            StorefrontAggregate::Cart,
+            Some(input.cart_id.to_string()),
+            attempted,
+        )
+        .await?;
+        append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+        tx.commit().await.map_err(pg_err)?;
+        Ok(receipt)
+    }
+
+    /// Preview or atomically capture a pending payment (`payments.complete`).
+    pub async fn execute_complete_payment_async(
+        &self,
+        command: &CommandEnvelope<CompletePayment>,
+    ) -> Result<ExecutionReceipt<Payment>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(COMPLETE_PAYMENT_COMMAND, PAYMENT_UNVERSIONED),
+            "payment",
+        )?
+        .then_guard(|_| complete_payment_guard(input));
+        let request_hash = run.request_hash.clone();
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
+        if let Some(existing) =
+            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "payment").await?
+        {
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
+        }
+        if let Some(mut receipt) = run.guard_receipt() {
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        let mut step = sqlx::Acquire::begin(&mut tx).await.map_err(pg_err)?;
+        let attempted = async {
+            let payment_id = input.payment_id.into_uuid();
+            let status: String =
+                sqlx::query_scalar("SELECT status FROM payments WHERE id = $1 FOR UPDATE")
+                    .bind(payment_id)
+                    .fetch_optional(step.as_mut())
+                    .await
+                    .map_err(pg_err)?
+                    .ok_or(CommerceError::NotFound)?;
+            refuse_recapture(&status)?;
+            mark_completed_pg(step.as_mut(), payment_id, Utc::now()).await?;
+            let row = sqlx::query_as::<_, PaymentRow>(
+                "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
+                        amount, currency, amount_refunded, external_id, idempotency_key, processor,
+                        card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
+                        billing_address, description, failure_reason, failure_code, metadata, paid_at,
+                        version, created_at, updated_at
+                 FROM payments WHERE id = $1",
+            )
+            .bind(payment_id)
+            .fetch_one(step.as_mut())
+            .await
+            .map_err(pg_err)?;
+            let payment = PgPaymentRepository::row_to_payment(row)?;
+            let payload = serde_json::json!({
+                "payment_id": payment.id.to_string(),
+                "order_id": payment.order_id.map(|value| value.to_string()),
+                "amount": payment.amount.to_string(),
+                "currency": payment.currency.as_str(),
+                "status": payment.status.to_string(),
+            });
+            outcome(payment, input.payment_id.to_string(), "payments.completed.v1", payload)
+        }
+        .await;
+        let mut receipt = finish_storefront_step_pg(
+            step,
+            &run,
+            StorefrontAggregate::Payment,
+            Some(input.payment_id.to_string()),
+            attempted,
+        )
+        .await?;
+        append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+        tx.commit().await.map_err(pg_err)?;
+        Ok(receipt)
+    }
+
+    /// Preview or atomically create a shipment for an order (`shipments.create`).
+    pub async fn execute_create_shipment_async(
+        &self,
+        command: &CommandEnvelope<CreateShipment>,
+    ) -> Result<ExecutionReceipt<Shipment>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_SHIPMENT_COMMAND),
+            "shipment",
+        )?
+        .then_guard(|_| create_shipment_guard(input));
+        let request_hash = run.request_hash.clone();
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
+        if let Some(existing) =
+            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "shipment")
+                    .await?
+        {
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
+        }
+        if let Some(mut receipt) = run.guard_receipt() {
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        let mut step = sqlx::Acquire::begin(&mut tx).await.map_err(pg_err)?;
+        let attempted = async {
+            let order_id = input.order_id.into_uuid();
+            let status: String =
+                sqlx::query_scalar("SELECT status FROM orders WHERE id = $1 FOR SHARE")
+                    .bind(order_id)
+                    .fetch_optional(step.as_mut())
+                    .await
+                    .map_err(pg_err)?
+                    .ok_or(CommerceError::OrderNotFound(order_id))?;
+            if order_status_refuses_shipment(&status) {
+                return Err(CommerceError::ValidationError(format!(
+                    "cannot create a shipment for a {status} order"
+                )));
+            }
+            let shipment = create_shipment_pg(step.as_mut(), input.clone()).await?;
+            let payload = serde_json::json!({
+                "shipment_id": shipment.id.to_string(),
+                "shipment_number": &shipment.shipment_number,
+                "order_id": shipment.order_id.to_string(),
+                "carrier": shipment.carrier.to_string(),
+                "tracking_number": &shipment.tracking_number,
+            });
+            outcome(shipment.clone(), shipment.id.to_string(), "shipments.created.v1", payload)
+        }
+        .await;
+        let mut receipt =
+            finish_storefront_step_pg(step, &run, StorefrontAggregate::Shipment, None, attempted)
+                .await?;
+        append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+        tx.commit().await.map_err(pg_err)?;
+        Ok(receipt)
+    }
+
+    /// Preview or atomically open a return request (`returns.create`).
+    pub async fn execute_create_return_async(
+        &self,
+        command: &CommandEnvelope<CreateReturn>,
+    ) -> Result<ExecutionReceipt<Return>> {
+        let mut input = command.payload.clone();
+        if input.idempotency_key.is_none() {
+            input.idempotency_key = Some(command.idempotency_key.clone());
+        }
+        let run = CommandRun::prepare(
+            command,
+            &input,
+            &self.policy,
+            EnvelopeGuard::create(CREATE_RETURN_COMMAND)
+                .with_payload_key(input.idempotency_key.as_deref()),
+            "return",
+        )?
+        .then_guard(|_| create_return_guard(&input));
+        let request_hash = run.request_hash.clone();
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
+        if let Some(existing) =
+            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "return").await?
+        {
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
+        }
+        if let Some(mut receipt) = run.guard_receipt() {
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        let mut step = sqlx::Acquire::begin(&mut tx).await.map_err(pg_err)?;
+        let attempted = async {
+            let returned = insert_return_pg(step.as_mut(), &input, Utc::now()).await?;
+            let payload = serde_json::json!({
+                "return_id": returned.id.to_string(),
+                "order_id": returned.order_id.to_string(),
+                "status": returned.status.to_string(),
+                "refund_amount": returned.refund_amount.map(|amount| amount.to_string()),
+            });
+            let mut done = outcome(
+                returned.clone(),
+                returned.id.to_string(),
+                "returns.requested.v1",
+                payload,
+            )?;
+            done.version_after = Some(returned.version);
+            Ok(done)
+        }
+        .await;
+        let mut receipt =
+            finish_storefront_step_pg(step, &run, StorefrontAggregate::Return, None, attempted)
+                .await?;
+        append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+        tx.commit().await.map_err(pg_err)?;
+        Ok(receipt)
+    }
+
+    /// Preview or atomically record a return's shipment tracking and move it
+    /// to `in_transit` (`returns.tracking.add`).
+    pub async fn execute_add_return_tracking_async(
+        &self,
+        command: &CommandEnvelope<AddReturnTracking>,
+    ) -> Result<ExecutionReceipt<Return>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(ADD_RETURN_TRACKING_COMMAND, RETURN_TRACKING_UNVERSIONED),
+            "return",
+        )?
+        .then_guard(|_| add_return_tracking_guard(input));
+        let request_hash = run.request_hash.clone();
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
+        if let Some(existing) =
+            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+            && let Replay::Return(stored) =
+                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "return").await?
+        {
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(stored);
+        }
+        if let Some(mut receipt) = run.guard_receipt() {
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        let mut step = sqlx::Acquire::begin(&mut tx).await.map_err(pg_err)?;
+        let attempted = async {
+            let update = UpdateReturn {
+                tracking_number: Some(input.tracking_number.clone()),
+                status: Some(stateset_core::ReturnStatus::InTransit),
+                ..Default::default()
+            };
+            let returned =
+                apply_update_pg(step.as_mut(), input.return_id.into_uuid(), &update, Utc::now())
+                    .await?;
+            let payload = serde_json::json!({
+                "return_id": returned.id.to_string(),
+                "tracking_number": &input.tracking_number,
+                "status": returned.status.to_string(),
+            });
+            let mut done = outcome(
+                returned.clone(),
+                returned.id.to_string(),
+                "returns.tracking_added.v1",
+                payload,
+            )?;
+            done.version_before = Some(returned.version - 1);
+            done.version_after = Some(returned.version);
+            Ok(done)
+        }
+        .await;
+        let mut receipt = finish_storefront_step_pg(
+            step,
+            &run,
+            StorefrontAggregate::Return,
+            Some(input.return_id.to_string()),
+            attempted,
+        )
+        .await?;
+        append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+        tx.commit().await.map_err(pg_err)?;
         Ok(receipt)
     }
 }

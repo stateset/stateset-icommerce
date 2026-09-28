@@ -71,6 +71,117 @@ struct ShipmentEventRow {
     created_at: DateTime<Utc>,
 }
 
+/// Insert a shipment (and its lines) on the caller's transaction (shared by
+/// [`PgShipmentRepository::create_async`] and the governed `shipments.create`
+/// kernel command).
+pub(crate) async fn create_shipment_pg(
+    conn: &mut sqlx::PgConnection,
+    input: CreateShipment,
+) -> Result<Shipment> {
+    let id = Uuid::new_v4();
+    let shipment_number = Shipment::generate_shipment_number();
+    let now = Utc::now();
+    let carrier = input.carrier.unwrap_or_default();
+    let method = input.shipping_method.unwrap_or_default();
+    let tracking_url = input.tracking_number.as_ref().and_then(|tn| carrier.tracking_url(tn));
+
+    sqlx::query(
+        "INSERT INTO shipments (id, shipment_number, order_id, status, carrier, shipping_method,
+         tracking_number, tracking_url, recipient_name, recipient_email, recipient_phone,
+         shipping_address, weight_kg, dimensions, shipping_cost, insurance_amount,
+         signature_required, estimated_delivery, notes, created_at, updated_at)
+         VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)"
+    )
+    .bind(id)
+    .bind(&shipment_number)
+    .bind(input.order_id.into_uuid())
+    .bind(carrier.to_string())
+    .bind(method.to_string())
+    .bind(&input.tracking_number)
+    .bind(&tracking_url)
+    .bind(&input.recipient_name)
+    .bind(&input.recipient_email)
+    .bind(&input.recipient_phone)
+    .bind(&input.shipping_address)
+    .bind(input.weight_kg)
+    .bind(&input.dimensions)
+    .bind(input.shipping_cost)
+    .bind(input.insurance_amount)
+    .bind(input.signature_required.unwrap_or(false))
+    .bind(input.estimated_delivery)
+    .bind(&input.notes)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+
+    let mut items = Vec::new();
+    if let Some(item_inputs) = &input.items {
+        for item_input in item_inputs {
+            let item_id = Uuid::new_v4();
+
+            sqlx::query(
+                "INSERT INTO shipment_items (id, shipment_id, order_item_id, product_id, sku, name, quantity, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+            )
+            .bind(item_id)
+            .bind(id)
+            .bind(item_input.order_item_id)
+            .bind(item_input.product_id.map(|pid| pid.into_uuid()))
+            .bind(&item_input.sku)
+            .bind(&item_input.name)
+            .bind(item_input.quantity)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+
+            items.push(ShipmentItem {
+                id: item_id,
+                shipment_id: ShipmentId::from(id),
+                order_item_id: item_input.order_item_id,
+                product_id: item_input.product_id,
+                sku: item_input.sku.clone(),
+                name: item_input.name.clone(),
+                quantity: item_input.quantity,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+    }
+
+    Ok(Shipment {
+        id: ShipmentId::from(id),
+        shipment_number,
+        order_id: input.order_id,
+        status: ShipmentStatus::Pending,
+        carrier,
+        shipping_method: method,
+        tracking_number: input.tracking_number,
+        tracking_url,
+        recipient_name: input.recipient_name,
+        recipient_email: input.recipient_email,
+        recipient_phone: input.recipient_phone,
+        shipping_address: input.shipping_address,
+        weight_kg: input.weight_kg,
+        dimensions: input.dimensions,
+        shipping_cost: input.shipping_cost,
+        insurance_amount: input.insurance_amount,
+        signature_required: input.signature_required.unwrap_or(false),
+        shipped_at: None,
+        estimated_delivery: input.estimated_delivery,
+        delivered_at: None,
+        notes: input.notes,
+        items,
+        events: vec![],
+        version: 1,
+        created_at: now,
+        updated_at: now,
+    })
+}
+
 impl PgShipmentRepository {
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -275,112 +386,10 @@ impl PgShipmentRepository {
 
     /// Create shipment (async)
     pub async fn create_async(&self, input: CreateShipment) -> Result<Shipment> {
-        let id = Uuid::new_v4();
-        let shipment_number = Shipment::generate_shipment_number();
-        let now = Utc::now();
-        let carrier = input.carrier.unwrap_or_default();
-        let method = input.shipping_method.unwrap_or_default();
-        let tracking_url = input.tracking_number.as_ref().and_then(|tn| carrier.tracking_url(tn));
-
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-
-        sqlx::query(
-            "INSERT INTO shipments (id, shipment_number, order_id, status, carrier, shipping_method,
-             tracking_number, tracking_url, recipient_name, recipient_email, recipient_phone,
-             shipping_address, weight_kg, dimensions, shipping_cost, insurance_amount,
-             signature_required, estimated_delivery, notes, created_at, updated_at)
-             VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)"
-        )
-        .bind(id)
-        .bind(&shipment_number)
-        .bind(input.order_id.into_uuid())
-        .bind(carrier.to_string())
-        .bind(method.to_string())
-        .bind(&input.tracking_number)
-        .bind(&tracking_url)
-        .bind(&input.recipient_name)
-        .bind(&input.recipient_email)
-        .bind(&input.recipient_phone)
-        .bind(&input.shipping_address)
-        .bind(input.weight_kg)
-        .bind(&input.dimensions)
-        .bind(input.shipping_cost)
-        .bind(input.insurance_amount)
-        .bind(input.signature_required.unwrap_or(false))
-        .bind(input.estimated_delivery)
-        .bind(&input.notes)
-        .bind(now)
-        .bind(now)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        let mut items = Vec::new();
-        if let Some(item_inputs) = &input.items {
-            for item_input in item_inputs {
-                let item_id = Uuid::new_v4();
-
-                sqlx::query(
-                    "INSERT INTO shipment_items (id, shipment_id, order_item_id, product_id, sku, name, quantity, created_at, updated_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
-                )
-                .bind(item_id)
-                .bind(id)
-                .bind(item_input.order_item_id)
-                .bind(item_input.product_id.map(|pid| pid.into_uuid()))
-                .bind(&item_input.sku)
-                .bind(&item_input.name)
-                .bind(item_input.quantity)
-                .bind(now)
-                .bind(now)
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-
-                items.push(ShipmentItem {
-                    id: item_id,
-                    shipment_id: ShipmentId::from(id),
-                    order_item_id: item_input.order_item_id,
-                    product_id: item_input.product_id,
-                    sku: item_input.sku.clone(),
-                    name: item_input.name.clone(),
-                    quantity: item_input.quantity,
-                    created_at: now,
-                    updated_at: now,
-                });
-            }
-        }
-
+        let shipment = create_shipment_pg(tx.as_mut(), input).await?;
         tx.commit().await.map_err(map_db_error)?;
-
-        Ok(Shipment {
-            id: ShipmentId::from(id),
-            shipment_number,
-            order_id: input.order_id,
-            status: ShipmentStatus::Pending,
-            carrier,
-            shipping_method: method,
-            tracking_number: input.tracking_number,
-            tracking_url,
-            recipient_name: input.recipient_name,
-            recipient_email: input.recipient_email,
-            recipient_phone: input.recipient_phone,
-            shipping_address: input.shipping_address,
-            weight_kg: input.weight_kg,
-            dimensions: input.dimensions,
-            shipping_cost: input.shipping_cost,
-            insurance_amount: input.insurance_amount,
-            signature_required: input.signature_required.unwrap_or(false),
-            shipped_at: None,
-            estimated_delivery: input.estimated_delivery,
-            delivered_at: None,
-            notes: input.notes,
-            items,
-            events: vec![],
-            version: 1,
-            created_at: now,
-            updated_at: now,
-        })
+        Ok(shipment)
     }
 
     /// Get shipment by ID (async)

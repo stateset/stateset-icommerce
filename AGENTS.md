@@ -41,7 +41,14 @@ profile's size, is [`cli/docs/TOOLS.md`](cli/docs/TOOLS.md) (authoritative).
 For an autonomous production endpoint, also provide operator-owned kernel
 policy and principal files. This enables strict mode: only typed governed write
 commands are exposed, while read tools remain available. Identity and policy
-never come from model arguments.
+never come from model arguments. The governed catalog covers a complete
+checkout — customers, carts (items, shipping address, payment method, coupon,
+tax), checkout, payment create/capture, order transitions, shipments, returns
+(create, tracking, transitions) and refunds — so grant those capabilities
+(see [`kernel/examples/strict-policy.json`](kernel/examples/strict-policy.json))
+and a strict agent can sell end to end. Promotions and coupons are operator
+configuration: strict agents redeem them (`apply_cart_discount`) but cannot
+create them; provision them outside the agent endpoint.
 
 ```json
 {

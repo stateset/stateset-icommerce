@@ -8,8 +8,9 @@ use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
 use stateset_core::{
     BatchResult, CommerceError, CreateX402PaymentIntent, Result, SignX402PaymentIntent,
-    X402_DEFAULT_VALIDITY_SECONDS, X402Asset, X402IntentStatus, X402Network, X402PaymentIntent,
-    X402PaymentIntentFilter, X402PaymentIntentRepository, X402SignatureScheme, validate_batch_size,
+    X402_DEFAULT_VALIDITY_SECONDS, X402Asset, X402BatchInclusion, X402IntentStatus, X402Network,
+    X402PaymentIntent, X402PaymentIntentFilter, X402PaymentIntentRepository, X402SignatureScheme,
+    validate_batch_size,
 };
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -727,15 +728,14 @@ impl PgX402PaymentIntentRepository {
     pub async fn mark_batched_async(
         &self,
         id: Uuid,
-        batch_merkle_root: &str,
-        inclusion_proof: Vec<String>,
+        inclusion: &X402BatchInclusion,
     ) -> Result<X402PaymentIntent> {
-        if batch_merkle_root.trim().is_empty() {
+        if inclusion.merkle_root.trim().is_empty() {
             return Err(CommerceError::ValidationError(
                 "batch_merkle_root is required to batch an x402 intent".to_string(),
             ));
         }
-        let proof_json = serde_json::to_value(&inclusion_proof)
+        let proof_json = serde_json::to_value(&inclusion.inclusion_proof)
             .map_err(|e| CommerceError::ValidationError(e.to_string()))?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let intent =
@@ -744,12 +744,19 @@ impl PgX402PaymentIntentRepository {
         // A commitment published after the validity window is meaningless
         // on-chain, exactly like a late settlement.
         Self::ensure_not_expired(&intent, "batch")?;
+        // The leaf is rebuilt from the stored (row-locked) intent, never from
+        // the caller: a root/proof that does not prove *this* intent is refused.
+        intent.verify_batch_inclusion(inclusion).map_err(|reason| {
+            CommerceError::ValidationError(format!(
+                "x402 intent {id} batch inclusion proof rejected: {reason}"
+            ))
+        })?;
 
         let affected = sqlx::query(
             "UPDATE x402_payment_intents SET status = $1, batch_merkle_root = $2, inclusion_proof = $3, updated_at = $4 WHERE id = $5 AND status = $6",
         )
         .bind(X402IntentStatus::Batched.to_string())
-        .bind(batch_merkle_root)
+        .bind(inclusion.merkle_root.trim())
         .bind(proof_json)
         .bind(Utc::now())
         .bind(id)
@@ -1189,13 +1196,8 @@ impl X402PaymentIntentRepository for PgX402PaymentIntentRepository {
         block_on(self.mark_sequenced_async(id, sequence_number, batch_id))
     }
 
-    fn mark_batched(
-        &self,
-        id: Uuid,
-        batch_merkle_root: &str,
-        inclusion_proof: Vec<String>,
-    ) -> Result<X402PaymentIntent> {
-        block_on(self.mark_batched_async(id, batch_merkle_root, inclusion_proof))
+    fn mark_batched(&self, id: Uuid, inclusion: &X402BatchInclusion) -> Result<X402PaymentIntent> {
+        block_on(self.mark_batched_async(id, inclusion))
     }
 
     fn mark_settled(

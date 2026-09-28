@@ -6,6 +6,81 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Changed (behaviour, needs a release note)
+
+- **Strict kernel endpoints can run a checkout end to end.** Eleven storefront
+  writes are now governed kernel commands, each with a sealed, policy-checked,
+  audit-hashed receipt: `customers.create`, `carts.create`, `carts.item.add`,
+  `carts.shipping_address.set`, `carts.payment_method.set`,
+  `carts.coupon.apply`, `carts.tax.calculate`, `payments.complete`,
+  `shipments.create`, `returns.create` and `returns.tracking.add`. **A
+  deployment with a kernel configured now routes these tools through it, so
+  its policy and principal must grant the new capabilities** (see
+  `kernel/examples/strict-*.json`). Without a kernel the tools keep their
+  previous handlers. Promotions stay merchant configuration: a strict agent
+  can redeem a coupon but cannot create one.
+
+- **An order can only be refunded if it was paid.** The refund guard (SQLite,
+  PostgreSQL and the kernel) read the payment status supplied in the same
+  update, and `orders.update_status(id, Refunded)` supplies `Refunded`
+  itself, so any order -- including one never paid -- could be marked
+  refunded. Refundability is now judged on the order's stored payment status;
+  record the payment first, then refund.
+- **x402 batch inclusion proofs are verified before they are recorded.**
+  `mark_batched` stored any Merkle root and proof it was handed. It now takes
+  an `X402BatchInclusion` (`merkle_root`, `inclusion_proof`, `leaf_index`,
+  `total_leaves`) instead of `(batch_merkle_root, inclusion_proof)`, rebuilds
+  the leaf from the stored intent (`X402PaymentIntent::batch_leaf_hash`, the
+  same leaf `X402PaymentReceipt::verify_inclusion` checks) and verifies the
+  proof inside the write transaction (SQLite and PostgreSQL). A wrong root,
+  tampered proof, wrong leaf index, or a proof for another intent is refused
+  with `ValidationError` and the intent stays `Sequenced`.
+  `X402BatchInclusion::from_leaves` builds the evidence for a batcher.
+  `mark_settled` still accepts `Sequenced` as well as `Batched` intents (the
+  documented direct on-chain settlement path).
+- **Agent cards govern who may buy and sell in A2A commerce.** A2A
+  `create_quote` / `create_purchase` accepted any `buyer_agent_id` /
+  `seller_agent_id`. The buyer must now be a registered, active,
+  non-suspended agent card that can buy (`buy` / `request_quote` skill) and
+  the seller one that can sell (`sell` / `quote` skill); otherwise the call is
+  refused with a `ValidationError` naming the side. The cards are read inside
+  the insert's write transaction (PostgreSQL: `FOR SHARE`), and SQLite
+  `create_quote` now runs in a `BEGIN IMMEDIATE` transaction. Register agent
+  cards before creating quotes or purchases.
+
+- **A PostgreSQL store now seeds the same tax rates as a SQLite store.** A
+  fresh SQLite store has always seeded US state sales tax, EU/UK VAT
+  (standard and reduced) and Canadian sales tax; a fresh PostgreSQL store
+  seeded none, so it charged zero tax on every sale. Postgres migration 105
+  seeds the same jurisdictions and rates, in the corrected state SQLite
+  reaches after its migration 099 (HST alone in the harmonized provinces,
+  Nova Scotia 14% from 2025-04-01, Quebec QST not compounded on GST, GST
+  only in the territories). **The seed runs only on a store with no tax rates
+  at all**: an existing Postgres store that already configured tax keeps
+  exactly what it has. An existing store that never configured any rate
+  starts charging the seeded rates after upgrading -- review them, or set
+  `enabled` to false in the tax settings, if that store should not charge tax.
+
+- **Closing a non-conformance report (NCR) requires a disposition.** A closed
+  NCR is the quality record of what was done with the non-conforming
+  material, yet `close_ncr` and `update_ncr { status: Closed }` closed one
+  with none. Both backends now refuse with a validation error naming the
+  missing disposition. Record it first (`update_ncr { disposition }`, or
+  `POST /api/v1/quality/ncrs/{id}/disposition`), or set it in the same
+  `update_ncr` call that closes. Re-closing an already-closed NCR is still a
+  no-op. So that every surface can still close an NCR, the Node binding gains
+  `quality.updateNcr(id, input)`, the Python binding gains
+  `quality.update_ncr(...)` and `quality.close_ncr(id)`, `NcrOutput` /
+  `NonConformance` now carry the disposition, and the `close_ncr` MCP tool
+  and `stateset quality close-ncr` take an optional `disposition` (plus an
+  exact `dispositionQuantity`) that they record before closing.
+
+### Fixed
+
+- Three SQLite cart writes (`set_shipping_address`, `set_payment`,
+  `apply_discount`) ran outside a transaction; they now run in one.
+- `executeTool` returned `result: '[truncated]'` for every governed tool.
+
 ## [1.35.3] - 2026-09-26
 
 ### Verified commerce invariants

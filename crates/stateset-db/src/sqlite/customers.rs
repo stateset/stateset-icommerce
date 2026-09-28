@@ -233,7 +233,18 @@ impl SqliteCustomerRepository {
     /// `create_batch_atomic`). The e-mail is normalised and checked against
     /// live accounts only; the `email_key` UNIQUE index (mapped to
     /// `EmailAlreadyExists` by `map_db_error`) backstops the race window.
-    fn insert_customer_tx(
+    /// Field validation every customer create runs before touching the store.
+    pub(crate) fn validate_create(input: &CreateCustomer) -> Result<()> {
+        validate_email(&input.email)?;
+        validate_required_text("customer.first_name", &input.first_name, 100)?;
+        validate_required_text("customer.last_name", &input.last_name, 100)?;
+        if let Some(phone) = &input.phone {
+            validate_phone(phone)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn insert_customer_tx(
         tx: &rusqlite::Transaction<'_>,
         input: &CreateCustomer,
     ) -> std::result::Result<Customer, rusqlite::Error> {
@@ -559,14 +570,7 @@ impl SqliteCustomerRepository {
 
 impl CustomerRepository for SqliteCustomerRepository {
     fn create(&self, input: CreateCustomer) -> Result<Customer> {
-        // Validate email format
-        validate_email(&input.email)?;
-        validate_required_text("customer.first_name", &input.first_name, 100)?;
-        validate_required_text("customer.last_name", &input.last_name, 100)?;
-        if let Some(phone) = &input.phone {
-            validate_phone(phone)?;
-        }
-
+        Self::validate_create(&input)?;
         with_immediate_transaction(&self.pool, |tx| Self::insert_customer_tx(tx, &input))
     }
 

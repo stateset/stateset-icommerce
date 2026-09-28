@@ -26,7 +26,98 @@ export const KERNEL_CAPABILITY_BY_TOOL = Object.freeze({
   x402_mark_settled: 'x402.settle',
   complete_checkout: 'checkout.commit',
   a2a_release_escrow: 'a2a.escrow.release',
+  // The customer journey: account, cart, pricing, capture, fulfilment and
+  // return, so a strict endpoint can run a complete checkout. Promotion and
+  // coupon provisioning stay operator actions outside the agent surface.
+  create_customer: 'customers.create',
+  create_cart: 'carts.create',
+  add_cart_item: 'carts.item.add',
+  set_cart_shipping_address: 'carts.shipping_address.set',
+  set_cart_payment: 'carts.payment_method.set',
+  apply_cart_discount: 'carts.coupon.apply',
+  calculate_cart_tax: 'carts.tax.calculate',
+  complete_payment: 'payments.complete',
+  create_shipment: 'shipments.create',
+  create_return: 'returns.create',
+  add_return_tracking: 'returns.tracking.add',
 });
+
+/**
+ * Storefront tools that were legacy writes before the customer journey was
+ * governed. With trusted kernel configuration present (strict or migration
+ * mode) they run as typed kernel commands like every other governed tool.
+ * With none configured -- the explicit `--kernel-allow-legacy-writes` posture
+ * or the ephemeral demo sandbox -- they keep their legacy handlers instead of
+ * failing closed, so governing them removes no capability from a kernel-less
+ * deployment. Every tool governed before the storefront journey (payments,
+ * refunds, checkout, inventory, orders, returns transitions, ledger, escrow)
+ * still refuses apply without a kernel.
+ */
+export const KERNEL_OPTIONAL_TOOLS = Object.freeze(
+  new Set([
+    'create_customer',
+    'create_cart',
+    'add_cart_item',
+    'set_cart_shipping_address',
+    'set_cart_payment',
+    'apply_cart_discount',
+    'calculate_cart_tax',
+    'complete_payment',
+    'create_shipment',
+    'create_return',
+    'add_return_tracking',
+  ]),
+);
+
+/**
+ * The key a tool's legacy handler returns its entity under. A governed call of
+ * the same tool answers with that key too (holding the receipt's result), so a
+ * caller reads `create_customer` the same way whether or not a kernel is
+ * configured. Only tools whose receipt result is the same kind of entity.
+ */
+const LEGACY_ENTITY_KEY_BY_TOOL = Object.freeze({
+  create_customer: 'customer',
+  create_cart: 'cart',
+  set_cart_shipping_address: 'cart',
+  complete_payment: 'payment',
+  create_shipment: 'shipment',
+  create_return: 'return',
+  add_return_tracking: 'return',
+});
+
+/** serde spellings of the carriers whose strum aliases differ. */
+const SHIPPING_CARRIER_ALIASES = Object.freeze({
+  fedex: 'fed_ex',
+  ontrac: 'on_trac',
+  lasership: 'laser_ship',
+});
+const SHIPPING_METHOD_ALIASES = Object.freeze({ twoday: 'two_day', sameday: 'same_day' });
+
+function optionalDecimalString(value) {
+  return value === null || value === undefined ? null : String(value);
+}
+
+function normalizedEnum(value, aliases) {
+  if (value === null || value === undefined || value === '') return null;
+  const lowered = String(value).trim().toLowerCase();
+  return aliases[lowered] ?? lowered;
+}
+
+function cartAddressPayload(params) {
+  return {
+    first_name: params.firstName,
+    last_name: params.lastName,
+    company: params.company ?? null,
+    line1: params.line1,
+    line2: params.line2 ?? null,
+    city: params.city,
+    state: params.state ?? null,
+    postal_code: params.postalCode,
+    country: params.country,
+    phone: params.phone ?? null,
+    email: params.email ?? null,
+  };
+}
 
 const RETURN_STATUS_BY_TOOL = Object.freeze({
   approve_return: 'approved',
@@ -225,6 +316,98 @@ function payloadFor(toolName, params, issuedAt = new Date(), actorAddress = null
       };
     case 'a2a_release_escrow':
       return { escrow_id: params.escrowId };
+    case 'create_customer':
+      return {
+        email: params.email,
+        first_name: params.firstName,
+        last_name: params.lastName,
+        phone: params.phone ?? null,
+        accepts_marketing: params.acceptsMarketing ?? null,
+        tags: null,
+        metadata: null,
+      };
+    case 'create_cart':
+      return {
+        customer_id: params.customerId ?? null,
+        customer_email: params.customerEmail ?? null,
+        customer_name: params.customerName ?? null,
+        currency: params.currency ? String(params.currency).toUpperCase() : null,
+        items: null,
+        shipping_address: null,
+        billing_address: null,
+        notes: null,
+        metadata: null,
+        expires_in_minutes: params.expiresInMinutes ?? null,
+      };
+    case 'add_cart_item':
+      return {
+        cart_id: params.cartId,
+        item: {
+          product_id: null,
+          variant_id: null,
+          sku: params.sku,
+          name: params.name,
+          description: params.description ?? null,
+          image_url: params.imageUrl ?? null,
+          quantity: params.quantity,
+          unit_price: String(params.unitPrice),
+          original_price: null,
+          weight: null,
+          requires_shipping: null,
+          metadata: null,
+        },
+      };
+    case 'set_cart_shipping_address':
+      return { cart_id: params.cartId, address: cartAddressPayload(params) };
+    case 'set_cart_payment':
+      return {
+        cart_id: params.cartId,
+        payment: {
+          payment_method: params.paymentMethod,
+          payment_token: params.paymentToken ?? null,
+          billing_address: null,
+        },
+      };
+    case 'apply_cart_discount':
+      return { cart_id: params.cartId, coupon_code: params.couponCode };
+    case 'calculate_cart_tax':
+      return { cart_id: params.cartId };
+    case 'complete_payment':
+      return { payment_id: params.paymentId };
+    case 'create_shipment':
+      return {
+        order_id: params.orderId,
+        carrier: normalizedEnum(params.carrier, SHIPPING_CARRIER_ALIASES),
+        shipping_method: normalizedEnum(params.service, SHIPPING_METHOD_ALIASES),
+        tracking_number: params.trackingNumber ?? null,
+        recipient_name: params.recipientName,
+        recipient_email: params.recipientEmail ?? null,
+        recipient_phone: params.recipientPhone ?? null,
+        shipping_address: params.shippingAddress,
+        weight_kg: null,
+        dimensions: null,
+        shipping_cost: optionalDecimalString(params.shippingCost),
+        insurance_amount: null,
+        signature_required: null,
+        estimated_delivery: null,
+        notes: null,
+        items: null,
+      };
+    case 'create_return':
+      return {
+        order_id: params.orderId,
+        reason: params.reason,
+        reason_details: params.reasonDetails ?? null,
+        idempotency_key: null,
+        items: (params.items || []).map((item) => ({
+          order_item_id: item.orderItemId,
+          quantity: item.quantity,
+          condition: null,
+        })),
+        notes: null,
+      };
+    case 'add_return_tracking':
+      return { return_id: params.returnId, tracking_number: params.trackingNumber };
     case 'a2a_refund_escrow':
       return { escrow_id: params.escrowId, reason: params.reason || null };
     default:
@@ -266,7 +449,7 @@ export function createKernelToolExecutor({ commerce, kernel, allowApply, agentCo
       return null;
     }
     if (!kernelConfig) {
-      if (!allowApply) return null;
+      if (!allowApply || KERNEL_OPTIONAL_TOOLS.has(toolName)) return null;
       throw new Error(
         `Tool '${toolName}' is a governed mutation and apply mode requires trusted kernel configuration.`,
       );
@@ -306,6 +489,13 @@ export function createKernelToolExecutor({ commerce, kernel, allowApply, agentCo
       throw new Error(
         'Strict kernel product creation requires variant prices as exact decimal strings.',
       );
+    }
+    if (
+      kernelConfig.strict !== false &&
+      toolName === 'add_cart_item' &&
+      typeof params.unitPrice !== 'string'
+    ) {
+      throw new Error('Strict kernel cart items require unitPrice as an exact decimal string.');
     }
     if (
       kernelConfig.strict !== false &&
@@ -383,13 +573,25 @@ export function createKernelToolExecutor({ commerce, kernel, allowApply, agentCo
         : executionOptions.authority || null;
 
     const receipt = await commerce.executeKernelCommand(command, kernelConfig.policy);
-    return {
+    // Copies, not aliases of `receipt.result`: replay/audit compaction treats a
+    // second reference to the same object as a cycle and truncates it, which
+    // left callers of `executeTool` with `result: '[truncated]'`.
+    const copyResult = () =>
+      receipt?.result === undefined || receipt?.result === null
+        ? null
+        : structuredClone(receipt.result);
+    const response = {
       success: receipt?.status === 'succeeded' || receipt?.status === 'previewed',
       kernel: true,
       commandType,
       preview: receipt?.status === 'previewed',
       receipt,
-      result: receipt?.result ?? null,
+      result: copyResult(),
     };
+    const entityKey = LEGACY_ENTITY_KEY_BY_TOOL[toolName];
+    if (entityKey && receipt?.status === 'succeeded' && response.result) {
+      response[entityKey] = copyResult();
+    }
+    return response;
   };
 }
