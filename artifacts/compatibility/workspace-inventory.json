@@ -559,11 +559,11 @@
     "topLevelSourceCounts": [
       {
         "name": "tools",
-        "count": 93
+        "count": 94
       },
       {
         "name": "commands",
-        "count": 88
+        "count": 89
       },
       {
         "name": "a2a",
@@ -587,7 +587,7 @@
       },
       {
         "name": "utils",
-        "count": 15
+        "count": 16
       },
       {
         "name": "harness",
@@ -990,7 +990,7 @@
         "count": 1
       }
     ],
-    "toolModuleCount": 93,
+    "toolModuleCount": 94,
     "a2aModuleCount": 61
   },
   "admin": {
