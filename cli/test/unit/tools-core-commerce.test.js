@@ -454,6 +454,44 @@ describe('Product Tools', () => {
     assert.equal(received.data.sku, 'WIDGET-002');
   });
 
+  it('variant tools send exact-string prices as priceExact (binding price is f64)', async () => {
+    const calls = [];
+    const commerce = makeCommerce({
+      addVariant: async (productId, data) => {
+        calls.push(['add', productId, data]);
+        return { ...mockVariant, ...data };
+      },
+      updateVariant: async (variantId, data) => {
+        calls.push(['update', variantId, data]);
+        return { ...mockVariant, ...data };
+      },
+      create: async (data) => {
+        calls.push(['create', data]);
+        return { id: 'prod_new', name: data.name, slug: 'x' };
+      },
+    });
+    await findTool(productTools, 'add_product_variant').handler({
+      commerce,
+      params: { productId: 'prod_001', sku: 'W-2', price: '12.50', compareAtPrice: '15.00' },
+      allowApply: true,
+    });
+    await findTool(productTools, 'update_product_variant').handler({
+      commerce,
+      params: { variantId: 'var_001', sku: 'W-2', price: 9.99 },
+      allowApply: true,
+    });
+    await findTool(productTools, 'create_product').handler({
+      commerce,
+      params: { name: 'Widget', variants: [{ sku: 'W-3', price: '1.10' }] },
+      allowApply: true,
+    });
+    assert.deepStrictEqual(calls, [
+      ['add', 'prod_001', { sku: 'W-2', priceExact: '12.50', compareAtPriceExact: '15.00' }],
+      ['update', 'var_001', { sku: 'W-2', price: 9.99 }],
+      ['create', { name: 'Widget', variants: [{ sku: 'W-3', priceExact: '1.10' }] }],
+    ]);
+  });
+
   it('delete_product_variant returns success', async () => {
     const result = await findTool(productTools, 'delete_product_variant').handler({
       commerce: makeCommerce(),

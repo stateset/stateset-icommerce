@@ -18,6 +18,7 @@ import { taxTools } from '../../src/tools/tax.js';
 import { manufacturingTools } from '../../src/tools/manufacturing.js';
 import { promotionTools } from '../../src/tools/promotions.js';
 import { subscriptionTools } from '../../src/tools/subscriptions.js';
+import { bindingClassMethods } from '../helpers/binding-class-methods.js';
 
 // ============================================================================
 // Helper: find tool by name from a tools array
@@ -336,14 +337,6 @@ describe('Tax Tools', () => {
         createExemption: async (data) => ({ id: 'e2', ...data }),
         ...overrides,
       },
-      calculateCartTax: async () => ({
-        subtotal: 50,
-        totalTax: 3.63,
-        total: 53.63,
-        taxInclusive: false,
-        taxBreakdown: [{ jurisdictionName: 'California', rate: 0.0725, taxAmount: 3.63 }],
-        lineItemTaxes: [{ lineItemId: 'li-1', subtotal: 50, taxAmount: 3.63, total: 53.63 }],
-      }),
     };
   }
 
@@ -493,16 +486,197 @@ describe('Tax Tools', () => {
   describe('calculate_cart_tax', () => {
     const tool = findTool(taxTools, 'calculate_cart_tax');
 
-    it('calculates tax for cart', async () => {
+    // Real binding shapes: CartOutput, CartItemOutput, TaxCalculationOutput.
+    const cartAddress = {
+      firstName: 'A',
+      lastName: 'B',
+      line1: '1 Main St',
+      city: 'Los Angeles',
+      state: 'CA',
+      postalCode: '90001',
+      country: 'US',
+    };
+    const cartOutput = (overrides = {}) => ({
+      id: 'cart-1',
+      customerId: 'cust-1',
+      currency: 'USD',
+      subtotalExact: '44.99',
+      taxAmountExact: '0',
+      shippingAmountExact: '7.50',
+      discountAmountExact: '0',
+      grandTotalExact: '52.49',
+      shippingAddress: cartAddress,
+      ...overrides,
+    });
+    const cartTaxResult = {
+      id: 'calc-1',
+      totalTax: 3.8,
+      totalTaxExact: '3.80',
+      subtotal: 44.99,
+      subtotalExact: '44.99',
+      total: 56.29,
+      totalExact: '56.29',
+      shippingTax: 0.54,
+      shippingTaxExact: '0.54',
+      taxBreakdown: [
+        {
+          jurisdictionId: 'j1',
+          jurisdictionName: 'Los Angeles',
+          taxType: 'sales_tax',
+          rateName: 'LA sales',
+          rate: 0.0725,
+          taxableAmount: 52.49,
+          taxableAmountExact: '52.49',
+          taxAmount: 3.8,
+          taxAmountExact: '3.80',
+          isCompound: false,
+        },
+      ],
+      lineItemTaxes: [
+        {
+          lineItemId: 'li-1',
+          taxableAmount: 39.98,
+          taxableAmountExact: '39.98',
+          taxAmount: 2.9,
+          taxAmountExact: '2.90',
+          effectiveRate: 0.072536,
+          isExempt: false,
+          taxDetails: [],
+        },
+      ],
+      exemptionsApplied: false,
+      jurisdictions: [],
+      calculatedAt: '2026-09-27T00:00:00Z',
+      isEstimate: true,
+    };
+
+    function makeCartTaxCommerce({ cart = cartOutput() } = {}) {
+      const calls = [];
+      const record =
+        (name, fn) =>
+        async (...args) => {
+          calls.push([name, ...args]);
+          return fn(...args);
+        };
+      const commerce = {
+        carts: {
+          get: record('carts.get', async () => cart),
+          getItems: record('carts.getItems', async () => [
+            {
+              id: 'li-1',
+              cartId: 'cart-1',
+              productId: 'prod-1',
+              sku: 'A',
+              name: 'Widget',
+              quantity: 2,
+              unitPrice: 19.99,
+              unitPriceExact: '19.99',
+              discountAmount: 0,
+              discountAmountExact: '0',
+              taxAmountExact: '0',
+              totalExact: '39.98',
+              requiresShipping: true,
+            },
+          ]),
+          setTax: record('carts.setTax', async () =>
+            cartOutput({ taxAmountExact: '3.80', grandTotalExact: '56.29' }),
+          ),
+        },
+        tax: { calculate: record('tax.calculate', async () => cartTaxResult) },
+      };
+      return { commerce, calls };
+    }
+
+    it('mocks only binding methods (no calculateCartTax: the binding has none)', () => {
+      const { commerce } = makeCartTaxCommerce();
+      const carts = bindingClassMethods('Carts');
+      const tax = bindingClassMethods('Tax');
+      for (const name of Object.keys(commerce.carts)) assert.ok(carts.has(name), name);
+      for (const name of Object.keys(commerce.tax)) assert.ok(tax.has(name), name);
+      assert.equal(bindingClassMethods('Commerce').has('calculateCartTax'), false);
+    });
+
+    it('builds TaxCalculationInput from the cart and applies the exact total with --apply', async () => {
+      const { commerce, calls } = makeCartTaxCommerce();
       const result = await tool.handler({
-        commerce: makeTaxCommerce(),
+        commerce,
         params: { cartId: 'cart-1' },
+        allowApply: true,
       });
+      assert.deepEqual(calls[0], ['carts.get', 'cart-1']);
+      assert.deepEqual(calls[1], ['carts.getItems', 'cart-1']);
+      assert.deepEqual(calls[2], [
+        'tax.calculate',
+        {
+          lineItems: [
+            {
+              id: 'li-1',
+              sku: 'A',
+              productId: 'prod-1',
+              quantity: 2,
+              unitPrice: 19.99,
+              discountAmount: 0,
+              taxCategory: 'standard',
+              description: 'Widget',
+            },
+          ],
+          shippingAddress: {
+            line1: '1 Main St',
+            line2: undefined,
+            city: 'Los Angeles',
+            state: 'CA',
+            postalCode: '90001',
+            country: 'US',
+          },
+          customerId: 'cust-1',
+          currency: 'USD',
+          shippingAmount: 7.5,
+        },
+      ]);
+      assert.deepEqual(calls[3], ['carts.setTax', 'cart-1', undefined, '3.80']);
       assert.equal(result.success, true);
-      assert.equal(result.cartId, 'cart-1');
-      assert.equal(result.tax.totalTax, 3.63);
-      assert.equal(result.tax.total, 53.63);
-      assert.equal(result.lineItems.length, 1);
+      assert.equal(result.applied, true);
+      assert.equal(result.tax.totalTax, '3.80');
+      assert.equal(result.tax.total, '56.29');
+      assert.deepEqual(result.tax.breakdown[0], {
+        jurisdiction: 'Los Angeles',
+        taxType: 'sales_tax',
+        rate: '7.25%',
+        taxableAmount: '52.49',
+        taxAmount: '3.80',
+      });
+      assert.equal(result.lineItems[0].taxAmount, '2.90');
+      assert.equal(result.cart.taxAmount, '3.80');
+      assert.equal(result.cart.grandTotal, '56.29');
+    });
+
+    it('without --apply it calculates but does not write the cart', async () => {
+      const { commerce, calls } = makeCartTaxCommerce();
+      const result = await tool.handler({ commerce, params: { cartId: 'cart-1' } });
+      assert.equal(
+        calls.some(([name]) => name === 'carts.setTax'),
+        false,
+      );
+      assert.equal(result.applied, false);
+      assert.match(result.hint, /--apply/);
+      assert.equal(result.tax.totalTax, '3.80');
+      assert.equal(result.cart.taxAmount, '0');
+    });
+
+    it('requires a shipping address', async () => {
+      const { commerce, calls } = makeCartTaxCommerce({
+        cart: cartOutput({ shippingAddress: undefined }),
+      });
+      const result = await tool.handler({ commerce, params: { cartId: 'cart-1' } });
+      assert.equal(result.success, false);
+      assert.match(result.error, /Shipping address required/);
+      assert.equal(calls.length, 1);
+    });
+
+    it('reports a missing cart', async () => {
+      const { commerce } = makeCartTaxCommerce({ cart: null });
+      const result = await tool.handler({ commerce, params: { cartId: 'nope' } });
+      assert.deepEqual(result, { success: false, error: 'Cart not found: nope' });
     });
   });
 });
@@ -991,42 +1165,53 @@ describe('Subscription Tools', () => {
     nextBillingDate: '2026-03-01',
   };
 
+  // Mirrors the binding's `Subscriptions` class (commerce.subscriptions.*).
+  // The tools send non-UUID ids to getPlanByCode / getByNumber, so those
+  // lookups resolve the fixture ids here too.
   function makeSubCommerce(overrides = {}) {
     return {
-      listSubscriptionPlans: async () => [mockPlan],
-      getSubscriptionPlan: async (id) => (id === 'plan-1' ? mockPlan : null),
-      createSubscriptionPlan: async (data) => ({
-        id: 'plan-2',
-        status: 'draft',
-        code: 'NEW',
-        ...data,
-      }),
-      activateSubscriptionPlan: async (id) => ({ ...mockPlan, id, status: 'active' }),
-      archiveSubscriptionPlan: async (id) => ({ ...mockPlan, id, status: 'archived' }),
-      listSubscriptions: async () => [mockSub],
-      getSubscription: async (id) => (id === 'sub-1' ? mockSub : null),
-      createSubscription: async (data) => ({ id: 'sub-2', status: 'active', ...data }),
-      pauseSubscription: async (id) => ({ ...mockSub, id, status: 'paused' }),
-      resumeSubscription: async (id) => ({ ...mockSub, id, status: 'active' }),
-      cancelSubscription: async (id) => ({ ...mockSub, id, status: 'cancelled' }),
-      skipBillingCycle: async (id) => ({
-        ...mockSub,
-        id,
-        message: 'Next billing cycle skipped',
-      }),
-      listBillingCycles: async () => [
-        { id: 'bc-1', subscriptionId: 'sub-1', status: 'paid', amount: 29.99 },
-      ],
-      getBillingCycle: async (id) => ({
-        id,
-        subscriptionId: 'sub-1',
-        status: 'paid',
-        amount: 29.99,
-      }),
-      getSubscriptionEvents: async () => [
-        { id: 'ev-1', type: 'subscription.created', timestamp: '2026-02-01' },
-      ],
-      ...overrides,
+      subscriptions: {
+        listPlans: async () => [mockPlan],
+        getPlan: async (id) => (id === 'plan-1' ? mockPlan : null),
+        getPlanByCode: async (code) =>
+          code === 'plan-1' || code === mockPlan.code ? mockPlan : null,
+        createPlan: async (input) => ({
+          id: 'plan-2',
+          status: 'draft',
+          code: 'NEW',
+          ...input,
+        }),
+        activatePlan: async (id) => ({ ...mockPlan, id, status: 'active' }),
+        archivePlan: async (id) => ({ ...mockPlan, id, status: 'archived' }),
+        list: async () => [mockSub],
+        get: async (id) => (id === 'sub-1' ? mockSub : null),
+        getByNumber: async (number) => (number === 'sub-1' ? mockSub : null),
+        subscribe: async (input) => ({ id: 'sub-2', status: 'active', ...input }),
+        pause: async (id) => ({ ...mockSub, id, status: 'paused' }),
+        resume: async (id) => ({ ...mockSub, id, status: 'active' }),
+        cancel: async (id) => ({ ...mockSub, id, status: 'cancelled' }),
+        skipBilling: async (id) => ({ ...mockSub, id }),
+        listBillingCycles: async () => [
+          {
+            id: 'bc-1',
+            subscriptionId: 'sub-1',
+            status: 'paid',
+            total: 29.99,
+            totalExact: '29.99',
+          },
+        ],
+        getBillingCycle: async (id) => ({
+          id,
+          subscriptionId: 'sub-1',
+          status: 'paid',
+          total: 29.99,
+          totalExact: '29.99',
+        }),
+        getEvents: async () => [
+          { id: 'ev-1', eventType: 'created', description: 'created', createdAt: '2026-02-01' },
+        ],
+        ...overrides,
+      },
     };
   }
 

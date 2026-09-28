@@ -43,6 +43,29 @@ function createConfiguredOutbox(db) {
   return createOutbox(db, getAgentKeyManagerOptions());
 }
 
+/**
+ * The SQLite handle the sync outbox and engine run on.
+ *
+ * The outbox is a better-sqlite3-style store (`prepare`/`exec`/`transaction`).
+ * The `@stateset/embedded` N-API `Commerce` does not expose one -- there is no
+ * `commerce.db` on the binding -- so a caller must pass it as `context.db`
+ * (e.g. `new Database('./store.db')`, as `stateset-sync` does). Without one,
+ * the command fails here with an explanation instead of a TypeError deep
+ * inside the outbox.
+ * @param {{ commerce?: any, db?: any }} context
+ */
+function requireSyncDb({ commerce, db }) {
+  const handle = db ?? commerce?.db;
+  if (!handle || typeof handle.prepare !== 'function') {
+    throw new Error(
+      'Sync commands need a SQLite database handle: pass `db` (a better-sqlite3 Database ' +
+        'on the store file) in the command context. The @stateset/embedded Commerce binding ' +
+        'does not expose one, so the local sync outbox is unavailable without it.',
+    );
+  }
+  return handle;
+}
+
 function ensureConfigured() {
   if (!isSyncConfigured()) {
     throw new Error('Sync not configured');
@@ -106,13 +129,14 @@ async function collectFormattedPulledEvents(
   };
 }
 
-export async function execute(action, args, { commerce, output, jsonOutput }) {
+export async function execute(action, args, context) {
+  const { output, jsonOutput } = context;
   switch (action) {
     case 'status': {
       ensureConfigured();
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const outbox = createConfiguredOutbox(commerce.db);
+      const outbox = createConfiguredOutbox(requireSyncDb(context));
       const stats = outbox.getStats();
       const syncState = outbox.getSyncState();
       let remoteHead = syncState.headSequence;
@@ -158,7 +182,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       const dryRun = ['true', '1', 'yes', 'y'].includes(String(dryRunRaw || '').toLowerCase());
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       await engine.initialize();
       const result = await engine.push({ batchSize, dryRun });
       await engine.shutdown();
@@ -198,7 +222,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       const keyId = parseOptionalInt(keyIdRaw, 'keyId must be a positive integer');
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       await engine.initialize();
       const shouldIncludeEvents = includeEvents || includePayloads || decryptPayloads;
       const result = await engine.pull({ fromSequence, limit, includeEvents: shouldIncludeEvents });
@@ -228,12 +252,13 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       ensureConfigured();
       const [status = 'all', limitRaw] = args;
       const limit = parseOptionalInt(limitRaw, 'Usage: sync outbox [status] [limit]') || 20;
-      const outbox = createConfiguredOutbox(commerce.db);
+      const syncDb = requireSyncDb(context);
+      const outbox = createConfiguredOutbox(syncDb);
       outbox.initialize();
       const stmt =
         status === 'all'
-          ? commerce.db.prepare('SELECT * FROM _ves_outbox ORDER BY local_seq DESC LIMIT ?')
-          : commerce.db.prepare(
+          ? syncDb.prepare('SELECT * FROM _ves_outbox ORDER BY local_seq DESC LIMIT ?')
+          : syncDb.prepare(
               'SELECT * FROM _ves_outbox WHERE sync_status = ? ORDER BY local_seq DESC LIMIT ?',
             );
       const rows = status === 'all' ? stmt.all(limit) : stmt.all(status, limit);
@@ -267,7 +292,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       const keyId = parseOptionalInt(keyIdRaw, 'keyId must be a positive integer');
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       const events = engine.getPulledEvents(limit);
       const formatted = await collectFormattedPulledEvents(engine, events, {
         includePayloads,
@@ -289,7 +314,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       }
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       const result = await engine.decryptStoredEvent({
         eventId: eventId || undefined,
         sequenceNumber: parseOptionalInt(
@@ -309,7 +334,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
 
     case 'retry': {
       ensureConfigured();
-      const outbox = createConfiguredOutbox(commerce.db);
+      const outbox = createConfiguredOutbox(requireSyncDb(context));
       const retriedCount = outbox.retryFailed();
       return { retriedCount, formatted: `Reset ${retriedCount} failed events to pending` };
     }
@@ -333,7 +358,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
       if (source === 'local') {
-        const engine = createSyncEngine({ db: commerce.db, config });
+        const engine = createSyncEngine({ db: requireSyncDb(context), config });
         const events = engine.getPulledEventsForEntity(
           entityType,
           entityId,
@@ -378,7 +403,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
         parseOptionalInt(pullLimitRaw, 'Usage: sync full [pushBatchSize] [pullLimit]') || 1000;
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       await engine.initialize();
       const push = await engine.push({ batchSize: pushBatchSize });
       const pull = await engine.pull({ limit: pullLimit });
@@ -396,7 +421,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       ensureConfigured();
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       await engine.initialize();
       const conflicts = await engine.getConflicts();
       await engine.shutdown();
@@ -409,7 +434,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       if (!conflictId) throw new Error('Usage: sync resolve <conflictId> [strategy]');
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       await engine.initialize();
       const result = await engine.resolveConflict(conflictId, strategy || undefined);
       await engine.shutdown();
@@ -421,7 +446,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       const strategy = args[0] || 'remote-wins';
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       await engine.initialize();
       const result = await engine.rebase({ strategy });
       await engine.shutdown();

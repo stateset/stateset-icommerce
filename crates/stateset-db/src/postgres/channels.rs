@@ -131,6 +131,22 @@ impl PgChannelRepository {
     /// back, so the read and the write have to be one step: otherwise a
     /// concurrent `set_lock` / `delete` / `update` that lands between them is
     /// silently overwritten by this call's stale copy.
+    /// Read a channel on the caller's transaction holding `FOR SHARE`, or
+    /// `None` when it does not exist: for write paths in other modules that
+    /// decide on the channel's type (e.g. purgatory ingest's `can_ingest`).
+    pub(crate) async fn load_channel_for_share_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+    ) -> Result<Option<Channel>> {
+        sqlx::query_as::<_, ChannelRow>("SELECT * FROM channels WHERE id = $1 FOR SHARE")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .map(Self::row_to_channel)
+            .transpose()
+    }
+
     async fn lock_channel_in_tx(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         id: Uuid,
@@ -289,6 +305,13 @@ impl PgChannelRepository {
         let channel_id = Uuid::from(id);
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        // Product sync is an external API mutation: a locked channel's SKU
+        // mappings are frozen like its settings. The row is held FOR UPDATE so
+        // a concurrent `set_lock` cannot slip in between check and write.
+        let channel = Self::lock_channel_in_tx(&mut tx, channel_id).await?;
+        if channel.is_mutation_blocked() {
+            return Err(CommerceError::Conflict("channel is API-locked".into()));
+        }
         let mut affected: u64 = 0;
         for item in &items {
             if item.delete {

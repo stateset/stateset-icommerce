@@ -186,3 +186,79 @@ fn sqlite_migrations_provision_commerce_entity_tables() {
     let loyalty_tx = column_names(&conn, "loyalty_transactions");
     assert!(loyalty_tx.contains(&"type".to_string()), "loyalty_transactions must have `type`");
 }
+
+/// A store migrated before 098 holds the seeded rows under bare-hex ids.
+/// Re-applying 098 over exactly that state must hyphenate every seeded id and
+/// every reference to one, leave foreign keys intact, and be idempotent.
+#[cfg(feature = "sqlite")]
+#[test]
+fn seeded_uuid_ids_are_hyphenated_on_upgrade() {
+    let mut conn = rusqlite::Connection::open_in_memory().expect("open");
+    conn.execute_batch("PRAGMA foreign_keys = ON").expect("fk on");
+    stateset_db::migrations::run_migrations(&mut conn).expect("migrate");
+
+    // Recreate the pre-098 state: seeded ids as 32 bare hex digits.
+    conn.execute_batch(
+        "PRAGMA foreign_keys = OFF;
+         UPDATE tax_jurisdictions SET id = replace(id, '-', ''), parent_id = NULL;
+         UPDATE tax_rates SET id = replace(id, '-', ''), jurisdiction_id = replace(jurisdiction_id, '-', '');
+         UPDATE subscription_plans SET id = replace(id, '-', '');
+         UPDATE exchange_rates SET id = replace(id, '-', '');
+         DELETE FROM _migrations WHERE name = '098_seeded_uuid_ids';
+         PRAGMA foreign_keys = ON;",
+    )
+    .expect("recreate pre-098 state");
+    let bare: i64 = conn
+        .query_row("SELECT COUNT(*) FROM tax_rates WHERE length(jurisdiction_id) = 32", [], |r| {
+            r.get(0)
+        })
+        .expect("count bare");
+    assert!(bare > 0, "the fixture must start from bare ids");
+
+    stateset_db::migrations::run_migrations(&mut conn).expect("re-apply 098");
+    stateset_db::migrations::run_migrations(&mut conn).expect("idempotent");
+
+    for (table, column) in [
+        ("tax_jurisdictions", "id"),
+        ("tax_jurisdictions", "parent_id"),
+        ("tax_rates", "id"),
+        ("tax_rates", "jurisdiction_id"),
+        ("subscription_plans", "id"),
+        ("exchange_rates", "id"),
+    ] {
+        let unhyphenated: i64 = conn
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM {table} WHERE {column} IS NOT NULL AND length({column}) <> 36"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(unhyphenated, 0, "{table}.{column} still holds a non-hyphenated id");
+    }
+
+    let orphans: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tax_rates r LEFT JOIN tax_jurisdictions j ON j.id = r.jurisdiction_id
+             WHERE j.id IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .expect("orphans");
+    assert_eq!(orphans, 0, "every seeded rate still points at its jurisdiction");
+
+    let parentless_states: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tax_jurisdictions WHERE level = 'state' AND parent_id IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .expect("parentless");
+    assert_eq!(parentless_states, 0, "every seeded state hangs off its country");
+
+    let violations: i64 = conn
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0))
+        .expect("fk check");
+    assert_eq!(violations, 0);
+}

@@ -7,7 +7,8 @@ use super::{
     inventory::{PgInventoryRepository, ReservationConfirmOutcome},
     map_db_error,
     payments::{
-        open_captures_for_order_pg, order_has_payments_pg, void_in_flight_payments_for_order_pg,
+        derive_order_payment_status_pg, open_captures_for_order_pg, order_has_payments_pg,
+        void_in_flight_payments_for_order_pg,
     },
 };
 use crate::KernelOutboxEvent;
@@ -1412,7 +1413,13 @@ impl PgOrderRepository {
             (input.status.unwrap_or(current_status), Vec::new())
         };
         let new_payment_status = input.payment_status.unwrap_or(current_payment_status);
-        let new_fulfillment_status = input.fulfillment_status.unwrap_or(current_fulfillment_status);
+        // Shipping/delivery moves the fulfillment status with the order status
+        // (itself derived from per-line shipped quantities); an explicit value
+        // in the input still wins.
+        let new_fulfillment_status = input
+            .fulfillment_status
+            .or_else(|| input.status.and(FulfillmentStatus::for_order_status(new_status)))
+            .unwrap_or(current_fulfillment_status);
         let now = Utc::now();
 
         if !current_status.can_transition_to(new_status) {
@@ -1533,6 +1540,47 @@ impl PgOrderRepository {
             }
         }
 
+        // Money rule for cancel (see `UpdateOrder::void_payments`): an order
+        // whose payments still hold money cannot be cancelled unless the
+        // caller explicitly voids; even then only in-flight payments are
+        // voided here — settled money leaves via a refund.
+        let mut cancel_money = CancelMoney::default();
+        if matches!(input.status, Some(OrderStatus::Cancelled)) {
+            let open = open_captures_for_order_pg(tx.as_mut(), id).await?;
+            if !open.is_empty() && !input.void_payments {
+                let outstanding: Decimal = open.iter().map(|p| p.amount - p.amount_refunded).sum();
+                let currency = open[0].currency;
+                return Err(CommerceError::ValidationError(format!(
+                    "order {id} cannot be cancelled: {} payment(s) still hold {outstanding} {currency}; \
+                     refund them first, or cancel with void_payments = true to void in-flight \
+                     payments and leave settled ones for refund",
+                    open.len()
+                )));
+            }
+            if input.void_payments {
+                cancel_money.voided_payment_ids =
+                    void_in_flight_payments_for_order_pg(tx.as_mut(), id, now).await?;
+                let voided = &cancel_money.voided_payment_ids;
+                let outstanding: Vec<_> =
+                    open.iter().filter(|p| !voided.contains(&p.id.into_uuid())).collect();
+                cancel_money.outstanding_captured =
+                    outstanding.iter().map(|p| p.amount - p.amount_refunded).sum();
+                cancel_money.outstanding_payment_ids =
+                    outstanding.iter().map(|p| p.id.into_uuid()).collect();
+            }
+        }
+        // Voiding in-flight payments changed the payment ledger, so the money
+        // status is re-derived from it (`PaymentStatus::derive`) and written in
+        // the UPDATE below. An explicit payment_status in the input still wins.
+        let new_payment_status = if input.payment_status.is_none()
+            && !cancel_money.voided_payment_ids.is_empty()
+        {
+            derive_order_payment_status_pg(tx.as_mut(), id, total_amount, current_payment_status)
+                .await?
+        } else {
+            new_payment_status
+        };
+
         let new_tracking = input.tracking_number.clone().or(tracking_number);
         let new_notes = input.notes.clone().or(notes);
         let new_shipping = shipping_address_json.or(shipping_address);
@@ -1569,35 +1617,7 @@ impl PgOrderRepository {
             });
         }
 
-        // Money rule for cancel (see `UpdateOrder::void_payments`): an order
-        // whose payments still hold money cannot be cancelled unless the
-        // caller explicitly voids; even then only in-flight payments are
-        // voided here — settled money leaves via a refund.
-        let mut cancel_money = CancelMoney::default();
         if matches!(input.status, Some(OrderStatus::Cancelled)) {
-            let open = open_captures_for_order_pg(tx.as_mut(), id).await?;
-            if !open.is_empty() && !input.void_payments {
-                let outstanding: Decimal = open.iter().map(|p| p.amount - p.amount_refunded).sum();
-                let currency = open[0].currency;
-                return Err(CommerceError::ValidationError(format!(
-                    "order {id} cannot be cancelled: {} payment(s) still hold {outstanding} {currency}; \
-                     refund them first, or cancel with void_payments = true to void in-flight \
-                     payments and leave settled ones for refund",
-                    open.len()
-                )));
-            }
-            if input.void_payments {
-                cancel_money.voided_payment_ids =
-                    void_in_flight_payments_for_order_pg(tx.as_mut(), id, now).await?;
-                let voided = &cancel_money.voided_payment_ids;
-                let outstanding: Vec<_> =
-                    open.iter().filter(|p| !voided.contains(&p.id.into_uuid())).collect();
-                cancel_money.outstanding_captured =
-                    outstanding.iter().map(|p| p.amount - p.amount_refunded).sum();
-                cancel_money.outstanding_payment_ids =
-                    outstanding.iter().map(|p| p.id.into_uuid()).collect();
-            }
-
             let reservation_ids = inventory_repo
                 .list_reservation_ids_by_reference_in_tx(tx, "order", &id.to_string())
                 .await?;

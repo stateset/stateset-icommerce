@@ -91,12 +91,107 @@ pub struct CreatePromotionInput {
     /// Eligible customer groups
     pub eligible_customer_groups: Option<Vec<String>>,
 
+    /// Conditions the cart must meet (minimum subtotal, first order, shipping
+    /// country, ...). Each is validated before anything is stored.
+    pub conditions: Option<Vec<PromotionConditionInput>>,
+
     /// Currency code
     pub currency: Option<String>,
     /// Priority (lower = applied first)
     pub priority: Option<i32>,
     /// Metadata as JSON
     pub metadata: Option<String>,
+}
+
+/// A condition a cart must meet for a promotion to apply.
+#[napi(object)]
+pub struct PromotionConditionInput {
+    /// What is tested: minimum_subtotal, minimum_quantity, product_in_cart,
+    /// category_in_cart, sku_in_cart, first_order, shipping_country,
+    /// shipping_state, cart_item_count, customer_id, ...
+    #[napi(ts_type = "PromotionConditionType")]
+    pub condition_type: String,
+    /// How it is compared: equals, not_equals, greater_than, in, ...
+    #[napi(ts_type = "PromotionConditionOperator")]
+    pub operator: String,
+    /// The value compared against: a decimal, an integer, a boolean, or a
+    /// comma-separated list, as the condition type requires.
+    pub value: String,
+    /// Required conditions must all be met; when optional ones exist, at
+    /// least one must be. Defaults to `true`.
+    pub is_required: Option<bool>,
+}
+
+impl PromotionConditionInput {
+    fn into_core(self) -> Result<stateset_core::CreatePromotionCondition> {
+        Ok(stateset_core::CreatePromotionCondition {
+            condition_type: self.condition_type.parse().map_err(|_| {
+                unknown_variant(
+                    "promotion condition type",
+                    &self.condition_type,
+                    &[
+                        "minimum_subtotal",
+                        "minimum_quantity",
+                        "product_in_cart",
+                        "category_in_cart",
+                        "sku_in_cart",
+                        "customer_group",
+                        "first_order",
+                        "customer_email_domain",
+                        "shipping_country",
+                        "shipping_state",
+                        "payment_method",
+                        "cart_item_count",
+                        "customer_id",
+                    ],
+                )
+            })?,
+            operator: self.operator.parse().map_err(|_| {
+                unknown_variant(
+                    "promotion condition operator",
+                    &self.operator,
+                    &[
+                        "equals",
+                        "not_equals",
+                        "greater_than",
+                        "greater_than_or_equal",
+                        "less_than",
+                        "less_than_or_equal",
+                        "contains",
+                        "not_contains",
+                        "in",
+                        "not_in",
+                    ],
+                )
+            })?,
+            value: self.value,
+            is_required: self.is_required.unwrap_or(true),
+        })
+    }
+}
+
+/// A condition attached to a promotion.
+#[napi(object)]
+pub struct PromotionConditionOutput {
+    pub id: String,
+    #[napi(ts_type = "PromotionConditionType")]
+    pub condition_type: String,
+    #[napi(ts_type = "PromotionConditionOperator")]
+    pub operator: String,
+    pub value: String,
+    pub is_required: bool,
+}
+
+impl From<stateset_core::PromotionCondition> for PromotionConditionOutput {
+    fn from(c: stateset_core::PromotionCondition) -> Self {
+        Self {
+            id: c.id.to_string(),
+            condition_type: c.condition_type.to_string(),
+            operator: c.operator.to_string(),
+            value: c.value,
+            is_required: c.is_required,
+        }
+    }
 }
 
 /// Input for updating a promotion
@@ -179,6 +274,8 @@ pub struct PromotionOutput {
     pub currency: String,
     pub priority: i32,
     pub metadata: Option<String>,
+    /// Conditions the cart must meet for this promotion to apply.
+    pub conditions: Vec<PromotionConditionOutput>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -221,6 +318,7 @@ impl TryFrom<stateset_core::Promotion> for PromotionOutput {
             currency: p.currency.to_string(),
             priority: p.priority,
             metadata: p.metadata.map(|m| m.to_string()),
+            conditions: p.conditions.into_iter().map(Into::into).collect(),
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
         })
@@ -354,6 +452,34 @@ pub struct ApplyPromotionsOutput {
     /// Exact base-10 grand total, straight from the engine's `Decimal`. Prefer this field for money.
     pub grand_total_exact: String,
     pub applied_promotions: Vec<AppliedPromotionOutput>,
+    /// Promotions and coupons considered but not applied, with the reason.
+    pub rejected_promotions: Vec<RejectedPromotionOutput>,
+}
+
+/// A promotion or coupon that was considered and refused.
+#[napi(object)]
+pub struct RejectedPromotionOutput {
+    pub promotion_id: Option<String>,
+    pub coupon_code: Option<String>,
+    /// Human-readable reason.
+    pub reason: String,
+    /// Machine-readable reason.
+    #[napi(ts_type = "PromotionRejectionReason")]
+    pub reason_code: String,
+}
+
+impl From<stateset_core::RejectedPromotion> for RejectedPromotionOutput {
+    fn from(r: stateset_core::RejectedPromotion) -> Self {
+        Self {
+            promotion_id: r.promotion_id.map(|id| id.to_string()),
+            coupon_code: r.coupon_code,
+            reason: r.reason,
+            reason_code: serde_json::to_value(r.reason_code)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_else(|| format!("{:?}", r.reason_code)),
+        }
+    }
 }
 
 /// An applied promotion
@@ -420,6 +546,7 @@ impl TryFrom<stateset_core::ApplyPromotionsResult> for ApplyPromotionsOutput {
             grand_total,
             grand_total_exact,
             applied_promotions: convert_outputs(r.applied_promotions)?,
+            rejected_promotions: r.rejected_promotions.into_iter().map(Into::into).collect(),
         })
     }
 }
@@ -504,6 +631,9 @@ pub(crate) fn parse_promotion_type(s: &str) -> Result<stateset_core::PromotionTy
         "bundle" | "bundle_discount" | "bundlediscount" => {
             stateset_core::PromotionType::BundleDiscount
         }
+        "first_order_discount" | "firstorderdiscount" => {
+            stateset_core::PromotionType::FirstOrderDiscount
+        }
         _ => {
             return Err(unknown_variant(
                 "promotion type",
@@ -517,6 +647,7 @@ pub(crate) fn parse_promotion_type(s: &str) -> Result<stateset_core::PromotionTy
                     "tiered_discount",
                     "bundle_discount",
                     "bundle",
+                    "first_order_discount",
                 ],
             ));
         }
@@ -667,7 +798,15 @@ impl Promotions {
             ends_at: parse_optional_datetime(input.ends_at, "ends at")?,
             total_usage_limit: input.total_usage_limit,
             per_customer_limit: input.per_customer_limit,
-            conditions: None,
+            conditions: input
+                .conditions
+                .map(|conditions| {
+                    conditions
+                        .into_iter()
+                        .map(PromotionConditionInput::into_core)
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?,
             applicable_product_ids: parse_id_list::<ProductId>(
                 input.applicable_product_ids,
                 "applicable product",
@@ -839,6 +978,28 @@ impl Promotions {
         convert_output(promo)
     }
 
+    /// Add a condition to an existing promotion.
+    ///
+    /// The condition is validated — its value must parse for its type and
+    /// its operator must apply to it — and then stored, so it takes part in
+    /// every later evaluation.
+    #[napi]
+    pub async fn add_condition(
+        &self,
+        promotion_id: String,
+        condition: PromotionConditionInput,
+    ) -> Result<PromotionOutput> {
+        let commerce = self.commerce.get()?;
+        let promotion_id = uuid::Uuid::parse_str(&promotion_id)
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid promotion UUID", e))?;
+        let promo = commerce
+            .promotions()
+            .add_condition(promotion_id.into(), condition.into_core()?)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to add promotion condition", e))?;
+
+        convert_output(promo)
+    }
+
     /// Get all currently active promotions
     #[napi]
     pub async fn get_active(&self) -> Result<Vec<PromotionOutput>> {
@@ -1005,7 +1166,22 @@ impl Promotions {
                 .unwrap_or_default(),
             shipping_country: input.shipping_country,
             shipping_state: input.shipping_state,
-            currency: parse_optional_currency(input.currency)?.unwrap_or(CurrencyCode::USD),
+            currency: match parse_optional_currency(input.currency)? {
+                Some(currency) => currency,
+                None => {
+                    let base = commerce
+                        .currency()
+                        .base_currency()
+                        .map_err(|e| wrap(ErrCode::Internal, "Failed to get base currency", e))?;
+                    base.code().parse::<CurrencyCode>().map_err(|_| {
+                        coded(
+                            ErrCode::Internal,
+                            format!("Store base currency '{}' is not a currency code", base.code()),
+                        )
+                    })?
+                }
+            },
+            // Settled from the customer's order history by the engine.
             is_first_order: false,
         };
 
@@ -1013,6 +1189,23 @@ impl Promotions {
             .promotions()
             .apply(request)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to apply promotions", e))?;
+
+        convert_output(result)
+    }
+
+    /// Evaluate a persisted cart's promotions and write the result onto it.
+    ///
+    /// Prices the cart's lines, its coupon and every automatic promotion,
+    /// stores the discount on the cart and its lines, and returns the
+    /// evaluation, including what was refused and why.
+    #[napi]
+    pub async fn apply_to_cart(&self, cart_id: String) -> Result<ApplyPromotionsOutput> {
+        let commerce = self.commerce.get()?;
+        let cart_id = uuid::Uuid::parse_str(&cart_id)
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid cart UUID", e))?;
+        let result = commerce
+            .apply_cart_promotions(cart_id)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to apply cart promotions", e))?;
 
         convert_output(result)
     }

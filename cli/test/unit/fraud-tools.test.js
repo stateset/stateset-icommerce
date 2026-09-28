@@ -1,13 +1,16 @@
+/**
+ * Fraud tools — module shape, schemas, apply guard, and binding surface.
+ */
+
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { z } from 'zod';
 
 import { fraudTools } from '../../src/tools/fraud.js';
-
-// ---------------------------------------------------------------------------
-// Helper
-// ---------------------------------------------------------------------------
+import { bindingClassMethods, toolModuleCalls } from '../helpers/binding-class-methods.js';
 
 const byName = Object.fromEntries(fraudTools.map((t) => [t.name, t]));
+const parse = (name, params) => z.object(byName[name].inputSchema).safeParse(params);
 
 const EXPECTED_NAMES = [
   'assess_order_fraud',
@@ -18,407 +21,150 @@ const EXPECTED_NAMES = [
   'review_flagged_order',
 ];
 
-// ---------------------------------------------------------------------------
-// Module exports
-// ---------------------------------------------------------------------------
-
 describe('fraudTools — module exports', () => {
-  it('exports an array of 6 tools', () => {
-    assert.ok(Array.isArray(fraudTools));
-    assert.equal(fraudTools.length, 6);
+  it('exports the expected tools in order', () => {
+    assert.deepEqual(
+      fraudTools.map((t) => t.name),
+      EXPECTED_NAMES,
+    );
   });
 
-  it('exports expected tool names in order', () => {
-    const names = fraudTools.map((t) => t.name);
-    assert.deepStrictEqual(names, EXPECTED_NAMES);
-  });
-
-  it('all tools have handler functions', () => {
+  it('every tool has a handler, description, and inputSchema', () => {
     for (const tool of fraudTools) {
-      assert.equal(typeof tool.handler, 'function', `${tool.name} missing handler`);
+      assert.equal(typeof tool.handler, 'function', tool.name);
+      assert.ok(tool.description.length > 0, tool.name);
+      assert.equal(typeof tool.inputSchema, 'object', tool.name);
     }
   });
 
-  it('all tools have valid permissions', () => {
-    for (const tool of fraudTools) {
-      assert.ok(
-        ['read', 'write', 'admin'].includes(tool.permission),
-        `${tool.name} has invalid permission: ${tool.permission}`,
-      );
-    }
-  });
-
-  it('all tools have non-empty descriptions', () => {
-    for (const tool of fraudTools) {
-      assert.ok(tool.description, `${tool.name} missing description`);
-      assert.ok(tool.description.length > 10, `${tool.name} description too short`);
-    }
-  });
-
-  it('all tools have an inputSchema object', () => {
-    for (const tool of fraudTools) {
-      assert.ok(
-        tool.inputSchema && typeof tool.inputSchema === 'object',
-        `${tool.name} missing inputSchema`,
-      );
-    }
+  it('keeps its permission assignments', () => {
+    assert.deepEqual(Object.fromEntries(fraudTools.map((t) => [t.name, t.permission])), {
+      assess_order_fraud: 'write',
+      get_fraud_assessment: 'read',
+      list_fraud_signals: 'read',
+      create_fraud_rule: 'admin',
+      update_fraud_rule: 'admin',
+      review_flagged_order: 'write',
+    });
   });
 });
 
-// ---------------------------------------------------------------------------
-// Permission checks
-// ---------------------------------------------------------------------------
+describe('fraudTools — binding surface', () => {
+  const fraudMethods = bindingClassMethods('Fraud');
 
-describe('fraudTools — permission assignments', () => {
-  it('assess_order_fraud is read', () => {
-    assert.equal(byName['assess_order_fraud'].permission, 'read');
+  it('calls only methods the binding’s Fraud class declares', () => {
+    const called = toolModuleCalls('fraud.js', 'fraud');
+    assert.ok(called.size >= 6, `only found ${[...called]}`);
+    for (const method of called) {
+      assert.ok(fraudMethods.has(method), `commerce.fraud.${method} is not on the binding`);
+    }
   });
 
-  it('get_fraud_assessment is read', () => {
-    assert.equal(byName['get_fraud_assessment'].permission, 'read');
-  });
-
-  it('list_fraud_signals is read', () => {
-    assert.equal(byName['list_fraud_signals'].permission, 'read');
-  });
-
-  it('create_fraud_rule is admin', () => {
-    assert.equal(byName['create_fraud_rule'].permission, 'admin');
-  });
-
-  it('update_fraud_rule is admin', () => {
-    assert.equal(byName['update_fraud_rule'].permission, 'admin');
-  });
-
-  it('review_flagged_order is write', () => {
-    assert.equal(byName['review_flagged_order'].permission, 'write');
+  it('the handler-test mock methods all exist on the binding', () => {
+    for (const method of [
+      'createAssessment',
+      'getAssessment',
+      'listAssessments',
+      'reviewAssessment',
+      'createRule',
+      'updateRule',
+    ]) {
+      assert.ok(fraudMethods.has(method), method);
+    }
   });
 });
-
-// ---------------------------------------------------------------------------
-// Input schema validation
-// ---------------------------------------------------------------------------
 
 describe('fraudTools — input schemas', () => {
-  it('assess_order_fraud has required orderId and optional fields', () => {
-    const schema = byName['assess_order_fraud'].inputSchema;
-    assert.ok(schema.orderId, 'missing orderId');
-    assert.ok(schema.customerIp, 'missing customerIp');
-    assert.ok(schema.deviceFingerprint, 'missing deviceFingerprint');
-    assert.ok(schema.billingAddress, 'missing billingAddress');
-    assert.ok(schema.shippingAddress, 'missing shippingAddress');
+  it('assess_order_fraud takes an orderId and typed signals', () => {
+    assert.equal(
+      parse('assess_order_fraud', {
+        orderId: 'o1',
+        signals: [{ signalType: 'geo_ip_anomaly', score: 0.5, details: 'IP in another country' }],
+      }).success,
+      true,
+    );
+    assert.equal(parse('assess_order_fraud', { orderId: 'o1' }).success, false);
+    // The old address/IP fields meant nothing to the engine and are gone.
+    assert.equal('customerIp' in byName.assess_order_fraud.inputSchema, false);
   });
 
-  it('get_fraud_assessment has assessmentId', () => {
-    const schema = byName['get_fraud_assessment'].inputSchema;
-    assert.ok(schema.assessmentId, 'missing assessmentId');
+  it('get_fraud_assessment is keyed by orderId', () => {
+    assert.deepEqual(Object.keys(byName.get_fraud_assessment.inputSchema), ['orderId']);
   });
 
-  it('list_fraud_signals has optional orderId, riskLevel, limit', () => {
-    const schema = byName['list_fraud_signals'].inputSchema;
-    assert.ok(schema.orderId, 'missing orderId');
-    assert.ok(schema.riskLevel, 'missing riskLevel');
-    assert.ok(schema.limit, 'missing limit');
+  it('list_fraud_signals takes optional orderId, minRiskScore, limit', () => {
+    assert.deepEqual(Object.keys(byName.list_fraud_signals.inputSchema).sort(), [
+      'limit',
+      'minRiskScore',
+      'orderId',
+    ]);
+    assert.equal(parse('list_fraud_signals', {}).success, true);
+    assert.equal(parse('list_fraud_signals', { minRiskScore: 2 }).success, false);
   });
 
-  it('create_fraud_rule has name, condition, action, and optional fields', () => {
-    const schema = byName['create_fraud_rule'].inputSchema;
-    assert.ok(schema.name, 'missing name');
-    assert.ok(schema.description, 'missing description');
-    assert.ok(schema.condition, 'missing condition');
-    assert.ok(schema.action, 'missing action');
-    assert.ok(schema.scoreAdjustment, 'missing scoreAdjustment');
-    assert.ok(schema.priority, 'missing priority');
-    assert.ok(schema.enabled, 'missing enabled');
-  });
-
-  it('update_fraud_rule has ruleId and optional update fields', () => {
-    const schema = byName['update_fraud_rule'].inputSchema;
-    assert.ok(schema.ruleId, 'missing ruleId');
-    assert.ok(schema.name, 'missing name');
-    assert.ok(schema.condition, 'missing condition');
-    assert.ok(schema.action, 'missing action');
-    assert.ok(schema.scoreAdjustment, 'missing scoreAdjustment');
-    assert.ok(schema.priority, 'missing priority');
-    assert.ok(schema.enabled, 'missing enabled');
-  });
-
-  it('review_flagged_order has assessmentId, decision, reason', () => {
-    const schema = byName['review_flagged_order'].inputSchema;
-    assert.ok(schema.assessmentId, 'missing assessmentId');
-    assert.ok(schema.decision, 'missing decision');
-    assert.ok(schema.reason, 'missing reason');
-    assert.ok(schema.reviewerNote, 'missing reviewerNote');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Handler apply-guard (write/admin tools)
-// ---------------------------------------------------------------------------
-
-describe('fraudTools — apply-guard on write/admin tools', () => {
-  it('create_fraud_rule requires --apply', async () => {
-    const result = await byName['create_fraud_rule'].handler({
-      params: {
-        name: 'Block high-risk',
-        condition: { field: 'order_amount', operator: 'gt', value: 10000 },
-        action: 'block',
-      },
-      allowApply: false,
-      commerce: {},
-    });
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('--apply'));
-    assert.ok(result.hint);
-    assert.ok(result.wouldDo);
-  });
-
-  it('update_fraud_rule requires --apply', async () => {
-    const result = await byName['update_fraud_rule'].handler({
-      params: { ruleId: 'rule-1', enabled: false },
-      allowApply: false,
-      commerce: {},
-    });
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('--apply'));
-    assert.ok(result.hint);
-  });
-
-  it('review_flagged_order requires --apply', async () => {
-    const result = await byName['review_flagged_order'].handler({
-      params: { assessmentId: 'fa-1', decision: 'approve', reason: 'Legit customer' },
-      allowApply: false,
-      commerce: {},
-    });
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('--apply'));
-    assert.ok(result.hint);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Handler error paths (commerce stub missing methods)
-// ---------------------------------------------------------------------------
-
-describe('fraudTools — handler error paths', () => {
-  it('assess_order_fraud fails gracefully with empty commerce', async () => {
-    try {
-      await byName['assess_order_fraud'].handler({
-        params: { orderId: 'order-1' },
-        commerce: {},
-      });
-      assert.fail('Expected an error to be thrown');
-    } catch (err) {
-      assert.ok(err instanceof TypeError);
-    }
-  });
-
-  it('get_fraud_assessment fails gracefully with empty commerce', async () => {
-    try {
-      await byName['get_fraud_assessment'].handler({
-        params: { assessmentId: 'fa-1' },
-        commerce: {},
-      });
-      assert.fail('Expected an error to be thrown');
-    } catch (err) {
-      assert.ok(err instanceof TypeError);
-    }
-  });
-
-  it('list_fraud_signals fails gracefully with empty commerce', async () => {
-    try {
-      await byName['list_fraud_signals'].handler({
-        params: { limit: 10 },
-        commerce: {},
-      });
-      assert.fail('Expected an error to be thrown');
-    } catch (err) {
-      assert.ok(err instanceof TypeError);
-    }
-  });
-
-  it('create_fraud_rule fails gracefully with empty commerce when allowApply=true', async () => {
-    try {
-      await byName['create_fraud_rule'].handler({
-        params: {
-          name: 'Test rule',
-          condition: { field: 'email_domain', operator: 'eq', value: 'spam.com' },
-          action: 'flag',
-        },
-        allowApply: true,
-        commerce: {},
-      });
-      assert.fail('Expected an error to be thrown');
-    } catch (err) {
-      assert.ok(err instanceof TypeError);
-    }
-  });
-
-  it('update_fraud_rule fails gracefully with empty commerce when allowApply=true', async () => {
-    try {
-      await byName['update_fraud_rule'].handler({
-        params: { ruleId: 'rule-1', enabled: false },
-        allowApply: true,
-        commerce: {},
-      });
-      assert.fail('Expected an error to be thrown');
-    } catch (err) {
-      assert.ok(err instanceof TypeError);
-    }
-  });
-
-  it('review_flagged_order fails gracefully with empty commerce when allowApply=true', async () => {
-    try {
-      await byName['review_flagged_order'].handler({
-        params: { assessmentId: 'fa-1', decision: 'reject', reason: 'Suspicious' },
-        allowApply: true,
-        commerce: {},
-      });
-      assert.fail('Expected an error to be thrown');
-    } catch (err) {
-      assert.ok(err instanceof TypeError);
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Handler success paths (mocked commerce)
-// ---------------------------------------------------------------------------
-
-describe('fraudTools — handler success paths (mocked commerce)', () => {
-  const mockAssessment = {
-    id: 'fa-001',
-    orderId: 'order-1',
-    riskScore: 35,
-    riskLevel: 'low',
-    recommendation: 'accept',
-    signals: [],
-    matchedRules: [],
-    assessedAt: '2026-01-15T00:00:00Z',
-    reviewStatus: 'pending',
-    reviewedBy: null,
-    reviewedAt: null,
-  };
-
-  const mockSignals = [
-    {
-      id: 'sig-1',
-      orderId: 'order-1',
-      type: 'velocity',
-      description: 'Multiple orders in 1 hour',
-      severity: 'medium',
-      metadata: {},
-      detectedAt: '2026-01-15T00:00:00Z',
-    },
-  ];
-
-  const mockRule = { id: 'rule-1', name: 'Test rule', action: 'flag', enabled: true };
-
-  const commerce = {
-    fraud: {
-      assessOrder: async () => mockAssessment,
-      getAssessment: async (id) => (id === 'fa-001' ? mockAssessment : null),
-      listSignals: async () => mockSignals,
-      createRule: async (data) => ({ ...mockRule, ...data }),
-      updateRule: async (_id, data) => ({ ...mockRule, ...data }),
-      reviewOrder: async (data) => ({ ...mockAssessment, reviewStatus: data.decision }),
-    },
-  };
-
-  it('assess_order_fraud returns success with assessment shape', async () => {
-    const result = await byName['assess_order_fraud'].handler({
-      params: { orderId: 'order-1' },
-      commerce,
-    });
-    assert.equal(result.success, true);
-    assert.ok(result.assessment);
-    assert.equal(result.assessment.orderId, 'order-1');
-    assert.equal(result.assessment.riskScore, 35);
-    assert.equal(result.assessment.riskLevel, 'low');
-  });
-
-  it('get_fraud_assessment returns success for existing assessment', async () => {
-    const result = await byName['get_fraud_assessment'].handler({
-      params: { assessmentId: 'fa-001' },
-      commerce,
-    });
-    assert.equal(result.success, true);
-    assert.ok(result.assessment);
-    assert.equal(result.assessment.id, 'fa-001');
-  });
-
-  it('get_fraud_assessment returns not-found for missing assessment', async () => {
-    const result = await byName['get_fraud_assessment'].handler({
-      params: { assessmentId: 'nonexistent' },
-      commerce,
-    });
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('not found'));
-  });
-
-  it('list_fraud_signals returns signal array', async () => {
-    const result = await byName['list_fraud_signals'].handler({
-      params: { limit: 50 },
-      commerce,
-    });
-    assert.equal(result.success, true);
-    assert.equal(result.returned, 1);
-    assert.ok(Array.isArray(result.signals));
-    assert.equal(result.signals[0].type, 'velocity');
-  });
-
-  it('create_fraud_rule returns success with allowApply', async () => {
-    const result = await byName['create_fraud_rule'].handler({
-      params: {
-        name: 'High amount rule',
-        condition: { field: 'order_amount', operator: 'gt', value: 5000 },
+  it('create_fraud_rule requires name, signalType, threshold, action', () => {
+    assert.equal(parse('create_fraud_rule', { name: 'r' }).success, false);
+    assert.equal(
+      parse('create_fraud_rule', {
+        name: 'r',
+        signalType: 'disposable_email',
+        threshold: 0.5,
         action: 'review',
-      },
-      allowApply: true,
-      commerce,
-    });
-    assert.equal(result.success, true);
-    assert.ok(result.message.includes('created'));
-    assert.ok(result.rule);
+      }).success,
+      true,
+    );
   });
 
-  it('update_fraud_rule returns success with allowApply', async () => {
-    const result = await byName['update_fraud_rule'].handler({
-      params: { ruleId: 'rule-1', enabled: false },
-      allowApply: true,
-      commerce,
-    });
-    assert.equal(result.success, true);
-    assert.ok(result.message.includes('updated'));
+  it('update_fraud_rule requires ruleId only', () => {
+    assert.equal(parse('update_fraud_rule', { ruleId: 'r1' }).success, true);
+    assert.equal(parse('update_fraud_rule', {}).success, false);
   });
 
-  it('review_flagged_order returns success with allowApply', async () => {
-    const result = await byName['review_flagged_order'].handler({
-      params: { assessmentId: 'fa-001', decision: 'approve', reason: 'Trusted customer' },
-      allowApply: true,
-      commerce,
-    });
-    assert.equal(result.success, true);
-    assert.ok(result.message.includes('approved'));
+  it('review_flagged_order requires orderId, decision, reviewer, reason', () => {
+    assert.equal(
+      parse('review_flagged_order', {
+        orderId: 'o1',
+        decision: 'accept',
+        reviewer: 'ops',
+        reason: 'ok',
+      }).success,
+      true,
+    );
+    assert.equal(
+      parse('review_flagged_order', { orderId: 'o1', decision: 'accept', reason: 'ok' }).success,
+      false,
+    );
   });
+});
 
-  it('review_flagged_order reject message says rejected', async () => {
-    const result = await byName['review_flagged_order'].handler({
-      params: { assessmentId: 'fa-001', decision: 'reject', reason: 'Fraud confirmed' },
-      allowApply: true,
-      commerce,
+describe('fraudTools — apply guard', () => {
+  const previews = {
+    assess_order_fraud: { orderId: 'o1', signals: [] },
+    create_fraud_rule: { name: 'r', signalType: 'proxy_vpn', threshold: 0.5, action: 'reject' },
+    update_fraud_rule: { ruleId: 'r1', enabled: false },
+    review_flagged_order: { orderId: 'o1', decision: 'reject', reviewer: 'ops', reason: 'x' },
+  };
+  for (const [name, params] of Object.entries(previews)) {
+    it(`${name} does not touch the binding without --apply`, async () => {
+      const result = await byName[name].handler({ commerce: {}, params });
+      assert.equal(result.success, false);
+      assert.match(result.error, /--apply/);
+      assert.deepEqual(result.wouldDo, params);
     });
-    assert.equal(result.success, true);
-    assert.ok(result.message.includes('rejected'));
-  });
+  }
+});
 
-  it('review_flagged_order escalate message says escalated', async () => {
-    const result = await byName['review_flagged_order'].handler({
-      params: { assessmentId: 'fa-001', decision: 'escalate', reason: 'Needs manager review' },
-      allowApply: true,
-      commerce,
+describe('fraudTools — handler error paths (binding missing)', () => {
+  for (const [name, params, allowApply] of [
+    ['get_fraud_assessment', { orderId: 'o1' }, false],
+    ['list_fraud_signals', { limit: 5 }, false],
+    ['assess_order_fraud', { orderId: 'o1', signals: [] }, true],
+  ]) {
+    it(`${name} throws a TypeError when commerce.fraud is absent`, async () => {
+      await assert.rejects(
+        () => byName[name].handler({ commerce: {}, params, allowApply }),
+        TypeError,
+      );
     });
-    assert.equal(result.success, true);
-    assert.ok(result.message.includes('escalated'));
-  });
+  }
 });

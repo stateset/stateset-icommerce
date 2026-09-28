@@ -1068,7 +1068,8 @@ impl PgQualityRepository {
                 disposition = COALESCE($6, disposition),
                 disposition_quantity = COALESCE($7, disposition_quantity),
                 assigned_to = COALESCE($8, assigned_to),
-                updated_at = $9
+                updated_at = $9,
+                closed_at = COALESCE($12, closed_at)
             WHERE id = $10 AND status = $11
             "#,
         )
@@ -1083,6 +1084,8 @@ impl PgQualityRepository {
         .bind(now)
         .bind(id)
         .bind(existing.status.to_string())
+        // Closing through update records the close time, as close_ncr does.
+        .bind((input.status == Some(NcrStatus::Closed)).then_some(now))
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;

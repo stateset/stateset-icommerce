@@ -125,8 +125,26 @@ export const shipmentTools = [
     description: 'Create a shipment for an order.',
     inputSchema: {
       orderId: z.string().min(1).describe('Order ID'),
-      carrier: z.string().optional().describe('Carrier: USPS, UPS, FedEx, DHL'),
-      service: z.string().optional().describe('Service level'),
+      recipientName: z.string().min(1).describe('Name of the person receiving the shipment'),
+      shippingAddress: z
+        .string()
+        .min(1)
+        .describe(
+          'Destination address as a single string (e.g. "1 Main St, Austin, TX 78701, US")',
+        ),
+      carrier: z
+        .string()
+        .optional()
+        .describe('Carrier: ups, fedex, usps, dhl, other (case-insensitive)'),
+      service: z
+        .string()
+        .optional()
+        .describe(
+          'Service level: standard, express, overnight, two_day, ground, international, same_day, freight',
+        ),
+      trackingNumber: z.string().optional().describe('Carrier tracking number, if already known'),
+      recipientEmail: z.string().optional().describe('Recipient email for notifications'),
+      recipientPhone: z.string().optional().describe('Recipient phone number'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -134,11 +152,22 @@ export const shipmentTools = [
         return applyRequired('Create shipment', params);
       }
 
-      const shipment = await commerce.shipments.create({
-        orderId: params.orderId,
-        carrier: params.carrier,
-        service: params.service,
-      });
+      // Binding CreateShipmentInput: recipientName + shippingAddress are
+      // required; the service level travels as shippingMethod; absent
+      // optionals are omitted (never null).
+      const input = Object.fromEntries(
+        Object.entries({
+          orderId: params.orderId,
+          recipientName: params.recipientName,
+          shippingAddress: params.shippingAddress,
+          carrier: params.carrier,
+          shippingMethod: params.service,
+          trackingNumber: params.trackingNumber,
+          recipientEmail: params.recipientEmail,
+          recipientPhone: params.recipientPhone,
+        }).filter(([, value]) => value !== undefined && value !== null),
+      );
+      const shipment = await commerce.shipments.create(input);
       return { success: true, message: 'Shipment created', shipment };
     },
   },

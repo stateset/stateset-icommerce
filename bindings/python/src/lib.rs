@@ -126,6 +126,16 @@ fn parse_optional_uuid(value: Option<&str>, field: &str) -> PyResult<Option<uuid
     value.map(|value| parse_uuid_str(value, field)).transpose()
 }
 
+/// An optional list of ids, typed; one malformed entry refuses the whole list.
+fn ids_of<T: From<uuid::Uuid>>(
+    values: Option<Vec<String>>,
+    field: &str,
+) -> PyResult<Option<Vec<T>>> {
+    values
+        .map(|values| Ok(parse_id_list(&values, field)?.into_iter().map(T::from).collect()))
+        .transpose()
+}
+
 /// Parse a list of ids, refusing the whole list when any single entry is malformed.
 fn parse_id_list(values: &[String], field: &str) -> PyResult<Vec<uuid::Uuid>> {
     values
@@ -1082,6 +1092,70 @@ impl CreateInvoiceItemInput {
             discount_amount,
             tax_amount,
         }
+    }
+}
+
+/// Input for a line item that promotions are evaluated against.
+///
+/// Product, SKU and category scoping (and bundle, tiered and buy-X-get-Y
+/// promotions) read these lines; without them only order-wide promotions can
+/// apply.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct PromotionLineItemInput {
+    #[pyo3(get, set)]
+    id: String,
+    #[pyo3(get, set)]
+    quantity: i32,
+    #[pyo3(get, set)]
+    unit_price: f64,
+    #[pyo3(get, set)]
+    line_total: f64,
+    #[pyo3(get, set)]
+    product_id: Option<String>,
+    #[pyo3(get, set)]
+    variant_id: Option<String>,
+    #[pyo3(get, set)]
+    sku: Option<String>,
+    #[pyo3(get, set)]
+    category_ids: Option<Vec<String>>,
+}
+
+#[pymethods]
+impl PromotionLineItemInput {
+    #[new]
+    #[pyo3(signature = (id, quantity, unit_price, line_total, product_id=None, variant_id=None, sku=None, category_ids=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        id: String,
+        quantity: i32,
+        unit_price: f64,
+        line_total: f64,
+        product_id: Option<String>,
+        variant_id: Option<String>,
+        sku: Option<String>,
+        category_ids: Option<Vec<String>>,
+    ) -> Self {
+        Self { id, quantity, unit_price, line_total, product_id, variant_id, sku, category_ids }
+    }
+}
+
+impl PromotionLineItemInput {
+    fn to_core(&self) -> PyResult<stateset_core::PromotionLineItem> {
+        Ok(stateset_core::PromotionLineItem {
+            id: self.id.clone(),
+            product_id: parse_optional_uuid(self.product_id.as_deref(), "product_id")?
+                .map(Into::into),
+            variant_id: parse_optional_uuid(self.variant_id.as_deref(), "variant_id")?,
+            sku: self.sku.clone(),
+            category_ids: parse_id_list(
+                self.category_ids.as_deref().unwrap_or_default(),
+                "category_ids",
+            )?,
+            quantity: self.quantity,
+            unit_price: decimal_from_f64(self.unit_price, "promotion line item unit_price")?,
+            line_total: decimal_from_f64(self.line_total, "promotion line item line_total")?,
+        })
     }
 }
 
@@ -8479,10 +8553,104 @@ pub struct Promotion {
     currency: String,
     #[pyo3(get)]
     priority: i32,
+    /// Conditions the cart must meet for this promotion to apply.
+    #[pyo3(get)]
+    conditions: Vec<PromotionCondition>,
     #[pyo3(get)]
     created_at: String,
     #[pyo3(get)]
     updated_at: String,
+}
+
+/// A condition attached to a promotion.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct PromotionCondition {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    condition_type: String,
+    #[pyo3(get)]
+    operator: String,
+    #[pyo3(get)]
+    value: String,
+    #[pyo3(get)]
+    is_required: bool,
+}
+
+impl From<stateset_core::PromotionCondition> for PromotionCondition {
+    fn from(c: stateset_core::PromotionCondition) -> Self {
+        Self {
+            id: c.id.to_string(),
+            condition_type: c.condition_type.to_string(),
+            operator: c.operator.to_string(),
+            value: c.value,
+            is_required: c.is_required,
+        }
+    }
+}
+
+/// A condition a cart must meet for a promotion to apply.
+///
+/// `condition_type` is one of minimum_subtotal, minimum_quantity,
+/// product_in_cart, category_in_cart, sku_in_cart, customer_group,
+/// first_order, customer_email_domain, shipping_country, shipping_state,
+/// payment_method, cart_item_count, customer_id; `operator` one of equals,
+/// not_equals, greater_than, greater_than_or_equal, less_than,
+/// less_than_or_equal, contains, not_contains, in, not_in. `value` is a
+/// decimal, integer, boolean or comma-separated list, as the type requires.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct PromotionConditionInput {
+    #[pyo3(get, set)]
+    condition_type: String,
+    #[pyo3(get, set)]
+    operator: String,
+    #[pyo3(get, set)]
+    value: String,
+    #[pyo3(get, set)]
+    is_required: bool,
+}
+
+#[pymethods]
+impl PromotionConditionInput {
+    #[new]
+    #[pyo3(signature = (condition_type, operator, value, is_required=true))]
+    fn new(condition_type: String, operator: String, value: String, is_required: bool) -> Self {
+        Self { condition_type, operator, value, is_required }
+    }
+}
+
+impl PromotionConditionInput {
+    fn to_core(&self) -> PyResult<stateset_core::CreatePromotionCondition> {
+        Ok(stateset_core::CreatePromotionCondition {
+            condition_type: self.condition_type.parse().map_err(|_| {
+                PyValueError::new_err(format!(
+                    "Unknown promotion condition type '{}'",
+                    self.condition_type
+                ))
+            })?,
+            operator: self.operator.parse().map_err(|_| {
+                PyValueError::new_err(format!(
+                    "Unknown promotion condition operator '{}'",
+                    self.operator
+                ))
+            })?,
+            value: self.value.clone(),
+            is_required: self.is_required,
+        })
+    }
+}
+
+/// A promotion write refused by the engine's own validation is a bad
+/// argument (`ValueError`); anything else is a runtime failure.
+fn promotion_write_error(context: &str, error: stateset_core::CommerceError) -> PyErr {
+    match error {
+        stateset_core::CommerceError::ValidationError(message) => {
+            PyValueError::new_err(format!("{context}: {message}"))
+        }
+        other => PyRuntimeError::new_err(format!("{context}: {other}")),
+    }
 }
 
 impl TryFrom<stateset_core::Promotion> for Promotion {
@@ -8523,6 +8691,7 @@ impl TryFrom<stateset_core::Promotion> for Promotion {
             usage_count: p.usage_count,
             currency: p.currency.to_string(),
             priority: p.priority,
+            conditions: p.conditions.into_iter().map(Into::into).collect(),
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
         })
@@ -8605,6 +8774,42 @@ pub struct ApplyPromotionsResult {
     grand_total_exact: String,
     #[pyo3(get)]
     applied_promotions: Vec<AppliedPromotion>,
+    /// Promotions and coupons considered but not applied, with the reason.
+    #[pyo3(get)]
+    rejected_promotions: Vec<RejectedPromotion>,
+}
+
+/// A promotion or coupon that was considered and refused.
+///
+/// `reason_code` is one of invalid_code, expired, not_yet_active,
+/// usage_limit_reached, customer_limit_reached, minimum_not_met,
+/// product_not_eligible, customer_not_eligible, not_stackable,
+/// already_applied, internal_error, currency_mismatch.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct RejectedPromotion {
+    #[pyo3(get)]
+    promotion_id: Option<String>,
+    #[pyo3(get)]
+    coupon_code: Option<String>,
+    #[pyo3(get)]
+    reason: String,
+    #[pyo3(get)]
+    reason_code: String,
+}
+
+impl From<stateset_core::RejectedPromotion> for RejectedPromotion {
+    fn from(r: stateset_core::RejectedPromotion) -> Self {
+        Self {
+            promotion_id: r.promotion_id.map(|id| id.to_string()),
+            coupon_code: r.coupon_code,
+            reason: r.reason,
+            reason_code: serde_json::to_value(r.reason_code)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_else(|| format!("{:?}", r.reason_code)),
+        }
+    }
 }
 
 impl TryFrom<stateset_core::ApplyPromotionsResult> for ApplyPromotionsResult {
@@ -8633,6 +8838,7 @@ impl TryFrom<stateset_core::ApplyPromotionsResult> for ApplyPromotionsResult {
             grand_total: to_f64_result(r.grand_total, "promotion grand total")?,
             grand_total_exact,
             applied_promotions: convert_outputs(r.applied_promotions)?,
+            rejected_promotions: r.rejected_promotions.into_iter().map(Into::into).collect(),
         })
     }
 }
@@ -8729,6 +8935,7 @@ fn parse_promotion_type(s: &str) -> PyResult<stateset_core::PromotionType> {
         "free_shipping" => Ok(stateset_core::PromotionType::FreeShipping),
         "tiered_discount" => Ok(stateset_core::PromotionType::TieredDiscount),
         "bundle_discount" => Ok(stateset_core::PromotionType::BundleDiscount),
+        "first_order_discount" => Ok(stateset_core::PromotionType::FirstOrderDiscount),
         other => Err(unknown_variant(
             "promotion_type",
             other,
@@ -8740,6 +8947,7 @@ fn parse_promotion_type(s: &str) -> PyResult<stateset_core::PromotionType> {
                 "free_shipping",
                 "tiered_discount",
                 "bundle_discount",
+                "first_order_discount",
             ],
         )),
     }
@@ -8852,7 +9060,10 @@ impl PromotionsApi {
     #[pyo3(signature = (name, promotion_type=None, trigger=None, target=None, stacking=None,
                         percentage_off=None, fixed_amount_off=None, max_discount_amount=None,
                         buy_quantity=None, get_quantity=None, starts_at=None, ends_at=None,
-                        total_usage_limit=None, per_customer_limit=None, currency=None, priority=None))]
+                        total_usage_limit=None, per_customer_limit=None, currency=None, priority=None,
+                        conditions=None, applicable_product_ids=None, applicable_category_ids=None,
+                        applicable_skus=None, excluded_product_ids=None, excluded_category_ids=None,
+                        eligible_customer_ids=None))]
     fn create(
         &self,
         name: String,
@@ -8871,6 +9082,13 @@ impl PromotionsApi {
         per_customer_limit: Option<i32>,
         currency: Option<String>,
         priority: Option<i32>,
+        conditions: Option<Vec<PromotionConditionInput>>,
+        applicable_product_ids: Option<Vec<String>>,
+        applicable_category_ids: Option<Vec<String>>,
+        applicable_skus: Option<Vec<String>>,
+        excluded_product_ids: Option<Vec<String>>,
+        excluded_category_ids: Option<Vec<String>>,
+        eligible_customer_ids: Option<Vec<String>>,
     ) -> PyResult<Promotion> {
         let commerce = self
             .commerce
@@ -8916,13 +9134,17 @@ impl PromotionsApi {
             ends_at: parse_optional_datetime(ends_at.as_deref(), "ends_at")?,
             total_usage_limit,
             per_customer_limit,
-            conditions: None,
-            applicable_product_ids: None,
-            applicable_category_ids: None,
-            applicable_skus: None,
-            excluded_product_ids: None,
-            excluded_category_ids: None,
-            eligible_customer_ids: None,
+            conditions: conditions
+                .map(|conditions| {
+                    conditions.iter().map(PromotionConditionInput::to_core).collect::<PyResult<_>>()
+                })
+                .transpose()?,
+            applicable_product_ids: ids_of(applicable_product_ids, "applicable_product_ids")?,
+            applicable_category_ids: ids_of(applicable_category_ids, "applicable_category_ids")?,
+            applicable_skus,
+            excluded_product_ids: ids_of(excluded_product_ids, "excluded_product_ids")?,
+            excluded_category_ids: ids_of(excluded_category_ids, "excluded_category_ids")?,
+            eligible_customer_ids: ids_of(eligible_customer_ids, "eligible_customer_ids")?,
             eligible_customer_groups: None,
             currency: parse_optional_currency(currency.as_deref(), "currency")?,
             priority,
@@ -8932,7 +9154,30 @@ impl PromotionsApi {
         let promo = commerce
             .promotions()
             .create(create)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create promotion: {}", e)))?;
+            .map_err(|e| promotion_write_error("Failed to create promotion", e))?;
+
+        convert_output(promo)
+    }
+
+    /// Add a condition to an existing promotion.
+    ///
+    /// The condition is validated (its value must parse for its type and its
+    /// operator must apply to it) and then stored, so it takes part in every
+    /// later evaluation. A malformed condition raises `ValueError`.
+    fn add_condition(
+        &self,
+        promotion_id: String,
+        condition: PromotionConditionInput,
+    ) -> PyResult<Promotion> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let promotion_id = parse_uuid_str(&promotion_id, "promotion_id")?;
+        let promo = commerce
+            .promotions()
+            .add_condition(promotion_id.into(), condition.to_core()?)
+            .map_err(|e| promotion_write_error("Failed to add promotion condition", e))?;
 
         convert_output(promo)
     }
@@ -9190,13 +9435,26 @@ impl PromotionsApi {
     // ========================================================================
 
     /// Apply promotions to cart/order items.
-    #[pyo3(signature = (subtotal, coupon_codes=None, shipping_amount=None, currency=None))]
+    ///
+    /// `line_items` carry what product, SKU and category scoping read;
+    /// `customer_id` enables customer-targeted, per-customer-limited and
+    /// first-order promotions (first-order status is decided from the
+    /// customer's order history); the shipping destination enables
+    /// country/state conditions. `currency` defaults to the store's base
+    /// currency.
+    #[pyo3(signature = (subtotal, coupon_codes=None, shipping_amount=None, currency=None, line_items=None, customer_id=None, cart_id=None, shipping_country=None, shipping_state=None))]
+    #[allow(clippy::too_many_arguments)]
     fn apply(
         &self,
         subtotal: f64,
         coupon_codes: Option<Vec<String>>,
         shipping_amount: Option<f64>,
         currency: Option<String>,
+        line_items: Option<Vec<PromotionLineItemInput>>,
+        customer_id: Option<String>,
+        cart_id: Option<String>,
+        shipping_country: Option<String>,
+        shipping_state: Option<String>,
     ) -> PyResult<ApplyPromotionsResult> {
         let commerce = self
             .commerce
@@ -9207,18 +9465,32 @@ impl PromotionsApi {
             Some(amount) => decimal_from_f64(amount, "shipping_amount")?,
             None => Decimal::ZERO,
         };
+        let currency = match parse_optional_currency(currency.as_deref(), "currency")? {
+            Some(currency) => currency,
+            None => {
+                let base = commerce.currency().base_currency().map_err(|e| {
+                    PyRuntimeError::new_err(format!("Failed to get base currency: {}", e))
+                })?;
+                parse_currency_str(base.code(), "store base")?
+            }
+        };
 
         let request = stateset_core::ApplyPromotionsRequest {
-            cart_id: None,
-            customer_id: None,
+            cart_id: parse_optional_uuid(cart_id.as_deref(), "cart_id")?.map(Into::into),
+            customer_id: parse_optional_uuid(customer_id.as_deref(), "customer_id")?
+                .map(Into::into),
             coupon_codes: coupon_codes.unwrap_or_default(),
-            line_items: vec![],
+            line_items: line_items
+                .unwrap_or_default()
+                .iter()
+                .map(PromotionLineItemInput::to_core)
+                .collect::<PyResult<Vec<_>>>()?,
             subtotal: decimal_from_f64(subtotal, "subtotal")?,
             shipping_amount,
-            shipping_country: None,
-            shipping_state: None,
-            currency: parse_optional_currency(currency.as_deref(), "currency")?
-                .unwrap_or(CurrencyCode::USD),
+            shipping_country,
+            shipping_state,
+            currency,
+            // Settled from the customer's order history by the engine.
             is_first_order: false,
         };
 
@@ -9226,6 +9498,24 @@ impl PromotionsApi {
             .promotions()
             .apply(request)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to apply promotions: {}", e)))?;
+
+        convert_output(result)
+    }
+
+    /// Evaluate a persisted cart's promotions and write the result onto it.
+    ///
+    /// Prices the cart's lines, its coupon and every automatic promotion,
+    /// stores the discount on the cart and its lines, and returns the
+    /// evaluation, including what was refused and why.
+    fn apply_to_cart(&self, cart_id: String) -> PyResult<ApplyPromotionsResult> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let cart_id = parse_uuid_str(&cart_id, "cart_id")?;
+        let result = commerce
+            .apply_cart_promotions(cart_id)
+            .map_err(|e| promotion_write_error("Failed to apply cart promotions", e))?;
 
         convert_output(result)
     }
@@ -14179,6 +14469,7 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<OrderItem>()?;
     m.add_class::<CreateOrderItemInput>()?;
     m.add_class::<CreateInvoiceItemInput>()?;
+    m.add_class::<PromotionLineItemInput>()?;
     m.add_class::<CreatePurchaseOrderItemInput>()?;
 
     // Products
@@ -14304,8 +14595,11 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Promotions
     m.add_class::<PromotionsApi>()?;
     m.add_class::<Promotion>()?;
+    m.add_class::<PromotionCondition>()?;
+    m.add_class::<PromotionConditionInput>()?;
     m.add_class::<Coupon>()?;
     m.add_class::<ApplyPromotionsResult>()?;
+    m.add_class::<RejectedPromotion>()?;
     m.add_class::<AppliedPromotion>()?;
     m.add_class::<PromotionUsage>()?;
 

@@ -170,6 +170,26 @@
           "hst": null,
           "qst": null,
           "total": "0.11"
+        },
+        {
+          "id": "ns-hst-2025",
+          "province": "NS",
+          "gst": "0",
+          "pst": null,
+          "hst": "0.14",
+          "qst": null,
+          "total": "0.14",
+          "note": "Nova Scotia HST fell from 15% to 14% on 2025-04-01; the table said 15% and nothing pinned it"
+        },
+        {
+          "id": "yt-gst-only",
+          "province": "YT",
+          "gst": "0.05",
+          "pst": null,
+          "hst": null,
+          "qst": null,
+          "total": "0.05",
+          "note": "The territories charge GST and no territorial sales tax; they were missing from the table"
         }
       ]
     },

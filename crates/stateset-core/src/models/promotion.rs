@@ -474,6 +474,9 @@ pub fn validate_coupon_redemption(
     }
     coupon.redeemability_at(now).map_err(CommerceError::ValidationError)?;
     promotion.redeemability_at(now).map_err(CommerceError::ValidationError)?;
+    if let Some(reason) = promotion.currency_mismatch(request) {
+        return Err(CommerceError::ValidationError(reason));
+    }
     if let Some(reason) = promotion.check_conditions(request)? {
         return Err(CommerceError::ValidationError(format!(
             "Promotion conditions not met: {reason}"
@@ -487,8 +490,10 @@ impl ApplyPromotionsRequest {
     /// `coupon_code`.
     ///
     /// `is_first_order` is set to `false` because the cart alone cannot prove
-    /// otherwise; a first-order condition therefore refuses (fail-closed)
-    /// unless the caller overrides it.
+    /// otherwise. The promotion repositories settle it from the customer's
+    /// order history before evaluating, on every path that prices or redeems
+    /// a cart; with no customer on the cart it stays `false`, so a
+    /// first-order condition refuses (fail-closed).
     #[must_use]
     pub fn from_cart(cart: &crate::models::Cart, coupon_code: &str) -> Self {
         Self {
@@ -651,6 +656,8 @@ pub enum RejectionReason {
     NotStackable,
     AlreadyApplied,
     InternalError,
+    /// The promotion's amounts are in a different currency from the cart.
+    CurrencyMismatch,
 }
 
 /// Discount applied to a specific line item
@@ -731,6 +738,30 @@ pub struct CreatePromotionCondition {
     pub operator: ConditionOperator,
     pub value: String,
     pub is_required: bool,
+}
+
+impl CreatePromotionCondition {
+    /// The condition this input would store on `promotion_id`, with a fresh id.
+    #[must_use]
+    pub fn into_condition(self, promotion_id: PromotionId) -> PromotionCondition {
+        PromotionCondition {
+            id: Uuid::new_v4(),
+            promotion_id,
+            condition_type: self.condition_type,
+            operator: self.operator,
+            value: self.value,
+            is_required: self.is_required,
+        }
+    }
+
+    /// See [`PromotionCondition::validate`].
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::ValidationError`] describing the value or operator.
+    pub fn validate(&self) -> Result<()> {
+        self.clone().into_condition(PromotionId::nil()).validate()
+    }
 }
 
 /// Update a promotion
@@ -1139,6 +1170,64 @@ impl PromotionCondition {
         }
     }
 
+    /// Check that this condition can be evaluated at all: its `value` parses
+    /// for its condition type and its operator means something for that type.
+    ///
+    /// Evaluation reports a malformed value as an error, and pricing
+    /// propagates it, so one misconfigured automatic promotion would fail
+    /// every cart's pricing and every checkout in the store. Conditions are
+    /// therefore checked when they are written. An operator the type cannot
+    /// use would instead refuse the promotion forever. Condition types the
+    /// pricing request cannot evaluate yet (customer group, email domain,
+    /// payment method) are accepted: they refuse, fail-closed, until it can.
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::ValidationError`] describing the value or operator.
+    pub fn validate(&self) -> Result<()> {
+        let to_validation = |error: CommerceError| match error {
+            CommerceError::DatabaseError(message) => CommerceError::ValidationError(message),
+            other => other,
+        };
+        // Exhaustive with no wildcard arm, like `evaluate`: a new condition
+        // type must decide here how it is validated.
+        let operator_applies = match self.condition_type {
+            ConditionType::MinimumSubtotal => {
+                self.parse_decimal().map_err(to_validation)?;
+                compare_decimal(Decimal::ZERO, self.operator, Decimal::ZERO).is_some()
+            }
+            ConditionType::MinimumQuantity | ConditionType::CartItemCount => {
+                self.parse_i32().map_err(to_validation)?;
+                compare_i32(0, self.operator, 0).is_some()
+            }
+            ConditionType::ProductInCart
+            | ConditionType::CategoryInCart
+            | ConditionType::CustomerId => {
+                self.parse_uuid_list().map_err(to_validation)?;
+                compare_membership(false, self.operator).is_some()
+            }
+            ConditionType::SkuInCart => compare_membership(false, self.operator).is_some(),
+            ConditionType::FirstOrder => {
+                self.parse_bool().map_err(to_validation)?;
+                compare_bool(false, self.operator, false).is_some()
+            }
+            ConditionType::ShippingCountry | ConditionType::ShippingState => {
+                compare_string("", self.operator, &self.value).is_some()
+            }
+            ConditionType::CustomerGroup
+            | ConditionType::CustomerEmailDomain
+            | ConditionType::PaymentMethod => true,
+        };
+        if operator_applies {
+            Ok(())
+        } else {
+            Err(CommerceError::ValidationError(format!(
+                "Operator {:?} does not apply to a {:?} condition",
+                self.operator, self.condition_type
+            )))
+        }
+    }
+
     /// Evaluate this condition against a cart pricing request.
     ///
     /// # Fail-closed contract
@@ -1291,6 +1380,15 @@ impl Promotion {
         &self,
         request: &ApplyPromotionsRequest,
     ) -> Result<Option<(String, RejectionReason)>> {
+        // The type is itself a condition: a first-order discount on a
+        // returning customer's order is a discount leak, with or without an
+        // explicit `first_order` condition.
+        if self.promotion_type == PromotionType::FirstOrderDiscount && !request.is_first_order {
+            return Ok(Some((
+                "a first-order discount applies only to a first order".to_string(),
+                RejectionReason::CustomerNotEligible,
+            )));
+        }
         if self.conditions.is_empty() {
             return Ok(None);
         }
@@ -1378,11 +1476,41 @@ impl CreatePromotion {
                 "Buy X Get Y promotions require buy_quantity and get_quantity of at least 1".into(),
             ));
         }
+        for condition in self.conditions.iter().flatten() {
+            condition.validate()?;
+        }
         Ok(())
     }
 }
 
 impl Promotion {
+    /// Why this promotion cannot price `request`'s currency, if it cannot.
+    ///
+    /// A fixed amount, a discount cap, a bundle amount, tier thresholds and a
+    /// minimum-subtotal condition are all sums of money in the promotion's
+    /// currency; applied to a cart priced in another currency they were read
+    /// as that currency, so "$10 off" took 10 yen off a yen cart and a $50
+    /// minimum admitted a 50-yen cart. A promotion carrying any of them is
+    /// refused for another currency. A pure percentage means the same thing in
+    /// every currency and still applies.
+    #[must_use]
+    pub fn currency_mismatch(&self, request: &ApplyPromotionsRequest) -> Option<String> {
+        if self.currency == request.currency {
+            return None;
+        }
+        let carries_money = self.fixed_amount_off.is_some()
+            || self.max_discount_amount.is_some()
+            || self.bundle_discount.is_some()
+            || self.promotion_type == PromotionType::TieredDiscount
+            || self.conditions.iter().any(|c| c.condition_type == ConditionType::MinimumSubtotal);
+        carries_money.then(|| {
+            format!(
+                "Promotion amounts are in {} but the cart is priced in {}",
+                self.currency, request.currency
+            )
+        })
+    }
+
     /// Line items of `request` that belong to this promotion's bundle.
     fn bundle_items<'a>(
         &'a self,
@@ -1431,7 +1559,7 @@ impl Promotion {
         let applicable_amount = eligible_subtotal.min(remaining).max(Decimal::ZERO);
 
         let discount = match self.promotion_type {
-            PromotionType::PercentageOff | PromotionType::FirstOrderDiscount => {
+            PromotionType::PercentageOff => {
                 self.percentage_off.map_or(Decimal::ZERO, |pct| applicable_amount * pct)
             }
             PromotionType::FixedAmountOff => {
@@ -1440,6 +1568,15 @@ impl Promotion {
                 // worth; unscoped keeps its historical whole-order semantics.
                 if scoped { fixed.min(applicable_amount) } else { fixed }
             }
+            // Priced as the percentage or fixed amount it carries, the same
+            // way `discount_description` describes it.
+            PromotionType::FirstOrderDiscount => match (self.percentage_off, self.fixed_amount_off)
+            {
+                (Some(pct), _) => applicable_amount * pct,
+                (None, Some(fixed)) if scoped => fixed.min(applicable_amount),
+                (None, Some(fixed)) => fixed,
+                (None, None) => Decimal::ZERO,
+            },
             PromotionType::FreeShipping => request.shipping_amount,
             PromotionType::TieredDiscount => self
                 .tiers
@@ -1615,6 +1752,11 @@ pub fn evaluate_promotions(
         // filter, so a coupon on a draft/expired promotion lands here.
         if !promo.is_active() {
             reject("Promotion is not active".into(), RejectionReason::Expired);
+            continue;
+        }
+
+        if let Some(reason) = promo.currency_mismatch(request) {
+            reject(reason, RejectionReason::CurrencyMismatch);
             continue;
         }
 
@@ -1878,6 +2020,195 @@ mod tests {
         )
         .expect("evaluate");
         result
+    }
+
+    fn in_currency(
+        mut req: ApplyPromotionsRequest,
+        currency: CurrencyCode,
+    ) -> ApplyPromotionsRequest {
+        req.currency = currency;
+        req
+    }
+
+    #[test]
+    fn a_fixed_amount_is_refused_in_another_currency() {
+        // "$10 off" used to grant 10 of whatever the cart was priced in:
+        // 10 yen, 10 euros, 10 bitcoin.
+        let mut p = promo(PromotionType::FixedAmountOff, StackingBehavior::Stackable, 1);
+        p.fixed_amount_off = Some(Decimal::new(1000, 2));
+        let cart = request(vec![item("A", 1, Decimal::new(500000, 2))], Decimal::ZERO);
+
+        let usd = evaluate(&cart, vec![p.clone()]);
+        assert_eq!(usd.total_discount, Decimal::new(1000, 2));
+
+        let jpy = evaluate(&in_currency(cart, CurrencyCode::JPY), vec![p]);
+        assert_eq!(jpy.total_discount, Decimal::ZERO);
+        assert_eq!(jpy.rejected_promotions.len(), 1);
+        assert_eq!(jpy.rejected_promotions[0].reason_code, RejectionReason::CurrencyMismatch);
+    }
+
+    #[test]
+    fn a_pure_percentage_applies_in_any_currency() {
+        let mut p = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 1);
+        p.percentage_off = Some(Decimal::new(1, 1));
+        let cart = request(vec![item("A", 1, Decimal::new(10000, 2))], Decimal::ZERO);
+        let eur = evaluate(&in_currency(cart, CurrencyCode::EUR), vec![p]);
+        assert_eq!(eur.total_discount, Decimal::new(1000, 2));
+    }
+
+    #[test]
+    fn money_carried_by_a_cap_or_a_condition_is_currency_bound() {
+        let cart = in_currency(
+            request(vec![item("A", 1, Decimal::new(10000, 2))], Decimal::ZERO),
+            CurrencyCode::EUR,
+        );
+
+        let mut capped = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 1);
+        capped.percentage_off = Some(Decimal::new(1, 1));
+        capped.max_discount_amount = Some(Decimal::new(500, 2));
+        assert_eq!(evaluate(&cart, vec![capped]).total_discount, Decimal::ZERO, "a USD cap");
+
+        let mut minimum = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 2);
+        minimum.percentage_off = Some(Decimal::new(1, 1));
+        minimum.conditions = vec![
+            CreatePromotionCondition {
+                condition_type: ConditionType::MinimumSubtotal,
+                operator: ConditionOperator::GreaterThanOrEqual,
+                value: "50".into(),
+                is_required: true,
+            }
+            .into_condition(minimum.id),
+        ];
+        assert_eq!(evaluate(&cart, vec![minimum]).total_discount, Decimal::ZERO, "a USD minimum");
+
+        let mut tiered = promo(PromotionType::TieredDiscount, StackingBehavior::Stackable, 3);
+        tiered.tiers = Some(vec![DiscountTier {
+            min_value: Decimal::new(5000, 2),
+            max_value: None,
+            percentage_off: Some(Decimal::new(1, 1)),
+            fixed_amount_off: None,
+        }]);
+        assert_eq!(evaluate(&cart, vec![tiered]).total_discount, Decimal::ZERO, "USD thresholds");
+    }
+
+    #[test]
+    fn a_coupon_is_not_redeemable_in_another_currency() {
+        let mut p = promo(PromotionType::FixedAmountOff, StackingBehavior::Stackable, 1);
+        p.fixed_amount_off = Some(Decimal::new(1000, 2));
+        let now = Utc::now();
+        let coupon = CouponCode {
+            id: Uuid::new_v4(),
+            promotion_id: p.id,
+            code: "TENOFF".into(),
+            status: CouponStatus::Active,
+            usage_limit: None,
+            per_customer_limit: None,
+            usage_count: 0,
+            starts_at: None,
+            ends_at: None,
+            metadata: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let cart = request(vec![item("A", 1, Decimal::new(500000, 2))], Decimal::ZERO);
+        validate_coupon_redemption(&coupon, &p, &cart, now).expect("same currency");
+        let err =
+            validate_coupon_redemption(&coupon, &p, &in_currency(cart, CurrencyCode::JPY), now)
+                .expect_err("another currency");
+        assert!(
+            matches!(err, CommerceError::ValidationError(ref m) if m.contains("USD")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn a_first_order_discount_applies_only_to_a_first_order() {
+        // The type alone used to decide nothing: without an explicit
+        // first-order condition it discounted every customer's every order.
+        let mut p = promo(PromotionType::FirstOrderDiscount, StackingBehavior::Stackable, 1);
+        p.percentage_off = Some(Decimal::new(1, 1)); // 10%
+        let mut req = request(vec![item("A", 1, Decimal::new(10000, 2))], Decimal::ZERO);
+
+        let returning = evaluate(&req, vec![p.clone()]);
+        assert!(returning.applied_promotions.is_empty(), "a returning customer");
+        assert_eq!(returning.total_discount, Decimal::ZERO);
+        assert_eq!(returning.rejected_promotions.len(), 1, "the refusal is reported");
+
+        req.is_first_order = true;
+        let first = evaluate(&req, vec![p]);
+        assert_eq!(first.total_discount, Decimal::new(1000, 2));
+    }
+
+    #[test]
+    fn a_fixed_first_order_discount_grants_what_it_describes() {
+        // Described as "$15 off first order" while calculating nothing: only
+        // the percentage form was priced.
+        let mut p = promo(PromotionType::FirstOrderDiscount, StackingBehavior::Stackable, 1);
+        p.fixed_amount_off = Some(Decimal::new(1500, 2));
+        assert_eq!(p.discount_description(), "$15.00 off first order");
+        let mut req = request(vec![item("A", 1, Decimal::new(10000, 2))], Decimal::ZERO);
+        req.is_first_order = true;
+        assert_eq!(p.calculate_discount(&req, Decimal::ZERO), Decimal::new(1500, 2));
+    }
+
+    #[test]
+    fn a_stored_condition_with_an_inapplicable_operator_still_fails_closed() {
+        // Write-time validation cannot reach rows stored before it existed;
+        // evaluation must keep refusing them rather than applying.
+        let mut p = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 1);
+        p.percentage_off = Some(Decimal::new(1, 1));
+        p.conditions = vec![
+            CreatePromotionCondition {
+                condition_type: ConditionType::ProductInCart,
+                operator: ConditionOperator::GreaterThan,
+                value: Uuid::new_v4().to_string(),
+                is_required: true,
+            }
+            .into_condition(p.id),
+        ];
+        let result =
+            evaluate(&request(vec![item("A", 1, Decimal::new(10000, 2))], Decimal::ZERO), vec![p]);
+        assert!(result.applied_promotions.is_empty());
+        assert_eq!(result.total_discount, Decimal::ZERO);
+    }
+
+    #[test]
+    fn condition_values_and_operators_are_validated() {
+        let condition = |condition_type, operator, value: &str| CreatePromotionCondition {
+            condition_type,
+            operator,
+            value: value.to_string(),
+            is_required: true,
+        };
+        for ok in [
+            condition(ConditionType::MinimumSubtotal, ConditionOperator::GreaterThan, "49.99"),
+            condition(ConditionType::MinimumQuantity, ConditionOperator::GreaterThanOrEqual, "2"),
+            condition(ConditionType::FirstOrder, ConditionOperator::Equals, "true"),
+            condition(ConditionType::FirstOrder, ConditionOperator::NotEquals, ""),
+            condition(ConditionType::SkuInCart, ConditionOperator::In, "A, B"),
+            condition(ConditionType::ShippingCountry, ConditionOperator::In, "US,CA"),
+            condition(
+                ConditionType::CustomerId,
+                ConditionOperator::In,
+                "5f0c6a8e-3b1d-4d8f-9a3e-2c7b1e4f6a90",
+            ),
+            condition(ConditionType::CustomerGroup, ConditionOperator::Equals, "vip"),
+        ] {
+            ok.validate().unwrap_or_else(|e| panic!("{ok:?} should be valid: {e}"));
+        }
+        for bad in [
+            condition(ConditionType::MinimumSubtotal, ConditionOperator::GreaterThan, "lots"),
+            condition(ConditionType::CartItemCount, ConditionOperator::GreaterThan, "1.5"),
+            condition(ConditionType::FirstOrder, ConditionOperator::Equals, "perhaps"),
+            condition(ConditionType::CategoryInCart, ConditionOperator::In, "shoes"),
+            condition(ConditionType::FirstOrder, ConditionOperator::LessThan, "true"),
+            condition(ConditionType::ProductInCart, ConditionOperator::GreaterThan, ""),
+        ] {
+            assert!(
+                matches!(bad.validate(), Err(CommerceError::ValidationError(_))),
+                "{bad:?} should be refused"
+            );
+        }
     }
 
     #[test]

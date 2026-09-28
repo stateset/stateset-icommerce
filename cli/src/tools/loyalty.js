@@ -2,11 +2,50 @@
  * Loyalty Program Tools Module
  *
  * MCP tool definitions for loyalty programs, points, and rewards management.
- * Modularized from mcp-server.js for better maintainability.
+ *
+ * Points are integers. A customer's points live on a loyalty account (one per
+ * customer per program); every earn/redeem is an `adjustPoints` transaction on
+ * that account, and the engine refuses any adjustment that would take the
+ * balance below zero.
  */
 
 import { z } from 'zod';
 import { applyRequired } from '../utils/apply-guard.js';
+
+/** Every `LoyaltyRewardType` the binding accepts. */
+const REWARD_TYPES = [
+  'discount',
+  'free_shipping',
+  'free_product',
+  'store_credit',
+  'exclusive_access',
+];
+
+/** Exact decimal amount, as a string (money is never a float). */
+const decimalString = z
+  .string()
+  .regex(/^\d+(\.\d+)?$/, 'Must be a non-negative decimal string, e.g. "10.00"');
+
+/** Shape a `LoyaltyAccountOutput` for a tool response. */
+function formatAccount(account) {
+  return {
+    id: account.id,
+    programId: account.programId,
+    customerId: account.customerId,
+    pointsBalance: account.pointsBalance,
+    lifetimePoints: account.lifetimePoints,
+    tier: account.tier,
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt,
+  };
+}
+
+/** The customer's account in the program, or null when they are not enrolled. */
+function findAccount(commerce, { programId, customerId }) {
+  return commerce.loyalty.getAccountByCustomer(customerId, programId);
+}
+
+const NOT_ENROLLED = { success: false, error: 'Customer is not enrolled in this loyalty program' };
 
 /**
  * Loyalty tool definitions
@@ -14,7 +53,7 @@ import { applyRequired } from '../utils/apply-guard.js';
 export const loyaltyTools = [
   {
     name: 'create_loyalty_program',
-    description: 'Create a loyalty program with tiers and earning rules.',
+    description: 'Create a loyalty program with an earning rate and optional tiers.',
     inputSchema: {
       name: z.string().min(1).max(255).describe('Program name'),
       description: z.string().max(1000).optional().describe('Program description'),
@@ -25,7 +64,6 @@ export const loyaltyTools = [
         .optional()
         .default(1)
         .describe('Points earned per dollar spent'),
-      currency: z.string().min(1).max(10).optional().default('USD').describe('Currency code'),
       tiers: z
         .array(
           z.object({
@@ -37,7 +75,11 @@ export const loyaltyTools = [
               .optional()
               .default(1)
               .describe('Points earning multiplier for this tier'),
-            perks: z.array(z.string().max(200)).optional().describe('Tier perks/benefits'),
+            perks: z
+              .array(z.string().max(200))
+              .optional()
+              .default([])
+              .describe('Tier perks/benefits'),
           }),
         )
         .min(1)
@@ -54,9 +96,13 @@ export const loyaltyTools = [
       const program = await commerce.loyalty.createProgram({
         name: params.name,
         description: params.description,
-        pointsPerDollar: params.pointsPerDollar || 1,
-        currency: params.currency || 'USD',
-        tiers: params.tiers,
+        pointsPerDollar: params.pointsPerDollar ?? 1,
+        tiers: params.tiers?.map((t) => ({
+          name: t.name,
+          minPoints: t.minPoints,
+          multiplier: t.multiplier ?? 1,
+          perks: t.perks ?? [],
+        })),
       });
       return { success: true, message: 'Loyalty program created', program };
     },
@@ -64,14 +110,13 @@ export const loyaltyTools = [
 
   {
     name: 'get_loyalty_program',
-    description: 'Get loyalty program details including tiers and reward catalog.',
+    description: 'Get loyalty program details including its tiers.',
     inputSchema: {
       programId: z.string().min(1).describe('Loyalty program ID'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const { programId } = params;
-      const program = await commerce.loyalty.getProgram(programId);
+      const program = await commerce.loyalty.getProgram(params.programId);
 
       if (!program) {
         return { success: false, error: 'Loyalty program not found' };
@@ -84,9 +129,7 @@ export const loyaltyTools = [
           name: program.name,
           description: program.description,
           pointsPerDollar: program.pointsPerDollar,
-          currency: program.currency,
           tiers: program.tiers,
-          totalMembers: program.totalMembers,
           status: program.status,
           createdAt: program.createdAt,
           updatedAt: program.updatedAt,
@@ -108,48 +151,40 @@ export const loyaltyTools = [
         return applyRequired('Enroll customer in loyalty program', params);
       }
 
-      const account = await commerce.loyalty.enrollCustomer(params.programId, params.customerId);
-      return { success: true, message: 'Customer enrolled in loyalty program', account };
+      const account = await commerce.loyalty.enroll({
+        customerId: params.customerId,
+        programId: params.programId,
+      });
+      return {
+        success: true,
+        message: 'Customer enrolled in loyalty program',
+        account: formatAccount(account),
+      };
     },
   },
 
   {
     name: 'get_loyalty_account',
-    description: 'Get a customer loyalty account including points balance and tier.',
+    description: "Get a customer's loyalty account in a program: points balance and tier.",
     inputSchema: {
       programId: z.string().min(1).describe('Loyalty program ID'),
       customerId: z.string().min(1).describe('Customer ID'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const { programId, customerId } = params;
-      const account = await commerce.loyalty.getAccount(programId, customerId);
+      const account = await findAccount(commerce, params);
 
       if (!account) {
         return { success: false, error: 'Loyalty account not found' };
       }
 
-      return {
-        success: true,
-        account: {
-          id: account.id,
-          programId: account.programId,
-          customerId: account.customerId,
-          pointsBalance: account.pointsBalance,
-          lifetimePoints: account.lifetimePoints,
-          currentTier: account.currentTier,
-          nextTier: account.nextTier,
-          pointsToNextTier: account.pointsToNextTier,
-          enrolledAt: account.enrolledAt,
-          updatedAt: account.updatedAt,
-        },
-      };
+      return { success: true, account: formatAccount(account) };
     },
   },
 
   {
     name: 'earn_points',
-    description: 'Award loyalty points to a customer account.',
+    description: "Award loyalty points to a customer's account in a program.",
     inputSchema: {
       programId: z.string().min(1).describe('Loyalty program ID'),
       customerId: z.string().min(1).describe('Customer ID'),
@@ -157,8 +192,12 @@ export const loyaltyTools = [
       reason: z
         .enum(['purchase', 'referral', 'birthday', 'review', 'promotion', 'manual'])
         .optional()
-        .describe('Reason for earning points'),
-      orderId: z.string().min(1).optional().describe('Associated order ID'),
+        .describe('Reason for earning points (recorded in the transaction description)'),
+      orderId: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Associated order ID (recorded as the reference)'),
       note: z.string().max(500).optional().describe('Note for the transaction'),
     },
     permission: 'write',
@@ -167,13 +206,16 @@ export const loyaltyTools = [
         return applyRequired('Award loyalty points', params);
       }
 
-      const transaction = await commerce.loyalty.earnPoints({
-        programId: params.programId,
-        customerId: params.customerId,
+      const account = await findAccount(commerce, params);
+      if (!account) return NOT_ENROLLED;
+
+      const reason = params.reason || 'manual';
+      const transaction = await commerce.loyalty.adjustPoints({
+        accountId: account.id,
         points: params.points,
-        reason: params.reason || 'manual',
-        orderId: params.orderId,
-        note: params.note,
+        transactionType: 'earn',
+        referenceId: params.orderId,
+        description: params.note ? `${reason}: ${params.note}` : reason,
       });
       return { success: true, message: `${params.points} points awarded`, transaction };
     },
@@ -181,13 +223,19 @@ export const loyaltyTools = [
 
   {
     name: 'redeem_points',
-    description: 'Redeem loyalty points for a reward or discount.',
+    description:
+      "Redeem loyalty points from a customer's account, optionally for a reward in the program. " +
+      'The engine refuses a redemption larger than the balance.',
     inputSchema: {
       programId: z.string().min(1).describe('Loyalty program ID'),
       customerId: z.string().min(1).describe('Customer ID'),
       points: z.number().int().positive().describe('Number of points to redeem'),
-      rewardId: z.string().min(1).optional().describe('Reward ID to redeem for'),
-      orderId: z.string().min(1).optional().describe('Order ID to apply discount to'),
+      rewardId: z.string().min(1).optional().describe('Reward ID being redeemed for'),
+      orderId: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Order the redemption applies to (recorded as the reference)'),
       note: z.string().max(500).optional().describe('Note for the transaction'),
     },
     permission: 'write',
@@ -196,13 +244,30 @@ export const loyaltyTools = [
         return applyRequired('Redeem loyalty points', params);
       }
 
-      const transaction = await commerce.loyalty.redeemPoints({
-        programId: params.programId,
-        customerId: params.customerId,
-        points: params.points,
-        rewardId: params.rewardId,
-        orderId: params.orderId,
-        note: params.note,
+      const account = await findAccount(commerce, params);
+      if (!account) return NOT_ENROLLED;
+
+      let reward = null;
+      if (params.rewardId) {
+        reward = await commerce.loyalty.getReward(params.rewardId);
+        if (!reward || reward.programId !== params.programId) {
+          return { success: false, error: 'Reward not found in this loyalty program' };
+        }
+        if (!reward.isActive) {
+          return { success: false, error: 'Reward is not active' };
+        }
+      }
+
+      const parts = [];
+      if (reward) parts.push(`reward ${reward.id} (${reward.name})`);
+      if (params.note) parts.push(params.note);
+
+      const transaction = await commerce.loyalty.adjustPoints({
+        accountId: account.id,
+        points: -params.points,
+        transactionType: 'redeem',
+        referenceId: params.orderId ?? reward?.id,
+        description: parts.length ? parts.join(': ') : undefined,
       });
       return { success: true, message: `${params.points} points redeemed`, transaction };
     },
@@ -210,10 +275,11 @@ export const loyaltyTools = [
 
   {
     name: 'list_rewards',
-    description: 'List available rewards in a loyalty program.',
+    description: 'List rewards in a loyalty program.',
     inputSchema: {
       programId: z.string().min(1).describe('Loyalty program ID'),
-      tier: z.string().min(1).optional().describe('Filter by tier name'),
+      rewardType: z.enum(REWARD_TYPES).optional().describe('Filter by reward type'),
+      activeOnly: z.boolean().optional().describe('Only active rewards'),
       limit: z
         .number()
         .int()
@@ -225,24 +291,26 @@ export const loyaltyTools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const { programId, tier, limit } = params;
-      const rewards = await commerce.loyalty.listRewards(programId, { tier });
-      const limited = rewards.slice(0, limit);
+      const { programId, rewardType, activeOnly } = params;
+      const rewards = await commerce.loyalty.listRewards({
+        programId,
+        rewardType,
+        isActive: activeOnly ? true : undefined,
+        limit: params.limit ?? 20,
+      });
 
       return {
         success: true,
         programId,
-        returned: limited.length,
-        rewards: limited.map((r) => ({
+        returned: rewards.length,
+        rewards: rewards.map((r) => ({
           id: r.id,
           name: r.name,
           description: r.description,
           pointsCost: r.pointsCost,
-          type: r.type,
+          rewardType: r.rewardType,
           value: r.value,
-          tier: r.tier,
-          status: r.status,
-          remainingStock: r.remainingStock,
+          isActive: r.isActive,
         })),
       };
     },
@@ -256,27 +324,10 @@ export const loyaltyTools = [
       name: z.string().min(1).max(255).describe('Reward name'),
       description: z.string().max(1000).optional().describe('Reward description'),
       pointsCost: z.number().int().positive().describe('Points required to redeem'),
-      type: z
-        .enum([
-          'discount_percentage',
-          'discount_fixed',
-          'free_product',
-          'free_shipping',
-          'gift_card',
-        ])
-        .describe('Reward type'),
-      value: z
-        .number()
-        .positive()
-        .describe('Reward value (percentage or fixed amount depending on type)'),
-      tier: z.string().min(1).optional().describe('Minimum tier required (if any)'),
-      maxRedemptions: z
-        .number()
-        .int()
-        .positive()
+      rewardType: z.enum(REWARD_TYPES).describe('Reward type'),
+      value: decimalString
         .optional()
-        .describe('Maximum total redemptions allowed'),
-      stock: z.number().int().min(0).optional().describe('Available stock (null for unlimited)'),
+        .describe('Monetary value as an exact decimal string, e.g. "10.00" (optional)'),
     },
     permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
@@ -284,15 +335,13 @@ export const loyaltyTools = [
         return applyRequired('Create reward', params);
       }
 
-      const reward = await commerce.loyalty.createReward(params.programId, {
+      const reward = await commerce.loyalty.createReward({
+        programId: params.programId,
         name: params.name,
         description: params.description,
         pointsCost: params.pointsCost,
-        type: params.type,
-        value: String(params.value),
-        tier: params.tier,
-        maxRedemptions: params.maxRedemptions,
-        stock: params.stock,
+        rewardType: params.rewardType,
+        value: params.value,
       });
       return { success: true, message: 'Reward created', reward };
     },

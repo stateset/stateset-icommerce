@@ -3321,12 +3321,46 @@ export interface CreatePromotionInput {
   eligibleCustomerIds?: Array<string>
   /** Eligible customer groups */
   eligibleCustomerGroups?: Array<string>
+  /**
+   * Conditions the cart must meet (minimum subtotal, first order, shipping
+   * country, ...). Each is validated before anything is stored.
+   */
+  conditions?: Array<PromotionConditionInput>
   /** Currency code */
   currency?: string
   /** Priority (lower = applied first) */
   priority?: number
   /** Metadata as JSON */
   metadata?: string
+}
+/** A condition a cart must meet for a promotion to apply. */
+export interface PromotionConditionInput {
+  /**
+   * What is tested: minimum_subtotal, minimum_quantity, product_in_cart,
+   * category_in_cart, sku_in_cart, first_order, shipping_country,
+   * shipping_state, cart_item_count, customer_id, ...
+   */
+  conditionType: PromotionConditionType
+  /** How it is compared: equals, not_equals, greater_than, in, ... */
+  operator: PromotionConditionOperator
+  /**
+   * The value compared against: a decimal, an integer, a boolean, or a
+   * comma-separated list, as the condition type requires.
+   */
+  value: string
+  /**
+   * Required conditions must all be met; when optional ones exist, at
+   * least one must be. Defaults to `true`.
+   */
+  isRequired?: boolean
+}
+/** A condition attached to a promotion. */
+export interface PromotionConditionOutput {
+  id: string
+  conditionType: PromotionConditionType
+  operator: PromotionConditionOperator
+  value: string
+  isRequired: boolean
 }
 /** Input for updating a promotion */
 export interface UpdatePromotionInput {
@@ -3392,6 +3426,8 @@ export interface PromotionOutput {
   currency: string
   priority: number
   metadata?: string
+  /** Conditions the cart must meet for this promotion to apply. */
+  conditions: Array<PromotionConditionOutput>
   createdAt: string
   updatedAt: string
 }
@@ -3489,6 +3525,17 @@ export interface ApplyPromotionsOutput {
   /** Exact base-10 grand total, straight from the engine's `Decimal`. Prefer this field for money. */
   grandTotalExact: string
   appliedPromotions: Array<AppliedPromotionOutput>
+  /** Promotions and coupons considered but not applied, with the reason. */
+  rejectedPromotions: Array<RejectedPromotionOutput>
+}
+/** A promotion or coupon that was considered and refused. */
+export interface RejectedPromotionOutput {
+  promotionId?: string
+  couponCode?: string
+  /** Human-readable reason. */
+  reason: string
+  /** Machine-readable reason. */
+  reasonCode: PromotionRejectionReason
 }
 /** An applied promotion */
 export interface AppliedPromotionOutput {
@@ -6809,6 +6856,14 @@ export declare class Promotions {
   activate(id: string): Promise<PromotionOutput>
   /** Deactivate (pause) a promotion */
   deactivate(id: string): Promise<PromotionOutput>
+  /**
+   * Add a condition to an existing promotion.
+   *
+   * The condition is validated — its value must parse for its type and
+   * its operator must apply to it — and then stored, so it takes part in
+   * every later evaluation.
+   */
+  addCondition(promotionId: string, condition: PromotionConditionInput): Promise<PromotionOutput>
   /** Get all currently active promotions */
   getActive(): Promise<Array<PromotionOutput>>
   /** Check if a promotion is currently valid */
@@ -6825,6 +6880,14 @@ export declare class Promotions {
   validateCoupon(code: string): Promise<CouponOutput | null>
   /** Apply promotions to cart/order items */
   apply(input: ApplyPromotionsInput): Promise<ApplyPromotionsOutput>
+  /**
+   * Evaluate a persisted cart's promotions and write the result onto it.
+   *
+   * Prices the cart's lines, its coupon and every automatic promotion,
+   * stores the discount on the cart and its lines, and returns the
+   * evaluation, including what was refused and why.
+   */
+  applyToCart(cartId: string): Promise<ApplyPromotionsOutput>
   /** Record promotion usage (after order completion) */
   recordUsage(promotionId: string, couponId: string | undefined | null, customerId: string | undefined | null, orderId: string | undefined | null, cartId: string | undefined | null, discountAmount: number, currency: string): Promise<PromotionUsageOutput>
   /**
@@ -7937,7 +8000,7 @@ export type SubscriptionEventType = 'created' | 'activated' | 'trialstarted' | '
 /** Promotion type as rendered on `PromotionOutput.promotionType` and `AppliedPromotionOutput.discountType` (lower-cased Rust `Debug` form). */
 export type PromotionType = 'percentageoff' | 'fixedamountoff' | 'buyxgety' | 'freeshipping' | 'tiereddiscount' | 'bundlediscount' | 'firstorderdiscount' | 'giftwithpurchase'
 /** Promotion type accepted on input (case-insensitive). */
-export type PromotionTypeInput = 'percentage_off' | 'percentageoff' | 'fixed_amount_off' | 'fixedamountoff' | 'buy_x_get_y' | 'buyxgety' | 'bogo' | 'free_shipping' | 'freeshipping' | 'tiered_discount' | 'tiereddiscount' | 'bundle' | 'bundle_discount' | 'bundlediscount'
+export type PromotionTypeInput = 'percentage_off' | 'percentageoff' | 'fixed_amount_off' | 'fixedamountoff' | 'buy_x_get_y' | 'buyxgety' | 'bogo' | 'free_shipping' | 'freeshipping' | 'tiered_discount' | 'tiereddiscount' | 'bundle' | 'bundle_discount' | 'bundlediscount' | 'first_order_discount' | 'firstorderdiscount'
 /** Promotion trigger as rendered on `PromotionOutput.trigger` (lower-cased Rust `Debug` form). */
 export type PromotionTrigger = 'automatic' | 'couponcode' | 'both'
 /** Promotion trigger accepted on input (case-insensitive). */
@@ -7950,6 +8013,12 @@ export type PromotionTargetInput = 'order' | 'product' | 'category' | 'shipping'
 export type PromotionStacking = 'stackable' | 'exclusive' | 'selectivestack'
 /** Stacking behaviour accepted on input (case-insensitive). */
 export type PromotionStackingInput = 'stackable' | 'exclusive' | 'selective_stack' | 'selectivestack'
+/** Why a promotion or coupon was considered and not applied, as rendered on `RejectedPromotionOutput.reasonCode`. */
+export type PromotionRejectionReason = 'invalid_code' | 'expired' | 'not_yet_active' | 'usage_limit_reached' | 'customer_limit_reached' | 'minimum_not_met' | 'product_not_eligible' | 'customer_not_eligible' | 'not_stackable' | 'already_applied' | 'internal_error' | 'currency_mismatch'
+/** What a promotion condition tests; accepted on `PromotionConditionInput.conditionType` (case-insensitive) and rendered in this snake_case form on `PromotionConditionOutput.conditionType`. */
+export type PromotionConditionType = 'minimum_subtotal' | 'minimum_quantity' | 'product_in_cart' | 'category_in_cart' | 'sku_in_cart' | 'customer_group' | 'first_order' | 'customer_email_domain' | 'shipping_country' | 'shipping_state' | 'payment_method' | 'cart_item_count' | 'customer_id'
+/** How a promotion condition compares its value; accepted on `PromotionConditionInput.operator` (case-insensitive) and rendered in this snake_case form on `PromotionConditionOutput.operator`. */
+export type PromotionConditionOperator = 'equals' | 'not_equals' | 'greater_than' | 'greater_than_or_equal' | 'less_than' | 'less_than_or_equal' | 'contains' | 'not_contains' | 'in' | 'not_in'
 /** Promotion status, shared by `PromotionOutput.status` and the update/filter inputs (case-insensitive on input). */
 export type PromotionStatus = 'draft' | 'scheduled' | 'active' | 'paused' | 'expired' | 'exhausted' | 'archived'
 /** Coupon status, shared by `CouponOutput.status` and `CouponFilterInput.status` (case-insensitive on input). */

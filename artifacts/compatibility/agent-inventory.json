@@ -4,16 +4,16 @@
     "registry": "cli/src/mcp-server-registry.js"
   },
   "totalAgents": 20,
-  "totalCommerceTools": 950,
+  "totalCommerceTools": 953,
   "totalScaffoldTools": 13,
   "totalX402Tools": 5,
   "fullAccessAgentCount": 1,
   "scopedAgentCount": 19,
-  "totalScopedToolReferences": 301,
+  "totalScopedToolReferences": 308,
   "supportedServers": [
     {
       "name": "stateset-commerce",
-      "toolCount": 950,
+      "toolCount": 953,
       "source": "cli/src/mcp-server.js"
     },
     {
@@ -60,10 +60,10 @@
       "id": "checkout",
       "name": "Checkout Agent",
       "description": "Shopping cart and protocol-neutral checkout flow specialist",
-      "toolCount": 32,
+      "toolCount": 33,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 32
+        "stateset-commerce": 33
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -88,10 +88,10 @@
       "id": "customer-service",
       "name": "Customer Service",
       "description": "Full-service agent with access to all commerce tools",
-      "toolCount": 950,
+      "toolCount": 953,
       "usesAllCommerceTools": true,
       "serverCounts": {
-        "stateset-commerce": 950
+        "stateset-commerce": 953
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -144,10 +144,10 @@
       "id": "orders",
       "name": "Orders Agent",
       "description": "Order lifecycle management specialist",
-      "toolCount": 8,
+      "toolCount": 9,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 8
+        "stateset-commerce": 9
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -158,10 +158,10 @@
       "id": "payments",
       "name": "Payments Agent",
       "description": "Payment processing and refund management specialist",
-      "toolCount": 21,
+      "toolCount": 22,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 21
+        "stateset-commerce": 22
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -172,10 +172,10 @@
       "id": "promotions",
       "name": "Promotions Agent",
       "description": "Promotions, discounts, and coupon code management specialist",
-      "toolCount": 17,
+      "toolCount": 20,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 17
+        "stateset-commerce": 20
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -186,10 +186,10 @@
       "id": "returns",
       "name": "Returns Agent",
       "description": "Return request processing specialist",
-      "toolCount": 7,
+      "toolCount": 8,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 7
+        "stateset-commerce": 8
       },
       "serverNamespaces": [
         "stateset-commerce"

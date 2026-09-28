@@ -164,6 +164,131 @@ impl PaymentStatus {
     pub const fn holds_money(self) -> bool {
         matches!(self, Self::Paid | Self::PartiallyPaid | Self::PartiallyRefunded)
     }
+
+    /// Derive an order's payment status from its payment ledger.
+    ///
+    /// This is the single definition both storage backends (and the kernel
+    /// executors) use to keep `orders.payment_status` in step with the
+    /// `payments` / `refunds` tables; they call it inside the same transaction
+    /// as every payment or refund write that moves money on the order.
+    ///
+    /// Rules, in order (all sums exact [`Decimal`], never floats):
+    ///
+    /// 1. **Money was captured** (`ledger.captured > 0`), with
+    ///    `net = captured - refunded`:
+    ///    - some refund and `net <= 0` → [`Self::Refunded`];
+    ///    - some refund and `net > 0` → [`Self::PartiallyRefunded`];
+    ///    - no refund and `net >= order_total` → [`Self::Paid`]
+    ///      (over-capture is impossible: captures are capped at the order
+    ///      total in the same transaction);
+    ///    - no refund and `net < order_total` → [`Self::PartiallyPaid`].
+    /// 2. **Nothing captured, but a money status is already recorded**
+    ///    (`Paid`/`PartiallyPaid`/`PartiallyRefunded`/`Refunded`): keep it.
+    ///    Such a status was written outside the payments ledger — checkout's
+    ///    settled-externally path marks the order `Paid` with no payment row —
+    ///    and an unrelated pending/failed payment must not erase it.
+    /// 3. **Nothing owed** (`order_total <= 0`) → [`Self::Paid`].
+    /// 4. A payment the processor is working on (`processing`) →
+    ///    [`Self::Authorized`].
+    /// 5. A payment still waiting (`pending` / `requires_action`) →
+    ///    [`Self::Pending`].
+    /// 6. Only failed attempts → [`Self::Failed`].
+    /// 7. Otherwise (no payments, or only cancelled ones) → [`Self::Pending`].
+    #[must_use]
+    pub fn derive(order_total: Decimal, ledger: &OrderPaymentLedger, current: Self) -> Self {
+        if ledger.captured > Decimal::ZERO {
+            let net = ledger.captured - ledger.refunded;
+            return if ledger.refunded > Decimal::ZERO {
+                if net <= Decimal::ZERO { Self::Refunded } else { Self::PartiallyRefunded }
+            } else if net >= order_total {
+                Self::Paid
+            } else {
+                Self::PartiallyPaid
+            };
+        }
+        if current.holds_money() || current == Self::Refunded {
+            return current;
+        }
+        if order_total <= Decimal::ZERO {
+            Self::Paid
+        } else if ledger.authorized {
+            Self::Authorized
+        } else if ledger.awaiting {
+            Self::Pending
+        } else if ledger.failed {
+            Self::Failed
+        } else {
+            Self::Pending
+        }
+    }
+}
+
+/// What an order's payment ledger says about its money, summed exactly.
+///
+/// Built from the order's payment rows with [`Self::record`], then fed to
+/// [`PaymentStatus::derive`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OrderPaymentLedger {
+    /// Σ `amount` of payments that captured money: `completed`,
+    /// `partially_refunded`, `refunded` and `disputed` (a dispute is contested
+    /// money still on the books).
+    pub captured: Decimal,
+    /// Σ `amount_refunded` of those same payments.
+    pub refunded: Decimal,
+    /// A payment is `processing` (authorized, not yet captured).
+    pub authorized: bool,
+    /// A payment is `pending` or `requires_action`.
+    pub awaiting: bool,
+    /// A payment `failed`.
+    pub failed: bool,
+}
+
+impl OrderPaymentLedger {
+    /// Fold one payment row into the ledger.
+    pub fn record(
+        &mut self,
+        status: super::payment::PaymentTransactionStatus,
+        amount: Decimal,
+        amount_refunded: Decimal,
+    ) {
+        use super::payment::PaymentTransactionStatus as S;
+        match status {
+            S::Completed | S::PartiallyRefunded | S::Refunded | S::Disputed => {
+                self.captured += amount;
+                self.refunded += amount_refunded;
+            }
+            S::Processing => self.authorized = true,
+            S::Pending | S::RequiresAction => self.awaiting = true,
+            S::Failed => self.failed = true,
+            S::Cancelled => {}
+        }
+    }
+}
+
+impl FulfillmentStatus {
+    /// The fulfillment status an order status implies, or `None` when the
+    /// order status says nothing about fulfillment (the stored value is kept).
+    ///
+    /// The order status is itself derived from per-line shipped quantities
+    /// (`PartiallyShipped` while Σ shipped < Σ ordered, else `Shipped`), so
+    /// this is the one place fulfillment is derived:
+    /// `PartiallyShipped` → [`Self::PartiallyFulfilled`], `Shipped` →
+    /// [`Self::Shipped`], `Delivered` → [`Self::Delivered`]. Pre-shipment
+    /// statuses and the post-shipment `Refunded`/`Cancelled` leave the stored
+    /// value untouched, so a refunded order still shows it was shipped.
+    #[must_use]
+    pub const fn for_order_status(status: OrderStatus) -> Option<Self> {
+        match status {
+            OrderStatus::PartiallyShipped => Some(Self::PartiallyFulfilled),
+            OrderStatus::Shipped => Some(Self::Shipped),
+            OrderStatus::Delivered => Some(Self::Delivered),
+            OrderStatus::Pending
+            | OrderStatus::Confirmed
+            | OrderStatus::Processing
+            | OrderStatus::Cancelled
+            | OrderStatus::Refunded => None,
+        }
+    }
 }
 
 /// Payment status enumeration.
@@ -1143,6 +1268,183 @@ mod tests {
     #[test]
     fn test_payment_status_default() {
         assert_eq!(PaymentStatus::default(), PaymentStatus::Pending);
+    }
+
+    // ============================================================================
+    // PaymentStatus::derive / FulfillmentStatus::for_order_status
+    // ============================================================================
+
+    use crate::models::payment::PaymentTransactionStatus as Txn;
+
+    fn ledger(rows: &[(Txn, Decimal, Decimal)]) -> OrderPaymentLedger {
+        let mut ledger = OrderPaymentLedger::default();
+        for (status, amount, refunded) in rows {
+            ledger.record(*status, *amount, *refunded);
+        }
+        ledger
+    }
+
+    fn derive(total: Decimal, rows: &[(Txn, Decimal, Decimal)]) -> PaymentStatus {
+        PaymentStatus::derive(total, &ledger(rows), PaymentStatus::Pending)
+    }
+
+    #[test]
+    fn derive_paid_exactly_at_the_total() {
+        assert_eq!(
+            derive(dec!(70.01), &[(Txn::Completed, dec!(70.01), dec!(0))]),
+            PaymentStatus::Paid
+        );
+        // Exact decimal: 0.1 + 0.2 captured against a 0.3 total is paid, not
+        // a float-rounded 0.30000000000000004 mismatch.
+        assert_eq!(
+            derive(
+                dec!(0.30),
+                &[(Txn::Completed, dec!(0.1), dec!(0)), (Txn::Completed, dec!(0.2), dec!(0))]
+            ),
+            PaymentStatus::Paid
+        );
+    }
+
+    #[test]
+    fn derive_partially_paid_below_the_total() {
+        assert_eq!(
+            derive(dec!(70.01), &[(Txn::Completed, dec!(70.00), dec!(0))]),
+            PaymentStatus::PartiallyPaid
+        );
+        // A pending top-up does not count until it completes.
+        assert_eq!(
+            derive(
+                dec!(70.01),
+                &[(Txn::Completed, dec!(70.00), dec!(0)), (Txn::Pending, dec!(0.01), dec!(0))]
+            ),
+            PaymentStatus::PartiallyPaid
+        );
+    }
+
+    #[test]
+    fn derive_partially_and_fully_refunded() {
+        assert_eq!(
+            derive(dec!(70.01), &[(Txn::PartiallyRefunded, dec!(70.01), dec!(10.03))]),
+            PaymentStatus::PartiallyRefunded
+        );
+        assert_eq!(
+            derive(dec!(70.01), &[(Txn::Refunded, dec!(70.01), dec!(70.01))]),
+            PaymentStatus::Refunded
+        );
+        // Refunded across two captures: one fully, one partially.
+        assert_eq!(
+            derive(
+                dec!(100),
+                &[
+                    (Txn::Refunded, dec!(60), dec!(60)),
+                    (Txn::PartiallyRefunded, dec!(40), dec!(0.01))
+                ]
+            ),
+            PaymentStatus::PartiallyRefunded
+        );
+        // A refund on a partial payment is still a partial refund.
+        assert_eq!(
+            derive(dec!(100), &[(Txn::PartiallyRefunded, dec!(50), dec!(10))]),
+            PaymentStatus::PartiallyRefunded
+        );
+    }
+
+    #[test]
+    fn derive_disputed_capture_still_counts_as_money_held() {
+        assert_eq!(derive(dec!(20), &[(Txn::Disputed, dec!(20), dec!(0))]), PaymentStatus::Paid);
+    }
+
+    #[test]
+    fn derive_without_captures() {
+        assert_eq!(derive(dec!(20), &[]), PaymentStatus::Pending);
+        assert_eq!(derive(dec!(20), &[(Txn::Pending, dec!(20), dec!(0))]), PaymentStatus::Pending);
+        assert_eq!(
+            derive(dec!(20), &[(Txn::RequiresAction, dec!(20), dec!(0))]),
+            PaymentStatus::Pending
+        );
+        assert_eq!(
+            derive(dec!(20), &[(Txn::Processing, dec!(20), dec!(0))]),
+            PaymentStatus::Authorized
+        );
+        assert_eq!(derive(dec!(20), &[(Txn::Failed, dec!(20), dec!(0))]), PaymentStatus::Failed);
+        // A live retry outranks an earlier failure.
+        assert_eq!(
+            derive(
+                dec!(20),
+                &[(Txn::Failed, dec!(20), dec!(0)), (Txn::Pending, dec!(20), dec!(0))]
+            ),
+            PaymentStatus::Pending
+        );
+        assert_eq!(
+            derive(dec!(20), &[(Txn::Cancelled, dec!(20), dec!(0))]),
+            PaymentStatus::Pending
+        );
+    }
+
+    #[test]
+    fn derive_zero_total_order_owes_nothing() {
+        assert_eq!(derive(dec!(0), &[]), PaymentStatus::Paid);
+        assert_eq!(derive(dec!(0.00), &[(Txn::Cancelled, dec!(1), dec!(0))]), PaymentStatus::Paid);
+    }
+
+    #[test]
+    fn derive_keeps_a_money_status_recorded_outside_the_ledger() {
+        // checkout's settled-externally path marks the order paid with no
+        // payment row; a stray pending/failed payment must not erase that.
+        for current in [
+            PaymentStatus::Paid,
+            PaymentStatus::PartiallyPaid,
+            PaymentStatus::PartiallyRefunded,
+            PaymentStatus::Refunded,
+        ] {
+            assert_eq!(
+                PaymentStatus::derive(
+                    dec!(20),
+                    &ledger(&[(Txn::Failed, dec!(20), dec!(0))]),
+                    current
+                ),
+                current
+            );
+        }
+        // ... but a stale Authorized/Failed status is recomputed.
+        assert_eq!(
+            PaymentStatus::derive(dec!(20), &ledger(&[]), PaymentStatus::Authorized),
+            PaymentStatus::Pending
+        );
+        // ... and the ledger wins as soon as it holds captured money.
+        assert_eq!(
+            PaymentStatus::derive(
+                dec!(20),
+                &ledger(&[(Txn::Completed, dec!(5), dec!(0))]),
+                PaymentStatus::Paid
+            ),
+            PaymentStatus::PartiallyPaid
+        );
+    }
+
+    #[test]
+    fn fulfillment_follows_shipping_order_statuses_only() {
+        assert_eq!(
+            FulfillmentStatus::for_order_status(OrderStatus::PartiallyShipped),
+            Some(FulfillmentStatus::PartiallyFulfilled)
+        );
+        assert_eq!(
+            FulfillmentStatus::for_order_status(OrderStatus::Shipped),
+            Some(FulfillmentStatus::Shipped)
+        );
+        assert_eq!(
+            FulfillmentStatus::for_order_status(OrderStatus::Delivered),
+            Some(FulfillmentStatus::Delivered)
+        );
+        for status in [
+            OrderStatus::Pending,
+            OrderStatus::Confirmed,
+            OrderStatus::Processing,
+            OrderStatus::Cancelled,
+            OrderStatus::Refunded,
+        ] {
+            assert_eq!(FulfillmentStatus::for_order_status(status), None);
+        }
     }
 
     #[test]

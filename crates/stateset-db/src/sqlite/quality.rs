@@ -1025,6 +1025,11 @@ impl QualityRepository for SqliteQualityRepository {
         if let Some(status) = &input.status {
             updates.push("status = ?");
             params.push(Box::new(status.to_string()));
+            // Closing through update records the close time, as close_ncr does.
+            if *status == NcrStatus::Closed {
+                updates.push("closed_at = ?");
+                params.push(Box::new(now.to_rfc3339()));
+            }
         }
         if let Some(severity) = &input.severity {
             updates.push("severity = ?");
@@ -1641,6 +1646,21 @@ mod tests {
         assert_eq!(updated.status, NcrStatus::CorrectiveAction);
         assert_eq!(updated.root_cause.as_deref(), Some("tooling wear"));
         assert_eq!(repo.close_ncr(ncr.id).expect("close").status, NcrStatus::Closed);
+    }
+
+    /// Closing through `update_ncr` stamps `closed_at` like `close_ncr`.
+    #[test]
+    fn update_ncr_to_closed_records_the_close_time() {
+        let repo = fresh_repo();
+        let ncr = make_ncr(&repo, "SKU-NCR-UPDATE-CLOSE");
+        let closed = repo
+            .update_ncr(
+                ncr.id,
+                UpdateNonConformance { status: Some(NcrStatus::Closed), ..Default::default() },
+            )
+            .expect("close via update");
+        assert_eq!(closed.status, NcrStatus::Closed);
+        assert!(closed.closed_at.is_some(), "a closed NCR records when it closed");
     }
 
     #[test]

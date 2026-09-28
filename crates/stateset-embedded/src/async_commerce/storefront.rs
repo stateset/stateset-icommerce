@@ -540,6 +540,15 @@ impl AsyncPromotions {
         self.db.promotions().apply_promotions_async(request).await
     }
 
+    /// Add a validated condition to an existing promotion.
+    pub async fn add_condition(
+        &self,
+        promotion_id: stateset_core::PromotionId,
+        condition: stateset_core::CreatePromotionCondition,
+    ) -> Result<Promotion> {
+        self.db.promotions().add_condition_async(promotion_id, condition).await
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn record_usage(
         &self,

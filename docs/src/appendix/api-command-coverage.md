@@ -13,9 +13,9 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 
 | Metric | Value |
 | --- | --- |
-| Tool modules | 87 |
-| Command modules on disk | 87 |
-| Command modules in registry | 87 |
+| Tool modules | 88 |
+| Command modules on disk | 88 |
+| Command modules in registry | 88 |
 | Tool-backed command modules | 8 |
 | Uncovered tool modules | 0 |
 | Uncovered tool-backed actions | 0 |
@@ -57,6 +57,7 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 | `cycle-counts` | tool-backed | 7 | 0 | - |
 | `edi-documents` | tool-backed | 5 | 0 | - |
 | `erc8004` | custom | 5 | 2 | - |
+| `explain` | tool-backed | 2 | 0 | - |
 | `fixed-assets` | tool-backed | 9 | 0 | - |
 | `fraud` | custom | 6 | 2 | - |
 | `fulfillment` | custom | 14 | 2 | - |
@@ -91,7 +92,7 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 | `revenue-recognition` | tool-backed | 6 | 0 | - |
 | `reviews` | custom | 8 | 2 | - |
 | `search-config` | tool-backed | 7 | 0 | - |
-| `segments` | custom | 7 | 2 | - |
+| `segments` | custom | 6 | 2 | - |
 | `serials` | custom | 8 | 2 | - |
 | `shipments` | custom | 13 | 3 | - |
 | `shipping-zones` | custom | 7 | 2 | - |
@@ -112,7 +113,7 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 | `vendor-returns` | tool-backed | 6 | 0 | - |
 | `warehouse` | custom | 9 | 2 | - |
 | `warranties` | custom | 7 | 2 | - |
-| `wishlists` | custom | 6 | 2 | - |
+| `wishlists` | tool-backed | 6 | 2 | - |
 | `x402` | tool-backed | 14 | 1 | 14/14 |
 
 ## Uncovered Tool Modules

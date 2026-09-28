@@ -25,16 +25,26 @@ function findTool(name) {
   return tool;
 }
 
+// Real SubscriptionPlanOutput / SubscriptionOutput / BillingCycleOutput /
+// SubscriptionEventOutput shapes (bindings/node/index.d.ts): money is a float
+// `price` plus an exact `priceExact` twin; ids are UUIDs.
+const PLAN_ID = '11111111-1111-4111-8111-111111111111';
+const SUB_ID = '22222222-2222-4222-8222-222222222222';
+const CYCLE_ID = '33333333-3333-4333-8333-333333333333';
+const MISSING_ID = '99999999-9999-4999-8999-999999999999';
+
 function makePlan(overrides = {}) {
   return {
-    id: 'plan_001',
+    id: PLAN_ID,
     code: 'COFFEE_MONTHLY',
     name: 'Coffee Club Monthly',
     status: 'active',
     billingInterval: 'monthly',
-    price: '29.99',
+    price: 29.99,
+    priceExact: '29.99',
     currency: 'USD',
     trialDays: 14,
+    trialRequiresPaymentMethod: false,
     description: 'Monthly coffee subscription',
     ...overrides,
   };
@@ -42,12 +52,14 @@ function makePlan(overrides = {}) {
 
 function makeSub(overrides = {}) {
   return {
-    id: 'sub_001',
+    id: SUB_ID,
     subscriptionNumber: 'SUB-100001',
     customerId: 'cust_001',
+    planId: PLAN_ID,
     planName: 'Coffee Club Monthly',
     status: 'active',
-    price: '29.99',
+    price: 29.99,
+    priceExact: '29.99',
     currency: 'USD',
     nextBillingDate: '2026-03-20T00:00:00Z',
     billingCycleCount: 3,
@@ -57,12 +69,14 @@ function makeSub(overrides = {}) {
 
 function makeCycle(overrides = {}) {
   return {
-    id: 'cycle_001',
+    id: CYCLE_ID,
+    subscriptionId: SUB_ID,
     cycleNumber: 1,
     status: 'paid',
     periodStart: '2026-02-01T00:00:00Z',
     periodEnd: '2026-03-01T00:00:00Z',
-    total: '29.99',
+    total: 29.99,
+    totalExact: '29.99',
     currency: 'USD',
     billedAt: '2026-02-01T00:00:00Z',
     ...overrides,
@@ -72,7 +86,8 @@ function makeCycle(overrides = {}) {
 function makeEvent(overrides = {}) {
   return {
     id: 'evt_001',
-    eventType: 'subscription.created',
+    subscriptionId: SUB_ID,
+    eventType: 'created',
     description: 'Subscription created',
     triggeredBy: 'system',
     createdAt: '2026-02-20T00:00:00Z',
@@ -80,32 +95,35 @@ function makeEvent(overrides = {}) {
   };
 }
 
+/**
+ * Mirrors the binding's `Subscriptions` class: only methods that really exist
+ * on `commerce.subscriptions`. `overrides` replaces individual methods.
+ */
 function makeCommerce(overrides = {}) {
   return {
-    listSubscriptionPlans: async () => [makePlan()],
-    getSubscriptionPlan: async (id) => (id === 'nonexistent' ? null : makePlan({ id })),
-    getSubscriptionPlanByCode: async (code) =>
-      code === 'MISSING' || code === 'nonexistent' ? null : makePlan({ code }),
-    createSubscriptionPlan: async (data) => makePlan({ id: 'plan_new', ...data }),
-    activateSubscriptionPlan: async (id) => makePlan({ id, status: 'active' }),
-    updateSubscriptionPlan: async (id, updates) => makePlan({ id, ...updates }),
-    archiveSubscriptionPlan: async (id) => makePlan({ id, status: 'archived' }),
-    listSubscriptions: async () => [makeSub()],
-    getSubscription: async (id) => (id === 'nonexistent' ? null : makeSub({ id })),
-    getSubscriptionByNumber: async (number) =>
-      number === 'MISSING' || number === 'nonexistent'
-        ? null
-        : makeSub({ subscriptionNumber: number }),
-    createSubscription: async (data) => makeSub({ id: 'sub_new', ...data }),
-    pauseSubscription: async (id) => makeSub({ id, status: 'paused' }),
-    updateSubscription: async (id, updates) => makeSub({ id, ...updates }),
-    resumeSubscription: async (id) => makeSub({ id, status: 'active' }),
-    cancelSubscription: async (id) => makeSub({ id, status: 'cancelled' }),
-    skipBillingCycle: async (id) => makeSub({ id, nextBillingDate: '2026-04-20T00:00:00Z' }),
-    listBillingCycles: async () => [makeCycle()],
-    getBillingCycle: async (id) => (id === 'nonexistent' ? null : makeCycle({ id })),
-    getSubscriptionEvents: async () => [makeEvent()],
-    ...overrides,
+    subscriptions: {
+      listPlans: async () => [makePlan()],
+      getPlan: async (id) => (id === MISSING_ID ? null : makePlan({ id })),
+      getPlanByCode: async (code) => (code === 'MISSING' ? null : makePlan({ code })),
+      createPlan: async (input) => makePlan({ id: PLAN_ID, ...input }),
+      activatePlan: async (id) => makePlan({ id, status: 'active' }),
+      updatePlan: async (id, input) => makePlan({ id, ...input }),
+      archivePlan: async (id) => makePlan({ id, status: 'archived' }),
+      subscribe: async (input) => makeSub({ ...input }),
+      get: async (id) => (id === MISSING_ID ? null : makeSub({ id })),
+      getByNumber: async (number) =>
+        number === 'MISSING' ? null : makeSub({ subscriptionNumber: number }),
+      list: async () => [makeSub()],
+      update: async (id, input) => makeSub({ id, ...input }),
+      pause: async (id) => makeSub({ id, status: 'paused' }),
+      resume: async (id) => makeSub({ id, status: 'active' }),
+      cancel: async (id) => makeSub({ id, status: 'cancelled' }),
+      skipBilling: async (id) => makeSub({ id, nextBillingDate: '2026-04-20T00:00:00Z' }),
+      listBillingCycles: async () => [makeCycle()],
+      getBillingCycle: async (id) => (id === MISSING_ID ? null : makeCycle({ id })),
+      getEvents: async () => [makeEvent()],
+      ...overrides,
+    },
   };
 }
 
@@ -155,8 +173,10 @@ describe('list_subscription_plans', () => {
   it('maps plan fields correctly', async () => {
     const result = await tool.handler({ commerce: makeCommerce(), params: {} });
     const plan = result.plans[0];
-    assert.strictEqual(plan.id, 'plan_001');
+    assert.strictEqual(plan.id, PLAN_ID);
     assert.strictEqual(plan.name, 'Coffee Club Monthly');
+    // Exact decimal twin is surfaced, never the float.
+    assert.strictEqual(plan.price, '29.99');
     assert.strictEqual(plan.billingInterval, 'monthly');
     assert.strictEqual(plan.trialDays, 14);
   });
@@ -164,7 +184,7 @@ describe('list_subscription_plans', () => {
   it('passes status and billingInterval filters', async () => {
     let calledWith = {};
     const commerce = makeCommerce({
-      listSubscriptionPlans: async (filters) => {
+      listPlans: async (filters) => {
         calledWith = filters;
         return [];
       },
@@ -186,25 +206,42 @@ describe('get_subscription_plan', () => {
     assert.strictEqual(tool.permission, 'read');
   });
 
-  it('returns plan by ID', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params: { planId: 'plan_001' } });
-    assert.strictEqual(result.success, true);
-    assert.ok(result.plan);
-  });
-
-  it('falls back to plan code lookup when available', async () => {
-    const result = await tool.handler({
-      commerce: makeCommerce(),
-      params: { planId: 'COFFEE_MONTHLY' },
+  it('returns plan by ID via subscriptions.getPlan', async () => {
+    const calls = [];
+    const commerce = makeCommerce({
+      getPlan: async (id) => (calls.push(['getPlan', id]), makePlan({ id })),
+      getPlanByCode: async (code) => (calls.push(['getPlanByCode', code]), null),
     });
+    const result = await tool.handler({ commerce, params: { planId: PLAN_ID } });
     assert.strictEqual(result.success, true);
     assert.ok(result.plan);
+    assert.deepStrictEqual(calls, [['getPlan', PLAN_ID]]);
   });
 
-  it('returns error when plan not found', async () => {
+  it('routes a non-UUID plan code to getPlanByCode (getPlan rejects non-UUIDs)', async () => {
+    const calls = [];
+    const commerce = makeCommerce({
+      getPlan: async () => {
+        throw new Error('Invalid UUID');
+      },
+      getPlanByCode: async (code) => (calls.push(code), makePlan({ code })),
+    });
+    const result = await tool.handler({ commerce, params: { planId: 'COFFEE_MONTHLY' } });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.plan.code, 'COFFEE_MONTHLY');
+    assert.deepStrictEqual(calls, ['COFFEE_MONTHLY']);
+  });
+
+  it('returns error when plan code not found', async () => {
+    const result = await tool.handler({ commerce: makeCommerce(), params: { planId: 'MISSING' } });
+    assert.strictEqual(result.success, false);
+    assert.ok(result.error.toLowerCase().includes('not found'));
+  });
+
+  it('returns error when plan ID not found', async () => {
     const result = await tool.handler({
       commerce: makeCommerce(),
-      params: { planId: 'nonexistent' },
+      params: { planId: MISSING_ID },
     });
     assert.strictEqual(result.success, false);
     assert.ok(result.error.toLowerCase().includes('not found'));
@@ -238,16 +275,19 @@ describe('create_subscription_plan', () => {
     assert.ok(result.message.includes('Pro Plan'));
   });
 
-  it('converts price to string before creating', async () => {
+  it('passes price and setupFee as numbers (CreateSubscriptionPlanInput is number-typed)', async () => {
     let calledWith = {};
     const commerce = makeCommerce({
-      createSubscriptionPlan: async (data) => {
-        calledWith = data;
-        return makePlan(data);
+      createPlan: async (input) => {
+        calledWith = input;
+        return makePlan(input);
       },
     });
-    await tool.handler({ commerce, params, allowApply: true });
-    assert.strictEqual(calledWith.price, '49.99');
+    await tool.handler({ commerce, params: { ...params, setupFee: 5 }, allowApply: true });
+    assert.strictEqual(calledWith.price, 49.99);
+    assert.strictEqual(calledWith.setupFee, 5);
+    assert.strictEqual(calledWith.billingInterval, 'monthly');
+    assert.strictEqual(calledWith.name, 'Pro Plan');
   });
 });
 
@@ -257,7 +297,7 @@ describe('create_subscription_plan', () => {
 
 describe('activate_subscription_plan', () => {
   const tool = findTool('activate_subscription_plan');
-  const params = { planId: 'plan_001' };
+  const params = { planId: PLAN_ID };
 
   it('has write permission', () => {
     assert.strictEqual(tool.permission, 'write');
@@ -278,7 +318,7 @@ describe('activate_subscription_plan', () => {
 
 describe('update_subscription_plan', () => {
   const tool = findTool('update_subscription_plan');
-  const params = { planId: 'plan_001', updates: { name: 'Updated Plan' } };
+  const params = { planId: PLAN_ID, updates: { name: 'Updated Plan' } };
 
   it('has write permission', () => {
     assert.strictEqual(tool.permission, 'write');
@@ -295,6 +335,40 @@ describe('update_subscription_plan', () => {
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.plan.name, 'Updated Plan');
   });
+
+  it('coerces decimal-string money to numbers for updatePlan', async () => {
+    let calledWith;
+    const commerce = makeCommerce({
+      updatePlan: async (id, input) => {
+        calledWith = [id, input];
+        return makePlan({ id, ...input });
+      },
+    });
+    const result = await tool.handler({
+      commerce,
+      params: { planId: PLAN_ID, updates: { price: '31.50', setupFee: 2 } },
+      allowApply: true,
+    });
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(calledWith, [PLAN_ID, { price: 31.5, setupFee: 2 }]);
+  });
+
+  it('refuses fields UpdateSubscriptionPlanInput does not have', async () => {
+    let called = false;
+    const commerce = makeCommerce({
+      updatePlan: async () => {
+        called = true;
+      },
+    });
+    const result = await tool.handler({
+      commerce,
+      params: { planId: PLAN_ID, updates: { metadata: { a: 1 } } },
+      allowApply: true,
+    });
+    assert.strictEqual(result.success, false);
+    assert.ok(result.error.includes('metadata'));
+    assert.strictEqual(called, false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -303,7 +377,7 @@ describe('update_subscription_plan', () => {
 
 describe('archive_subscription_plan', () => {
   const tool = findTool('archive_subscription_plan');
-  const params = { planId: 'plan_001' };
+  const params = { planId: PLAN_ID };
 
   it('has delete permission', () => {
     assert.strictEqual(tool.permission, 'delete');
@@ -342,15 +416,16 @@ describe('list_subscriptions', () => {
   it('maps subscription fields correctly', async () => {
     const result = await tool.handler({ commerce: makeCommerce(), params: {} });
     const sub = result.subscriptions[0];
-    assert.strictEqual(sub.id, 'sub_001');
+    assert.strictEqual(sub.id, SUB_ID);
     assert.strictEqual(sub.subscriptionNumber, 'SUB-100001');
+    assert.strictEqual(sub.price, '29.99');
     assert.strictEqual(sub.status, 'active');
   });
 
   it('passes filters to commerce', async () => {
     let calledWith = {};
     const commerce = makeCommerce({
-      listSubscriptions: async (filters) => {
+      list: async (filters) => {
         calledWith = filters;
         return [];
       },
@@ -375,27 +450,31 @@ describe('get_subscription', () => {
   it('returns subscription by ID', async () => {
     const result = await tool.handler({
       commerce: makeCommerce(),
-      params: { subscriptionId: 'sub_001' },
+      params: { subscriptionId: SUB_ID },
     });
     assert.ok(result);
-    assert.strictEqual(result.id, 'sub_001');
+    assert.strictEqual(result.id, SUB_ID);
   });
 
   it('returns error when subscription not found', async () => {
     const result = await tool.handler({
       commerce: makeCommerce(),
-      params: { subscriptionId: 'nonexistent' },
+      params: { subscriptionId: MISSING_ID },
     });
     assert.strictEqual(result.success, false);
     assert.ok(result.error.toLowerCase().includes('not found'));
   });
 
-  it('falls back to subscription number lookup when available', async () => {
+  it('routes a subscription number to getByNumber (get rejects non-UUIDs)', async () => {
     const result = await tool.handler({
-      commerce: makeCommerce({ getSubscription: async () => null }),
+      commerce: makeCommerce({
+        get: async () => {
+          throw new Error('Invalid UUID');
+        },
+      }),
       params: { subscriptionId: 'SUB-100001' },
     });
-    assert.ok(result);
+    assert.strictEqual(result.subscriptionNumber, 'SUB-100001');
   });
 });
 
@@ -419,11 +498,25 @@ describe('create_subscription', () => {
     assert.strictEqual(result.wouldSubscribe.customerId, 'cust_001');
   });
 
-  it('creates subscription when allowApply is true', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
+  it('creates subscription via subscriptions.subscribe when allowApply is true', async () => {
+    let calledWith;
+    const commerce = makeCommerce({
+      subscribe: async (input) => {
+        calledWith = input;
+        return makeSub(input);
+      },
+    });
+    const result = await tool.handler({
+      commerce,
+      params: { ...params, skipTrial: true },
+      allowApply: true,
+    });
     assert.strictEqual(result.success, true);
     assert.ok(result.subscription);
     assert.ok(result.message.includes('SUB-'));
+    assert.strictEqual(calledWith.customerId, 'cust_001');
+    assert.strictEqual(calledWith.planId, 'plan_001');
+    assert.strictEqual(calledWith.skipTrial, true);
   });
 });
 
@@ -446,9 +539,23 @@ describe('pause_subscription', () => {
   });
 
   it('pauses subscription when allowApply is true', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
+    let calledWith;
+    const commerce = makeCommerce({
+      pause: async (id, input) => {
+        calledWith = [id, input];
+        return makeSub({ id, status: 'paused' });
+      },
+    });
+    const result = await tool.handler({
+      commerce,
+      params: { ...params, reason: 'vacation', resumeAt: '2027-01-01' },
+      allowApply: true,
+    });
     assert.strictEqual(result.success, true);
     assert.ok(result.message.includes('paused'));
+    assert.strictEqual(calledWith[0], 'sub_001');
+    assert.strictEqual(calledWith[1].reason, 'vacation');
+    assert.strictEqual(calledWith[1].resumeAt, '2027-01-01T00:00:00.000Z');
   });
 });
 
@@ -470,6 +577,32 @@ describe('update_subscription', () => {
     const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.subscription.status, 'past_due');
+  });
+
+  it('coerces decimal-string price and refuses unknown fields', async () => {
+    let calledWith;
+    const commerce = makeCommerce({
+      update: async (id, input) => {
+        calledWith = [id, input];
+        return makeSub({ id, ...input });
+      },
+    });
+    const ok = await tool.handler({
+      commerce,
+      params: { subscriptionId: SUB_ID, updates: { price: '27.50', couponCode: 'SAVE' } },
+      allowApply: true,
+    });
+    assert.strictEqual(ok.success, true);
+    assert.deepStrictEqual(calledWith, [SUB_ID, { price: 27.5, couponCode: 'SAVE' }]);
+
+    calledWith = undefined;
+    const refused = await tool.handler({
+      commerce,
+      params: { subscriptionId: SUB_ID, updates: { metadata: {} } },
+      allowApply: true,
+    });
+    assert.strictEqual(refused.success, false);
+    assert.strictEqual(calledWith, undefined);
   });
 });
 
@@ -523,13 +656,21 @@ describe('cancel_subscription', () => {
   });
 
   it('cancels immediately when immediate is true', async () => {
+    let calledWith;
+    const commerce = makeCommerce({
+      cancel: async (id, input) => {
+        calledWith = [id, input];
+        return makeSub({ id, status: 'cancelled' });
+      },
+    });
     const result = await tool.handler({
-      commerce: makeCommerce(),
-      params: { ...params, immediate: true },
+      commerce,
+      params: { ...params, immediate: true, reason: 'done' },
       allowApply: true,
     });
     assert.strictEqual(result.success, true);
     assert.ok(result.message.includes('immediately'));
+    assert.deepStrictEqual(calledWith, ['sub_001', { immediate: true, reason: 'done' }]);
   });
 });
 
@@ -556,6 +697,18 @@ describe('skip_billing_cycle', () => {
     assert.strictEqual(result.success, true);
     assert.ok(result.message.includes('skipped'));
     assert.ok(result.nextBillingDate);
+  });
+
+  it('calls subscriptions.skipBilling with the reason', async () => {
+    let calledWith;
+    const commerce = makeCommerce({
+      skipBilling: async (id, input) => {
+        calledWith = [id, input];
+        return makeSub({ id });
+      },
+    });
+    await tool.handler({ commerce, params: { ...params, reason: 'away' }, allowApply: true });
+    assert.deepStrictEqual(calledWith, ['sub_001', { reason: 'away' }]);
   });
 });
 
@@ -585,9 +738,21 @@ describe('list_billing_cycles', () => {
       params: { subscriptionId: 'sub_001' },
     });
     const cycle = result.cycles[0];
-    assert.strictEqual(cycle.id, 'cycle_001');
+    assert.strictEqual(cycle.id, CYCLE_ID);
     assert.strictEqual(cycle.status, 'paid');
     assert.strictEqual(cycle.total, '29.99');
+  });
+
+  it('passes subscriptionId and status filter', async () => {
+    let calledWith;
+    const commerce = makeCommerce({
+      listBillingCycles: async (filter) => {
+        calledWith = filter;
+        return [];
+      },
+    });
+    await tool.handler({ commerce, params: { subscriptionId: SUB_ID, status: 'scheduled' } });
+    assert.deepStrictEqual(calledWith, { subscriptionId: SUB_ID, status: 'scheduled' });
   });
 });
 
@@ -605,16 +770,16 @@ describe('get_billing_cycle', () => {
   it('returns billing cycle by ID', async () => {
     const result = await tool.handler({
       commerce: makeCommerce(),
-      params: { cycleId: 'cycle_001' },
+      params: { cycleId: CYCLE_ID },
     });
     assert.ok(result);
-    assert.strictEqual(result.id, 'cycle_001');
+    assert.strictEqual(result.id, CYCLE_ID);
   });
 
   it('returns error when cycle not found', async () => {
     const result = await tool.handler({
       commerce: makeCommerce(),
-      params: { cycleId: 'nonexistent' },
+      params: { cycleId: MISSING_ID },
     });
     assert.strictEqual(result.success, false);
     assert.ok(result.error.toLowerCase().includes('not found'));
@@ -648,18 +813,23 @@ describe('get_subscription_events', () => {
     });
     const evt = result.events[0];
     assert.strictEqual(evt.id, 'evt_001');
-    assert.strictEqual(evt.eventType, 'subscription.created');
+    assert.strictEqual(evt.eventType, 'created');
   });
 
-  it('passes limit parameter', async () => {
-    let passedLimit;
+  it('applies limit client-side (getEvents takes only the subscription id)', async () => {
+    let args;
     const commerce = makeCommerce({
-      getSubscriptionEvents: async (_id, limit) => {
-        passedLimit = limit;
-        return [];
+      getEvents: async (...a) => {
+        args = a;
+        return [makeEvent({ id: 'e1' }), makeEvent({ id: 'e2' }), makeEvent({ id: 'e3' })];
       },
     });
-    await tool.handler({ commerce, params: { subscriptionId: 'sub_001', limit: 5 } });
-    assert.strictEqual(passedLimit, 5);
+    const result = await tool.handler({ commerce, params: { subscriptionId: SUB_ID, limit: 2 } });
+    assert.deepStrictEqual(args, [SUB_ID]);
+    assert.strictEqual(result.count, 2);
+    assert.deepStrictEqual(
+      result.events.map((e) => e.id),
+      ['e1', 'e2'],
+    );
   });
 });

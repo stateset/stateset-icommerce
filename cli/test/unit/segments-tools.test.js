@@ -15,7 +15,6 @@ const EXPECTED_NAMES = [
   'list_segments',
   'update_segment',
   'evaluate_segment_membership',
-  'rebuild_dynamic_segment',
 ];
 
 // ---------------------------------------------------------------------------
@@ -23,9 +22,9 @@ const EXPECTED_NAMES = [
 // ---------------------------------------------------------------------------
 
 describe('segmentTools — module exports', () => {
-  it('exports an array of 6 tools', () => {
+  it('exports an array of 5 tools', () => {
     assert.ok(Array.isArray(segmentTools));
-    assert.equal(segmentTools.length, 6);
+    assert.equal(segmentTools.length, 5);
   });
 
   it('exports expected tool names in order', () => {
@@ -90,9 +89,6 @@ describe('segmentTools — permission assignments', () => {
     assert.equal(byName['evaluate_segment_membership'].permission, 'read');
   });
 
-  it('rebuild_dynamic_segment is write', () => {
-    assert.equal(byName['rebuild_dynamic_segment'].permission, 'write');
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -135,10 +131,6 @@ describe('segmentTools — input schemas', () => {
     assert.ok(schema.customerId, 'missing customerId');
   });
 
-  it('rebuild_dynamic_segment has segmentId', () => {
-    const schema = byName['rebuild_dynamic_segment'].inputSchema;
-    assert.ok(schema.segmentId, 'missing segmentId');
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -171,16 +163,6 @@ describe('segmentTools — apply-guard on write tools', () => {
     assert.ok(result.hint);
   });
 
-  it('rebuild_dynamic_segment requires --apply', async () => {
-    const result = await byName['rebuild_dynamic_segment'].handler({
-      params: { segmentId: 'seg-1' },
-      allowApply: false,
-      commerce: {},
-    });
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('--apply'));
-    assert.ok(result.hint);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -250,18 +232,6 @@ describe('segmentTools — handler error paths', () => {
     }
   });
 
-  it('rebuild_dynamic_segment fails gracefully with empty commerce when allowApply=true', async () => {
-    try {
-      await byName['rebuild_dynamic_segment'].handler({
-        params: { segmentId: 'seg-1' },
-        allowApply: true,
-        commerce: {},
-      });
-      assert.fail('Expected an error to be thrown');
-    } catch (err) {
-      assert.ok(err instanceof TypeError);
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -269,42 +239,36 @@ describe('segmentTools — handler error paths', () => {
 // ---------------------------------------------------------------------------
 
 describe('segmentTools — handler success paths (mocked commerce)', () => {
+  // Shape of the binding's SegmentOutput.
   const mockSegment = {
     id: 'seg-001',
     name: 'VIP Customers',
     description: 'Customers who spent over $1000',
-    type: 'dynamic',
-    conditions: [{ field: 'totalSpent', operator: 'gt', value: 1000 }],
-    conditionLogic: 'all',
+    segmentType: 'dynamic',
+    rules: [{ field: 'totalSpent', operator: 'gt', value: '1000' }],
     memberCount: 128,
-    status: 'active',
-    lastEvaluatedAt: '2026-01-15T12:00:00Z',
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-15T12:00:00Z',
   };
 
-  const mockMembership = {
-    isMember: true,
-    matchedConditions: ['totalSpent > 1000'],
-    evaluatedAt: '2026-01-15T12:00:00Z',
-  };
-
-  const mockRebuild = {
-    memberCount: 130,
-    added: 5,
-    removed: 3,
-    evaluatedAt: '2026-01-15T12:30:00Z',
-  };
-
+  const calls = [];
+  // Only methods the real Segments binding class has.
   const commerce = {
     segments: {
-      create: async (data) => ({ id: 'seg-new', ...data }),
+      create: async (data) => {
+        calls.push(['create', data]);
+        return { ...mockSegment, id: 'seg-new', ...data };
+      },
       get: async (id) => (id === 'seg-001' ? mockSegment : null),
-      list: async () => [mockSegment],
-      count: async () => 1,
+      list: async (filter) => {
+        calls.push(['list', filter]);
+        return [mockSegment];
+      },
       update: async (id, data) => ({ ...mockSegment, id, ...data }),
-      evaluateMembership: async () => mockMembership,
-      rebuild: async () => mockRebuild,
+      isMember: async (segmentId, customerId) => {
+        calls.push(['isMember', segmentId, customerId]);
+        return true;
+      },
     },
   };
 
@@ -320,6 +284,15 @@ describe('segmentTools — handler success paths (mocked commerce)', () => {
     assert.equal(result.success, true);
     assert.ok(result.message.includes('created'));
     assert.ok(result.segment);
+    assert.deepStrictEqual(calls.at(-1), [
+      'create',
+      {
+        name: 'High Spenders',
+        description: undefined,
+        segmentType: 'dynamic',
+        rules: [{ field: 'totalSpent', operator: 'gt', value: '500' }],
+      },
+    ]);
   });
 
   it('get_segment returns success for existing segment', async () => {
@@ -333,6 +306,7 @@ describe('segmentTools — handler success paths (mocked commerce)', () => {
     assert.equal(result.segment.name, 'VIP Customers');
     assert.equal(result.segment.memberCount, 128);
     assert.equal(result.segment.type, 'dynamic');
+    assert.deepStrictEqual(result.segment.rules, mockSegment.rules);
   });
 
   it('get_segment returns not-found for missing segment', async () => {
@@ -354,6 +328,11 @@ describe('segmentTools — handler success paths (mocked commerce)', () => {
     assert.equal(result.returned, 1);
     assert.ok(Array.isArray(result.segments));
     assert.equal(result.segments[0].name, 'VIP Customers');
+    assert.equal(result.segments[0].type, 'dynamic');
+    assert.deepStrictEqual(calls.at(-1), [
+      'list',
+      { segmentType: undefined, limit: 1000, offset: 0 },
+    ]);
   });
 
   it('update_segment returns success with allowApply', async () => {
@@ -376,22 +355,17 @@ describe('segmentTools — handler success paths (mocked commerce)', () => {
     assert.equal(result.segmentId, 'seg-001');
     assert.equal(result.customerId, 'cust-1');
     assert.equal(result.isMember, true);
-    assert.ok(Array.isArray(result.matchedConditions));
-    assert.ok(result.evaluatedAt);
+    assert.equal(result.basis, 'stored_membership');
+    assert.deepStrictEqual(calls.at(-1), ['isMember', 'seg-001', 'cust-1']);
   });
 
-  it('rebuild_dynamic_segment returns rebuild stats', async () => {
-    const result = await byName['rebuild_dynamic_segment'].handler({
-      params: { segmentId: 'seg-001' },
-      allowApply: true,
-      commerce,
-    });
-    assert.equal(result.success, true);
-    assert.ok(result.message.includes('rebuilt'));
-    assert.equal(result.segmentId, 'seg-001');
-    assert.equal(result.memberCount, 130);
-    assert.equal(result.added, 5);
-    assert.equal(result.removed, 3);
-    assert.ok(result.evaluatedAt);
+});
+
+describe('rebuild_dynamic_segment', () => {
+  it('is not offered: the engine cannot rebuild or evaluate dynamic segments', () => {
+    // It called `commerce.segments.rebuild`, which the binding has never had,
+    // so every real call threw. Nothing in the engine evaluates segment rules,
+    // so there is no honest implementation to point it at.
+    assert.equal(byName['rebuild_dynamic_segment'], undefined);
   });
 });
