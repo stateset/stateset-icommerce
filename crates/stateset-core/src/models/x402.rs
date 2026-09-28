@@ -467,6 +467,101 @@ pub struct SettleX402Intent {
     pub block_number: u64,
 }
 
+/// Batch-commitment evidence for `mark_batched`: the batch's Merkle root, the
+/// intent's inclusion proof, and where its leaf sits in the tree.
+///
+/// The repository never trusts a caller-supplied leaf: it rebuilds the leaf
+/// from the stored intent ([`X402PaymentIntent::batch_leaf_hash`]) and
+/// verifies `inclusion_proof` against `merkle_root` before recording anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct X402BatchInclusion {
+    /// Merkle root of the published batch (hex, optional `0x` prefix, 32 bytes).
+    pub merkle_root: String,
+    /// Sibling hashes of the inclusion proof (hex, 32 bytes each), in the
+    /// order produced by an `rs_merkle` SHA-256 tree.
+    pub inclusion_proof: Vec<String>,
+    /// Index of this intent's leaf in the batch tree.
+    pub leaf_index: u32,
+    /// Number of leaves in the batch tree.
+    pub total_leaves: u32,
+}
+
+impl X402BatchInclusion {
+    /// Build the inclusion evidence for `leaves[leaf_index]` from the full,
+    /// ordered list of batch leaves (as produced by
+    /// [`X402PaymentIntent::batch_leaf_hash`]). Returns `None` when the index
+    /// is out of range or `leaves` is empty.
+    #[must_use]
+    pub fn from_leaves(leaves: &[[u8; 32]], leaf_index: u32) -> Option<Self> {
+        let index = leaf_index as usize;
+        if index >= leaves.len() {
+            return None;
+        }
+        let total_leaves = u32::try_from(leaves.len()).ok()?;
+        let tree = rs_merkle::MerkleTree::<MerkleSha256>::from_leaves(leaves);
+        let root = tree.root()?;
+        let proof = tree.proof(&[index]);
+        Some(Self {
+            merkle_root: hex0x(root),
+            inclusion_proof: proof.proof_hashes().iter().map(hex0x).collect(),
+            leaf_index,
+            total_leaves,
+        })
+    }
+}
+
+impl X402PaymentIntent {
+    /// The Merkle leaf a batcher commits to for this intent — the same leaf
+    /// [`X402PaymentReceipt::verify_inclusion`] checks, built only from the
+    /// intent's own (stored) fields.
+    ///
+    /// Requires the intent to carry a sequence number, a signing hash, and
+    /// (when present) a well-formed signature; otherwise returns an error.
+    pub fn batch_leaf_hash(&self) -> Result<[u8; 32], X402CryptoError> {
+        let sequence_number = self.sequence_number.ok_or_else(|| {
+            X402CryptoError::Serialization("intent has no sequence number".to_string())
+        })?;
+        let signing_hash = self.signing_hash.as_deref().ok_or_else(|| {
+            X402CryptoError::Serialization("intent has no signing hash".to_string())
+        })?;
+        payment_leaf_hash(&PaymentLeafFields {
+            intent_id: self.id,
+            sequence_number,
+            payer_address: &self.payer_address,
+            payee_address: &self.payee_address,
+            amount: self.amount,
+            asset: self.asset,
+            network: self.network,
+            chain_id: self.chain_id,
+            nonce: self.nonce,
+            valid_until: self.valid_until,
+            signing_hash,
+            payer_signature_scheme: self.payer_signature_scheme,
+            payer_signature: self.payer_signature.as_deref().unwrap_or(""),
+            ml_dsa_65_signature: self
+                .payer_signature_bundle
+                .as_ref()
+                .map(|bundle| bundle.ml_dsa_65_signature.as_slice()),
+        })
+    }
+
+    /// Verify that `inclusion` proves this intent's leaf
+    /// ([`Self::batch_leaf_hash`]) is in the batch committed to by
+    /// `inclusion.merkle_root`. Returns a human-readable reason on failure.
+    pub fn verify_batch_inclusion(&self, inclusion: &X402BatchInclusion) -> Result<(), String> {
+        let leaf = self
+            .batch_leaf_hash()
+            .map_err(|e| format!("cannot build the batch leaf for intent {}: {e}", self.id))?;
+        verify_merkle_inclusion(
+            &inclusion.merkle_root,
+            &inclusion.inclusion_proof,
+            inclusion.leaf_index,
+            inclusion.total_leaves,
+            leaf,
+        )
+    }
+}
+
 impl X402PaymentIntent {
     /// Create a new payment intent
     pub fn new(
@@ -1017,37 +1112,73 @@ pub struct X402PaymentReceipt {
 }
 
 impl X402PaymentReceipt {
+    fn leaf_fields(&self) -> PaymentLeafFields<'_> {
+        PaymentLeafFields {
+            intent_id: self.intent_id,
+            sequence_number: self.sequence_number,
+            payer_address: &self.payer_address,
+            payee_address: &self.payee_address,
+            amount: self.amount,
+            asset: self.asset,
+            network: self.network,
+            chain_id: self.chain_id,
+            nonce: self.nonce,
+            valid_until: self.valid_until,
+            signing_hash: &self.signing_hash,
+            payer_signature_scheme: self.payer_signature_scheme,
+            payer_signature: &self.payer_signature,
+            ml_dsa_65_signature: self
+                .payer_signature_bundle
+                .as_ref()
+                .map(|bundle| bundle.ml_dsa_65_signature.as_slice()),
+        }
+    }
+
     /// Verify the inclusion proof against the merkle root
     #[must_use]
     pub fn verify_inclusion(&self) -> bool {
-        if self.merkle_root.is_empty() {
+        let Ok(leaf) = payment_leaf_hash(&self.leaf_fields()) else {
             return false;
-        }
-
-        if self.total_leaves == 0 || self.leaf_index >= self.total_leaves {
-            return false;
-        }
-
-        let root = match decode_hex_array::<32>(&self.merkle_root) {
-            Ok(bytes) => bytes,
-            Err(_) => return false,
         };
+        verify_merkle_inclusion(
+            &self.merkle_root,
+            &self.inclusion_proof,
+            self.leaf_index,
+            self.total_leaves,
+            leaf,
+        )
+        .is_ok()
+    }
+}
 
-        let leaf = match payment_leaf_hash(self) {
-            Ok(hash) => hash,
-            Err(_) => return false,
-        };
-
-        let mut proof_hashes = Vec::with_capacity(self.inclusion_proof.len());
-        for proof_hash in &self.inclusion_proof {
-            match decode_hex_array::<32>(proof_hash) {
-                Ok(hash) => proof_hashes.push(hash),
-                Err(_) => return false,
-            }
-        }
-
-        let proof = MerkleProof::<MerkleSha256>::new(proof_hashes);
-        proof.verify(root, &[self.leaf_index as usize], &[leaf], self.total_leaves as usize)
+/// Verify an `rs_merkle` SHA-256 inclusion proof for one leaf.
+fn verify_merkle_inclusion(
+    merkle_root: &str,
+    inclusion_proof: &[String],
+    leaf_index: u32,
+    total_leaves: u32,
+    leaf: [u8; 32],
+) -> Result<(), String> {
+    if merkle_root.trim().is_empty() {
+        return Err("merkle root is required".to_string());
+    }
+    if total_leaves == 0 || leaf_index >= total_leaves {
+        return Err(format!("leaf index {leaf_index} is outside a tree of {total_leaves} leaves"));
+    }
+    let root = decode_hex_array::<32>(merkle_root.trim())
+        .map_err(|e| format!("merkle root is not a 32-byte hex hash: {e}"))?;
+    let mut proof_hashes = Vec::with_capacity(inclusion_proof.len());
+    for proof_hash in inclusion_proof {
+        proof_hashes.push(
+            decode_hex_array::<32>(proof_hash.trim())
+                .map_err(|e| format!("inclusion proof hash is not a 32-byte hex hash: {e}"))?,
+        );
+    }
+    let proof = MerkleProof::<MerkleSha256>::new(proof_hashes);
+    if proof.verify(root, &[leaf_index as usize], &[leaf], total_leaves as usize) {
+        Ok(())
+    } else {
+        Err("inclusion proof does not verify against the merkle root".to_string())
     }
 }
 
@@ -1400,38 +1531,53 @@ fn update_optional_leaf_bytes(
     Ok(())
 }
 
-fn payment_leaf_hash(receipt: &X402PaymentReceipt) -> Result<[u8; 32], X402CryptoError> {
+/// The fields a batch leaf commits to (shared by receipts and stored intents).
+struct PaymentLeafFields<'a> {
+    intent_id: Uuid,
+    sequence_number: u64,
+    payer_address: &'a str,
+    payee_address: &'a str,
+    amount: u64,
+    asset: X402Asset,
+    network: X402Network,
+    chain_id: u64,
+    nonce: u64,
+    valid_until: u64,
+    signing_hash: &'a str,
+    payer_signature_scheme: Option<X402SignatureScheme>,
+    payer_signature: &'a str,
+    ml_dsa_65_signature: Option<&'a [u8]>,
+}
+
+fn payment_leaf_hash(fields: &PaymentLeafFields<'_>) -> Result<[u8; 32], X402CryptoError> {
     let mut hasher = Sha256::new();
 
-    hasher.update(receipt.intent_id.as_bytes());
-    hasher.update(receipt.sequence_number.to_be_bytes());
+    hasher.update(fields.intent_id.as_bytes());
+    hasher.update(fields.sequence_number.to_be_bytes());
 
-    hasher.update(receipt.payer_address.as_bytes());
-    hasher.update(receipt.payee_address.as_bytes());
-    hasher.update(receipt.amount.to_be_bytes());
-    hasher.update(receipt.asset.to_string().to_lowercase().as_bytes());
-    hasher.update(receipt.network.to_string().as_bytes());
-    hasher.update(receipt.chain_id.to_be_bytes());
-    hasher.update(receipt.nonce.to_be_bytes());
-    hasher.update(receipt.valid_until.to_be_bytes());
+    hasher.update(fields.payer_address.as_bytes());
+    hasher.update(fields.payee_address.as_bytes());
+    hasher.update(fields.amount.to_be_bytes());
+    hasher.update(fields.asset.to_string().to_lowercase().as_bytes());
+    hasher.update(fields.network.to_string().as_bytes());
+    hasher.update(fields.chain_id.to_be_bytes());
+    hasher.update(fields.nonce.to_be_bytes());
+    hasher.update(fields.valid_until.to_be_bytes());
 
-    let signing_hash = decode_hex_array::<32>(&receipt.signing_hash)?;
+    let signing_hash = decode_hex_array::<32>(fields.signing_hash)?;
     let legacy_signature =
-        normalize_optional_string(&receipt.payer_signature).map(|sig| decode_hex_bytes(&sig));
+        normalize_optional_string(fields.payer_signature).map(|sig| decode_hex_bytes(&sig));
     let legacy_signature = legacy_signature.transpose()?;
     hasher.update(signing_hash);
     hasher.update(
-        receipt
+        fields
             .payer_signature_scheme
             .unwrap_or(X402SignatureScheme::Ed25519)
             .to_string()
             .as_bytes(),
     );
     update_optional_leaf_bytes(&mut hasher, legacy_signature.as_deref())?;
-    update_optional_leaf_bytes(
-        &mut hasher,
-        receipt.payer_signature_bundle.as_ref().map(|bundle| bundle.ml_dsa_65_signature.as_slice()),
-    )?;
+    update_optional_leaf_bytes(&mut hasher, fields.ml_dsa_65_signature)?;
 
     let result = hasher.finalize();
     let mut hash = [0u8; 32];
@@ -1646,8 +1792,8 @@ mod tests {
         other.signing_hash = format!("0x{}", "33".repeat(32));
         other.payer_signature = format!("0x{}", "44".repeat(64));
 
-        let leaf = payment_leaf_hash(&receipt).unwrap();
-        let other_leaf = payment_leaf_hash(&other).unwrap();
+        let leaf = payment_leaf_hash(&receipt.leaf_fields()).unwrap();
+        let other_leaf = payment_leaf_hash(&other.leaf_fields()).unwrap();
 
         let leaves = vec![leaf, other_leaf];
         let tree = rs_merkle::MerkleTree::<MerkleSha256>::from_leaves(&leaves);
@@ -1661,5 +1807,60 @@ mod tests {
         receipt.leaf_index = 0;
 
         assert!(receipt.verify_inclusion());
+    }
+
+    #[test]
+    fn test_intent_batch_leaf_matches_receipt_leaf_and_verifies() {
+        let mut intent = X402PaymentIntent::new(
+            "0xpayer",
+            "0xpayee",
+            1_000_000,
+            X402Asset::Usdc,
+            X402Network::SetChain,
+        );
+        // Not sequenced yet: no leaf.
+        assert!(intent.batch_leaf_hash().is_err());
+        intent.sign_with_hybrid(&generate_hybrid_signing_keypair().unwrap()).unwrap();
+        intent.sequence_number = Some(11);
+        let leaf = intent.batch_leaf_hash().unwrap();
+
+        let inclusion = X402BatchInclusion::from_leaves(&[[3u8; 32], leaf, [4u8; 32]], 1).unwrap();
+        assert!(intent.verify_batch_inclusion(&inclusion).is_ok());
+
+        // The same leaf a receipt for this intent commits to.
+        let receipt = X402PaymentReceipt {
+            receipt_id: Uuid::new_v4(),
+            intent_id: intent.id,
+            sequence_number: 11,
+            batch_id: Uuid::new_v4(),
+            merkle_root: inclusion.merkle_root.clone(),
+            inclusion_proof: inclusion.inclusion_proof.clone(),
+            leaf_index: 1,
+            total_leaves: 3,
+            tx_hash: None,
+            block_number: None,
+            payer_address: intent.payer_address.clone(),
+            payee_address: intent.payee_address.clone(),
+            amount: intent.amount,
+            asset: intent.asset,
+            network: intent.network,
+            chain_id: intent.chain_id,
+            nonce: intent.nonce,
+            valid_until: intent.valid_until,
+            signing_hash: intent.signing_hash.clone().unwrap(),
+            payer_signature_scheme: intent.payer_signature_scheme,
+            payer_signature: intent.payer_signature.clone().unwrap_or_default(),
+            payer_signature_bundle: intent.payer_signature_bundle.clone(),
+            created_at: Utc::now(),
+        };
+        assert!(receipt.verify_inclusion());
+
+        let mut wrong_index = inclusion.clone();
+        wrong_index.leaf_index = 0;
+        assert!(intent.verify_batch_inclusion(&wrong_index).is_err());
+        let mut wrong_root = inclusion;
+        wrong_root.merkle_root = format!("0x{}", "00".repeat(32));
+        assert!(intent.verify_batch_inclusion(&wrong_root).is_err());
+        assert!(X402BatchInclusion::from_leaves(&[leaf], 1).is_none());
     }
 }

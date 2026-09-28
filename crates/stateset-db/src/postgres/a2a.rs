@@ -1,6 +1,7 @@
 //! PostgreSQL implementation of A2A commerce repository
 
 use super::{block_on, map_db_error};
+use crate::a2a_participants::{A2ASide, ensure_participant};
 use chrono::Utc;
 use rust_decimal::Decimal;
 use serde::de::DeserializeOwned;
@@ -534,6 +535,21 @@ impl PgA2ARepository {
         row.map(Self::row_to_purchase).transpose()
     }
 
+    /// Agent-card governance: the buyer must hold a card that can buy and the
+    /// seller one that can sell. Both cards are read `FOR SHARE` on the
+    /// caller's transaction so they cannot be suspended or re-skilled until
+    /// the quote/purchase insert commits.
+    async fn ensure_participants(
+        tx: &mut sqlx::PgConnection,
+        buyer_agent_id: Uuid,
+        seller_agent_id: Uuid,
+    ) -> Result<()> {
+        let buyer = super::PgAgentCardRepository::get_for_share(&mut *tx, buyer_agent_id).await?;
+        ensure_participant(buyer.as_ref(), buyer_agent_id, A2ASide::Buyer)?;
+        let seller = super::PgAgentCardRepository::get_for_share(&mut *tx, seller_agent_id).await?;
+        ensure_participant(seller.as_ref(), seller_agent_id, A2ASide::Seller)
+    }
+
     pub async fn create_quote_async(&self, input: CreateA2AQuote) -> Result<SkillQuote> {
         self.validate_quote_input(&input)?;
 
@@ -553,6 +569,9 @@ impl PgA2ARepository {
         let tax_amount = input.tax_amount.unwrap_or(Decimal::ZERO);
         let shipping_amount = input.shipping_amount.unwrap_or(Decimal::ZERO);
         let discount_amount = input.discount_amount.unwrap_or(Decimal::ZERO);
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::ensure_participants(tx.as_mut(), input.buyer_agent_id, input.seller_agent_id).await?;
 
         sqlx::query(
             r#"
@@ -589,9 +608,11 @@ impl PgA2ARepository {
         .bind(input.metadata)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_quote_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -747,6 +768,7 @@ impl PgA2ARepository {
         // pool without a lock and consumed with an unconditional UPDATE, so two
         // buyers could both purchase the same quote.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::ensure_participants(tx.as_mut(), input.buyer_agent_id, input.seller_agent_id).await?;
 
         let quote_status = match quote_id {
             Some(quote_id) => {

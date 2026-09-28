@@ -222,6 +222,22 @@ impl PgAgentCardRepository {
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Load an agent card inside another repository's transaction, holding
+    /// a `FOR SHARE` lock so the card cannot be suspended, re-skilled, or
+    /// deleted until that transaction ends (A2A quote/purchase creation).
+    pub(crate) async fn get_for_share(
+        conn: &mut sqlx::PgConnection,
+        id: Uuid,
+    ) -> Result<Option<AgentCard>> {
+        let row: Option<AgentCardRow> =
+            sqlx::query_as("SELECT * FROM agent_cards WHERE id = $1 FOR SHARE")
+                .bind(id)
+                .fetch_optional(conn)
+                .await
+                .map_err(map_db_error)?;
+        row.map(Self::row_to_agent_card).transpose()
+    }
+
     pub async fn get_async(&self, id: Uuid) -> Result<Option<AgentCard>> {
         let row: Option<AgentCardRow> = sqlx::query_as("SELECT * FROM agent_cards WHERE id = $1")
             .bind(id)

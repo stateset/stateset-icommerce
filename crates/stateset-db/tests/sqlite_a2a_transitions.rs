@@ -14,12 +14,35 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::{
-    A2ACommerceRepository, CommerceError, CreateA2APurchase, CreateA2AQuote, ItemAvailability,
-    PurchaseStatus, QuoteStatus, QuotedItem,
+    A2ACommerceRepository, A2ASkill, AgentCardRepository, CommerceError, CreateA2APurchase,
+    CreateA2AQuote, CreateAgentCard, ItemAvailability, PurchaseStatus, QuoteStatus, QuotedItem,
 };
 use stateset_db::SqliteDatabase;
 use std::sync::{Arc, Barrier};
 use uuid::Uuid;
+
+/// Register an agent card that may buy (A2A quotes/purchases require one).
+fn buyer(db: &SqliteDatabase) -> Uuid {
+    agent(db, A2ASkill::Buy)
+}
+
+/// Register an agent card that may sell.
+fn seller(db: &SqliteDatabase) -> Uuid {
+    agent(db, A2ASkill::Sell)
+}
+
+fn agent(db: &SqliteDatabase, skill: A2ASkill) -> Uuid {
+    db.agent_cards()
+        .create(CreateAgentCard {
+            name: format!("{skill} agent"),
+            wallet_address: format!("0xagent-{}", Uuid::new_v4().as_simple()),
+            public_key: "test-public-key".into(),
+            a2a_skills: Some(vec![skill]),
+            ..Default::default()
+        })
+        .expect("register agent card")
+        .id
+}
 
 fn item() -> QuotedItem {
     QuotedItem {
@@ -56,8 +79,8 @@ fn shipped_purchase(db: &SqliteDatabase) -> Uuid {
     let repo = db.a2a_purchases();
     let purchase = repo
         .create_purchase(CreateA2APurchase {
-            buyer_agent_id: Uuid::new_v4(),
-            seller_agent_id: Uuid::new_v4(),
+            buyer_agent_id: buyer(db),
+            seller_agent_id: seller(db),
             items: vec![item()],
             total: dec!(10),
             ..Default::default()
@@ -118,7 +141,7 @@ fn sqlite_a2a_completed_vs_cancelled_exactly_one_wins() {
 fn sqlite_a2a_quote_accept_vs_reject_exactly_one_wins() {
     let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory sqlite"));
     for round in 0..20 {
-        let quote_id = quoted_quote(&db, Uuid::new_v4(), Uuid::new_v4());
+        let quote_id = quoted_quote(&db, buyer(&db), seller(&db));
         let barrier = Arc::new(Barrier::new(2));
         let spawn = |target: QuoteStatus| {
             let (db, barrier) = (Arc::clone(&db), Arc::clone(&barrier));
@@ -172,8 +195,8 @@ fn sqlite_a2a_confirm_delivery_requires_shipped_or_delivered() {
     let repo = db.a2a_purchases();
     let purchase = repo
         .create_purchase(CreateA2APurchase {
-            buyer_agent_id: Uuid::new_v4(),
-            seller_agent_id: Uuid::new_v4(),
+            buyer_agent_id: buyer(&db),
+            seller_agent_id: seller(&db),
             items: vec![item()],
             total: dec!(10),
             ..Default::default()
@@ -232,7 +255,7 @@ fn sqlite_a2a_confirm_delivery_racing_cancel_cannot_resurrect() {
 #[test]
 fn sqlite_a2a_quoted_quote_may_move_to_purchased() {
     let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
-    let quote_id = quoted_quote(&db, Uuid::new_v4(), Uuid::new_v4());
+    let quote_id = quoted_quote(&db, buyer(&db), seller(&db));
     let purchased = db
         .a2a_quotes()
         .update_quote_status(quote_id, QuoteStatus::Purchased)

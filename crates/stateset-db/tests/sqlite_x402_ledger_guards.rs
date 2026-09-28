@@ -3,8 +3,9 @@
 #![cfg(feature = "sqlite")]
 
 use stateset_core::{
-    CommerceError, CreateX402PaymentIntent, X402Asset, X402CreditAdjustment, X402CreditDirection,
-    X402CreditRepository, X402IntentStatus, X402Network, X402PaymentIntentRepository,
+    CommerceError, CreateX402PaymentIntent, X402Asset, X402BatchInclusion, X402CreditAdjustment,
+    X402CreditDirection, X402CreditRepository, X402IntentStatus, X402Network,
+    X402PaymentIntentRepository,
 };
 use stateset_db::SqliteDatabase;
 use std::sync::{Arc, Barrier};
@@ -35,6 +36,24 @@ fn force_status(db: &SqliteDatabase, id: uuid::Uuid, status: X402IntentStatus) {
         .expect("force status");
 }
 
+/// Force `Sequenced` with a sequence number (the leaf commits to it).
+fn force_sequenced(db: &SqliteDatabase, id: uuid::Uuid) {
+    db.conn()
+        .expect("conn")
+        .execute(
+            "UPDATE x402_payment_intents SET status = ?, sequence_number = 1 WHERE id = ?",
+            rusqlite::params![X402IntentStatus::Sequenced.to_string(), id.to_string()],
+        )
+        .expect("force sequenced");
+}
+
+/// A valid inclusion proof for the stored intent in a two-leaf batch.
+fn inclusion_for(db: &SqliteDatabase, id: uuid::Uuid) -> X402BatchInclusion {
+    let stored = db.x402_payment_intents().get(id).expect("get").expect("exists");
+    let leaf = stored.batch_leaf_hash().expect("leaf");
+    X402BatchInclusion::from_leaves(&[leaf, [7u8; 32]], 0).expect("proof")
+}
+
 // ---------------------------------------------------------------------------
 // Batched: Sequenced -> Batched -> Settled, guarded and sweeper-exempt
 // ---------------------------------------------------------------------------
@@ -46,24 +65,27 @@ fn sqlite_x402_mark_batched_is_guarded_and_records_commitment() {
     let repo = db.x402_payment_intents();
 
     // Only Sequenced intents may be batched.
-    let err = repo.mark_batched(intent.id, "0xroot", vec![]).expect_err("created cannot batch");
+    let dummy = X402BatchInclusion::from_leaves(&[[1u8; 32], [2u8; 32]], 0).expect("proof");
+    let err = repo.mark_batched(intent.id, &dummy).expect_err("created cannot batch");
     assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
     force_status(&db, intent.id, X402IntentStatus::Signed);
-    let err = repo.mark_batched(intent.id, "0xroot", vec![]).expect_err("signed cannot batch");
+    let err = repo.mark_batched(intent.id, &dummy).expect_err("signed cannot batch");
     assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
 
-    force_status(&db, intent.id, X402IntentStatus::Sequenced);
-    let err = repo.mark_batched(intent.id, "   ", vec![]).expect_err("root required");
+    force_sequenced(&db, intent.id);
+    let mut blank = inclusion_for(&db, intent.id);
+    blank.merkle_root = "   ".into();
+    let err = repo.mark_batched(intent.id, &blank).expect_err("root required");
     assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
 
-    let batched =
-        repo.mark_batched(intent.id, "0xroot", vec!["0xaa".into(), "0xbb".into()]).expect("batch");
+    let inclusion = inclusion_for(&db, intent.id);
+    let batched = repo.mark_batched(intent.id, &inclusion).expect("batch");
     assert_eq!(batched.status, X402IntentStatus::Batched);
-    assert_eq!(batched.batch_merkle_root.as_deref(), Some("0xroot"));
-    assert_eq!(batched.inclusion_proof, Some(vec!["0xaa".to_string(), "0xbb".to_string()]));
+    assert_eq!(batched.batch_merkle_root.as_deref(), Some(inclusion.merkle_root.as_str()));
+    assert_eq!(batched.inclusion_proof.as_ref(), Some(&inclusion.inclusion_proof));
 
     // Batched is one-shot and cancel is refused, but settle/fail proceed.
-    let err = repo.mark_batched(intent.id, "0xroot", vec![]).expect_err("already batched");
+    let err = repo.mark_batched(intent.id, &inclusion).expect_err("already batched");
     assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
     let err = repo.cancel(intent.id).expect_err("batched cannot be cancelled by payer");
     assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
@@ -97,7 +119,8 @@ fn sqlite_x402_batch_racing_expire_and_fail_has_one_winner() {
     let db = Arc::new(SqliteDatabase::in_memory().expect("db"));
     for round in 0..15 {
         let intent = create_intent(&db);
-        force_status(&db, intent.id, X402IntentStatus::Sequenced);
+        force_sequenced(&db, intent.id);
+        let inclusion = inclusion_for(&db, intent.id);
         let barrier = Arc::new(Barrier::new(3));
         let spawn = |f: Transition| {
             let (db, barrier) = (Arc::clone(&db), Arc::clone(&barrier));
@@ -109,7 +132,7 @@ fn sqlite_x402_batch_racing_expire_and_fail_has_one_winner() {
         let id = intent.id;
         let handles = [
             spawn(Box::new(move |db| {
-                db.x402_payment_intents().mark_batched(id, "0xroot", vec![]).map(|i| i.status)
+                db.x402_payment_intents().mark_batched(id, &inclusion).map(|i| i.status)
             })),
             spawn(Box::new(move |db| db.x402_payment_intents().mark_expired(id).map(|i| i.status))),
             spawn(Box::new(move |db| {
