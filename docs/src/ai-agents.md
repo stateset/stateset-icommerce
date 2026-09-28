@@ -59,19 +59,18 @@ import { createToolDescriptors } from '@stateset/embedded/generic';
 
 const commerce = new Commerce('./store.db');
 const tools = createOpenAITools(commerce, {
-    filter: ['list_customers']
+  filter: ['list_customers'],
 });
 const execution = await executeOpenAIToolCall(commerce, {
-    call_id: 'demo_call_1',
-    function: {
-        name: 'list_customers',
-        arguments: '{}'
-    }
+  call_id: 'demo_call_1',
+  function: {
+    name: 'list_customers',
+    arguments: '{}',
+  },
 });
 const descriptors = createToolDescriptors(commerce, {
-    filter: ['list_customers', 'list_orders', 'get_sales_summary']
+  filter: ['list_customers', 'list_orders', 'get_sales_summary'],
 });
-
 ```
 
 `createOpenAITools()` returns JSON-schema function tool definitions.
@@ -83,16 +82,16 @@ If you want the embedded runtime to fan out to specialist agents, pass `autonomo
 import { createEmbeddedAgentToolkit } from '@stateset/embedded/agent-toolkit';
 
 const delegatedToolkit = createEmbeddedAgentToolkit({
-    commerce,
-    allowApply: true,
-    capabilities: ['read:*', 'delegate_to_agent'],
-    autonomousEngine,
+  commerce,
+  allowApply: true,
+  capabilities: ['read:*', 'delegate_to_agent'],
+  autonomousEngine,
 });
 
 await delegatedToolkit.executeTool('delegate_to_agent', {
-    agent_name: 'orders',
-    task_description: 'Review pending orders over $500',
-    context: { limit: 10 },
+  agent_name: 'orders',
+  task_description: 'Review pending orders over $500',
+  context: { limit: 10 },
 });
 ```
 
@@ -105,14 +104,14 @@ import { anthropic } from '@ai-sdk/anthropic';
 import { createVercelAITools } from '@stateset/embedded/vercel-ai';
 
 const tools = createVercelAITools(commerce, {
-    tool,
-    filter: ['list_customers', 'get_order', 'get_sales_summary'],
+  tool,
+  filter: ['list_customers', 'get_order', 'get_sales_summary'],
 });
 
 const result = await generateText({
-    model: anthropic('claude-sonnet-4-6'),
-    prompt: 'What are my top 5 customers by revenue?',
-    tools,
+  model: anthropic('claude-sonnet-4-6'),
+  prompt: 'What are my top 5 customers by revenue?',
+  tools,
 });
 ```
 
@@ -125,8 +124,8 @@ import { DynamicStructuredTool } from '@langchain/core/tools';
 import { createLangChainTools } from '@stateset/embedded/langchain';
 
 const tools = createLangChainTools(commerce, {
-    DynamicStructuredTool,
-    filter: ['list_customers', 'get_order', 'search_products'],
+  DynamicStructuredTool,
+  filter: ['list_customers', 'get_order', 'search_products'],
 });
 
 // Use with any LangChain agent or chain
@@ -141,7 +140,7 @@ contract, use `createToolDescriptors()`:
 
 ```javascript
 const tools = createToolDescriptors(commerce, {
-    filter: ['list_customers', 'list_orders', 'get_sales_summary'],
+  filter: ['list_customers', 'list_orders', 'get_sales_summary'],
 });
 
 const result = await tools[0].execute({});
@@ -207,9 +206,9 @@ const tools = createOpenAITools(commerce);
 
 // 1. Initial request
 const response = await client.responses.create({
-    model: 'gpt-4.1',
-    input: 'List the most recent customers.',
-    tools,
+  model: 'gpt-4.1',
+  input: 'List the most recent customers.',
+  tools,
 });
 
 // 2. Execute tool calls
@@ -218,10 +217,10 @@ const execution = await executeOpenAIToolCall(commerce, toolCall);
 
 // 3. Return results to model
 const finalResponse = await client.responses.create({
-    model: 'gpt-4.1',
-    previous_response_id: response.id,
-    input: [execution.outputMessage],
-    tools,
+  model: 'gpt-4.1',
+  previous_response_id: response.id,
+  input: [execution.outputMessage],
+  tools,
 });
 
 console.log(finalResponse.output_text);
@@ -236,18 +235,18 @@ const client = new Anthropic();
 const tools = toolkit.getTools({ format: 'anthropic' });
 
 const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 4096,
-    messages: [{ role: 'user', content: 'Show me pending orders' }],
-    tools,
+  model: 'claude-sonnet-4-6',
+  max_tokens: 4096,
+  messages: [{ role: 'user', content: 'Show me pending orders' }],
+  tools,
 });
 
 // Handle tool use
 for (const block of response.content) {
-    if (block.type === 'tool_use') {
-        const result = await toolkit.executeTool(block.name, block.input);
-        // Send result back to Claude...
-    }
+  if (block.type === 'tool_use') {
+    const result = await toolkit.executeTool(block.name, block.input);
+    // Send result back to Claude...
+  }
 }
 ```
 
@@ -259,8 +258,8 @@ Start with `allowApply: false` and progressively enable writes:
 
 ```javascript
 const preview = await toolkit.simulateMutation({
-    tool: 'ship_order',
-    params: { orderId: 'ord-123', trackingNumber: 'FEDEX-789' }
+  tool: 'ship_order',
+  params: { orderId: 'ord-123', trackingNumber: 'FEDEX-789' },
 });
 // preview.outcome.preview === true
 // preview.outcome.wouldDo.tool === 'ship_order'
@@ -286,9 +285,9 @@ const plan = await toolkit.executePlan({
 
 ```javascript
 const results = await toolkit.executeToolCalls([
-    { tool: 'list_customers', params: {} },
-    { tool: 'get_customer', params: { identifier: 'cust-001' } },
-    { tool: 'list_orders', params: { limit: 10 } }
+  { tool: 'list_customers', params: {} },
+  { tool: 'get_customer', params: { identifier: 'cust-001' } },
+  { tool: 'list_orders', params: { limit: 10 } },
 ]);
 ```
 
@@ -296,9 +295,9 @@ const results = await toolkit.executeToolCalls([
 
 ```javascript
 const toolkit = createEmbeddedAgentToolkit({
-    commerce,
-    allowApply: true,   // Enables write operations
-    capabilities: ['read:*', 'payments.create'],
+  commerce,
+  allowApply: true, // Enables write operations
+  capabilities: ['read:*', 'payments.create'],
 });
 ```
 
@@ -306,6 +305,79 @@ const toolkit = createEmbeddedAgentToolkit({
 names, `read:*`, `permission:write`, domain wildcards, and governed kernel
 capabilities such as `payments.create` are supported. High-risk tools still
 require their configured approvals.
+
+## Reading Tool Results
+
+Every tool call — through the MCP server (stdio or HTTP) or the embedded
+toolkit — is judged by one result contract
+(`cli/src/mcp/tool-result-contract.js`). Branch on it, not on prose:
+
+```javascript
+{
+  ok: boolean,        // false exactly when the call failed or was refused
+  preview: boolean,   // true when nothing was mutated (no --apply, dry run)
+  result?: unknown,   // the tool's own payload, untouched
+  error?: {           // present exactly when ok === false
+    code: string,     // stable, machine-readable
+    message: string,
+    retryable: boolean,
+    hint?: string,
+  },
+  notice?: { code, message, hint? },  // why a result is a preview
+}
+```
+
+- **A tool's own failure is a failure.** `{ success: false, error }`, a truthy
+  `error`, and a kernel receipt whose `status` is `rejected` or `failed` are
+  all `ok: false` — a rejected `ship_order` no longer looks like a success.
+- **A preview is not an error.** A write without `--apply` is `ok: true,
+preview: true` with `notice.code === 'APPLY_REQUIRED'` (`DRY_RUN` for a dry
+  run, `KERNEL_PREVIEW` for a kernel preview). A governed preview whose
+  receipt says the command _would_ be rejected is `ok: false, preview: true`.
+- **Money is never rewritten.** `result` is the tool's payload by reference;
+  the contract never converts strings to numbers. Prefer the `*Exact` decimal
+  strings (`totalAmountExact`, `grandTotalExact`, `amountExact`, …) over their
+  deprecated float twins.
+
+`error.code` comes from the most structured source available:
+
+| Source                                                                             | `error.code`                                                                                                                                                                    | `retryable`                                                                                                      |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Kernel receipt `status: rejected/failed`                                           | the receipt's `error_code` (e.g. `commerce.invalid_order_status_transition`), else `KERNEL_REJECTED` / `KERNEL_FAILED`                                                          | from the receipt's `retry`: `same_key`, `after_conflict`, `after_delay` are retryable; `never` is not            |
+| Thrown engine/binding error                                                        | its `code`: `NOT_FOUND`, `CONFLICT`, `VALIDATION`, `INSUFFICIENT_STOCK`, `PRECONDITION_FAILED`, `POLICY_REJECTED`, `DATABASE`, `EXTERNAL_SERVICE`, `INTERNAL`, `INTERNAL_PANIC` | `CONFLICT` only for version/optimistic conflicts (not duplicates); `DATABASE` only when the store is busy/locked |
+| `{ success: false }` with `errorCode` / `error_code` / `reasonCode` / `error.code` | that code                                                                                                                                                                       | no                                                                                                               |
+| Input fails the tool schema                                                        | `INVALID_INPUT` (hint lists the failing fields)                                                                                                                                 | no                                                                                                               |
+| Unknown tool                                                                       | `UNKNOWN_TOOL`                                                                                                                                                                  | no                                                                                                               |
+| Permission gate / MCP policy / hook                                                | `PERMISSION_DENIED` / `POLICY_DENIED` / `HOOK_BLOCKED`                                                                                                                          | no                                                                                                               |
+| Priced tool without payment / treasury refusal                                     | `PAYMENT_REQUIRED` / `TREASURY_BLOCKED`                                                                                                                                         | no                                                                                                               |
+| Message says not found / timed out / rate limited                                  | `NOT_FOUND` / `TIMEOUT` / `RATE_LIMITED`                                                                                                                                        | timeouts and rate limits only                                                                                    |
+| Anything else                                                                      | `TOOL_ERROR`                                                                                                                                                                    | no                                                                                                               |
+
+**On the MCP wire** a `CallToolResult` carries the outcome in
+`structuredContent` and sets `isError: true` exactly when `ok` is false. The
+text content is still the tool's own JSON, so text-only clients see what they
+always saw; a thrown error's text now also names its `code`. Previews are no
+longer flagged `isError`.
+
+**From `executeTool`** (embedded toolkit, `server.executeTool`) the outcome
+is flattened next to the existing fields: `ok`, `preview`, `failure` (the
+contract's `error` object, `null` when ok), `notice`, and `result` (now the
+tool's full result — earlier it was the compacted replay-log copy). `error`
+stays the message string, and `success` keeps meaning "the tool executed and
+succeeded": it is now also false when the tool's own result failed, and still
+false for a preview. `toToolResultContract(executed)` rebuilds the canonical
+object.
+
+```javascript
+const shipped = await toolkit.executeTool('ship_order', { orderId, trackingNumber });
+if (!shipped.ok) {
+  if (shipped.failure.retryable) {
+    /* reload and retry */
+  } else throw new Error(`${shipped.failure.code}: ${shipped.failure.message}`);
+} else if (shipped.preview) {
+  // nothing changed: re-run with --apply
+}
+```
 
 ## MCP-Native Clients
 
@@ -323,12 +395,12 @@ The setup creates a configuration entry in your MCP client's config file:
 
 ```json
 {
-    "mcpServers": {
-        "stateset-commerce": {
-            "command": "npx",
-            "args": ["-y", "-p", "@stateset/cli@1.35.3", "stateset-mcp", "--db", "./store.db"]
-        }
+  "mcpServers": {
+    "stateset-commerce": {
+      "command": "npx",
+      "args": ["-y", "-p", "@stateset/cli@1.35.3", "stateset-mcp", "--db", "./store.db"]
     }
+  }
 }
 ```
 
@@ -445,23 +517,23 @@ them with an unsupported-protocol-version error.
 
 ### Which MCP entrypoint?
 
-| Binary | Transport | Store | Writes |
-|---|---|---|---|
-| `stateset-mcp` | stdio | your database | preview-only unless `--apply` |
-| `stateset-mcp-http` | Streamable HTTP, 2026-07-28, stateless | shared `--db`, seeded when `:memory:` | enabled on `:memory:`, else `--apply` |
-| `stateset-mcp-events` | stdio + HTTP event sidecar | your database | preview-only unless `--apply` |
-| `stateset-x402-mcp` | stdio | x402 payment tools only | per its flags |
+| Binary                | Transport                              | Store                                 | Writes                                |
+| --------------------- | -------------------------------------- | ------------------------------------- | ------------------------------------- |
+| `stateset-mcp`        | stdio                                  | your database                         | preview-only unless `--apply`         |
+| `stateset-mcp-http`   | Streamable HTTP, 2026-07-28, stateless | shared `--db`, seeded when `:memory:` | enabled on `:memory:`, else `--apply` |
+| `stateset-mcp-events` | stdio + HTTP event sidecar             | your database                         | preview-only unless `--apply`         |
+| `stateset-x402-mcp`   | stdio                                  | x402 payment tools only               | per its flags                         |
 
 ## Which Approach Should I Use?
 
-| Scenario | Recommended |
-|----------|-------------|
-| Claude Desktop / Cursor / Windsurf | MCP server (automatic tool discovery) |
-| OpenAI GPT agents | `@stateset/embedded/openai` |
-| Vercel AI SDK app | `@stateset/embedded/vercel-ai` |
-| LangChain / LangGraph agent | `@stateset/embedded/langchain` |
-| Custom agent framework | `@stateset/embedded/generic` |
-| LangChain Python agent | `create_langchain_tools()` or `create_callable_registry()` |
+| Scenario                              | Recommended                                                                       |
+| ------------------------------------- | --------------------------------------------------------------------------------- |
+| Claude Desktop / Cursor / Windsurf    | MCP server (automatic tool discovery)                                             |
+| OpenAI GPT agents                     | `@stateset/embedded/openai`                                                       |
+| Vercel AI SDK app                     | `@stateset/embedded/vercel-ai`                                                    |
+| LangChain / LangGraph agent           | `@stateset/embedded/langchain`                                                    |
+| Custom agent framework                | `@stateset/embedded/generic`                                                      |
+| LangChain Python agent                | `create_langchain_tools()` or `create_callable_registry()`                        |
 | CrewAI / AutoGen style Python runtime | `create_crewai_tools()` / `create_autogen_tools()` or `create_tool_descriptors()` |
-| Server-side API | Embedded toolkit with `allowApply: true` |
-| Testing / exploration | CLI with `stateset "..."` (read-only) |
+| Server-side API                       | Embedded toolkit with `allowApply: true`                                          |
+| Testing / exploration                 | CLI with `stateset "..."` (read-only)                                             |

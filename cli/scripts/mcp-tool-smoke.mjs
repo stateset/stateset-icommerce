@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 
 import { createStatesetMcpServer } from '../src/mcp-server.js';
 import { ALL_DOMAIN_TOOLS } from '../src/tools/domain-registry.js';
+import { toToolResultContract } from '../src/mcp/tool-result-contract.js';
 
 /** Messages that mean the tool itself is broken, whatever its input. */
 export const DEFECT_PATTERNS = [
@@ -36,11 +37,16 @@ export const DEFECT_PATTERNS = [
   /no such (?:column|table)/i,
 ];
 
+/**
+ * Classify one call from its result contract (src/mcp/tool-result-contract.js):
+ * `ok` -> 'ok' (a preview is ok too); a refusal with a crash-shaped message ->
+ * 'defect'; any other `ok: false` -> 'refused'.
+ */
 export function classifyOutcome(outcome) {
   if (outcome.timedOut) return 'timeout';
   if (outcome.threw)
     return DEFECT_PATTERNS.some((p) => p.test(outcome.message)) ? 'defect' : 'refused';
-  if (outcome.success) return 'ok';
+  if (outcome.contract?.ok ?? outcome.success) return 'ok';
   return DEFECT_PATTERNS.some((p) => p.test(outcome.message ?? '')) ? 'defect' : 'refused';
 }
 
@@ -166,18 +172,15 @@ async function callWithTimeout(server, name, params, ms) {
   const call = server
     .executeTool(name, params)
     .then((result) => {
-      // A tool can succeed at the dispatch layer while its own result says it
-      // failed ({ success: false, error } -- including a kernel receipt that
-      // was rejected). Judge the tool by its own result.
-      const inner = result?.result;
-      const innerFailed = inner && typeof inner === 'object' && inner.success === false;
-      const message =
-        result?.error?.message ??
-        (typeof result?.error === 'string' ? result.error : undefined) ??
-        (typeof inner?.error === 'string' ? inner.error : inner?.error?.message) ??
-        inner?.receipt?.error_message ??
-        (result?.success && !innerFailed ? undefined : JSON.stringify(result).slice(0, 300));
-      return { success: result?.success === true && !innerFailed, message };
+      // The contract judges the tool by its own result too: `{ success: false }`
+      // and a rejected kernel receipt are `ok: false`.
+      const contract = toToolResultContract(result);
+      return {
+        success: contract.ok,
+        contract,
+        code: contract.error?.code,
+        message: contract.error?.message,
+      };
     })
     .catch((error) => ({ threw: true, message: String(error?.stack ?? error) }));
   const outcome = await Promise.race([call, timeout]);
@@ -190,8 +193,14 @@ async function callWithTimeout(server, name, params, ms) {
  * @param {Set<string>|null} [options.only] - restrict the sweep to these tool names
  * @param {Array<object>} [options.tools] - tool definitions to sweep (default: every domain tool)
  * @param {number} [options.timeoutMs]
+ * @param {boolean} [options.allowApply] - `false` runs the sweep in preview mode (writes are previews)
  */
-export async function runSmoke({ only = null, tools = ALL_DOMAIN_TOOLS, timeoutMs = 20_000 } = {}) {
+export async function runSmoke({
+  only = null,
+  tools = ALL_DOMAIN_TOOLS,
+  timeoutMs = 20_000,
+  allowApply = true,
+} = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'mcp-smoke-'));
   const dbPath = path.join(dir, 'store.db');
   // Some tools keep state under ~/.stateset (a2a.db, audit.db, wallets). A
@@ -203,7 +212,7 @@ export async function runSmoke({ only = null, tools = ALL_DOMAIN_TOOLS, timeoutM
   process.env.HOME = home;
   process.env.USERPROFILE = home;
   // Every tier, so any tool can be swept regardless of the default profile.
-  const server = createStatesetMcpServer({ dbPath, allowApply: true, toolProfile: 'all' });
+  const server = createStatesetMcpServer({ dbPath, allowApply, toolProfile: 'all' });
   const rows = [];
   try {
     for (const tool of tools) {
@@ -219,6 +228,9 @@ export async function runSmoke({ only = null, tools = ALL_DOMAIN_TOOLS, timeoutM
       rows.push({
         tool: tool.name,
         kind: classifyOutcome(outcome),
+        code: outcome.code,
+        preview: outcome.contract?.preview,
+        contract: outcome.contract,
         message: outcome.message?.split('\n')[0]?.slice(0, 240),
       });
     }
@@ -243,6 +255,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   for (const r of rows.filter((r) => r.kind === 'defect' || r.kind === 'timeout')) {
     console.log(`${r.kind.padEnd(8)} ${r.tool.padEnd(40)} ${r.message ?? ''}`);
   }
-  if (jsonAt >= 0) writeFileSync(args[jsonAt + 1], JSON.stringify(rows, null, 2));
+  if (jsonAt >= 0) {
+    const slim = rows.map(({ contract: _contract, ...row }) => row);
+    writeFileSync(args[jsonAt + 1], JSON.stringify(slim, null, 2));
+  }
   process.exit(0);
 }

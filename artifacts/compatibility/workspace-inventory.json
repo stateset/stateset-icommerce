@@ -559,11 +559,11 @@
     "topLevelSourceCounts": [
       {
         "name": "tools",
-        "count": 95
+        "count": 96
       },
       {
         "name": "commands",
-        "count": 88
+        "count": 89
       },
       {
         "name": "a2a",
@@ -571,7 +571,7 @@
       },
       {
         "name": "mcp",
-        "count": 32
+        "count": 33
       },
       {
         "name": "channels",
@@ -587,7 +587,7 @@
       },
       {
         "name": "utils",
-        "count": 15
+        "count": 16
       },
       {
         "name": "harness",
@@ -990,7 +990,7 @@
         "count": 1
       }
     ],
-    "toolModuleCount": 95,
+    "toolModuleCount": 96,
     "a2aModuleCount": 61
   },
   "admin": {

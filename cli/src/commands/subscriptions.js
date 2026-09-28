@@ -2,27 +2,27 @@
  * Subscriptions Commands Module
  */
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// The binding's `getPlan` / `get` reject a non-UUID argument outright, so a
+// code or subscription number is routed to its own lookup instead.
 async function getPlan(commerce, identifier) {
-  let plan = await commerce.getSubscriptionPlan(identifier);
-  if (!plan && typeof commerce.getSubscriptionPlanByCode === 'function') {
-    plan = await commerce.getSubscriptionPlanByCode(identifier);
-  }
-  return plan;
+  return UUID_RE.test(identifier)
+    ? commerce.subscriptions.getPlan(identifier)
+    : commerce.subscriptions.getPlanByCode(identifier);
 }
 
 async function getSubscription(commerce, identifier) {
-  let subscription = await commerce.getSubscription(identifier);
-  if (!subscription && typeof commerce.getSubscriptionByNumber === 'function') {
-    subscription = await commerce.getSubscriptionByNumber(identifier);
-  }
-  return subscription;
+  return UUID_RE.test(identifier)
+    ? commerce.subscriptions.get(identifier)
+    : commerce.subscriptions.getByNumber(identifier);
 }
 
 export async function execute(action, args, { commerce, output, jsonOutput }) {
   switch (action) {
     case 'plans': {
       const [status, billingInterval] = args;
-      const plans = await commerce.listSubscriptionPlans({ status, billingInterval });
+      const plans = await commerce.subscriptions.listPlans({ status, billingInterval });
       return formatPlanList(plans, { output, jsonOutput });
     }
 
@@ -36,7 +36,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
 
     case 'list': {
       const [customerId, status] = args;
-      const subscriptions = await commerce.listSubscriptions({ customerId, status });
+      const subscriptions = await commerce.subscriptions.list({ customerId, status });
       return formatSubscriptionList(subscriptions, { output, jsonOutput });
     }
 
@@ -53,7 +53,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       if (!customerId || !planId) {
         throw new Error('Usage: subscriptions create <customerId> <planId>');
       }
-      const subscription = await commerce.createSubscription({ customerId, planId });
+      const subscription = await commerce.subscriptions.subscribe({ customerId, planId });
       return {
         subscription,
         formatted: `Created subscription ${subscription.subscriptionNumber || subscription.id}`,
@@ -64,7 +64,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       const [subscriptionId, ...reasonParts] = args;
       if (!subscriptionId) throw new Error('Usage: subscriptions pause <subscriptionId> [reason]');
       const reason = reasonParts.join(' ') || undefined;
-      const subscription = await commerce.pauseSubscription(subscriptionId, { reason });
+      const subscription = await commerce.subscriptions.pause(subscriptionId, { reason });
       return {
         subscription,
         formatted: `Paused subscription ${subscription.subscriptionNumber || subscription.id}`,
@@ -74,7 +74,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
     case 'resume': {
       const subscriptionId = args[0];
       if (!subscriptionId) throw new Error('Usage: subscriptions resume <subscriptionId>');
-      const subscription = await commerce.resumeSubscription(subscriptionId);
+      const subscription = await commerce.subscriptions.resume(subscriptionId);
       return {
         subscription,
         formatted: `Resumed subscription ${subscription.subscriptionNumber || subscription.id}`,
@@ -87,7 +87,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
         throw new Error('Usage: subscriptions cancel <subscriptionId> [immediate]');
       }
       const immediate = immediateFlag === 'true' || immediateFlag === 'immediate';
-      const subscription = await commerce.cancelSubscription(subscriptionId, { immediate });
+      const subscription = await commerce.subscriptions.cancel(subscriptionId, { immediate });
       return {
         subscription,
         formatted: immediate
@@ -98,7 +98,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
 
     case 'cycles': {
       const [subscriptionId, status] = args;
-      const cycles = await commerce.listBillingCycles({ subscriptionId, status });
+      const cycles = await commerce.subscriptions.listBillingCycles({ subscriptionId, status });
       return formatBillingCycles(cycles, { output, jsonOutput });
     }
 
@@ -106,7 +106,9 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       const subscriptionId = args[0];
       const limit = Number.parseInt(args[1] || '20', 10);
       if (!subscriptionId) throw new Error('Usage: subscriptions events <subscriptionId> [limit]');
-      const events = await commerce.getSubscriptionEvents(subscriptionId, limit);
+      // The binding returns every event; the limit is applied here.
+      const all = await commerce.subscriptions.getEvents(subscriptionId);
+      const events = Number.isInteger(limit) && limit >= 0 ? all.slice(0, limit) : all;
       return formatEvents(events, { output, jsonOutput });
     }
 
@@ -137,7 +139,7 @@ function formatPlanList(plans, { output, jsonOutput }) {
     { key: 'name', header: 'Name' },
     { key: 'status', header: 'Status' },
     { key: 'billingInterval', header: 'Interval' },
-    { key: 'price', header: 'Price', align: 'right' },
+    { key: 'priceExact', header: 'Price', align: 'right' },
   ]);
   return { plans, formatted };
 }
@@ -153,7 +155,7 @@ function formatPlanDetail(plan, { jsonOutput }) {
       `Code:        ${plan.code}\n` +
       `Status:      ${plan.status}\n` +
       `Interval:    ${plan.billingInterval}\n` +
-      `Price:       ${plan.price} ${plan.currency}\n` +
+      `Price:       ${plan.priceExact} ${plan.currency}\n` +
       `Trial days:  ${plan.trialDays ?? 0}`,
   };
 }
@@ -182,7 +184,7 @@ function formatSubscriptionDetail(subscription, { jsonOutput }) {
       `Customer:       ${subscription.customerId}\n` +
       `Plan:           ${subscription.planName || subscription.planId || 'N/A'}\n` +
       `Status:         ${subscription.status}\n` +
-      `Price:          ${subscription.price} ${subscription.currency}\n` +
+      `Price:          ${subscription.priceExact} ${subscription.currency}\n` +
       `Next billing:   ${subscription.nextBillingDate || 'N/A'}`,
   };
 }
@@ -196,7 +198,7 @@ function formatBillingCycles(cycles, { output, jsonOutput }) {
     { key: 'status', header: 'Status' },
     { key: 'periodStart', header: 'Start' },
     { key: 'periodEnd', header: 'End' },
-    { key: 'total', header: 'Total', align: 'right' },
+    { key: 'totalExact', header: 'Total', align: 'right' },
   ]);
   return { cycles, formatted };
 }

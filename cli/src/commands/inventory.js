@@ -66,7 +66,12 @@ async function loadStockSnapshot(commerce, products) {
  * @param {Object} options - Command options
  * @returns {Promise<any>} Command result
  */
-export async function execute(action, args, { commerce, output, jsonOutput, resolveSku }) {
+export async function execute(
+  action,
+  args,
+  // `resolveSku` maps a partial SKU to a full one; library callers may omit it.
+  { commerce, output, jsonOutput, resolveSku = async (sku) => sku },
+) {
   switch (action) {
     case 'list': {
       const products = await commerce.products.list();
@@ -154,40 +159,54 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
     }
 
     case 'reserve': {
-      const [skuArg, qtyStr, orderId] = args;
-      const qty = parseInt(qtyStr, 10);
+      const [skuArg, qtyStr, orderId, expiresRaw] = args;
+      const qty = Number(qtyStr);
+      const expiresInSeconds = expiresRaw ? Number(expiresRaw) : undefined;
 
-      if (!skuArg || isNaN(qty)) {
+      if (
+        !skuArg ||
+        !orderId ||
+        !Number.isInteger(qty) ||
+        qty < 1 ||
+        (expiresInSeconds !== undefined &&
+          !(Number.isInteger(expiresInSeconds) && expiresInSeconds > 0))
+      ) {
         throw new Error(
-          'Usage: inventory reserve <sku> <quantity> [orderId]\n\n' +
+          'Usage: inventory reserve <sku> <quantity> <orderId> [expiresInSeconds]\n\n' +
             'Reserve inventory for an order.',
         );
       }
 
       const sku = await resolveSku(skuArg);
-      const reservation = await commerce.inventory.reserve(sku, qty, orderId);
+      const reservation = await commerce.inventory.reserve(
+        sku,
+        qty,
+        'order',
+        orderId,
+        expiresInSeconds,
+      );
 
       return {
         reservation,
-        formatted: `Reserved ${qty} units of ${sku}${orderId ? ` for order ${orderId}` : ''}`,
+        formatted: `Reserved ${qty} units of ${sku} for order ${orderId} (reservation ${reservation.id})`,
       };
     }
 
     case 'release': {
-      const [skuArg, qtyStr] = args;
-      const qty = parseInt(qtyStr, 10);
-
-      if (!skuArg || isNaN(qty)) {
-        throw new Error('Usage: inventory release <sku> <quantity>\n\nRelease reserved inventory.');
+      // Reservations are released by ID; the binding has no release-by-SKU.
+      const reservationId = args[0];
+      if (!reservationId) {
+        throw new Error(
+          'Usage: inventory release <reservationId>\n\nRelease an inventory reservation.',
+        );
       }
 
-      const sku = await resolveSku(skuArg);
-      await commerce.inventory.release(sku, qty);
-      const stock = await commerce.inventory.getStock(sku);
+      await commerce.inventory.releaseReservation(reservationId);
 
       return {
-        stock,
-        formatted: `Released ${qty} units of ${sku}. New available: ${stock.totalAvailable}`,
+        reservationId,
+        released: true,
+        formatted: `Released reservation ${reservationId}; its quantity is available again`,
       };
     }
 
@@ -200,8 +219,8 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
           '  adjust <sku> <qty> <reason>  Adjust stock\n' +
           '  create <sku> <name> [qty]    Create inventory item\n' +
           '  low [threshold]   List low stock items\n' +
-          '  reserve <sku> <qty> [orderId]  Reserve inventory\n' +
-          '  release <sku> <qty>  Release reserved inventory',
+          '  reserve <sku> <qty> <orderId> [expiresInSeconds]  Reserve inventory\n' +
+          '  release <reservationId>  Release an inventory reservation',
       );
   }
 }
@@ -315,8 +334,11 @@ export const metadata = {
     adjust: { description: 'Adjust stock level', args: ['<sku>', '<quantity>', '<reason>'] },
     create: { description: 'Create inventory item', args: ['<sku>', '<name>', '[quantity]'] },
     low: { description: 'List low stock items', args: ['[threshold]'] },
-    reserve: { description: 'Reserve inventory', args: ['<sku>', '<quantity>', '[orderId]'] },
-    release: { description: 'Release reservation', args: ['<sku>', '<quantity>'] },
+    reserve: {
+      description: 'Reserve inventory',
+      args: ['<sku>', '<quantity>', '<orderId>', '[expiresInSeconds]'],
+    },
+    release: { description: 'Release reservation', args: ['<reservationId>'] },
   },
 };
 

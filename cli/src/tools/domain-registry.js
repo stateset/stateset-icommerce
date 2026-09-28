@@ -85,6 +85,7 @@ import { transferOrderTools } from './transfer-orders.js';
 import { productionBatchTools } from './production-batches.js';
 import { supplierSkuTools } from './supplier-skus.js';
 import { inboundShipmentTools } from './inbound-shipments.js';
+import { explainTools } from './explain.js';
 
 export const DOMAIN_TOOL_ENTRIES = Object.freeze([
   ['customers', customerTools],
@@ -174,6 +175,7 @@ export const DOMAIN_TOOL_ENTRIES = Object.freeze([
   ['production-batches', productionBatchTools],
   ['supplier-skus', supplierSkuTools],
   ['inbound-shipments', inboundShipmentTools],
+  ['explain', explainTools],
 ]);
 
 export const DOMAIN_TOOL_ARRAYS = Object.freeze(Object.fromEntries(DOMAIN_TOOL_ENTRIES));
