@@ -181,7 +181,7 @@ describe('mcp http — protocol 2026-07-28, stateless', () => {
     assert.equal(ok.structuredContent.preview, false);
 
     // A malformed id is refused by the engine with a stable binding code.
-    const refused = (await callTool(BASE, 'get_order', { identifier: 'not-a-uuid' }, 13)).json
+    const refused = (await callTool(BASE, 'get_payment', { paymentId: 'not-a-uuid' }, 13)).json
       .result;
     assert.equal(refused.isError, true, JSON.stringify(refused).slice(0, 400));
     assert.equal(refused.structuredContent.ok, false);

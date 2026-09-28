@@ -11,8 +11,8 @@ use stateset_core::{
     CreatePromotion, CreatePromotionCondition, CurrencyCode, CustomerId, CustomerUsageCounts,
     OrderId, Promotion, PromotionCondition, PromotionFilter, PromotionId, PromotionRepository,
     PromotionStatus, PromotionTarget, PromotionTrigger, PromotionType, PromotionUsage,
-    RejectedPromotion, RejectionReason, Result, StackingBehavior, UpdatePromotion,
-    evaluate_promotions, generate_promotion_code, validate_coupon_redemption,
+    PromotionUsageFilter, RejectedPromotion, RejectionReason, Result, StackingBehavior,
+    UpdatePromotion, evaluate_promotions, generate_promotion_code, validate_coupon_redemption,
 };
 use uuid::Uuid;
 
@@ -1630,15 +1630,44 @@ impl PgPromotionRepository {
 
     /// Usage ledger rows recorded against a cart.
     pub async fn usage_for_cart_async(&self, cart_id: CartId) -> Result<Vec<PromotionUsage>> {
-        let rows: Vec<PromotionUsageRow> = sqlx::query_as(
+        self.list_usage_async(PromotionUsageFilter { cart_id: Some(cart_id), ..Default::default() })
+            .await
+    }
+
+    /// Usage ledger rows matching `filter`, oldest first (`used_at`, `id`).
+    pub async fn list_usage_async(
+        &self,
+        filter: PromotionUsageFilter,
+    ) -> Result<Vec<PromotionUsage>> {
+        let mut sql =
             "SELECT id, promotion_id, coupon_id, customer_id, order_id, cart_id, discount_amount,
                     currency, used_at
-             FROM promotion_usage WHERE cart_id = $1 ORDER BY used_at",
-        )
-        .bind(cart_id.into_uuid())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+             FROM promotion_usage WHERE 1=1"
+                .to_string();
+        let clauses: [(&str, Option<Uuid>); 5] = [
+            ("promotion_id", filter.promotion_id.map(PromotionId::into_uuid)),
+            ("coupon_id", filter.coupon_id),
+            ("customer_id", filter.customer_id.map(CustomerId::into_uuid)),
+            ("order_id", filter.order_id.map(OrderId::into_uuid)),
+            ("cart_id", filter.cart_id.map(CartId::into_uuid)),
+        ];
+        let mut binds: Vec<Uuid> = Vec::new();
+        for (column, value) in clauses {
+            if let Some(value) = value {
+                binds.push(value);
+                sql.push_str(&format!(" AND {column} = ${}", binds.len()));
+            }
+        }
+        sql.push_str(" ORDER BY used_at, id");
+        sql.push_str(&format!(" LIMIT {}", super::effective_limit(filter.limit)));
+        if let Some(offset) = filter.offset {
+            sql.push_str(&format!(" OFFSET {offset}"));
+        }
+        let mut query = sqlx::query_as::<_, PromotionUsageRow>(&sql);
+        for value in binds {
+            query = query.bind(value);
+        }
+        let rows = query.fetch_all(&self.pool).await.map_err(map_db_error)?;
         Ok(rows.into_iter().map(PromotionUsage::from).collect())
     }
 
@@ -1697,6 +1726,10 @@ impl PgPromotionRepository {
 }
 
 impl PromotionRepository for PgPromotionRepository {
+    fn list_usage(&self, filter: PromotionUsageFilter) -> Result<Vec<PromotionUsage>> {
+        super::block_on(self.list_usage_async(filter))
+    }
+
     fn create(&self, input: CreatePromotion) -> Result<Promotion> {
         super::block_on(self.create_async(input))
     }

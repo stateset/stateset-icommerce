@@ -219,6 +219,38 @@ pub enum ConditionType {
     CustomerId,
 }
 
+impl ConditionType {
+    /// The [`RejectionReason`] reported when a condition of this type refuses
+    /// a promotion.
+    ///
+    /// * customer targeting (first order, customer id, customer group, email
+    ///   domain) -> [`RejectionReason::CustomerNotEligible`];
+    /// * cart contents (product, category or SKU in cart) ->
+    ///   [`RejectionReason::ProductNotEligible`];
+    /// * thresholds (subtotal, quantity, item count) and everything else
+    ///   (shipping destination, payment method) ->
+    ///   [`RejectionReason::MinimumNotMet`], the code every condition used to
+    ///   report.
+    #[must_use]
+    pub const fn rejection_reason(self) -> RejectionReason {
+        match self {
+            Self::FirstOrder
+            | Self::CustomerId
+            | Self::CustomerGroup
+            | Self::CustomerEmailDomain => RejectionReason::CustomerNotEligible,
+            Self::ProductInCart | Self::CategoryInCart | Self::SkuInCart => {
+                RejectionReason::ProductNotEligible
+            }
+            Self::MinimumSubtotal
+            | Self::MinimumQuantity
+            | Self::CartItemCount
+            | Self::ShippingCountry
+            | Self::ShippingState
+            | Self::PaymentMethod => RejectionReason::MinimumNotMet,
+        }
+    }
+}
+
 // ============================================================================
 // Main Promotion Model
 // ============================================================================
@@ -778,6 +810,21 @@ pub struct PromotionFilter {
     pub offset: Option<u32>,
 }
 
+/// Filter for reading the promotion usage ledger.
+///
+/// Every set field narrows the result (AND). Rows come back in the order they
+/// were recorded (`used_at`, then `id`).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PromotionUsageFilter {
+    pub promotion_id: Option<PromotionId>,
+    pub coupon_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
+    pub order_id: Option<OrderId>,
+    pub cart_id: Option<CartId>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
 /// Filter for listing coupon codes
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CouponFilter {
@@ -1316,11 +1363,31 @@ impl Promotion {
     ///
     /// Propagates a misconfigured condition value.
     pub fn check_conditions(&self, request: &ApplyPromotionsRequest) -> Result<Option<String>> {
+        Ok(self.check_conditions_with_reason(request)?.map(|(reason, _)| reason))
+    }
+
+    /// [`Self::check_conditions`], also naming the [`RejectionReason`] that
+    /// classifies the refusing condition (see [`ConditionType::rejection_reason`]).
+    ///
+    /// When only optional conditions exist and none is met, the code is the
+    /// one they all share, or [`RejectionReason::MinimumNotMet`] when they
+    /// fall into different classes.
+    ///
+    /// # Errors
+    ///
+    /// Propagates a misconfigured condition value.
+    pub fn check_conditions_with_reason(
+        &self,
+        request: &ApplyPromotionsRequest,
+    ) -> Result<Option<(String, RejectionReason)>> {
         // The type is itself a condition: a first-order discount on a
         // returning customer's order is a discount leak, with or without an
         // explicit `first_order` condition.
         if self.promotion_type == PromotionType::FirstOrderDiscount && !request.is_first_order {
-            return Ok(Some("a first-order discount applies only to a first order".to_string()));
+            return Ok(Some((
+                "a first-order discount applies only to a first order".to_string(),
+                RejectionReason::CustomerNotEligible,
+            )));
         }
         if self.conditions.is_empty() {
             return Ok(None);
@@ -1333,21 +1400,40 @@ impl Promotion {
         for cond in &required {
             let outcome = cond.evaluate(request)?;
             if !outcome.is_met() {
-                return Ok(Some(outcome.describe(cond.condition_type)));
+                return Ok(Some((
+                    outcome.describe(cond.condition_type),
+                    cond.condition_type.rejection_reason(),
+                )));
             }
         }
 
         // At least one optional condition must be met, when any exist.
         if !optional.is_empty() {
             let mut reasons = Vec::with_capacity(optional.len());
+            let mut code: Option<RejectionReason> = None;
+            let mut mixed = false;
             for cond in &optional {
                 let outcome = cond.evaluate(request)?;
                 if outcome.is_met() {
                     return Ok(None);
                 }
                 reasons.push(outcome.describe(cond.condition_type));
+                let this = cond.condition_type.rejection_reason();
+                match code {
+                    None => code = Some(this),
+                    Some(existing) if existing != this => mixed = true,
+                    Some(_) => {}
+                }
             }
-            return Ok(Some(format!("no optional condition was met ({})", reasons.join("; "))));
+            let code = if mixed {
+                RejectionReason::MinimumNotMet
+            } else {
+                code.unwrap_or(RejectionReason::MinimumNotMet)
+            };
+            return Ok(Some((
+                format!("no optional condition was met ({})", reasons.join("; ")),
+                code,
+            )));
         }
 
         Ok(None)
@@ -1714,11 +1800,8 @@ pub fn evaluate_promotions(
 
         // Conditions fail CLOSED: one that cannot be proven from the request
         // refuses the promotion instead of applying it by default.
-        if let Some(reason) = promo.check_conditions(request)? {
-            reject(
-                format!("Promotion conditions not met: {reason}"),
-                RejectionReason::MinimumNotMet,
-            );
+        if let Some((reason, reason_code)) = promo.check_conditions_with_reason(request)? {
+            reject(format!("Promotion conditions not met: {reason}"), reason_code);
             continue;
         }
 
@@ -2367,5 +2450,161 @@ mod tests {
         let mut result = ApplyPromotionsResult::default();
         evaluate_promotions(&req, vec![(p, None)], &usage, &mut result).expect("eval");
         assert_eq!(result.applied_promotions.len(), 1);
+    }
+
+    // ------------------------------------------------------------------
+    // Rejection reason codes per condition class
+    // ------------------------------------------------------------------
+
+    fn condition(
+        condition_type: ConditionType,
+        operator: ConditionOperator,
+        value: &str,
+        is_required: bool,
+    ) -> PromotionCondition {
+        PromotionCondition {
+            id: Uuid::new_v4(),
+            promotion_id: PromotionId::new(),
+            condition_type,
+            operator,
+            value: value.to_string(),
+            is_required,
+        }
+    }
+
+    fn rejection_code_for(conditions: Vec<PromotionCondition>) -> RejectionReason {
+        let mut p = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 1);
+        p.percentage_off = Some(Decimal::new(1, 1));
+        p.conditions = conditions;
+        let req = request(vec![item("A", 1, Decimal::from(10))], Decimal::ZERO);
+        let result = evaluate(&req, vec![p]);
+        assert!(result.applied_promotions.is_empty(), "promotion must be refused: {result:?}");
+        assert_eq!(result.rejected_promotions.len(), 1, "{result:?}");
+        result.rejected_promotions[0].reason_code
+    }
+
+    #[test]
+    fn failed_customer_targeting_condition_reports_customer_not_eligible() {
+        // is_first_order defaults to false, so a first_order=true condition fails.
+        assert_eq!(
+            rejection_code_for(vec![condition(
+                ConditionType::FirstOrder,
+                ConditionOperator::Equals,
+                "true",
+                true,
+            )]),
+            RejectionReason::CustomerNotEligible
+        );
+        // Anonymous cart: a customer_id condition cannot be proven.
+        assert_eq!(
+            rejection_code_for(vec![condition(
+                ConditionType::CustomerId,
+                ConditionOperator::In,
+                &Uuid::new_v4().to_string(),
+                true,
+            )]),
+            RejectionReason::CustomerNotEligible
+        );
+        for ty in [ConditionType::CustomerGroup, ConditionType::CustomerEmailDomain] {
+            assert_eq!(
+                rejection_code_for(vec![condition(ty, ConditionOperator::Equals, "x", true)]),
+                RejectionReason::CustomerNotEligible,
+                "{ty}"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_cart_content_condition_reports_product_not_eligible() {
+        assert_eq!(
+            rejection_code_for(vec![condition(
+                ConditionType::SkuInCart,
+                ConditionOperator::In,
+                "OTHER-SKU",
+                true,
+            )]),
+            RejectionReason::ProductNotEligible
+        );
+        for ty in [ConditionType::ProductInCart, ConditionType::CategoryInCart] {
+            assert_eq!(
+                rejection_code_for(vec![condition(
+                    ty,
+                    ConditionOperator::In,
+                    &Uuid::new_v4().to_string(),
+                    true,
+                )]),
+                RejectionReason::ProductNotEligible,
+                "{ty}"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_threshold_condition_still_reports_minimum_not_met() {
+        assert_eq!(
+            rejection_code_for(vec![condition(
+                ConditionType::MinimumSubtotal,
+                ConditionOperator::GreaterThanOrEqual,
+                "100",
+                true,
+            )]),
+            RejectionReason::MinimumNotMet
+        );
+        assert_eq!(
+            rejection_code_for(vec![condition(
+                ConditionType::MinimumQuantity,
+                ConditionOperator::GreaterThanOrEqual,
+                "5",
+                true,
+            )]),
+            RejectionReason::MinimumNotMet
+        );
+        assert_eq!(
+            rejection_code_for(vec![condition(
+                ConditionType::CartItemCount,
+                ConditionOperator::GreaterThanOrEqual,
+                "3",
+                true,
+            )]),
+            RejectionReason::MinimumNotMet
+        );
+    }
+
+    #[test]
+    fn unmet_optional_conditions_report_their_shared_class_or_minimum_not_met() {
+        // Both optional conditions are customer-targeting: that class wins.
+        assert_eq!(
+            rejection_code_for(vec![
+                condition(ConditionType::FirstOrder, ConditionOperator::Equals, "true", false),
+                condition(ConditionType::CustomerGroup, ConditionOperator::Equals, "vip", false),
+            ]),
+            RejectionReason::CustomerNotEligible
+        );
+        // Mixed classes fall back to the generic threshold code.
+        assert_eq!(
+            rejection_code_for(vec![
+                condition(ConditionType::FirstOrder, ConditionOperator::Equals, "true", false),
+                condition(
+                    ConditionType::MinimumSubtotal,
+                    ConditionOperator::GreaterThanOrEqual,
+                    "100",
+                    false,
+                ),
+            ]),
+            RejectionReason::MinimumNotMet
+        );
+    }
+
+    #[test]
+    fn check_conditions_keeps_its_reason_text() {
+        let mut p = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 1);
+        p.conditions =
+            vec![condition(ConditionType::FirstOrder, ConditionOperator::Equals, "true", true)];
+        let req = request(vec![item("A", 1, Decimal::from(10))], Decimal::ZERO);
+        let text = p.check_conditions(&req).expect("check").expect("refused");
+        let (detailed, code) =
+            p.check_conditions_with_reason(&req).expect("check").expect("refused");
+        assert_eq!(text, detailed);
+        assert_eq!(code, RejectionReason::CustomerNotEligible);
     }
 }
