@@ -24,7 +24,7 @@ import { toToolResultContract } from '../src/mcp/tool-result-contract.js';
 /** Messages that mean the tool itself is broken, whatever its input. */
 export const DEFECT_PATTERNS = [
   /is not a function/i,
-  /Cannot read propert(?:y|ies) of (?:undefined|null)/i,
+  /Cannot read (?:property|properties) of (?:undefined|null)/i,
   /Cannot destructure/i,
   /is not defined/i,
   /is not iterable/i,
