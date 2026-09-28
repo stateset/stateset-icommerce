@@ -18,6 +18,9 @@
       "unitPrice"
     ],
     "OrderOutput": [
+      "discountAmount",
+      "shippingAmount",
+      "taxAmount",
       "totalAmount"
     ],
     "ProductVariantOutput": [
@@ -25,7 +28,8 @@
       "price"
     ],
     "PaymentOutput": [
-      "amount"
+      "amount",
+      "amountRefunded"
     ],
     "RefundOutput": [
       "amount"
@@ -218,6 +222,14 @@
     ],
     "X402IntentOutput": [
       "amountDecimal"
+    ],
+    "BillItemOutput": [
+      "amount",
+      "taxAmount",
+      "unitPrice"
+    ],
+    "ReceiptItemOutput": [
+      "unitCost"
     ]
   },
   "notMoney": {

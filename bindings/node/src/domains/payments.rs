@@ -56,6 +56,11 @@ pub struct PaymentOutput {
     pub amount: f64,
     /// Exact base-10 amount. Prefer this field for all calculations.
     pub amount_exact: String,
+    /// @deprecated Use the `amountRefundedExact` twin; float money will be removed in 2.0.
+    pub amount_refunded: f64,
+    /// Exact base-10 total of COMPLETED refunds. A refund only counts here
+    /// once `completeRefund` settles it; pending refunds are not included.
+    pub amount_refunded_exact: String,
     pub currency: String,
     #[napi(ts_type = "PaymentTransactionStatus")]
     pub status: String,
@@ -69,6 +74,8 @@ impl TryFrom<stateset_core::Payment> for PaymentOutput {
 
     fn try_from(p: stateset_core::Payment) -> Result<Self> {
         let (amount, amount_exact) = money_pair(p.amount, "payment amount")?;
+        let (amount_refunded, amount_refunded_exact) =
+            money_pair(p.amount_refunded, "payment amount refunded")?;
         Ok(Self {
             id: p.id.to_string(),
             payment_number: p.payment_number,
@@ -78,6 +85,8 @@ impl TryFrom<stateset_core::Payment> for PaymentOutput {
             idempotency_key: p.idempotency_key,
             amount,
             amount_exact,
+            amount_refunded,
+            amount_refunded_exact,
             currency: p.currency.to_string(),
             status: format!("{}", p.status),
             version: p.version,
@@ -119,10 +128,17 @@ pub struct RefundOutput {
     pub amount: f64,
     /// Exact base-10 amount. Prefer this field for all calculations.
     pub amount_exact: String,
+    pub currency: String,
     #[napi(ts_type = "RefundStatus")]
     pub status: String,
     pub reason: Option<String>,
+    pub external_id: Option<String>,
+    /// Why the refund failed (set by `failRefund`).
+    pub failure_reason: Option<String>,
+    /// RFC 3339; set when `completeRefund` settles the refund.
+    pub refunded_at: Option<String>,
     pub created_at: String,
+    pub updated_at: String,
     pub idempotency_key: Option<String>,
 }
 
@@ -137,9 +153,14 @@ impl TryFrom<stateset_core::Refund> for RefundOutput {
             payment_id: r.payment_id.to_string(),
             amount,
             amount_exact,
+            currency: r.currency.to_string(),
             status: format!("{}", r.status),
             reason: r.reason,
+            external_id: r.external_id,
+            failure_reason: r.failure_reason,
+            refunded_at: r.refunded_at.map(|t| t.to_rfc3339()),
             created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
             idempotency_key: r.idempotency_key,
         })
     }
@@ -384,6 +405,60 @@ impl Payments {
                 ..Default::default()
             })
             .map_err(|error| wrap(ErrCode::Internal, "Failed to create refund", error))?;
+        convert_output(refund)
+    }
+
+    /// Get a refund by id. `null` when it does not exist.
+    #[napi]
+    pub async fn get_refund(&self, id: String) -> Result<Option<RefundOutput>> {
+        let commerce = self.commerce.get()?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid refund UUID"))?;
+        let refund = commerce
+            .payments()
+            .get_refund(uuid)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get refund", e))?;
+        convert_optional_output(refund)
+    }
+
+    /// Every refund recorded against a payment, in any status.
+    #[napi]
+    pub async fn get_refunds(&self, payment_id: String) -> Result<Vec<RefundOutput>> {
+        let commerce = self.commerce.get()?;
+        let uuid: uuid::Uuid =
+            payment_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid payment UUID"))?;
+        let refunds = commerce
+            .payments()
+            .get_refunds(uuid.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list refunds", e))?;
+        convert_outputs(refunds)
+    }
+
+    /// Settle a pending refund: marks it `completed` and folds its amount
+    /// into the payment's `amountRefunded` (moving the payment to
+    /// `partially_refunded` or `refunded`).
+    #[napi]
+    pub async fn complete_refund(&self, id: String) -> Result<RefundOutput> {
+        let commerce = self.commerce.get()?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid refund UUID"))?;
+        let refund = commerce
+            .payments()
+            .complete_refund(uuid)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to complete refund", e))?;
+        convert_output(refund)
+    }
+
+    /// Mark a pending refund as failed, releasing its reserved amount.
+    #[napi]
+    pub async fn fail_refund(&self, id: String, reason: String) -> Result<RefundOutput> {
+        let commerce = self.commerce.get()?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid refund UUID"))?;
+        let refund = commerce
+            .payments()
+            .fail_refund(uuid, &reason)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to fail refund", e))?;
         convert_output(refund)
     }
 

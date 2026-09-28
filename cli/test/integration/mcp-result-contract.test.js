@@ -151,7 +151,8 @@ describe('the tool result contract on the real server', () => {
   });
 
   it('keeps a binding error code from a thrown engine error', async () => {
-    const out = await applyServer.executeTool('get_order', { identifier: 'not-a-uuid' });
+    // get_order now resolves a non-UUID as an order number, so use a UUID-only read.
+    const out = await applyServer.executeTool('get_payment', { paymentId: 'not-a-uuid' });
     assert.equal(out.ok, false);
     assert.equal(out.failure.code, 'VALIDATION');
   });
