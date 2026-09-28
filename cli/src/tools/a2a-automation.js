@@ -7,6 +7,7 @@
  */
 
 import { z } from 'zod';
+import { A2A_SERVICE_REQUIREMENTS } from '../a2a/service-requirements.js';
 
 export const a2aAutomationTools = [
   // ==========================================================================
@@ -20,7 +21,7 @@ export const a2aAutomationTools = [
     permission: 'write',
     handler: async ({ commerce }) => {
       if (!commerce._billingExecutor) {
-        return { success: false, error: 'Billing executor not initialized' };
+        return { success: false, error: A2A_SERVICE_REQUIREMENTS.billingExecutor };
       }
       return commerce._billingExecutor.tick();
     },
@@ -32,7 +33,7 @@ export const a2aAutomationTools = [
     permission: 'admin',
     handler: async ({ commerce }) => {
       if (!commerce._billingExecutor) {
-        return { success: false, error: 'Billing executor not initialized' };
+        return { success: false, error: A2A_SERVICE_REQUIREMENTS.billingExecutor };
       }
       commerce._billingExecutor.start();
       return { success: true, message: 'Billing executor started' };
@@ -45,7 +46,7 @@ export const a2aAutomationTools = [
     permission: 'admin',
     handler: async ({ commerce }) => {
       if (!commerce._billingExecutor) {
-        return { success: false, error: 'Billing executor not initialized' };
+        return { success: false, error: A2A_SERVICE_REQUIREMENTS.billingExecutor };
       }
       commerce._billingExecutor.stop();
       return { success: true, message: 'Billing executor stopped' };
@@ -58,7 +59,7 @@ export const a2aAutomationTools = [
     permission: 'read',
     handler: async ({ commerce }) => {
       if (!commerce._billingExecutor) {
-        return { success: false, error: 'Billing executor not initialized' };
+        return { success: false, error: A2A_SERVICE_REQUIREMENTS.billingExecutor };
       }
       return commerce._billingExecutor.getMetrics();
     },
@@ -288,7 +289,12 @@ export const a2aAutomationTools = [
     permission: 'read',
     handler: async ({ commerce }) => {
       if (!commerce._sequencerClient) {
-        return { state: 'not_configured', failures: 0, queueDepth: 0 };
+        return {
+          state: 'not_configured',
+          failures: 0,
+          queueDepth: 0,
+          note: A2A_SERVICE_REQUIREMENTS.sequencerClient,
+        };
       }
       return commerce._sequencerClient.getCircuitStatus();
     },
@@ -325,11 +331,15 @@ export const a2aAutomationTools = [
       sagaId: z.string().optional().describe('Optional saga ID for idempotency'),
     },
     permission: 'write',
-    handler: async ({ commerce, params }) => {
-      if (!commerce._sagaOrchestrator) {
-        return { success: false, error: 'Saga orchestrator not initialized' };
-      }
-      return commerce._sagaOrchestrator.execute(params.sagaType, params.context, params.sagaId);
+    handler: async ({ params }) => {
+      // The orchestrator's execute() takes a saga *definition*, not a type
+      // name, and every built-in definition calls services this server does
+      // not provide — refuse explicitly rather than fail mid-saga.
+      return {
+        success: false,
+        error: A2A_SERVICE_REQUIREMENTS.sagaExecute,
+        sagaType: params.sagaType,
+      };
     },
   },
   {

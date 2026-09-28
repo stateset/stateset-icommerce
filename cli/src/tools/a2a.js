@@ -1939,8 +1939,8 @@ export const a2aTools = [
         .describe('Max notifications to quarantine'),
     },
     permission: 'admin',
-    handler: async ({ params, commerce, applyMode }) => {
-      if (!applyMode) {
+    handler: async ({ params, commerce, allowApply }) => {
+      if (!allowApply) {
         return {
           success: false,
           error: 'Quarantining failed webhooks requires --apply flag.',
@@ -1963,8 +1963,8 @@ export const a2aTools = [
       dlqId: z.string().min(1).describe('DLQ entry ID to replay'),
     },
     permission: 'admin',
-    handler: async ({ params, commerce, applyMode }) => {
-      if (!applyMode) {
+    handler: async ({ params, commerce, allowApply }) => {
+      if (!allowApply) {
         return {
           success: false,
           error: 'Replaying DLQ entries requires --apply flag.',
@@ -1996,8 +1996,8 @@ export const a2aTools = [
         .describe('Remove entries older than this many days'),
     },
     permission: 'admin',
-    handler: async ({ params, commerce, applyMode }) => {
-      if (!applyMode) {
+    handler: async ({ params, commerce, allowApply }) => {
+      if (!allowApply) {
         return {
           success: false,
           error: 'Purging DLQ requires --apply flag.',

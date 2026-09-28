@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { A2A_SERVICE_REQUIREMENTS } from '../a2a/service-requirements.js';
 
 export const a2aPlatformTools = [
   // ==========================================================================
@@ -155,7 +156,7 @@ export const a2aPlatformTools = [
         };
       }
       if (!commerce._batchService) {
-        return { success: false, error: 'Batch service not initialized' };
+        return { success: false, error: A2A_SERVICE_REQUIREMENTS.batchService };
       }
       return commerce._batchService.batchPay(params.payments, {
         concurrency: params.concurrency,
@@ -184,7 +185,7 @@ export const a2aPlatformTools = [
     permission: 'write',
     handler: async ({ commerce, params }) => {
       if (!commerce._batchService) {
-        return { success: false, error: 'Batch service not initialized' };
+        return { success: false, error: A2A_SERVICE_REQUIREMENTS.batchService };
       }
       return commerce._batchService.batchRequestQuotes(params.requests);
     },
@@ -202,7 +203,7 @@ export const a2aPlatformTools = [
     permission: 'write',
     handler: async ({ commerce, params, agentConfig }) => {
       if (!commerce._checkpointService) {
-        return { success: false, error: 'Checkpoint service not initialized' };
+        return { success: false, error: A2A_SERVICE_REQUIREMENTS.checkpointService };
       }
       const addr = agentConfig?.walletAddress || 'default';
       await commerce._checkpointService.saveCheckpoint(addr, {
@@ -219,7 +220,7 @@ export const a2aPlatformTools = [
     permission: 'read',
     handler: async ({ commerce, agentConfig }) => {
       if (!commerce._checkpointService) {
-        return { success: false, error: 'Checkpoint service not initialized' };
+        return { success: false, error: A2A_SERVICE_REQUIREMENTS.checkpointService };
       }
       const addr = agentConfig?.walletAddress || 'default';
       const data = await commerce._checkpointService.loadCheckpoint(addr);
@@ -233,7 +234,7 @@ export const a2aPlatformTools = [
     permission: 'read',
     handler: async ({ commerce }) => {
       if (!commerce._checkpointService) {
-        return { success: false, error: 'Checkpoint service not initialized' };
+        return { success: false, error: A2A_SERVICE_REQUIREMENTS.checkpointService };
       }
       return commerce._checkpointService.listCheckpoints();
     },
@@ -345,7 +346,7 @@ export const a2aPlatformTools = [
     permission: 'read',
     handler: async ({ commerce }) => {
       if (!commerce._tickOptimizer) {
-        return { success: false, error: 'Tick optimizer not initialized' };
+        return { success: false, error: A2A_SERVICE_REQUIREMENTS.tickOptimizer };
       }
       return commerce._tickOptimizer.getMetrics();
     },

@@ -48,6 +48,18 @@ impl SqliteAgentCardRepository {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
+    /// Load an agent card on an existing connection (used inside another
+    /// repository's write transaction, e.g. A2A quote/purchase creation).
+    pub(crate) fn get_on(conn: &rusqlite::Connection, id: Uuid) -> Result<Option<AgentCard>> {
+        conn.query_row(
+            "SELECT * FROM agent_cards WHERE id = ?",
+            [id.to_string()],
+            Self::row_to_agent_card,
+        )
+        .optional()
+        .map_err(map_db_error)
+    }
+
     fn row_to_agent_card(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentCard> {
         let supported_networks_json: String = row.get("supported_networks")?;
         let supported_assets_json: String = row.get("supported_assets")?;

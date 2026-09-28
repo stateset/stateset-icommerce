@@ -8,8 +8,8 @@
 #![cfg(feature = "postgres")]
 
 use stateset_core::{
-    CommerceError, CreateX402PaymentIntent, X402Asset, X402CreditAdjustment, X402CreditDirection,
-    X402IntentStatus, X402Network,
+    CommerceError, CreateX402PaymentIntent, X402Asset, X402BatchInclusion, X402CreditAdjustment,
+    X402CreditDirection, X402IntentStatus, X402Network,
 };
 use stateset_db::PostgresDatabase;
 use std::sync::Arc;
@@ -40,6 +40,23 @@ async fn force_status(db: &PostgresDatabase, id: Uuid, status: X402IntentStatus)
         .execute(db.pool())
         .await
         .expect("force status");
+}
+
+/// Force `Sequenced` with a sequence number (the batch leaf commits to it).
+async fn force_sequenced(db: &PostgresDatabase, id: Uuid) {
+    sqlx::query("UPDATE x402_payment_intents SET status = $1, sequence_number = 1 WHERE id = $2")
+        .bind(X402IntentStatus::Sequenced.to_string())
+        .bind(id)
+        .execute(db.pool())
+        .await
+        .expect("force sequenced");
+}
+
+/// A valid inclusion proof for the stored intent in a two-leaf batch.
+async fn inclusion_for(db: &PostgresDatabase, id: Uuid) -> X402BatchInclusion {
+    let stored = db.x402_payment_intents().get_async(id).await.expect("get").expect("exists");
+    let leaf = stored.batch_leaf_hash().expect("leaf");
+    X402BatchInclusion::from_leaves(&[leaf, [7u8; 32]], 0).expect("proof")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -152,21 +169,22 @@ async fn postgres_x402_mark_batched_is_guarded_and_settles_from_batched() {
     let repo = db.x402_payment_intents();
     let intent = create_intent(&db).await;
 
-    let err = repo.mark_batched_async(intent.id, "0xroot", vec![]).await.expect_err("created");
+    let dummy = X402BatchInclusion::from_leaves(&[[1u8; 32], [2u8; 32]], 0).expect("proof");
+    let err = repo.mark_batched_async(intent.id, &dummy).await.expect_err("created");
     assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
-    force_status(&db, intent.id, X402IntentStatus::Sequenced).await;
-    let err = repo.mark_batched_async(intent.id, " ", vec![]).await.expect_err("root required");
+    force_sequenced(&db, intent.id).await;
+    let mut blank = inclusion_for(&db, intent.id).await;
+    blank.merkle_root = " ".into();
+    let err = repo.mark_batched_async(intent.id, &blank).await.expect_err("root required");
     assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
 
-    let batched = repo
-        .mark_batched_async(intent.id, "0xroot", vec!["0xaa".into(), "0xbb".into()])
-        .await
-        .expect("batch");
+    let inclusion = inclusion_for(&db, intent.id).await;
+    let batched = repo.mark_batched_async(intent.id, &inclusion).await.expect("batch");
     assert_eq!(batched.status, X402IntentStatus::Batched);
-    assert_eq!(batched.batch_merkle_root.as_deref(), Some("0xroot"));
-    assert_eq!(batched.inclusion_proof, Some(vec!["0xaa".to_string(), "0xbb".to_string()]));
+    assert_eq!(batched.batch_merkle_root.as_deref(), Some(inclusion.merkle_root.as_str()));
+    assert_eq!(batched.inclusion_proof.as_ref(), Some(&inclusion.inclusion_proof));
 
-    let err = repo.mark_batched_async(intent.id, "0xroot", vec![]).await.expect_err("twice");
+    let err = repo.mark_batched_async(intent.id, &inclusion).await.expect_err("twice");
     assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
     let err = repo.cancel_async(intent.id).await.expect_err("batched cannot be cancelled");
     assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");

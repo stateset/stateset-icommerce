@@ -4,17 +4,40 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::{
-    A2ACommerceRepository, CommerceError, CreateA2APurchase, ItemAvailability, PurchaseStatus,
-    QuotedItem,
+    A2ACommerceRepository, A2ASkill, AgentCardRepository, CommerceError, CreateA2APurchase,
+    CreateAgentCard, ItemAvailability, PurchaseStatus, QuotedItem,
 };
 use stateset_db::SqliteDatabase;
 use uuid::Uuid;
 
+/// Register an agent card that may buy (A2A quotes/purchases require one).
+fn buyer(db: &SqliteDatabase) -> Uuid {
+    agent(db, A2ASkill::Buy)
+}
+
+/// Register an agent card that may sell.
+fn seller(db: &SqliteDatabase) -> Uuid {
+    agent(db, A2ASkill::Sell)
+}
+
+fn agent(db: &SqliteDatabase, skill: A2ASkill) -> Uuid {
+    db.agent_cards()
+        .create(CreateAgentCard {
+            name: format!("{skill} agent"),
+            wallet_address: format!("0xagent-{}", Uuid::new_v4().as_simple()),
+            public_key: "test-public-key".into(),
+            a2a_skills: Some(vec![skill]),
+            ..Default::default()
+        })
+        .expect("register agent card")
+        .id
+}
+
 fn purchase(db: &SqliteDatabase) -> Uuid {
     db.a2a_purchases()
         .create_purchase(CreateA2APurchase {
-            buyer_agent_id: Uuid::new_v4(),
-            seller_agent_id: Uuid::new_v4(),
+            buyer_agent_id: buyer(db),
+            seller_agent_id: seller(db),
             items: vec![QuotedItem {
                 line_number: 1,
                 sku: Some("SKU-1".into()),

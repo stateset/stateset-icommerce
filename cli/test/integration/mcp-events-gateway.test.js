@@ -8,6 +8,8 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 
+import { scaleForLoad, startupBudgetMs } from '../helpers/startup-budget.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const BIN_DIR = path.join(__dirname, '..', '..', 'bin');
@@ -31,8 +33,9 @@ async function waitForExit(processHandle, signal = 'SIGINT') {
   }
 }
 
-const GATEWAY_START_TIMEOUT_MS = 30_000;
-const MCP_REQUEST_TIMEOUT_MS = 15_000;
+const GATEWAY_START_TIMEOUT_MS = startupBudgetMs(30_000);
+const MCP_REQUEST_TIMEOUT_MS = scaleForLoad(15_000);
+const SSE_CONNECT_TIMEOUT_MS = scaleForLoad(4000);
 
 function startGateway(dbPathOrOptions, port = '0') {
   return new Promise((resolve, reject) => {
@@ -349,7 +352,7 @@ function openEventsStream(port, query = '', options = {}) {
             reject(new Error('SSE events stream did not send connected event'));
             req.destroy();
           }
-        }, 4000);
+        }, SSE_CONNECT_TIMEOUT_MS);
 
         res.on('data', onData);
         res.on('error', onResponseError);
@@ -399,7 +402,7 @@ function requestJson(port, route, options = {}) {
   });
 }
 
-function waitForStreamEvent(stream, predicate, timeoutMs = 4000) {
+function waitForStreamEvent(stream, predicate, timeoutMs = scaleForLoad(4000)) {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
     const check = () => {

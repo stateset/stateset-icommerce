@@ -352,8 +352,8 @@
     }
   ],
   "totalAuditedClasses": 32,
-  "totalAuditedMethods": 404,
-  "mappedAuditedMethods": 404,
+  "totalAuditedMethods": 405,
+  "mappedAuditedMethods": 405,
   "uncoveredAuditedMethods": [],
   "staleAuditedMethodMappings": [],
   "invalidAuditedToolReferences": [],
@@ -528,8 +528,8 @@
     },
     {
       "className": "Quality",
-      "methodCount": 15,
-      "mappedMethodCount": 15,
+      "methodCount": 16,
+      "mappedMethodCount": 16,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []

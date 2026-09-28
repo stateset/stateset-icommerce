@@ -317,6 +317,7 @@
       "multiplier"
     ],
     "NcrOutput": [
+      "dispositionQuantity",
       "quantityAffected"
     ],
     "OrderSearchResultOutput": [

@@ -107,5 +107,21 @@ export function createStatesetV2McpServer({ createServer, ...serverOptions }) {
   for (const toolDef of tools) {
     registerAdaptedTool(server, toolDef);
   }
+  // Stop the stateset server's A2A loops and timers when this instance closes
+  // (per request under stateless HTTP, on disconnect under stdio). Both hooks
+  // are needed: `onclose` fires only for a connected instance, and `close()`
+  // may be called on one that never connected. Dispose is idempotent.
+  if (typeof stateset.dispose === 'function') {
+    const originalClose = server.close.bind(server);
+    server.close = (...args) => {
+      stateset.dispose();
+      return originalClose(...args);
+    };
+    const previousOnClose = server.server.onclose;
+    server.server.onclose = () => {
+      stateset.dispose();
+      previousOnClose?.();
+    };
+  }
   return server;
 }
