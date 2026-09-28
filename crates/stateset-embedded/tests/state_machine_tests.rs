@@ -16,8 +16,8 @@ use stateset_embedded::{
     BillingInterval, CancelSubscription, Commerce, CreateBackorder, CreateBom, CreateCustomer,
     CreateInventoryItem, CreateOrder, CreateOrderItem, CreateSerialNumbersBulk, CreateSubscription,
     CreateSubscriptionPlan, CreateWorkOrder, FulfillmentSourceType, Order, OrderStatus,
-    PauseSubscription, ReservationStatus, ReserveSerialNumber, SerialStatus, SubscriptionStatus,
-    WorkOrderStatus,
+    PauseSubscription, PaymentStatus, ReservationStatus, ReserveSerialNumber, SerialStatus,
+    SubscriptionStatus, UpdateOrder, WorkOrderStatus,
 };
 use uuid::Uuid;
 
@@ -87,6 +87,14 @@ fn test_order_state_machine_all_valid_transitions() {
         .expect("Failed to update order status");
     assert_eq!(order.status, OrderStatus::Delivered);
 
+    // Only a paid order can be refunded.
+    commerce
+        .orders()
+        .update(
+            order.id,
+            UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
+        )
+        .expect("record payment");
     let order = commerce
         .orders()
         .update_status(order.id, OrderStatus::Refunded)

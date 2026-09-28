@@ -242,13 +242,38 @@ async fn postgres_allows_refund_with_paid_status() {
         .await
         .expect("update order to delivered");
 
-    let updated = db
+    // Declaring the order paid in the refunding update itself is not enough:
+    // refundability is judged on the stored payment status.
+    let declared = db
         .orders()
         .update_async(
             order.id.into(),
             UpdateOrder {
                 status: Some(OrderStatus::Refunded),
                 payment_status: Some(PaymentStatus::Paid),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(
+        matches!(declared, Err(CommerceError::OrderCannotBeRefunded(_))),
+        "an unpaid order must not become refundable by declaration: {declared:?}"
+    );
+
+    db.orders()
+        .update_async(
+            order.id.into(),
+            UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
+        )
+        .await
+        .expect("record payment");
+    let updated = db
+        .orders()
+        .update_async(
+            order.id.into(),
+            UpdateOrder {
+                status: Some(OrderStatus::Refunded),
+                payment_status: Some(PaymentStatus::Refunded),
                 ..Default::default()
             },
         )

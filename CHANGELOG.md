@@ -8,6 +8,13 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Changed (behaviour, needs a release note)
 
+- **An order can only be refunded if it was paid.** The refund guard (SQLite,
+  PostgreSQL and the kernel) read the payment status supplied in the same
+  update, and `orders.update_status(id, Refunded)` supplies `Refunded`
+  itself, so any order -- including one never paid -- could be marked
+  refunded. Refundability is now judged on the order's stored payment status;
+  record the payment first, then refund.
+
 - **A PostgreSQL store now seeds the same tax rates as a SQLite store.** A
   fresh SQLite store has always seeded US state sales tax, EU/UK VAT
   (standard and reduced) and Canadian sales tax; a fresh PostgreSQL store
