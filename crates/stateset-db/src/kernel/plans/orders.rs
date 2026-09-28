@@ -95,9 +95,11 @@ pub fn plan_order_transition(
         ));
     }
     let next_payment_status = command.payload.payment_status.unwrap_or(order.payment_status);
+    // Refundability is judged on the payment status the order already has,
+    // never on one the same command declares.
     if next_status == OrderStatus::Refunded
         && !matches!(
-            next_payment_status,
+            order.payment_status,
             PaymentStatus::Paid
                 | PaymentStatus::PartiallyPaid
                 | PaymentStatus::Refunded
