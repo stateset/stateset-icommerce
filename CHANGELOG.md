@@ -6,7 +6,59 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.36.0] - 2026-09-28
+
+Agents can run a whole storefront under the strict kernel, every MCP tool
+reports success and failure the same way, and a fresh store charges the right
+tax. This release also closes a set of money and trust holes found by
+exercising every tool against a real store. **Read the behaviour changes
+before upgrading.**
+
 ### Changed (behaviour, needs a release note)
+
+- **The MCP servers serve the `core` tool tier by default** (#263).
+  `stateset-mcp`, `stateset-mcp-http` and `stateset-mcp-events` with no
+  `--profile` now expose the 196 `core` tools instead of all 951; pass
+  `--profile all` or `--domains ...` for more. `--profile core` no longer
+  includes `checkout` (payment links / crypto checkout, not cart checkout),
+  subscriptions, reviews, wishlists or loyalty, which are `extended`.
+  In-process `createStatesetMcpServer` still defaults to `all`.
+- **Public HTTP binds require real security controls** (#240). A
+  non-loopback `ServerBuilder` bind now refuses to start unless authorization
+  and rate limiting are configured (or an operator explicitly acknowledges
+  that a trusted gateway enforces them), and a direct public bind refuses to
+  trust client-supplied `x-actor-id` or forwarding headers.
+- **Teams webhooks must be signed** (#243). `/api/messages` verifies the Bot
+  Connector JWT (Microsoft metadata origin, RS256 key with the `msteams`
+  endorsement, App ID audience, issuer, expiry) before dispatching to the
+  agent. Bot Framework Emulator and Azure Government tokens are not accepted.
+- **Direct channel gateways are preview-only by default** (#244). Discord,
+  Google Chat, Matrix, Signal, Slack, Telegram and WhatsApp gateways default to
+  `allowApply: false`; pass `allowApply: true` explicitly to enable writes.
+- **Every MCP tool answers with one result contract** (#261):
+  `{ ok, preview, result, error?: { code, message, retryable, hint } }`. `ok`
+  is false whenever the tool, its kernel receipt or a gate says it failed --
+  `ship_order` on an order that cannot ship is no longer reported as success.
+  Previews are `ok: true, preview: true` and no longer set `isError`;
+  `executeTool.result` is the full tool result (it was the replay-log copy,
+  truncated at 25 array items / depth 4).
+- **Order payment and fulfillment status follow payments, refunds and
+  shipping** (#265). They were set at checkout and never maintained; a paid,
+  shipped, refunded order still read `pending` / `unfulfilled`.
+- **Configured fraud rules decide the assessment** (#258). `create_assessment`
+  ignored the enabled rules and used a fixed 0.8 cutoff.
+- **Promotions** (#251, #252): `first_order` conditions and first-order
+  promotions can now apply (the order being placed no longer counts as the
+  customer's previous order); condition values are validated when created, so
+  one malformed promotion can no longer break pricing for every cart; a
+  promotion's fixed money amounts apply only in its currency (percentages
+  apply in any).
+- **Go `OrdersAPI.Ship` / `Cancel` use the engine's ship and cancel** (#270).
+  `Ship` was a bare status write: it deducted no stock, settled no
+  reservations and refused a pending order.
+- **Channel API lock and ingest guards are enforced** (#268): an API-locked
+  channel refuses product sync, and purgatory ingest refuses a channel that
+  does not exist or cannot ingest orders.
 
 - **Strict kernel endpoints can run a checkout end to end.** Eleven storefront
   writes are now governed kernel commands, each with a sealed, policy-checked,
@@ -114,11 +166,69 @@ This project follows Keep a Changelog and Semantic Versioning.
   status only, and the payment status keeps saying what the ledger holds --
   record the refund first if it should read `refunded`.
 
+### Added
+
+- **`explain_order` and `explain_cart_pricing` MCP tools** (#262): an order's
+  timeline, exact money reconciliation and flagged inconsistencies; a cart's
+  total with every applied and refused promotion (with reason codes) and the
+  tax recomputed from its address.
+- **Tiered MCP tool profiles** (#263): every tool is `core`, `extended` or
+  `experimental`, and the `core` profile is exactly the core tier.
+- **Binding read APIs** (#267): Node/Python `payments.getRefund` /
+  `getRefunds` / `completeRefund` / `failRefund` and `amountRefunded`;
+  `promotions.listUsage`; `orders.getByNumber` and tax, shipping and discount
+  amounts on orders; line items on Node `createBill`, `createInspection` and
+  `createReceipt` (they were silently dropped) with readers. Promotion
+  refusals carry specific reason codes (`customer_not_eligible`,
+  `product_not_eligible`).
+- **Forkable business profiles** (#235) (`.stateset/business.yaml`, eight
+  vertical starter packs) and a **kernel-restriction compiler** (#239) that
+  tightens an operator-owned kernel policy from a profile.
+- **Real-server test gates** (#257): every MCP tool is called on a fresh store
+  (a crash is a failure; a shrink-only backlog tracks the rest), and a full
+  commerce journey runs through the MCP server in strict and non-strict
+  kernel modes.
+- **Binding parity report and regression gate** (#259): traces which engine
+  operations each binding actually reaches.
+- **`npm run regen`** (#260) rewrites every generated artifact; release
+  hygiene reports every stale artifact in one run; load-aware test budgets.
+
 ### Fixed
 
 - Three SQLite cart writes (`set_shipping_address`, `set_payment`,
   `apply_discount`) ran outside a transaction; they now run in one.
 - `executeTool` returned `result: '[truncated]'` for every governed tool.
+- A fresh SQLite store charged **zero tax**: seeded jurisdiction and rate ids
+  were bare hex the engine could not match, and seeded states had no parent
+  country (#255). Canadian sales tax is corrected: HST replaces GST instead of
+  stacking on it, Quebec QST is not compounded on GST, Nova Scotia is 14% from
+  2025-04-01, and Newfoundland and Labrador, Prince Edward Island and the
+  territories are covered. Seeded subscription plans are subscribable.
+- About 40 MCP tool calls, and 29 calls in the `executeCommand` library
+  surface, named Node binding methods that do not exist, so every real call
+  failed (#253, #254). A static guard now checks every call against the
+  binding. `apply_cart_promotions` works.
+- About 30 A2A MCP tools failed because their services were never attached
+  (#256); a saga purchase no longer releases escrow when fulfillment is unmet.
+- `get_order` accepts an order number, as it always claimed to (#267).
+- Compliance exports (GDPR export/erasure, SOC 2 evidence, audit trail,
+  summary) crashed on a real A2A store: they queried tables and columns the
+  store does not create.
+- Closing an NCR through `update_ncr` records `closed_at` (#271).
+- Concurrent HTTP requests with the same `Idempotency-Key` could both run the
+  create handler; they are now serialized per tenant and key (#245).
+- The Rust quickstart compiles for a reader who installed only
+  `stateset-sdk`, and CI now runs it (#237).
+
+### Security
+
+- Dependency advisories: `sharp` 0.35.4 and `@solana/spl-token` replaced by a
+  local SPL adapter (byte-for-byte goldens) (#238); unused Matrix / Bot
+  Framework SDKs removed (#241); jayson's `uuid` pinned (#248);
+  `@humanfs/node` 0.16.8 (#249); `cmov` 0.5.4; OpenTelemetry 0.33 (Baggage
+  allocation), with the OTLP pipeline ported and tested; admin on Vitest 4
+  (#273). Remaining: `stream-json` through `@solana/web3.js` -> `jayson`
+  (the fixed line is ESM-only).
 
 ## [1.35.3] - 2026-09-26
 
