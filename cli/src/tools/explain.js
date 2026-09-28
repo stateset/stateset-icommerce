@@ -939,3 +939,5 @@ export const explainTools = [
     handler: explainCartPricing,
   },
 ];
+
+export default explainTools;
