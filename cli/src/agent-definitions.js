@@ -80,6 +80,7 @@ When the user asks to create, update, or delete something, first explain what wo
       'mcp__stateset-commerce__set_cart_tax',
       'mcp__stateset-commerce__get_abandoned_carts',
       'mcp__stateset-commerce__get_expired_carts',
+      'mcp__stateset-commerce__explain_cart_pricing',
       // Also need customer lookup for checkout
       'mcp__stateset-commerce__get_customer',
       'mcp__stateset-commerce__list_customers',
@@ -110,6 +111,7 @@ Guide customers through the shopping cart and checkout process.
 - complete_checkout - Convert to order (requires --apply)
 - cancel_cart, abandon_cart, expire_cart - End cart lifecycle (requires --apply)
 - get_abandoned_carts, get_expired_carts - Recovery and cleanup views
+- explain_cart_pricing - Explain a cart's total: promotions applied/refused, tax, shipping (read-only)
 
 ## Safety Rules
 1. Preview totals before completing checkout
@@ -126,6 +128,7 @@ If --apply is not set, write operations show a preview instead of executing.`,
     tools: [
       'mcp__stateset-commerce__list_orders',
       'mcp__stateset-commerce__get_order',
+      'mcp__stateset-commerce__explain_order',
       'mcp__stateset-commerce__create_order',
       'mcp__stateset-commerce__update_order_status',
       'mcp__stateset-commerce__ship_order',
@@ -145,6 +148,7 @@ pending → confirmed → processing → shipped → delivered
 ## Available Tools
 - list_orders - List all orders
 - get_order - Get order details with items
+- explain_order - Explain an order end to end: timeline, money, inconsistencies (read-only)
 - create_order - Create new order (requires --apply)
 - update_order_status - Change status (requires --apply)
 - ship_order - Ship with tracking (requires --apply)
@@ -210,6 +214,7 @@ If --apply is not set, write operations show a preview instead of executing.`,
       'mcp__stateset-commerce__approve_return',
       'mcp__stateset-commerce__reject_return',
       'mcp__stateset-commerce__get_order',
+      'mcp__stateset-commerce__explain_order',
       'mcp__stateset-commerce__list_orders',
     ],
     systemPrompt: `You are a returns processing specialist for StateSet Commerce.
@@ -315,6 +320,7 @@ Note: All analytics tools are read-only. No --apply flag needed.`,
       'mcp__stateset-commerce__get_promotion',
       'mcp__stateset-commerce__update_promotion',
       'mcp__stateset-commerce__create_promotion',
+      'mcp__stateset-commerce__add_promotion_condition',
       'mcp__stateset-commerce__delete_promotion',
       'mcp__stateset-commerce__activate_promotion',
       'mcp__stateset-commerce__deactivate_promotion',
@@ -325,7 +331,9 @@ Note: All analytics tools are read-only. No --apply flag needed.`,
       'mcp__stateset-commerce__get_active_promotions',
       'mcp__stateset-commerce__check_promotion_validity',
       'mcp__stateset-commerce__apply_cart_promotions',
+      'mcp__stateset-commerce__quote_promotions',
       'mcp__stateset-commerce__record_promotion_usage',
+      'mcp__stateset-commerce__explain_cart_pricing',
       // Also need cart access for applying promotions
       'mcp__stateset-commerce__get_cart',
       'mcp__stateset-commerce__apply_cart_discount',
@@ -356,6 +364,7 @@ draft → active → (paused) → expired
 - get_promotion - Get promotion details
 - update_promotion - Update campaign details (requires --apply)
 - create_promotion - Create new promotion (requires --apply)
+- add_promotion_condition - Gate a promotion on a condition, e.g. first order or minimum subtotal (requires --apply)
 - delete_promotion - Delete promotion (requires --apply)
 - activate_promotion - Make promotion live (requires --apply)
 - deactivate_promotion - Pause promotion (requires --apply)
@@ -366,6 +375,8 @@ draft → active → (paused) → expired
 - get_active_promotions - Get currently running promotions
 - check_promotion_validity - Verify if a promotion can still apply
 - apply_cart_promotions - Apply discounts to cart (requires --apply)
+- quote_promotions - Price a basket and explain refused promotions, writing nothing
+- explain_cart_pricing - Explain why a cart's coupon applied or was refused (reason codes)
 - record_promotion_usage - Record applied discount usage (requires --apply)
 
 ## Safety Rules
@@ -693,6 +704,7 @@ If --apply is not set, write operations show a preview instead of executing.`,
       'mcp__stateset-commerce__ingest_payment_provider_webhook',
       // Also need order context
       'mcp__stateset-commerce__get_order',
+      'mcp__stateset-commerce__explain_order',
       'mcp__stateset-commerce__list_orders',
     ],
     systemPrompt: `You are a payment processing specialist for StateSet Commerce.

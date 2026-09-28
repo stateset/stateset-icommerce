@@ -39,7 +39,6 @@ const mockReview = {
   body: 'Really enjoyed this',
   status: 'pending',
   verifiedPurchase: true,
-  flagged: false,
   helpfulCount: 5,
   reportedCount: 0,
   createdAt: '2026-02-01T00:00:00Z',
@@ -51,9 +50,14 @@ const mockSummary = {
   averageRating: 4.2,
   totalReviews: 50,
   ratingDistribution: [2, 3, 5, 20, 20],
-  verifiedPurchaseCount: 40,
-  recommendedPercentage: 92,
 };
+
+const emptySummary = (productId) => ({
+  productId,
+  averageRating: 0,
+  totalReviews: 0,
+  ratingDistribution: [0, 0, 0, 0, 0],
+});
 
 // ============================================================================
 // Mock commerce factory
@@ -64,22 +68,13 @@ function makeReviewCommerce(overrides = {}) {
     reviews: {
       create: async (data) => ({ ...mockReview, ...data }),
       get: async (id) => (id === 'rev_001' ? mockReview : null),
+      // Only methods the real Reviews binding class has. The engine returns a
+      // zeroed summary (never null) for a product with no approved reviews.
       list: async () => [mockReview],
-      count: async () => 1,
-      approve: async (id) => ({ ...mockReview, id, status: 'approved' }),
-      reject: async (id, reason) => ({
-        ...mockReview,
-        id,
-        status: 'rejected',
-        rejectionReason: reason,
-      }),
-      getSummary: async (productId) => (productId === 'prod_001' ? mockSummary : null),
-      flag: async (id, flagData) => ({
-        ...mockReview,
-        id,
-        flagged: true,
-        flagReason: flagData.reason,
-      }),
+      update: async (id, input) => ({ ...mockReview, id, ...input }),
+      getSummary: async (productId) =>
+        productId === 'prod_001' ? mockSummary : emptySummary(productId),
+      markReported: async () => undefined,
       ...overrides,
     },
   };
@@ -277,7 +272,6 @@ describe('list_reviews', () => {
         calledFilter = filter;
         return [];
       },
-      count: async () => 0,
     });
     await tool.handler({
       commerce,
@@ -286,13 +280,14 @@ describe('list_reviews', () => {
     assert.equal(calledFilter.productId, 'prod_001');
     assert.equal(calledFilter.status, 'approved');
     assert.equal(calledFilter.minRating, 3);
+    assert.equal(calledFilter.limit, 1000);
+    assert.equal(calledFilter.offset, 0);
   });
 
   it('slices results to limit', async () => {
     const manyReviews = Array.from({ length: 10 }, (_, i) => ({ ...mockReview, id: `rev_00${i}` }));
     const commerce = makeReviewCommerce({
       list: async () => manyReviews,
-      count: async () => 10,
     });
     const result = await tool.handler({ commerce, params: { limit: 3 } });
     assert.equal(result.returned, 3);
@@ -340,7 +335,7 @@ describe('approve_review', () => {
 
   it('returns error when commerce throws', async () => {
     const commerce = makeReviewCommerce({
-      approve: async () => {
+      update: async () => {
         throw new Error('review not found');
       },
     });
@@ -371,10 +366,10 @@ describe('reject_review', () => {
   it('rejects review with reason when --apply is set', async () => {
     let calledId, calledReason;
     const commerce = makeReviewCommerce({
-      reject: async (id, reason) => {
+      update: async (id, input) => {
         calledId = id;
-        calledReason = reason;
-        return { ...mockReview, id, status: 'rejected' };
+        calledReason = input;
+        return { ...mockReview, id, ...input };
       },
     });
     const result = await tool.handler({
@@ -385,12 +380,14 @@ describe('reject_review', () => {
     assert.equal(result.success, true);
     assert.ok(result.message.includes('rejected'));
     assert.equal(calledId, 'rev_001');
-    assert.equal(calledReason, 'Violates policy');
+    assert.deepStrictEqual(calledReason, { status: 'rejected' });
+    assert.equal(result.reason, 'Violates policy');
+    assert.equal(result.reasonPersisted, false);
   });
 
   it('returns error when commerce throws', async () => {
     const commerce = makeReviewCommerce({
-      reject: async () => {
+      update: async () => {
         throw new Error('reject failed');
       },
     });
@@ -418,8 +415,7 @@ describe('get_review_summary', () => {
     assert.equal(result.summary.averageRating, 4.2);
     assert.equal(result.summary.totalReviews, 50);
     assert.equal(result.summary.ratingDistribution.length, 5);
-    assert.equal(result.summary.verifiedPurchaseCount, 40);
-    assert.equal(result.summary.recommendedPercentage, 92);
+    assert.equal(result.summary.verifiedPurchaseCount, undefined);
   });
 
   it('returns success: false when no reviews exist for product', async () => {
@@ -428,7 +424,7 @@ describe('get_review_summary', () => {
       params: { productId: 'prod_no_reviews' },
     });
     assert.equal(result.success, false);
-    assert.ok(result.error.includes('No reviews'));
+    assert.ok(result.error.includes('No approved reviews'));
   });
 
   it('returns error when commerce throws', async () => {
@@ -462,12 +458,15 @@ describe('flag_review', () => {
   });
 
   it('flags review with reason when --apply is set', async () => {
-    let calledId, calledData;
+    let reportedId, calledId, calledData;
     const commerce = makeReviewCommerce({
-      flag: async (id, data) => {
+      markReported: async (id) => {
+        reportedId = id;
+      },
+      update: async (id, data) => {
         calledId = id;
         calledData = data;
-        return { ...mockReview, id, flagged: true };
+        return { ...mockReview, id, ...data, reportedCount: 1 };
       },
     });
     const result = await tool.handler({
@@ -477,9 +476,12 @@ describe('flag_review', () => {
     });
     assert.equal(result.success, true);
     assert.ok(result.message.includes('flagged'));
+    assert.equal(reportedId, 'rev_001');
     assert.equal(calledId, 'rev_001');
-    assert.equal(calledData.reason, 'fake');
-    assert.equal(calledData.details, 'Suspicious account');
+    assert.deepStrictEqual(calledData, { status: 'flagged' });
+    assert.equal(result.reason, 'fake');
+    assert.equal(result.details, 'Suspicious account');
+    assert.equal(result.reasonPersisted, false);
   });
 
   it('flags review without optional details', async () => {
@@ -489,12 +491,12 @@ describe('flag_review', () => {
       allowApply: true,
     });
     assert.equal(result.success, true);
-    assert.equal(result.review.flagged, true);
+    assert.equal(result.review.status, 'flagged');
   });
 
   it('returns error when commerce throws', async () => {
     const commerce = makeReviewCommerce({
-      flag: async () => {
+      markReported: async () => {
         throw new Error('flag operation failed');
       },
     });

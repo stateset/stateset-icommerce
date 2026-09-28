@@ -661,7 +661,7 @@ impl SqliteInventoryRepository {
             },
         )?;
 
-        if balance.quantity_available < quantity {
+        if !balance.can_allocate(quantity) {
             return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                 CommerceError::InsufficientStock {
                     sku,

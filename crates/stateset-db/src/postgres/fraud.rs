@@ -142,11 +142,25 @@ impl PgFraudRepository {
             .collect();
 
         let risk_score = FraudAssessment::calculate_risk_score(&signals);
-        let decision =
-            if risk_score >= 0.8 { FraudDecision::Review } else { FraudDecision::Accept };
 
         let signals_json = serde_json::to_value(&signals)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        // The enabled rules decide, read in the same transaction as the write.
+        // Postgres twin of the SQLite create_assessment.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let rules = sqlx::query_as::<_, FraudRuleRow>(
+            "SELECT id, name, description, signal_type, threshold, action, enabled,
+             created_at, updated_at
+             FROM fraud_rules WHERE enabled = TRUE ORDER BY created_at DESC",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_db_error)?
+        .into_iter()
+        .map(Self::row_to_rule)
+        .collect::<Result<Vec<_>>>()?;
+        let decision = FraudAssessment::decide(risk_score, &rules, &signals);
 
         sqlx::query(
             "INSERT INTO fraud_assessments (order_id, risk_score, signals, decision,
@@ -159,9 +173,10 @@ impl PgFraudRepository {
         .bind(decision.to_string())
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_assessment_async(input.order_id).await?.ok_or(CommerceError::NotFound)
     }

@@ -25,39 +25,68 @@ function findTool(name) {
 // Mock factory
 // ============================================================================
 
+// Shape of the binding's WishlistItemOutput (items have no id; they are keyed
+// by productId).
 const mockWishlistItem = {
-  id: 'wi_001',
   productId: 'prod_001',
   variantId: 'var_001',
   note: 'Love this one',
+  quantity: 2,
   priority: 1,
+  addedAt: '2026-01-01T00:00:00Z',
 };
 
+// Shape of the binding's WishlistOutput.
 const mockWishlist = {
   id: 'wl_001',
   customerId: 'cust_001',
   name: 'Birthday List',
-  visibility: 'private',
-  itemCount: 1,
+  isPublic: false,
   items: [mockWishlistItem],
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-02-01T00:00:00Z',
 };
 
+const mockProduct = { id: 'prod_001', name: 'Widget', status: 'active' };
+const mockVariant = {
+  id: 'var_001',
+  productId: 'prod_001',
+  sku: 'W-1',
+  name: 'Blue',
+  price: 19.99,
+  priceExact: '19.99',
+  isDefault: true,
+};
+
 function makeWishlistCommerce(overrides = {}) {
+  const calls = [];
+  // Only methods the real Wishlists / Products / Carts binding classes have.
   return {
+    calls,
     wishlists: {
       create: async (data) => ({ ...mockWishlist, ...data }),
       get: async (_id) => mockWishlist,
       list: async (_filters) => [mockWishlist],
       addItem: async (_wlId, data) => ({ ...mockWishlistItem, ...data }),
-      removeItem: async (_wlId, _itemId) => undefined,
-      convertToCart: async (_wlId, _opts) => ({
-        cartId: 'cart_001',
-        itemsAdded: 1,
-        itemsUnavailable: 0,
-      }),
+      removeItem: async (wlId, productId) => {
+        calls.push(['wishlists.removeItem', wlId, productId]);
+      },
       ...overrides,
+    },
+    products: {
+      get: async (id) => (id === mockProduct.id ? mockProduct : null),
+      getVariant: async (id) => (id === mockVariant.id ? mockVariant : null),
+      getVariants: async (productId) => (productId === mockProduct.id ? [mockVariant] : []),
+    },
+    carts: {
+      create: async (input) => {
+        calls.push(['carts.create', input]);
+        return { id: 'cart_001', customerId: input.customerId };
+      },
+      addItemExact: async (cartId, item) => {
+        calls.push(['carts.addItemExact', cartId, item]);
+        return { id: 'ci_1', cartId, ...item };
+      },
     },
   };
 }
@@ -280,6 +309,7 @@ describe('wishlistTools -- get_wishlist handler', () => {
     assert.equal(result.wishlist.id, 'wl_001');
     assert.equal(result.wishlist.customerId, 'cust_001');
     assert.equal(result.wishlist.name, 'Birthday List');
+    // visibility is derived from isPublic; itemCount from items.length.
     assert.equal(result.wishlist.visibility, 'private');
     assert.equal(result.wishlist.itemCount, 1);
     assert.ok(Array.isArray(result.wishlist.items));
@@ -354,10 +384,11 @@ describe('wishlistTools -- list_wishlists handler', () => {
 });
 
 describe('wishlistTools -- convert_wishlist_to_cart handler', () => {
-  it('converts wishlist to cart when allowApply is true', async () => {
+  it('creates a cart for the customer and adds each item at its variant price', async () => {
     const tool = findTool('convert_wishlist_to_cart');
+    const commerce = makeWishlistCommerce();
     const result = await tool.handler({
-      commerce: makeWishlistCommerce(),
+      commerce,
       params: { wishlistId: 'wl_001', clearWishlist: true },
       allowApply: true,
     });
@@ -365,7 +396,23 @@ describe('wishlistTools -- convert_wishlist_to_cart handler', () => {
     assert.equal(result.message, 'Wishlist converted to cart');
     assert.equal(result.cartId, 'cart_001');
     assert.equal(result.itemsAdded, 1);
-    assert.equal(result.itemsUnavailable, 0);
+    assert.deepStrictEqual(result.itemsUnavailable, []);
+    assert.deepStrictEqual(commerce.calls, [
+      ['carts.create', { customerId: 'cust_001' }],
+      [
+        'carts.addItemExact',
+        'cart_001',
+        {
+          productId: 'prod_001',
+          variantId: 'var_001',
+          sku: 'W-1',
+          name: 'Widget - Blue',
+          quantity: 2,
+          unitPrice: '19.99',
+        },
+      ],
+      ['wishlists.removeItem', 'wl_001', 'prod_001'],
+    ]);
   });
 });
 
@@ -429,7 +476,7 @@ describe('wishlistTools -- error paths', () => {
     );
   });
 
-  it('convert_wishlist_to_cart throws when commerce.wishlists.convertToCart is missing', async () => {
+  it('convert_wishlist_to_cart throws when commerce.wishlists.get is missing', async () => {
     const tool = findTool('convert_wishlist_to_cart');
     await assert.rejects(
       () =>

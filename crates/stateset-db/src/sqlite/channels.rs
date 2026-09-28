@@ -104,6 +104,21 @@ impl SqliteChannelRepository {
     }
 }
 
+/// Load a channel by id on the caller's connection/transaction (deleted
+/// channels included), for write paths that must decide on its lock state or
+/// type inside their own transaction.
+pub(crate) fn load_channel_conn(
+    conn: &rusqlite::Connection,
+    id: &str,
+) -> rusqlite::Result<Option<Channel>> {
+    conn.query_row(
+        "SELECT * FROM channels WHERE id = ?",
+        [id],
+        SqliteChannelRepository::row_to_channel,
+    )
+    .optional()
+}
+
 impl ChannelRepository for SqliteChannelRepository {
     fn create(&self, input: CreateChannel) -> Result<Channel> {
         let id = ChannelId::new();
@@ -269,6 +284,16 @@ impl ChannelRepository for SqliteChannelRepository {
         let id_str = id.to_string();
         let now_str = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
+            // Product sync is an external API mutation: a locked channel's SKU
+            // mappings are frozen exactly like its settings (see
+            // `Channel::api_locked`). Decided on the write transaction.
+            let channel =
+                load_channel_conn(tx, &id_str)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+            if channel.is_mutation_blocked() {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict("channel is API-locked".into()),
+                )));
+            }
             let mut affected: u64 = 0;
             for item in &items {
                 if item.delete {

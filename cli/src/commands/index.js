@@ -90,6 +90,7 @@ import * as supplierSkus from './supplier-skus.js';
 import * as topologySnapshots from './topology-snapshots.js';
 import * as transferOrders from './transfer-orders.js';
 import * as unitsOfMeasure from './units-of-measure.js';
+import * as explain from './explain.js';
 import * as vendorCredits from './vendor-credits.js';
 import * as vendorReturns from './vendor-returns.js';
 
@@ -121,6 +122,7 @@ export const commands = {
   'topology-snapshots': topologySnapshots,
   'transfer-orders': transferOrders,
   'units-of-measure': unitsOfMeasure,
+  explain,
   'vendor-credits': vendorCredits,
   'vendor-returns': vendorReturns,
   customers,

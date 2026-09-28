@@ -4,6 +4,106 @@
 
 import { z } from 'zod';
 
+/**
+ * Normalise an optional ISO-8601 date/datetime to the RFC 3339 string the
+ * binding parses. Absent stays `undefined` (the binding's `Option<String>`
+ * refuses `null`); an unparseable value throws a validation error.
+ * @param {string | undefined} value
+ * @param {string} field
+ * @returns {string | undefined}
+ */
+function toRfc3339(value, field) {
+  if (value === undefined || value === null || value === '') return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`${field} must be an ISO 8601 date or datetime, got "${value}"`);
+  }
+  return date.toISOString();
+}
+
+/**
+ * Drop undefined/null keys so absent optionals reach the binding as absent.
+ * @template {Record<string, unknown>} T
+ * @param {T} input
+ * @returns {T}
+ */
+function omitAbsent(input) {
+  return /** @type {T} */ (
+    Object.fromEntries(
+      Object.entries(input).filter(([, value]) => value !== undefined && value !== null),
+    )
+  );
+}
+
+const CONDITION_TYPES = [
+  'minimum_subtotal',
+  'minimum_quantity',
+  'product_in_cart',
+  'category_in_cart',
+  'sku_in_cart',
+  'customer_group',
+  'first_order',
+  'customer_email_domain',
+  'shipping_country',
+  'shipping_state',
+  'payment_method',
+  'cart_item_count',
+  'customer_id',
+];
+
+const CONDITION_OPERATORS = [
+  'equals',
+  'not_equals',
+  'greater_than',
+  'greater_than_or_equal',
+  'less_than',
+  'less_than_or_equal',
+  'contains',
+  'not_contains',
+  'in',
+  'not_in',
+];
+
+const conditionSchema = z.object({
+  conditionType: z.enum(CONDITION_TYPES).describe('What the condition tests'),
+  operator: z.enum(CONDITION_OPERATORS).describe('How the value is compared'),
+  value: z
+    .string()
+    .describe(
+      'Value compared against: a decimal (minimum_subtotal), an integer (minimum_quantity, cart_item_count), true/false (first_order), or a comma-separated list (SKUs, UUIDs, countries)',
+    ),
+  isRequired: z
+    .boolean()
+    .optional()
+    .describe(
+      'Required conditions must all hold; otherwise at least one optional one must (default true)',
+    ),
+});
+
+/** The parts of a promotion evaluation an agent acts on, money as exact strings. */
+function summarizeEvaluation(result) {
+  return {
+    originalSubtotal: result.originalSubtotalExact,
+    totalDiscount: result.totalDiscountExact,
+    discountedSubtotal: result.discountedSubtotalExact,
+    shippingDiscount: result.shippingDiscountExact,
+    grandTotal: result.grandTotalExact,
+    appliedPromotions: result.appliedPromotions.map((p) => ({
+      promotionId: p.promotionId,
+      name: p.promotionName,
+      type: p.discountType,
+      discountAmount: p.discountAmountExact,
+      couponCode: p.couponCode,
+    })),
+    rejectedPromotions: (result.rejectedPromotions || []).map((p) => ({
+      promotionId: p.promotionId,
+      couponCode: p.couponCode,
+      reason: p.reason,
+      reasonCode: p.reasonCode,
+    })),
+  };
+}
+
 export const promotionTools = [
   {
     name: 'list_promotions',
@@ -43,6 +143,7 @@ export const promotionTools = [
           trigger: p.trigger,
           percentageOff: p.percentageOff,
           fixedAmountOff: p.fixedAmountOff,
+          fixedAmountOffExact: p.fixedAmountOffExact,
           startsAt: p.startsAt,
           endsAt: p.endsAt,
           usageCount: p.usageCount,
@@ -81,7 +182,9 @@ export const promotionTools = [
           target: promotion.target,
           percentageOff: promotion.percentageOff,
           fixedAmountOff: promotion.fixedAmountOff,
+          fixedAmountOffExact: promotion.fixedAmountOffExact,
           maxDiscount: promotion.maxDiscountAmount,
+          maxDiscountExact: promotion.maxDiscountAmountExact,
           startsAt: promotion.startsAt,
           endsAt: promotion.endsAt,
           usageCount: promotion.usageCount,
@@ -122,7 +225,7 @@ export const promotionTools = [
   {
     name: 'create_promotion',
     description:
-      'Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, and tiered discounts.',
+      'Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, tiered, and first-order discounts, optionally scoped to SKUs and gated by conditions.',
     inputSchema: {
       name: z.string().min(1).describe('Promotion name (e.g., "Summer Sale")'),
       type: z
@@ -132,8 +235,11 @@ export const promotionTools = [
           'buy_x_get_y',
           'free_shipping',
           'tiered_discount',
+          'first_order_discount',
         ])
-        .describe('Type of discount'),
+        .describe(
+          'Type of discount (first_order_discount applies only to a customer with no prior orders)',
+        ),
       trigger: z
         .enum(['automatic', 'coupon_code', 'both'])
         .default('automatic')
@@ -149,6 +255,14 @@ export const promotionTools = [
       description: z.string().optional().describe('Public description'),
       startsAt: z.string().optional().describe('Start date (ISO 8601)'),
       endsAt: z.string().optional().describe('End date (ISO 8601)'),
+      applicableSkus: z
+        .array(z.string().min(1))
+        .optional()
+        .describe('Only these SKUs are discounted (default: the whole order)'),
+      conditions: z
+        .array(conditionSchema)
+        .optional()
+        .describe('Conditions the cart must meet, validated before anything is stored'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -159,28 +273,26 @@ export const promotionTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: params,
         };
-      const typeMap = {
-        percentage_off: 'PercentageOff',
-        fixed_amount_off: 'FixedAmountOff',
-        buy_x_get_y: 'BuyXGetY',
-        free_shipping: 'FreeShipping',
-        tiered_discount: 'TieredDiscount',
-      };
-      const triggerMap = { automatic: 'Automatic', coupon_code: 'CouponCode', both: 'Both' };
-      const promotion = await commerce.promotions().create({
-        name: params.name,
-        description: params.description,
-        promotionType: typeMap[params.type],
-        trigger: triggerMap[params.trigger],
-        target: 'Order',
-        stacking: 'Stackable',
-        percentageOff: params.percentageOff,
-        fixedAmountOff: params.fixedAmountOff,
-        maxDiscountAmount: params.maxDiscountAmount,
-        startsAt: params.startsAt ? new Date(params.startsAt) : null,
-        endsAt: params.endsAt ? new Date(params.endsAt) : null,
-        priority: 1,
-      });
+      // The tool's snake_case enums are the binding's PromotionTypeInput /
+      // PromotionTriggerInput literals verbatim.
+      const promotion = await commerce.promotions().create(
+        omitAbsent({
+          name: params.name,
+          description: params.description,
+          promotionType: params.type,
+          trigger: params.trigger ?? 'automatic',
+          target: 'order',
+          stacking: 'stackable',
+          percentageOff: params.percentageOff,
+          fixedAmountOff: params.fixedAmountOff,
+          maxDiscountAmount: params.maxDiscountAmount,
+          startsAt: toRfc3339(params.startsAt, 'startsAt'),
+          endsAt: toRfc3339(params.endsAt, 'endsAt'),
+          applicableSkus: params.applicableSkus,
+          conditions: params.conditions,
+          priority: 1,
+        }),
+      );
       return {
         success: true,
         message: 'Promotion created successfully (status: draft)',
@@ -191,6 +303,39 @@ export const promotionTools = [
           name: promotion.name,
           type: promotion.promotionType,
           status: promotion.status,
+          conditions: promotion.conditions,
+        },
+      };
+    },
+  },
+  {
+    name: 'add_promotion_condition',
+    description:
+      'Add a condition to an existing promotion (minimum subtotal, first order, shipping country, SKU in cart, ...). The condition is validated before it is stored. Requires --apply.',
+    inputSchema: {
+      promotionId: z.string().min(1).describe('Promotion ID (UUID)'),
+      condition: conditionSchema,
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply)
+        return {
+          success: false,
+          error: 'Add condition operation not allowed. The --apply flag must be set.',
+          hint: 'Run with --apply to enable write operations.',
+          wouldAdd: params,
+        };
+      const promotion = await commerce
+        .promotions()
+        .addCondition(params.promotionId, params.condition);
+      return {
+        success: true,
+        message: 'Condition added',
+        promotion: {
+          id: promotion.id,
+          name: promotion.name,
+          status: promotion.status,
+          conditions: promotion.conditions,
         },
       };
     },
@@ -262,8 +407,13 @@ export const promotionTools = [
     inputSchema: {
       promotionId: z.string().min(1).describe('Promotion ID to create coupon for'),
       code: z.string().min(1).describe('Coupon code (e.g., "SUMMER25")'),
-      usageLimit: z.number().optional().describe('Maximum number of times this coupon can be used'),
-      perCustomerLimit: z.number().optional().describe('Max uses per customer'),
+      usageLimit: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Maximum number of times this coupon can be used'),
+      perCustomerLimit: z.number().int().positive().optional().describe('Max uses per customer'),
       startsAt: z.string().optional().describe('Coupon valid from (ISO 8601)'),
       endsAt: z.string().optional().describe('Coupon valid until (ISO 8601)'),
     },
@@ -276,14 +426,16 @@ export const promotionTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: params,
         };
-      const coupon = await commerce.promotions().createCoupon({
-        promotionId: params.promotionId,
-        code: params.code.toUpperCase(),
-        usageLimit: params.usageLimit,
-        perCustomerLimit: params.perCustomerLimit,
-        startsAt: params.startsAt ? new Date(params.startsAt) : null,
-        endsAt: params.endsAt ? new Date(params.endsAt) : null,
-      });
+      const coupon = await commerce.promotions().createCoupon(
+        omitAbsent({
+          promotionId: params.promotionId,
+          code: params.code.toUpperCase(),
+          usageLimit: params.usageLimit,
+          perCustomerLimit: params.perCustomerLimit,
+          startsAt: toRfc3339(params.startsAt, 'startsAt'),
+          endsAt: toRfc3339(params.endsAt, 'endsAt'),
+        }),
+      );
       return {
         success: true,
         message: 'Coupon code created',
@@ -342,6 +494,7 @@ export const promotionTools = [
           discountType: promotion?.promotionType,
           percentageOff: promotion?.percentageOff,
           fixedAmountOff: promotion?.fixedAmountOff,
+          fixedAmountOffExact: promotion?.fixedAmountOffExact,
           usageRemaining: coupon.usageLimit ? coupon.usageLimit - coupon.usageCount : 'unlimited',
         },
       };
@@ -397,6 +550,7 @@ export const promotionTools = [
           trigger: p.trigger,
           percentageOff: p.percentageOff,
           fixedAmountOff: p.fixedAmountOff,
+          fixedAmountOffExact: p.fixedAmountOffExact,
           endsAt: p.endsAt,
         })),
       };
@@ -429,28 +583,44 @@ export const promotionTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldApplyTo: cartId,
         };
-      const result = await commerce.applyCartPromotions(cartId);
-      return {
-        success: true,
-        cartId,
-        originalSubtotal: result.originalSubtotal,
-        totalDiscount: result.totalDiscount,
-        discountedSubtotal: result.discountedSubtotal,
-        shippingDiscount: result.shippingDiscount,
-        grandTotal: result.grandTotal,
-        appliedPromotions: result.appliedPromotions.map((p) => ({
-          name: p.promotionName,
-          type: p.discountType,
-          discountAmount: p.discountAmount,
-          description: p.description,
-          couponCode: p.couponCode,
-        })),
-        rejectedPromotions:
-          result.rejectedPromotions?.map((p) => ({
-            name: p.promotionName,
-            reason: p.rejectionReason,
-          })) || [],
-      };
+      const result = await commerce.promotions().applyToCart(cartId);
+      return { success: true, cartId, ...summarizeEvaluation(result) };
+    },
+  },
+  {
+    name: 'quote_promotions',
+    description:
+      'Price a basket against every active promotion and the given coupon codes WITHOUT writing anything: returns the discount, what applied, and what was refused and why. Use it before a cart exists, or to explain why a coupon does not apply.',
+    inputSchema: {
+      lineItems: z
+        .array(
+          z.object({
+            id: z.string().min(1).describe('Line identifier'),
+            sku: z.string().optional(),
+            productId: z.string().optional().describe('Product UUID'),
+            variantId: z.string().optional().describe('Variant UUID'),
+            categoryIds: z.array(z.string()).optional().describe('Category UUIDs'),
+            quantity: z.number().int().positive(),
+            unitPrice: z.number().nonnegative(),
+            lineTotal: z.number().nonnegative(),
+          }),
+        )
+        .describe('Basket lines'),
+      subtotal: z.number().nonnegative().describe('Basket subtotal'),
+      couponCodes: z.array(z.string().min(1)).optional(),
+      shippingAmount: z.number().nonnegative().optional(),
+      customerId: z
+        .string()
+        .optional()
+        .describe('Customer UUID; enables customer-targeted and first-order promotions'),
+      shippingCountry: z.string().optional(),
+      shippingState: z.string().optional(),
+      currency: z.string().optional().describe('ISO 4217 code (default: the store base currency)'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const result = await commerce.promotions().apply(params);
+      return { success: true, ...summarizeEvaluation(result) };
     },
   },
   {

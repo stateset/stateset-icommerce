@@ -6,6 +6,7 @@
 
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { z } from 'zod';
 
 import { taxTools } from '../../src/tools/tax.js';
 import { __resetTaxProviderState } from '../../src/tools/providers/tax.js';
@@ -402,5 +403,92 @@ describe('void_tax_transaction', () => {
     const second = await ingestWebhookTool.handler({ params, allowApply: true });
     assert.equal(first.webhook.idempotent, false);
     assert.equal(second.webhook.idempotent, true);
+  });
+});
+
+describe('Tax record tools — binding input shapes', () => {
+  const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+  it('create_tax_rate defaults effectiveFrom to today (YYYY-MM-DD), omitting absent optionals', async () => {
+    const calls = [];
+    const commerce = {
+      tax: {
+        createRate: async (input) => {
+          calls.push(input);
+          return { id: 'rate-1', ...input };
+        },
+      },
+    };
+    const tool = findTool('create_tax_rate');
+    await tool.handler({
+      commerce,
+      params: { jurisdictionId: 'j-1', taxType: 'sales_tax', rate: 0.0725, name: 'CA state' },
+      allowApply: true,
+    });
+    await tool.handler({
+      commerce,
+      params: {
+        jurisdictionId: 'j-1',
+        taxType: 'vat',
+        rate: 0.2,
+        name: 'UK VAT',
+        effectiveFrom: '2026-01-01',
+        effectiveTo: '2026-12-31',
+      },
+      allowApply: true,
+    });
+    assert.equal(calls.length, 2);
+    const { effectiveFrom, ...rest } = calls[0];
+    assert.match(effectiveFrom, ISO_DAY);
+    assert.deepStrictEqual(rest, {
+      jurisdictionId: 'j-1',
+      taxType: 'sales_tax',
+      rate: 0.0725,
+      name: 'CA state',
+    });
+    assert.equal(calls[1].effectiveFrom, '2026-01-01');
+    assert.equal(calls[1].effectiveTo, '2026-12-31');
+  });
+
+  it('create_tax_rate refuses a non YYYY-MM-DD effectiveFrom at the schema', () => {
+    const schema = z.object(findTool('create_tax_rate').inputSchema);
+    const base = { jurisdictionId: 'j', taxType: 'vat', rate: 0.1, name: 'n' };
+    assert.equal(schema.safeParse({ ...base, effectiveFrom: '2026-01-01' }).success, true);
+    assert.equal(
+      schema.safeParse({ ...base, effectiveFrom: '2026-01-01T00:00:00Z' }).success,
+      false,
+    );
+  });
+
+  it('create_tax_exemption omits an absent expiresAt instead of sending null', async () => {
+    const calls = [];
+    const commerce = {
+      tax: {
+        createExemption: async (input) => {
+          calls.push(input);
+          return { id: 'ex-1', ...input };
+        },
+      },
+    };
+    const tool = findTool('create_tax_exemption');
+    await tool.handler({
+      commerce,
+      params: { customerId: 'c-1', exemptionType: 'resale' },
+      allowApply: true,
+    });
+    await tool.handler({
+      commerce,
+      params: { customerId: 'c-1', exemptionType: 'resale', expiresAt: '2027-01-01' },
+      allowApply: true,
+    });
+    const { effectiveFrom, ...rest } = calls[0];
+    assert.match(effectiveFrom, ISO_DAY);
+    assert.deepStrictEqual(rest, {
+      customerId: 'c-1',
+      exemptionType: 'resale',
+      jurisdictionIds: [],
+      exemptCategories: [],
+    });
+    assert.equal(calls[1].expiresAt, '2027-01-01');
   });
 });

@@ -229,22 +229,30 @@ fn payment_method_condition_fails_closed() {
 }
 
 #[test]
-fn unsupported_operator_for_a_condition_fails_closed() {
-    // `product_in_cart > <uuid>` is meaningless. It must refuse, not apply.
+fn unsupported_operator_for_a_condition_is_refused_at_create() {
+    // `product_in_cart > <uuid>` is meaningless. It used to be stored and then
+    // refuse at every evaluation; it is now refused when written. Rows stored
+    // before that still fail closed (see the core test
+    // `a_stored_condition_with_an_inapplicable_operator_still_fails_closed`).
     let commerce = new_commerce();
-    pct_promo(
-        &commerce,
-        "Nonsense operator",
-        vec![required(
-            ConditionType::ProductInCart,
-            ConditionOperator::GreaterThan,
-            &Uuid::new_v4().to_string(),
-        )],
-    );
+    let err = commerce
+        .promotions()
+        .create(CreatePromotion {
+            name: "Nonsense operator".into(),
+            promotion_type: PromotionType::PercentageOff,
+            trigger: PromotionTrigger::Automatic,
+            percentage_off: Some(dec!(0.10)),
+            conditions: Some(vec![required(
+                ConditionType::ProductInCart,
+                ConditionOperator::GreaterThan,
+                &Uuid::new_v4().to_string(),
+            )]),
+            ..Default::default()
+        })
+        .expect_err("an inapplicable operator is refused at create");
+    assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
 
-    let result = apply(&commerce, cart());
-
-    assert_refused(&result, "an inapplicable operator");
+    assert_eq!(apply(&commerce, cart()).total_discount, Decimal::ZERO);
 }
 
 #[test]
