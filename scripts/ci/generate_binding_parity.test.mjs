@@ -356,13 +356,13 @@ test('gate: loss, unlisted new gap, stale gap and unrecorded gain all fail', () 
 test('baseline exemptions and aliases must name real engine methods', () => {
   const errors = validateBaselineConfig(
     {
-      exempt: { all: { 'orders.cancel': 'ok', 'orders.cancle': 'typo' } },
+      exempt: { all: { 'orders.cancel': 'ok', 'orders.not_a_method': 'no such method' } },
       aliases: { 'orders.void_order': 'cancel', 'promotions.redeem': 'redeem' },
     },
     engine(),
   );
   assert.deepEqual(errors, [
-    'Exemption all:orders.cancle does not name an engine method; fix or remove it.',
+    'Exemption all:orders.not_a_method does not name an engine method; fix or remove it.',
     'Alias promotions.redeem -> redeem does not name an engine method; fix or remove it.',
   ]);
 });
