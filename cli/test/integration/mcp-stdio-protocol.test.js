@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { ALL_DOMAIN_TOOLS } from '../../src/tools/domain-registry.js';
 import { AGENTIC_RUNTIME_TOOLS } from '../../src/mcp/agentic-runtime-tools.js';
 import { toolTier } from '../../src/tools/tool-tiers.js';
+import { startupBudgetMs } from '../helpers/startup-budget.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(__dirname, '../../bin/stateset-mcp.js');
@@ -85,10 +86,11 @@ function createClient(args = []) {
     );
   });
 
-  const request = (message, timeoutMs = 30_000) =>
+  // The first request on a fresh child also absorbs the server's boot cost.
+  const request = (message, timeoutMs = startupBudgetMs(30_000)) =>
     new Promise((resolve, reject) => {
       const timer = setTimeout(
-        () => reject(new Error(`timed out waiting for id ${message.id}`)),
+        () => reject(new Error(`timed out waiting for id ${message.id} after ${timeoutMs}ms`)),
         timeoutMs,
       );
       pending.set(message.id, { resolve, reject, timer });

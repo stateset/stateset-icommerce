@@ -85,7 +85,8 @@ impl AsyncQuality {
         self.db.quality().list_ncrs_async(filter).await
     }
 
-    /// Close an NCR. Idempotent; a `Cancelled` NCR is refused.
+    /// Close an NCR. Idempotent; a `Cancelled` NCR is refused, and so is one
+    /// with no disposition.
     pub async fn close_ncr(&self, id: Uuid) -> Result<NonConformance> {
         self.db.quality().close_ncr_async(id).await
     }

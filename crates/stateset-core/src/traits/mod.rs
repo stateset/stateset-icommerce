@@ -185,9 +185,10 @@ pub(crate) use crate::models::{
     ValidationSummary, VectorSearchResult, Warehouse, WarehouseFilter, Warranty, WarrantyClaim,
     WarrantyClaimFilter, WarrantyFilter, Wave, WaveFilter, Wishlist, WishlistFilter, WishlistItem,
     WorkOrder, WorkOrderFilter, WorkOrderMaterial, WorkOrderTask, WriteOff, WriteOffFilter,
-    X402Asset, X402CheckoutResult, X402CreditAccount, X402CreditAdjustment, X402CreditTransaction,
-    X402CreditTransactionFilter, X402Network, X402PaymentIntent, X402PaymentIntentFilter, Zone,
-    ZoneShippingMethod, ZoneShippingMethodFilter, ZoneShippingRate, ZoneShippingRateRequest,
+    X402Asset, X402BatchInclusion, X402CheckoutResult, X402CreditAccount, X402CreditAdjustment,
+    X402CreditTransaction, X402CreditTransactionFilter, X402Network, X402PaymentIntent,
+    X402PaymentIntentFilter, Zone, ZoneShippingMethod, ZoneShippingMethodFilter, ZoneShippingRate,
+    ZoneShippingRateRequest,
 };
 pub(crate) use crate::models::{
     AdjustBinLevel, BinLevel, BinMovement, BinReconciliation, CreateWarehouseBin, MoveBetweenBins,

@@ -480,9 +480,9 @@ pub(crate) use stateset_core::{
     A2APurchase, A2APurchaseFilter, A2ASkill, AgentCard, AgentCardFilter, CreateA2APurchase,
     CreateA2AQuote, CreateAgentCard, CreateX402PaymentIntent, PurchaseStatus, QuoteStatus,
     SignX402PaymentIntent, SkillQuote, SkillQuoteFilter, TrustLevel, UpdateAgentCard, X402Asset,
-    X402CreditAccount, X402CreditAdjustment, X402CreditDirection, X402CreditTransaction,
-    X402CreditTransactionFilter, X402IntentStatus, X402Network, X402PaymentIntent,
-    X402PaymentIntentFilter, to_smallest_unit,
+    X402BatchInclusion, X402CreditAccount, X402CreditAdjustment, X402CreditDirection,
+    X402CreditTransaction, X402CreditTransactionFilter, X402IntentStatus, X402Network,
+    X402PaymentIntent, X402PaymentIntentFilter, to_smallest_unit,
 };
 pub(crate) use stateset_core::{
     CreateCustomObject, CreateCustomObjectType, CustomObject, CustomObjectFilter, CustomObjectType,
