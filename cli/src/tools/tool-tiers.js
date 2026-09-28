@@ -49,12 +49,9 @@ export const EXPERIMENTAL_REASONS = Object.freeze({
   erc8004: 'on-chain identity registry; needs a registry database and chain',
   treasury: 'on-chain stablecoin treasury; needs a configured chain and token',
   checkout:
-    'payment links and crypto checkout; state lives in ~/.stateset/a2a.db, not the --db store',
+    'converting a payment link mints order, payment and escrow ids without creating any of them in the store; link totals are floats',
   'circuit-breaker':
-    'agent spending breakers; state lives in ~/.stateset/a2a.db, not the --db store',
-  compliance:
-    'reads ~/.stateset/a2a.db, not the --db store; GDPR/SOC2 exports crash (smoke backlog)',
-  catalog: 'agent product catalog; state lives in ~/.stateset/a2a.db, not the --db store',
+    'breaker state is held in process memory, not the store: a tripped breaker is closed again after a restart',
   // Tools
   x402_settle_intent_onchain: 'submits an on-chain settlement transaction',
   x402_execute_agent_payment: 'needs an agent signing key (wallet)',
@@ -135,6 +132,8 @@ export const DOMAIN_TIERS = Object.freeze({
   'production-batches': 'extended',
   'supplier-skus': 'extended',
   'inbound-shipments': 'extended',
+  compliance: 'extended',
+  catalog: 'extended',
 
   // experimental -- see EXPERIMENTAL_REASONS
   sync: 'experimental',
@@ -153,8 +152,6 @@ export const DOMAIN_TIERS = Object.freeze({
   treasury: 'experimental',
   checkout: 'experimental',
   'circuit-breaker': 'experimental',
-  compliance: 'experimental',
-  catalog: 'experimental',
 });
 
 /** Tools whose tier differs from their domain's. */

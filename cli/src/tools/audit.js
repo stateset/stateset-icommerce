@@ -8,6 +8,23 @@
 import { z } from 'zod';
 
 /**
+ * The audit log of the server this tool runs in (`context.getAuditStore`, or
+ * the sibling of `context.dbPath`), never the per-machine `~/.stateset/audit.db`.
+ *
+ * @param {object} ctx - tool handler context
+ */
+async function resolveAuditStore(ctx) {
+  if (typeof ctx?.getAuditStore === 'function') return ctx.getAuditStore();
+  if (ctx?.dbPath && ctx.dbPath !== ':memory:') {
+    const { getAuditStoreForDb } = await import('../audit-store.js');
+    return getAuditStoreForDb(ctx.dbPath);
+  }
+  throw new Error(
+    'This tool needs the server audit log (context.getAuditStore or a file dbPath); it does not fall back to ~/.stateset.',
+  );
+}
+
+/**
  * Audit tool definitions
  */
 export const auditTools = [
@@ -35,10 +52,9 @@ export const auditTools = [
         .describe('Maximum entries to return (default: 50)'),
     },
     permission: 'read',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const { getAuditStore } = await import('../audit-store.js');
-        const store = getAuditStore();
+        const store = await resolveAuditStore(ctx);
         const entries = store.query({
           tool: params.tool || null,
           result: params.result || null,
@@ -64,10 +80,9 @@ export const auditTools = [
       since: z.string().min(1).optional().describe('ISO 8601 timestamp to summarize from'),
     },
     permission: 'read',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const { getAuditStore } = await import('../audit-store.js');
-        const store = getAuditStore();
+        const store = await resolveAuditStore(ctx);
         const totalCount = store.count();
 
         // Query recent entries for breakdown
@@ -123,10 +138,9 @@ export const auditTools = [
       format: z.enum(['json', 'csv']).optional().describe('Export format (default: json)'),
     },
     permission: 'admin',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const { getAuditStore } = await import('../audit-store.js');
-        const store = getAuditStore();
+        const store = await resolveAuditStore(ctx);
         const exported = store.export({
           since: params.since || null,
           limit: params.limit || 10000,
@@ -174,7 +188,7 @@ export const auditTools = [
       'Run audit log retention cleanup. Removes entries older than the configured retention period (default: 90 days).',
     inputSchema: {},
     permission: 'admin',
-    handler: async ({ allowApply }) => {
+    handler: async ({ allowApply, ...ctx }) => {
       if (!allowApply) {
         return {
           success: false,
@@ -184,8 +198,7 @@ export const auditTools = [
         };
       }
       try {
-        const { getAuditStore } = await import('../audit-store.js');
-        const store = getAuditStore();
+        const store = await resolveAuditStore(ctx);
         const beforeCount = store.count();
         store.cleanup();
         const afterCount = store.count();

@@ -136,18 +136,6 @@
     {
       "tool": "a2a_join_results",
       "reason": "Fan-out coordinator not initialized"
-    },
-    {
-      "tool": "export_gdpr_data",
-      "reason": "no such table: agent_cards (compliance reads ~/.stateset/a2a.db; the table is missing on a fresh home)"
-    },
-    {
-      "tool": "delete_gdpr_data",
-      "reason": "no such table: agent_cards (compliance reads ~/.stateset/a2a.db; the table is missing on a fresh home)"
-    },
-    {
-      "tool": "soc2_evidence",
-      "reason": "no such table: agent_cards (compliance reads ~/.stateset/a2a.db; the table is missing on a fresh home)"
     }
   ]
 }

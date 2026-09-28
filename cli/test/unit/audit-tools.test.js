@@ -2,6 +2,29 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { auditTools } from '../../src/tools/audit.js';
+import { AuditStore } from '../../src/audit-store.js';
+
+// The server hands each tool its own audit log (context.getAuditStore). Use an
+// in-memory one: these tests must never touch ~/.stateset/audit.db.
+const auditStore = new AuditStore({ dbPath: ':memory:' });
+const CTX = { getAuditStore: () => auditStore };
+
+describe('auditTools — store scoping', () => {
+  it('refuses without a server audit log instead of falling back to the home directory', async () => {
+    const tool = auditTools.find((t) => t.name === 'audit_query');
+    const result = await tool.handler({ params: {} });
+    assert.equal(result.success, false);
+    assert.match(result.error, /does not fall back to ~\/\.stateset/);
+  });
+
+  it('reads the audit log the context provides', async () => {
+    auditStore.log({ tool: 'scoped_probe', params: {}, result: 'allowed', level: 'read' });
+    const tool = auditTools.find((t) => t.name === 'audit_query');
+    const result = await tool.handler({ ...CTX, params: { tool: 'scoped_probe' } });
+    assert.equal(result.success, true);
+    assert.equal(result.count, 1);
+  });
+});
 // AuditStore falls back cleanly when the native SQLite binding is unavailable,
 // so these handler tests validate the real success path in both environments.
 
@@ -68,7 +91,10 @@ describe('auditTools — audit_query handler', () => {
   const byName = Object.fromEntries(auditTools.map((t) => [t.name, t]));
 
   it('returns success or catches error gracefully', async () => {
-    const result = await byName['audit_query'].handler({ params: {} });
+    const result = await byName['audit_query'].handler({
+      ...CTX,
+      params: {},
+    });
     assert.ok('success' in result);
     if (result.success) {
       assert.ok('count' in result);
@@ -81,6 +107,7 @@ describe('auditTools — audit_query handler', () => {
 
   it('accepts filter parameters', async () => {
     const result = await byName['audit_query'].handler({
+      ...CTX,
       params: { tool: 'list_customers', result: 'denied', limit: 10 },
     });
     assert.ok('success' in result);
@@ -88,6 +115,7 @@ describe('auditTools — audit_query handler', () => {
 
   it('accepts since parameter', async () => {
     const result = await byName['audit_query'].handler({
+      ...CTX,
       params: { since: '2026-01-01T00:00:00Z' },
     });
     assert.ok('success' in result);
@@ -95,7 +123,10 @@ describe('auditTools — audit_query handler', () => {
 
   it('default limit is 50', async () => {
     // Verify the handler doesn't crash with empty params
-    const result = await byName['audit_query'].handler({ params: {} });
+    const result = await byName['audit_query'].handler({
+      ...CTX,
+      params: {},
+    });
     assert.ok('success' in result);
   });
 });
@@ -108,7 +139,10 @@ describe('auditTools — audit_summary handler', () => {
   const byName = Object.fromEntries(auditTools.map((t) => [t.name, t]));
 
   it('returns summary shape on success', async () => {
-    const result = await byName['audit_summary'].handler({ params: {} });
+    const result = await byName['audit_summary'].handler({
+      ...CTX,
+      params: {},
+    });
     if (result.success) {
       assert.ok('totalEntries' in result);
       assert.ok('queriedEntries' in result);
@@ -120,13 +154,17 @@ describe('auditTools — audit_summary handler', () => {
 
   it('accepts since parameter', async () => {
     const result = await byName['audit_summary'].handler({
+      ...CTX,
       params: { since: '2026-01-01T00:00:00Z' },
     });
     assert.ok('success' in result);
   });
 
   it('returns denialRate as percentage string', async () => {
-    const result = await byName['audit_summary'].handler({ params: {} });
+    const result = await byName['audit_summary'].handler({
+      ...CTX,
+      params: {},
+    });
     if (result.success) {
       assert.ok(result.denialRate.endsWith('%'));
     }
@@ -141,7 +179,10 @@ describe('auditTools — audit_export handler', () => {
   const byName = Object.fromEntries(auditTools.map((t) => [t.name, t]));
 
   it('returns json format by default', async () => {
-    const result = await byName['audit_export'].handler({ params: {} });
+    const result = await byName['audit_export'].handler({
+      ...CTX,
+      params: {},
+    });
     if (result.success) {
       assert.equal(result.format, 'json');
       assert.ok('exportedAt' in result);
@@ -152,6 +193,7 @@ describe('auditTools — audit_export handler', () => {
 
   it('returns csv format when requested', async () => {
     const result = await byName['audit_export'].handler({
+      ...CTX,
       params: { format: 'csv' },
     });
     if (result.success) {
@@ -163,6 +205,7 @@ describe('auditTools — audit_export handler', () => {
 
   it('respects limit parameter', async () => {
     const result = await byName['audit_export'].handler({
+      ...CTX,
       params: { limit: 5 },
     });
     if (result.success) {
@@ -172,6 +215,7 @@ describe('auditTools — audit_export handler', () => {
 
   it('respects since parameter', async () => {
     const result = await byName['audit_export'].handler({
+      ...CTX,
       params: { since: '2099-01-01T00:00:00Z' },
     });
     if (result.success) {
@@ -189,6 +233,7 @@ describe('auditTools — audit_retention handler', () => {
 
   it('requires --apply flag', async () => {
     const result = await byName['audit_retention'].handler({
+      ...CTX,
       params: {},
       allowApply: false,
     });
@@ -200,6 +245,7 @@ describe('auditTools — audit_retention handler', () => {
 
   it('runs cleanup when allowApply is true', async () => {
     const result = await byName['audit_retention'].handler({
+      ...CTX,
       params: {},
       allowApply: true,
     });
@@ -213,6 +259,7 @@ describe('auditTools — audit_retention handler', () => {
 
   it('returns entriesRemoved >= 0', async () => {
     const result = await byName['audit_retention'].handler({
+      ...CTX,
       params: {},
       allowApply: true,
     });
@@ -232,6 +279,7 @@ describe('auditTools — CSV export edge cases', () => {
 
   it('CSV header contains all expected columns', async () => {
     const result = await byName['audit_export'].handler({
+      ...CTX,
       params: { format: 'csv' },
     });
     if (result.success) {
@@ -249,6 +297,7 @@ describe('auditTools — CSV export edge cases', () => {
 
   it('CSV has header + data rows', async () => {
     const result = await byName['audit_export'].handler({
+      ...CTX,
       params: { format: 'csv' },
     });
     if (result.success) {

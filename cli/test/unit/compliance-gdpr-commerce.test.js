@@ -10,93 +10,14 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { createComplianceService } from '../../src/compliance/exports.js';
+import { A2A_SCHEMA as REAL_A2A_SCHEMA } from '../../src/a2a/store/schema.js';
+import { CB_SCHEMA } from '../../src/a2a/circuit-breaker.js';
 
 // ---------------------------------------------------------------------------
-// A2A schema (minimal — just enough for the compliance service to initialize)
+// A2A schema — the real store schema, not a hand-written copy that can drift
 // ---------------------------------------------------------------------------
 
-const A2A_SCHEMA = `
-CREATE TABLE IF NOT EXISTS a2a_payments (
-  id TEXT PRIMARY KEY,
-  status TEXT NOT NULL DEFAULT 'pending',
-  sender_address TEXT NOT NULL,
-  recipient_address TEXT NOT NULL,
-  amount INTEGER NOT NULL,
-  amount_decimal REAL NOT NULL,
-  asset TEXT NOT NULL DEFAULT 'USDC',
-  network TEXT NOT NULL DEFAULT 'set_chain',
-  memo TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  completed_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS a2a_disputes (
-  id TEXT PRIMARY KEY,
-  status TEXT NOT NULL DEFAULT 'filed',
-  escrow_id TEXT NOT NULL,
-  filed_by TEXT NOT NULL,
-  filed_against TEXT NOT NULL,
-  reason TEXT NOT NULL,
-  category TEXT NOT NULL DEFAULT 'non_delivery',
-  amount_disputed INTEGER NOT NULL,
-  amount_decimal REAL NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  resolved_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS a2a_circuit_breaker_events (
-  id TEXT PRIMARY KEY,
-  agent_name TEXT NOT NULL,
-  event_type TEXT NOT NULL,
-  reason TEXT,
-  amount REAL,
-  state_before TEXT,
-  state_after TEXT,
-  metadata TEXT,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS a2a_spending_ledger (
-  id TEXT PRIMARY KEY,
-  agent_name TEXT NOT NULL,
-  amount REAL NOT NULL,
-  success INTEGER NOT NULL DEFAULT 1,
-  error TEXT,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS agent_cards (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  wallet_address TEXT UNIQUE NOT NULL,
-  description TEXT,
-  trust_level TEXT DEFAULT 'sandbox',
-  active INTEGER DEFAULT 1,
-  created_at TEXT,
-  updated_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS a2a_notification_log (
-  id TEXT PRIMARY KEY,
-  recipient_address TEXT NOT NULL,
-  endpoint_url TEXT NOT NULL DEFAULT '',
-  event_type TEXT NOT NULL,
-  payload TEXT NOT NULL DEFAULT '{}',
-  status TEXT NOT NULL DEFAULT 'pending',
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS a2a_sla_violations (
-  id TEXT PRIMARY KEY,
-  sla_id TEXT NOT NULL,
-  service_id TEXT NOT NULL,
-  metric TEXT NOT NULL DEFAULT 'latency',
-  severity TEXT NOT NULL DEFAULT 'warning',
-  created_at TEXT NOT NULL
-);
-`;
+const A2A_SCHEMA = `${REAL_A2A_SCHEMA}\n${CB_SCHEMA}`;
 
 // ---------------------------------------------------------------------------
 // Commerce schema — mirrors main commerce database tables

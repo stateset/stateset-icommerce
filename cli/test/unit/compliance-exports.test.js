@@ -9,131 +9,19 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { createComplianceService } from '../../src/compliance/exports.js';
+import { A2A_SCHEMA } from '../../src/a2a/store/schema.js';
+import { CB_SCHEMA } from '../../src/a2a/circuit-breaker.js';
 
 // ---------------------------------------------------------------------------
-// Schema — mirrors tables the compliance service queries
+// Schema — the REAL A2A store schema plus the circuit breaker's tables.
+//
+// This used to be a hand-written copy, and it drifted: it kept `agent_cards`,
+// `filed_by`/`filed_against` and `metric` after the store renamed them, so
+// these tests passed while export_gdpr_data, delete_gdpr_data and
+// soc2_evidence crashed on every real store ("no such table: agent_cards").
 // ---------------------------------------------------------------------------
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS a2a_payments (
-  id TEXT PRIMARY KEY,
-  status TEXT NOT NULL DEFAULT 'pending',
-  sender_agent_id TEXT,
-  sender_address TEXT NOT NULL,
-  recipient_agent_id TEXT,
-  recipient_address TEXT NOT NULL,
-  amount INTEGER NOT NULL,
-  amount_decimal REAL NOT NULL,
-  asset TEXT NOT NULL DEFAULT 'USDC',
-  network TEXT NOT NULL DEFAULT 'set_chain',
-  memo TEXT,
-  reference_type TEXT,
-  reference_id TEXT,
-  idempotency_key TEXT UNIQUE,
-  intent_id TEXT,
-  tx_hash TEXT,
-  block_number INTEGER,
-  metadata TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  completed_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS a2a_disputes (
-  id TEXT PRIMARY KEY,
-  status TEXT NOT NULL DEFAULT 'filed',
-  escrow_id TEXT NOT NULL,
-  quote_id TEXT,
-  filed_by TEXT NOT NULL,
-  filed_against TEXT NOT NULL,
-  reason TEXT NOT NULL,
-  category TEXT NOT NULL DEFAULT 'non_delivery',
-  amount_disputed INTEGER NOT NULL,
-  amount_decimal REAL NOT NULL,
-  asset TEXT NOT NULL DEFAULT 'USDC',
-  resolution_type TEXT,
-  resolution_amount INTEGER,
-  resolution_note TEXT,
-  resolved_by TEXT,
-  evidence_deadline TEXT,
-  review_deadline TEXT,
-  metadata TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  resolved_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS a2a_circuit_breaker_events (
-  id TEXT PRIMARY KEY,
-  agent_name TEXT NOT NULL,
-  event_type TEXT NOT NULL,
-  reason TEXT,
-  amount REAL,
-  state_before TEXT,
-  state_after TEXT,
-  metadata TEXT,
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_cb_events_agent ON a2a_circuit_breaker_events(agent_name);
-CREATE INDEX IF NOT EXISTS idx_cb_events_type ON a2a_circuit_breaker_events(event_type);
-
-CREATE TABLE IF NOT EXISTS a2a_spending_ledger (
-  id TEXT PRIMARY KEY,
-  agent_name TEXT NOT NULL,
-  amount REAL NOT NULL,
-  success INTEGER NOT NULL DEFAULT 1,
-  error TEXT,
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_spending_agent ON a2a_spending_ledger(agent_name);
-CREATE INDEX IF NOT EXISTS idx_spending_created ON a2a_spending_ledger(created_at);
-
-CREATE TABLE IF NOT EXISTS agent_cards (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  wallet_address TEXT UNIQUE NOT NULL,
-  public_key TEXT,
-  supported_networks TEXT DEFAULT '["set_chain"]',
-  supported_assets TEXT DEFAULT '["USDC"]',
-  a2a_skills TEXT DEFAULT '["buy","sell","quote"]',
-  endpoint_url TEXT,
-  description TEXT,
-  trust_level TEXT DEFAULT 'sandbox',
-  active INTEGER DEFAULT 1,
-  suspended_at TEXT,
-  created_at TEXT,
-  updated_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS a2a_notification_log (
-  id TEXT PRIMARY KEY,
-  recipient_address TEXT NOT NULL,
-  endpoint_url TEXT NOT NULL DEFAULT '',
-  event_type TEXT NOT NULL,
-  payload TEXT NOT NULL DEFAULT '{}',
-  signature TEXT,
-  status TEXT NOT NULL DEFAULT 'pending',
-  attempts INTEGER NOT NULL DEFAULT 0,
-  last_attempt_at TEXT,
-  last_error TEXT,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS a2a_sla_violations (
-  id TEXT PRIMARY KEY,
-  sla_id TEXT NOT NULL,
-  service_id TEXT NOT NULL,
-  violation_type TEXT NOT NULL DEFAULT 'breach',
-  expected_value REAL NOT NULL DEFAULT 0,
-  actual_value REAL NOT NULL DEFAULT 0,
-  metric TEXT NOT NULL DEFAULT 'latency',
-  severity TEXT NOT NULL DEFAULT 'warning',
-  penalty_amount REAL,
-  resolved INTEGER NOT NULL DEFAULT 0,
-  metadata TEXT,
-  created_at TEXT NOT NULL
-);
-`;
+const SCHEMA = `${A2A_SCHEMA}\n${CB_SCHEMA}`;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -218,7 +106,7 @@ function seedAgentCard(store, opts = {}) {
   const now = new Date().toISOString();
   store.db
     .prepare(
-      `INSERT INTO agent_cards (id, name, wallet_address, description, trust_level, active, created_at, updated_at)
+      `INSERT INTO a2a_runtime_agent_cards (id, name, wallet_address, description, trust_level, active, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
@@ -239,8 +127,8 @@ function seedNotifications(store, count, opts = {}) {
     const created = new Date(now - i * 86400000).toISOString();
     store.db
       .prepare(
-        `INSERT INTO a2a_notification_log (id, recipient_address, endpoint_url, event_type, payload, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO a2a_notification_log (id, recipient_address, endpoint_url, event_type, payload, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         `notif-${i}`,
@@ -249,6 +137,7 @@ function seedNotifications(store, count, opts = {}) {
         opts.eventType || 'payment.completed',
         opts.payload || '{"test": true}',
         opts.status || 'delivered',
+        created,
         created,
       );
   }
@@ -260,8 +149,8 @@ function seedDisputes(store, count, opts = {}) {
     const created = new Date(now - i * 86400000).toISOString();
     store.db
       .prepare(
-        `INSERT INTO a2a_disputes (id, status, escrow_id, filed_by, filed_against, reason, category, amount_disputed, amount_decimal, asset, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO a2a_disputes (id, status, escrow_id, claimant_address, respondent_address, reason, category, amount_decimal, asset, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         opts.idPrefix ? `${opts.idPrefix}-${i}` : `dispute-${i}`,
@@ -271,8 +160,7 @@ function seedDisputes(store, count, opts = {}) {
         opts.filedAgainst || '0xRespondent',
         opts.reason || 'Non-delivery',
         opts.category || 'non_delivery',
-        (opts.amount || 50) * 100,
-        opts.amount || 50,
+        String(opts.amount || 50),
         opts.asset || 'USDC',
         created,
         created,
@@ -286,14 +174,14 @@ function seedSLAViolations(store, count, opts = {}) {
     const created = new Date(now - i * 86400000).toISOString();
     store.db
       .prepare(
-        `INSERT INTO a2a_sla_violations (id, sla_id, service_id, metric, severity, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO a2a_sla_violations (id, sla_id, service_id, violation_type, expected_value, actual_value, severity, created_at)
+       VALUES (?, ?, ?, ?, 0, 0, ?, ?)`,
       )
       .run(
         `sla-v-${i}`,
         opts.slaId || `sla-${i}`,
         opts.serviceId || 'svc-1',
-        opts.metric || 'latency',
+        opts.violationType || 'latency',
         opts.severity || 'warning',
         created,
       );
@@ -716,11 +604,38 @@ describe('deleteGDPRData', () => {
   it('deletes agent card data', () => {
     seedAgentCard(store, { walletAddress: '0xDelete' });
     const result = svc.deleteGDPRData('0xDelete');
-    assert.ok(result.deleted.some((d) => d.table === 'agent_cards'));
+    assert.ok(result.deleted.some((d) => d.table === 'a2a_runtime_agent_cards'));
     const remaining = store.db
-      .prepare('SELECT COUNT(*) AS cnt FROM agent_cards WHERE wallet_address = ?')
+      .prepare('SELECT COUNT(*) AS cnt FROM a2a_runtime_agent_cards WHERE wallet_address = ?')
       .get('0xDelete');
     assert.equal(remaining.cnt, 0);
+  });
+
+  it('covers the native agent_cards table too when the commerce schema shares the store', () => {
+    // The MCP server opens its A2A store on the commerce database, where the
+    // native engine keeps its own `agent_cards`.
+    store.db.exec(`CREATE TABLE agent_cards (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
+      wallet_address TEXT NOT NULL UNIQUE, trust_level TEXT, active INTEGER,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+    const now = new Date().toISOString();
+    store.db
+      .prepare(
+        `INSERT INTO agent_cards (id, name, wallet_address, trust_level, active, created_at, updated_at)
+         VALUES ('native-1', 'Native', '0xBoth', 'standard', 1, ?, ?)`,
+      )
+      .run(now, now);
+    seedAgentCard(store, { id: 'runtime-1', walletAddress: '0xBoth' });
+
+    const exported = svc.generateGDPRExport('0xBoth');
+    assert.deepEqual(exported.personalData.map((row) => row.id).sort(), ['native-1', 'runtime-1']);
+
+    const result = svc.deleteGDPRData('0xBoth');
+    const tables = result.deleted.map((d) => d.table).sort();
+    assert.ok(tables.includes('agent_cards') && tables.includes('a2a_runtime_agent_cards'));
+    for (const table of ['agent_cards', 'a2a_runtime_agent_cards']) {
+      assert.equal(store.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0);
+    }
   });
 
   it('deletes notification log entries', () => {
@@ -764,7 +679,7 @@ describe('deleteGDPRData', () => {
     const result = svc.deleteGDPRData('0xDelete', { keepTransactions: true });
     assert.ok(result.retained.some((r) => r.table === 'a2a_disputes' && r.action === 'anonymized'));
     const original = store.db
-      .prepare('SELECT COUNT(*) AS cnt FROM a2a_disputes WHERE filed_by = ?')
+      .prepare('SELECT COUNT(*) AS cnt FROM a2a_disputes WHERE claimant_address = ?')
       .get('0xDelete');
     assert.equal(original.cnt, 0);
   });

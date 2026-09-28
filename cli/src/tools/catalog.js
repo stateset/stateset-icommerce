@@ -8,20 +8,19 @@
 
 import { z } from 'zod';
 
-let _catalogSvc = null;
+import { scopedService } from './scoped-store.js';
 
 /**
- * Lazy-initialize the catalog service (singleton).
+ * The agent catalog service over the server's store (`--db`), one per
+ * database. Entries live in that database's `agent_catalog` table.
+ * @param {object} ctx - tool handler context
  * @returns {Promise<object>}
  */
-async function getCatalogSvc() {
-  if (_catalogSvc) return _catalogSvc;
-  const { A2AStore } = await import('../a2a/store.js');
-  const { createAgentCatalog } = await import('../catalog/agent-catalog.js');
-  const store = new A2AStore();
-  store.init();
-  _catalogSvc = createAgentCatalog(store);
-  return _catalogSvc;
+async function getCatalogSvc(ctx) {
+  return scopedService(ctx, 'catalog', async (store) => {
+    const { createAgentCatalog } = await import('../catalog/agent-catalog.js');
+    return createAgentCatalog(store);
+  });
 }
 
 export const catalogTools = [
@@ -66,9 +65,9 @@ export const catalogTools = [
       category: z.string().optional().describe('Product category'),
     },
     permission: 'write',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getCatalogSvc();
+        const svc = await getCatalogSvc(ctx);
         const result = svc.publishProduct(params);
         return { success: true, ...result };
       } catch (err) {
@@ -107,9 +106,9 @@ export const catalogTools = [
       offset: z.number().int().min(0).optional().default(0).describe('Pagination offset'),
     },
     permission: 'read',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getCatalogSvc();
+        const svc = await getCatalogSvc(ctx);
         const result = svc.queryProducts(params);
         return { success: true, ...result };
       } catch (err) {
@@ -129,9 +128,9 @@ export const catalogTools = [
       identifier: z.string().min(1).describe('Product ID or catalog entry ID'),
     },
     permission: 'read',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getCatalogSvc();
+        const svc = await getCatalogSvc(ctx);
         const result = svc.getProductSpec(params.identifier);
         if (!result) {
           return { success: false, error: 'Product not found' };
@@ -161,9 +160,9 @@ export const catalogTools = [
         .describe('Agent trust level'),
     },
     permission: 'read',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getCatalogSvc();
+        const svc = await getCatalogSvc(ctx);
         const result = svc.matchAgentToProducts(params.agentCapabilities, params.agentTrustLevel);
         return { success: true, ...result };
       } catch (err) {
@@ -195,9 +194,9 @@ export const catalogTools = [
         .describe('List of available agents to filter'),
     },
     permission: 'read',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getCatalogSvc();
+        const svc = await getCatalogSvc(ctx);
         const result = svc.matchProductToAgents(params.productId, params.availableAgents);
         return { success: true, ...result };
       } catch (err) {
@@ -223,9 +222,9 @@ export const catalogTools = [
       status: z.enum(['active', 'delisted']).optional().describe('Filter by status'),
     },
     permission: 'read',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const svc = await getCatalogSvc();
+        const svc = await getCatalogSvc(ctx);
         const result = svc.exportCatalog(params);
         return { success: true, ...result };
       } catch (err) {
