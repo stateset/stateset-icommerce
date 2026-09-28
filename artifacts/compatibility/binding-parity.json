@@ -1797,14 +1797,15 @@
       "evidence": "traced: #[napi] methods -> engine calls",
       "engineBacked": true,
       "gated": true,
-      "exposedCount": 726,
+      "exposedCount": 728,
       "applicableCount": 1216,
-      "coverage": 59.7,
+      "coverage": 59.9,
       "notes": null,
       "domains": {
         "commerce": {
-          "coverage": 41.2,
+          "coverage": 47.1,
           "exposed": [
+            "apply_cart_promotions",
             "economic_budget_status",
             "execute_kernel_command",
             "list_webhooks",
@@ -1814,7 +1815,6 @@
             "unregister_webhook"
           ],
           "missing": [
-            "apply_cart_promotions",
             "backend",
             "calculate_cart_tax",
             "emit_event",
@@ -2743,9 +2743,10 @@
           ]
         },
         "promotions": {
-          "coverage": 94.4,
+          "coverage": 100,
           "exposed": [
             "activate",
+            "add_condition",
             "apply",
             "create",
             "create_coupon",
@@ -2763,9 +2764,7 @@
             "update",
             "validate_coupon"
           ],
-          "missing": [
-            "add_condition"
-          ]
+          "missing": []
         },
         "purchase_orders": {
           "coverage": 42.3,
@@ -3480,20 +3479,20 @@
       "evidence": "traced: #[pymethods] methods -> engine calls",
       "engineBacked": true,
       "gated": true,
-      "exposedCount": 583,
+      "exposedCount": 585,
       "applicableCount": 1216,
-      "coverage": 47.9,
+      "coverage": 48.1,
       "notes": null,
       "domains": {
         "commerce": {
-          "coverage": 17.6,
+          "coverage": 23.5,
           "exposed": [
+            "apply_cart_promotions",
             "economic_budget_status",
             "execute_kernel_command",
             "provision_economic_budget"
           ],
           "missing": [
-            "apply_cart_promotions",
             "backend",
             "calculate_cart_tax",
             "emit_event",
@@ -4425,9 +4424,10 @@
           ]
         },
         "promotions": {
-          "coverage": 83.3,
+          "coverage": 88.9,
           "exposed": [
             "activate",
+            "add_condition",
             "apply",
             "create",
             "create_coupon",
@@ -4444,7 +4444,6 @@
             "validate_coupon"
           ],
           "missing": [
-            "add_condition",
             "is_valid",
             "update"
           ]
@@ -5161,9 +5160,9 @@
       "evidence": "traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls",
       "engineBacked": true,
       "gated": true,
-      "exposedCount": 79,
+      "exposedCount": 80,
       "applicableCount": 1216,
-      "coverage": 6.5,
+      "coverage": 6.6,
       "notes": null,
       "domains": {
         "commerce": {
@@ -5930,8 +5929,9 @@
           ]
         },
         "orders": {
-          "coverage": 22.2,
+          "coverage": 27.8,
           "exposed": [
+            "cancel",
             "create",
             "get",
             "list",
@@ -5939,7 +5939,6 @@
           ],
           "missing": [
             "add_item",
-            "cancel",
             "cancel_with",
             "count",
             "create_from_cart",
@@ -7858,8 +7857,8 @@
   ],
   "parityVsReference": {
     "python": {
-      "shared": 577,
-      "referenceExposed": 726,
+      "shared": 579,
+      "referenceExposed": 728,
       "parity": 79.5,
       "beyondReference": [
         "accounts_payable.pay_bill",
@@ -7871,14 +7870,14 @@
       ]
     },
     "go": {
-      "shared": 79,
-      "referenceExposed": 726,
-      "parity": 10.9,
+      "shared": 80,
+      "referenceExposed": 728,
+      "parity": 11,
       "beyondReference": []
     },
     "dotnet": {
       "shared": 47,
-      "referenceExposed": 726,
+      "referenceExposed": 728,
       "parity": 6.5,
       "beyondReference": [
         "accounts_receivable.get_customer_aging"
@@ -7886,7 +7885,7 @@
     },
     "java": {
       "shared": 71,
-      "referenceExposed": 726,
+      "referenceExposed": 728,
       "parity": 9.8,
       "beyondReference": [
         "fulfillment.create_picks_for_order",
@@ -7899,14 +7898,14 @@
     },
     "kotlin": {
       "shared": 59,
-      "referenceExposed": 726,
+      "referenceExposed": 728,
       "parity": 8.1,
       "beyondReference": []
     },
     "php": {
       "shared": 161,
-      "referenceExposed": 726,
-      "parity": 22.2,
+      "referenceExposed": 728,
+      "parity": 22.1,
       "beyondReference": [
         "bom.delete",
         "bom.remove_component",
@@ -7929,19 +7928,19 @@
     },
     "ruby": {
       "shared": 0,
-      "referenceExposed": 726,
+      "referenceExposed": 728,
       "parity": 0,
       "beyondReference": []
     },
     "swift": {
       "shared": 51,
-      "referenceExposed": 726,
+      "referenceExposed": 728,
       "parity": 7,
       "beyondReference": []
     },
     "wasm": {
       "shared": 0,
-      "referenceExposed": 726,
+      "referenceExposed": 728,
       "parity": 0,
       "beyondReference": []
     }
@@ -9036,7 +9035,7 @@
       {
         "className": "Promotions",
         "domain": "promotions",
-        "methodCount": 17
+        "methodCount": 19
       },
       {
         "className": "PurchaseOrders",
@@ -9541,9 +9540,19 @@
         "methodCount": 1
       },
       {
+        "className": "PromotionConditionInput",
+        "domain": null,
+        "methodCount": 1
+      },
+      {
+        "className": "PromotionLineItemInput",
+        "domain": null,
+        "methodCount": 1
+      },
+      {
         "className": "PromotionsApi",
         "domain": "promotions",
-        "methodCount": 15
+        "methodCount": 17
       },
       {
         "className": "PurchaseOrder",
@@ -9933,24 +9942,6 @@
     },
     {
       "binding": "go",
-      "hostMethod": "OrdersAPI.Cancel",
-      "domain": "orders",
-      "engineMethods": [
-        "orders.update_status"
-      ],
-      "documented": false
-    },
-    {
-      "binding": "go",
-      "hostMethod": "OrdersAPI.Ship",
-      "domain": "orders",
-      "engineMethods": [
-        "orders.update_status"
-      ],
-      "documented": false
-    },
-    {
-      "binding": "go",
       "hostMethod": "PaymentsAPI.Complete",
       "domain": "payments",
       "engineMethods": [
@@ -10224,6 +10215,15 @@
     },
     {
       "binding": "node",
+      "hostMethod": "Promotions.applyToCart",
+      "domain": "promotions",
+      "engineMethods": [
+        "commerce.apply_cart_promotions"
+      ],
+      "documented": false
+    },
+    {
+      "binding": "node",
       "hostMethod": "RevenueRecognition.recognize",
       "domain": "revenue_recognition",
       "engineMethods": [
@@ -10423,6 +10423,15 @@
     },
     {
       "binding": "python",
+      "hostMethod": "PromotionsApi.apply_to_cart",
+      "domain": "promotions",
+      "engineMethods": [
+        "commerce.apply_cart_promotions"
+      ],
+      "documented": false
+    },
+    {
+      "binding": "python",
       "hostMethod": "RevenueRecognition.recognize",
       "domain": "revenue_recognition",
       "engineMethods": [
@@ -10470,13 +10479,6 @@
       "field": "items",
       "value": "vec![]",
       "structLiteral": "stateset_core::CreateReceipt"
-    },
-    {
-      "file": "bindings/python/src/lib.rs",
-      "line": 9098,
-      "field": "line_items",
-      "value": "vec![]",
-      "structLiteral": "stateset_core::ApplyPromotionsRequest"
     }
   ],
   "exempt": {
