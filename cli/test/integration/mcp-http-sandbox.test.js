@@ -20,10 +20,19 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { ALL_DOMAIN_TOOLS } from '../../src/tools/domain-registry.js';
+import { AGENTIC_RUNTIME_TOOLS } from '../../src/mcp/agentic-runtime-tools.js';
+import { toolTier } from '../../src/tools/tool-tiers.js';
 import { startupBudgetMs } from '../helpers/startup-budget.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(__dirname, '../../bin/stateset-mcp-http.js');
+
+/** With no --profile the server exposes the core tier, exactly. */
+const CORE_TIER = [...ALL_DOMAIN_TOOLS, ...AGENTIC_RUNTIME_TOOLS]
+  .filter((tool) => toolTier(tool.name) === 'core')
+  .map((tool) => tool.name)
+  .sort();
 const DEFAULT_PORT = 18091 + (process.pid % 400);
 const STRICT_PORT = DEFAULT_PORT + 400;
 
@@ -142,7 +151,11 @@ describe('mcp http — protocol 2026-07-28, stateless', () => {
   it('lists tools over the 2026-07-28 envelope', async () => {
     const res = await modern(BASE, { method: 'tools/list' });
     const tools = res.json.result.tools;
-    assert.ok(tools.length > 500, `expected the full tool surface, got ${tools.length}`);
+    assert.deepEqual(
+      tools.map((t) => t.name).sort(),
+      CORE_TIER,
+      'with no --profile the server exposes exactly the core tier',
+    );
     const listCustomers = tools.find((t) => t.name === 'list_customers');
     assert.ok(listCustomers, 'list_customers must be advertised');
     assert.equal(listCustomers.inputSchema.type, 'object', 'schemas must render as JSON Schema');
@@ -224,7 +237,7 @@ describe('mcp http — --strict-protocol', () => {
 
   it('still serves 2026-07-28 traffic', async () => {
     const res = await modern(BASE, { method: 'tools/list' });
-    assert.ok(res.json.result.tools.length > 500);
+    assert.ok(res.json.result.tools.length === CORE_TIER.length);
   });
 
   it('rejects a 2025-era client', async () => {
@@ -310,7 +323,7 @@ describe('mcp http — Origin validation', () => {
   it('serves a request from an allowed Origin', async () => {
     const res = await listWithOrigin(BASE, 'https://agent.example.com');
     assert.equal(res.status, 200);
-    assert.ok(parseBody(await res.text()).result.tools.length > 500);
+    assert.ok(parseBody(await res.text()).result.tools.length === CORE_TIER.length);
   });
 
   it('matches allowed origins by hostname, ignoring scheme and port', async () => {
@@ -321,7 +334,7 @@ describe('mcp http — Origin validation', () => {
   it('serves a request with no Origin header (non-browser client)', async () => {
     const res = await listWithOrigin(BASE, null);
     assert.equal(res.status, 200);
-    assert.ok(parseBody(await res.text()).result.tools.length > 500);
+    assert.ok(parseBody(await res.text()).result.tools.length === CORE_TIER.length);
   });
 });
 
@@ -423,7 +436,7 @@ describe('mcp http — auth off by default on a loopback bind', () => {
     assert.equal(health.auth, 'off');
     const res = await listWithHeaders(BASE);
     assert.equal(res.status, 200);
-    assert.ok(parseBody(await res.text()).result.tools.length > 500);
+    assert.ok(parseBody(await res.text()).result.tools.length === CORE_TIER.length);
   });
 });
 
@@ -466,7 +479,7 @@ describe('mcp http — API-key authentication', () => {
   it('serves a modern request with a valid Bearer key', async () => {
     const res = await listWithHeaders(BASE, { Authorization: `Bearer ${API_KEY}` });
     assert.equal(res.status, 200);
-    assert.ok(parseBody(await res.text()).result.tools.length > 500);
+    assert.ok(parseBody(await res.text()).result.tools.length === CORE_TIER.length);
   });
 
   it('serves a request with a valid X-API-Key, including one from the env var', async () => {

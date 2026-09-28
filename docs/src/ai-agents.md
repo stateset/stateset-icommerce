@@ -387,7 +387,7 @@ For Claude Desktop, Cursor, Windsurf, or other MCP-native clients:
 npx -y @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
 ```
 
-This registers the iCommerce MCP server with your client. The full registry-generated tool inventory appears automatically in the tool palette.
+This registers the iCommerce MCP server with your client. The core tool tier appears automatically in the tool palette (see [Tool tiers and profiles](#tool-tiers-and-profiles) to widen it).
 
 ### MCP Configuration
 
@@ -403,6 +403,27 @@ The setup creates a configuration entry in your MCP client's config file:
   }
 }
 ```
+
+### Tool tiers and profiles
+
+Every MCP tool has a stability tier, and with no `--profile` the servers expose
+exactly the **core** tier: the everyday commerce loop (catalog, customers,
+carts and checkout, orders, payments and refunds, returns, shipments,
+inventory, promotions, tax, gift cards and store credit, analytics) plus the
+agentic planning and replay tools. Every core tool is driven through the real
+server on a fresh store in CI and must work or refuse cleanly — no crashes, no
+known-defect backlog.
+
+| Tier | Exposed by | Contents |
+|---|---|---|
+| `core` | default (`--profile core`) | the commerce loop above |
+| `extended` | `--profile all`, a curated profile, or `--domains` | finance suite, manufacturing, WMS, B2B, subscriptions, reviews, loyalty, integrations |
+| `experimental` | `--profile all`, a curated profile, or `--domains` | A2A, agent receipts, sync, vector search, on-chain treasury — tools that need a wallet, a chain, an API key or a demo stack |
+
+`--profile finance`, `operations` and `agents` expose every tool in their
+domains whatever its tier; `--profile all` exposes everything. The generated
+catalog [`cli/docs/TOOLS.md`](https://github.com/stateset/stateset-icommerce/blob/master/cli/docs/TOOLS.md)
+lists each tool's tier and each profile's size.
 
 ### Streamable HTTP (hosted sandboxes, remote agents)
 

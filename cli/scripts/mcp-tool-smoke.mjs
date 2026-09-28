@@ -12,7 +12,7 @@
  *   node scripts/mcp-tool-smoke.mjs [--json out.json] [--only name,name]
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -33,6 +33,8 @@ export const DEFECT_PATTERNS = [
   /Missing field `?\w+`?/i,
   /Failed to convert (?:JavaScript|napi) value/i,
   /\bexpect(?:ed)? .* but got\b/i,
+  // A fresh store's own schema disagreeing with the code: never an input problem.
+  /no such (?:column|table)/i,
 ];
 
 /**
@@ -187,16 +189,33 @@ async function callWithTimeout(server, name, params, ms) {
 }
 
 /**
- * @param {{ only?: Set<string>|null, timeoutMs?: number, allowApply?: boolean }} [options]
- *   `allowApply: false` runs the sweep in preview mode (writes are previews).
+ * @param {object} [options]
+ * @param {Set<string>|null} [options.only] - restrict the sweep to these tool names
+ * @param {Array<object>} [options.tools] - tool definitions to sweep (default: every domain tool)
+ * @param {number} [options.timeoutMs]
+ * @param {boolean} [options.allowApply] - `false` runs the sweep in preview mode (writes are previews)
  */
-export async function runSmoke({ only = null, timeoutMs = 20_000, allowApply = true } = {}) {
+export async function runSmoke({
+  only = null,
+  tools = ALL_DOMAIN_TOOLS,
+  timeoutMs = 20_000,
+  allowApply = true,
+} = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'mcp-smoke-'));
   const dbPath = path.join(dir, 'store.db');
-  const server = createStatesetMcpServer({ dbPath, allowApply });
+  // Some tools keep state under ~/.stateset (a2a.db, audit.db, wallets). A
+  // fresh store means a fresh home too: otherwise the sweep writes into the
+  // developer's real home and its verdict depends on what is already there.
+  const home = path.join(dir, 'home');
+  mkdirSync(home);
+  const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  // Every tier, so any tool can be swept regardless of the default profile.
+  const server = createStatesetMcpServer({ dbPath, allowApply, toolProfile: 'all' });
   const rows = [];
   try {
-    for (const tool of ALL_DOMAIN_TOOLS) {
+    for (const tool of tools) {
       if (only && !only.has(tool.name)) continue;
       let params;
       try {
@@ -216,6 +235,10 @@ export async function runSmoke({ only = null, timeoutMs = 20_000, allowApply = t
       });
     }
   } finally {
+    for (const [key, value] of Object.entries(savedHome)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     rmSync(dir, { recursive: true, force: true });
   }
   return rows;

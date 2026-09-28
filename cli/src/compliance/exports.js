@@ -145,6 +145,35 @@ export function createComplianceService(store, options = {}) {
     return !!row;
   }
 
+  /**
+   * Whether a table has a column.
+   * @param {string} tableName
+   * @param {string} column
+   * @returns {boolean}
+   */
+  function columnExists(tableName, column) {
+    return db
+      .prepare(`PRAGMA table_info(${tableName})`)
+      .all()
+      .some((c) => c.name === column);
+  }
+
+  /**
+   * The dispute party columns. The A2A store names them claimant_address /
+   * respondent_address; older databases used filed_by / filed_against.
+   * Results always report them as filed_by / filed_against.
+   */
+  function disputeParties() {
+    return columnExists('a2a_disputes', 'claimant_address')
+      ? { by: 'claimant_address', against: 'respondent_address' }
+      : { by: 'filed_by', against: 'filed_against' };
+  }
+
+  /** The SLA violation kind column: violation_type in the store, metric in older databases. */
+  function slaMetricColumn() {
+    return columnExists('a2a_sla_violations', 'violation_type') ? 'violation_type' : 'metric';
+  }
+
   // -------------------------------------------------------------------------
   // 1. exportAuditTrail
   // -------------------------------------------------------------------------
@@ -167,7 +196,9 @@ export function createComplianceService(store, options = {}) {
     const records = [];
 
     // --- Circuit breaker events ---
-    {
+    // The circuit breaker creates its table on first use, so a store where no
+    // breaker ever ran has none.
+    if (tableExists(db, 'a2a_circuit_breaker_events')) {
       let sql = `SELECT id, agent_name, event_type, reason, amount, state_before, state_after, metadata, created_at
                  FROM a2a_circuit_breaker_events WHERE created_at >= ? AND created_at <= ?`;
       const params = [fromDate, toDate];
@@ -185,8 +216,8 @@ export function createComplianceService(store, options = {}) {
       }
     }
 
-    // --- Spending ledger ---
-    {
+    // --- Spending ledger --- (also created by the circuit breaker on first use)
+    if (tableExists(db, 'a2a_spending_ledger')) {
       let sql = `SELECT id, agent_name, amount, success, error, created_at
                  FROM a2a_spending_ledger WHERE created_at >= ? AND created_at <= ?`;
       const params = [fromDate, toDate];
@@ -304,17 +335,22 @@ export function createComplianceService(store, options = {}) {
    * Full GDPR data portability export for a customer/agent identifier.
    */
   function generateGDPRExport(customerId) {
+    const parties = disputeParties();
     if (!customerId) {
       throw new Error('customerId is required for GDPR export');
     }
 
-    // Personal data from agent_cards
-    const personalData = db
-      .prepare(
-        `SELECT id, name, wallet_address, description, trust_level, active, created_at, updated_at
-         FROM agent_cards WHERE wallet_address = ? OR id = ? OR name = ?`,
-      )
-      .all(customerId, customerId, customerId);
+    // Personal data from agent_cards. The A2A store does not create that
+    // table (agent cards live in the commerce store), so read it only when a
+    // deployment's A2A database has one.
+    const personalData = tableExists(db, 'agent_cards')
+      ? db
+          .prepare(
+            `SELECT id, name, wallet_address, description, trust_level, active, created_at, updated_at
+             FROM agent_cards WHERE wallet_address = ? OR id = ? OR name = ?`,
+          )
+          .all(customerId, customerId, customerId)
+      : [];
 
     // Payments (as sender or recipient)
     const payments = db
@@ -335,8 +371,8 @@ export function createComplianceService(store, options = {}) {
     // Orders/disputes filed by or against
     const disputes = db
       .prepare(
-        `SELECT id, status, escrow_id, filed_by, filed_against, reason, category, amount_decimal, created_at
-         FROM a2a_disputes WHERE filed_by = ? OR filed_against = ?`,
+        `SELECT id, status, escrow_id, ${parties.by} AS filed_by, ${parties.against} AS filed_against, reason, category, amount_decimal, created_at
+         FROM a2a_disputes WHERE ${parties.by} = ? OR ${parties.against} = ?`,
       )
       .all(customerId, customerId);
 
@@ -479,6 +515,7 @@ export function createComplianceService(store, options = {}) {
    * GDPR right to erasure — delete or anonymize personal data.
    */
   function deleteGDPRData(customerId, { keepTransactions = false } = {}) {
+    const parties = disputeParties();
     if (!customerId) {
       throw new Error('customerId is required for GDPR deletion');
     }
@@ -489,9 +526,11 @@ export function createComplianceService(store, options = {}) {
     const anonAddress = `anon_${anonymized}`;
 
     // Agent cards — always delete personal data
-    const agentCards = db
-      .prepare(`SELECT id FROM agent_cards WHERE wallet_address = ? OR id = ? OR name = ?`)
-      .all(customerId, customerId, customerId);
+    const agentCards = tableExists(db, 'agent_cards')
+      ? db
+          .prepare(`SELECT id FROM agent_cards WHERE wallet_address = ? OR id = ? OR name = ?`)
+          .all(customerId, customerId, customerId)
+      : [];
 
     if (agentCards.length > 0) {
       db.prepare(`DELETE FROM agent_cards WHERE wallet_address = ? OR id = ? OR name = ?`).run(
@@ -551,10 +590,10 @@ export function createComplianceService(store, options = {}) {
     // Disputes — anonymize addresses if keeping, delete otherwise
     if (keepTransactions) {
       const filedBy = db
-        .prepare(`UPDATE a2a_disputes SET filed_by = ? WHERE filed_by = ?`)
+        .prepare(`UPDATE a2a_disputes SET ${parties.by} = ? WHERE ${parties.by} = ?`)
         .run(anonAddress, customerId);
       const filedAgainst = db
-        .prepare(`UPDATE a2a_disputes SET filed_against = ? WHERE filed_against = ?`)
+        .prepare(`UPDATE a2a_disputes SET ${parties.against} = ? WHERE ${parties.against} = ?`)
         .run(anonAddress, customerId);
       const totalDisputeAnon = (filedBy.changes || 0) + (filedAgainst.changes || 0);
       if (totalDisputeAnon > 0) {
@@ -567,13 +606,12 @@ export function createComplianceService(store, options = {}) {
       }
     } else {
       const disputes = db
-        .prepare(`SELECT id FROM a2a_disputes WHERE filed_by = ? OR filed_against = ?`)
+        .prepare(`SELECT id FROM a2a_disputes WHERE ${parties.by} = ? OR ${parties.against} = ?`)
         .all(customerId, customerId);
       if (disputes.length > 0) {
-        db.prepare(`DELETE FROM a2a_disputes WHERE filed_by = ? OR filed_against = ?`).run(
-          customerId,
-          customerId,
-        );
+        db.prepare(
+          `DELETE FROM a2a_disputes WHERE ${parties.by} = ? OR ${parties.against} = ?`,
+        ).run(customerId, customerId);
         deleted.push({ table: 'a2a_disputes', count: disputes.length });
       }
     }
@@ -842,6 +880,7 @@ export function createComplianceService(store, options = {}) {
    * Generate an aggregate compliance summary for a given period.
    */
   function generateComplianceSummary({ period = 'month', agentName } = {}) {
+    const parties = disputeParties();
     const range = periodToDateRange(period);
 
     // Total transactions and volume
@@ -863,7 +902,7 @@ export function createComplianceService(store, options = {}) {
     let disputeSql = `SELECT COUNT(*) AS cnt FROM a2a_disputes WHERE created_at >= ? AND created_at <= ?`;
     const disputeParams = [range.from, range.to];
     if (agentName) {
-      disputeSql += ' AND (filed_by = ? OR filed_against = ?)';
+      disputeSql += ` AND (${parties.by} = ? OR ${parties.against} = ?)`;
       disputeParams.push(agentName, agentName);
     }
     const disputeStats = db.prepare(disputeSql).get(...disputeParams);
@@ -879,7 +918,9 @@ export function createComplianceService(store, options = {}) {
       violationSql += ' AND agent_name = ?';
       violationParams.push(agentName);
     }
-    const violationStats = db.prepare(violationSql).get(...violationParams);
+    const violationStats = tableExists(db, 'a2a_circuit_breaker_events')
+      ? db.prepare(violationSql).get(...violationParams)
+      : { cnt: 0 };
     const policyViolations = violationStats.cnt || 0;
 
     // Agent count and top agents
@@ -929,6 +970,7 @@ export function createComplianceService(store, options = {}) {
    * Generate SOC2 audit evidence package for requested controls.
    */
   function generateSOC2Evidence({ controls = [] } = {}) {
+    const parties = disputeParties();
     const SUPPORTED_CONTROLS = new Set([
       'access_control',
       'change_management',
@@ -952,12 +994,14 @@ export function createComplianceService(store, options = {}) {
       switch (control) {
         case 'access_control': {
           // Agent registrations and trust level changes
-          const agentCards = db
-            .prepare(
-              `SELECT id, name, wallet_address, trust_level, active, created_at, updated_at
-               FROM agent_cards ORDER BY created_at DESC LIMIT 100`,
-            )
-            .all();
+          const agentCards = tableExists(db, 'agent_cards')
+            ? db
+                .prepare(
+                  `SELECT id, name, wallet_address, trust_level, active, created_at, updated_at
+                   FROM agent_cards ORDER BY created_at DESC LIMIT 100`,
+                )
+                .all()
+            : [];
           evidence.push({
             control,
             status: 'gathered',
@@ -970,14 +1014,16 @@ export function createComplianceService(store, options = {}) {
 
         case 'change_management': {
           // Circuit breaker state changes serve as change management evidence
-          const stateChanges = db
-            .prepare(
-              `SELECT id, agent_name, event_type, state_before, state_after, reason, created_at
-               FROM a2a_circuit_breaker_events
-               WHERE state_before IS NOT NULL AND state_after IS NOT NULL
-               ORDER BY created_at DESC LIMIT 100`,
-            )
-            .all();
+          const stateChanges = tableExists(db, 'a2a_circuit_breaker_events')
+            ? db
+                .prepare(
+                  `SELECT id, agent_name, event_type, state_before, state_after, reason, created_at
+                   FROM a2a_circuit_breaker_events
+                   WHERE state_before IS NOT NULL AND state_after IS NOT NULL
+                   ORDER BY created_at DESC LIMIT 100`,
+                )
+                .all()
+            : [];
           evidence.push({
             control,
             status: 'gathered',
@@ -1009,15 +1055,17 @@ export function createComplianceService(store, options = {}) {
 
         case 'monitoring': {
           // Circuit breaker events + SLA violations
-          const cbEvents = db
-            .prepare(
-              `SELECT id, agent_name, event_type, reason, created_at
-               FROM a2a_circuit_breaker_events ORDER BY created_at DESC LIMIT 50`,
-            )
-            .all();
+          const cbEvents = tableExists(db, 'a2a_circuit_breaker_events')
+            ? db
+                .prepare(
+                  `SELECT id, agent_name, event_type, reason, created_at
+                   FROM a2a_circuit_breaker_events ORDER BY created_at DESC LIMIT 50`,
+                )
+                .all()
+            : [];
           const slaViolations = db
             .prepare(
-              `SELECT id, sla_id, service_id, metric, severity, created_at
+              `SELECT id, sla_id, service_id, ${slaMetricColumn()} AS metric, severity, created_at
                FROM a2a_sla_violations ORDER BY created_at DESC LIMIT 50`,
             )
             .all();
@@ -1036,17 +1084,19 @@ export function createComplianceService(store, options = {}) {
           // Disputes as incident records + circuit breaker trips
           const disputes = db
             .prepare(
-              `SELECT id, status, filed_by, filed_against, reason, category, amount_decimal, created_at, resolved_at
+              `SELECT id, status, ${parties.by} AS filed_by, ${parties.against} AS filed_against, reason, category, amount_decimal, created_at, resolved_at
                FROM a2a_disputes ORDER BY created_at DESC LIMIT 50`,
             )
             .all();
-          const trips = db
-            .prepare(
-              `SELECT id, agent_name, reason, amount, created_at
-               FROM a2a_circuit_breaker_events WHERE event_type = 'trip'
-               ORDER BY created_at DESC LIMIT 50`,
-            )
-            .all();
+          const trips = tableExists(db, 'a2a_circuit_breaker_events')
+            ? db
+                .prepare(
+                  `SELECT id, agent_name, reason, amount, created_at
+                   FROM a2a_circuit_breaker_events WHERE event_type = 'trip'
+                   ORDER BY created_at DESC LIMIT 50`,
+                )
+                .all()
+            : [];
           evidence.push({
             control,
             status: 'gathered',

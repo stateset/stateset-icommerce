@@ -62,6 +62,7 @@ import {
   createApiKeyGuard,
   keyFingerprint,
 } from '../src/mcp/http-api-keys.js';
+import { DEFAULT_MCP_TOOL_PROFILE } from '../src/mcp/default-tool-profile.js';
 
 const HELP = `
 StateSet Commerce MCP Server — Streamable HTTP (protocol 2026-07-28)  v${CLI_VERSION}
@@ -74,6 +75,7 @@ OPTIONS:
   --port <port>          Bind port (default: 8090)
   --db <path>            Shared store path (default: :memory:, seeded at boot)
   --profile <name>       Tool profile: core, operations, finance, agents, all
+                         (default: core -- the stable tier; all = every tier)
   --domains <a,b,...>    Add specific tool domains to the selected profile
   --apply                Enable write tools against a durable --db
   --read-only            Disable write tools (default for a durable --db)
@@ -143,7 +145,7 @@ async function main() {
       host: { type: 'string' },
       port: { type: 'string' },
       db: { type: 'string' },
-      profile: { type: 'string', default: 'all' },
+      profile: { type: 'string', default: DEFAULT_MCP_TOOL_PROFILE },
       domains: { type: 'string' },
       apply: { type: 'boolean', default: false },
       'read-only': { type: 'boolean', default: false },
