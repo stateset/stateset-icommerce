@@ -20,6 +20,8 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { startupBudgetMs } from '../helpers/startup-budget.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(__dirname, '../../bin/stateset-mcp-http.js');
 const DEFAULT_PORT = 18091 + (process.pid % 400);
@@ -32,7 +34,7 @@ const ENVELOPE = {
   'io.modelcontextprotocol/clientCapabilities': {},
 };
 
-async function waitForHealth(base, timeoutMs = 60_000) {
+async function waitForHealth(base, timeoutMs = startupBudgetMs(60_000)) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -43,7 +45,7 @@ async function waitForHealth(base, timeoutMs = 60_000) {
     }
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error('server did not become healthy in time');
+  throw new Error(`server did not become healthy within ${timeoutMs}ms`);
 }
 
 function parseBody(text) {
@@ -248,7 +250,7 @@ function spawnAndCollect(args) {
     child.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
     });
-    const killer = setTimeout(() => child.kill('SIGKILL'), 20_000);
+    const killer = setTimeout(() => child.kill('SIGKILL'), startupBudgetMs(20_000));
     child.once('close', (code) => {
       clearTimeout(killer);
       resolve({ code, stderr });

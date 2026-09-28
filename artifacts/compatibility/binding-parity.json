@@ -1798,7 +1798,7 @@
       "evidence": "traced: #[napi] methods -> engine calls",
       "engineBacked": true,
       "gated": true,
-      "exposedCount": 737,
+      "exposedCount": 738,
       "applicableCount": 1217,
       "coverage": 60.6,
       "notes": null,
@@ -2815,7 +2815,7 @@
           "missing": []
         },
         "quality": {
-          "coverage": 48.5,
+          "coverage": 51.5,
           "exposed": [
             "close_ncr",
             "complete_inspection",
@@ -2832,7 +2832,8 @@
             "list_inspections",
             "list_ncrs",
             "release_hold",
-            "start_inspection"
+            "start_inspection",
+            "update_ncr"
           ],
           "missing": [
             "cancel_ncr",
@@ -2850,8 +2851,7 @@
             "get_pending_inspections",
             "list_defect_codes",
             "record_inspection_result",
-            "update_inspection",
-            "update_ncr"
+            "update_inspection"
           ]
         },
         "receiving": {
@@ -3481,9 +3481,9 @@
       "evidence": "traced: #[pymethods] methods -> engine calls",
       "engineBacked": true,
       "gated": true,
-      "exposedCount": 591,
+      "exposedCount": 593,
       "applicableCount": 1217,
-      "coverage": 48.6,
+      "coverage": 48.7,
       "notes": null,
       "domains": {
         "commerce": {
@@ -4498,8 +4498,9 @@
           "missing": []
         },
         "quality": {
-          "coverage": 24.2,
+          "coverage": 30.3,
           "exposed": [
+            "close_ncr",
             "complete_inspection",
             "create_hold",
             "create_inspection",
@@ -4507,11 +4508,11 @@
             "get_inspection",
             "list_inspections",
             "list_ncrs",
-            "release_hold"
+            "release_hold",
+            "update_ncr"
           ],
           "missing": [
             "cancel_ncr",
-            "close_ncr",
             "count_active_holds",
             "count_inspections",
             "count_ncrs",
@@ -4533,8 +4534,7 @@
             "list_holds",
             "record_inspection_result",
             "start_inspection",
-            "update_inspection",
-            "update_ncr"
+            "update_inspection"
           ]
         },
         "receiving": {
@@ -7861,9 +7861,9 @@
   ],
   "parityVsReference": {
     "python": {
-      "shared": 586,
-      "referenceExposed": 737,
-      "parity": 79.5,
+      "shared": 588,
+      "referenceExposed": 738,
+      "parity": 79.7,
       "beyondReference": [
         "accounts_payable.pay_bill",
         "cost_accounting.get_inventory_valuation",
@@ -7874,13 +7874,13 @@
     },
     "go": {
       "shared": 80,
-      "referenceExposed": 737,
-      "parity": 10.9,
+      "referenceExposed": 738,
+      "parity": 10.8,
       "beyondReference": []
     },
     "dotnet": {
       "shared": 47,
-      "referenceExposed": 737,
+      "referenceExposed": 738,
       "parity": 6.4,
       "beyondReference": [
         "accounts_receivable.get_customer_aging"
@@ -7888,7 +7888,7 @@
     },
     "java": {
       "shared": 71,
-      "referenceExposed": 737,
+      "referenceExposed": 738,
       "parity": 9.6,
       "beyondReference": [
         "fulfillment.create_picks_for_order",
@@ -7901,13 +7901,13 @@
     },
     "kotlin": {
       "shared": 59,
-      "referenceExposed": 737,
+      "referenceExposed": 738,
       "parity": 8,
       "beyondReference": []
     },
     "php": {
       "shared": 161,
-      "referenceExposed": 737,
+      "referenceExposed": 738,
       "parity": 21.8,
       "beyondReference": [
         "bom.delete",
@@ -7931,19 +7931,19 @@
     },
     "ruby": {
       "shared": 0,
-      "referenceExposed": 737,
+      "referenceExposed": 738,
       "parity": 0,
       "beyondReference": []
     },
     "swift": {
       "shared": 51,
-      "referenceExposed": 737,
+      "referenceExposed": 738,
       "parity": 6.9,
       "beyondReference": []
     },
     "wasm": {
       "shared": 0,
-      "referenceExposed": 737,
+      "referenceExposed": 738,
       "parity": 0,
       "beyondReference": []
     }
@@ -9053,7 +9053,7 @@
       {
         "className": "Quality",
         "domain": "quality",
-        "methodCount": 16
+        "methodCount": 17
       },
       {
         "className": "Receiving",
@@ -9575,7 +9575,7 @@
       {
         "className": "QualityApi",
         "domain": "quality",
-        "methodCount": 8
+        "methodCount": 10
       },
       {
         "className": "ReceivingApi",

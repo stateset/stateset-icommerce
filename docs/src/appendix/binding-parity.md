@@ -33,9 +33,9 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 
 | Binding | Evidence | Gated | Exposed | Coverage | Parity vs Node |
 | --- | --- | --- | --- | --- | --- |
-| Node.js | traced: #[napi] methods -> engine calls | yes | 737/1217 | 60.6% | reference |
-| Python | traced: #[pymethods] methods -> engine calls | yes | 591/1217 | 48.6% | 79.5% |
-| Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1217 | 6.6% | 10.9% |
+| Node.js | traced: #[napi] methods -> engine calls | yes | 738/1217 | 60.6% | reference |
+| Python | traced: #[pymethods] methods -> engine calls | yes | 593/1217 | 48.7% | 79.7% |
+| Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1217 | 6.6% | 10.8% |
 | .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1217 | 3.9% | 6.4% |
 | Java | native reach: engine calls anywhere in the Rust layer | no | 77/1217 | 6.3% | 9.6% |
 | Kotlin | native reach: engine calls anywhere in the Rust layer | no | 59/1217 | 4.8% | 8% |
@@ -105,7 +105,7 @@ Cells are exposed / applicable engine methods.
 | `promotions` | 19 | 0 | 19/19 | 17/19 | 0/19 | 0/19 | 0/19 | 0/19 | 9/19 | 0/19 | 0/19 | 0/19 |
 | `purchase_orders` | 26 | 0 | 11/26 | 11/26 | 10/26 | 0/26 | 0/26 | 0/26 | 11/26 | 0/26 | 0/26 | 0/26 |
 | `purgatory` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
-| `quality` | 33 | 0 | 16/33 | 8/33 | 0/33 | 1/33 | 4/33 | 2/33 | 4/33 | 0/33 | 2/33 | 0/33 |
+| `quality` | 33 | 0 | 17/33 | 10/33 | 0/33 | 1/33 | 4/33 | 2/33 | 4/33 | 0/33 | 2/33 | 0/33 |
 | `receiving` | 24 | 0 | 10/24 | 5/24 | 0/24 | 0/24 | 4/24 | 0/24 | 4/24 | 0/24 | 0/24 | 0/24 |
 | `returns` | 15 | 0 | 13/15 | 6/15 | 6/15 | 2/15 | 6/15 | 6/15 | 5/15 | 0/15 | 2/15 | 0/15 |
 | `revenue_recognition` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
@@ -150,8 +150,8 @@ unless `--allow-loss` is also passed. Gated bindings: `node`, `python`, `go`
 
 | Binding | Known gaps vs Node (baseline) |
 | --- | --- |
-| python | 151 |
-| go | 657 |
+| python | 150 |
+| go | 658 |
 
 ## Exemptions
 
@@ -1272,7 +1272,7 @@ None found.
 | Engine method | Node.js | Python | Go |
 | --- | --- | --- | --- |
 | `cancel_ncr` | — | — | — |
-| `close_ncr` | yes | — | — |
+| `close_ncr` | yes | yes | — |
 | `complete_inspection` | yes | yes | — |
 | `count_active_holds` | yes | — | — |
 | `count_inspections` | — | — | — |
@@ -1303,7 +1303,7 @@ None found.
 | `release_hold` | yes | yes | — |
 | `start_inspection` | yes | — | — |
 | `update_inspection` | — | — | — |
-| `update_ncr` | — | — | — |
+| `update_ncr` | yes | yes | — |
 
 ### `commerce.receiving()`
 

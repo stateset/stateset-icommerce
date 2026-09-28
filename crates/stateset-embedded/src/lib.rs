@@ -1000,6 +1000,7 @@ pub use stateset_core::{
     X402_MAX_VALIDITY_SECONDS,
     X402_VERSION,
     X402Asset,
+    X402BatchInclusion,
     X402BatchStatus,
     X402CreditAccount,
     X402CreditAdjustment,

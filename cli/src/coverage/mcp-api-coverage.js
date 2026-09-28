@@ -563,6 +563,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       getNcr: ['get_ncr'],
       listNcrs: ['list_ncrs'],
       closeNcr: ['close_ncr'],
+      updateNcr: ['close_ncr'],
       createHold: ['create_quality_hold'],
       getHold: ['get_quality_hold'],
       listHolds: ['list_quality_holds'],

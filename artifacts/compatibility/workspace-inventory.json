@@ -567,7 +567,7 @@
       },
       {
         "name": "a2a",
-        "count": 61
+        "count": 62
       },
       {
         "name": "mcp",
@@ -991,7 +991,7 @@
       }
     ],
     "toolModuleCount": 94,
-    "a2aModuleCount": 61
+    "a2aModuleCount": 62
   },
   "admin": {
     "dependencyCount": 26,

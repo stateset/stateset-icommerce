@@ -298,9 +298,135 @@ class Commerce:
         """Get the currency API."""
         ...
 
+    @property
+    def quality(self) -> QualityApi:
+        """Get the quality-control API (inspections, NCRs, quality holds)."""
+        ...
+
     def vector(self, openai_api_key: str) -> VectorSearch:
         """Get the vector search API for semantic search operations."""
         ...
+
+# ============================================================================
+# Quality Control
+# ============================================================================
+
+class Inspection:
+    id: str
+    inspection_number: str
+    inspection_type: str
+    status: str
+    reference_type: str
+    reference_id: str
+    inspector_id: Optional[str]
+    notes: Optional[str]
+    created_at: str
+
+class NonConformance:
+    """A non-conformance report (NCR)."""
+    id: str
+    ncr_number: str
+    sku: str
+    description: str
+    status: str
+    source: str
+    severity: str
+    quantity_affected: float
+    disposition: Optional[str]
+    """What was decided for the material (e.g. ``"Scrap"``). Closing requires one."""
+    disposition_quantity: Optional[float]
+    disposition_quantity_exact: Optional[str]
+    """Exact base-10 twin of ``disposition_quantity``."""
+    root_cause: Optional[str]
+    corrective_action: Optional[str]
+    preventive_action: Optional[str]
+    assigned_to: Optional[str]
+    closed_at: Optional[str]
+
+class QualityHold:
+    id: str
+    sku: str
+    reason: str
+    quantity_held: float
+    hold_type: str
+    placed_by: str
+
+class QualityApi:
+    """Inspections, non-conformance reports and quality holds."""
+
+    def create_inspection(
+        self,
+        reference_type: str,
+        reference_id: str,
+        inspection_type: str,
+        inspector_id: Optional[str] = None,
+    ) -> Inspection: ...
+    def get_inspection(self, id: str) -> Optional[Inspection]: ...
+    def list_inspections(
+        self,
+        inspection_type: Optional[str] = None,
+        status: Optional[str] = None,
+        reference_type: Optional[str] = None,
+        reference_id: Optional[str] = None,
+        inspector_id: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Inspection]: ...
+    def complete_inspection(self, id: str) -> Inspection: ...
+    def create_ncr(
+        self,
+        sku: str,
+        description: str,
+        quantity_affected: float,
+        source: str,
+        severity: str,
+    ) -> NonConformance: ...
+    def list_ncrs(
+        self,
+        source: Optional[str] = None,
+        severity: Optional[str] = None,
+        status: Optional[str] = None,
+        sku: Optional[str] = None,
+        lot_number: Optional[str] = None,
+        assigned_to: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[NonConformance]: ...
+    def update_ncr(
+        self,
+        id: str,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+        root_cause: Optional[str] = None,
+        corrective_action: Optional[str] = None,
+        preventive_action: Optional[str] = None,
+        disposition: Optional[str] = None,
+        disposition_quantity: Optional[float] = None,
+        disposition_quantity_exact: Optional[str] = None,
+        assigned_to: Optional[str] = None,
+    ) -> NonConformance:
+        """Update an open NCR; omitted arguments are unchanged.
+
+        ``status="closed"`` requires a disposition, already recorded or set in
+        the same call; otherwise raises ``ValueError``. ``disposition`` accepts
+        ``use_as_is``, ``rework``, ``repair``, ``scrap``, ``return_to_vendor``,
+        ``downgrade`` or ``sort_and_screen`` (case-insensitive).
+        """
+        ...
+    def close_ncr(self, id: str) -> NonConformance:
+        """Close an NCR. Raises ``ValueError`` if it has no disposition.
+
+        Re-closing a closed NCR is a no-op.
+        """
+        ...
+    def create_hold(self, sku: str, reason: str, quantity: float) -> QualityHold: ...
+    def release_hold(
+        self, id: str, released_by: str, release_notes: Optional[str] = None
+    ) -> QualityHold: ...
 
 # ============================================================================
 # Agent Toolkit

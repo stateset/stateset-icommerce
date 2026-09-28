@@ -180,13 +180,16 @@ impl Quality {
     ///
     /// Use this to set root cause, corrective action, disposition, etc.
     /// A `Closed` or `Cancelled` NCR is a finished record and is refused —
-    /// open a new NCR instead.
+    /// open a new NCR instead. Setting `status: Closed` needs a disposition,
+    /// already recorded or set by the same update.
     pub fn update_ncr(&self, id: Uuid, input: UpdateNonConformance) -> Result<NonConformance> {
         self.db.quality().update_ncr(id, input)
     }
 
     /// Close an NCR. Idempotent; a `Cancelled` NCR is refused (cancelling
-    /// means it was opened in error, so it must not become a closed record).
+    /// means it was opened in error, so it must not become a closed record),
+    /// and so is one with no disposition — record it with
+    /// [`update_ncr`](Self::update_ncr) first.
     pub fn close_ncr(&self, id: Uuid) -> Result<NonConformance> {
         self.db.quality().close_ncr(id)
     }

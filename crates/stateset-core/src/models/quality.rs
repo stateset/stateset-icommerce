@@ -653,6 +653,33 @@ impl Inspection {
 }
 
 impl NonConformance {
+    /// Refuse to close this NCR while it has no disposition.
+    ///
+    /// A closed NCR is the quality record of what was done with the
+    /// non-conforming material, so it must say what that was. Both backends
+    /// call this before closing, through `close_ncr` or through `update_ncr`
+    /// (checked after the update's own fields are applied, so one update may
+    /// set the disposition and close).
+    ///
+    /// Only the disposition is enforced: unlike [`Self::can_close`], the
+    /// status the NCR is closed from is not, because the HTTP API and the
+    /// bindings offer no way to move an NCR into the investigation statuses.
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::ValidationError`](crate::CommerceError::ValidationError)
+    /// naming the missing disposition.
+    pub fn ensure_closable(&self) -> Result<(), crate::CommerceError> {
+        if self.disposition.is_none() {
+            return Err(crate::CommerceError::ValidationError(format!(
+                "Cannot close NCR {} ({}): it has no disposition (record one first, e.g. \
+                 scrap, rework or use_as_is)",
+                self.ncr_number, self.id
+            )));
+        }
+        Ok(())
+    }
+
     /// Check if NCR can be closed
     #[must_use]
     pub const fn can_close(&self) -> bool {

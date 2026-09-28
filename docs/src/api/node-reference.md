@@ -518,6 +518,8 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`MapPurgatoryLineInput`](#mappurgatorylineinput)
   - [`MappingLookupInput`](#mappinglookupinput)
   - [`MoneyWire`](#moneywire)
+  - [`NcrDisposition`](#ncrdisposition)
+  - [`NcrDispositionInput`](#ncrdispositioninput)
   - [`NcrFilterInput`](#ncrfilterinput)
   - [`NcrOutput`](#ncroutput)
   - [`NcrSeverity`](#ncrseverity)
@@ -525,6 +527,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`NcrSource`](#ncrsource)
   - [`NcrSourceInput`](#ncrsourceinput)
   - [`NcrStatus`](#ncrstatus)
+  - [`NcrStatusInput`](#ncrstatusinput)
   - [`OpenOptions`](#openoptions)
   - [`OrderAddressInput`](#orderaddressinput)
   - [`OrderAddressOutput`](#orderaddressoutput)
@@ -774,6 +777,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`UpdateGiftCardInput`](#updategiftcardinput)
   - [`UpdateIntegrationFieldMappingInput`](#updateintegrationfieldmappinginput)
   - [`UpdateIntegrationMappingInput`](#updateintegrationmappinginput)
+  - [`UpdateNcrInput`](#updatencrinput)
   - [`UpdatePriceLevelInput`](#updatepricelevelinput)
   - [`UpdatePriceScheduleInput`](#updatepricescheduleinput)
   - [`UpdateProductInput`](#updateproductinput)
@@ -2769,9 +2773,19 @@ Class `Quality`.
 
   Types: [`NcrFilterInput`](#ncrfilterinput), [`NcrOutput`](#ncroutput)
 
+- **`updateNcr(id: string, input: UpdateNcrInput): Promise<NcrOutput>`**
+
+  Update an open NCR: root cause, actions, disposition, status and so on.
+  Omitted fields are left unchanged. Setting `status: 'closed'` requires
+  a disposition, already recorded or set in the same call.
+
+  Types: [`UpdateNcrInput`](#updatencrinput), [`NcrOutput`](#ncroutput)
+
 - **`closeNcr(id: string): Promise<NcrOutput>`**
 
-  Close an NCR
+  Close an NCR. It must have a disposition (see `updateNcr`); an NCR
+  without one is refused with a validation error. Re-closing a closed
+  NCR is a no-op.
 
   Types: [`NcrOutput`](#ncroutput)
 
@@ -10261,6 +10275,26 @@ Exact money on the wire (`stateset_primitives::MoneyWire`).
 | `amount` | `string` | Base-10 decimal amount, for example `"29.99"`. |
 | `currency` | `string` | ISO 4217 code that fixes the permitted minor-unit scale, e.g. `"USD"`. |
 
+### NcrDisposition
+
+NCR disposition as rendered on `NcrOutput.disposition` (Rust `Debug` form).
+
+```ts
+type NcrDisposition = 'UseAsIs' | 'Rework' | 'Repair' | 'Scrap' | 'ReturnToVendor' | 'Downgrade' | 'SortAndScreen'
+```
+
+One of: `'UseAsIs'`, `'Rework'`, `'Repair'`, `'Scrap'`, `'ReturnToVendor'`, `'Downgrade'`, `'SortAndScreen'`.
+
+### NcrDispositionInput
+
+NCR disposition accepted by `UpdateNcrInput.disposition` (case-insensitive; `_` optional).
+
+```ts
+type NcrDispositionInput = 'use_as_is' | 'rework' | 'repair' | 'scrap' | 'return_to_vendor' | 'downgrade' | 'sort_and_screen' | NcrDisposition
+```
+
+Types: [`NcrDisposition`](#ncrdisposition)
+
 ### NcrFilterInput
 
 Filter for `quality.listNcrs()`
@@ -10291,7 +10325,15 @@ Filter for `quality.listNcrs()`
 | `quantityAffected` | `number` |  |
 | `status` | `NcrStatus` | Types: [`NcrStatus`](#ncrstatus) |
 | `description` | `string` |  |
+| `disposition?` | `NcrDisposition` | What was decided for the non-conforming material. Closing requires one. Types: [`NcrDisposition`](#ncrdisposition) |
+| `dispositionQuantity?` | `number` | **Deprecated.** Use the `dispositionQuantityExact` twin; float quantities will be removed in 2.0. |
+| `dispositionQuantityExact?` | `string` | Exact base-10 quantity the disposition covers. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `rootCause?` | `string` |  |
+| `correctiveAction?` | `string` |  |
+| `preventiveAction?` | `string` |  |
+| `assignedTo?` | `string` |  |
 | `createdAt` | `string` |  |
+| `closedAt?` | `string` |  |
 
 ### NcrSeverity
 
@@ -10342,6 +10384,16 @@ type NcrStatus = 'Open' | 'UnderReview' | 'PendingDisposition' | 'CorrectiveActi
 ```
 
 One of: `'Open'`, `'UnderReview'`, `'PendingDisposition'`, `'CorrectiveAction'`, `'PreventiveAction'`, `'Verification'`, `'Closed'`, `'Cancelled'`.
+
+### NcrStatusInput
+
+Non-conformance report status accepted by `UpdateNcrInput.status` (case-insensitive; `_` optional).
+
+```ts
+type NcrStatusInput = 'open' | 'under_review' | 'pending_disposition' | 'corrective_action' | 'preventive_action' | 'verification' | 'closed' | 'cancelled' | NcrStatus
+```
+
+Types: [`NcrStatus`](#ncrstatus)
 
 ### OpenOptions
 
@@ -13263,6 +13315,24 @@ Filter for `listRules()`; omit for every rule.
 |---|---|---|
 | `internalValue?` | `string` |  |
 | `isActive?` | `boolean` |  |
+
+### UpdateNcrInput
+
+Fields for `Quality.updateNcr`. Every field is optional; omitted fields are
+left unchanged. Closing (`status: 'closed'`) requires a disposition, already
+recorded or set in the same call.
+
+| Field | Type | Description |
+|---|---|---|
+| `status?` | `NcrStatusInput` | Types: [`NcrStatusInput`](#ncrstatusinput) |
+| `severity?` | `NcrSeverityInput` | Types: [`NcrSeverityInput`](#ncrseverityinput) |
+| `rootCause?` | `string` |  |
+| `correctiveAction?` | `string` |  |
+| `preventiveAction?` | `string` |  |
+| `disposition?` | `NcrDispositionInput` | Types: [`NcrDispositionInput`](#ncrdispositioninput) |
+| `dispositionQuantity?` | `number` | **Deprecated.** Use the `dispositionQuantityExact` twin; float quantities will be removed in 2.0. |
+| `dispositionQuantityExact?` | `string` | Exact base-10 quantity the disposition covers. Wins over the float. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `assignedTo?` | `string` |  |
 
 ### UpdatePriceLevelInput
 
