@@ -1062,7 +1062,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `list_ncrs` | read | List non-conformance reports, optionally filtered by source, severity, status, SKU, lot, assignee or date range. |
 | `get_ncr` | read | Get a non-conformance report by ID. |
 | `create_ncr` | write | Create a non-conformance report. |
-| `close_ncr` | write | Close a non-conformance report. |
+| `close_ncr` | write | Close a non-conformance report. Closing requires a disposition (what was done with the non-conforming material): pass `disposition` (and optionally `dispositionQuantity`) to record it and close in one step. An NCR with no disposition recorded is refused. |
 | `list_quality_holds` | read | List quality holds. |
 | `get_quality_hold` | read | Get a quality hold by ID. |
 | `create_quality_hold` | write | Create a quality hold. |

@@ -182,6 +182,7 @@
         "update"
       ],
       "commerce": [
+        "apply_cart_promotions",
         "economic_budget_status",
         "execute_kernel_command",
         "list_webhooks",
@@ -559,6 +560,7 @@
       ],
       "promotions": [
         "activate",
+        "add_condition",
         "apply",
         "create",
         "create_coupon",
@@ -613,7 +615,8 @@
         "list_inspections",
         "list_ncrs",
         "release_hold",
-        "start_inspection"
+        "start_inspection",
+        "update_ncr"
       ],
       "receiving": [
         "cancel_receipt",
@@ -1023,6 +1026,7 @@
         "update"
       ],
       "commerce": [
+        "apply_cart_promotions",
         "economic_budget_status",
         "execute_kernel_command",
         "provision_economic_budget"
@@ -1336,6 +1340,7 @@
       ],
       "promotions": [
         "activate",
+        "add_condition",
         "apply",
         "create",
         "create_coupon",
@@ -1374,6 +1379,7 @@
         "post"
       ],
       "quality": [
+        "close_ncr",
         "complete_inspection",
         "create_hold",
         "create_inspection",
@@ -1381,7 +1387,8 @@
         "get_inspection",
         "list_inspections",
         "list_ncrs",
-        "release_hold"
+        "release_hold",
+        "update_ncr"
       ],
       "receiving": [
         "complete_receiving",
@@ -1681,6 +1688,7 @@
         "void"
       ],
       "orders": [
+        "cancel",
         "create",
         "get",
         "list",
@@ -1870,7 +1878,6 @@
         "update"
       ],
       "quality": [
-        "close_ncr",
         "count_active_holds",
         "get_active_holds",
         "get_hold",
@@ -2063,6 +2070,7 @@
         "update"
       ],
       "commerce": [
+        "apply_cart_promotions",
         "economic_budget_status",
         "execute_kernel_command",
         "list_webhooks",
@@ -2319,7 +2327,6 @@
         "supports_backup"
       ],
       "orders": [
-        "cancel",
         "count",
         "create_from_cart",
         "ship"
@@ -2408,6 +2415,7 @@
       ],
       "promotions": [
         "activate",
+        "add_condition",
         "apply",
         "create",
         "create_coupon",
@@ -2452,7 +2460,8 @@
         "list_inspections",
         "list_ncrs",
         "release_hold",
-        "start_inspection"
+        "start_inspection",
+        "update_ncr"
       ],
       "receiving": [
         "cancel_receipt",

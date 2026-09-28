@@ -3614,7 +3614,36 @@ export interface NcrOutput {
   quantityAffected: number
   status: NcrStatus
   description: string
+  /** What was decided for the non-conforming material. Closing requires one. */
+  disposition?: NcrDisposition
+  /** @deprecated Use the `dispositionQuantityExact` twin; float quantities will be removed in 2.0. */
+  dispositionQuantity?: number
+  /** Exact base-10 quantity the disposition covers. */
+  dispositionQuantityExact?: string
+  rootCause?: string
+  correctiveAction?: string
+  preventiveAction?: string
+  assignedTo?: string
   createdAt: string
+  closedAt?: string
+}
+/**
+ * Fields for `Quality.updateNcr`. Every field is optional; omitted fields are
+ * left unchanged. Closing (`status: 'closed'`) requires a disposition, already
+ * recorded or set in the same call.
+ */
+export interface UpdateNcrInput {
+  status?: NcrStatusInput
+  severity?: NcrSeverityInput
+  rootCause?: string
+  correctiveAction?: string
+  preventiveAction?: string
+  disposition?: NcrDispositionInput
+  /** @deprecated Use the `dispositionQuantityExact` twin; float quantities will be removed in 2.0. */
+  dispositionQuantity?: number
+  /** Exact base-10 quantity the disposition covers. Wins over the float. */
+  dispositionQuantityExact?: string
+  assignedTo?: string
 }
 export interface CreateQualityHoldInput {
   sku: string
@@ -6766,7 +6795,17 @@ export declare class Quality {
    * Calling with no argument keeps the previous behaviour (server default page size).
    */
   listNcrs(filter?: NcrFilterInput | undefined | null): Promise<Array<NcrOutput>>
-  /** Close an NCR */
+  /**
+   * Update an open NCR: root cause, actions, disposition, status and so on.
+   * Omitted fields are left unchanged. Setting `status: 'closed'` requires
+   * a disposition, already recorded or set in the same call.
+   */
+  updateNcr(id: string, input: UpdateNcrInput): Promise<NcrOutput>
+  /**
+   * Close an NCR. It must have a disposition (see `updateNcr`); an NCR
+   * without one is refused with a validation error. Re-closing a closed
+   * NCR is a no-op.
+   */
   closeNcr(id: string): Promise<NcrOutput>
   /** Create a quality hold */
   createHold(input: CreateQualityHoldInput): Promise<QualityHoldOutput>
@@ -7663,6 +7702,12 @@ export type NcrSeverity = 'Critical' | 'Major' | 'Minor' | 'Observation'
 export type NcrSeverityInput = 'critical' | 'major' | 'minor' | 'observation'
 /** Non-conformance report status as rendered on `NcrOutput.status` (Rust `Debug` form). */
 export type NcrStatus = 'Open' | 'UnderReview' | 'PendingDisposition' | 'CorrectiveAction' | 'PreventiveAction' | 'Verification' | 'Closed' | 'Cancelled'
+/** Non-conformance report status accepted by `UpdateNcrInput.status` (case-insensitive; `_` optional). */
+export type NcrStatusInput = 'open' | 'under_review' | 'pending_disposition' | 'corrective_action' | 'preventive_action' | 'verification' | 'closed' | 'cancelled' | NcrStatus
+/** NCR disposition as rendered on `NcrOutput.disposition` (Rust `Debug` form). */
+export type NcrDisposition = 'UseAsIs' | 'Rework' | 'Repair' | 'Scrap' | 'ReturnToVendor' | 'Downgrade' | 'SortAndScreen'
+/** NCR disposition accepted by `UpdateNcrInput.disposition` (case-insensitive; `_` optional). */
+export type NcrDispositionInput = 'use_as_is' | 'rework' | 'repair' | 'scrap' | 'return_to_vendor' | 'downgrade' | 'sort_and_screen' | NcrDisposition
 /** Quality hold type as rendered on `QualityHoldOutput.holdType` (Rust `Debug` form). */
 export type QualityHoldType = 'QualityInspection' | 'CustomerReturn' | 'Recall' | 'Damaged' | 'Expired' | 'Quarantine' | 'RegulatoryHold' | 'InvestigationHold'
 /** Quality hold type accepted by `CreateQualityHoldInput.holdType` (case-insensitive). */

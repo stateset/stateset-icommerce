@@ -239,7 +239,8 @@ pub trait QualityRepository: Send + Sync {
 
     /// Close an NCR. Idempotent for an already-closed one; a `Cancelled` NCR
     /// is refused, since cancelling means it was opened in error and it must
-    /// not become a closed quality record.
+    /// not become a closed quality record. An NCR with no disposition is
+    /// refused too (see `NonConformance::ensure_closable`).
     fn close_ncr(&self, id: Uuid) -> Result<NonConformance>;
 
     /// Cancel an NCR opened in error. Idempotent for an already-cancelled one;

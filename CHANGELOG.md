@@ -6,6 +6,35 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Changed (behaviour, needs a release note)
+
+- **A PostgreSQL store now seeds the same tax rates as a SQLite store.** A
+  fresh SQLite store has always seeded US state sales tax, EU/UK VAT
+  (standard and reduced) and Canadian sales tax; a fresh PostgreSQL store
+  seeded none, so it charged zero tax on every sale. Postgres migration 105
+  seeds the same jurisdictions and rates, in the corrected state SQLite
+  reaches after its migration 099 (HST alone in the harmonized provinces,
+  Nova Scotia 14% from 2025-04-01, Quebec QST not compounded on GST, GST
+  only in the territories). **The seed runs only on a store with no tax rates
+  at all**: an existing Postgres store that already configured tax keeps
+  exactly what it has. An existing store that never configured any rate
+  starts charging the seeded rates after upgrading -- review them, or set
+  `enabled` to false in the tax settings, if that store should not charge tax.
+
+- **Closing a non-conformance report (NCR) requires a disposition.** A closed
+  NCR is the quality record of what was done with the non-conforming
+  material, yet `close_ncr` and `update_ncr { status: Closed }` closed one
+  with none. Both backends now refuse with a validation error naming the
+  missing disposition. Record it first (`update_ncr { disposition }`, or
+  `POST /api/v1/quality/ncrs/{id}/disposition`), or set it in the same
+  `update_ncr` call that closes. Re-closing an already-closed NCR is still a
+  no-op. So that every surface can still close an NCR, the Node binding gains
+  `quality.updateNcr(id, input)`, the Python binding gains
+  `quality.update_ncr(...)` and `quality.close_ncr(id)`, `NcrOutput` /
+  `NonConformance` now carry the disposition, and the `close_ncr` MCP tool
+  and `stateset quality close-ncr` take an optional `disposition` (plus an
+  exact `dispositionQuantity`) that they record before closing.
+
 ## [1.35.3] - 2026-09-26
 
 ### Verified commerce invariants
