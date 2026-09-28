@@ -13,6 +13,81 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+/// Shipment statuses that precede the carrier hand-off, as a SQL `IN (...)`
+/// body. PostgreSQL twin of the SQLite constant: `on_hold`, `cancelled` and
+/// everything at or past `shipped` are left alone when the order ships.
+const PRE_SHIP_STATUSES_SQL: &str = "('pending', 'processing', 'ready_to_ship', 'readytoship')";
+
+/// Carry a fully shipped order onto its open shipment records, inside the
+/// caller's transaction.
+///
+/// PostgreSQL twin of the SQLite `ship_open_shipments_for_order_in_tx`: every
+/// shipment of `order_id` in `pending`/`processing`/`ready_to_ship` becomes
+/// `shipped`; a shipment without a tracking number adopts the order's, one
+/// with its own keeps it. Each moved shipment records a
+/// `shipment.status_changed` outbox fact in the same transaction. Returns the
+/// recorded facts' event ids.
+pub(crate) async fn ship_open_shipments_for_order_in_tx(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+    tracking_number: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<Vec<Uuid>> {
+    let open: Vec<(Uuid, String, String, Option<String>)> = sqlx::query_as(&format!(
+        "SELECT id, status, carrier, tracking_number FROM shipments
+         WHERE order_id = $1 AND status IN {PRE_SHIP_STATUSES_SQL}
+         ORDER BY created_at, id FOR UPDATE"
+    ))
+    .bind(order_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    let mut event_ids = Vec::with_capacity(open.len());
+    for (shipment_id, previous_status, carrier, own_tracking) in open {
+        let adopted = if own_tracking.is_none() { tracking_number } else { None };
+        let tracking_url = adopted.and_then(|tn| {
+            carrier.parse::<ShippingCarrier>().ok().and_then(|c| c.tracking_url(tn))
+        });
+        let rows = sqlx::query(&format!(
+            "UPDATE shipments SET status = 'shipped',
+                    tracking_number = COALESCE(tracking_number, $1),
+                    tracking_url = COALESCE($2, tracking_url),
+                    shipped_at = COALESCE(shipped_at, $3), updated_at = $3
+             WHERE id = $4 AND status IN {PRE_SHIP_STATUSES_SQL}"
+        ))
+        .bind(adopted)
+        .bind(tracking_url)
+        .bind(now)
+        .bind(shipment_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            continue;
+        }
+        let event_id = super::kernel_outbox::record_outbox_fact(
+            &mut *conn,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "shipment.status_changed",
+                aggregate_type: "shipment",
+                aggregate_id: &shipment_id.to_string(),
+                payload: serde_json::json!({
+                    "shipment_id": shipment_id,
+                    "order_id": order_id,
+                    "previous_status": previous_status,
+                    "status": ShipmentStatus::Shipped.to_string(),
+                    "tracking_number": own_tracking.as_deref().or(adopted),
+                    "reason": "order_shipped",
+                }),
+            },
+        )
+        .await?;
+        event_ids.push(event_id);
+    }
+    Ok(event_ids)
+}
+
 /// PostgreSQL shipment repository
 #[derive(Debug, Clone)]
 pub struct PgShipmentRepository {

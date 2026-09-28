@@ -5,10 +5,10 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rust_decimal_macros::dec;
 use stateset_core::{
-    CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CreateProduct, CurrencyCode,
-    CustomerFilter, CustomerId, CustomerRepository, FulfillmentStatus, InventoryRepository,
-    OrderFilter, OrderRepository, OrderStatus, PaymentStatus, ProductFilter, ProductId,
-    ProductRepository, ReserveInventory, UpdateOrder,
+    CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CreatePayment,
+    CreateProduct, CurrencyCode, CustomerFilter, CustomerId, CustomerRepository, FulfillmentStatus,
+    InventoryRepository, OrderFilter, OrderRepository, OrderStatus, PaymentMethodType,
+    PaymentRepository, ProductFilter, ProductId, ProductRepository, ReserveInventory, UpdateOrder,
 };
 use stateset_db::{DatabaseConfig, SqliteDatabase};
 use std::sync::Arc;
@@ -461,12 +461,17 @@ fn benchmark_order_lifecycle(c: &mut Criterion) {
                 )
                 .unwrap();
 
-            orders
-                .update(
-                    order.id,
-                    UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
-                )
+            // The payment status is derived: record a real payment instead.
+            let payment = db
+                .payments()
+                .create(CreatePayment {
+                    order_id: Some(order.id),
+                    payment_method: PaymentMethodType::CreditCard,
+                    amount: order.total_amount,
+                    ..Default::default()
+                })
                 .unwrap();
+            db.payments().mark_completed(payment.id).unwrap();
 
             orders
                 .update(

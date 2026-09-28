@@ -467,11 +467,16 @@ pub(crate) async fn order_has_payments_pg(
 /// `update` left `amount_refunded` stale, so `open_captures_for_order` kept
 /// reporting the money as outstanding. Same-status writes still pass. Worded
 /// identically in the SQLite backend.
+///
+/// `Disputed -> Refunded` is the one exception: it is a lost chargeback, and
+/// the caller records it on the ledger with [`record_lost_chargeback_pg`] in
+/// the same transaction.
 pub(crate) fn ensure_not_refund_by_status_flip(
     current: PaymentTransactionStatus,
     target: PaymentTransactionStatus,
 ) -> Result<()> {
     if current != target
+        && !current.is_lost_chargeback(target)
         && matches!(
             target,
             PaymentTransactionStatus::Refunded | PaymentTransactionStatus::PartiallyRefunded
@@ -484,6 +489,78 @@ pub(crate) fn ensure_not_refund_by_status_flip(
         )));
     }
     Ok(())
+}
+
+/// Record a lost chargeback on `payment` (currently `Disputed`, being moved to
+/// `Refunded` by the caller's status write) inside the caller's transaction.
+///
+/// PostgreSQL twin of the SQLite `record_lost_chargeback_tx`: a `completed`
+/// refund-ledger row for the whole remaining balance, stamped `reason =`
+/// [`stateset_core::LOST_CHARGEBACK_REFUND_REASON`], `amount_refunded =
+/// amount`, and a `payments.chargeback_lost.v1` event. The caller then
+/// re-derives the order's payment status from the ledger. Returns the ledger
+/// row's id.
+pub(crate) async fn record_lost_chargeback_pg(
+    conn: &mut sqlx::PgConnection,
+    payment: &Payment,
+    now: DateTime<Utc>,
+) -> Result<Uuid> {
+    let reversed = (payment.amount - payment.amount_refunded).max(Decimal::ZERO);
+    let id = Uuid::new_v4();
+    let refund_number = generate_refund_number();
+    sqlx::query(
+        "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason,
+                              external_id, idempotency_key, notes, refunded_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NULL, $8, $9, $9, $9)",
+    )
+    .bind(id)
+    .bind(&refund_number)
+    .bind(payment.id.into_uuid())
+    .bind(RefundStatus::Completed.to_string())
+    .bind(reversed)
+    .bind(payment.currency)
+    .bind(stateset_core::LOST_CHARGEBACK_REFUND_REASON)
+    .bind("chargeback lost: the card network reversed the charge")
+    .bind(now)
+    .execute(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    let rows = sqlx::query(
+        "UPDATE payments SET amount_refunded = $1, updated_at = $2 WHERE id = $3 AND status = $4",
+    )
+    .bind(payment.amount)
+    .bind(now)
+    .bind(payment.id.into_uuid())
+    .bind(PaymentTransactionStatus::Refunded.to_string())
+    .execute(&mut *conn)
+    .await
+    .map_err(map_db_error)?
+    .rows_affected();
+    if rows == 0 {
+        return Err(transition_conflict(
+            PaymentTransactionStatus::Disputed,
+            PaymentTransactionStatus::Refunded,
+        ));
+    }
+    append_kernel_event_tx(
+        conn,
+        &KernelOutboxEvent::domain(
+            "payments.chargeback_lost.v1",
+            "payment",
+            payment.id.to_string(),
+            serde_json::json!({
+                "payment_id": payment.id.to_string(),
+                "order_id": payment.order_id.map(|id| id.to_string()),
+                "refund_id": id.to_string(),
+                "refund_number": refund_number,
+                "amount": reversed.to_string(),
+                "currency": payment.currency.as_str(),
+            }),
+            None,
+        ),
+    )
+    .await?;
+    Ok(id)
 }
 
 #[derive(Debug, Clone)]
@@ -1045,6 +1122,9 @@ impl PgPaymentRepository {
             }
         }
 
+        // A lost chargeback is recorded on the ledger after the status write;
+        // keep the pre-write payment for it.
+        let chargeback = current.is_lost_chargeback(target).then(|| payment.clone());
         let rows = sqlx::query(
             "UPDATE payments SET status = $1, external_id = $2, failure_reason = $3,
              failure_code = $4, metadata = $5, updated_at = $6
@@ -1064,6 +1144,9 @@ impl PgPaymentRepository {
         .rows_affected();
         if rows == 0 {
             return Err(transition_conflict(current, target));
+        }
+        if let Some(disputed) = &chargeback {
+            record_lost_chargeback_pg(tx.as_mut(), disputed, now).await?;
         }
         if current != target {
             if let Some(order_id) = payment.order_id {
@@ -1950,6 +2033,7 @@ impl PgPaymentRepository {
                     .await?;
                 }
             }
+            let chargeback = current.is_lost_chargeback(target).then(|| payment.clone());
             let rows = sqlx::query(
                 "UPDATE payments SET status = $1, external_id = $2, failure_reason = $3,
                  failure_code = $4, metadata = $5, updated_at = $6
@@ -1969,6 +2053,9 @@ impl PgPaymentRepository {
             .rows_affected();
             if rows == 0 {
                 return Err(transition_conflict(current, target));
+            }
+            if let Some(disputed) = &chargeback {
+                record_lost_chargeback_pg(tx.as_mut(), disputed, now).await?;
             }
             if current != target {
                 if let Some(order_id) = payment.order_id {

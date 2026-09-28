@@ -1329,6 +1329,9 @@ impl PgOrderRepository {
         input: &UpdateOrder,
         ship: ShipMode<'_>,
     ) -> Result<UpdateOutcome> {
+        // The payment status is derived from the payment ledger, never
+        // declared (see `UpdateOrder::payment_status`).
+        input.ensure_payment_status_not_declared()?;
         if let Some(address) = &input.shipping_address {
             Self::validate_address_input(address, "order.shipping_address")?;
         }
@@ -1412,7 +1415,6 @@ impl PgOrderRepository {
         } else {
             (input.status.unwrap_or(current_status), Vec::new())
         };
-        let new_payment_status = input.payment_status.unwrap_or(current_payment_status);
         // Shipping/delivery moves the fulfillment status with the order status
         // (itself derived from per-line shipped quantities); an explicit value
         // in the input still wins.
@@ -1573,14 +1575,13 @@ impl PgOrderRepository {
         }
         // Voiding in-flight payments changed the payment ledger, so the money
         // status is re-derived from it (`PaymentStatus::derive`) and written in
-        // the UPDATE below. An explicit payment_status in the input still wins.
-        let new_payment_status = if input.payment_status.is_none()
-            && !cancel_money.voided_payment_ids.is_empty()
-        {
+        // the UPDATE below. A payment status never comes from the input
+        // (refused above).
+        let new_payment_status = if cancel_money.voided_payment_ids.is_empty() {
+            current_payment_status
+        } else {
             derive_order_payment_status_pg(tx.as_mut(), id, total_amount, current_payment_status)
                 .await?
-        } else {
-            new_payment_status
         };
 
         let new_tracking = input.tracking_number.clone().or(tracking_number);
@@ -1617,6 +1618,18 @@ impl PgOrderRepository {
                 id: id.to_string(),
                 expected_version,
             });
+        }
+
+        // The order just became fully shipped: its open shipment records
+        // follow it (a partial shipment cannot say which package moved).
+        if new_status == OrderStatus::Shipped && current_status != OrderStatus::Shipped {
+            super::shipments::ship_open_shipments_for_order_in_tx(
+                tx.as_mut(),
+                id,
+                new_tracking.as_deref(),
+                now,
+            )
+            .await?;
         }
 
         if matches!(input.status, Some(OrderStatus::Cancelled)) {

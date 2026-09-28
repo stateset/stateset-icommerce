@@ -84,10 +84,15 @@ impl Agent {
 
     /// Apply and require a sealed success; returns the receipt's result.
     fn apply(&mut self, command_type: &str, payload: Value) -> Value {
+        self.apply_with_events(command_type, payload, 1)
+    }
+
+    /// [`Self::apply`] for a command that commits `events` facts.
+    fn apply_with_events(&mut self, command_type: &str, payload: Value, events: usize) -> Value {
         let receipt = self.run(command_type, "apply", payload);
         assert_eq!(receipt["status"], "succeeded", "{command_type}: {receipt}");
         assert!(receipt["audit_hash"].is_string(), "{command_type} receipt is sealed");
-        assert_eq!(receipt["event_ids"].as_array().map(Vec::len), Some(1), "{command_type}");
+        assert_eq!(receipt["event_ids"].as_array().map(Vec::len), Some(events), "{command_type}");
         receipt["result"].clone()
     }
 
@@ -211,10 +216,17 @@ fn governed_storefront_runs_a_complete_checkout_through_the_json_dispatcher() {
     });
     let created = agent.apply("shipments.create", shipment);
     assert_eq!(created["carrier"], "ups");
-    agent.apply(
+    // Shipping the whole order carries the open shipment with it: the order
+    // fact plus the shipment's `shipment.status_changed` fact.
+    agent.apply_with_events(
         "orders.ship",
         json!({"order_id": order_id, "tracking_number": "1Z999", "lines": null}),
+        2,
     );
+    let shipment_id = created["id"].as_str().expect("shipment id").parse::<Uuid>().expect("uuid");
+    let shipped = agent.commerce.shipments().get(shipment_id.into()).expect("load").expect("s");
+    assert_eq!(shipped.status, stateset_core::ShipmentStatus::Shipped);
+    assert_eq!(shipped.tracking_number.as_deref(), Some("1Z999"));
 
     let order = agent
         .commerce

@@ -762,13 +762,9 @@ async fn postgres_refunded_cannot_be_reached_through_update() {
     let p = completed_payment(&db, Some(order_id), dec!(100.00)).await;
     let pid = p.id.into_uuid();
     set_status(&db, pid, PaymentTransactionStatus::Disputed).await.expect("dispute");
-
-    let err = set_status(&db, pid, PaymentTransactionStatus::Refunded)
-        .await
-        .expect_err("refund by status flip is refused");
-    assert_validation_mentioning(&err, "complete_refund");
-    assert_eq!(status(&db, pid).await, PaymentTransactionStatus::Disputed);
     assert_eq!(open_ids(&db, order_id).await, vec![pid]);
+    // (`Disputed -> Refunded` is a lost chargeback, recorded on the ledger by
+    // the status write itself — see `postgres_chargeback_lost.rs`.)
 
     set_status(&db, pid, PaymentTransactionStatus::Completed).await.expect("dispute won");
     for target in [PaymentTransactionStatus::Refunded, PaymentTransactionStatus::PartiallyRefunded]

@@ -1622,25 +1622,24 @@ impl PgKernelExecutor {
 
         // Void first: the voids change the payment ledger the order's money
         // status is derived from, and the derived value belongs in the same
-        // UPDATE (one version bump). An explicit payment_status on the command
-        // still wins. Mirrors the SQLite executor.
+        // UPDATE (one version bump). A command never declares a payment status
+        // (`transition_order_guard` refuses one). Mirrors the SQLite executor.
         let mut voided_payment_ids = Vec::new();
         if effects.void_in_flight_payments {
             voided_payment_ids =
                 void_in_flight_payments_for_order_pg(tx.as_mut(), order_uuid, started_at).await?;
         }
-        let next_payment_status =
-            if command.payload.payment_status.is_none() && !voided_payment_ids.is_empty() {
-                derive_order_payment_status_pg(
-                    tx.as_mut(),
-                    order_uuid,
-                    order.total_amount,
-                    effects.next_payment_status,
-                )
-                .await?
-            } else {
-                effects.next_payment_status
-            };
+        let next_payment_status = if voided_payment_ids.is_empty() {
+            effects.next_payment_status
+        } else {
+            derive_order_payment_status_pg(
+                tx.as_mut(),
+                order_uuid,
+                order.total_amount,
+                effects.next_payment_status,
+            )
+            .await?
+        };
         let next_fulfillment_status = FulfillmentStatus::for_order_status(effects.next_status)
             .unwrap_or(order.fulfillment_status);
         let updated = sqlx::query("UPDATE orders SET status = $1, payment_status = $2, fulfillment_status = $3, updated_at = $4, version = version + 1 WHERE id = $5 AND version = $6")
@@ -1941,6 +1940,29 @@ impl PgKernelExecutor {
                 if !event_ids.contains(&event_id) {
                     event_ids.push(event_id);
                 }
+            }
+        }
+        // Same rule as `OrderRepository::ship`: a full shipment carries the
+        // order's open shipment records to `shipped`, and their facts carry
+        // this command's context like the reservation facts above.
+        if effects.resolved_status == OrderStatus::Shipped
+            && effects.status_before != OrderStatus::Shipped
+        {
+            let tracking =
+                command.payload.tracking_number.as_deref().or(order.tracking_number.as_deref());
+            let shipment_events = super::shipments::ship_open_shipments_for_order_in_tx(
+                tx.as_mut(),
+                order_uuid,
+                tracking,
+                started_at,
+            )
+            .await?;
+            for event_id in shipment_events {
+                sqlx::query("UPDATE kernel_outbox SET command_id = $1, idempotency_key = $2, principal_type = $3, principal_id = $4, correlation_id = $5, causation_id = $6 WHERE id = $7")
+                    .bind(command.command_id).bind(&command.idempotency_key).bind(principal_kind_name(command)).bind(&command.principal.id)
+                    .bind(command.correlation_id).bind(command.causation_id).bind(event_id).execute(tx.as_mut()).await
+                    .map_err(pg_err)?;
+                event_ids.push(event_id);
             }
         }
         let event = run.event(

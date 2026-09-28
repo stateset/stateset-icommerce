@@ -29,6 +29,15 @@ pub trait PaymentRepository: Send + Sync {
     /// are ledger states written only by [`Self::complete_refund`], which also
     /// advances `amount_refunded`. Such a write is refused with a
     /// `ValidationError`.
+    ///
+    /// The one exception is a **lost chargeback**, `Disputed -> Refunded`
+    /// ([`crate::PaymentTransactionStatus::is_lost_chargeback`]): the network
+    /// already reversed the charge, so the write records the reversal on the
+    /// ledger in the same transaction (a completed refund row for the whole
+    /// remaining balance, reason
+    /// [`crate::LOST_CHARGEBACK_REFUND_REASON`]) and the order's payment status
+    /// is re-derived — it no longer reads `paid`. A won dispute is
+    /// `Disputed -> Completed` and changes nothing else.
     fn update(&self, id: PaymentId, input: UpdatePayment) -> Result<Payment>;
 
     /// List payments with filter

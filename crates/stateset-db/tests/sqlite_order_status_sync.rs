@@ -226,3 +226,35 @@ fn kernel_cancel_with_void_rederives_payment_status_in_one_write() {
     assert_eq!(cancelled.payment_status, PaymentStatus::Pending, "the voided hold is gone");
     assert_eq!(cancelled.version, authorized.version + 1, "one version bump");
 }
+
+/// `orders.transition` cannot declare a payment status: it is derived from
+/// the payment ledger. The command is rejected (sealed receipt, nothing
+/// written), with or without a status change riding along.
+#[test]
+fn kernel_transition_rejects_a_declared_payment_status() {
+    let db = SqliteDatabase::in_memory().expect("db");
+    let order = order(&db, "SYNC-KERNEL-DECLARED");
+    for (key, declared) in
+        [("declared-paid", PaymentStatus::Paid), ("declared-refunded", PaymentStatus::Refunded)]
+    {
+        let receipt = db
+            .kernel_executor(policy())
+            .execute_transition_order(&apply(
+                "orders.transition",
+                key,
+                TransitionOrder {
+                    order_id: order.id,
+                    status: OrderStatus::Confirmed,
+                    payment_status: Some(declared),
+                    void_payments: false,
+                },
+            ))
+            .expect("sealed rejection");
+        assert_eq!(receipt.status, ExecutionStatus::Rejected, "{receipt:?}");
+        assert_eq!(receipt.error_code.as_deref(), Some("commerce.payment_status_derived"));
+    }
+    let stored = get(&db, order.id);
+    assert_eq!(stored.status, OrderStatus::Pending);
+    assert_eq!(stored.payment_status, PaymentStatus::Pending);
+    assert_eq!(stored.version, order.version);
+}

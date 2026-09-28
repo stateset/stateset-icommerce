@@ -4,7 +4,7 @@ use rust_decimal_macros::dec;
 use stateset_core::{
     AdjustInventory, CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder,
     CreateOrderItem, CustomerId, CustomerRepository, InventoryRepository, OrderRepository,
-    OrderStatus, PaymentStatus, ProductId, UpdateCustomer, UpdateOrder,
+    OrderStatus, ProductId, UpdateCustomer, UpdateOrder,
 };
 use stateset_db::SqliteDatabase;
 use uuid::Uuid;
@@ -87,11 +87,7 @@ fn order_update_batch_atomic_rejects_refund_without_payment() {
 
     let result = db.orders().update_batch_atomic(vec![(
         order.id,
-        UpdateOrder {
-            status: Some(OrderStatus::Refunded),
-            payment_status: Some(PaymentStatus::Pending),
-            ..Default::default()
-        },
+        UpdateOrder { status: Some(OrderStatus::Refunded), ..Default::default() },
     )]);
 
     match result {

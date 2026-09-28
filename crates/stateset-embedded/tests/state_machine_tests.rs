@@ -14,10 +14,10 @@
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     BillingInterval, CancelSubscription, Commerce, CreateBackorder, CreateBom, CreateCustomer,
-    CreateInventoryItem, CreateOrder, CreateOrderItem, CreateSerialNumbersBulk, CreateSubscription,
-    CreateSubscriptionPlan, CreateWorkOrder, FulfillmentSourceType, Order, OrderStatus,
-    PauseSubscription, PaymentStatus, ReservationStatus, ReserveSerialNumber, SerialStatus,
-    SubscriptionStatus, UpdateOrder, WorkOrderStatus,
+    CreateInventoryItem, CreateOrder, CreateOrderItem, CreatePayment, CreateRefund,
+    CreateSerialNumbersBulk, CreateSubscription, CreateSubscriptionPlan, CreateWorkOrder,
+    FulfillmentSourceType, Order, OrderStatus, PauseSubscription, PaymentMethodType, PaymentStatus,
+    ReservationStatus, ReserveSerialNumber, SerialStatus, SubscriptionStatus, WorkOrderStatus,
 };
 use uuid::Uuid;
 
@@ -87,19 +87,60 @@ fn test_order_state_machine_all_valid_transitions() {
         .expect("Failed to update order status");
     assert_eq!(order.status, OrderStatus::Delivered);
 
-    // Only a paid order can be refunded.
-    commerce
-        .orders()
-        .update(
-            order.id,
-            UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
-        )
-        .expect("record payment");
+    // Only a paid order can be refunded: record the payment, then the refund.
+    let payment = pay_in_full(&commerce, &order);
+    let refund = commerce
+        .payments()
+        .create_refund(CreateRefund { payment_id: payment.id, ..Default::default() })
+        .expect("create refund");
+    commerce.payments().complete_refund(refund.id).expect("complete refund");
     let order = commerce
         .orders()
         .update_status(order.id, OrderStatus::Refunded)
         .expect("Failed to update order status");
     assert_eq!(order.status, OrderStatus::Refunded);
+    assert_eq!(order.payment_status, PaymentStatus::Refunded, "derived from the refund");
+}
+
+/// Record and complete a payment for the order's whole total.
+fn pay_in_full(commerce: &Commerce, order: &Order) -> stateset_embedded::Payment {
+    let payment = commerce
+        .payments()
+        .create(CreatePayment {
+            order_id: Some(order.id),
+            payment_method: PaymentMethodType::CreditCard,
+            amount: order.total_amount,
+            ..Default::default()
+        })
+        .expect("create payment");
+    commerce.payments().mark_completed(payment.id).expect("complete payment")
+}
+
+/// `update_status(Refunded)` moves the order status only: the payment status
+/// is derived from the ledger, so a paid order with no refund recorded still
+/// reads `paid` (it used to be forced to `refunded`, claiming money had gone
+/// back that never had).
+#[test]
+fn test_update_status_refunded_leaves_payment_status_to_the_ledger() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let customer_id = create_test_customer(&commerce);
+    let order = create_test_order(&commerce, customer_id);
+    for status in [
+        OrderStatus::Confirmed,
+        OrderStatus::Processing,
+        OrderStatus::Shipped,
+        OrderStatus::Delivered,
+    ] {
+        commerce.orders().update_status(order.id, status).expect("advance");
+    }
+    pay_in_full(&commerce, &order);
+
+    let refunded = commerce
+        .orders()
+        .update_status(order.id, OrderStatus::Refunded)
+        .expect("refund order status");
+    assert_eq!(refunded.status, OrderStatus::Refunded);
+    assert_eq!(refunded.payment_status, PaymentStatus::Paid, "no refund was recorded");
 }
 
 #[test]

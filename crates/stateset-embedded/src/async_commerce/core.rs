@@ -123,9 +123,11 @@ impl AsyncOrders {
     }
 
     /// Update order status.
+    ///
+    /// Moves the order status only; the payment status is derived from the
+    /// order's payments and refunds (see the sync `Orders::update_status`).
     pub async fn update_status(&self, id: Uuid, status: OrderStatus) -> Result<Order> {
         let mut tracking_number = None;
-        let mut payment_status = None;
         if status == OrderStatus::Shipped {
             if let Some(order) = self.get(id).await? {
                 if order.tracking_number.is_none() {
@@ -133,19 +135,8 @@ impl AsyncOrders {
                 }
             }
         }
-        if status == OrderStatus::Refunded {
-            payment_status = Some(PaymentStatus::Refunded);
-        }
-        self.update(
-            id,
-            UpdateOrder {
-                status: Some(status),
-                payment_status,
-                tracking_number,
-                ..Default::default()
-            },
-        )
-        .await
+        self.update(id, UpdateOrder { status: Some(status), tracking_number, ..Default::default() })
+            .await
     }
 
     /// List orders with optional filtering.

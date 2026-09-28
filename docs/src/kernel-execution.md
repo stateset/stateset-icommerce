@@ -464,7 +464,9 @@ check. It supports confirmation, processing, delivery, refund, and cancellation;
 cancellation releases linked inventory reservations and backorders in the same
 transaction. Shipment targets are rejected with
 `commerce.shipment_command_required` because fulfillment needs the separate
-line-aware `orders.ship` contract. Transition receipts identify the order
+line-aware `orders.ship` contract. A command that declares a `payment_status` is
+rejected with `commerce.payment_status_derived`: an order's payment status is
+derived from its payments and refunds, never declared. Transition receipts identify the order
 version before and after the mutation, and the committed `orders.updated.v1`
 fact carries the authenticated command context.
 
@@ -474,8 +476,11 @@ state and validates line ownership, remaining quantities, reservation expiry,
 policy, and order version without mutation. Apply confirms the exact inventory
 reservation portions, increments line shipment quantities, records tracking,
 updates the order, and commits every inventory and order fact plus one receipt
-atomically. Every caused fact is listed in the receipt and inherits the command's
-principal, correlation, and causation context.
+atomically. When the shipment completes the order, the order's open shipment
+records (`pending`, `processing`, `ready_to_ship`) move to `shipped` in the same
+transaction, adopting the command's tracking number when they have none, each
+with a `shipment.status_changed` fact. Every caused fact is listed in the receipt
+and inherits the command's principal, correlation, and causation context.
 
 `returns.transition` applies the return state machine under the same governed
 boundary. Preview reports the current return and predicted version; apply locks

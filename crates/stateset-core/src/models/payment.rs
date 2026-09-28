@@ -95,7 +95,29 @@ impl PaymentTransactionStatus {
     pub const fn is_refundable(self) -> bool {
         matches!(self, Self::Completed | Self::PartiallyRefunded)
     }
+
+    /// Whether moving a payment from `self` to `next` records a **lost
+    /// chargeback**: a `Disputed` payment resolved against the merchant
+    /// (`Disputed -> Refunded`). A dispute won is `Disputed -> Completed`.
+    ///
+    /// The card network has already reversed the charge, so the payment's
+    /// whole remaining balance has left the merchant. The storage backends
+    /// record it in the same transaction as the status write: a completed
+    /// refund-ledger row for the remaining balance, stamped with
+    /// [`LOST_CHARGEBACK_REFUND_REASON`] (a reversal forced by the network,
+    /// not a refund the merchant issued), `amount_refunded = amount`, and the
+    /// order's payment status re-derived from the ledger (full order lost ->
+    /// `refunded`, part of it -> `partially_refunded`).
+    #[must_use]
+    pub const fn is_lost_chargeback(self, next: Self) -> bool {
+        matches!((self, next), (Self::Disputed, Self::Refunded))
+    }
 }
+
+/// Refund `reason` stamped on the refund-ledger row a lost chargeback writes
+/// (see [`PaymentTransactionStatus::is_lost_chargeback`]), so reports can tell
+/// money the card network reversed from refunds the merchant issued.
+pub const LOST_CHARGEBACK_REFUND_REASON: &str = "chargeback_lost";
 
 /// Payment method type
 #[derive(

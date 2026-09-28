@@ -14,6 +14,88 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+/// Shipment statuses that precede the carrier hand-off, as a SQL `IN (...)`
+/// body. When the order they belong to ships in full, these follow it to
+/// `shipped`; `on_hold` is left alone (a hold is an explicit decision the
+/// order ship must not override), as is `cancelled` and everything at or past
+/// `shipped`. `readytoship` is the legacy spelling `ShipmentStatus` still
+/// parses. Mirrored exactly in the Postgres backend.
+const PRE_SHIP_STATUSES_SQL: &str = "('pending', 'processing', 'ready_to_ship', 'readytoship')";
+
+/// Carry a fully shipped order onto its open shipment records, inside the
+/// caller's transaction.
+///
+/// Every shipment of `order_id` still in a pre-ship status (`pending`,
+/// `processing`, `ready_to_ship`) becomes `shipped` with `shipped_at = now`.
+/// A shipment that already carries a tracking number keeps it; one without
+/// adopts the order's `tracking_number` (and the carrier's tracking URL for
+/// it). Each moved shipment records a `shipment.status_changed` outbox fact
+/// in the same transaction. Returns the recorded facts' event ids (one per
+/// moved shipment).
+///
+/// A *partial* order shipment does not call this: which package carried
+/// which units is not knowable from the order lines, so those shipments are
+/// advanced explicitly with `ShipmentRepository::ship`.
+pub(crate) fn ship_open_shipments_for_order_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    order_id: &str,
+    tracking_number: Option<&str>,
+    now: chrono::DateTime<Utc>,
+) -> rusqlite::Result<Vec<Uuid>> {
+    let open: Vec<(String, String, String, Option<String>)> = {
+        let mut stmt = tx.prepare(&format!(
+            "SELECT id, status, carrier, tracking_number FROM shipments
+             WHERE order_id = ? AND status IN {PRE_SHIP_STATUSES_SQL} ORDER BY created_at, id"
+        ))?;
+        stmt.query_map([order_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut event_ids = Vec::with_capacity(open.len());
+    for (shipment_id, previous_status, carrier, own_tracking) in open {
+        let adopted = if own_tracking.is_none() { tracking_number } else { None };
+        let tracking_url = adopted.and_then(|tn| {
+            carrier.parse::<ShippingCarrier>().ok().and_then(|c| c.tracking_url(tn))
+        });
+        let rows = tx.execute(
+            &format!(
+                "UPDATE shipments SET status = 'shipped',
+                        tracking_number = COALESCE(tracking_number, ?),
+                        tracking_url = COALESCE(?, tracking_url),
+                        shipped_at = COALESCE(shipped_at, ?), updated_at = ?
+                 WHERE id = ? AND status IN {PRE_SHIP_STATUSES_SQL}"
+            ),
+            rusqlite::params![
+                adopted,
+                tracking_url,
+                now.to_rfc3339(),
+                now.to_rfc3339(),
+                shipment_id
+            ],
+        )?;
+        if rows == 0 {
+            continue;
+        }
+        let event_id = super::kernel_outbox::record_outbox_fact(
+            tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "shipment.status_changed",
+                aggregate_type: "shipment",
+                aggregate_id: &shipment_id,
+                payload: serde_json::json!({
+                    "shipment_id": shipment_id,
+                    "order_id": order_id,
+                    "previous_status": previous_status,
+                    "status": ShipmentStatus::Shipped.to_string(),
+                    "tracking_number": own_tracking.as_deref().or(adopted),
+                    "reason": "order_shipped",
+                }),
+            },
+        )?;
+        event_ids.push(event_id);
+    }
+    Ok(event_ids)
+}
+
 /// SQLite implementation of `ShipmentRepository`
 #[derive(Debug)]
 pub struct SqliteShipmentRepository {

@@ -440,6 +440,13 @@ impl Default for CreateOrderItem {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateOrder {
     pub status: Option<OrderStatus>,
+    /// **Must be `None`.** An order's payment status is derived from its
+    /// payment ledger ([`PaymentStatus::derive`]) inside the same transaction
+    /// as every payment or refund write; an update that sets it is refused
+    /// with a `ValidationError` ([`DIRECT_PAYMENT_STATUS_REFUSED`]). Record a
+    /// payment (create + complete) or a refund (`create_refund` +
+    /// `complete_refund`) instead. The field is kept so existing callers
+    /// compile and serialized inputs still parse.
     pub payment_status: Option<PaymentStatus>,
     pub fulfillment_status: Option<FulfillmentStatus>,
     pub tracking_number: Option<String>,
@@ -459,6 +466,30 @@ pub struct UpdateOrder {
     /// `outstanding_payment_ids` / `outstanding_captured`.
     #[serde(default)]
     pub void_payments: bool,
+}
+
+/// Why an order update (or `orders.transition` command) that sets
+/// `payment_status` is refused: the value is derived from the order's
+/// payments and refunds, never declared.
+pub const DIRECT_PAYMENT_STATUS_REFUSED: &str = "order payment_status is derived from the order's \
+     payments and refunds and cannot be set directly; record a payment (create + complete) or a \
+     refund (create_refund + complete_refund) instead";
+
+impl UpdateOrder {
+    /// Refuse a caller-supplied `payment_status` (see the field docs).
+    ///
+    /// # Errors
+    ///
+    /// [`crate::CommerceError::ValidationError`] carrying
+    /// [`DIRECT_PAYMENT_STATUS_REFUSED`] when `payment_status` is `Some`.
+    pub fn ensure_payment_status_not_declared(&self) -> Result<()> {
+        match self.payment_status {
+            Some(_) => Err(crate::CommerceError::ValidationError(
+                DIRECT_PAYMENT_STATUS_REFUSED.to_string(),
+            )),
+            None => Ok(()),
+        }
+    }
 }
 
 /// Input for cancelling an order.
@@ -514,6 +545,9 @@ impl From<CancelOrder> for UpdateOrder {
 pub struct TransitionOrder {
     pub order_id: OrderId,
     pub status: OrderStatus,
+    /// **Must be `None`**: a command that declares a payment status is
+    /// rejected with `commerce.payment_status_derived` (see
+    /// [`UpdateOrder::payment_status`]). Kept for wire compatibility.
     pub payment_status: Option<PaymentStatus>,
     /// Cancel money rule (mirrors [`UpdateOrder::void_payments`]): a
     /// transition to [`OrderStatus::Cancelled`] is rejected with

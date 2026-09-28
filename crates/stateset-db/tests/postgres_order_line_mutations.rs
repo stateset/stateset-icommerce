@@ -641,38 +641,57 @@ async fn postgres_line_edits_write_kernel_outbox_events_in_the_same_transaction(
 
 #[tokio::test]
 async fn postgres_delete_refuses_an_order_whose_payment_status_holds_money() {
+    use stateset_core::{CreatePayment, CreateRefund, PaymentMethodType, PaymentStatus};
     let Some(ctx) = setup().await else { return };
     let order = ctx.order_with_order_level_money().await;
     let id = order.id.into_uuid();
-    ctx.db
-        .orders()
-        .update_async(
-            id,
-            UpdateOrder {
-                payment_status: Some(stateset_core::PaymentStatus::Paid),
-                ..Default::default()
-            },
-        )
+    // Record a real payment for the whole total: the order derives `paid`.
+    let payment = ctx
+        .db
+        .payments()
+        .create_async(CreatePayment {
+            order_id: Some(order.id),
+            payment_method: PaymentMethodType::CreditCard,
+            amount: order.total_amount,
+            ..Default::default()
+        })
         .await
-        .expect("mark paid");
+        .expect("create payment");
+    ctx.db.payments().mark_completed_async(payment.id.into_uuid()).await.expect("complete");
+    let paid = ctx.db.orders().get_async(id).await.unwrap().unwrap();
+    assert_eq!(paid.payment_status, PaymentStatus::Paid);
 
     let err = ctx.db.orders().delete_async(id).await.expect_err("paid orders are records");
     assert!(matches!(err, CommerceError::Conflict(ref m) if m.contains("paid")), "{err:?}");
     assert!(ctx.db.orders().get_async(id).await.unwrap().is_some());
     assert_eq!(ctx.open_reserved_qty(id).await, dec!(2), "nothing released on a refused delete");
 
-    ctx.db
+    // Refund part, then force the cancel past the settled capture.
+    let refund = ctx
+        .db
+        .payments()
+        .create_refund_async(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(5.00)),
+            ..Default::default()
+        })
+        .await
+        .expect("create refund");
+    ctx.db.payments().complete_refund_async(refund.id).await.expect("complete refund");
+    let cancelled = ctx
+        .db
         .orders()
         .update_async(
             id,
             UpdateOrder {
                 status: Some(OrderStatus::Cancelled),
-                payment_status: Some(stateset_core::PaymentStatus::PartiallyRefunded),
+                void_payments: true,
                 ..Default::default()
             },
         )
         .await
         .expect("cancel");
+    assert_eq!(cancelled.payment_status, PaymentStatus::PartiallyRefunded);
     let err = ctx.db.orders().delete_async(id).await.expect_err("partially refunded is a record");
     assert!(matches!(err, CommerceError::Conflict(_)), "{err:?}");
     assert!(ctx.db.orders().get_async(id).await.unwrap().is_some());

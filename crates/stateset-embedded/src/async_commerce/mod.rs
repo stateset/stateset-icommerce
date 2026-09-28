@@ -137,7 +137,6 @@ pub(crate) use stateset_core::{
     Payment,
     PaymentFilter,
     PaymentMethod,
-    PaymentStatus,
     Product,
     ProductFilter,
     ProductPerformance,
