@@ -15,7 +15,7 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 - **Domains** are the `Commerce` accessors that return a handle (`commerce.orders()`,
   `commerce.promotions()`, ...) plus the root `commerce` methods. Each domain's engine methods are
   the `pub fn` methods with a `self` receiver on the returned type. The engine exposes
-  70 domains and 1224 methods.
+  70 domains and 1225 methods.
 - **Traced bindings** (Node, Python, Go): an engine method is *exposed* only when an exported
   binding method (or a helper it calls) actually calls it — `commerce.promotions().get_by_code(`.
   Names do not matter, so renames (`GetLevel` → `get_stock`) are credited correctly. A class
@@ -33,16 +33,16 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 
 | Binding | Evidence | Gated | Exposed | Coverage | Parity vs Node |
 | --- | --- | --- | --- | --- | --- |
-| Node.js | traced: #[napi] methods -> engine calls | yes | 729/1216 | 60% | reference |
-| Python | traced: #[pymethods] methods -> engine calls | yes | 587/1216 | 48.3% | 79.7% |
-| Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1216 | 6.6% | 11% |
-| .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1216 | 3.9% | 6.4% |
-| Java | native reach: engine calls anywhere in the Rust layer | no | 77/1216 | 6.3% | 9.7% |
-| Kotlin | native reach: engine calls anywhere in the Rust layer | no | 59/1216 | 4.9% | 8.1% |
-| PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1216 | 14.6% | 22.1% |
-| Ruby | native reach: engine calls anywhere in the Rust layer | no | 0/1216 | 0% | 0% |
-| Swift | native reach: engine calls anywhere in the Rust layer | no | 51/1216 | 4.2% | 7% |
-| WASM | native reach: engine calls anywhere in the Rust layer | no | 0/1216 | 0% | 0% |
+| Node.js | traced: #[napi] methods -> engine calls | yes | 738/1217 | 60.6% | reference |
+| Python | traced: #[pymethods] methods -> engine calls | yes | 593/1217 | 48.7% | 79.7% |
+| Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1217 | 6.6% | 10.8% |
+| .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1217 | 3.9% | 6.4% |
+| Java | native reach: engine calls anywhere in the Rust layer | no | 77/1217 | 6.3% | 9.6% |
+| Kotlin | native reach: engine calls anywhere in the Rust layer | no | 59/1217 | 4.8% | 8% |
+| PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1217 | 14.6% | 21.8% |
+| Ruby | native reach: engine calls anywhere in the Rust layer | no | 0/1217 | 0% | 0% |
+| Swift | native reach: engine calls anywhere in the Rust layer | no | 51/1217 | 4.2% | 6.9% |
+| WASM | native reach: engine calls anywhere in the Rust layer | no | 0/1217 | 0% | 0% |
 
 Coverage is exposed / (engine methods − exempt). Parity vs Node is the share of Node-exposed engine
 methods the binding also exposes.
@@ -51,9 +51,9 @@ methods the binding also exposes.
 
 | Binding | Host methods | Name-matched | Coverage | Unmatched host methods |
 | --- | --- | --- | --- | --- |
-| .NET | 245 | 220/1216 | 18.1% | 7 |
-| Swift | 71 | 71/1216 | 5.8% | 0 |
-| WASM | 148 | 134/1216 | 11% | 14 |
+| .NET | 245 | 220/1217 | 18.1% | 7 |
+| Swift | 71 | 71/1217 | 5.8% | 0 |
+| WASM | 148 | 134/1217 | 11% | 14 |
 
 ## Per-domain matrix
 
@@ -62,7 +62,7 @@ Cells are exposed / applicable engine methods.
 | Domain | Engine methods | Exempt | Node.js | Python | Go | .NET | Java | Kotlin | PHP | Ruby | Swift | WASM |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `commerce` | 21 | 4 | 8/17 | 4/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 |
-| `accounts_payable` | 38 | 0 | 12/38 | 8/38 | 0/38 | 2/38 | 3/38 | 3/38 | 4/38 | 0/38 | 3/38 | 0/38 |
+| `accounts_payable` | 38 | 0 | 13/38 | 8/38 | 0/38 | 2/38 | 3/38 | 3/38 | 4/38 | 0/38 | 3/38 | 0/38 |
 | `accounts_receivable` | 28 | 0 | 8/28 | 3/28 | 0/28 | 2/28 | 3/28 | 2/28 | 3/28 | 0/28 | 2/28 | 0/28 |
 | `activity_logs` | 5 | 0 | 5/5 | 5/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
 | `agent` | 4 | 4 | exempt | exempt | exempt | exempt | exempt | exempt | exempt | exempt | exempt | exempt |
@@ -93,20 +93,20 @@ Cells are exposed / applicable engine methods.
 | `lots` | 35 | 0 | 12/35 | 6/35 | 0/35 | 2/35 | 4/35 | 2/35 | 5/35 | 0/35 | 2/35 | 0/35 |
 | `loyalty` | 14 | 0 | 14/14 | 14/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 |
 | `maintenance` | 10 | 0 | 7/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 |
-| `orders` | 18 | 0 | 8/18 | 7/18 | 5/18 | 4/18 | 8/18 | 6/18 | 8/18 | 0/18 | 4/18 | 0/18 |
+| `orders` | 18 | 0 | 9/18 | 8/18 | 5/18 | 4/18 | 8/18 | 6/18 | 8/18 | 0/18 | 4/18 | 0/18 |
 | `payment_obligations` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
-| `payments` | 23 | 0 | 8/23 | 7/23 | 6/23 | 1/23 | 1/23 | 3/23 | 1/23 | 0/23 | 1/23 | 0/23 |
+| `payments` | 23 | 0 | 12/23 | 11/23 | 6/23 | 1/23 | 1/23 | 3/23 | 1/23 | 0/23 | 1/23 | 0/23 |
 | `prepayments` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `price_levels` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `price_schedules` | 10 | 0 | 10/10 | 10/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 |
 | `print_stations` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `production_batches` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `products` | 17 | 0 | 16/17 | 6/17 | 4/17 | 3/17 | 4/17 | 3/17 | 5/17 | 0/17 | 3/17 | 0/17 |
-| `promotions` | 18 | 0 | 18/18 | 16/18 | 0/18 | 0/18 | 0/18 | 0/18 | 9/18 | 0/18 | 0/18 | 0/18 |
+| `promotions` | 19 | 0 | 19/19 | 17/19 | 0/19 | 0/19 | 0/19 | 0/19 | 9/19 | 0/19 | 0/19 | 0/19 |
 | `purchase_orders` | 26 | 0 | 11/26 | 11/26 | 10/26 | 0/26 | 0/26 | 0/26 | 11/26 | 0/26 | 0/26 | 0/26 |
 | `purgatory` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
-| `quality` | 33 | 0 | 16/33 | 10/33 | 0/33 | 1/33 | 4/33 | 2/33 | 4/33 | 0/33 | 2/33 | 0/33 |
-| `receiving` | 24 | 0 | 9/24 | 5/24 | 0/24 | 0/24 | 4/24 | 0/24 | 4/24 | 0/24 | 0/24 | 0/24 |
+| `quality` | 33 | 0 | 17/33 | 10/33 | 0/33 | 1/33 | 4/33 | 2/33 | 4/33 | 0/33 | 2/33 | 0/33 |
+| `receiving` | 24 | 0 | 10/24 | 5/24 | 0/24 | 0/24 | 4/24 | 0/24 | 4/24 | 0/24 | 0/24 | 0/24 |
 | `returns` | 15 | 0 | 13/15 | 6/15 | 6/15 | 2/15 | 6/15 | 6/15 | 5/15 | 0/15 | 2/15 | 0/15 |
 | `revenue_recognition` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `reviews` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
@@ -150,8 +150,8 @@ unless `--allow-loss` is also passed. Gated bindings: `node`, `python`, `go`
 
 | Binding | Known gaps vs Node (baseline) |
 | --- | --- |
-| python | 148 |
-| go | 649 |
+| python | 150 |
+| go | 658 |
 
 ## Exemptions
 
@@ -282,11 +282,7 @@ Struct literals in engine-backed bindings that hand the engine an always-empty c
 carry the data the engine supports — the defect class behind Python's line-item-less invoices,
 purchase orders and promotions. They are not a CI failure; review each one.
 
-| Location | Struct literal | Field |
-| --- | --- | --- |
-| `bindings/node/src/domains/accounts_payable.rs:271` | `stateset_core::CreateBill` | `items: vec![]` |
-| `bindings/node/src/domains/quality.rs:416` | `stateset_core::CreateInspection` | `items: vec![]` |
-| `bindings/node/src/domains/receiving.rs:138` | `stateset_core::CreateReceipt` | `items: vec![]` |
+None found.
 
 ## Unmatched host methods (name-matched surfaces)
 
@@ -363,7 +359,7 @@ purchase orders and promotions. They are not a CI failure; review each one.
 | `get_aging_summary` | yes | yes | — |
 | `get_bill` | yes | yes | — |
 | `get_bill_by_number` | yes | — | — |
-| `get_bill_items` | — | — | — |
+| `get_bill_items` | yes | — | — |
 | `get_bills_batch` | — | — | — |
 | `get_bills_due_soon` | yes | — | — |
 | `get_overdue_bills` | yes | yes | — |
@@ -1062,7 +1058,7 @@ purchase orders and promotions. They are not a CI failure; review each one.
 | `delete` | — | — | — |
 | `deliver` | — | — | — |
 | `get` | yes | yes | yes |
-| `get_by_number` | — | — | — |
+| `get_by_number` | yes | yes | — |
 | `list` | yes | yes | yes |
 | `list_for_customer` | — | — | — |
 | `remove_item` | — | — | — |
@@ -1090,21 +1086,21 @@ purchase orders and promotions. They are not a CI failure; review each one.
 | Engine method | Node.js | Python | Go |
 | --- | --- | --- | --- |
 | `cancel` | yes | — | — |
-| `complete_refund` | — | — | — |
+| `complete_refund` | yes | yes | — |
 | `count` | yes | yes | — |
 | `create` | yes | yes | yes |
 | `create_payment_method` | — | — | — |
 | `create_refund` | yes | yes | yes |
 | `delete_payment_method` | — | — | — |
-| `fail_refund` | — | — | — |
+| `fail_refund` | yes | yes | — |
 | `for_invoice` | — | — | — |
 | `for_order` | — | — | — |
 | `get` | yes | yes | yes |
 | `get_by_external_id` | — | — | — |
 | `get_by_number` | — | — | — |
 | `get_payment_methods` | — | — | — |
-| `get_refund` | — | — | — |
-| `get_refunds` | — | — | — |
+| `get_refund` | yes | yes | — |
+| `get_refunds` | yes | yes | — |
 | `list` | yes | yes | yes |
 | `mark_completed` | yes | yes | yes |
 | `mark_failed` | yes | yes | yes |
@@ -1223,6 +1219,7 @@ purchase orders and promotions. They are not a CI failure; review each one.
 | `is_valid` | yes | — | — |
 | `list` | yes | yes | — |
 | `list_coupons` | yes | yes | — |
+| `list_usage` | yes | yes | — |
 | `record_usage` | yes | yes | — |
 | `update` | yes | — | — |
 | `validate_coupon` | yes | yes | — |
@@ -1293,7 +1290,7 @@ purchase orders and promotions. They are not a CI failure; review each one.
 | `get_hold` | yes | — | — |
 | `get_inspection` | yes | yes | — |
 | `get_inspection_by_number` | — | — | — |
-| `get_inspection_items` | — | — | — |
+| `get_inspection_items` | yes | — | — |
 | `get_ncr` | yes | — | — |
 | `get_ncr_by_number` | — | — | — |
 | `get_open_ncrs` | — | — | — |
@@ -1328,7 +1325,7 @@ purchase orders and promotions. They are not a CI failure; review each one.
 | `get_put_away` | — | — | — |
 | `get_receipt` | yes | yes | — |
 | `get_receipt_by_number` | yes | — | — |
-| `get_receipt_items` | — | yes | — |
+| `get_receipt_items` | yes | yes | — |
 | `get_receipts_batch` | — | — | — |
 | `list_put_aways` | — | — | — |
 | `list_receipts` | yes | yes | — |

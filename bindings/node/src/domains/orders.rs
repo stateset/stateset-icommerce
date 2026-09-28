@@ -163,6 +163,18 @@ pub struct OrderOutput {
     pub total_amount: f64,
     /// Exact base-10 order total. Prefer this field for calculations.
     pub total_amount_exact: String,
+    /// @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0.
+    pub tax_amount: f64,
+    /// Exact base-10 order-level tax, already included in the total.
+    pub tax_amount_exact: String,
+    /// @deprecated Use the `shippingAmountExact` twin; float money will be removed in 2.0.
+    pub shipping_amount: f64,
+    /// Exact base-10 shipping charge, already included in the total.
+    pub shipping_amount_exact: String,
+    /// @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0.
+    pub discount_amount: f64,
+    /// Exact base-10 order-level discount, already subtracted from the total.
+    pub discount_amount_exact: String,
     pub currency: String,
     #[napi(ts_type = "PaymentStatus")]
     pub payment_status: String,
@@ -184,6 +196,11 @@ impl TryFrom<stateset_core::Order> for OrderOutput {
 
     fn try_from(o: stateset_core::Order) -> Result<Self> {
         let (total_amount, total_amount_exact) = money_pair(o.total_amount, "order total amount")?;
+        let (tax_amount, tax_amount_exact) = money_pair(o.tax_amount, "order tax amount")?;
+        let (shipping_amount, shipping_amount_exact) =
+            money_pair(o.shipping_amount, "order shipping amount")?;
+        let (discount_amount, discount_amount_exact) =
+            money_pair(o.discount_amount, "order discount amount")?;
         Ok(Self {
             id: o.id.to_string(),
             order_number: o.order_number,
@@ -191,6 +208,12 @@ impl TryFrom<stateset_core::Order> for OrderOutput {
             status: format!("{}", o.status),
             total_amount,
             total_amount_exact,
+            tax_amount,
+            tax_amount_exact,
+            shipping_amount,
+            shipping_amount_exact,
+            discount_amount,
+            discount_amount_exact,
             currency: o.currency.to_string(),
             payment_status: format!("{}", o.payment_status),
             fulfillment_status: format!("{}", o.fulfillment_status),
@@ -356,6 +379,17 @@ impl Orders {
             .get(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get order", e))?;
 
+        convert_optional_output(order)
+    }
+
+    /// Get an order by its human-readable order number. `null` when none matches.
+    #[napi]
+    pub async fn get_by_number(&self, order_number: String) -> Result<Option<OrderOutput>> {
+        let commerce = self.commerce.get()?;
+        let order = commerce
+            .orders()
+            .get_by_number(&order_number)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get order by number", e))?;
         convert_optional_output(order)
     }
 

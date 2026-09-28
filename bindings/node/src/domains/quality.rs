@@ -21,6 +21,77 @@ pub struct CreateInspectionInput {
     pub warehouse_id: Option<i32>,
     pub assigned_to: Option<String>,
     pub notes: Option<String>,
+    /// Lines to inspect. Optional: omitted (or empty) creates an inspection
+    /// with no lines, as before.
+    pub items: Option<Vec<CreateInspectionItemInput>>,
+}
+
+/// A line to inspect.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateInspectionItemInput {
+    pub sku: String,
+    pub lot_number: Option<String>,
+    pub serial_number: Option<String>,
+    /// Float quantity. Optional: send `quantity_to_inspect_exact` instead.
+    pub quantity_to_inspect: Option<f64>,
+    /// Exact base-10 quantity. Takes precedence over `quantity_to_inspect`.
+    pub quantity_to_inspect_exact: Option<String>,
+}
+
+impl TryFrom<CreateInspectionItemInput> for stateset_core::CreateInspectionItem {
+    type Error = Error;
+
+    fn try_from(i: CreateInspectionItemInput) -> Result<Self> {
+        Ok(Self {
+            sku: i.sku,
+            lot_number: i.lot_number,
+            serial_number: i.serial_number,
+            quantity_to_inspect: money_input(
+                i.quantity_to_inspect_exact.as_deref(),
+                i.quantity_to_inspect,
+                "inspection item quantity",
+            )?,
+        })
+    }
+}
+
+/// An inspection line as stored. Quantities are exact base-10 strings.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct InspectionItemOutput {
+    pub id: String,
+    pub inspection_id: String,
+    pub sku: String,
+    pub lot_number: Option<String>,
+    pub serial_number: Option<String>,
+    pub quantity_inspected_exact: String,
+    pub quantity_passed_exact: String,
+    pub quantity_failed_exact: String,
+    pub defect_codes: Vec<String>,
+    /// `pending`, `pass`, `fail`, ... (the engine's snake_case result).
+    pub result: String,
+    pub notes: Option<String>,
+    pub created_at: String,
+}
+
+impl From<stateset_core::InspectionItem> for InspectionItemOutput {
+    fn from(i: stateset_core::InspectionItem) -> Self {
+        Self {
+            id: i.id.to_string(),
+            inspection_id: i.inspection_id.to_string(),
+            sku: i.sku,
+            lot_number: i.lot_number,
+            serial_number: i.serial_number,
+            quantity_inspected_exact: i.quantity_inspected.to_string(),
+            quantity_passed_exact: i.quantity_passed.to_string(),
+            quantity_failed_exact: i.quantity_failed.to_string(),
+            defect_codes: i.defect_codes,
+            result: i.result.to_string(),
+            notes: i.notes,
+            created_at: i.created_at.to_rfc3339(),
+        }
+    }
 }
 
 #[napi(object)]
@@ -413,11 +484,33 @@ impl Quality {
                 inspector_id: input.assigned_to,
                 scheduled_at: None,
                 notes: input.notes,
-                items: vec![],
+                items: input
+                    .items
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(TryInto::try_into)
+                    .collect::<Result<Vec<_>>>()?,
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to create inspection", e))?;
 
         Ok(inspection.into())
+    }
+
+    /// The lines of an inspection.
+    #[napi]
+    pub async fn get_inspection_items(
+        &self,
+        inspection_id: String,
+    ) -> Result<Vec<InspectionItemOutput>> {
+        let commerce = self.commerce.get()?;
+        let uuid: uuid::Uuid = inspection_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid inspection UUID"))?;
+        let items = commerce
+            .quality()
+            .get_inspection_items(uuid)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get inspection items", e))?;
+        Ok(items.into_iter().map(Into::into).collect())
     }
 
     /// Get an inspection by ID

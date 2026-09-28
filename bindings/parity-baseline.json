@@ -65,6 +65,7 @@
         "get_aging_summary",
         "get_bill",
         "get_bill_by_number",
+        "get_bill_items",
         "get_bills_due_soon",
         "get_overdue_bills",
         "get_total_outstanding",
@@ -462,6 +463,7 @@
         "create",
         "create_from_cart",
         "get",
+        "get_by_number",
         "list",
         "ship",
         "update_status"
@@ -478,10 +480,14 @@
       ],
       "payments": [
         "cancel",
+        "complete_refund",
         "count",
         "create",
         "create_refund",
+        "fail_refund",
         "get",
+        "get_refund",
+        "get_refunds",
         "list",
         "mark_completed",
         "mark_failed"
@@ -574,6 +580,7 @@
         "is_valid",
         "list",
         "list_coupons",
+        "list_usage",
         "record_usage",
         "update",
         "validate_coupon"
@@ -610,6 +617,7 @@
         "get_active_holds",
         "get_hold",
         "get_inspection",
+        "get_inspection_items",
         "get_ncr",
         "list_holds",
         "list_inspections",
@@ -626,6 +634,7 @@
         "create_receipt_from_po",
         "get_receipt",
         "get_receipt_by_number",
+        "get_receipt_items",
         "list_receipts",
         "start_receiving"
       ],
@@ -1253,6 +1262,7 @@
         "count",
         "create",
         "get",
+        "get_by_number",
         "list",
         "ship",
         "update_status"
@@ -1268,10 +1278,14 @@
         "set_status"
       ],
       "payments": [
+        "complete_refund",
         "count",
         "create",
         "create_refund",
+        "fail_refund",
         "get",
+        "get_refund",
+        "get_refunds",
         "list",
         "mark_completed",
         "mark_failed"
@@ -1353,6 +1367,7 @@
         "get_coupon_by_code",
         "list",
         "list_coupons",
+        "list_usage",
         "record_usage",
         "validate_coupon"
       ],
@@ -1761,6 +1776,7 @@
         "cancel_bill",
         "count_bills",
         "get_bill_by_number",
+        "get_bill_items",
         "get_bills_due_soon",
         "get_total_outstanding"
       ],
@@ -1881,6 +1897,7 @@
         "count_active_holds",
         "get_active_holds",
         "get_hold",
+        "get_inspection_items",
         "get_ncr",
         "list_holds",
         "start_inspection"
@@ -1965,6 +1982,7 @@
         "get_aging_summary",
         "get_bill",
         "get_bill_by_number",
+        "get_bill_items",
         "get_bills_due_soon",
         "get_overdue_bills",
         "get_total_outstanding",
@@ -2329,6 +2347,7 @@
       "orders": [
         "count",
         "create_from_cart",
+        "get_by_number",
         "ship"
       ],
       "payment_obligations": [
@@ -2343,7 +2362,11 @@
       ],
       "payments": [
         "cancel",
-        "count"
+        "complete_refund",
+        "count",
+        "fail_refund",
+        "get_refund",
+        "get_refunds"
       ],
       "prepayments": [
         "apply",
@@ -2429,6 +2452,7 @@
         "is_valid",
         "list",
         "list_coupons",
+        "list_usage",
         "record_usage",
         "update",
         "validate_coupon"
@@ -2455,6 +2479,7 @@
         "get_active_holds",
         "get_hold",
         "get_inspection",
+        "get_inspection_items",
         "get_ncr",
         "list_holds",
         "list_inspections",
@@ -2471,6 +2496,7 @@
         "create_receipt_from_po",
         "get_receipt",
         "get_receipt_by_number",
+        "get_receipt_items",
         "list_receipts",
         "start_receiving"
       ],

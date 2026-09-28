@@ -8,7 +8,7 @@
   },
   "engine": {
     "domainCount": 70,
-    "methodCount": 1224,
+    "methodCount": 1225,
     "accessorAliases": [
       {
         "accessor": "custom_states",
@@ -1061,6 +1061,7 @@
           "is_valid",
           "list",
           "list_coupons",
+          "list_usage",
           "record_usage",
           "update",
           "validate_coupon"
@@ -1797,9 +1798,9 @@
       "evidence": "traced: #[napi] methods -> engine calls",
       "engineBacked": true,
       "gated": true,
-      "exposedCount": 729,
-      "applicableCount": 1216,
-      "coverage": 60,
+      "exposedCount": 738,
+      "applicableCount": 1217,
+      "coverage": 60.6,
       "notes": null,
       "domains": {
         "commerce": {
@@ -1827,7 +1828,7 @@
           ]
         },
         "accounts_payable": {
-          "coverage": 31.6,
+          "coverage": 34.2,
           "exposed": [
             "approve_bill",
             "cancel_bill",
@@ -1836,6 +1837,7 @@
             "get_aging_summary",
             "get_bill",
             "get_bill_by_number",
+            "get_bill_items",
             "get_bills_due_soon",
             "get_overdue_bills",
             "get_total_outstanding",
@@ -1853,7 +1855,6 @@
             "create_payment_run",
             "delete_bill",
             "dispute_bill",
-            "get_bill_items",
             "get_bills_batch",
             "get_payment",
             "get_payment_allocations",
@@ -2576,13 +2577,14 @@
           ]
         },
         "orders": {
-          "coverage": 44.4,
+          "coverage": 50,
           "exposed": [
             "cancel",
             "count",
             "create",
             "create_from_cart",
             "get",
+            "get_by_number",
             "list",
             "ship",
             "update_status"
@@ -2592,7 +2594,6 @@
             "cancel_with",
             "delete",
             "deliver",
-            "get_by_number",
             "list_for_customer",
             "remove_item",
             "remove_item_with",
@@ -2615,29 +2616,29 @@
           "missing": []
         },
         "payments": {
-          "coverage": 34.8,
+          "coverage": 52.2,
           "exposed": [
             "cancel",
+            "complete_refund",
             "count",
             "create",
             "create_refund",
+            "fail_refund",
             "get",
+            "get_refund",
+            "get_refunds",
             "list",
             "mark_completed",
             "mark_failed"
           ],
           "missing": [
-            "complete_refund",
             "create_payment_method",
             "delete_payment_method",
-            "fail_refund",
             "for_invoice",
             "for_order",
             "get_by_external_id",
             "get_by_number",
             "get_payment_methods",
-            "get_refund",
-            "get_refunds",
             "mark_processing",
             "open_captures_for_order",
             "set_default_payment_method",
@@ -2760,6 +2761,7 @@
             "is_valid",
             "list",
             "list_coupons",
+            "list_usage",
             "record_usage",
             "update",
             "validate_coupon"
@@ -2813,7 +2815,7 @@
           "missing": []
         },
         "quality": {
-          "coverage": 48.5,
+          "coverage": 51.5,
           "exposed": [
             "close_ncr",
             "complete_inspection",
@@ -2824,6 +2826,7 @@
             "get_active_holds",
             "get_hold",
             "get_inspection",
+            "get_inspection_items",
             "get_ncr",
             "list_holds",
             "list_inspections",
@@ -2843,7 +2846,6 @@
             "get_active_holds_for_sku",
             "get_defect_code",
             "get_inspection_by_number",
-            "get_inspection_items",
             "get_ncr_by_number",
             "get_open_ncrs",
             "get_pending_inspections",
@@ -2853,7 +2855,7 @@
           ]
         },
         "receiving": {
-          "coverage": 37.5,
+          "coverage": 41.7,
           "exposed": [
             "cancel_receipt",
             "complete_receiving",
@@ -2862,6 +2864,7 @@
             "create_receipt_from_po",
             "get_receipt",
             "get_receipt_by_number",
+            "get_receipt_items",
             "list_receipts",
             "start_receiving"
           ],
@@ -2875,7 +2878,6 @@
             "delete_receipt",
             "get_pending_put_aways",
             "get_put_away",
-            "get_receipt_items",
             "get_receipts_batch",
             "list_put_aways",
             "receive_items",
@@ -3479,9 +3481,9 @@
       "evidence": "traced: #[pymethods] methods -> engine calls",
       "engineBacked": true,
       "gated": true,
-      "exposedCount": 587,
-      "applicableCount": 1216,
-      "coverage": 48.3,
+      "exposedCount": 593,
+      "applicableCount": 1217,
+      "coverage": 48.7,
       "notes": null,
       "domains": {
         "commerce": {
@@ -4257,12 +4259,13 @@
           ]
         },
         "orders": {
-          "coverage": 38.9,
+          "coverage": 44.4,
           "exposed": [
             "cancel",
             "count",
             "create",
             "get",
+            "get_by_number",
             "list",
             "ship",
             "update_status"
@@ -4273,7 +4276,6 @@
             "create_from_cart",
             "delete",
             "deliver",
-            "get_by_number",
             "list_for_customer",
             "remove_item",
             "remove_item_with",
@@ -4296,29 +4298,29 @@
           "missing": []
         },
         "payments": {
-          "coverage": 30.4,
+          "coverage": 47.8,
           "exposed": [
+            "complete_refund",
             "count",
             "create",
             "create_refund",
+            "fail_refund",
             "get",
+            "get_refund",
+            "get_refunds",
             "list",
             "mark_completed",
             "mark_failed"
           ],
           "missing": [
             "cancel",
-            "complete_refund",
             "create_payment_method",
             "delete_payment_method",
-            "fail_refund",
             "for_invoice",
             "for_order",
             "get_by_external_id",
             "get_by_number",
             "get_payment_methods",
-            "get_refund",
-            "get_refunds",
             "mark_processing",
             "open_captures_for_order",
             "set_default_payment_method",
@@ -4424,7 +4426,7 @@
           ]
         },
         "promotions": {
-          "coverage": 88.9,
+          "coverage": 89.5,
           "exposed": [
             "activate",
             "add_condition",
@@ -4440,6 +4442,7 @@
             "get_coupon_by_code",
             "list",
             "list_coupons",
+            "list_usage",
             "record_usage",
             "validate_coupon"
           ],
@@ -5161,7 +5164,7 @@
       "engineBacked": true,
       "gated": true,
       "exposedCount": 80,
-      "applicableCount": 1216,
+      "applicableCount": 1217,
       "coverage": 6.6,
       "notes": null,
       "domains": {
@@ -6114,6 +6117,7 @@
             "is_valid",
             "list",
             "list_coupons",
+            "list_usage",
             "record_usage",
             "update",
             "validate_coupon"
@@ -6824,7 +6828,7 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 48,
-      "applicableCount": 1216,
+      "applicableCount": 1217,
       "coverage": 3.9,
       "notes": "host (C#) layer is not traced; known in-memory fake at the host level",
       "domains": {
@@ -6980,7 +6984,7 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 77,
-      "applicableCount": 1216,
+      "applicableCount": 1217,
       "coverage": 6.3,
       "notes": "host (Java/JNI) layer is not traced",
       "domains": {
@@ -7170,8 +7174,8 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 59,
-      "applicableCount": 1216,
-      "coverage": 4.9,
+      "applicableCount": 1217,
+      "coverage": 4.8,
       "notes": "host (Kotlin/JNI) layer is not traced",
       "domains": {
         "accounts_payable": {
@@ -7337,7 +7341,7 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 178,
-      "applicableCount": 1216,
+      "applicableCount": 1217,
       "coverage": 14.6,
       "notes": "engine linkage is behind an optional cargo feature",
       "domains": {
@@ -7523,7 +7527,7 @@
           ]
         },
         "promotions": {
-          "coverage": 50,
+          "coverage": 47.4,
           "exposed": [
             "activate",
             "create",
@@ -7678,7 +7682,7 @@
       "engineBacked": false,
       "gated": false,
       "exposedCount": 0,
-      "applicableCount": 1216,
+      "applicableCount": 1217,
       "coverage": 0,
       "notes": "does not depend on stateset-embedded",
       "domains": {}
@@ -7690,7 +7694,7 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 51,
-      "applicableCount": 1216,
+      "applicableCount": 1217,
       "coverage": 4.2,
       "notes": "host (Swift) layer is not traced; known in-memory fake at the host level",
       "domains": {
@@ -7849,7 +7853,7 @@
       "engineBacked": false,
       "gated": false,
       "exposedCount": 0,
-      "applicableCount": 1216,
+      "applicableCount": 1217,
       "coverage": 0,
       "notes": "in-memory reimplementation; does not link stateset-embedded",
       "domains": {}
@@ -7857,27 +7861,26 @@
   ],
   "parityVsReference": {
     "python": {
-      "shared": 581,
-      "referenceExposed": 729,
+      "shared": 588,
+      "referenceExposed": 738,
       "parity": 79.7,
       "beyondReference": [
         "accounts_payable.pay_bill",
         "cost_accounting.get_inventory_valuation",
         "fulfillment.complete_pick",
-        "receiving.get_receipt_items",
         "serials.change_status",
         "warehouse.get_locations_for_warehouse"
       ]
     },
     "go": {
       "shared": 80,
-      "referenceExposed": 729,
-      "parity": 11,
+      "referenceExposed": 738,
+      "parity": 10.8,
       "beyondReference": []
     },
     "dotnet": {
       "shared": 47,
-      "referenceExposed": 729,
+      "referenceExposed": 738,
       "parity": 6.4,
       "beyondReference": [
         "accounts_receivable.get_customer_aging"
@@ -7885,8 +7888,8 @@
     },
     "java": {
       "shared": 71,
-      "referenceExposed": 729,
-      "parity": 9.7,
+      "referenceExposed": 738,
+      "parity": 9.6,
       "beyondReference": [
         "fulfillment.create_picks_for_order",
         "inventory.get_item",
@@ -7898,14 +7901,14 @@
     },
     "kotlin": {
       "shared": 59,
-      "referenceExposed": 729,
-      "parity": 8.1,
+      "referenceExposed": 738,
+      "parity": 8,
       "beyondReference": []
     },
     "php": {
       "shared": 161,
-      "referenceExposed": 729,
-      "parity": 22.1,
+      "referenceExposed": 738,
+      "parity": 21.8,
       "beyondReference": [
         "bom.delete",
         "bom.remove_component",
@@ -7928,19 +7931,19 @@
     },
     "ruby": {
       "shared": 0,
-      "referenceExposed": 729,
+      "referenceExposed": 738,
       "parity": 0,
       "beyondReference": []
     },
     "swift": {
       "shared": 51,
-      "referenceExposed": 729,
-      "parity": 7,
+      "referenceExposed": 738,
+      "parity": 6.9,
       "beyondReference": []
     },
     "wasm": {
       "shared": 0,
-      "referenceExposed": 729,
+      "referenceExposed": 738,
       "parity": 0,
       "beyondReference": []
     }
@@ -7953,7 +7956,7 @@
       "engineBacked": null,
       "gated": false,
       "exposedCount": 220,
-      "applicableCount": 1216,
+      "applicableCount": 1217,
       "coverage": 18.1,
       "notes": null,
       "hostMethodCount": 245,
@@ -8198,7 +8201,7 @@
           ]
         },
         "promotions": {
-          "coverage": 61.1,
+          "coverage": 57.9,
           "exposed": [
             "activate",
             "create",
@@ -8372,7 +8375,7 @@
       "engineBacked": null,
       "gated": false,
       "exposedCount": 71,
-      "applicableCount": 1216,
+      "applicableCount": 1217,
       "coverage": 5.8,
       "notes": null,
       "hostMethodCount": 71,
@@ -8484,7 +8487,7 @@
           ]
         },
         "promotions": {
-          "coverage": 61.1,
+          "coverage": 57.9,
           "exposed": [
             "activate",
             "create",
@@ -8564,7 +8567,7 @@
       "engineBacked": null,
       "gated": false,
       "exposedCount": 134,
-      "applicableCount": 1216,
+      "applicableCount": 1217,
       "coverage": 11,
       "notes": null,
       "hostMethodCount": 148,
@@ -8697,7 +8700,7 @@
           ]
         },
         "promotions": {
-          "coverage": 88.9,
+          "coverage": 84.2,
           "exposed": [
             "activate",
             "apply",
@@ -8825,7 +8828,7 @@
       {
         "className": "AccountsPayable",
         "domain": "accounts_payable",
-        "methodCount": 12
+        "methodCount": 13
       },
       {
         "className": "AccountsReceivable",
@@ -8990,7 +8993,7 @@
       {
         "className": "Orders",
         "domain": "orders",
-        "methodCount": 8
+        "methodCount": 9
       },
       {
         "className": "PaymentObligations",
@@ -9000,7 +9003,7 @@
       {
         "className": "Payments",
         "domain": "payments",
-        "methodCount": 10
+        "methodCount": 14
       },
       {
         "className": "Prepayments",
@@ -9035,7 +9038,7 @@
       {
         "className": "Promotions",
         "domain": "promotions",
-        "methodCount": 19
+        "methodCount": 20
       },
       {
         "className": "PurchaseOrders",
@@ -9050,12 +9053,12 @@
       {
         "className": "Quality",
         "domain": "quality",
-        "methodCount": 16
+        "methodCount": 17
       },
       {
         "className": "Receiving",
         "domain": "receiving",
-        "methodCount": 9
+        "methodCount": 10
       },
       {
         "className": "Returns",
@@ -9477,7 +9480,7 @@
       {
         "className": "Orders",
         "domain": "orders",
-        "methodCount": 7
+        "methodCount": 8
       },
       {
         "className": "Payment",
@@ -9492,7 +9495,7 @@
       {
         "className": "Payments",
         "domain": "payments",
-        "methodCount": 9
+        "methodCount": 13
       },
       {
         "className": "PerformanceObligationInput",
@@ -9552,7 +9555,7 @@
       {
         "className": "PromotionsApi",
         "domain": "promotions",
-        "methodCount": 17
+        "methodCount": 18
       },
       {
         "className": "PurchaseOrder",
@@ -10458,29 +10461,7 @@
       "documented": true
     }
   ],
-  "hollowSignals": [
-    {
-      "file": "bindings/node/src/domains/accounts_payable.rs",
-      "line": 271,
-      "field": "items",
-      "value": "vec![]",
-      "structLiteral": "stateset_core::CreateBill"
-    },
-    {
-      "file": "bindings/node/src/domains/quality.rs",
-      "line": 416,
-      "field": "items",
-      "value": "vec![]",
-      "structLiteral": "stateset_core::CreateInspection"
-    },
-    {
-      "file": "bindings/node/src/domains/receiving.rs",
-      "line": 138,
-      "field": "items",
-      "value": "vec![]",
-      "structLiteral": "stateset_core::CreateReceipt"
-    }
-  ],
+  "hollowSignals": [],
   "exempt": {
     "all": {
       "commerce.database": "returns a borrowed &dyn Database trait object; no language boundary can carry it",
