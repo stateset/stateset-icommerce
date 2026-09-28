@@ -455,8 +455,10 @@ impl ApplyPromotionsRequest {
     /// `coupon_code`.
     ///
     /// `is_first_order` is set to `false` because the cart alone cannot prove
-    /// otherwise; a first-order condition therefore refuses (fail-closed)
-    /// unless the caller overrides it.
+    /// otherwise. The promotion repositories settle it from the customer's
+    /// order history before evaluating, on every path that prices or redeems
+    /// a cart; with no customer on the cart it stays `false`, so a
+    /// first-order condition refuses (fail-closed).
     #[must_use]
     pub fn from_cart(cart: &crate::models::Cart, coupon_code: &str) -> Self {
         Self {
@@ -699,6 +701,30 @@ pub struct CreatePromotionCondition {
     pub operator: ConditionOperator,
     pub value: String,
     pub is_required: bool,
+}
+
+impl CreatePromotionCondition {
+    /// The condition this input would store on `promotion_id`, with a fresh id.
+    #[must_use]
+    pub fn into_condition(self, promotion_id: PromotionId) -> PromotionCondition {
+        PromotionCondition {
+            id: Uuid::new_v4(),
+            promotion_id,
+            condition_type: self.condition_type,
+            operator: self.operator,
+            value: self.value,
+            is_required: self.is_required,
+        }
+    }
+
+    /// See [`PromotionCondition::validate`].
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::ValidationError`] describing the value or operator.
+    pub fn validate(&self) -> Result<()> {
+        self.clone().into_condition(PromotionId::nil()).validate()
+    }
 }
 
 /// Update a promotion
@@ -1092,6 +1118,64 @@ impl PromotionCondition {
         }
     }
 
+    /// Check that this condition can be evaluated at all: its `value` parses
+    /// for its condition type and its operator means something for that type.
+    ///
+    /// Evaluation reports a malformed value as an error, and pricing
+    /// propagates it, so one misconfigured automatic promotion would fail
+    /// every cart's pricing and every checkout in the store. Conditions are
+    /// therefore checked when they are written. An operator the type cannot
+    /// use would instead refuse the promotion forever. Condition types the
+    /// pricing request cannot evaluate yet (customer group, email domain,
+    /// payment method) are accepted: they refuse, fail-closed, until it can.
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::ValidationError`] describing the value or operator.
+    pub fn validate(&self) -> Result<()> {
+        let to_validation = |error: CommerceError| match error {
+            CommerceError::DatabaseError(message) => CommerceError::ValidationError(message),
+            other => other,
+        };
+        // Exhaustive with no wildcard arm, like `evaluate`: a new condition
+        // type must decide here how it is validated.
+        let operator_applies = match self.condition_type {
+            ConditionType::MinimumSubtotal => {
+                self.parse_decimal().map_err(to_validation)?;
+                compare_decimal(Decimal::ZERO, self.operator, Decimal::ZERO).is_some()
+            }
+            ConditionType::MinimumQuantity | ConditionType::CartItemCount => {
+                self.parse_i32().map_err(to_validation)?;
+                compare_i32(0, self.operator, 0).is_some()
+            }
+            ConditionType::ProductInCart
+            | ConditionType::CategoryInCart
+            | ConditionType::CustomerId => {
+                self.parse_uuid_list().map_err(to_validation)?;
+                compare_membership(false, self.operator).is_some()
+            }
+            ConditionType::SkuInCart => compare_membership(false, self.operator).is_some(),
+            ConditionType::FirstOrder => {
+                self.parse_bool().map_err(to_validation)?;
+                compare_bool(false, self.operator, false).is_some()
+            }
+            ConditionType::ShippingCountry | ConditionType::ShippingState => {
+                compare_string("", self.operator, &self.value).is_some()
+            }
+            ConditionType::CustomerGroup
+            | ConditionType::CustomerEmailDomain
+            | ConditionType::PaymentMethod => true,
+        };
+        if operator_applies {
+            Ok(())
+        } else {
+            Err(CommerceError::ValidationError(format!(
+                "Operator {:?} does not apply to a {:?} condition",
+                self.operator, self.condition_type
+            )))
+        }
+    }
+
     /// Evaluate this condition against a cart pricing request.
     ///
     /// # Fail-closed contract
@@ -1227,6 +1311,12 @@ impl Promotion {
     ///
     /// Propagates a misconfigured condition value.
     pub fn check_conditions(&self, request: &ApplyPromotionsRequest) -> Result<Option<String>> {
+        // The type is itself a condition: a first-order discount on a
+        // returning customer's order is a discount leak, with or without an
+        // explicit `first_order` condition.
+        if self.promotion_type == PromotionType::FirstOrderDiscount && !request.is_first_order {
+            return Ok(Some("a first-order discount applies only to a first order".to_string()));
+        }
         if self.conditions.is_empty() {
             return Ok(None);
         }
@@ -1295,6 +1385,9 @@ impl CreatePromotion {
                 "Buy X Get Y promotions require buy_quantity and get_quantity of at least 1".into(),
             ));
         }
+        for condition in self.conditions.iter().flatten() {
+            condition.validate()?;
+        }
         Ok(())
     }
 }
@@ -1348,7 +1441,7 @@ impl Promotion {
         let applicable_amount = eligible_subtotal.min(remaining).max(Decimal::ZERO);
 
         let discount = match self.promotion_type {
-            PromotionType::PercentageOff | PromotionType::FirstOrderDiscount => {
+            PromotionType::PercentageOff => {
                 self.percentage_off.map_or(Decimal::ZERO, |pct| applicable_amount * pct)
             }
             PromotionType::FixedAmountOff => {
@@ -1357,6 +1450,15 @@ impl Promotion {
                 // worth; unscoped keeps its historical whole-order semantics.
                 if scoped { fixed.min(applicable_amount) } else { fixed }
             }
+            // Priced as the percentage or fixed amount it carries, the same
+            // way `discount_description` describes it.
+            PromotionType::FirstOrderDiscount => match (self.percentage_off, self.fixed_amount_off)
+            {
+                (Some(pct), _) => applicable_amount * pct,
+                (None, Some(fixed)) if scoped => fixed.min(applicable_amount),
+                (None, Some(fixed)) => fixed,
+                (None, None) => Decimal::ZERO,
+            },
             PromotionType::FreeShipping => request.shipping_amount,
             PromotionType::TieredDiscount => self
                 .tiers
@@ -1798,6 +1900,96 @@ mod tests {
         )
         .expect("evaluate");
         result
+    }
+
+    #[test]
+    fn a_first_order_discount_applies_only_to_a_first_order() {
+        // The type alone used to decide nothing: without an explicit
+        // first-order condition it discounted every customer's every order.
+        let mut p = promo(PromotionType::FirstOrderDiscount, StackingBehavior::Stackable, 1);
+        p.percentage_off = Some(Decimal::new(1, 1)); // 10%
+        let mut req = request(vec![item("A", 1, Decimal::new(10000, 2))], Decimal::ZERO);
+
+        let returning = evaluate(&req, vec![p.clone()]);
+        assert!(returning.applied_promotions.is_empty(), "a returning customer");
+        assert_eq!(returning.total_discount, Decimal::ZERO);
+        assert_eq!(returning.rejected_promotions.len(), 1, "the refusal is reported");
+
+        req.is_first_order = true;
+        let first = evaluate(&req, vec![p]);
+        assert_eq!(first.total_discount, Decimal::new(1000, 2));
+    }
+
+    #[test]
+    fn a_fixed_first_order_discount_grants_what_it_describes() {
+        // Described as "$15 off first order" while calculating nothing: only
+        // the percentage form was priced.
+        let mut p = promo(PromotionType::FirstOrderDiscount, StackingBehavior::Stackable, 1);
+        p.fixed_amount_off = Some(Decimal::new(1500, 2));
+        assert_eq!(p.discount_description(), "$15.00 off first order");
+        let mut req = request(vec![item("A", 1, Decimal::new(10000, 2))], Decimal::ZERO);
+        req.is_first_order = true;
+        assert_eq!(p.calculate_discount(&req, Decimal::ZERO), Decimal::new(1500, 2));
+    }
+
+    #[test]
+    fn a_stored_condition_with_an_inapplicable_operator_still_fails_closed() {
+        // Write-time validation cannot reach rows stored before it existed;
+        // evaluation must keep refusing them rather than applying.
+        let mut p = promo(PromotionType::PercentageOff, StackingBehavior::Stackable, 1);
+        p.percentage_off = Some(Decimal::new(1, 1));
+        p.conditions = vec![
+            CreatePromotionCondition {
+                condition_type: ConditionType::ProductInCart,
+                operator: ConditionOperator::GreaterThan,
+                value: Uuid::new_v4().to_string(),
+                is_required: true,
+            }
+            .into_condition(p.id),
+        ];
+        let result =
+            evaluate(&request(vec![item("A", 1, Decimal::new(10000, 2))], Decimal::ZERO), vec![p]);
+        assert!(result.applied_promotions.is_empty());
+        assert_eq!(result.total_discount, Decimal::ZERO);
+    }
+
+    #[test]
+    fn condition_values_and_operators_are_validated() {
+        let condition = |condition_type, operator, value: &str| CreatePromotionCondition {
+            condition_type,
+            operator,
+            value: value.to_string(),
+            is_required: true,
+        };
+        for ok in [
+            condition(ConditionType::MinimumSubtotal, ConditionOperator::GreaterThan, "49.99"),
+            condition(ConditionType::MinimumQuantity, ConditionOperator::GreaterThanOrEqual, "2"),
+            condition(ConditionType::FirstOrder, ConditionOperator::Equals, "true"),
+            condition(ConditionType::FirstOrder, ConditionOperator::NotEquals, ""),
+            condition(ConditionType::SkuInCart, ConditionOperator::In, "A, B"),
+            condition(ConditionType::ShippingCountry, ConditionOperator::In, "US,CA"),
+            condition(
+                ConditionType::CustomerId,
+                ConditionOperator::In,
+                "5f0c6a8e-3b1d-4d8f-9a3e-2c7b1e4f6a90",
+            ),
+            condition(ConditionType::CustomerGroup, ConditionOperator::Equals, "vip"),
+        ] {
+            ok.validate().unwrap_or_else(|e| panic!("{ok:?} should be valid: {e}"));
+        }
+        for bad in [
+            condition(ConditionType::MinimumSubtotal, ConditionOperator::GreaterThan, "lots"),
+            condition(ConditionType::CartItemCount, ConditionOperator::GreaterThan, "1.5"),
+            condition(ConditionType::FirstOrder, ConditionOperator::Equals, "perhaps"),
+            condition(ConditionType::CategoryInCart, ConditionOperator::In, "shoes"),
+            condition(ConditionType::FirstOrder, ConditionOperator::LessThan, "true"),
+            condition(ConditionType::ProductInCart, ConditionOperator::GreaterThan, ""),
+        ] {
+            assert!(
+                matches!(bad.validate(), Err(CommerceError::ValidationError(_))),
+                "{bad:?} should be refused"
+            );
+        }
     }
 
     #[test]

@@ -456,6 +456,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       delete: ['delete_promotion'],
       activate: ['activate_promotion'],
       deactivate: ['deactivate_promotion'],
+      addCondition: ['add_promotion_condition'],
       getActive: ['get_active_promotions'],
       isValid: ['check_promotion_validity'],
       createCoupon: ['create_coupon'],

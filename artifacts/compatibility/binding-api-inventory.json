@@ -1898,7 +1898,7 @@
         "langchain"
       ],
       "moduleCount": 7,
-      "publicSymbolCount": 254,
+      "publicSymbolCount": 257,
       "helperModules": [
         "agent_toolkit",
         "autogen",
@@ -2057,6 +2057,9 @@
         "Products",
         "ProductSearchResult",
         "ProductVariant",
+        "PromotionCondition",
+        "PromotionConditionInput",
+        "PromotionLineItemInput",
         "PurchaseOrder",
         "PurchaseOrders",
         "Purgatory",

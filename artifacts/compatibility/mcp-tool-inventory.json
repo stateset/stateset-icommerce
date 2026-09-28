@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 968,
+  "totalTools": 969,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 950
+      "count": 951
     },
     {
       "name": "stateset-scaffold",
@@ -247,7 +247,7 @@
     },
     {
       "name": "promotions",
-      "count": 15
+      "count": 16
     },
     {
       "name": "proofs",
@@ -393,14 +393,14 @@
     },
     {
       "name": "write",
-      "count": 422
+      "count": 423
     }
   ],
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
     "read": 478,
-    "write": 422
+    "write": 423
   },
   "tools": [
     {
@@ -1733,6 +1733,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__add_production_batch_work_orders",
       "policyDomain": "production_batches",
+      "permission": "write"
+    },
+    {
+      "name": "add_promotion_condition",
+      "description": "Add a condition to an existing promotion (minimum subtotal, first order, shipping country, SKU in cart, ...). The condition is validated before it is stored. Requires --apply.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__add_promotion_condition",
+      "policyDomain": "promotions",
       "permission": "write"
     },
     {
@@ -3726,7 +3735,7 @@
     },
     {
       "name": "create_promotion",
-      "description": "Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, and tiered discounts.",
+      "description": "Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, tiered, and first-order discounts, optionally scoped to SKUs and gated by conditions.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__create_promotion",

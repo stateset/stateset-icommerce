@@ -95,6 +95,12 @@ pub trait PromotionRepository: Send + Sync {
     fn activate(&self, id: PromotionId) -> Result<Promotion>;
     /// Deactivate a promotion
     fn deactivate(&self, id: PromotionId) -> Result<Promotion>;
+    /// Attach a condition to an existing promotion, after validating it.
+    fn add_condition(
+        &self,
+        promotion_id: PromotionId,
+        condition: crate::models::CreatePromotionCondition,
+    ) -> Result<Promotion>;
 
     /// Create a coupon code
     fn create_coupon(&self, input: CreateCouponCode) -> Result<CouponCode>;

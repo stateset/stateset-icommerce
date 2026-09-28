@@ -4,16 +4,16 @@
     "registry": "cli/src/mcp-server-registry.js"
   },
   "totalAgents": 20,
-  "totalCommerceTools": 950,
+  "totalCommerceTools": 951,
   "totalScaffoldTools": 13,
   "totalX402Tools": 5,
   "fullAccessAgentCount": 1,
   "scopedAgentCount": 19,
-  "totalScopedToolReferences": 301,
+  "totalScopedToolReferences": 302,
   "supportedServers": [
     {
       "name": "stateset-commerce",
-      "toolCount": 950,
+      "toolCount": 951,
       "source": "cli/src/mcp-server.js"
     },
     {
@@ -88,10 +88,10 @@
       "id": "customer-service",
       "name": "Customer Service",
       "description": "Full-service agent with access to all commerce tools",
-      "toolCount": 950,
+      "toolCount": 951,
       "usesAllCommerceTools": true,
       "serverCounts": {
-        "stateset-commerce": 950
+        "stateset-commerce": 951
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -172,10 +172,10 @@
       "id": "promotions",
       "name": "Promotions Agent",
       "description": "Promotions, discounts, and coupon code management specialist",
-      "toolCount": 17,
+      "toolCount": 18,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 17
+        "stateset-commerce": 18
       },
       "serverNamespaces": [
         "stateset-commerce"

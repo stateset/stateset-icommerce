@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:3f0c6fbe29810eda9a5b15a3eb40980b7d34521ce7ba551ef2551928f8fcefa5",
+  "digest": "sha256:4e21eb4270159ebfe6c5d5dfd36697ca85ec7e89d8af716c2fee8f43927f63ca",
   "counts": {
-    "total": 950,
+    "total": 951,
     "readOnly": 469,
-    "mutations": 481,
+    "mutations": 482,
     "governed": 25,
     "governedComposite": 1,
-    "blocked": 455
+    "blocked": 456
   },
   "entries": [
     {
@@ -1041,6 +1041,13 @@
     },
     {
       "name": "add_production_batch_work_orders",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "add_promotion_condition",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",

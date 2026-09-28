@@ -4,7 +4,7 @@
     "coverageModel": "cli/src/coverage/mcp-api-coverage.js"
   },
   "totalDomainModules": 87,
-  "totalDomainTools": 935,
+  "totalDomainTools": 936,
   "totalCommerceGetters": 68,
   "mappedCommerceGetters": 68,
   "uncoveredCommerceGetters": [],
@@ -213,7 +213,7 @@
     {
       "getter": "promotions",
       "module": "promotions",
-      "toolCount": 15
+      "toolCount": 16
     },
     {
       "getter": "purchaseOrders",
@@ -352,8 +352,8 @@
     }
   ],
   "totalAuditedClasses": 32,
-  "totalAuditedMethods": 402,
-  "mappedAuditedMethods": 402,
+  "totalAuditedMethods": 403,
+  "mappedAuditedMethods": 403,
   "uncoveredAuditedMethods": [],
   "staleAuditedMethodMappings": [],
   "invalidAuditedToolReferences": [],
@@ -512,8 +512,8 @@
     },
     {
       "className": "Promotions",
-      "methodCount": 17,
-      "mappedMethodCount": 17,
+      "methodCount": 18,
+      "mappedMethodCount": 18,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []

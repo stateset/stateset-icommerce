@@ -346,3 +346,85 @@ test(
     assert.equal(await commerce.promotions.validateCoupon('DRAFTC'), null);
   },
 );
+
+test('conditions are created, returned, and gate the discount', async () => {
+  const commerce = new Commerce(':memory:');
+  const promotion = await activePromotion(commerce, {
+    name: 'Big cart',
+    promotionType: 'percentage_off',
+    percentageOff: 0.1,
+    conditions: [{ conditionType: 'minimum_subtotal', operator: 'greater_than_or_equal', value: '100' }],
+  });
+  assert.deepEqual(
+    promotion.conditions.map(({ conditionType, operator, value, isRequired }) => ({ conditionType, operator, value, isRequired })),
+    [{ conditionType: 'minimum_subtotal', operator: 'greater_than_or_equal', value: '100', isRequired: true }],
+  );
+  const small = await commerce.promotions.apply({ lineItems: cart(), subtotal: 64.98 });
+  assert.equal(small.totalDiscountExact, '0');
+});
+
+test('addCondition stores the condition; a malformed one is VALIDATION and stores nothing', async () => {
+  const commerce = new Commerce(':memory:');
+  const promotion = await activePromotion(commerce, { name: 'US only', promotionType: 'percentage_off', percentageOff: 0.1 });
+
+  const updated = await commerce.promotions.addCondition(promotion.id, {
+    conditionType: 'shipping_country',
+    operator: 'equals',
+    value: 'US',
+  });
+  assert.equal(updated.conditions.length, 1);
+  assert.equal((await commerce.promotions.get(promotion.id)).conditions.length, 1, 'persisted, not just returned');
+
+  const us = await commerce.promotions.apply({ lineItems: cart(), subtotal: 64.98, shippingCountry: 'US' });
+  const ca = await commerce.promotions.apply({ lineItems: cart(), subtotal: 64.98, shippingCountry: 'CA' });
+  assert.equal(us.totalDiscountExact, '6.50');
+  assert.equal(ca.totalDiscountExact, '0');
+
+  const isValidation = (pattern) => (err) => err.code === 'VALIDATION' && pattern.test(err.message);
+  await assert.rejects(
+    commerce.promotions.addCondition(promotion.id, { conditionType: 'first_order', operator: 'equals', value: 'banana' }),
+    isValidation(/banana/),
+  );
+  await assert.rejects(
+    commerce.promotions.addCondition(promotion.id, { conditionType: 'first_ordr', operator: 'equals', value: 'true' }),
+    isValidation(/condition type/),
+  );
+  await assert.rejects(
+    commerce.promotions.addCondition(promotion.id, { conditionType: 'first_order', operator: 'greater_than', value: 'true' }),
+    isValidation(/does not apply/),
+  );
+  await assert.rejects(
+    commerce.promotions.addCondition('00000000-0000-0000-0000-000000000001', { conditionType: 'first_order', operator: 'equals', value: 'true' }),
+    (err) => err.code === 'NOT_FOUND',
+  );
+  assert.equal((await commerce.promotions.get(promotion.id)).conditions.length, 1);
+});
+
+test('a first-order discount follows the customer order history', async () => {
+  const commerce = new Commerce(':memory:');
+  await activePromotion(commerce, { name: 'Welcome', promotionType: 'first_order_discount', percentageOff: 0.1 });
+  const shopper = await customer(commerce, 'welcome@example.com');
+
+  const first = await commerce.promotions.apply({ lineItems: cart(), subtotal: 64.98, customerId: shopper.id });
+  assert.equal(first.totalDiscountExact, '6.50');
+
+  await commerce.orders.create({
+    customerId: shopper.id,
+    items: [{ sku: 'WIDGET', name: 'Widget', quantity: 1, unitPrice: 19.99 }],
+  });
+  const second = await commerce.promotions.apply({ lineItems: cart(), subtotal: 64.98, customerId: shopper.id });
+  assert.equal(second.totalDiscountExact, '0', 'a returning customer is not on a first order');
+});
+
+test('apply defaults to the store base currency, not USD', async () => {
+  // Discounts round to the request currency's minor unit: a yen store was
+  // quoted fractions of a yen.
+  const commerce = new Commerce(':memory:');
+  await commerce.currency.setBaseCurrency('JPY');
+  await activePromotion(commerce, { name: 'Ten percent', promotionType: 'percentage_off', percentageOff: 0.1 });
+  const result = await commerce.promotions.apply({
+    lineItems: [{ id: 'l1', sku: 'A', quantity: 1, unitPrice: 1234, lineTotal: 1234 }],
+    subtotal: 1234,
+  });
+  assert.equal(result.totalDiscountExact, '123');
+});

@@ -315,6 +315,7 @@ Note: All analytics tools are read-only. No --apply flag needed.`,
       'mcp__stateset-commerce__get_promotion',
       'mcp__stateset-commerce__update_promotion',
       'mcp__stateset-commerce__create_promotion',
+      'mcp__stateset-commerce__add_promotion_condition',
       'mcp__stateset-commerce__delete_promotion',
       'mcp__stateset-commerce__activate_promotion',
       'mcp__stateset-commerce__deactivate_promotion',
@@ -356,6 +357,7 @@ draft → active → (paused) → expired
 - get_promotion - Get promotion details
 - update_promotion - Update campaign details (requires --apply)
 - create_promotion - Create new promotion (requires --apply)
+- add_promotion_condition - Gate a promotion on a condition, e.g. first order or minimum subtotal (requires --apply)
 - delete_promotion - Delete promotion (requires --apply)
 - activate_promotion - Make promotion live (requires --apply)
 - deactivate_promotion - Pause promotion (requires --apply)

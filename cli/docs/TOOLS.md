@@ -5,7 +5,7 @@
 
 Source of truth: `cli/src/tools/domain-registry.js`.
 
-**935 tools** across **87 domains**.
+**936 tools** across **87 domains**.
 
 ## Domains
 
@@ -21,7 +21,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [analytics](#analytics) | 14 |
 | [currency](#currency) | 13 |
 | [tax](#tax) | 29 |
-| [promotions](#promotions) | 15 |
+| [promotions](#promotions) | 16 |
 | [subscriptions](#subscriptions) | 17 |
 | [sync](#sync) | 20 |
 | [manufacturing](#manufacturing) | 11 |
@@ -303,7 +303,8 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `list_promotions` | read | List all promotions. Shows active, paused, and scheduled promotions with their discount details. |
 | `get_promotion` | read | Get a promotion by ID or internal code. |
 | `update_promotion` | write | Update an existing promotion. Requires --apply flag. |
-| `create_promotion` | write | Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, and tiered discounts. |
+| `create_promotion` | write | Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, tiered, and first-order discounts, optionally scoped to SKUs and gated by conditions. |
+| `add_promotion_condition` | write | Add a condition to an existing promotion (minimum subtotal, first order, shipping country, SKU in cart, ...). The condition is validated before it is stored. Requires --apply. |
 | `delete_promotion` | delete | Delete a promotion. Requires --apply flag. |
 | `activate_promotion` | write | Activate a promotion to make it available for use. |
 | `deactivate_promotion` | write | Pause/deactivate a promotion. |
