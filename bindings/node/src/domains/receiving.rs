@@ -20,6 +20,108 @@ pub struct CreateReceiptInput {
     pub purchase_order_id: Option<String>,
     pub carrier: Option<String>,
     pub tracking_number: Option<String>,
+    /// Expected lines. Optional: omitted (or empty) creates a receipt with no
+    /// lines, as before.
+    pub items: Option<Vec<CreateReceiptItemInput>>,
+}
+
+/// An expected receipt line. Money follows the binding convention: send the
+/// `...Exact` base-10 string (preferred) or the float.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateReceiptItemInput {
+    pub sku: String,
+    pub description: Option<String>,
+    pub po_line_id: Option<String>,
+    /// Float quantity. Optional: send `expected_quantity_exact` instead.
+    pub expected_quantity: Option<f64>,
+    /// Exact base-10 quantity. Takes precedence over `expected_quantity`.
+    pub expected_quantity_exact: Option<String>,
+    /// Float unit cost. Optional: send `unit_cost_exact` instead for exact money.
+    pub unit_cost: Option<f64>,
+    /// Exact base-10 unit cost. Takes precedence over `unit_cost` when present.
+    pub unit_cost_exact: Option<String>,
+    pub lot_number: Option<String>,
+    /// RFC 3339 timestamp.
+    pub expiration_date: Option<String>,
+    pub notes: Option<String>,
+}
+
+impl TryFrom<CreateReceiptItemInput> for stateset_core::CreateReceiptItem {
+    type Error = Error;
+
+    fn try_from(i: CreateReceiptItemInput) -> Result<Self> {
+        Ok(Self {
+            sku: i.sku,
+            description: i.description,
+            po_line_id: parse_optional_id(i.po_line_id, "PO line")?,
+            expected_quantity: money_input(
+                i.expected_quantity_exact.as_deref(),
+                i.expected_quantity,
+                "receipt item expected quantity",
+            )?,
+            unit_cost: optional_money_input(
+                i.unit_cost_exact.as_deref(),
+                i.unit_cost,
+                "receipt item unit cost",
+            )?,
+            lot_number: i.lot_number,
+            expiration_date: parse_optional_datetime(i.expiration_date, "expiration date")?,
+            notes: i.notes,
+        })
+    }
+}
+
+/// A receipt line as stored. Quantities are exact base-10 strings.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ReceiptItemOutput {
+    pub id: String,
+    pub receipt_id: String,
+    pub line_number: i32,
+    pub sku: String,
+    pub description: Option<String>,
+    pub po_line_id: Option<String>,
+    pub expected_quantity_exact: String,
+    pub received_quantity_exact: String,
+    pub rejected_quantity_exact: String,
+    /// @deprecated Use the `unitCostExact` twin; float money will be removed in 2.0.
+    pub unit_cost: Option<f64>,
+    /// Exact base-10 unit cost, when set.
+    pub unit_cost_exact: Option<String>,
+    pub lot_number: Option<String>,
+    pub expiration_date: Option<String>,
+    /// The engine's snake_case line status (`pending`, `received`, ...).
+    pub status: String,
+    pub notes: Option<String>,
+    pub created_at: String,
+}
+
+impl TryFrom<stateset_core::ReceiptItem> for ReceiptItemOutput {
+    type Error = Error;
+
+    fn try_from(i: stateset_core::ReceiptItem) -> Result<Self> {
+        let (unit_cost, unit_cost_exact) =
+            optional_money_pair(i.unit_cost, "receipt item unit cost")?;
+        Ok(Self {
+            id: i.id.to_string(),
+            receipt_id: i.receipt_id.to_string(),
+            line_number: i.line_number,
+            sku: i.sku,
+            description: i.description,
+            po_line_id: i.po_line_id.map(|id| id.to_string()),
+            expected_quantity_exact: i.expected_quantity.to_string(),
+            received_quantity_exact: i.received_quantity.to_string(),
+            rejected_quantity_exact: i.rejected_quantity.to_string(),
+            unit_cost,
+            unit_cost_exact,
+            lot_number: i.lot_number,
+            expiration_date: i.expiration_date.map(|d| d.to_rfc3339()),
+            status: i.status.to_string(),
+            notes: i.notes,
+            created_at: i.created_at.to_rfc3339(),
+        })
+    }
 }
 
 #[napi(object)]
@@ -135,10 +237,28 @@ impl Receiving {
                 expected_date: None,
                 notes: None,
                 created_by: None,
-                items: vec![],
+                items: input
+                    .items
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(TryInto::try_into)
+                    .collect::<Result<Vec<_>>>()?,
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to create receipt", e))?;
         Ok(receipt.into())
+    }
+
+    /// The lines of a receipt, in line order.
+    #[napi]
+    pub async fn get_receipt_items(&self, receipt_id: String) -> Result<Vec<ReceiptItemOutput>> {
+        let commerce = self.commerce.get()?;
+        let uuid: uuid::Uuid =
+            receipt_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid receipt UUID"))?;
+        let items = commerce
+            .receiving()
+            .get_receipt_items(uuid)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get receipt items", e))?;
+        convert_outputs(items)
     }
 
     /// Get a receipt by ID

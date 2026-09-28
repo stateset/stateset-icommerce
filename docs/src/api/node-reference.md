@@ -160,6 +160,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`BackupReportOutput`](#backupreportoutput)
   - [`BalanceSheetOutput`](#balancesheetoutput)
   - [`BillFilterInput`](#billfilterinput)
+  - [`BillItemOutput`](#billitemoutput)
   - [`BillOutput`](#billoutput)
   - [`BillStatus`](#billstatus)
   - [`BillStatusInput`](#billstatusinput)
@@ -223,6 +224,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`CreateAgentValidationResponseInput`](#createagentvalidationresponseinput)
   - [`CreateBackorderInput`](#createbackorderinput)
   - [`CreateBillInput`](#createbillinput)
+  - [`CreateBillItemInput`](#createbilliteminput)
   - [`CreateBomComponentInput`](#createbomcomponentinput)
   - [`CreateBomInput`](#createbominput)
   - [`CreateCartInput`](#createcartinput)
@@ -250,6 +252,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`CreateInboundShipmentInput`](#createinboundshipmentinput)
   - [`CreateInboundShipmentItemInput`](#createinboundshipmentiteminput)
   - [`CreateInspectionInput`](#createinspectioninput)
+  - [`CreateInspectionItemInput`](#createinspectioniteminput)
   - [`CreateIntegrationFieldMappingInput`](#createintegrationfieldmappinginput)
   - [`CreateIntegrationMappingInput`](#createintegrationmappinginput)
   - [`CreateInventoryItemInput`](#createinventoryiteminput)
@@ -280,6 +283,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`CreatePurchaseOrderItemInput`](#createpurchaseorderiteminput)
   - [`CreateQualityHoldInput`](#createqualityholdinput)
   - [`CreateReceiptInput`](#createreceiptinput)
+  - [`CreateReceiptItemInput`](#createreceiptiteminput)
   - [`CreateRefundExactInput`](#createrefundexactinput)
   - [`CreateRefundInput`](#createrefundinput)
   - [`CreateReturnInput`](#createreturninput)
@@ -429,6 +433,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`IngestLineItemInput`](#ingestlineiteminput)
   - [`IngestOrderInput`](#ingestorderinput)
   - [`InspectionFilterInput`](#inspectionfilterinput)
+  - [`InspectionItemOutput`](#inspectionitemoutput)
   - [`InspectionOutput`](#inspectionoutput)
   - [`InspectionStatus`](#inspectionstatus)
   - [`InspectionType`](#inspectiontype)
@@ -587,6 +592,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`PromotionTriggerInput`](#promotiontriggerinput)
   - [`PromotionType`](#promotiontype)
   - [`PromotionTypeInput`](#promotiontypeinput)
+  - [`PromotionUsageFilterInput`](#promotionusagefilterinput)
   - [`PromotionUsageOutput`](#promotionusageoutput)
   - [`PurchaseOrderFilterInput`](#purchaseorderfilterinput)
   - [`PurchaseOrderOutput`](#purchaseorderoutput)
@@ -601,6 +607,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`QualityHoldTypeFilter`](#qualityholdtypefilter)
   - [`QualityHoldTypeInput`](#qualityholdtypeinput)
   - [`ReceiptFilterInput`](#receiptfilterinput)
+  - [`ReceiptItemOutput`](#receiptitemoutput)
   - [`ReceiptOutput`](#receiptoutput)
   - [`ReceiptStatus`](#receiptstatus)
   - [`ReceiptStatusInput`](#receiptstatusinput)
@@ -1081,6 +1088,12 @@ Class `Orders`.
   Types: [`CreateOrderExactInput`](#createorderexactinput), [`OrderOutput`](#orderoutput)
 
 - **`get(id: string): Promise<OrderOutput | null>`**
+
+  Types: [`OrderOutput`](#orderoutput)
+
+- **`getByNumber(orderNumber: string): Promise<OrderOutput | null>`**
+
+  Get an order by its human-readable order number. `null` when none matches.
 
   Types: [`OrderOutput`](#orderoutput)
 
@@ -1593,6 +1606,32 @@ Class `Payments`.
   Create a refund without any floating-point conversion.
 
   Types: [`CreateRefundExactInput`](#createrefundexactinput), [`RefundOutput`](#refundoutput)
+
+- **`getRefund(id: string): Promise<RefundOutput | null>`**
+
+  Get a refund by id. `null` when it does not exist.
+
+  Types: [`RefundOutput`](#refundoutput)
+
+- **`getRefunds(paymentId: string): Promise<Array<RefundOutput>>`**
+
+  Every refund recorded against a payment, in any status.
+
+  Types: [`RefundOutput`](#refundoutput)
+
+- **`completeRefund(id: string): Promise<RefundOutput>`**
+
+  Settle a pending refund: marks it `completed` and folds its amount
+  into the payment's `amountRefunded` (moving the payment to
+  `partially_refunded` or `refunded`).
+
+  Types: [`RefundOutput`](#refundoutput)
+
+- **`failRefund(id: string, reason: string): Promise<RefundOutput>`**
+
+  Mark a pending refund as failed, releasing its reserved amount.
+
+  Types: [`RefundOutput`](#refundoutput)
 
 - **`count(): Promise<number>`**
 
@@ -2505,6 +2544,13 @@ Promotions API for managing discounts and coupon codes
 
   Types: [`PromotionUsageOutput`](#promotionusageoutput)
 
+- **`listUsage(filter?: PromotionUsageFilterInput | undefined | null): Promise<Array<PromotionUsageOutput>>`**
+
+  Read the promotion usage ledger, oldest first: which promotions an
+  order (or customer, cart, coupon) redeemed, and for how much.
+
+  Types: [`PromotionUsageFilterInput`](#promotionusagefilterinput), [`PromotionUsageOutput`](#promotionusageoutput)
+
 ### commerce.tax
 
 Class `Tax`.
@@ -2644,6 +2690,12 @@ Class `Quality`.
   Create a new inspection
 
   Types: [`CreateInspectionInput`](#createinspectioninput), [`InspectionOutput`](#inspectionoutput)
+
+- **`getInspectionItems(inspectionId: string): Promise<Array<InspectionItemOutput>>`**
+
+  The lines of an inspection.
+
+  Types: [`InspectionItemOutput`](#inspectionitemoutput)
 
 - **`getInspection(id: string): Promise<InspectionOutput | null>`**
 
@@ -2929,6 +2981,12 @@ Class `Receiving`.
 
   Types: [`CreateReceiptInput`](#createreceiptinput), [`ReceiptOutput`](#receiptoutput)
 
+- **`getReceiptItems(receiptId: string): Promise<Array<ReceiptItemOutput>>`**
+
+  The lines of a receipt, in line order.
+
+  Types: [`ReceiptItemOutput`](#receiptitemoutput)
+
 - **`getReceipt(id: string): Promise<ReceiptOutput | null>`**
 
   Get a receipt by ID
@@ -3066,6 +3124,12 @@ Class `AccountsPayable`.
   Create a bill
 
   Types: [`CreateBillInput`](#createbillinput), [`BillOutput`](#billoutput)
+
+- **`getBillItems(billId: string): Promise<Array<BillItemOutput>>`**
+
+  The lines of a bill, in line order.
+
+  Types: [`BillItemOutput`](#billitemoutput)
 
 - **`getBill(id: string): Promise<BillOutput | null>`**
 
@@ -5870,6 +5934,28 @@ Optional filters for `AccountsPayable.listBills`. No argument lists all.
 | `limit?` | `number` |  |
 | `offset?` | `number` |  |
 
+### BillItemOutput
+
+A bill line as stored, with engine-derived `amount` and `taxAmount`.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `billId` | `string` |  |
+| `lineNumber` | `number` |  |
+| `description` | `string` |  |
+| `accountCode?` | `string` |  |
+| `quantityExact` | `string` | Exact base-10 quantity. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `unitPrice` | `number` | **Deprecated.** Use the `unitPriceExact` twin; float money will be removed in 2.0. |
+| `unitPriceExact` | `string` | Exact base-10 unit price. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `amount` | `number` | **Deprecated.** Use the `amountExact` twin; float money will be removed in 2.0. |
+| `amountExact` | `string` | Exact base-10 line amount (quantity x unit price). _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `taxRateExact?` | `string` | Exact base-10 tax rate (a fraction), when set. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `taxAmount` | `number` | **Deprecated.** Use the `taxAmountExact` twin; float money will be removed in 2.0. |
+| `taxAmountExact` | `string` | Exact base-10 line tax. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `poLineId?` | `string` |  |
+| `createdAt` | `string` |  |
+
 ### BillOutput
 
 | Field | Type | Description |
@@ -6709,6 +6795,24 @@ One of: `'active'`, `'disabled'`, `'exhausted'`, `'expired'`.
 | `paymentTerms?` | `string` |  |
 | `referenceNumber?` | `string` |  |
 | `notes?` | `string` |  |
+| `items?` | `Array<CreateBillItemInput>` | Bill lines. Optional: omitted (or empty) creates a header-only bill, as before. The engine derives each line amount and the bill totals. Types: [`CreateBillItemInput`](#createbilliteminput) |
+
+### CreateBillItemInput
+
+A bill line. Money follows the binding convention: send the `...Exact`
+base-10 string (preferred) or the float.
+
+| Field | Type | Description |
+|---|---|---|
+| `description` | `string` |  |
+| `accountCode?` | `string` |  |
+| `quantity?` | `number` | Float quantity. Optional: send `quantity_exact` instead. |
+| `quantityExact?` | `string` | Exact base-10 quantity. Takes precedence over `quantity` when present. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `unitPrice?` | `number` | Float unit price. Optional: send `unit_price_exact` instead for exact money. |
+| `unitPriceExact?` | `string` | Exact base-10 unit price. Takes precedence over `unit_price` when present. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `taxRate?` | `number` | Tax rate as a fraction (`0.08` = 8%). |
+| `taxRateExact?` | `string` | Exact base-10 tax rate. Takes precedence over `tax_rate` when present. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `poLineId?` | `string` |  |
 
 ### CreateBomComponentInput
 
@@ -7009,6 +7113,19 @@ Input for creating a coupon code
 | `warehouseId?` | `number` |  |
 | `assignedTo?` | `string` |  |
 | `notes?` | `string` |  |
+| `items?` | `Array<CreateInspectionItemInput>` | Lines to inspect. Optional: omitted (or empty) creates an inspection with no lines, as before. Types: [`CreateInspectionItemInput`](#createinspectioniteminput) |
+
+### CreateInspectionItemInput
+
+A line to inspect.
+
+| Field | Type | Description |
+|---|---|---|
+| `sku` | `string` |  |
+| `lotNumber?` | `string` |  |
+| `serialNumber?` | `string` |  |
+| `quantityToInspect?` | `number` | Float quantity. Optional: send `quantity_to_inspect_exact` instead. |
+| `quantityToInspectExact?` | `string` | Exact base-10 quantity. Takes precedence over `quantity_to_inspect`. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 
 ### CreateIntegrationFieldMappingInput
 
@@ -7376,6 +7493,25 @@ Input for creating a promotion
 | `purchaseOrderId?` | `string` |  |
 | `carrier?` | `string` |  |
 | `trackingNumber?` | `string` |  |
+| `items?` | `Array<CreateReceiptItemInput>` | Expected lines. Optional: omitted (or empty) creates a receipt with no lines, as before. Types: [`CreateReceiptItemInput`](#createreceiptiteminput) |
+
+### CreateReceiptItemInput
+
+An expected receipt line. Money follows the binding convention: send the
+`...Exact` base-10 string (preferred) or the float.
+
+| Field | Type | Description |
+|---|---|---|
+| `sku` | `string` |  |
+| `description?` | `string` |  |
+| `poLineId?` | `string` |  |
+| `expectedQuantity?` | `number` | Float quantity. Optional: send `expected_quantity_exact` instead. |
+| `expectedQuantityExact?` | `string` | Exact base-10 quantity. Takes precedence over `expected_quantity`. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `unitCost?` | `number` | Float unit cost. Optional: send `unit_cost_exact` instead for exact money. |
+| `unitCostExact?` | `string` | Exact base-10 unit cost. Takes precedence over `unit_cost` when present. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `lotNumber?` | `string` |  |
+| `expirationDate?` | `string` | RFC 3339 timestamp. |
+| `notes?` | `string` |  |
 
 ### CreateRefundExactInput
 
@@ -9012,6 +9148,25 @@ Filter for `quality.listInspections()`
 | `offset?` | `number` |  |
 | `afterCursor?` | `Array<string>` | Keyset cursor: `[createdAt, id]` |
 
+### InspectionItemOutput
+
+An inspection line as stored. Quantities are exact base-10 strings.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `inspectionId` | `string` |  |
+| `sku` | `string` |  |
+| `lotNumber?` | `string` |  |
+| `serialNumber?` | `string` |  |
+| `quantityInspectedExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `quantityPassedExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `quantityFailedExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `defectCodes` | `Array<string>` |  |
+| `result` | `string` | `pending`, `pass`, `fail`, ... (the engine's snake_case result). |
+| `notes?` | `string` |  |
+| `createdAt` | `string` |  |
+
 ### InspectionOutput
 
 | Field | Type | Description |
@@ -10229,6 +10384,12 @@ Filter for `orders.list()`
 | `status` | `OrderStatus` | Types: [`OrderStatus`](#orderstatus) |
 | `totalAmount` | `number` | **Deprecated.** Use the `totalAmountExact` twin; float money will be removed in 2.0. |
 | `totalAmountExact` | `string` | Exact base-10 order total. Prefer this field for calculations. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `taxAmount` | `number` | **Deprecated.** Use the `taxAmountExact` twin; float money will be removed in 2.0. |
+| `taxAmountExact` | `string` | Exact base-10 order-level tax, already included in the total. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `shippingAmount` | `number` | **Deprecated.** Use the `shippingAmountExact` twin; float money will be removed in 2.0. |
+| `shippingAmountExact` | `string` | Exact base-10 shipping charge, already included in the total. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `discountAmount` | `number` | **Deprecated.** Use the `discountAmountExact` twin; float money will be removed in 2.0. |
+| `discountAmountExact` | `string` | Exact base-10 order-level discount, already subtracted from the total. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `currency` | `string` |  |
 | `paymentStatus` | `PaymentStatus` | Types: [`PaymentStatus`](#paymentstatus) |
 | `fulfillmentStatus` | `FulfillmentStatus` | Types: [`FulfillmentStatus`](#fulfillmentstatus) |
@@ -10385,6 +10546,8 @@ One of: `'pending'`, `'scheduled'`, `'partially_paid'`, `'paid'`, `'cancelled'`.
 | `idempotencyKey?` | `string` |  |
 | `amount` | `number` | **Deprecated.** Use the `amountExact` twin; float money will be removed in 2.0. |
 | `amountExact` | `string` | Exact base-10 amount. Prefer this field for all calculations. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `amountRefunded` | `number` | **Deprecated.** Use the `amountRefundedExact` twin; float money will be removed in 2.0. |
+| `amountRefundedExact` | `string` | Exact base-10 total of COMPLETED refunds. A refund only counts here once `completeRefund` settles it; pending refunds are not included. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `currency` | `string` |  |
 | `status` | `PaymentTransactionStatus` | Types: [`PaymentTransactionStatus`](#paymenttransactionstatus) |
 | `version` | `number` |  |
@@ -10956,6 +11119,21 @@ type PromotionTypeInput = 'percentage_off' | 'percentageoff' | 'fixed_amount_off
 
 One of: `'percentage_off'`, `'percentageoff'`, `'fixed_amount_off'`, `'fixedamountoff'`, `'buy_x_get_y'`, `'buyxgety'`, `'bogo'`, `'free_shipping'`, `'freeshipping'`, `'tiered_discount'`, `'tiereddiscount'`, `'bundle'`, `'bundle_discount'`, `'bundlediscount'`.
 
+### PromotionUsageFilterInput
+
+Optional filters for `Promotions.listUsage`. Every set field narrows the
+result; no argument lists the whole ledger (engine default page size).
+
+| Field | Type | Description |
+|---|---|---|
+| `promotionId?` | `string` |  |
+| `couponId?` | `string` |  |
+| `customerId?` | `string` |  |
+| `orderId?` | `string` |  |
+| `cartId?` | `string` |  |
+| `limit?` | `number` |  |
+| `offset?` | `number` |  |
+
 ### PromotionUsageOutput
 
 Promotion usage record output
@@ -11136,6 +11314,29 @@ Optional filters for `Receiving.listReceipts`. No argument lists all.
 | `limit?` | `number` |  |
 | `offset?` | `number` |  |
 
+### ReceiptItemOutput
+
+A receipt line as stored. Quantities are exact base-10 strings.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `receiptId` | `string` |  |
+| `lineNumber` | `number` |  |
+| `sku` | `string` |  |
+| `description?` | `string` |  |
+| `poLineId?` | `string` |  |
+| `expectedQuantityExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `receivedQuantityExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `rejectedQuantityExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `unitCost?` | `number` | **Deprecated.** Use the `unitCostExact` twin; float money will be removed in 2.0. |
+| `unitCostExact?` | `string` | Exact base-10 unit cost, when set. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `lotNumber?` | `string` |  |
+| `expirationDate?` | `string` |  |
+| `status` | `string` | The engine's snake_case line status (`pending`, `received`, ...). |
+| `notes?` | `string` |  |
+| `createdAt` | `string` |  |
+
 ### ReceiptOutput
 
 | Field | Type | Description |
@@ -11257,9 +11458,14 @@ Types: [`RecognitionMethod`](#recognitionmethod)
 | `paymentId` | `string` |  |
 | `amount` | `number` | **Deprecated.** Use the `amountExact` twin; float money will be removed in 2.0. |
 | `amountExact` | `string` | Exact base-10 amount. Prefer this field for all calculations. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `currency` | `string` |  |
 | `status` | `RefundStatus` | Types: [`RefundStatus`](#refundstatus) |
 | `reason?` | `string` |  |
+| `externalId?` | `string` |  |
+| `failureReason?` | `string` | Why the refund failed (set by `failRefund`). |
+| `refundedAt?` | `string` | RFC 3339; set when `completeRefund` settles the refund. |
 | `createdAt` | `string` |  |
+| `updatedAt` | `string` |  |
 | `idempotencyKey?` | `string` |  |
 
 ### RefundStatus

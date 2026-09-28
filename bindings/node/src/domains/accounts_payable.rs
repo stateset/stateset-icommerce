@@ -19,6 +19,110 @@ pub struct CreateBillInput {
     pub payment_terms: Option<String>,
     pub reference_number: Option<String>,
     pub notes: Option<String>,
+    /// Bill lines. Optional: omitted (or empty) creates a header-only bill,
+    /// as before. The engine derives each line amount and the bill totals.
+    pub items: Option<Vec<CreateBillItemInput>>,
+}
+
+/// A bill line. Money follows the binding convention: send the `...Exact`
+/// base-10 string (preferred) or the float.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateBillItemInput {
+    pub description: String,
+    pub account_code: Option<String>,
+    /// Float quantity. Optional: send `quantity_exact` instead.
+    pub quantity: Option<f64>,
+    /// Exact base-10 quantity. Takes precedence over `quantity` when present.
+    pub quantity_exact: Option<String>,
+    /// Float unit price. Optional: send `unit_price_exact` instead for exact money.
+    pub unit_price: Option<f64>,
+    /// Exact base-10 unit price. Takes precedence over `unit_price` when present.
+    pub unit_price_exact: Option<String>,
+    /// Tax rate as a fraction (`0.08` = 8%).
+    pub tax_rate: Option<f64>,
+    /// Exact base-10 tax rate. Takes precedence over `tax_rate` when present.
+    pub tax_rate_exact: Option<String>,
+    pub po_line_id: Option<String>,
+}
+
+impl TryFrom<CreateBillItemInput> for stateset_core::CreateBillItem {
+    type Error = Error;
+
+    fn try_from(i: CreateBillItemInput) -> Result<Self> {
+        Ok(Self {
+            description: i.description,
+            account_code: i.account_code,
+            quantity: money_input(i.quantity_exact.as_deref(), i.quantity, "bill item quantity")?,
+            unit_price: money_input(
+                i.unit_price_exact.as_deref(),
+                i.unit_price,
+                "bill item unit price",
+            )?,
+            tax_rate: optional_money_input(
+                i.tax_rate_exact.as_deref(),
+                i.tax_rate,
+                "bill item tax rate",
+            )?,
+            po_line_id: parse_optional_id(i.po_line_id, "PO line")?,
+        })
+    }
+}
+
+/// A bill line as stored, with engine-derived `amount` and `taxAmount`.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BillItemOutput {
+    pub id: String,
+    pub bill_id: String,
+    pub line_number: i32,
+    pub description: String,
+    pub account_code: Option<String>,
+    /// Exact base-10 quantity.
+    pub quantity_exact: String,
+    /// @deprecated Use the `unitPriceExact` twin; float money will be removed in 2.0.
+    pub unit_price: f64,
+    /// Exact base-10 unit price.
+    pub unit_price_exact: String,
+    /// @deprecated Use the `amountExact` twin; float money will be removed in 2.0.
+    pub amount: f64,
+    /// Exact base-10 line amount (quantity x unit price).
+    pub amount_exact: String,
+    /// Exact base-10 tax rate (a fraction), when set.
+    pub tax_rate_exact: Option<String>,
+    /// @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0.
+    pub tax_amount: f64,
+    /// Exact base-10 line tax.
+    pub tax_amount_exact: String,
+    pub po_line_id: Option<String>,
+    pub created_at: String,
+}
+
+impl TryFrom<stateset_core::BillItem> for BillItemOutput {
+    type Error = Error;
+
+    fn try_from(i: stateset_core::BillItem) -> Result<Self> {
+        let (unit_price, unit_price_exact) = money_pair(i.unit_price, "bill item unit price")?;
+        let (amount, amount_exact) = money_pair(i.amount, "bill item amount")?;
+        let (tax_amount, tax_amount_exact) = money_pair(i.tax_amount, "bill item tax amount")?;
+        Ok(Self {
+            id: i.id.to_string(),
+            bill_id: i.bill_id.to_string(),
+            line_number: i.line_number,
+            description: i.description,
+            account_code: i.account_code,
+            quantity_exact: i.quantity.to_string(),
+            unit_price,
+            unit_price_exact,
+            amount,
+            amount_exact,
+            tax_rate_exact: i.tax_rate.map(|r| r.to_string()),
+            tax_amount,
+            tax_amount_exact,
+            po_line_id: i.po_line_id.map(|id| id.to_string()),
+            created_at: i.created_at.to_rfc3339(),
+        })
+    }
 }
 
 #[napi(object)]
@@ -268,10 +372,28 @@ impl AccountsPayable {
                 currency: None,
                 reference_number: input.reference_number,
                 memo: input.notes,
-                items: vec![],
+                items: input
+                    .items
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(TryInto::try_into)
+                    .collect::<Result<Vec<_>>>()?,
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to create bill", e))?;
         convert_output(bill)
+    }
+
+    /// The lines of a bill, in line order.
+    #[napi]
+    pub async fn get_bill_items(&self, bill_id: String) -> Result<Vec<BillItemOutput>> {
+        let commerce = self.commerce.get()?;
+        let uuid: uuid::Uuid =
+            bill_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid bill UUID"))?;
+        let items = commerce
+            .accounts_payable()
+            .get_bill_items(uuid)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get bill items", e))?;
+        convert_outputs(items)
     }
 
     /// Get a bill by ID

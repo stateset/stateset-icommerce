@@ -863,6 +863,12 @@ class Order:
     status: str
     total_amount: float
     total_amount_exact: str
+    tax_amount: float
+    tax_amount_exact: str
+    shipping_amount: float
+    shipping_amount_exact: str
+    discount_amount: float
+    discount_amount_exact: str
     currency: str
     payment_status: str
     fulfillment_status: str
@@ -908,6 +914,8 @@ class Orders:
     ) -> Order:
         """Create a new order."""
         ...
+
+    def get_by_number(self, order_number: str) -> Optional[Order]: ...
 
     def get(self, id: str) -> Optional[Order]:
         """Get an order by ID."""
@@ -1874,6 +1882,8 @@ class Payment:
     idempotency_key: Optional[str]
     amount: float
     amount_exact: str
+    amount_refunded: float
+    amount_refunded_exact: str
     currency: str
     status: str
     payment_method: str
@@ -1888,9 +1898,14 @@ class Refund:
     idempotency_key: Optional[str]
     amount: float
     amount_exact: str
+    refund_number: str
+    currency: str
     status: str
     reason: Optional[str]
+    failure_reason: Optional[str]
+    refunded_at: Optional[str]
     created_at: str
+    updated_at: str
 
 class Payments:
     """Payment processing operations."""
@@ -1938,6 +1953,14 @@ class Payments:
         reason: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> Refund: ...
+
+    def get_refund(self, id: str) -> Optional[Refund]: ...
+
+    def get_refunds(self, payment_id: str) -> List[Refund]: ...
+
+    def complete_refund(self, id: str) -> Refund: ...
+
+    def fail_refund(self, id: str, reason: str) -> Refund: ...
 
     def count(self) -> int: ...
 

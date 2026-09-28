@@ -789,6 +789,7 @@ pub use stateset_core::{
     PromotionTrigger,
     PromotionType,
     PromotionUsage,
+    PromotionUsageFilter,
     PurchaseOrder,
     PurchaseOrderFilter,
     PurchaseOrderItem,

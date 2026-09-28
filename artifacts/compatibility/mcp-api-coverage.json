@@ -352,16 +352,16 @@
     }
   ],
   "totalAuditedClasses": 32,
-  "totalAuditedMethods": 402,
-  "mappedAuditedMethods": 402,
+  "totalAuditedMethods": 411,
+  "mappedAuditedMethods": 411,
   "uncoveredAuditedMethods": [],
   "staleAuditedMethodMappings": [],
   "invalidAuditedToolReferences": [],
   "auditedClasses": [
     {
       "className": "AccountsPayable",
-      "methodCount": 12,
-      "mappedMethodCount": 12,
+      "methodCount": 13,
+      "mappedMethodCount": 13,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
@@ -488,16 +488,16 @@
     },
     {
       "className": "Orders",
-      "methodCount": 8,
-      "mappedMethodCount": 8,
+      "methodCount": 9,
+      "mappedMethodCount": 9,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
     {
       "className": "Payments",
-      "methodCount": 10,
-      "mappedMethodCount": 10,
+      "methodCount": 14,
+      "mappedMethodCount": 14,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
@@ -512,8 +512,8 @@
     },
     {
       "className": "Promotions",
-      "methodCount": 17,
-      "mappedMethodCount": 17,
+      "methodCount": 18,
+      "mappedMethodCount": 18,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
@@ -528,16 +528,16 @@
     },
     {
       "className": "Quality",
-      "methodCount": 15,
-      "mappedMethodCount": 15,
+      "methodCount": 16,
+      "mappedMethodCount": 16,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
     {
       "className": "Receiving",
-      "methodCount": 9,
-      "mappedMethodCount": 9,
+      "methodCount": 10,
+      "mappedMethodCount": 10,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []

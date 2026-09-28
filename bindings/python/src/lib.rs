@@ -939,6 +939,21 @@ pub struct Order {
     total_amount: f64,
     #[pyo3(get)]
     total_amount_exact: String,
+    /// Order-level tax, already included in the total.
+    #[pyo3(get)]
+    tax_amount: f64,
+    #[pyo3(get)]
+    tax_amount_exact: String,
+    /// Shipping charge, already included in the total.
+    #[pyo3(get)]
+    shipping_amount: f64,
+    #[pyo3(get)]
+    shipping_amount_exact: String,
+    /// Order-level discount, already subtracted from the total.
+    #[pyo3(get)]
+    discount_amount: f64,
+    #[pyo3(get)]
+    discount_amount_exact: String,
     #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
@@ -985,6 +1000,12 @@ impl TryFrom<stateset_core::Order> for Order {
             status: format!("{}", o.status),
             total_amount: to_f64_result(o.total_amount, "order total amount")?,
             total_amount_exact,
+            tax_amount: to_f64_result(o.tax_amount, "order tax amount")?,
+            tax_amount_exact: o.tax_amount.to_string(),
+            shipping_amount: to_f64_result(o.shipping_amount, "order shipping amount")?,
+            shipping_amount_exact: o.shipping_amount.to_string(),
+            discount_amount: to_f64_result(o.discount_amount, "order discount amount")?,
+            discount_amount_exact: o.discount_amount.to_string(),
             currency: o.currency.to_string(),
             payment_status: format!("{}", o.payment_status),
             fulfillment_status: format!("{}", o.fulfillment_status),
@@ -1228,6 +1249,18 @@ impl Orders {
             .get(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get order: {}", e)))?;
 
+        convert_optional_output(order)
+    }
+
+    /// Get an order by its human-readable order number. `None` when none matches.
+    fn get_by_number(&self, order_number: String) -> PyResult<Option<Order>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let order = commerce.orders().get_by_number(&order_number).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get order by number: {}", e))
+        })?;
         convert_optional_output(order)
     }
 
@@ -2735,6 +2768,11 @@ pub struct Payment {
     /// Exact base-10 amount. Prefer this field for calculations.
     #[pyo3(get)]
     amount_exact: String,
+    /// Total of COMPLETED refunds (pending refunds are not included).
+    #[pyo3(get)]
+    amount_refunded: f64,
+    #[pyo3(get)]
+    amount_refunded_exact: String,
     #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
@@ -2773,6 +2811,8 @@ impl TryFrom<stateset_core::Payment> for Payment {
             idempotency_key: p.idempotency_key,
             amount: to_f64_result(p.amount, "payment amount")?,
             amount_exact,
+            amount_refunded: to_f64_result(p.amount_refunded, "payment amount refunded")?,
+            amount_refunded_exact: p.amount_refunded.to_string(),
             currency: p.currency.to_string(),
             status: format!("{}", p.status),
             payment_method: format!("{}", p.payment_method),
@@ -2799,11 +2839,22 @@ pub struct Refund {
     #[pyo3(get)]
     amount_exact: String,
     #[pyo3(get)]
+    refund_number: String,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
     status: String,
     #[pyo3(get)]
     reason: Option<String>,
     #[pyo3(get)]
+    failure_reason: Option<String>,
+    /// RFC 3339; set when `complete_refund` settles the refund.
+    #[pyo3(get)]
+    refunded_at: Option<String>,
+    #[pyo3(get)]
     created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
 }
 
 #[pymethods]
@@ -2824,9 +2875,14 @@ impl TryFrom<stateset_core::Refund> for Refund {
             idempotency_key: r.idempotency_key,
             amount: to_f64_result(r.amount, "refund amount")?,
             amount_exact,
+            refund_number: r.refund_number,
+            currency: r.currency.to_string(),
             status: format!("{}", r.status),
             reason: r.reason,
+            failure_reason: r.failure_reason,
+            refunded_at: r.refunded_at.map(|t| t.to_rfc3339()),
             created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
         })
     }
 }
@@ -3099,6 +3155,67 @@ impl Payments {
             .map_err(|error| {
                 PyRuntimeError::new_err(format!("Failed to create refund: {error}"))
             })?;
+        convert_output(refund)
+    }
+
+    /// Get a refund by id. `None` when it does not exist.
+    fn get_refund(&self, id: String) -> PyResult<Option<Refund>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| PyValueError::new_err("Invalid refund UUID"))?;
+        let refund = commerce
+            .payments()
+            .get_refund(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get refund: {}", e)))?;
+        convert_optional_output(refund)
+    }
+
+    /// Every refund recorded against a payment, in any status.
+    fn get_refunds(&self, payment_id: String) -> PyResult<Vec<Refund>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            payment_id.parse().map_err(|_| PyValueError::new_err("Invalid payment UUID"))?;
+        let refunds = commerce
+            .payments()
+            .get_refunds(uuid.into())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list refunds: {}", e)))?;
+        refunds.into_iter().map(Refund::try_from).collect()
+    }
+
+    /// Settle a pending refund: `completed`, and its amount folds into the
+    /// payment's `amount_refunded`.
+    fn complete_refund(&self, id: String) -> PyResult<Refund> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| PyValueError::new_err("Invalid refund UUID"))?;
+        let refund = commerce
+            .payments()
+            .complete_refund(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to complete refund: {}", e)))?;
+        convert_output(refund)
+    }
+
+    /// Mark a pending refund as failed, releasing its reserved amount.
+    fn fail_refund(&self, id: String, reason: String) -> PyResult<Refund> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| PyValueError::new_err("Invalid refund UUID"))?;
+        let refund = commerce
+            .payments()
+            .fail_refund(uuid, &reason)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to fail refund: {}", e)))?;
         convert_output(refund)
     }
 
@@ -9147,6 +9264,43 @@ impl PromotionsApi {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to record usage: {}", e)))?;
 
         convert_output(usage)
+    }
+
+    /// Read the promotion usage ledger, oldest first. Every given filter
+    /// narrows the result.
+    #[pyo3(signature = (promotion_id=None, customer_id=None, order_id=None, cart_id=None, coupon_id=None, limit=None, offset=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn list_usage(
+        &self,
+        promotion_id: Option<String>,
+        customer_id: Option<String>,
+        order_id: Option<String>,
+        cart_id: Option<String>,
+        coupon_id: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<PromotionUsage>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let usage = commerce
+            .promotions()
+            .list_usage(stateset_core::PromotionUsageFilter {
+                promotion_id: parse_optional_uuid(promotion_id.as_deref(), "promotion_id")?
+                    .map(Into::into),
+                coupon_id: parse_optional_uuid(coupon_id.as_deref(), "coupon_id")?,
+                customer_id: parse_optional_uuid(customer_id.as_deref(), "customer_id")?
+                    .map(Into::into),
+                order_id: parse_optional_uuid(order_id.as_deref(), "order_id")?.map(Into::into),
+                cart_id: parse_optional_uuid(cart_id.as_deref(), "cart_id")?.map(Into::into),
+                limit,
+                offset,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to list promotion usage: {}", e))
+            })?;
+        usage.into_iter().map(PromotionUsage::try_from).collect()
     }
 }
 

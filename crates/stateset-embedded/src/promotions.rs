@@ -37,7 +37,7 @@ use rust_decimal::Decimal;
 use stateset_core::{
     ApplyPromotionsRequest, ApplyPromotionsResult, CartId, CouponCode, CouponFilter,
     CreateCouponCode, CreatePromotion, CreatePromotionCondition, CustomerId, OrderId, Promotion,
-    PromotionFilter, PromotionId, PromotionUsage, Result, UpdatePromotion,
+    PromotionFilter, PromotionId, PromotionUsage, PromotionUsageFilter, Result, UpdatePromotion,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -303,6 +303,15 @@ impl Promotions {
             discount_amount,
             currency,
         )
+    }
+
+    /// Read the promotion usage ledger, oldest first.
+    ///
+    /// Filter by promotion, coupon, customer, order and/or cart; every set
+    /// field narrows the result. This is how to answer "which promotions did
+    /// order X redeem, and for how much?".
+    pub fn list_usage(&self, filter: PromotionUsageFilter) -> Result<Vec<PromotionUsage>> {
+        self.db.promotions().list_usage(filter)
     }
 
     // ========================================================================

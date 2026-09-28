@@ -119,6 +119,9 @@ pub trait PromotionRepository: Send + Sync {
         discount_amount: rust_decimal::Decimal,
         currency: &str,
     ) -> Result<PromotionUsage>;
+    /// Read the promotion usage ledger (who redeemed what, on which order or
+    /// cart, for how much), oldest first.
+    fn list_usage(&self, filter: PromotionUsageFilter) -> Result<Vec<PromotionUsage>>;
 }
 
 /// Price level (B2B pricing tier) repository trait.

@@ -441,6 +441,38 @@ pub struct PromotionUsageOutput {
     pub used_at: String,
 }
 
+/// Optional filters for `Promotions.listUsage`. Every set field narrows the
+/// result; no argument lists the whole ledger (engine default page size).
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct PromotionUsageFilterInput {
+    pub promotion_id: Option<String>,
+    pub coupon_id: Option<String>,
+    pub customer_id: Option<String>,
+    pub order_id: Option<String>,
+    pub cart_id: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+impl TryFrom<PromotionUsageFilterInput> for stateset_core::PromotionUsageFilter {
+    type Error = Error;
+
+    fn try_from(f: PromotionUsageFilterInput) -> Result<Self> {
+        Ok(Self {
+            promotion_id: parse_optional_id::<uuid::Uuid>(f.promotion_id, "promotion")?
+                .map(Into::into),
+            coupon_id: parse_optional_id::<uuid::Uuid>(f.coupon_id, "coupon")?,
+            customer_id: parse_optional_id::<uuid::Uuid>(f.customer_id, "customer")?
+                .map(CustomerId::from),
+            order_id: parse_optional_id::<uuid::Uuid>(f.order_id, "order")?.map(OrderId::from),
+            cart_id: parse_optional_id::<uuid::Uuid>(f.cart_id, "cart")?.map(CartId::from),
+            limit: f.limit,
+            offset: f.offset,
+        })
+    }
+}
+
 impl TryFrom<stateset_core::PromotionUsage> for PromotionUsageOutput {
     type Error = Error;
 
@@ -1016,5 +1048,21 @@ impl Promotions {
             .map_err(|e| wrap(ErrCode::Internal, "Failed to record usage", e))?;
 
         convert_output(usage)
+    }
+
+    /// Read the promotion usage ledger, oldest first: which promotions an
+    /// order (or customer, cart, coupon) redeemed, and for how much.
+    #[napi]
+    pub async fn list_usage(
+        &self,
+        filter: Option<PromotionUsageFilterInput>,
+    ) -> Result<Vec<PromotionUsageOutput>> {
+        let commerce = self.commerce.get()?;
+        let filter = filter.unwrap_or_default().try_into()?;
+        let usage = commerce
+            .promotions()
+            .list_usage(filter)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list promotion usage", e))?;
+        convert_outputs(usage)
     }
 }

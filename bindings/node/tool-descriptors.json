@@ -285,8 +285,8 @@
         "className": "X402"
       }
     ],
-    "toolCount": 750,
-    "readOnlyCount": 378,
+    "toolCount": 759,
+    "readOnlyCount": 385,
     "readOnlyPrefixes": [
       "calculate",
       "check",
@@ -1586,6 +1586,13 @@
         },
         "notes": {
           "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CreateBillItemInput"
+          },
+          "description": "Bill lines. Optional: omitted (or empty) creates a header-only bill, as before. The engine derives each line amount and the bill totals."
         }
       },
       "required": [
@@ -1593,6 +1600,55 @@
         "dueDate"
       ],
       "additionalProperties": false
+    },
+    "CreateBillItemInput": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "accountCode": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "number",
+          "x-money": "float",
+          "description": "Float quantity. Optional: send `quantity_exact` instead. Float money field; prefer the `quantityExact` string for exact amounts."
+        },
+        "quantityExact": {
+          "type": "string",
+          "x-money": "exact",
+          "description": "Exact base-10 quantity. Takes precedence over `quantity` when present."
+        },
+        "unitPrice": {
+          "type": "number",
+          "x-money": "float",
+          "description": "Float unit price. Optional: send `unit_price_exact` instead for exact money. Float money field; prefer the `unitPriceExact` string for exact amounts."
+        },
+        "unitPriceExact": {
+          "type": "string",
+          "x-money": "exact",
+          "description": "Exact base-10 unit price. Takes precedence over `unit_price` when present."
+        },
+        "taxRate": {
+          "type": "number",
+          "x-money": "float",
+          "description": "Tax rate as a fraction (`0.08` = 8%). Float money field; prefer the `taxRateExact` string for exact amounts."
+        },
+        "taxRateExact": {
+          "type": "string",
+          "x-money": "exact",
+          "description": "Exact base-10 tax rate. Takes precedence over `tax_rate` when present."
+        },
+        "poLineId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "additionalProperties": false,
+      "description": "A bill line. Money follows the binding convention: send the `...Exact` base-10 string (preferred) or the float."
     },
     "CreateBomComponentInput": {
       "type": "object",
@@ -2561,6 +2617,13 @@
         },
         "notes": {
           "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CreateInspectionItemInput"
+          },
+          "description": "Lines to inspect. Optional: omitted (or empty) creates an inspection with no lines, as before."
         }
       },
       "required": [
@@ -2569,6 +2632,35 @@
         "referenceId"
       ],
       "additionalProperties": false
+    },
+    "CreateInspectionItemInput": {
+      "type": "object",
+      "properties": {
+        "sku": {
+          "type": "string"
+        },
+        "lotNumber": {
+          "type": "string"
+        },
+        "serialNumber": {
+          "type": "string"
+        },
+        "quantityToInspect": {
+          "type": "number",
+          "x-money": "float",
+          "description": "Float quantity. Optional: send `quantity_to_inspect_exact` instead. Float money field; prefer the `quantityToInspectExact` string for exact amounts."
+        },
+        "quantityToInspectExact": {
+          "type": "string",
+          "x-money": "exact",
+          "description": "Exact base-10 quantity. Takes precedence over `quantity_to_inspect`."
+        }
+      },
+      "required": [
+        "sku"
+      ],
+      "additionalProperties": false,
+      "description": "A line to inspect."
     },
     "CreateIntegrationFieldMappingInput": {
       "type": "object",
@@ -3799,6 +3891,13 @@
         },
         "trackingNumber": {
           "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CreateReceiptItemInput"
+          },
+          "description": "Expected lines. Optional: omitted (or empty) creates a receipt with no lines, as before."
         }
       },
       "required": [
@@ -3806,6 +3905,55 @@
         "warehouseId"
       ],
       "additionalProperties": false
+    },
+    "CreateReceiptItemInput": {
+      "type": "object",
+      "properties": {
+        "sku": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "poLineId": {
+          "type": "string"
+        },
+        "expectedQuantity": {
+          "type": "number",
+          "x-money": "float",
+          "description": "Float quantity. Optional: send `expected_quantity_exact` instead. Float money field; prefer the `expectedQuantityExact` string for exact amounts."
+        },
+        "expectedQuantityExact": {
+          "type": "string",
+          "x-money": "exact",
+          "description": "Exact base-10 quantity. Takes precedence over `expected_quantity`."
+        },
+        "unitCost": {
+          "type": "number",
+          "x-money": "float",
+          "description": "Float unit cost. Optional: send `unit_cost_exact` instead for exact money. Float money field; prefer the `unitCostExact` string for exact amounts."
+        },
+        "unitCostExact": {
+          "type": "string",
+          "x-money": "exact",
+          "description": "Exact base-10 unit cost. Takes precedence over `unit_cost` when present."
+        },
+        "lotNumber": {
+          "type": "string"
+        },
+        "expirationDate": {
+          "type": "string",
+          "description": "RFC 3339 timestamp."
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sku"
+      ],
+      "additionalProperties": false,
+      "description": "An expected receipt line. Money follows the binding convention: send the `...Exact` base-10 string (preferred) or the float."
     },
     "CreateRefundExactInput": {
       "type": "object",
@@ -6758,6 +6906,34 @@
       ],
       "additionalProperties": false,
       "description": "Line item input for promotion calculation"
+    },
+    "PromotionUsageFilterInput": {
+      "type": "object",
+      "properties": {
+        "promotionId": {
+          "type": "string"
+        },
+        "couponId": {
+          "type": "string"
+        },
+        "customerId": {
+          "type": "string"
+        },
+        "orderId": {
+          "type": "string"
+        },
+        "cartId": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "number"
+        },
+        "offset": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Optional filters for `Promotions.listUsage`. Every set field narrows the result; no argument lists the whole ledger (engine default page size)."
     },
     "PurchaseOrderFilterInput": {
       "type": "object",
@@ -10283,6 +10459,32 @@
         },
         "required": [
           "number"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsPayable.getBillItems",
+      "module": "accountsPayable",
+      "className": "AccountsPayable",
+      "method": "getBillItems",
+      "description": "The lines of a bill, in line order.",
+      "signature": "getBillItems(billId: string): Promise<Array<BillItemOutput>>",
+      "returnType": "Promise<Array<BillItemOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "billId"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "billId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "billId"
         ],
         "additionalProperties": false
       }
@@ -20613,6 +20815,32 @@
       }
     },
     {
+      "name": "orders.getByNumber",
+      "module": "orders",
+      "className": "Orders",
+      "method": "getByNumber",
+      "description": "Get an order by its human-readable order number. `null` when none matches.",
+      "signature": "getByNumber(orderNumber: string): Promise<OrderOutput | null>",
+      "returnType": "Promise<OrderOutput | null>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "orderNumber"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "orderNumber": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "orderNumber"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "orders.list",
       "module": "orders",
       "className": "Orders",
@@ -20969,6 +21197,32 @@
       }
     },
     {
+      "name": "payments.completeRefund",
+      "module": "payments",
+      "className": "Payments",
+      "method": "completeRefund",
+      "description": "Settle a pending refund: marks it `completed` and folds its amount into the payment's `amountRefunded` (moving the payment to `partially_refunded` or `refunded`).",
+      "signature": "completeRefund(id: string): Promise<RefundOutput>",
+      "returnType": "Promise<RefundOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "payments.count",
       "module": "payments",
       "className": "Payments",
@@ -21090,6 +21344,37 @@
       }
     },
     {
+      "name": "payments.failRefund",
+      "module": "payments",
+      "className": "Payments",
+      "method": "failRefund",
+      "description": "Mark a pending refund as failed, releasing its reserved amount.",
+      "signature": "failRefund(id: string, reason: string): Promise<RefundOutput>",
+      "returnType": "Promise<RefundOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "reason"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "payments.get",
       "module": "payments",
       "className": "Payments",
@@ -21111,6 +21396,58 @@
         },
         "required": [
           "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "payments.getRefund",
+      "module": "payments",
+      "className": "Payments",
+      "method": "getRefund",
+      "description": "Get a refund by id. `null` when it does not exist.",
+      "signature": "getRefund(id: string): Promise<RefundOutput | null>",
+      "returnType": "Promise<RefundOutput | null>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "payments.getRefunds",
+      "module": "payments",
+      "className": "Payments",
+      "method": "getRefunds",
+      "description": "Every refund recorded against a payment, in any status.",
+      "signature": "getRefunds(paymentId: string): Promise<Array<RefundOutput>>",
+      "returnType": "Promise<Array<RefundOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "paymentId"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "paymentId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "paymentId"
         ],
         "additionalProperties": false
       }
@@ -23214,6 +23551,36 @@
       }
     },
     {
+      "name": "promotions.listUsage",
+      "module": "promotions",
+      "className": "Promotions",
+      "method": "listUsage",
+      "description": "Read the promotion usage ledger, oldest first: which promotions an order (or customer, cart, coupon) redeemed, and for how much.",
+      "signature": "listUsage(filter?: PromotionUsageFilterInput | undefined | null): Promise<Array<PromotionUsageOutput>>",
+      "returnType": "Promise<Array<PromotionUsageOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "filter"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/PromotionUsageFilterInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "promotions.recordUsage",
       "module": "promotions",
       "className": "Promotions",
@@ -24028,6 +24395,32 @@
       }
     },
     {
+      "name": "quality.getInspectionItems",
+      "module": "quality",
+      "className": "Quality",
+      "method": "getInspectionItems",
+      "description": "The lines of an inspection.",
+      "signature": "getInspectionItems(inspectionId: string): Promise<Array<InspectionItemOutput>>",
+      "returnType": "Promise<Array<InspectionItemOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "inspectionId"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "inspectionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "inspectionId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "quality.getNcr",
       "module": "quality",
       "className": "Quality",
@@ -24381,6 +24774,32 @@
         },
         "required": [
           "number"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "receiving.getReceiptItems",
+      "module": "receiving",
+      "className": "Receiving",
+      "method": "getReceiptItems",
+      "description": "The lines of a receipt, in line order.",
+      "signature": "getReceiptItems(receiptId: string): Promise<Array<ReceiptItemOutput>>",
+      "returnType": "Promise<Array<ReceiptItemOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "receiptId"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "receiptId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "receiptId"
         ],
         "additionalProperties": false
       }

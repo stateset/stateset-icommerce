@@ -62,7 +62,14 @@ export const orderTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { identifier } = params;
-      const order = await commerce.orders.get(identifier);
+      // The binding's `get` takes a UUID; anything else is an order number.
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        identifier,
+      );
+      const order =
+        !isUuid && typeof commerce.orders.getByNumber === 'function'
+          ? await commerce.orders.getByNumber(identifier)
+          : await commerce.orders.get(identifier);
 
       if (!order) {
         return { success: false, error: 'Order not found' };

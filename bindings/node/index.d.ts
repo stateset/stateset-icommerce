@@ -14,6 +14,58 @@ export interface CreateBillInput {
   paymentTerms?: string
   referenceNumber?: string
   notes?: string
+  /**
+   * Bill lines. Optional: omitted (or empty) creates a header-only bill,
+   * as before. The engine derives each line amount and the bill totals.
+   */
+  items?: Array<CreateBillItemInput>
+}
+/**
+ * A bill line. Money follows the binding convention: send the `...Exact`
+ * base-10 string (preferred) or the float.
+ */
+export interface CreateBillItemInput {
+  description: string
+  accountCode?: string
+  /** Float quantity. Optional: send `quantity_exact` instead. */
+  quantity?: number
+  /** Exact base-10 quantity. Takes precedence over `quantity` when present. */
+  quantityExact?: string
+  /** Float unit price. Optional: send `unit_price_exact` instead for exact money. */
+  unitPrice?: number
+  /** Exact base-10 unit price. Takes precedence over `unit_price` when present. */
+  unitPriceExact?: string
+  /** Tax rate as a fraction (`0.08` = 8%). */
+  taxRate?: number
+  /** Exact base-10 tax rate. Takes precedence over `tax_rate` when present. */
+  taxRateExact?: string
+  poLineId?: string
+}
+/** A bill line as stored, with engine-derived `amount` and `taxAmount`. */
+export interface BillItemOutput {
+  id: string
+  billId: string
+  lineNumber: number
+  description: string
+  accountCode?: string
+  /** Exact base-10 quantity. */
+  quantityExact: string
+  /** @deprecated Use the `unitPriceExact` twin; float money will be removed in 2.0. */
+  unitPrice: number
+  /** Exact base-10 unit price. */
+  unitPriceExact: string
+  /** @deprecated Use the `amountExact` twin; float money will be removed in 2.0. */
+  amount: number
+  /** Exact base-10 line amount (quantity x unit price). */
+  amountExact: string
+  /** Exact base-10 tax rate (a fraction), when set. */
+  taxRateExact?: string
+  /** @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0. */
+  taxAmount: number
+  /** Exact base-10 line tax. */
+  taxAmountExact: string
+  poLineId?: string
+  createdAt: string
 }
 export interface BillOutput {
   id: string
@@ -2706,6 +2758,18 @@ export interface OrderOutput {
   totalAmount: number
   /** Exact base-10 order total. Prefer this field for calculations. */
   totalAmountExact: string
+  /** @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0. */
+  taxAmount: number
+  /** Exact base-10 order-level tax, already included in the total. */
+  taxAmountExact: string
+  /** @deprecated Use the `shippingAmountExact` twin; float money will be removed in 2.0. */
+  shippingAmount: number
+  /** Exact base-10 shipping charge, already included in the total. */
+  shippingAmountExact: string
+  /** @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0. */
+  discountAmount: number
+  /** Exact base-10 order-level discount, already subtracted from the total. */
+  discountAmountExact: string
   currency: string
   paymentStatus: PaymentStatus
   fulfillmentStatus: FulfillmentStatus
@@ -2802,6 +2866,13 @@ export interface PaymentOutput {
   amount: number
   /** Exact base-10 amount. Prefer this field for all calculations. */
   amountExact: string
+  /** @deprecated Use the `amountRefundedExact` twin; float money will be removed in 2.0. */
+  amountRefunded: number
+  /**
+   * Exact base-10 total of COMPLETED refunds. A refund only counts here
+   * once `completeRefund` settles it; pending refunds are not included.
+   */
+  amountRefundedExact: string
   currency: string
   status: PaymentTransactionStatus
   version: number
@@ -2832,9 +2903,16 @@ export interface RefundOutput {
   amount: number
   /** Exact base-10 amount. Prefer this field for all calculations. */
   amountExact: string
+  currency: string
   status: RefundStatus
   reason?: string
+  externalId?: string
+  /** Why the refund failed (set by `failRefund`). */
+  failureReason?: string
+  /** RFC 3339; set when `completeRefund` settles the refund. */
+  refundedAt?: string
   createdAt: string
+  updatedAt: string
   idempotencyKey?: string
 }
 export interface StrictSigningKeypairOutput {
@@ -3438,6 +3516,19 @@ export interface PromotionUsageOutput {
   currency: string
   usedAt: string
 }
+/**
+ * Optional filters for `Promotions.listUsage`. Every set field narrows the
+ * result; no argument lists the whole ledger (engine default page size).
+ */
+export interface PromotionUsageFilterInput {
+  promotionId?: string
+  couponId?: string
+  customerId?: string
+  orderId?: string
+  cartId?: string
+  limit?: number
+  offset?: number
+}
 export interface CreateSupplierInput {
   name: string
   supplierCode?: string
@@ -3538,6 +3629,37 @@ export interface CreateInspectionInput {
   warehouseId?: number
   assignedTo?: string
   notes?: string
+  /**
+   * Lines to inspect. Optional: omitted (or empty) creates an inspection
+   * with no lines, as before.
+   */
+  items?: Array<CreateInspectionItemInput>
+}
+/** A line to inspect. */
+export interface CreateInspectionItemInput {
+  sku: string
+  lotNumber?: string
+  serialNumber?: string
+  /** Float quantity. Optional: send `quantity_to_inspect_exact` instead. */
+  quantityToInspect?: number
+  /** Exact base-10 quantity. Takes precedence over `quantity_to_inspect`. */
+  quantityToInspectExact?: string
+}
+/** An inspection line as stored. Quantities are exact base-10 strings. */
+export interface InspectionItemOutput {
+  id: string
+  inspectionId: string
+  sku: string
+  lotNumber?: string
+  serialNumber?: string
+  quantityInspectedExact: string
+  quantityPassedExact: string
+  quantityFailedExact: string
+  defectCodes: Array<string>
+  /** `pending`, `pass`, `fail`, ... (the engine's snake_case result). */
+  result: string
+  notes?: string
+  createdAt: string
 }
 export interface InspectionOutput {
   id: string
@@ -3606,6 +3728,54 @@ export interface CreateReceiptInput {
   purchaseOrderId?: string
   carrier?: string
   trackingNumber?: string
+  /**
+   * Expected lines. Optional: omitted (or empty) creates a receipt with no
+   * lines, as before.
+   */
+  items?: Array<CreateReceiptItemInput>
+}
+/**
+ * An expected receipt line. Money follows the binding convention: send the
+ * `...Exact` base-10 string (preferred) or the float.
+ */
+export interface CreateReceiptItemInput {
+  sku: string
+  description?: string
+  poLineId?: string
+  /** Float quantity. Optional: send `expected_quantity_exact` instead. */
+  expectedQuantity?: number
+  /** Exact base-10 quantity. Takes precedence over `expected_quantity`. */
+  expectedQuantityExact?: string
+  /** Float unit cost. Optional: send `unit_cost_exact` instead for exact money. */
+  unitCost?: number
+  /** Exact base-10 unit cost. Takes precedence over `unit_cost` when present. */
+  unitCostExact?: string
+  lotNumber?: string
+  /** RFC 3339 timestamp. */
+  expirationDate?: string
+  notes?: string
+}
+/** A receipt line as stored. Quantities are exact base-10 strings. */
+export interface ReceiptItemOutput {
+  id: string
+  receiptId: string
+  lineNumber: number
+  sku: string
+  description?: string
+  poLineId?: string
+  expectedQuantityExact: string
+  receivedQuantityExact: string
+  rejectedQuantityExact: string
+  /** @deprecated Use the `unitCostExact` twin; float money will be removed in 2.0. */
+  unitCost?: number
+  /** Exact base-10 unit cost, when set. */
+  unitCostExact?: string
+  lotNumber?: string
+  expirationDate?: string
+  /** The engine's snake_case line status (`pending`, `received`, ...). */
+  status: string
+  notes?: string
+  createdAt: string
 }
 export interface ReceiptOutput {
   id: string
@@ -5687,6 +5857,8 @@ export declare class Commerce {
 export declare class AccountsPayable {
   /** Create a bill */
   createBill(input: CreateBillInput): Promise<BillOutput>
+  /** The lines of a bill, in line order. */
+  getBillItems(billId: string): Promise<Array<BillItemOutput>>
   /** Get a bill by ID */
   getBill(id: string): Promise<BillOutput | null>
   /** Get a bill by bill number */
@@ -6451,6 +6623,8 @@ export declare class Orders {
   /** Create an order without any floating-point conversion. */
   createExact(input: CreateOrderExactInput): Promise<OrderOutput>
   get(id: string): Promise<OrderOutput | null>
+  /** Get an order by its human-readable order number. `null` when none matches. */
+  getByNumber(orderNumber: string): Promise<OrderOutput | null>
   /**
    * List orders, optionally filtered/paginated.
    *
@@ -6494,6 +6668,18 @@ export declare class Payments {
   createRefund(input: CreateRefundInput): Promise<RefundOutput>
   /** Create a refund without any floating-point conversion. */
   createRefundExact(input: CreateRefundExactInput): Promise<RefundOutput>
+  /** Get a refund by id. `null` when it does not exist. */
+  getRefund(id: string): Promise<RefundOutput | null>
+  /** Every refund recorded against a payment, in any status. */
+  getRefunds(paymentId: string): Promise<Array<RefundOutput>>
+  /**
+   * Settle a pending refund: marks it `completed` and folds its amount
+   * into the payment's `amountRefunded` (moving the payment to
+   * `partially_refunded` or `refunded`).
+   */
+  completeRefund(id: string): Promise<RefundOutput>
+  /** Mark a pending refund as failed, releasing its reserved amount. */
+  failRefund(id: string, reason: string): Promise<RefundOutput>
   count(): Promise<number>
 }
 export declare class Prepayments {
@@ -6641,6 +6827,11 @@ export declare class Promotions {
   apply(input: ApplyPromotionsInput): Promise<ApplyPromotionsOutput>
   /** Record promotion usage (after order completion) */
   recordUsage(promotionId: string, couponId: string | undefined | null, customerId: string | undefined | null, orderId: string | undefined | null, cartId: string | undefined | null, discountAmount: number, currency: string): Promise<PromotionUsageOutput>
+  /**
+   * Read the promotion usage ledger, oldest first: which promotions an
+   * order (or customer, cart, coupon) redeemed, and for how much.
+   */
+  listUsage(filter?: PromotionUsageFilterInput | undefined | null): Promise<Array<PromotionUsageOutput>>
 }
 export declare class PurchaseOrders {
   createSupplier(input: CreateSupplierInput): Promise<SupplierOutput>
@@ -6681,6 +6872,8 @@ export declare class Purgatory {
 export declare class Quality {
   /** Create a new inspection */
   createInspection(input: CreateInspectionInput): Promise<InspectionOutput>
+  /** The lines of an inspection. */
+  getInspectionItems(inspectionId: string): Promise<Array<InspectionItemOutput>>
   /** Get an inspection by ID */
   getInspection(id: string): Promise<InspectionOutput | null>
   /**
@@ -6721,6 +6914,8 @@ export declare class Quality {
 export declare class Receiving {
   /** Create a new receipt */
   createReceipt(input: CreateReceiptInput): Promise<ReceiptOutput>
+  /** The lines of a receipt, in line order. */
+  getReceiptItems(receiptId: string): Promise<Array<ReceiptItemOutput>>
   /** Get a receipt by ID */
   getReceipt(id: string): Promise<ReceiptOutput | null>
   /** Get a receipt by receipt number */
