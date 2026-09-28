@@ -91,6 +91,13 @@ pub fn canonical_span_name(operation: &str) -> String {
     conventions::operation_span_name(operation)
 }
 
+/// The tracer provider `init_tracing_otel` installed, kept so
+/// [`shutdown_otel`] can flush it: since `opentelemetry` 0.28 the global
+/// provider can no longer be shut down through `opentelemetry::global`.
+#[cfg(feature = "otel")]
+static OTEL_PROVIDER: std::sync::OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> =
+    std::sync::OnceLock::new();
+
 /// Initialize tracing with `OpenTelemetry` OTLP export.
 ///
 /// Sends traces to an OTLP-compatible collector (e.g. Jaeger, Tempo, Datadog).
@@ -105,8 +112,10 @@ pub fn canonical_span_name(operation: &str) -> String {
 #[cfg(feature = "otel")]
 pub fn init_tracing_otel(config: &TracingConfig) -> Result<()> {
     use opentelemetry::KeyValue;
+    use opentelemetry::trace::TracerProvider as _;
     use opentelemetry_otlp::WithExportConfig;
     use opentelemetry_sdk::Resource;
+    use opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
@@ -117,18 +126,29 @@ pub fn init_tracing_otel(config: &TracingConfig) -> Result<()> {
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:4317".to_string());
 
-    let tracer = opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_exporter(opentelemetry_otlp::new_exporter().tonic().with_endpoint(&endpoint))
-        .with_trace_config(opentelemetry_sdk::trace::Config::default().with_resource(
-            Resource::new(vec![
-                KeyValue::new("service.name", config.service_name.clone()),
-                KeyValue::new("deployment.environment", config.environment.clone()),
-                KeyValue::new("cloud.region", config.region.clone()),
-            ]),
-        ))
-        .install_batch(opentelemetry_sdk::runtime::Tokio)
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint.clone())
+        .build()
         .map_err(|e| ObservabilityError::ExporterError(e.to_string()))?;
+    let resource = Resource::builder()
+        .with_service_name(config.service_name.clone())
+        .with_attributes([
+            KeyValue::new("deployment.environment", config.environment.clone()),
+            KeyValue::new("cloud.region", config.region.clone()),
+        ])
+        .build();
+    // The tonic exporter needs a Tokio reactor, so batch on the Tokio runtime
+    // (as `install_batch(runtime::Tokio)` did) rather than on the SDK's own
+    // background thread.
+    let processor = BatchSpanProcessor::builder(exporter, opentelemetry_sdk::runtime::Tokio).build();
+    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        .with_span_processor(processor)
+        .with_resource(resource)
+        .build();
+    let tracer = provider.tracer(config.service_name.clone());
+    opentelemetry::global::set_tracer_provider(provider.clone());
+    let _ = OTEL_PROVIDER.set(provider);
 
     let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -156,7 +176,11 @@ pub fn init_tracing_otel(config: &TracingConfig) -> Result<()> {
 /// Call this during graceful shutdown to ensure all pending spans are exported.
 #[cfg(feature = "otel")]
 pub fn shutdown_otel() {
-    opentelemetry::global::shutdown_tracer_provider();
+    if let Some(provider) = OTEL_PROVIDER.get() {
+        if let Err(error) = provider.shutdown() {
+            tracing::warn!(%error, "OpenTelemetry tracer provider did not shut down cleanly");
+        }
+    }
 }
 
 #[cfg(test)]
