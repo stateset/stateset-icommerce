@@ -474,6 +474,39 @@ describe('currencyTools — update_currency_settings handler', () => {
     assert.equal(result.success, true);
     assert.deepStrictEqual(result.settings.enabledCurrencies, ['USD', 'EUR']);
   });
+
+  it('merges a partial update onto current settings so the binding gets its required fields', async () => {
+    const tool = findTool('update_currency_settings');
+    const calls = [];
+    const commerce = {
+      currency: {
+        getSettings: async () => ({
+          baseCurrency: 'USD',
+          enabledCurrencies: ['USD', 'EUR'],
+          autoConvert: true,
+          roundingMode: 'half_up',
+        }),
+        updateSettings: async (input) => {
+          calls.push(input);
+          return input;
+        },
+      },
+    };
+    const result = await tool.handler({
+      commerce,
+      params: { roundingMode: 'half_even', enabledCurrencies: ['usd', 'gbp'] },
+      allowApply: true,
+    });
+    assert.equal(result.success, true);
+    assert.deepStrictEqual(calls, [
+      {
+        baseCurrency: 'USD',
+        enabledCurrencies: ['USD', 'GBP'],
+        autoConvert: true,
+        roundingMode: 'half_even',
+      },
+    ]);
+  });
 });
 
 // ============================================================================

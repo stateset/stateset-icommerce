@@ -17,6 +17,28 @@ import {
   voidTaxTransaction,
 } from './providers/tax.js';
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Today's date as the binding's `YYYY-MM-DD` NaiveDate string (UTC). */
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Drop undefined/null keys: the binding's `Option<String>` fields accept an
+ * absent key but refuse `null`.
+ * @template {Record<string, unknown>} T
+ * @param {T} input
+ * @returns {T}
+ */
+function omitAbsent(input) {
+  return /** @type {T} */ (
+    Object.fromEntries(
+      Object.entries(input).filter(([, value]) => value !== undefined && value !== null),
+    )
+  );
+}
+
 const US_STATE_TAX_INFO = {
   CA: {
     stateCode: 'CA',
@@ -394,14 +416,30 @@ export const taxTools = [
       rate: z.number().min(0).describe('Tax rate as decimal'),
       name: z.string().min(1).describe('Rate name'),
       isCompound: z.boolean().optional().describe('Whether the rate compounds'),
-      effectiveFrom: z.string().optional().describe('Effective date/time'),
+      effectiveFrom: z
+        .string()
+        .regex(ISO_DATE, 'must be YYYY-MM-DD')
+        .optional()
+        .describe('First day the rate applies (YYYY-MM-DD). Defaults to today (UTC).'),
+      effectiveTo: z
+        .string()
+        .regex(ISO_DATE, 'must be YYYY-MM-DD')
+        .optional()
+        .describe('Last day the rate applies (YYYY-MM-DD). Omit for open-ended.'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
+      // The binding requires effectiveFrom (a YYYY-MM-DD NaiveDate); a newly
+      // created rate with no stated start applies from today, the same default
+      // create_tax_exemption uses.
+      const input = omitAbsent({
+        ...params,
+        effectiveFrom: params.effectiveFrom ?? todayIsoDate(),
+      });
       if (!allowApply) {
-        return applyRequired('Create tax rate', params);
+        return applyRequired('Create tax rate', input);
       }
-      const rate = await commerce.tax.createRate(params);
+      const rate = await commerce.tax.createRate(input);
       return { success: true, message: 'Tax rate created', rate };
     },
   },
@@ -498,7 +536,11 @@ export const taxTools = [
         ),
       certificateNumber: z.string().optional().describe('Exemption certificate number'),
       issuingAuthority: z.string().optional().describe('Issuing authority (e.g., state name)'),
-      expiresAt: z.string().optional().describe('Expiration date (YYYY-MM-DD)'),
+      expiresAt: z
+        .string()
+        .regex(ISO_DATE, 'must be YYYY-MM-DD')
+        .optional()
+        .describe('Expiration date (YYYY-MM-DD)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -509,17 +551,18 @@ export const taxTools = [
           error: 'Write operations require --apply flag. Would create tax exemption for customer.',
           preview: { customerId, exemptionType, certificateNumber, issuingAuthority },
         };
-      const today = new Date().toISOString().split('T')[0];
-      const exemption = await commerce.tax.createExemption({
-        customerId,
-        exemptionType,
-        certificateNumber,
-        issuingAuthority,
-        effectiveFrom: today,
-        expiresAt: expiresAt || null,
-        jurisdictionIds: [],
-        exemptCategories: [],
-      });
+      const exemption = await commerce.tax.createExemption(
+        omitAbsent({
+          customerId,
+          exemptionType,
+          certificateNumber,
+          issuingAuthority,
+          effectiveFrom: todayIsoDate(),
+          expiresAt,
+          jurisdictionIds: [],
+          exemptCategories: [],
+        }),
+      );
       return {
         success: true,
         message: 'Tax exemption created for customer',

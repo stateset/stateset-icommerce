@@ -105,8 +105,10 @@ export const manufacturingTools = [
       name: z.string().min(1).describe('Component name (e.g., "Yellow Onions")'),
       sku: z.string().optional().describe('Component SKU if from inventory'),
       quantity: z.number().positive().describe('Quantity needed per unit produced'),
-      unitOfMeasure: z.string().optional().describe('Unit (e.g., "kg", "lbs", "each", "ml")'),
-      notes: z.string().optional().describe('Notes about this component'),
+      unitOfMeasure: z
+        .string()
+        .optional()
+        .describe('Unit (e.g., "kg", "lbs", "each", "ml"). Defaults to "each".'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -118,13 +120,16 @@ export const manufacturingTools = [
         };
       }
 
-      const component = await commerce.bom.addComponent(params.bomId, {
+      // Binding CreateBomComponentInput: quantity is a number, componentSku an
+      // Option<String> (omitted when absent, never null); it has no notes field.
+      /** @type {{ name: string, quantity: number, unitOfMeasure: string, componentSku?: string }} */
+      const input = {
         name: params.name,
-        componentSku: params.sku || null,
-        quantity: String(params.quantity),
+        quantity: params.quantity,
         unitOfMeasure: params.unitOfMeasure || 'each',
-        notes: params.notes || null,
-      });
+      };
+      if (params.sku) input.componentSku = params.sku;
+      const component = await commerce.bom.addComponent(params.bomId, input);
       return {
         success: true,
         message: 'Component added to BOM',

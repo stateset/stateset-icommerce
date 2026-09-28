@@ -15,6 +15,7 @@
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
@@ -22,11 +23,36 @@ import { JsonRpcProvider, Wallet, Contract, keccak256, toUtf8Bytes } from 'ether
 
 const execFileAsync = promisify(execFile);
 
-const DEMO_PATH =
-  process.env.AGENT_RECEIPT_DEMO_PATH || '/home/dom/icommerce-app/ves-demo/agent-receipt.mjs';
 const ANVIL_URL = process.env.ANVIL_URL || 'http://localhost:8545';
-const BROADCAST_LOG =
-  '/home/dom/icommerce-app/set/contracts/broadcast/DeployAgentReceipt.s.sol/84532001/run-latest.json';
+
+// The receipt demo lives outside this package (the VES demo stack: anvil,
+// sequencer, deployed contracts). Its location is configuration, never a
+// default: a path on one developer's machine made these tools hang or fail
+// obscurely on every other install.
+function demoScript(name) {
+  if (name === 'agent-receipt.mjs' && process.env.AGENT_RECEIPT_DEMO_PATH) {
+    return process.env.AGENT_RECEIPT_DEMO_PATH;
+  }
+  const dir = process.env.AGENT_RECEIPT_DEMO_DIR;
+  if (!dir) {
+    throw new Error(
+      'Agent receipt demo not configured: set AGENT_RECEIPT_DEMO_DIR to the ves-demo directory ' +
+        '(the local anvil + sequencer + contracts stack).',
+    );
+  }
+  return path.join(dir, name);
+}
+
+function broadcastLogPath() {
+  const log = process.env.AGENT_RECEIPT_BROADCAST_LOG;
+  if (!log) {
+    throw new Error(
+      'Agent receipt contracts not configured: set AGENT_RECEIPT_BROADCAST_LOG to the ' +
+        'DeployAgentReceipt run-latest.json broadcast log.',
+    );
+  }
+  return log;
+}
 
 // Well-known Anvil/Hardhat default keys, used ONLY in explicit demo/test mode.
 // These keys are public and MUST NEVER be used to sign value-bearing actions
@@ -121,8 +147,9 @@ function loadAddresses() {
     };
     return _addressCache;
   }
+  const BROADCAST_LOG = broadcastLogPath();
   if (!fs.existsSync(BROADCAST_LOG)) {
-    throw new Error(`OrderEscrow not deployed. Run setup.sh first: ./setup.sh`);
+    throw new Error(`OrderEscrow not deployed: ${BROADCAST_LOG} does not exist.`);
   }
   const log = JSON.parse(fs.readFileSync(BROADCAST_LOG, 'utf-8'));
   const escrow = log.transactions.find((t) => t.contractName === 'OrderEscrow');
@@ -242,16 +269,16 @@ export const agentReceiptTools = [
       'commitment + proof on Set Chain L2, buyer marks delivered, seller',
       'releases. Returns the signed Agent Receipt JSON with on-chain tx hashes.',
       'Requires the local stack (anvil + sequencer + postgres + deployed',
-      'contracts) to be running — see /home/dom/icommerce-app/setup.sh.',
+      'contracts) to be running, configured by AGENT_RECEIPT_DEMO_DIR.',
     ].join(' '),
-    inputSchema: purchaseInput,
+    inputSchema: purchaseInput.shape,
     permission: 'write',
-    handler: async (args) => {
+    handler: async ({ params: args }) => {
       const { sku, qty, unit_price_usd, max_total_usd, skip_release, fee_recipient, fee_bps } =
         purchaseInput.parse(args);
 
       const cliArgs = [
-        DEMO_PATH,
+        demoScript('agent-receipt.mjs'),
         '--json',
         '--sku',
         sku,
@@ -308,9 +335,9 @@ export const agentReceiptTools = [
       'Read the on-chain escrow state for an order. Returns buyer, seller, ' +
       'amount, deadlines, delivery receipt hash, and current status ' +
       '(None / Locked / Delivered / Disputed / Released / Refunded).',
-    inputSchema: orderIdInput,
+    inputSchema: orderIdInput.shape,
     permission: 'read',
-    handler: async (args) => {
+    handler: async ({ params: args }) => {
       const { order_id_hash } = orderIdInput.parse(args);
       try {
         return { success: true, ...(await readEscrowOrder(order_id_hash)) };
@@ -326,9 +353,9 @@ export const agentReceiptTools = [
       'Buyer raises an on-chain dispute on a Delivered order. Funds freeze in ' +
       'escrow until the operator resolves. The plain-text reason is hashed ' +
       '(keccak256) and stored on-chain as proof of the filing.',
-    inputSchema: disputeInput,
+    inputSchema: disputeInput.shape,
     permission: 'write',
-    handler: async (args) => {
+    handler: async ({ params: args }) => {
       const { order_id_hash, reason } = disputeInput.parse(args);
       try {
         const reasonHash = keccak256(toUtf8Bytes(reason));
@@ -358,9 +385,9 @@ export const agentReceiptTools = [
       'Operator (sequencer / arbiter) resolves a Disputed order. ' +
       'Routes the locked funds either to the seller (in_favor_of_seller=true) ' +
       'or refunds the buyer (false). Emits DisputeResolved + Released/Refunded.',
-    inputSchema: resolveInput,
+    inputSchema: resolveInput.shape,
     permission: 'admin',
-    handler: async (args) => {
+    handler: async ({ params: args }) => {
       const { order_id_hash, in_favor_of_seller } = resolveInput.parse(args);
       try {
         const { contract } = escrowAs('operator');
@@ -393,7 +420,7 @@ export const agentReceiptTools = [
       'Use this BEFORE locking funds so the agent can verify the rate is ' +
       'fresh and within expected bounds. Pre-seeded pairs at deploy time: ' +
       'EUR/ssUSD, GBP/ssUSD, JPY/ssUSD, MXN/ssUSD.',
-    inputSchema: z.object({
+    inputSchema: {
       pair: z
         .string()
         .regex(/^[A-Z]{2,8}\/[A-Za-z]{2,8}$/)
@@ -403,9 +430,9 @@ export const agentReceiptTools = [
         .nonnegative()
         .default(1)
         .describe('Amount of the base currency to convert. Default 1 (returns the per-unit rate).'),
-    }),
+    },
     permission: 'read',
-    handler: async (args) => {
+    handler: async ({ params: args }) => {
       const { pair, amount_base } = args;
       try {
         const { fx } = loadAddresses();
@@ -447,13 +474,11 @@ export const agentReceiptTools = [
       'on-chain audit pass rate. Optional filters scope the statement to a ' +
       'date range, a specific seller wallet, or a specific buyer wallet — ' +
       'enabling multi-tenant accounting on a single OrderEscrow contract.',
-    inputSchema: z.object({
+    inputSchema: {
       receipts_dir: z
         .string()
         .optional()
-        .describe(
-          'Directory containing receipt JSON files. Defaults to /home/dom/icommerce-app/ves-demo.',
-        ),
+        .describe('Directory containing receipt JSON files. Defaults to AGENT_RECEIPT_DEMO_DIR.'),
       since_iso: z
         .string()
         .optional()
@@ -470,10 +495,10 @@ export const agentReceiptTools = [
         .regex(/^0x[0-9a-fA-F]{40}$/)
         .optional()
         .describe('Filter to one buyer wallet (e.g. for buyer-side spend reports).'),
-    }),
+    },
     permission: 'read',
-    handler: async (args) => {
-      const script = '/home/dom/icommerce-app/ves-demo/merchant-statement-demo.mjs';
+    handler: async ({ params: args }) => {
+      const script = demoScript('merchant-statement-demo.mjs');
       const cliArgs = [script, '--json'];
       if (args.receipts_dir) cliArgs.push('--dir', args.receipts_dir);
       if (args.since_iso) cliArgs.push('--since', args.since_iso);
@@ -524,7 +549,7 @@ export const agentReceiptTools = [
       'key, POSTs the signed request to the bridge, and returns a ' +
       'Stripe-Treasury-shaped OutboundPayment intent. Requires bridge ' +
       'running on http://localhost:4243 (or BRIDGE_PAYOUT_URL env).',
-    inputSchema: z.object({
+    inputSchema: {
       role: z
         .enum(['seller', 'buyer'])
         .default('seller')
@@ -539,9 +564,9 @@ export const agentReceiptTools = [
         .string()
         .regex(/^\d{4}$/)
         .describe('Last 4 digits of the recipient bank account, for the OutboundPayment metadata.'),
-    }),
+    },
     permission: 'write',
-    handler: async (args) => {
+    handler: async ({ params: args }) => {
       const { role, amount_usd, bank_last4 } = args;
       const bridgeUrl = process.env.BRIDGE_PAYOUT_URL || 'http://localhost:4243';
 
@@ -552,7 +577,7 @@ export const agentReceiptTools = [
           return {
             success: false,
             error: `payout bridge not reachable at ${bridgeUrl}`,
-            hint: 'Start it with: node /home/dom/icommerce-app/ves-demo/bridge-ssdc-payout.mjs',
+            hint: 'Start it with: node $AGENT_RECEIPT_DEMO_DIR/bridge-ssdc-payout.mjs',
           };
         }
         const bridgeState = await health.json();
@@ -656,18 +681,18 @@ export const agentReceiptTools = [
       'pass/fail summary the calling agent can act on. The strongest ' +
       'audit primitive in the stack: any agent can verify any receipt ' +
       'without trusting the producer.',
-    inputSchema: z.object({
+    inputSchema: {
       receipt_path: z
         .string()
         .min(1)
         .describe(
-          'Absolute path to a stateset.*-receipt.v1 or stateset.compliance-bundle.v1 JSON file (e.g. /home/dom/icommerce-app/ves-demo/agent-receipt-ORD-XXX.json).',
+          'Absolute path to a stateset.*-receipt.v1 or stateset.compliance-bundle.v1 JSON file (e.g. $AGENT_RECEIPT_DEMO_DIR/agent-receipt-ORD-XXX.json).',
         ),
-    }),
+    },
     permission: 'read',
-    handler: async (args) => {
+    handler: async ({ params: args }) => {
       const { receipt_path } = args;
-      const verifierScript = '/home/dom/icommerce-app/ves-demo/verify-receipt.mjs';
+      const verifierScript = demoScript('verify-receipt.mjs');
       try {
         const { stdout } = await execFileAsync(
           process.execPath,
@@ -712,7 +737,7 @@ export const agentReceiptTools = [
       'in flight — a programmable platform revenue stream alongside any ' +
       'BPS fee. Read first via yield_available; positive amount returns ' +
       'the sweep tx, otherwise a no-op.',
-    inputSchema: z.object({
+    inputSchema: {
       token_address: z
         .string()
         .regex(/^0x[0-9a-fA-F]{40}$/)
@@ -723,9 +748,9 @@ export const agentReceiptTools = [
         .string()
         .regex(/^0x[0-9a-fA-F]{40}$/)
         .describe('Where to send the swept yield (marketplace, yield pool, buyer rebate, etc.).'),
-    }),
+    },
     permission: 'admin',
-    handler: async (args) => {
+    handler: async ({ params: args }) => {
       const { token_address, recipient } = args;
       try {
         const { contract } = escrowAs('operator');
@@ -766,9 +791,9 @@ export const agentReceiptTools = [
       'expired. No dispute, no operator, no platform — purely the safety ' +
       'property of the OrderEscrow primitive. Reverts with DeadlineNotReached ' +
       'if the deadline has not yet passed.',
-    inputSchema: orderIdInput,
+    inputSchema: orderIdInput.shape,
     permission: 'write',
-    handler: async (args) => {
+    handler: async ({ params: args }) => {
       const { order_id_hash } = orderIdInput.parse(args);
       try {
         const { contract } = escrowAs('buyer');
@@ -795,9 +820,9 @@ export const agentReceiptTools = [
       'Seller pulls escrowed funds after delivery + confirmation window. ' +
       'Use this when agent_receipt_purchase was called with skip_release=true ' +
       'and there has been no dispute. Routes funds to the seller wallet.',
-    inputSchema: orderIdInput,
+    inputSchema: orderIdInput.shape,
     permission: 'write',
-    handler: async (args) => {
+    handler: async ({ params: args }) => {
       const { order_id_hash } = orderIdInput.parse(args);
       try {
         const { contract } = escrowAs('seller');

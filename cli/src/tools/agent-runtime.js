@@ -998,26 +998,20 @@ export const agentRuntimeTools = [
       'Enable on-chain payment settlement for an agent runtime. ' +
       'The agent will settle payments on the specified blockchain using derived wallets.',
     inputSchema: {
-      type: 'object',
-      properties: {
-        name: { type: 'string', description: 'Agent name' },
-        chainId: {
-          type: 'string',
-          description:
-            'Target blockchain (base, solana, set_chain, ethereum, arbitrum, bitcoin, zcash)',
-          default: 'base',
-        },
-        simulate: {
-          type: 'boolean',
-          description: 'Simulate without broadcasting (default: true)',
-          default: true,
-        },
-        tokenSymbol: {
-          type: 'string',
-          description: 'Override token (default: chain payment token)',
-        },
-      },
-      required: ['name'],
+      name: z.string().min(1).describe('Agent name'),
+      chainId: z
+        .string()
+        .optional()
+        .default('base')
+        .describe(
+          'Target blockchain (base, solana, set_chain, ethereum, arbitrum, bitcoin, zcash)',
+        ),
+      simulate: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Simulate without broadcasting (default: true)'),
+      tokenSymbol: z.string().optional().describe('Override token (default: chain payment token)'),
     },
     permission: 'write',
     handler: async ({ params, allowApply }) => {
@@ -1089,16 +1083,11 @@ export const agentRuntimeTools = [
     description:
       'Get the on-chain payment-token balance for an agent runtime with settlement enabled.',
     inputSchema: {
-      type: 'object',
-      properties: {
-        name: { type: 'string', description: 'Agent name' },
-        chainId: {
-          type: 'string',
-          description:
-            'Specific settlement chain to query (default: current runtime settlement chain)',
-        },
-      },
-      required: ['name'],
+      name: z.string().min(1).describe('Agent name'),
+      chainId: z
+        .string()
+        .optional()
+        .describe('Specific settlement chain to query (default: current runtime settlement chain)'),
     },
     permission: 'read',
     handler: async ({ params }) => {
