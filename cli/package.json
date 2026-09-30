@@ -233,6 +233,7 @@
     "@slack/socket-mode": {
       "ws": "7.5.11"
     },
+    "brace-expansion": "2.1.7",
     "axios": "1.18.0",
     "botframework-streaming": {
       "ws": "7.5.11"
