@@ -7173,9 +7173,9 @@
       "evidence": "native reach: engine calls anywhere in the Rust layer",
       "engineBacked": true,
       "gated": false,
-      "exposedCount": 60,
+      "exposedCount": 61,
       "applicableCount": 1217,
-      "coverage": 4.9,
+      "coverage": 5,
       "notes": "host (Kotlin/JNI) layer is not traced",
       "domains": {
         "accounts_payable": {
@@ -7314,13 +7314,14 @@
           ]
         },
         "shipments": {
-          "coverage": 31.8,
+          "coverage": 36.4,
           "exposed": [
             "cancel",
             "create",
             "get",
             "list",
             "mark_delivered",
+            "mark_in_transit",
             "mark_out_for_delivery",
             "ship"
           ]
@@ -7905,6 +7906,7 @@
       "referenceExposed": 740,
       "parity": 8,
       "beyondReference": [
+        "shipments.mark_in_transit",
         "shipments.mark_out_for_delivery"
       ]
     },

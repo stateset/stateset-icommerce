@@ -219,6 +219,9 @@ class StateSetCommerceTest {
             val shipped = commerce.shipments.ship(shipment.id, "1Z999AA10123456784")
             assertEquals("shipped", shipped.status)
 
+            val inTransit = commerce.shipments.markInTransit(shipment.id)
+            assertEquals("in_transit", inTransit.status)
+
             val outForDelivery = commerce.shipments.markOutForDelivery(shipment.id)
             assertEquals("out_for_delivery", outForDelivery.status)
 
