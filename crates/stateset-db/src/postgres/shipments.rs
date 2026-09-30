@@ -33,7 +33,7 @@ pub(crate) async fn ship_open_shipments_for_order_in_tx(
     tracking_number: Option<&str>,
     now: DateTime<Utc>,
 ) -> Result<Vec<Uuid>> {
-    let open: Vec<(Uuid, String, String, Option<String>, i64)> = sqlx::query_as(&format!(
+    let open: Vec<(Uuid, String, String, Option<String>, i32)> = sqlx::query_as(&format!(
         "SELECT id, status, carrier, tracking_number, version FROM shipments
          WHERE order_id = $1 AND status IN {PRE_SHIP_STATUSES_SQL}
          ORDER BY created_at, id FOR UPDATE"

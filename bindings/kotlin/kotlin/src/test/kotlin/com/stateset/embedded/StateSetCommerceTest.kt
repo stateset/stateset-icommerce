@@ -208,6 +208,11 @@ class StateSetCommerceTest {
             assertTrue(shipment.id.isNotEmpty())
             assertEquals(order.id, shipment.orderId)
 
+            // A fully shipped order advances its open tracking manifests;
+            // the explicit shipment call below then exercises the idempotent
+            // shipped path exposed by the binding.
+            commerce.orders.ship(order.id)
+
             val fetched = commerce.shipments.get(shipment.id)
             assertNotNull(fetched)
 
