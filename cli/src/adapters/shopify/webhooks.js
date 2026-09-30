@@ -115,10 +115,20 @@ export function createShopifyWebhookHandlers(commerce, idMapStore) {
       ['pending', 'authorized', 'processing'].includes(candidate.status),
     );
     if (!payment) {
+      // Shopify order update webhooks often omit line items and total_price.
+      // A zero mapped amount must not create a zero-dollar capture; use the
+      // native order total for that sparse event instead.
+      let amount = mapped.data.totalAmount;
+      let currency = mapped.data.currency;
+      if (!amount || decimal(amount).isZero()) {
+        const current = await commerce.orders?.get?.(orderId);
+        amount = current?.totalAmountExact ?? amount;
+        currency = current?.currency ?? currency;
+      }
       const input = {
         orderId,
-        amount: mapped.data.totalAmount,
-        currency: mapped.data.currency,
+        amount,
+        currency,
         paymentMethod: 'other',
       };
       if (commerce.payments.createExact) {

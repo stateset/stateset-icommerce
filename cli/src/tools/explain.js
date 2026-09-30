@@ -61,9 +61,8 @@ export const EXPLAIN_ORDER_API_GAPS = Object.freeze([
   {
     topic: 'refunds',
     reason:
-      'The Node binding has no refund read: Payments has createRefund but no getRefunds/getRefund, ' +
-      'and PaymentOutput omits amount_refunded. Refund amounts are inferred only from a fully ' +
-      "'refunded' payment status; pending refunds (the state createRefund leaves them in) are invisible.",
+      'Refund records could not be read from the available payment binding, so refund amounts ' +
+      'are inferred only from a fully refunded payment status when possible.',
     missingApi: 'payments.getRefunds(paymentId) / PaymentOutput.amountRefunded',
   },
   {
@@ -303,7 +302,14 @@ function summarizeOrder(order) {
 }
 
 /** Build the order's money summary and the flags it implies. */
-function explainOrderMoney({ order, cart, payments, recomputedTax }) {
+function explainOrderMoney({
+  order,
+  cart,
+  payments,
+  refunds = [],
+  refundsReadable = false,
+  recomputedTax,
+}) {
   const currency = order.currency;
   const orderTotal = formatDecimal(order.totalAmountExact);
   const itemsSubtotal = addDecimals((order.items ?? []).map((i) => i.totalExact));
@@ -312,10 +318,15 @@ function explainOrderMoney({ order, cart, payments, recomputedTax }) {
   const charged = addDecimals(captured.map((p) => p.amountExact));
   const partiallyRefunded = payments.filter((p) => p.status === 'partially_refunded');
   const fullyRefunded = payments.filter((p) => p.status === 'refunded');
-  // A fully refunded payment gave back exactly its amount; a partial refund's
-  // amount is not readable (see EXPLAIN_ORDER_API_GAPS.refunds).
-  const refunded =
-    partiallyRefunded.length > 0 ? null : addDecimals(fullyRefunded.map((p) => p.amountExact));
+  // Refund records include pending requests as well as completed refunds. A
+  // pending request is still money reserved for the customer, so include it
+  // in the exact refund total while preserving its status in the timeline.
+  const readableRefunds = refunds.filter((refund) => refund.status !== 'failed');
+  const refunded = refundsReadable
+    ? addDecimals(readableRefunds.map((refund) => refund.amountExact))
+    : partiallyRefunded.length > 0
+      ? null
+      : addDecimals(fullyRefunded.map((p) => p.amountExact));
 
   const money = {
     currency,
@@ -336,8 +347,9 @@ function explainOrderMoney({ order, cart, payments, recomputedTax }) {
       shipping: cart ? 'checkout_cart' : 'unavailable',
       charged:
         'payments with a captured status (completed, refunded, partially_refunded, disputed)',
-      refunded:
-        refunded === null
+      refunded: refundsReadable
+        ? 'payment refund records (pending and completed, excluding failed)'
+        : refunded === null
           ? 'unavailable: a payment is partially_refunded and refund amounts are not readable'
           : "payment status only: fully 'refunded' payments; pending refunds are not readable",
       recomputedTax: recomputedTax ? 'recomputed_now' : 'unavailable',
@@ -464,12 +476,34 @@ async function explainOrder({ commerce, params }) {
     (await readSection(unavailable, 'payments', () =>
       commerce.payments.list({ orderId: order.id }),
     )) ?? [];
+  const refundsReadable = typeof commerce.payments?.getRefunds === 'function';
+  let refundsReadComplete = refundsReadable;
+  const refunds = [];
+  if (refundsReadable) {
+    for (const payment of payments) {
+      const records = await readSection(unavailable, 'refunds', () =>
+        commerce.payments.getRefunds(payment.id),
+      );
+      if (Array.isArray(records)) refunds.push(...records);
+      else refundsReadComplete = false;
+    }
+  }
+  if (
+    refundsReadable &&
+    !refundsReadComplete &&
+    !unavailable.some((entry) => entry.topic === 'refunds')
+  ) {
+    unavailable.push({
+      topic: 'refunds',
+      reason: 'The refund read returned no records for this payment.',
+    });
+  }
   for (const p of payments) {
     const amount = `${formatDecimal(p.amountExact)} ${p.currency}`;
     push(p.createdAt, 'payment', 'created', `Payment ${p.paymentNumber} of ${amount} created.`, {
       paymentId: p.id,
     });
-    if (p.status === 'refunded' || p.status === 'partially_refunded') {
+    if (!refundsReadComplete && (p.status === 'refunded' || p.status === 'partially_refunded')) {
       push(
         p.updatedAt,
         'refund',
@@ -484,6 +518,16 @@ async function explainOrder({ commerce, params }) {
         paymentId: p.id,
       });
     }
+  }
+  for (const refund of refunds) {
+    const amount = `${formatDecimal(refund.amountExact)} ${refund.currency}`;
+    push(
+      refund.refundedAt ?? refund.createdAt,
+      'refund',
+      refund.status,
+      `Refund ${refund.refundNumber} for ${amount} is ${refund.status}.`,
+      { paymentId: refund.paymentId, refundId: refund.id },
+    );
   }
 
   const shipments =
@@ -611,7 +655,18 @@ async function explainOrder({ commerce, params }) {
     return formatTax(result);
   });
 
-  const { money, flags, flag } = explainOrderMoney({ order, cart, payments, recomputedTax });
+  const refundsAvailable =
+    refundsReadable &&
+    refundsReadComplete &&
+    !unavailable.some((entry) => entry.topic === 'refunds' || entry.topic === 'payments');
+  const { money, flags, flag } = explainOrderMoney({
+    order,
+    cart,
+    payments,
+    refunds,
+    refundsReadable: refundsAvailable,
+    recomputedTax,
+  });
 
   const hasShippedShipment = shipments.some((s) => SHIPPED_SHIPMENT_STATUSES.has(s.status));
   const orderShipped = ['shipped', 'delivered'].includes(order.status);
@@ -651,7 +706,7 @@ async function explainOrder({ commerce, params }) {
     flag(
       'return_refund_unverifiable',
       'info',
-      `${completedReturns.length} return(s) are received or completed, but no refund is readable; refunds that are still pending cannot be seen through this API.`,
+      `${completedReturns.length} return(s) are received or completed, but no refund is readable.`,
     );
   }
   if (
@@ -699,7 +754,10 @@ async function explainOrder({ commerce, params }) {
     returns: returns.map((r) => ({ id: r.id, status: r.status, reason: r.reason })),
     fraud,
     flags,
-    unavailable: [...unavailable, ...EXPLAIN_ORDER_API_GAPS],
+    unavailable: [
+      ...unavailable,
+      ...EXPLAIN_ORDER_API_GAPS.filter((gap) => gap.topic !== 'refunds' || !refundsAvailable),
+    ],
   };
 }
 
