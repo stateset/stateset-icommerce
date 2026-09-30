@@ -199,12 +199,15 @@ fn test_full_commerce_lifecycle() {
     // 10. Ship and deliver
     // ========================================================================
     commerce.orders().update_status(order.id, OrderStatus::Processing).expect("set processing");
-    commerce.orders().update_status(order.id, OrderStatus::Shipped).expect("set shipped");
 
     commerce.shipments().mark_processing(shipment.id).expect("processing");
     commerce.shipments().mark_ready(shipment.id).expect("ready");
     let shipment = commerce.shipments().ship(shipment.id, None).expect("Failed to ship");
     assert_eq!(shipment.status, ShipmentStatus::Shipped);
+
+    // The shipment was advanced explicitly, so changing the order to shipped
+    // does not re-apply the order-level propagation to an open shipment.
+    commerce.orders().update_status(order.id, OrderStatus::Shipped).expect("set shipped");
 
     commerce.shipments().mark_in_transit(shipment.id).expect("in transit");
     commerce.shipments().mark_out_for_delivery(shipment.id).expect("out for delivery");
