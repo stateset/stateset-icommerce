@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "configured": true,
+  "dbPath": "/tmp/stateset-demo/empty.db",
+  "mode": "preview",
+  "message": "Store ready · no activity yet",
+  "sizeBytes": 4096,
+  "counts": { "orders": 0, "customers": 0, "products": 0, "returns": 0, "payments": 0 },
+  "alerts": { "pendingOrders": 0, "failedPayments": 0, "pendingReturns": 0, "lowStock": 0 },
+  "signalsComplete": true,
+  "unavailableSignals": []
+}
