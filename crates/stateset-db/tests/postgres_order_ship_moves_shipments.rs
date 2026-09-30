@@ -115,6 +115,7 @@ async fn postgres_full_order_ship_carries_open_shipments_but_partial_does_not() 
     let processing = open_shipment(&db, &order, "Processing").await;
     db.shipments().mark_processing_async(processing).await.expect("processing");
     let ready = open_shipment(&db, &order, "Ready").await;
+    db.shipments().mark_processing_async(ready).await.expect("processing");
     db.shipments().mark_ready_async(ready).await.expect("ready");
     let held = open_shipment(&db, &order, "Held").await;
     db.shipments().hold_async(held).await.expect("hold");

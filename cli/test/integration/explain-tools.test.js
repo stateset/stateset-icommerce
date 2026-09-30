@@ -196,16 +196,10 @@ describe('explain_order through the MCP server', () => {
     assert.ok(timeline.every((entry) => entry.at && entry.summary && entry.ref));
   });
 
-  it(
-    'puts the refund on the timeline after the return',
-    {
-      todo: 'the binding has no refund read (payments.getRefunds / amountRefunded); createRefund leaves the refund pending and the payment completed',
-    },
-    () => {
-      const kinds = journey.explained.timeline.map((e) => e.kind);
-      assert.ok(kinds.lastIndexOf('refund') > kinds.lastIndexOf('return'));
-    },
-  );
+  it('puts the refund on the timeline after the return', () => {
+    const kinds = journey.explained.timeline.map((e) => e.kind);
+    assert.ok(kinds.lastIndexOf('refund') > kinds.lastIndexOf('return'));
+  });
 
   it('sums the money exactly: charged is the order total, net = charged - refunded', () => {
     const { money } = journey.explained;
@@ -226,30 +220,26 @@ describe('explain_order through the MCP server', () => {
     );
   });
 
-  it(
-    'counts the 10.00 refund in money.refunded',
-    { todo: 'refund amounts are not readable through the Node binding' },
-    () => {
-      assert.equal(journey.explained.money.refunded, '10.00');
-      assert.equal(
-        journey.explained.money.net,
-        subtractDecimals(journey.explained.money.charged, '10.00'),
-      );
-    },
-  );
+  it('counts the 10.00 refund in money.refunded', () => {
+    assert.equal(journey.explained.money.refunded, '10.00');
+    assert.equal(
+      journey.explained.money.net,
+      subtractDecimals(journey.explained.money.charged, '10.00'),
+    );
+  });
 
   it('finds the order statuses kept in step with payment and shipment', () => {
     const codes = journey.explained.flags.map((f) => f.code);
     assert.ok(!codes.includes('order_payment_status_stale'), codes.join(','));
     assert.ok(!codes.includes('order_fulfillment_status_stale'), codes.join(','));
-    assert.ok(codes.includes('return_refund_unverifiable'), codes.join(','));
+    assert.ok(!codes.includes('return_refund_unverifiable'), codes.join(','));
     assert.ok(!codes.includes('over_captured'));
     assert.ok(!codes.includes('order_total_differs_from_cart'));
   });
 
   it('names what it cannot see instead of guessing', () => {
     const topics = journey.explained.unavailable.map((u) => u.topic);
-    for (const topic of ['refunds', 'promotion_usage', 'order_tax', 'kernel_receipts']) {
+    for (const topic of ['promotion_usage', 'order_tax', 'kernel_receipts']) {
       assert.ok(topics.includes(topic), topics.join(','));
     }
     assert.equal(journey.explained.tax.basis, 'recomputed_now');

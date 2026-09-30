@@ -700,6 +700,8 @@ fn test_shipment_tracking_flow() {
 
     assert_eq!(shipment.status, ShipmentStatus::Pending);
 
+    commerce.shipments().mark_processing(shipment.id).expect("processing");
+    commerce.shipments().mark_ready(shipment.id).expect("ready");
     let shipped = commerce
         .shipments()
         .ship(shipment.id, Some(tracking_number.clone()))
@@ -707,6 +709,8 @@ fn test_shipment_tracking_flow() {
     assert_eq!(shipped.status, ShipmentStatus::Shipped);
     assert!(shipped.tracking_url.as_ref().is_some_and(|url| url.contains("ups.com")));
 
+    commerce.shipments().mark_in_transit(shipment.id).expect("in transit");
+    commerce.shipments().mark_out_for_delivery(shipment.id).expect("out for delivery");
     let delivered =
         commerce.shipments().mark_delivered(shipment.id).expect("Failed to mark delivered");
     assert_eq!(delivered.status, ShipmentStatus::Delivered);

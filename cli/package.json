@@ -1,9 +1,10 @@
 {
   "name": "@stateset/cli",
-  "version": "1.35.3",
+  "version": "1.36.0",
   "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
+    "stateset-muse": "bin/stateset-muse.js",
     "ss": "bin/stateset.js",
     "stateset": "bin/stateset.js",
     "stateset-chat": "bin/stateset-chat.js",
@@ -204,6 +205,7 @@
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@stateset/embedded": "file:../bindings/node",
+    "bignumber.js": "^9.3.1",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "ethers": "^6.16.0",
@@ -231,6 +233,7 @@
     "@slack/socket-mode": {
       "ws": "7.5.11"
     },
+    "brace-expansion": "2.1.7",
     "axios": "1.18.0",
     "botframework-streaming": {
       "ws": "7.5.11"
@@ -242,7 +245,7 @@
     },
     "protobufjs": "7.6.6",
     "sharp": "0.35.4",
-    "undici": "6.28.0"
+    "undici": "6.28.1"
   },
   "publishConfig": {
     "access": "public"

@@ -378,6 +378,18 @@ class Shipments internal constructor(private val commerce: StateSetCommerce) {
         return StateSetCommerce.json.decodeFromString(Shipment.serializer(), json)
     }
 
+    fun markInTransit(id: String): Shipment {
+        val json = commerce.nativeShipmentInTransit(commerce.getPtr(), id)
+            ?: throw StateSetException("Failed to mark shipment in transit")
+        return StateSetCommerce.json.decodeFromString(Shipment.serializer(), json)
+    }
+
+    fun markOutForDelivery(id: String): Shipment {
+        val json = commerce.nativeShipmentOutForDelivery(commerce.getPtr(), id)
+            ?: throw StateSetException("Failed to mark shipment out for delivery")
+        return StateSetCommerce.json.decodeFromString(Shipment.serializer(), json)
+    }
+
     fun deliver(id: String): Shipment {
         val json = commerce.nativeShipmentDeliver(commerce.getPtr(), id)
             ?: throw StateSetException("Failed to deliver shipment")

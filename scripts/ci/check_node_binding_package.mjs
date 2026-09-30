@@ -32,6 +32,8 @@ const REQUIRED_PACKED_FILES = [
   'openai.d.ts',
   'generic.mjs',
   'generic.d.ts',
+  'webmcp.mjs',
+  'webmcp.d.ts',
   'langchain.mjs',
   'langchain.d.ts',
   'vercel-ai.mjs',
@@ -154,11 +156,12 @@ async function verifyPackedImports(packageDir) {
   const commerce = new Commerce(':memory:');
   assert.ok(commerce, 'Packed root module should create a Commerce instance.');
 
-  const [openai, generic, langchain, vercelAi] = await Promise.all([
+  const [openai, generic, langchain, vercelAi, webmcp] = await Promise.all([
     import(pathToFileURL(path.join(packageDir, 'openai.mjs')).href),
     import(pathToFileURL(path.join(packageDir, 'generic.mjs')).href),
     import(pathToFileURL(path.join(packageDir, 'langchain.mjs')).href),
     import(pathToFileURL(path.join(packageDir, 'vercel-ai.mjs')).href),
+    import(pathToFileURL(path.join(packageDir, 'webmcp.mjs')).href),
   ]);
 
   const fakeToolkit = {
@@ -219,6 +222,12 @@ async function verifyPackedImports(packageDir) {
   assert.equal(langchainTools[0].name, 'list_customers');
   const vercelTools = vercelAi.createVercelAITools(fakeToolkit);
   assert.ok(vercelTools.list_customers);
+  const browserTools = webmcp.createWebMCPTools([{
+    name: 'list_customers', description: 'List customers',
+    inputSchema: { type: 'object' }, permission: 'read',
+  }], { executeTool: async () => ({ status: 'success' }) });
+  assert.equal((await browserTools[0].execute({})).status, 'success');
+  assert.equal(webmcp.getWebMCPContext(), null);
 
   // Without @stateset/cli the adapters must still work end to end on the
   // native toolkit shipped in the tarball (tool-descriptors.json +

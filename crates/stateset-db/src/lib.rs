@@ -44,6 +44,10 @@ pub mod error_helpers;
 pub mod http_idempotency;
 pub mod kernel;
 pub mod kernel_outbox;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
+mod shipment_allocations;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
+mod shipment_updates;
 pub(crate) mod x402_claim;
 pub use http_idempotency::{HttpIdempotencyRecord, HttpIdempotencyRepository};
 pub use kernel_outbox::{KernelOutboxEvent, KernelReceiptRecord};

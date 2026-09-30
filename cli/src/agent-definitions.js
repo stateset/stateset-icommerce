@@ -794,7 +794,9 @@ If --apply is not set, payment operations show a preview instead of executing.`,
     tools: [
       'mcp__stateset-commerce__list_shipments',
       'mcp__stateset-commerce__get_shipment',
+      'mcp__stateset-commerce__plan_partial_shipment',
       'mcp__stateset-commerce__create_shipment',
+      'mcp__stateset-commerce__update_shipment',
       'mcp__stateset-commerce__ship_shipment',
       'mcp__stateset-commerce__deliver_shipment',
       'mcp__stateset-commerce__cancel_shipment',
@@ -816,8 +818,8 @@ If --apply is not set, payment operations show a preview instead of executing.`,
 Manage shipment creation, tracking, and delivery confirmation.
 
 ## Shipment Status Flow
-created → shipped → in_transit → delivered
-                             ↘ exception
+pending → processing → ready_to_ship → shipped → in_transit → out_for_delivery → delivered
+Use observed carrier/warehouse events; do not invent intermediate physical stages.
 
 ## Shipping Carriers
 - FEDEX, UPS, USPS, DHL
@@ -827,10 +829,12 @@ created → shipped → in_transit → delivered
 ### Core Shipments
 - list_shipments - List all shipments
 - get_shipment - Get shipment details
+- plan_partial_shipment - Inspect remaining order quantities without writes
 - create_shipment - Create shipment with tracking (requires --apply)
+- update_shipment - Record lifecycle stages or metadata with expectedVersion (requires --apply)
 - ship_shipment - Mark shipment as shipped (requires --apply)
 - deliver_shipment - Mark as delivered (requires --apply)
-- cancel_shipment - Cancel shipment before delivery (requires --apply)
+- cancel_shipment - Cancel shipment before carrier handoff (requires --apply and cancellation permission)
 - ship_order - Ship order with tracking (requires --apply)
 
 ### Provider Labels and Exceptions
@@ -838,16 +842,17 @@ created → shipped → in_transit → delivered
 - quote_shipping_rates - Get provider-backed rate quotes
 - create_shipping_label - Purchase/create a shipping label (requires --apply)
 - void_shipping_label - Void an unused label (requires --apply)
-- track_shipping_label - Track a label with provider updates
+- track_shipping_label - Read current label tracking without advancing status
 - list_shipping_labels - List created labels
 - ingest_shipping_provider_webhook - Ingest shipping provider webhook (requires --apply)
-- handle_fulfillment_exception - Resolve delivery exceptions (requires --apply)
+- handle_fulfillment_exception - Handle exceptions; partial shipment returns a reconciliation plan and cannot automatically create a follow-up shipment (requires --apply)
 
 ## Safety Rules
 1. Verify tracking number format for carrier
 2. Confirm shipping address is complete
 3. Check inventory before shipping
-4. Update order status after shipment
+4. Shipment tracking and order fulfillment are separate; reconcile quantities and reservations before order fulfillment
+5. Partial-shipment plans are snapshots, not reservations or authorization to ship
 
 If --apply is not set, write operations show a preview instead of executing.`,
   },

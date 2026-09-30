@@ -53,6 +53,53 @@ For real-time updates, configure Shopify webhooks to point at your webhook serve
 
 ## Data Mapping
 
+Product variant prices use the native `priceExact` and `compareAtPriceExact`
+fields; order lines use `unitPriceExact`. They remain decimal strings throughout
+mapping, including export. Malformed prices and invalid quantities are rejected
+instead of silently becoming zero. Native shipping addresses use `line1`,
+`line2`, `city`, `state`, `postalCode` and `country`.
+
+Update webhooks now write native customer fields, product fields and variants,
+order status/address/note fields, and shipment status/tracking/carrier fields.
+Variant IDs are retained when a SKU changes. Omitted fields in partial updates
+are preserved. The result lists `updatedFields`; metadata-only events can return
+`unchanged`. A missing native write method or rejected update raises an error,
+and the ID-map snapshot advances only after the writes succeed. Events older
+than the stored `updated_at` snapshot are skipped.
+
+These are field-sync guarantees, not a certification of the complete Shopify
+transaction lifecycle. Changed order totals or line economics relative to a
+stored snapshot require explicit order editing and financial reconciliation.
+Clearing an existing customer phone requires nullable-field support. Product
+variant deletion, guest orders, fulfillment creation, inventory location/absolute
+quantity semantics, concurrent deliveries, and recovery between native writes
+and ID-map commits still require integration work. An external payment status
+update does not create a payment transaction or ledger reconciliation.
+
+Native shipment updates enforce the declared lifecycle on SQLite and PostgreSQL:
+`pending → processing → ready_to_ship → shipped → in_transit → out_for_delivery → delivered`.
+Cancellation is permitted only before handoff to the carrier. Rejected transitions
+leave the native shipment and ID-map snapshot unchanged; missing carrier stages
+require explicit reconciliation rather than fabricated intermediate events.
+Updates accept an optional `expectedVersion` to reject stale writes. Changed
+fields increment the shipment version and write an outbox fact in the same
+transaction. Reapplying an unchanged patch preserves the version and timestamps
+when its optional version precondition is satisfied; stale versions still fail.
+Cancellation retains shipment items and tracking history. This does not establish durable
+provider idempotency or atomicity between native writes and the ID map.
+
+The current HTTP client still uses REST. Its authenticated requests are confined
+to the configured shop and API version, refuse redirects, time out after 15
+seconds and detect repeated pagination links. GraphQL migration and live-shop
+verification remain tracked in
+[`kernel/foundation-program.json`](../../../kernel/foundation-program.json).
+
+Local native integration regressions:
+
+```sh
+node --test cli/test/integration/shopify-native-sync.test.js
+```
+
 | Shopify Entity | iCommerce Entity |
 |---------------|-----------------|
 | Product | Product + Variants |

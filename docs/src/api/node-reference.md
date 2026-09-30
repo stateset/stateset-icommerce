@@ -678,6 +678,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`SetExchangeRateInput`](#setexchangerateinput)
   - [`SetItemCostInput`](#setitemcostinput)
   - [`ShipmentFilterInput`](#shipmentfilterinput)
+  - [`ShipmentItemOutput`](#shipmentitemoutput)
   - [`ShipmentMethod`](#shipmentmethod)
   - [`ShipmentMethodInput`](#shipmentmethodinput)
   - [`ShipmentOutput`](#shipmentoutput)
@@ -778,6 +779,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`UpdateIntegrationFieldMappingInput`](#updateintegrationfieldmappinginput)
   - [`UpdateIntegrationMappingInput`](#updateintegrationmappinginput)
   - [`UpdateNcrInput`](#updatencrinput)
+  - [`UpdateOrderInput`](#updateorderinput)
   - [`UpdatePriceLevelInput`](#updatepricelevelinput)
   - [`UpdatePriceScheduleInput`](#updatepricescheduleinput)
   - [`UpdateProductInput`](#updateproductinput)
@@ -787,6 +789,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`UpdateReviewInput`](#updatereviewinput)
   - [`UpdateSearchConfigInput`](#updatesearchconfiginput)
   - [`UpdateSegmentInput`](#updatesegmentinput)
+  - [`UpdateShipmentInput`](#updateshipmentinput)
   - [`UpdateShippingZoneInput`](#updateshippingzoneinput)
   - [`UpdateSubscriptionInput`](#updatesubscriptioninput)
   - [`UpdateSubscriptionPlanInput`](#updatesubscriptionplaninput)
@@ -1096,6 +1099,12 @@ Class `Orders`.
   Create an order without any floating-point conversion.
 
   Types: [`CreateOrderExactInput`](#createorderexactinput), [`OrderOutput`](#orderoutput)
+
+- **`update(id: string, input: UpdateOrderInput): Promise<OrderOutput>`**
+
+  Update fields without bypassing native state-transition or money guards.
+
+  Types: [`UpdateOrderInput`](#updateorderinput), [`OrderOutput`](#orderoutput)
 
 - **`get(id: string): Promise<OrderOutput | null>`**
 
@@ -1722,6 +1731,12 @@ Class `Shipments`.
 - **`create(input: CreateShipmentInput): Promise<ShipmentOutput>`**
 
   Types: [`CreateShipmentInput`](#createshipmentinput), [`ShipmentOutput`](#shipmentoutput)
+
+- **`update(id: string, input: UpdateShipmentInput): Promise<ShipmentOutput>`**
+
+  Update shipment metadata and status through the native repository.
+
+  Types: [`UpdateShipmentInput`](#updateshipmentinput), [`ShipmentOutput`](#shipmentoutput)
 
 - **`get(id: string): Promise<ShipmentOutput | null>`**
 
@@ -10449,6 +10464,7 @@ Filter for `orders.list()`
 | `sku` | `string` |  |
 | `name` | `string` |  |
 | `quantity` | `number` |  |
+| `shippedQuantity` | `number` | Units recorded as fulfilled by the order engine; shipment tracking is separate. |
 | `unitPrice` | `number` | **Deprecated.** Use the `unitPriceExact` twin; float money will be removed in 2.0. |
 | `unitPriceExact` | `string` | Exact base-10 unit price. Prefer this field for calculations. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `total` | `number` | **Deprecated.** Use the `totalExact` twin; float money will be removed in 2.0. |
@@ -12165,6 +12181,18 @@ Filter for `shipments.list()`
 | `limit?` | `number` | Page size |
 | `offset?` | `number` |  |
 
+### ShipmentItemOutput
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `shipmentId` | `string` |  |
+| `orderItemId?` | `string` |  |
+| `productId?` | `string` |  |
+| `sku` | `string` |  |
+| `name` | `string` |  |
+| `quantity` | `number` |  |
+
 ### ShipmentMethod
 
 Shipping service level as rendered on `ShipmentOutput.shippingMethod`.
@@ -12198,7 +12226,11 @@ Types: [`ShipmentMethod`](#shipmentmethod)
 | `trackingNumber?` | `string` |  |
 | `trackingUrl?` | `string` |  |
 | `recipientName` | `string` |  |
+| `recipientEmail?` | `string` |  |
+| `recipientPhone?` | `string` |  |
 | `shippingAddress` | `string` |  |
+| `notes?` | `string` |  |
+| `items` | `Array<ShipmentItemOutput>` | Persisted tracking contents; does not reserve inventory or fulfill order lines. Types: [`ShipmentItemOutput`](#shipmentitemoutput) |
 | `version` | `number` |  |
 | `createdAt` | `string` |  |
 | `updatedAt` | `string` |  |
@@ -13334,6 +13366,20 @@ recorded or set in the same call.
 | `dispositionQuantityExact?` | `string` | Exact base-10 quantity the disposition covers. Wins over the float. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `assignedTo?` | `string` |  |
 
+### UpdateOrderInput
+
+Patch supported fields through the native engine validation and audit path.
+
+| Field | Type | Description |
+|---|---|---|
+| `status?` | `OrderStatusUpdate` | Types: [`OrderStatusUpdate`](#orderstatusupdate) |
+| `paymentStatus?` | `PaymentStatus` | Types: [`PaymentStatus`](#paymentstatus) |
+| `fulfillmentStatus?` | `FulfillmentStatus` | Types: [`FulfillmentStatus`](#fulfillmentstatus) |
+| `trackingNumber?` | `string` |  |
+| `notes?` | `string` |  |
+| `shippingAddress?` | `OrderAddressInput` | Types: [`OrderAddressInput`](#orderaddressinput) |
+| `billingAddress?` | `OrderAddressInput` | Types: [`OrderAddressInput`](#orderaddressinput) |
+
 ### UpdatePriceLevelInput
 
 | Field | Type | Description |
@@ -13431,6 +13477,22 @@ Input for updating a promotion
 | `name?` | `string` |  |
 | `description?` | `string` |  |
 | `rules?` | `Array<SegmentRuleInput>` | Types: [`SegmentRuleInput`](#segmentruleinput) |
+
+### UpdateShipmentInput
+
+Patch supported shipment fields through the native repository.
+
+| Field | Type | Description |
+|---|---|---|
+| `expectedVersion?` | `number` |  |
+| `status?` | `ShipmentStatus` | Types: [`ShipmentStatus`](#shipmentstatus) |
+| `carrier?` | `ShippingCarrier` | Types: [`ShippingCarrier`](#shippingcarrier) |
+| `trackingNumber?` | `string` |  |
+| `recipientName?` | `string` |  |
+| `recipientEmail?` | `string` |  |
+| `recipientPhone?` | `string` |  |
+| `shippingAddress?` | `string` |  |
+| `notes?` | `string` |  |
 
 ### UpdateShippingZoneInput
 

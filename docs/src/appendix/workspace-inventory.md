@@ -13,13 +13,13 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 
 | Metric | Value |
 | --- | --- |
-| Workspace version | `1.35.3` |
+| Workspace version | `1.36.0` |
 | Workspace members | 30 |
 | Default members | 19 |
 | Rust crates in workspace | 22 |
 | Binding crates in workspace | 8 |
 | Excluded local binding manifests | 2 |
-| CLI binaries | 55 |
+| CLI binaries | 56 |
 | CLI optional dependencies | 12 |
 | Admin local embedded binding | `file:../bindings/node` |
 
@@ -81,16 +81,16 @@ workspace membership because they require host runtimes or headers.
 | Metric | Value |
 | --- | --- |
 | Top-level source groups | 108 |
-| Tool modules | 96 |
+| Tool modules | 98 |
 | A2A modules | 62 |
-| JS dependencies | 14 |
+| JS dependencies | 15 |
 | Optional integrations | 12 |
 
 ## CLI Top-Level Source Groups
 
 | Group | Files |
 | --- | --- |
-| `tools` | 96 |
+| `tools` | 98 |
 | `commands` | 89 |
 | `a2a` | 62 |
 | `mcp` | 33 |
@@ -105,6 +105,7 @@ workspace membership because they require host runtimes or headers.
 | `memory` | 6 |
 | `skills` | 5 |
 | `treasury` | 5 |
+| `connectors` | 4 |
 | `providers` | 4 |
 | `autonomous` | 3 |
 | `heartbeat` | 3 |
@@ -139,7 +140,6 @@ workspace membership because they require host runtimes or headers.
 | `compliance` | 1 |
 | `config` | 1 |
 | `config.js` | 1 |
-| `connectors` | 1 |
 | `context-guard.js` | 1 |
 | `context.js` | 1 |
 | `conversation-history.js` | 1 |

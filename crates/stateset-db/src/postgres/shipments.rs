@@ -1,7 +1,7 @@
 //! PostgreSQL implementation of shipment repository
 
 use super::map_db_error;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SubsecRound, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
@@ -33,8 +33,8 @@ pub(crate) async fn ship_open_shipments_for_order_in_tx(
     tracking_number: Option<&str>,
     now: DateTime<Utc>,
 ) -> Result<Vec<Uuid>> {
-    let open: Vec<(Uuid, String, String, Option<String>)> = sqlx::query_as(&format!(
-        "SELECT id, status, carrier, tracking_number FROM shipments
+    let open: Vec<(Uuid, String, String, Option<String>, i32)> = sqlx::query_as(&format!(
+        "SELECT id, status, carrier, tracking_number, version FROM shipments
          WHERE order_id = $1 AND status IN {PRE_SHIP_STATUSES_SQL}
          ORDER BY created_at, id FOR UPDATE"
     ))
@@ -43,13 +43,16 @@ pub(crate) async fn ship_open_shipments_for_order_in_tx(
     .await
     .map_err(map_db_error)?;
     let mut event_ids = Vec::with_capacity(open.len());
-    for (shipment_id, previous_status, carrier, own_tracking) in open {
+    for (shipment_id, previous_status, carrier, own_tracking, version) in open {
+        let next_version = version
+            .checked_add(1)
+            .ok_or_else(|| CommerceError::ValidationError("Shipment version overflow".into()))?;
         let adopted = if own_tracking.is_none() { tracking_number } else { None };
         let tracking_url = adopted.and_then(|tn| {
             carrier.parse::<ShippingCarrier>().ok().and_then(|c| c.tracking_url(tn))
         });
         let rows = sqlx::query(&format!(
-            "UPDATE shipments SET status = 'shipped',
+            "UPDATE shipments SET status = 'shipped', version = version + 1,
                     tracking_number = COALESCE(tracking_number, $1),
                     tracking_url = COALESCE($2, tracking_url),
                     shipped_at = COALESCE(shipped_at, $3), updated_at = $3
@@ -79,6 +82,7 @@ pub(crate) async fn ship_open_shipments_for_order_in_tx(
                     "status": ShipmentStatus::Shipped.to_string(),
                     "tracking_number": own_tracking.as_deref().or(adopted),
                     "reason": "order_shipped",
+                    "version": next_version,
                 }),
             },
         )
@@ -88,71 +92,20 @@ pub(crate) async fn ship_open_shipments_for_order_in_tx(
     Ok(event_ids)
 }
 
-/// PostgreSQL shipment repository
-#[derive(Debug, Clone)]
-pub struct PgShipmentRepository {
-    pool: PgPool,
-}
-
-#[derive(FromRow)]
-struct ShipmentRow {
-    id: Uuid,
-    shipment_number: String,
-    order_id: Uuid,
-    status: String,
-    carrier: String,
-    shipping_method: String,
-    tracking_number: Option<String>,
-    tracking_url: Option<String>,
-    recipient_name: String,
-    recipient_email: Option<String>,
-    recipient_phone: Option<String>,
-    shipping_address: String,
-    weight_kg: Option<Decimal>,
-    dimensions: Option<String>,
-    shipping_cost: Option<Decimal>,
-    insurance_amount: Option<Decimal>,
-    signature_required: bool,
-    shipped_at: Option<DateTime<Utc>>,
-    estimated_delivery: Option<DateTime<Utc>>,
-    delivered_at: Option<DateTime<Utc>>,
-    notes: Option<String>,
-    version: i32,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-}
-
-#[derive(FromRow)]
-struct ShipmentItemRow {
-    id: Uuid,
-    shipment_id: Uuid,
-    order_item_id: Option<Uuid>,
-    product_id: Option<Uuid>,
-    sku: String,
-    name: String,
-    quantity: i32,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-}
-
-#[derive(FromRow)]
-struct ShipmentEventRow {
-    id: Uuid,
-    shipment_id: Uuid,
-    event_type: String,
-    location: Option<String>,
-    description: Option<String>,
-    event_time: DateTime<Utc>,
-    created_at: DateTime<Utc>,
-}
-
 /// Insert a shipment (and its lines) on the caller's transaction (shared by
 /// [`PgShipmentRepository::create_async`] and the governed `shipments.create`
 /// kernel command).
 pub(crate) async fn create_shipment_pg(
     conn: &mut sqlx::PgConnection,
-    input: CreateShipment,
+    mut input: CreateShipment,
 ) -> Result<Shipment> {
+    crate::shipment_updates::validate_create_items(&input)?;
+    if let Some(items) = input.items.as_ref().filter(|items| !items.is_empty()) {
+        input.items = Some(
+            PgShipmentRepository::normalize_items_tx(conn, input.order_id.into_uuid(), items)
+                .await?,
+        );
+    }
     let id = Uuid::new_v4();
     let shipment_number = Shipment::generate_shipment_number();
     let now = Utc::now();
@@ -257,7 +210,110 @@ pub(crate) async fn create_shipment_pg(
     })
 }
 
+/// PostgreSQL shipment repository
+#[derive(Debug, Clone)]
+pub struct PgShipmentRepository {
+    pool: PgPool,
+}
+
+#[derive(FromRow)]
+struct ShipmentRow {
+    id: Uuid,
+    shipment_number: String,
+    order_id: Uuid,
+    status: String,
+    carrier: String,
+    shipping_method: String,
+    tracking_number: Option<String>,
+    tracking_url: Option<String>,
+    recipient_name: String,
+    recipient_email: Option<String>,
+    recipient_phone: Option<String>,
+    shipping_address: String,
+    weight_kg: Option<Decimal>,
+    dimensions: Option<String>,
+    shipping_cost: Option<Decimal>,
+    insurance_amount: Option<Decimal>,
+    signature_required: bool,
+    shipped_at: Option<DateTime<Utc>>,
+    estimated_delivery: Option<DateTime<Utc>>,
+    delivered_at: Option<DateTime<Utc>>,
+    notes: Option<String>,
+    version: i32,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(FromRow)]
+struct ShipmentItemRow {
+    id: Uuid,
+    shipment_id: Uuid,
+    order_item_id: Option<Uuid>,
+    product_id: Option<Uuid>,
+    sku: String,
+    name: String,
+    quantity: i32,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(FromRow)]
+struct ShipmentEventRow {
+    id: Uuid,
+    shipment_id: Uuid,
+    event_type: String,
+    location: Option<String>,
+    description: Option<String>,
+    event_time: DateTime<Utc>,
+    created_at: DateTime<Utc>,
+}
+
 impl PgShipmentRepository {
+    async fn normalize_items_tx(
+        tx: &mut sqlx::PgConnection,
+        order_id: Uuid,
+        inputs: &[CreateShipmentItem],
+    ) -> Result<Vec<CreateShipmentItem>> {
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM orders WHERE id = $1 FOR UPDATE")
+                .bind(order_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::OrderNotFound(order_id))?;
+        crate::shipment_allocations::validate_order_status(&status)?;
+        let rows: Vec<(Uuid, Uuid, String, i32)> = sqlx::query_as(
+            "SELECT id, product_id, sku, quantity FROM order_items WHERE order_id = $1",
+        )
+        .bind(order_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        let lines: Vec<_> = rows
+            .into_iter()
+            .map(|(id, product, sku, quantity)| crate::shipment_allocations::Line {
+                id,
+                product_id: ProductId::from(product),
+                sku,
+                quantity,
+            })
+            .collect();
+        let rows: Vec<(Option<Uuid>, Option<Uuid>, String, i32)> = sqlx::query_as("SELECT si.order_item_id, si.product_id, si.sku, si.quantity FROM shipment_items si JOIN shipments s ON s.id = si.shipment_id WHERE s.order_id = $1 AND s.status != 'cancelled'")
+            .bind(order_id).fetch_all(&mut *tx).await.map_err(map_db_error)?;
+        let existing: Vec<_> = rows
+            .into_iter()
+            .map(|(order_item_id, product, sku, quantity)| {
+                crate::shipment_allocations::Assignment {
+                    order_item_id,
+                    product_id: product.map(ProductId::from),
+                    sku,
+                    quantity,
+                }
+            })
+            .collect();
+        crate::shipment_allocations::normalize(&lines, &existing, inputs)
+    }
+
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -445,26 +501,245 @@ impl PgShipmentRepository {
         Ok(map)
     }
 
+    async fn update_tx(
+        tx: &mut sqlx::PgConnection,
+        id: Uuid,
+        input: UpdateShipment,
+    ) -> Result<Shipment> {
+        let row =
+            sqlx::query_as::<_, ShipmentRow>("SELECT * FROM shipments WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        let items = sqlx::query_as::<_, ShipmentItemRow>(
+            "SELECT * FROM shipment_items WHERE shipment_id = $1",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_db_error)?
+        .into_iter()
+        .map(Self::row_to_item)
+        .collect();
+        let events = sqlx::query_as::<_, ShipmentEventRow>(
+            "SELECT * FROM shipment_events WHERE shipment_id = $1 ORDER BY event_time DESC",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_db_error)?
+        .into_iter()
+        .map(Self::row_to_event)
+        .collect();
+        let mut shipment = Self::row_to_shipment(row, items, events)?;
+        let previous_status = shipment.status;
+        let previous_version = shipment.version;
+        let changed =
+            crate::shipment_updates::apply(&mut shipment, input, Utc::now().trunc_subsecs(6))?;
+        if changed.is_empty() {
+            return Ok(shipment);
+        }
+        let result = sqlx::query(
+            "UPDATE shipments SET status = $1, carrier = $2, tracking_number = $3, tracking_url = $4,
+             recipient_name = $5, recipient_email = $6, recipient_phone = $7, shipping_address = $8,
+             weight_kg = $9, dimensions = $10, shipping_cost = $11, estimated_delivery = $12, notes = $13,
+             shipped_at = $14, delivered_at = $15, version = $16, updated_at = $17 WHERE id = $18 AND version = $19"
+        )
+        .bind(shipment.status.to_string()).bind(shipment.carrier.to_string())
+        .bind(&shipment.tracking_number).bind(&shipment.tracking_url).bind(&shipment.recipient_name)
+        .bind(&shipment.recipient_email).bind(&shipment.recipient_phone).bind(&shipment.shipping_address)
+        .bind(shipment.weight_kg).bind(&shipment.dimensions).bind(shipment.shipping_cost)
+        .bind(shipment.estimated_delivery).bind(&shipment.notes).bind(shipment.shipped_at)
+        .bind(shipment.delivered_at).bind(shipment.version).bind(shipment.updated_at)
+        .bind(id).bind(previous_version).execute(&mut *tx).await.map_err(map_db_error)?;
+        if result.rows_affected() != 1 {
+            return Err(CommerceError::OptimisticLockFailure);
+        }
+        super::kernel_outbox::record_outbox_fact(
+            tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "shipments.updated.v1",
+                aggregate_type: "shipment",
+                aggregate_id: &id.to_string(),
+                payload: crate::shipment_updates::fact(&shipment, previous_status, &changed),
+            },
+        )
+        .await?;
+        Ok(shipment)
+    }
+
+    async fn lock_shipment_tx(tx: &mut sqlx::PgConnection, id: Uuid) -> Result<Shipment> {
+        let row =
+            sqlx::query_as::<_, ShipmentRow>("SELECT * FROM shipments WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        Self::row_to_shipment(row, Vec::new(), Vec::new())
+    }
+
+    async fn record_item_change_tx(
+        tx: &mut sqlx::PgConnection,
+        shipment: &mut Shipment,
+        item: &ShipmentItem,
+        event_type: &str,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let previous_version = shipment.version;
+        crate::shipment_updates::change_contents(shipment, now)?;
+        let result = sqlx::query(
+            "UPDATE shipments SET version = $1, updated_at = $2 WHERE id = $3 AND version = $4",
+        )
+        .bind(shipment.version)
+        .bind(shipment.updated_at)
+        .bind(shipment.id.into_uuid())
+        .bind(previous_version)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        if result.rows_affected() != 1 {
+            return Err(CommerceError::OptimisticLockFailure);
+        }
+        super::kernel_outbox::record_outbox_fact(
+            tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type,
+                aggregate_type: "shipment",
+                aggregate_id: &shipment.id.to_string(),
+                payload: crate::shipment_updates::item_fact(shipment, item),
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn update_status_async(&self, id: Uuid, status: ShipmentStatus) -> Result<Shipment> {
-        let now = Utc::now();
-
-        sqlx::query("UPDATE shipments SET status = $1, updated_at = $2 WHERE id = $3")
-            .bind(status.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        self.get_async(id).await?.ok_or(CommerceError::NotFound)
+        self.update_async(id, UpdateShipment { status: Some(status), ..Default::default() }).await
     }
 
     /// Create shipment (async)
-    pub async fn create_async(&self, input: CreateShipment) -> Result<Shipment> {
+    pub async fn create_async(&self, mut input: CreateShipment) -> Result<Shipment> {
+        crate::shipment_updates::validate_create_items(&input)?;
+        let id = Uuid::new_v4();
+        let shipment_number = Shipment::generate_shipment_number();
+        let now = Utc::now();
+        let carrier = input.carrier.unwrap_or_default();
+        let method = input.shipping_method.unwrap_or_default();
+        let tracking_url = input.tracking_number.as_ref().and_then(|tn| carrier.tracking_url(tn));
+
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let shipment = create_shipment_pg(tx.as_mut(), input).await?;
+
+        if let Some(inputs) = input.items.as_ref().filter(|items| !items.is_empty()) {
+            input.items =
+                Some(Self::normalize_items_tx(&mut tx, input.order_id.into_uuid(), inputs).await?);
+        }
+
+        sqlx::query(
+            "INSERT INTO shipments (id, shipment_number, order_id, status, carrier, shipping_method,
+             tracking_number, tracking_url, recipient_name, recipient_email, recipient_phone,
+             shipping_address, weight_kg, dimensions, shipping_cost, insurance_amount,
+             signature_required, estimated_delivery, notes, created_at, updated_at)
+             VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)"
+        )
+        .bind(id)
+        .bind(&shipment_number)
+        .bind(input.order_id.into_uuid())
+        .bind(carrier.to_string())
+        .bind(method.to_string())
+        .bind(&input.tracking_number)
+        .bind(&tracking_url)
+        .bind(&input.recipient_name)
+        .bind(&input.recipient_email)
+        .bind(&input.recipient_phone)
+        .bind(&input.shipping_address)
+        .bind(input.weight_kg)
+        .bind(&input.dimensions)
+        .bind(input.shipping_cost)
+        .bind(input.insurance_amount)
+        .bind(input.signature_required.unwrap_or(false))
+        .bind(input.estimated_delivery)
+        .bind(&input.notes)
+        .bind(now)
+        .bind(now)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let mut items = Vec::new();
+        if let Some(item_inputs) = &input.items {
+            for item_input in item_inputs {
+                let item_id = Uuid::new_v4();
+
+                sqlx::query(
+                    "INSERT INTO shipment_items (id, shipment_id, order_item_id, product_id, sku, name, quantity, created_at, updated_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+                )
+                .bind(item_id)
+                .bind(id)
+                .bind(item_input.order_item_id)
+                .bind(item_input.product_id.map(|pid| pid.into_uuid()))
+                .bind(&item_input.sku)
+                .bind(&item_input.name)
+                .bind(item_input.quantity)
+                .bind(now)
+                .bind(now)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+
+                items.push(ShipmentItem {
+                    id: item_id,
+                    shipment_id: ShipmentId::from(id),
+                    order_item_id: item_input.order_item_id,
+                    product_id: item_input.product_id,
+                    sku: item_input.sku.clone(),
+                    name: item_input.name.clone(),
+                    quantity: item_input.quantity,
+                    created_at: now,
+                    updated_at: now,
+                });
+            }
+        }
+
+        super::kernel_outbox::record_outbox_fact(tx.as_mut(), crate::kernel_outbox::RecordedFact {
+                event_type: "shipments.created.v1", aggregate_type: "shipment", aggregate_id: &id.to_string(),
+                payload: serde_json::json!({ "id": id, "order_id": input.order_id, "status": "pending", "version": 1,
+                    "carrier": carrier, "tracking_number": input.tracking_number,
+                    "shipping_cost": input.shipping_cost.map(|amount| amount.to_string()), "items": &items }),
+            }).await?;
         tx.commit().await.map_err(map_db_error)?;
-        Ok(shipment)
+
+        Ok(Shipment {
+            id: ShipmentId::from(id),
+            shipment_number,
+            order_id: input.order_id,
+            status: ShipmentStatus::Pending,
+            carrier,
+            shipping_method: method,
+            tracking_number: input.tracking_number,
+            tracking_url,
+            recipient_name: input.recipient_name,
+            recipient_email: input.recipient_email,
+            recipient_phone: input.recipient_phone,
+            shipping_address: input.shipping_address,
+            weight_kg: input.weight_kg,
+            dimensions: input.dimensions,
+            shipping_cost: input.shipping_cost,
+            insurance_amount: input.insurance_amount,
+            signature_required: input.signature_required.unwrap_or(false),
+            shipped_at: None,
+            estimated_delivery: input.estimated_delivery,
+            delivered_at: None,
+            notes: input.notes,
+            items,
+            events: vec![],
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        })
     }
 
     /// Get shipment by ID (async)
@@ -524,49 +799,10 @@ impl PgShipmentRepository {
 
     /// Update shipment (async)
     pub async fn update_async(&self, id: Uuid, input: UpdateShipment) -> Result<Shipment> {
-        let existing = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
-        let now = Utc::now();
-
-        let new_status = input.status.unwrap_or(existing.status);
-        let new_carrier = input.carrier.unwrap_or(existing.carrier);
-        let new_tracking = input.tracking_number.or(existing.tracking_number);
-        let new_tracking_url = new_tracking.as_ref().and_then(|tn| new_carrier.tracking_url(tn));
-        let new_recipient_name = input.recipient_name.unwrap_or(existing.recipient_name);
-        let new_recipient_email = input.recipient_email.or(existing.recipient_email);
-        let new_recipient_phone = input.recipient_phone.or(existing.recipient_phone);
-        let new_shipping_address = input.shipping_address.unwrap_or(existing.shipping_address);
-        let new_weight = input.weight_kg.or(existing.weight_kg);
-        let new_dimensions = input.dimensions.or(existing.dimensions);
-        let new_shipping_cost = input.shipping_cost.or(existing.shipping_cost);
-        let new_estimated_delivery = input.estimated_delivery.or(existing.estimated_delivery);
-        let new_notes = input.notes.or(existing.notes);
-
-        sqlx::query(
-            "UPDATE shipments SET status = $1, carrier = $2, tracking_number = $3, tracking_url = $4,
-             recipient_name = $5, recipient_email = $6, recipient_phone = $7, shipping_address = $8,
-             weight_kg = $9, dimensions = $10, shipping_cost = $11, estimated_delivery = $12, notes = $13,
-             updated_at = $14 WHERE id = $15"
-        )
-        .bind(new_status.to_string())
-        .bind(new_carrier.to_string())
-        .bind(&new_tracking)
-        .bind(&new_tracking_url)
-        .bind(&new_recipient_name)
-        .bind(&new_recipient_email)
-        .bind(&new_recipient_phone)
-        .bind(&new_shipping_address)
-        .bind(new_weight)
-        .bind(&new_dimensions)
-        .bind(new_shipping_cost)
-        .bind(new_estimated_delivery)
-        .bind(&new_notes)
-        .bind(now)
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        self.get_async(id).await?.ok_or(CommerceError::NotFound)
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let shipment = Self::update_tx(tx.as_mut(), id, input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(shipment)
     }
 
     /// List shipments (async)
@@ -666,14 +902,7 @@ impl PgShipmentRepository {
 
     /// Delete shipment (async) - marks as cancelled
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE shipments SET status = 'cancelled', updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        Ok(())
+        self.cancel_async(id).await.map(|_| ())
     }
 
     /// Mark as processing (async)
@@ -688,26 +917,15 @@ impl PgShipmentRepository {
 
     /// Ship the shipment (async)
     pub async fn ship_async(&self, id: Uuid, tracking_number: Option<String>) -> Result<Shipment> {
-        let existing = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
-        let now = Utc::now();
-
-        let tracking_url =
-            tracking_number.as_ref().and_then(|tn| existing.carrier.tracking_url(tn));
-
-        sqlx::query(
-            "UPDATE shipments SET status = 'shipped', tracking_number = COALESCE($1, tracking_number),
-             tracking_url = COALESCE($2, tracking_url), shipped_at = $3, updated_at = $4 WHERE id = $5"
+        self.update_async(
+            id,
+            UpdateShipment {
+                status: Some(ShipmentStatus::Shipped),
+                tracking_number,
+                ..Default::default()
+            },
         )
-        .bind(&tracking_number)
-        .bind(&tracking_url)
-        .bind(now)
-        .bind(now)
-        .bind(id)
-        .execute(&self.pool)
         .await
-        .map_err(map_db_error)?;
-
-        self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Mark as in transit (async)
@@ -722,17 +940,7 @@ impl PgShipmentRepository {
 
     /// Mark as delivered (async)
     pub async fn mark_delivered_async(&self, id: Uuid) -> Result<Shipment> {
-        let now = Utc::now();
-
-        sqlx::query("UPDATE shipments SET status = 'delivered', delivered_at = $1, updated_at = $2 WHERE id = $3")
-            .bind(now)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        self.get_async(id).await?.ok_or(CommerceError::NotFound)
+        self.update_status_async(id, ShipmentStatus::Delivered).await
     }
 
     /// Mark as failed (async)
@@ -756,8 +964,22 @@ impl PgShipmentRepository {
         shipment_id: Uuid,
         item: CreateShipmentItem,
     ) -> Result<ShipmentItem> {
+        crate::shipment_updates::validate_item(&item)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        // Lock the order before the shipment, consistently with future combined fulfillment commands.
+        let order_id: Uuid = sqlx::query_scalar("SELECT order_id FROM shipments WHERE id = $1")
+            .bind(shipment_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        let item = Self::normalize_items_tx(&mut tx, order_id, &[item])
+            .await?
+            .pop()
+            .ok_or_else(|| CommerceError::Internal("Missing normalized shipment item".into()))?;
+        let mut shipment = Self::lock_shipment_tx(&mut tx, shipment_id).await?;
         let id = Uuid::new_v4();
-        let now = Utc::now();
+        let now = Utc::now().trunc_subsecs(6);
 
         sqlx::query(
             "INSERT INTO shipment_items (id, shipment_id, order_item_id, product_id, sku, name, quantity, created_at, updated_at)
@@ -772,11 +994,11 @@ impl PgShipmentRepository {
         .bind(item.quantity)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
 
-        Ok(ShipmentItem {
+        let created = ShipmentItem {
             id,
             shipment_id: ShipmentId::from(shipment_id),
             order_item_id: item.order_item_id,
@@ -786,17 +1008,50 @@ impl PgShipmentRepository {
             quantity: item.quantity,
             created_at: now,
             updated_at: now,
-        })
+        };
+        Self::record_item_change_tx(
+            &mut tx,
+            &mut shipment,
+            &created,
+            "shipments.item_added.v1",
+            now,
+        )
+        .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(created)
     }
 
     /// Remove item from shipment (async)
     pub async fn remove_item_async(&self, item_id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM shipment_items WHERE id = $1")
-            .bind(item_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        // Discover the parent without locking the item: every writer locks the parent first.
+        let parent: Uuid =
+            sqlx::query_scalar("SELECT shipment_id FROM shipment_items WHERE id = $1")
+                .bind(item_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        let mut shipment = Self::lock_shipment_tx(&mut tx, parent).await?;
+        let row = sqlx::query_as::<_, ShipmentItemRow>(
+            "DELETE FROM shipment_items WHERE id = $1 AND shipment_id = $2 RETURNING *",
+        )
+        .bind(item_id)
+        .bind(parent)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        let item = Self::row_to_item(row);
+        Self::record_item_change_tx(
+            &mut tx,
+            &mut shipment,
+            &item,
+            "shipments.item_removed.v1",
+            Utc::now().trunc_subsecs(6),
+        )
+        .await?;
+        tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
 
@@ -909,7 +1164,27 @@ impl PgShipmentRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut shipments = Vec::with_capacity(inputs.len());
 
-        for input in inputs {
+        let mut order_ids: Vec<_> = inputs
+            .iter()
+            .filter(|input| input.items.as_ref().is_some_and(|items| !items.is_empty()))
+            .map(|input| input.order_id.into_uuid())
+            .collect();
+        order_ids.sort_unstable();
+        order_ids.dedup();
+        // Deterministic locking prevents opposing batches from deadlocking across orders.
+        sqlx::query("SELECT id FROM orders WHERE id = ANY($1) ORDER BY id FOR UPDATE")
+            .bind(order_ids)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        for mut input in inputs {
+            crate::shipment_updates::validate_create_items(&input)?;
+            if let Some(items) = input.items.as_ref().filter(|items| !items.is_empty()) {
+                input.items = Some(
+                    Self::normalize_items_tx(&mut tx, input.order_id.into_uuid(), items).await?,
+                );
+            }
             let id = Uuid::new_v4();
             let shipment_number = Shipment::generate_shipment_number();
             let now = Utc::now();
@@ -985,6 +1260,12 @@ impl PgShipmentRepository {
                 }
             }
 
+            super::kernel_outbox::record_outbox_fact(tx.as_mut(), crate::kernel_outbox::RecordedFact {
+                event_type: "shipments.created.v1", aggregate_type: "shipment", aggregate_id: &id.to_string(),
+                payload: serde_json::json!({ "id": id, "order_id": input.order_id, "status": "pending", "version": 1,
+                    "carrier": carrier, "tracking_number": input.tracking_number,
+                    "shipping_cost": input.shipping_cost.map(|amount| amount.to_string()), "items": &items }),
+            }).await?;
             shipments.push(Shipment {
                 id: ShipmentId::from(id),
                 shipment_number,
@@ -1045,128 +1326,20 @@ impl PgShipmentRepository {
     ) -> Result<Vec<Shipment>> {
         validate_batch_size(&updates)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let mut shipments = Vec::with_capacity(updates.len());
-        let now = Utc::now();
-
+        // Stable lock order prevents opposing batches from deadlocking. Keep the
+        // caller's order for applying patches, including repeated IDs.
+        let ids: Vec<Uuid> = updates.iter().map(|(id, _)| id.into_uuid()).collect();
+        sqlx::query("SELECT id FROM shipments WHERE id = ANY($1) ORDER BY id FOR UPDATE")
+            .bind(&ids)
+            .fetch_all(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(updates.len());
         for (id, input) in updates {
-            let raw_id = id.into_uuid();
-            // Get existing shipment with lock
-            let existing_row = sqlx::query_as::<_, ShipmentRow>(
-                "SELECT id, shipment_number, order_id, status, carrier, shipping_method,
-                        tracking_number, tracking_url, recipient_name, recipient_email, recipient_phone,
-                        shipping_address, weight_kg, dimensions, shipping_cost, insurance_amount,
-                        signature_required, shipped_at, estimated_delivery, delivered_at, notes,
-                        version, created_at, updated_at
-                 FROM shipments WHERE id = $1 FOR UPDATE"
-            )
-            .bind(raw_id)
-            .fetch_optional(tx.as_mut())
-            .await
-            .map_err(map_db_error)?
-            .ok_or(CommerceError::NotFound)?;
-
-            let existing_status: ShipmentStatus = existing_row.status.parse().map_err(|e| {
-                CommerceError::DatabaseError(format!(
-                    "Invalid shipment.status '{}': {}",
-                    existing_row.status.as_str(),
-                    e
-                ))
-            })?;
-            let existing_carrier: ShippingCarrier = existing_row.carrier.parse().map_err(|e| {
-                CommerceError::DatabaseError(format!(
-                    "Invalid shipment.carrier '{}': {}",
-                    existing_row.carrier.as_str(),
-                    e
-                ))
-            })?;
-
-            let new_status = input.status.unwrap_or(existing_status);
-            let new_carrier = input.carrier.unwrap_or(existing_carrier);
-            let new_tracking = input.tracking_number.or(existing_row.tracking_number.clone());
-            let new_tracking_url =
-                new_tracking.as_ref().and_then(|tn| new_carrier.tracking_url(tn));
-            let new_recipient_name =
-                input.recipient_name.unwrap_or(existing_row.recipient_name.clone());
-            let new_recipient_email =
-                input.recipient_email.or(existing_row.recipient_email.clone());
-            let new_recipient_phone =
-                input.recipient_phone.or(existing_row.recipient_phone.clone());
-            let new_shipping_address =
-                input.shipping_address.unwrap_or(existing_row.shipping_address.clone());
-            let new_weight = input.weight_kg.or(existing_row.weight_kg);
-            let new_dimensions = input.dimensions.or(existing_row.dimensions.clone());
-            let new_shipping_cost = input.shipping_cost.or(existing_row.shipping_cost);
-            let new_estimated_delivery =
-                input.estimated_delivery.or(existing_row.estimated_delivery);
-            let new_notes = input.notes.or(existing_row.notes.clone());
-
-            sqlx::query(
-                "UPDATE shipments SET status = $1, carrier = $2, tracking_number = $3, tracking_url = $4,
-                 recipient_name = $5, recipient_email = $6, recipient_phone = $7, shipping_address = $8,
-                 weight_kg = $9, dimensions = $10, shipping_cost = $11, estimated_delivery = $12, notes = $13,
-                 updated_at = $14 WHERE id = $15"
-            )
-            .bind(new_status.to_string())
-            .bind(new_carrier.to_string())
-            .bind(&new_tracking)
-            .bind(&new_tracking_url)
-            .bind(&new_recipient_name)
-            .bind(&new_recipient_email)
-            .bind(&new_recipient_phone)
-            .bind(&new_shipping_address)
-            .bind(new_weight)
-            .bind(&new_dimensions)
-            .bind(new_shipping_cost)
-            .bind(new_estimated_delivery)
-            .bind(&new_notes)
-            .bind(now)
-            .bind(raw_id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            // Fetch updated shipment row
-            let updated_row = sqlx::query_as::<_, ShipmentRow>(
-                "SELECT id, shipment_number, order_id, status, carrier, shipping_method,
-                        tracking_number, tracking_url, recipient_name, recipient_email, recipient_phone,
-                        shipping_address, weight_kg, dimensions, shipping_cost, insurance_amount,
-                        signature_required, shipped_at, estimated_delivery, delivered_at, notes,
-                        version, created_at, updated_at
-                 FROM shipments WHERE id = $1"
-            )
-            .bind(raw_id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            // Load items and events
-            let item_rows = sqlx::query_as::<_, ShipmentItemRow>(
-                "SELECT id, shipment_id, order_item_id, product_id, sku, name, quantity, created_at, updated_at
-                 FROM shipment_items WHERE shipment_id = $1"
-            )
-            .bind(raw_id)
-            .fetch_all(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            let event_rows = sqlx::query_as::<_, ShipmentEventRow>(
-                "SELECT id, shipment_id, event_type, location, description, event_time, created_at
-                 FROM shipment_events WHERE shipment_id = $1 ORDER BY event_time DESC",
-            )
-            .bind(raw_id)
-            .fetch_all(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            let items: Vec<ShipmentItem> = item_rows.into_iter().map(Self::row_to_item).collect();
-            let events: Vec<ShipmentEvent> =
-                event_rows.into_iter().map(Self::row_to_event).collect();
-
-            shipments.push(Self::row_to_shipment(updated_row, items, events)?);
+            results.push(Self::update_tx(tx.as_mut(), id.into_uuid(), input).await?);
         }
-
         tx.commit().await.map_err(map_db_error)?;
-        Ok(shipments)
+        Ok(results)
     }
 
     /// Delete multiple shipments in a batch (async, non-atomic)
@@ -1188,37 +1361,21 @@ impl PgShipmentRepository {
     /// Delete multiple shipments in a batch atomically (async)
     pub async fn delete_batch_atomic_async(&self, ids: Vec<ShipmentId>) -> Result<()> {
         validate_batch_size(&ids)?;
-
-        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
-
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-
-        // Delete shipment events first (foreign key constraint)
-        sqlx::query("DELETE FROM shipment_events WHERE shipment_id = ANY($1)")
-            .bind(&raw_ids)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-        // Delete shipment items (foreign key constraint)
-        sqlx::query("DELETE FROM shipment_items WHERE shipment_id = ANY($1)")
-            .bind(&raw_ids)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-        // Mark shipments as cancelled (soft delete)
-        sqlx::query(
-            "UPDATE shipments SET status = 'cancelled', updated_at = $1 WHERE id = ANY($2)",
+        self.update_batch_atomic_async(
+            ids.into_iter()
+                .map(|id| {
+                    (
+                        id,
+                        UpdateShipment {
+                            status: Some(ShipmentStatus::Cancelled),
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect(),
         )
-        .bind(Utc::now())
-        .bind(&raw_ids)
-        .execute(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
-
-        tx.commit().await.map_err(map_db_error)?;
-        Ok(())
+        .map(|_| ())
     }
 
     /// Get multiple shipments by IDs (async)

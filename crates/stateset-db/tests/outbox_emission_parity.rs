@@ -594,7 +594,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("shipments.rs", "add_item"),
     ("shipments.rs", "remove_item"),
     ("shipments.rs", "add_event"),
-    ("shipments.rs", "create_batch_atomic"),
     ("shipments.rs", "update_batch_atomic"),
     ("shipments.rs", "delete_batch_atomic"),
     ("shipping_zones.rs", "create"),

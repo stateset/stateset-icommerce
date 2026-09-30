@@ -13,11 +13,11 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 971 |
+| Total tools | 973 |
 | MCP servers | 3 |
 | Policy domains | 90 |
-| Read tools | 479 |
-| Write tools | 424 |
+| Read tools | 480 |
+| Write tools | 425 |
 | Delete tools | 21 |
 | Admin tools | 47 |
 | Unknown permission | 0 |
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 953 | `cli/src/mcp-server.js` |
+| stateset-commerce | 955 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -103,7 +103,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | search-config | 7 |
 | segments | 5 |
 | serials | 8 |
-| shipments | 14 |
+| shipments | 16 |
 | shipping_zones | 7 |
 | stablecoin | 4 |
 | stock-snapshots | 5 |
@@ -131,8 +131,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | --- | --- |
 | admin | 47 |
 | delete | 21 |
-| read | 479 |
-| write | 424 |
+| read | 480 |
+| write | 425 |
 
 ## Tool Registry
 
@@ -907,6 +907,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `pause_subscription` | `stateset-commerce` | `subscriptions` | `write` |
 | `pick_up_next_print_job` | `stateset-commerce` | `print-stations` | `write` |
 | `place_asset_in_service` | `stateset-commerce` | `fixed_assets` | `write` |
+| `plan_partial_shipment` | `stateset-commerce` | `shipments` | `read` |
 | `post_depreciation` | `stateset-commerce` | `fixed_assets` | `write` |
 | `post_journal_entry` | `stateset-commerce` | `general_ledger` | `write` |
 | `post_purgatory_order` | `stateset-commerce` | `purgatory` | `write` |
@@ -1042,6 +1043,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `update_promotion` | `stateset-commerce` | `promotions` | `write` |
 | `update_search_config` | `stateset-commerce` | `search-config` | `write` |
 | `update_segment` | `stateset-commerce` | `segments` | `write` |
+| `update_shipment` | `stateset-commerce` | `shipments` | `write` |
 | `update_shipping_zone` | `stateset-commerce` | `shipping_zones` | `write` |
 | `update_subscription` | `stateset-commerce` | `subscriptions` | `write` |
 | `update_subscription_plan` | `stateset-commerce` | `subscriptions` | `write` |

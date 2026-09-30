@@ -33,12 +33,12 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 
 | Binding | Evidence | Gated | Exposed | Coverage | Parity vs Node |
 | --- | --- | --- | --- | --- | --- |
-| Node.js | traced: #[napi] methods -> engine calls | yes | 738/1217 | 60.6% | reference |
-| Python | traced: #[pymethods] methods -> engine calls | yes | 593/1217 | 48.7% | 79.7% |
+| Node.js | traced: #[napi] methods -> engine calls | yes | 740/1217 | 60.8% | reference |
+| Python | traced: #[pymethods] methods -> engine calls | yes | 593/1217 | 48.7% | 79.5% |
 | Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1217 | 6.6% | 10.8% |
 | .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1217 | 3.9% | 6.4% |
 | Java | native reach: engine calls anywhere in the Rust layer | no | 77/1217 | 6.3% | 9.6% |
-| Kotlin | native reach: engine calls anywhere in the Rust layer | no | 59/1217 | 4.8% | 8% |
+| Kotlin | native reach: engine calls anywhere in the Rust layer | no | 61/1217 | 5% | 8% |
 | PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1217 | 14.6% | 21.8% |
 | Ruby | native reach: engine calls anywhere in the Rust layer | no | 0/1217 | 0% | 0% |
 | Swift | native reach: engine calls anywhere in the Rust layer | no | 51/1217 | 4.2% | 6.9% |
@@ -93,7 +93,7 @@ Cells are exposed / applicable engine methods.
 | `lots` | 35 | 0 | 12/35 | 6/35 | 0/35 | 2/35 | 4/35 | 2/35 | 5/35 | 0/35 | 2/35 | 0/35 |
 | `loyalty` | 14 | 0 | 14/14 | 14/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 |
 | `maintenance` | 10 | 0 | 7/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 |
-| `orders` | 18 | 0 | 9/18 | 8/18 | 5/18 | 4/18 | 8/18 | 6/18 | 8/18 | 0/18 | 4/18 | 0/18 |
+| `orders` | 18 | 0 | 10/18 | 8/18 | 5/18 | 4/18 | 8/18 | 6/18 | 8/18 | 0/18 | 4/18 | 0/18 |
 | `payment_obligations` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `payments` | 23 | 0 | 12/23 | 11/23 | 6/23 | 1/23 | 1/23 | 3/23 | 1/23 | 0/23 | 1/23 | 0/23 |
 | `prepayments` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
@@ -113,7 +113,7 @@ Cells are exposed / applicable engine methods.
 | `search_config` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `segments` | 11 | 0 | 10/11 | 10/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 |
 | `serials` | 36 | 0 | 9/36 | 4/36 | 0/36 | 2/36 | 3/36 | 2/36 | 4/36 | 0/36 | 2/36 | 0/36 |
-| `shipments` | 22 | 0 | 7/22 | 7/22 | 6/22 | 6/22 | 0/22 | 6/22 | 9/22 | 0/22 | 6/22 | 0/22 |
+| `shipments` | 22 | 0 | 8/22 | 7/22 | 6/22 | 6/22 | 0/22 | 8/22 | 9/22 | 0/22 | 6/22 | 0/22 |
 | `shipping_zones` | 12 | 0 | 12/12 | 12/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 |
 | `stock_snapshots` | 6 | 0 | 6/6 | 6/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 |
 | `store_credits` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
@@ -150,8 +150,8 @@ unless `--allow-loss` is also passed. Gated bindings: `node`, `python`, `go`
 
 | Binding | Known gaps vs Node (baseline) |
 | --- | --- |
-| python | 150 |
-| go | 658 |
+| python | 152 |
+| go | 660 |
 
 ## Exemptions
 
@@ -1065,7 +1065,7 @@ None found.
 | `remove_item_with` | — | — | — |
 | `ship` | yes | yes | — |
 | `ship_lines` | — | — | — |
-| `update` | — | — | — |
+| `update` | yes | — | — |
 | `update_status` | yes | yes | yes |
 
 ### `commerce.payment_obligations()`
@@ -1477,7 +1477,7 @@ None found.
 | `mark_ready` | — | — | — |
 | `remove_item` | — | — | — |
 | `ship` | yes | yes | yes |
-| `update` | — | — | — |
+| `update` | yes | — | — |
 
 ### `commerce.shipping_zones()`
 

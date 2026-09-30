@@ -466,6 +466,7 @@
         "get_by_number",
         "list",
         "ship",
+        "update",
         "update_status"
       ],
       "payment_obligations": [
@@ -715,7 +716,8 @@
         "get",
         "list",
         "mark_delivered",
-        "ship"
+        "ship",
+        "update"
       ],
       "shipping_zones": [
         "calculate_rates",
@@ -1872,7 +1874,8 @@
         "supports_backup"
       ],
       "orders": [
-        "create_from_cart"
+        "create_from_cart",
+        "update"
       ],
       "payments": [
         "cancel"
@@ -1925,6 +1928,9 @@
         "is_available",
         "mark_sold",
         "quarantine"
+      ],
+      "shipments": [
+        "update"
       ],
       "subscriptions": [
         "get_plan_by_code",
@@ -2348,7 +2354,8 @@
         "count",
         "create_from_cart",
         "get_by_number",
-        "ship"
+        "ship",
+        "update"
       ],
       "payment_obligations": [
         "create",
@@ -2565,7 +2572,8 @@
         "quarantine"
       ],
       "shipments": [
-        "count"
+        "count",
+        "update"
       ],
       "shipping_zones": [
         "calculate_rates",

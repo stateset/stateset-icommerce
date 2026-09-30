@@ -34,7 +34,7 @@ const API_CLASS = {
 const READ_METHODS = {
   orders: ['get', 'list'],
   carts: ['get', 'getItems', 'forCustomer'],
-  payments: ['list'],
+  payments: ['list', 'getRefunds'],
   shipments: ['list'],
   returns: ['listForOrder'],
   fraud: ['isSupported', 'getAssessment'],

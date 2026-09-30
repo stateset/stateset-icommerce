@@ -53,6 +53,39 @@ let db = PostgresDatabase::connect(
 ).await?;
 ```
 
+## Shipment contents and audit
+
+Shipment items require a positive quantity and non-empty SKU and name. This
+validation applies to individual creation, batch creation, and later item additions.
+Contents may be changed while a shipment is pending, processing, or on hold; they
+are frozen once ready to ship and in all subsequent or cancelled states.
+
+Adding or removing an item locks the parent shipment, increments its version, and
+records `shipments.item_added.v1` or `shipments.item_removed.v1` in the transactional
+outbox. Each fact includes the item contents and old/new shipment versions.
+Creation facts include the initial items. If writing the fact fails, both the item
+change and parent update roll back. Removing a missing item returns `NotFound`.
+An item change also invalidates a previously read `expected_version` for a shipment
+update, allowing packing completion to detect concurrent content changes.
+
+Every new item is resolved to a line of the shipment's order. A missing
+`order_item_id` is accepted only for an unambiguous SKU; supplied product IDs must
+match that line. Creation and additions enforce a shared per-line manifest budget
+across all non-cancelled shipments. PostgreSQL serializes allocations on the order
+row; SQLite uses an immediate transaction. Atomic batches lock orders in a stable
+order. Cancelled manifests release capacity while retaining their history.
+
+Legacy items without references count against the budget when their SKU is
+unambiguous. Ambiguous or inconsistent legacy data requires reconciliation before
+new allocation. Order deletion is refused while shipment history exists, and line
+removal is refused while a shipment item references that line, including cancelled
+manifests.
+
+These are tracking records. Their budget is the ordered quantity; fulfilled units
+are not subtracted a second time. Allocations do not reserve stock or update
+physical fulfillment. Automatic partial-shipment recovery still requires atomic
+reconciliation with those records and durable request idempotency.
+
 ## Feature Flags
 
 | Feature | Description | Default |

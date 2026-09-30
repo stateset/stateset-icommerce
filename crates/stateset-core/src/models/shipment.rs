@@ -296,7 +296,9 @@ pub struct CreateShipment {
 /// Input for creating a shipment item
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateShipmentItem {
+    /// Must belong to the shipment's order. Omit only when the SKU identifies one order line.
     pub order_item_id: Option<Uuid>,
+    /// Must match the order line when supplied; otherwise filled from that line.
     pub product_id: Option<ProductId>,
     pub sku: String,
     pub name: String,
@@ -306,6 +308,8 @@ pub struct CreateShipmentItem {
 /// Input for updating a shipment
 #[derive(Debug, Clone, Default)]
 pub struct UpdateShipment {
+    /// Reject this update if another writer has changed the shipment version.
+    pub expected_version: Option<i32>,
     pub status: Option<ShipmentStatus>,
     pub carrier: Option<ShippingCarrier>,
     pub tracking_number: Option<String>,

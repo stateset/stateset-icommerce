@@ -13,11 +13,11 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 
 | Metric | Value |
 | --- | --- |
-| Tool modules | 90 |
+| Tool modules | 91 |
 | Command modules on disk | 88 |
 | Command modules in registry | 88 |
 | Tool-backed command modules | 8 |
-| Uncovered tool modules | 2 |
+| Uncovered tool modules | 3 |
 | Uncovered tool-backed actions | 0 |
 | Command-only modules | 0 |
 | Registry mismatches | 0 |
@@ -120,6 +120,7 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 
 | Module | Status | Actions | Aliases |
 | --- | --- | --- | --- |
+| `fulfillment-recovery` | missing command coverage | - | - |
 | `scoped-store` | missing command coverage | - | - |
 | `tool-tiers` | missing command coverage | - | - |
 

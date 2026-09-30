@@ -30,6 +30,18 @@ pub struct CreateShipmentInput {
 
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
+pub struct ShipmentItemOutput {
+    pub id: String,
+    pub shipment_id: String,
+    pub order_item_id: Option<String>,
+    pub product_id: Option<String>,
+    pub sku: String,
+    pub name: String,
+    pub quantity: i32,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ShipmentOutput {
     pub id: String,
     pub shipment_number: String,
@@ -43,7 +55,12 @@ pub struct ShipmentOutput {
     pub tracking_number: Option<String>,
     pub tracking_url: Option<String>,
     pub recipient_name: String,
+    pub recipient_email: Option<String>,
+    pub recipient_phone: Option<String>,
     pub shipping_address: String,
+    pub notes: Option<String>,
+    /// Persisted tracking contents; does not reserve inventory or fulfill order lines.
+    pub items: Vec<ShipmentItemOutput>,
     pub version: i32,
     pub created_at: String,
     pub updated_at: String,
@@ -61,12 +78,45 @@ impl From<stateset_core::Shipment> for ShipmentOutput {
             tracking_number: s.tracking_number,
             tracking_url: s.tracking_url,
             recipient_name: s.recipient_name,
+            recipient_email: s.recipient_email,
+            recipient_phone: s.recipient_phone,
             shipping_address: s.shipping_address,
+            notes: s.notes,
+            items: s
+                .items
+                .into_iter()
+                .map(|item| ShipmentItemOutput {
+                    id: item.id.to_string(),
+                    shipment_id: item.shipment_id.to_string(),
+                    order_item_id: item.order_item_id.map(|id| id.to_string()),
+                    product_id: item.product_id.map(|id| id.to_string()),
+                    sku: item.sku,
+                    name: item.name,
+                    quantity: item.quantity,
+                })
+                .collect(),
             version: s.version,
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
         }
     }
+}
+
+/// Patch supported shipment fields through the native repository.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateShipmentInput {
+    pub expected_version: Option<i32>,
+    #[napi(ts_type = "ShipmentStatus")]
+    pub status: Option<String>,
+    #[napi(ts_type = "ShippingCarrier")]
+    pub carrier: Option<String>,
+    pub tracking_number: Option<String>,
+    pub recipient_name: Option<String>,
+    pub recipient_email: Option<String>,
+    pub recipient_phone: Option<String>,
+    pub shipping_address: Option<String>,
+    pub notes: Option<String>,
 }
 
 #[napi]
@@ -143,6 +193,45 @@ impl Shipments {
             .map_err(|e| wrap(ErrCode::Internal, "Failed to create shipment", e))?;
 
         Ok(shipment.into())
+    }
+
+    /// Update shipment metadata and status through the native repository.
+    #[napi]
+    pub async fn update(&self, id: String, input: UpdateShipmentInput) -> Result<ShipmentOutput> {
+        let commerce = self.commerce.get()?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
+        let update = stateset_core::UpdateShipment {
+            expected_version: input.expected_version,
+            status: input
+                .status
+                .map(|value| {
+                    value
+                        .parse::<stateset_core::ShipmentStatus>()
+                        .map_err(|e| wrap(ErrCode::Validation, "Invalid status", e))
+                })
+                .transpose()?,
+            carrier: input
+                .carrier
+                .map(|value| {
+                    value
+                        .parse::<stateset_core::ShippingCarrier>()
+                        .map_err(|e| wrap(ErrCode::Validation, "Invalid carrier", e))
+                })
+                .transpose()?,
+            tracking_number: input.tracking_number,
+            recipient_name: input.recipient_name,
+            recipient_email: input.recipient_email,
+            recipient_phone: input.recipient_phone,
+            shipping_address: input.shipping_address,
+            notes: input.notes,
+            ..Default::default()
+        };
+        let result = commerce
+            .shipments()
+            .update(uuid.into(), update)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update shipment", e))?;
+        Ok(result.into())
     }
 
     #[napi]

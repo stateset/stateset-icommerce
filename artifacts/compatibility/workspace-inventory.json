@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.35.3",
+    "version": "1.36.0",
     "memberCount": 30,
     "defaultMemberCount": 19,
     "rustCrateCount": 22,
@@ -553,13 +553,13 @@
     }
   ],
   "cli": {
-    "binaryCount": 55,
-    "dependencyCount": 14,
+    "binaryCount": 56,
+    "dependencyCount": 15,
     "optionalDependencyCount": 12,
     "topLevelSourceCounts": [
       {
         "name": "tools",
-        "count": 96
+        "count": 98
       },
       {
         "name": "commands",
@@ -616,6 +616,10 @@
       {
         "name": "treasury",
         "count": 5
+      },
+      {
+        "name": "connectors",
+        "count": 4
       },
       {
         "name": "providers",
@@ -751,10 +755,6 @@
       },
       {
         "name": "config.js",
-        "count": 1
-      },
-      {
-        "name": "connectors",
         "count": 1
       },
       {
@@ -990,7 +990,7 @@
         "count": 1
       }
     ],
-    "toolModuleCount": 96,
+    "toolModuleCount": 98,
     "a2aModuleCount": 62
   },
   "admin": {

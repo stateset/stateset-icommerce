@@ -1087,6 +1087,17 @@ impl PgOrderRepository {
             order_has_payments_pg(tx.as_mut(), id).await?,
         )?;
 
+        let has_shipments: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM shipments WHERE order_id = $1) OR EXISTS(SELECT 1 FROM shipment_items si JOIN order_items oi ON oi.id = si.order_item_id WHERE oi.order_id = $1)")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if has_shipments {
+            return Err(CommerceError::ValidationError(
+                "Cannot delete an order with shipment history".into(),
+            ));
+        }
         self.release_order_stock_in_tx(tx, id).await?;
         sqlx::query("DELETE FROM order_items WHERE order_id = $1")
             .bind(id)
@@ -1871,6 +1882,14 @@ impl PgOrderRepository {
             )));
         };
         let removed = Self::row_to_item(line);
+
+        let assigned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM shipment_items si JOIN shipments s ON s.id = si.shipment_id WHERE si.order_item_id = $1 OR (si.order_item_id IS NULL AND s.order_id = $2 AND si.sku = $3))")
+            .bind(item_id).bind(order_id).bind(&removed.sku).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+        if assigned {
+            return Err(CommerceError::ValidationError(
+                "Cannot remove an order item referenced by shipment history".into(),
+            ));
+        }
 
         self.release_line_reservations_in_tx(
             &mut tx,

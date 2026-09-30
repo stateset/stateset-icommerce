@@ -12,6 +12,64 @@ import {
   mapOrderToStateSet,
   mapInventoryToStateSet,
 } from './mapper.js';
+import { decimal } from '../../tools/providers/money.js';
+import { deterministicHash } from '../../tools/providers/runtime.js';
+
+function previousPayload(mapping) {
+  if (!mapping?.externalData) return {};
+  return typeof mapping.externalData === 'string'
+    ? JSON.parse(mapping.externalData)
+    : mapping.externalData;
+}
+
+function isStale(mapping, payload) {
+  const previous = Date.parse(previousPayload(mapping).updated_at);
+  const incoming = Date.parse(payload.updated_at);
+  return Number.isFinite(previous) && Number.isFinite(incoming) && incoming < previous;
+}
+
+function patchFields(payload, mapped, fields) {
+  return Object.fromEntries(
+    Object.entries(fields)
+      .filter(([external]) => Object.hasOwn(payload, external))
+      .map(([, internal]) => [internal, mapped[internal]]),
+  );
+}
+
+function orderEconomics(payload) {
+  return {
+    currency: payload.currency,
+    total_price:
+      payload.total_price === undefined ? undefined : decimal(payload.total_price).toFixed(),
+    line_items: payload.line_items?.map((item) => ({
+      id: String(item.id),
+      sku: item.sku,
+      quantity: item.quantity,
+      price: decimal(item.price).toFixed(),
+      discount: decimal(item.total_discount ?? '0').toFixed(),
+      taxes: item.tax_lines?.map((tax) => ({
+        title: tax.title,
+        price: decimal(tax.price).toFixed(),
+      })),
+    })),
+  };
+}
+
+function assertUnchangedOrderEconomics(existing, payload) {
+  const previous = orderEconomics(previousPayload(existing));
+  const incoming = orderEconomics(payload);
+  for (const field of ['currency', 'total_price', 'line_items']) {
+    if (
+      previous[field] !== undefined &&
+      incoming[field] !== undefined &&
+      deterministicHash(previous[field]) !== deterministicHash(incoming[field])
+    ) {
+      throw new Error(
+        `Shopify order ${field} changed; native order editing and financial reconciliation are required`,
+      );
+    }
+  }
+}
 
 /**
  * Create a set of Shopify webhook handlers.
@@ -22,6 +80,90 @@ import {
  */
 export function createShopifyWebhookHandlers(commerce, idMapStore) {
   const platform = 'shopify';
+
+  async function updateMapped(entityType, mapped, existing, update) {
+    if (isStale(existing, mapped.raw)) {
+      return {
+        action: 'skipped',
+        reason: 'stale_event',
+        externalId: mapped.externalId,
+        statesetId: existing.statesetId,
+      };
+    }
+    const updatedFields = await update(existing.statesetId);
+    // Never advance the external snapshot when a native write failed. Replays
+    // can repeat completed field assignments after a later operation fails.
+    idMapStore.store(platform, entityType, mapped.externalId, existing.statesetId, {
+      ...previousPayload(existing),
+      ...mapped.raw,
+    });
+    return {
+      action: updatedFields.length ? 'updated' : 'unchanged',
+      externalId: mapped.externalId,
+      statesetId: existing.statesetId,
+      updatedFields,
+    };
+  }
+
+  async function syncShopifyPayment(orderId, mapped) {
+    const target = mapped.data.paymentStatus;
+    if (!['paid', 'partially_paid'].includes(target)) return false;
+    if (!commerce.payments?.list || !commerce.payments?.markCompleted) return false;
+
+    const payments = await commerce.payments.list({ orderId });
+    let payment = payments.find((candidate) =>
+      ['pending', 'authorized', 'processing'].includes(candidate.status),
+    );
+    if (!payment) {
+      // Shopify order update webhooks often omit line items and total_price.
+      // A zero mapped amount must not create a zero-dollar capture; use the
+      // native order total for that sparse event instead.
+      let amount = mapped.data.totalAmount;
+      let currency = mapped.data.currency;
+      if (!amount || decimal(amount).isZero()) {
+        const current = await commerce.orders?.get?.(orderId);
+        amount = current?.totalAmountExact ?? amount;
+        currency = current?.currency ?? currency;
+      }
+      const input = {
+        orderId,
+        amount,
+        currency,
+        paymentMethod: 'other',
+      };
+      if (commerce.payments.createExact) {
+        payment = await commerce.payments.createExact(input);
+      } else if (commerce.payments.create) {
+        payment = await commerce.payments.create(input);
+      }
+    }
+    if (!payment || payment.status === 'completed') return Boolean(payment);
+    await commerce.payments.markCompleted(payment.id);
+    return true;
+  }
+
+  async function syncVariants(productId, mapped) {
+    if (!Object.hasOwn(mapped.raw, 'variants') || mapped.data.variants.length === 0) return [];
+    const current = await commerce.products.getVariants(productId);
+    const previous = previousPayload(idMapStore.lookup(platform, 'products', mapped.externalId));
+    for (const variant of mapped.data.variants) {
+      const externalId = variant.metadata.shopifyVariantId;
+      if (externalId === 'undefined' || !variant.sku)
+        throw new Error('Shopify variants require an ID and SKU');
+      const known = idMapStore.lookup(platform, 'variants', externalId);
+      const oldSku = previous.variants?.find((entry) => String(entry.id) === externalId)?.sku;
+      const match = known
+        ? current.find((entry) => entry.id === known.statesetId)
+        : current.find((entry) => entry.sku === (oldSku || variant.sku));
+      if (known && !match)
+        throw new Error(`Shopify variant ${externalId} does not belong to product ${productId}`);
+      const result = match
+        ? await commerce.products.updateVariant(match.id, variant)
+        : await commerce.products.addVariant(productId, variant);
+      idMapStore.store(platform, 'variants', externalId, result.id, variant);
+    }
+    return ['variants'];
+  }
 
   /**
    * Helper: create or skip based on id_map.
@@ -50,13 +192,25 @@ export function createShopifyWebhookHandlers(commerce, idMapStore) {
       const mapped = mapCustomerToStateSet(payload);
       const existing = idMapStore.lookup(platform, 'customers', mapped.externalId);
       if (existing) {
-        // Update existing — store new external data
-        idMapStore.store(platform, 'customers', mapped.externalId, existing.statesetId, mapped.raw);
-        return {
-          action: 'updated',
-          externalId: mapped.externalId,
-          statesetId: existing.statesetId,
-        };
+        return updateMapped('customers', mapped, existing, async (id) => {
+          const patch = patchFields(payload, mapped.data, {
+            email: 'email',
+            first_name: 'firstName',
+            last_name: 'lastName',
+            phone: 'phone',
+            state: 'status',
+            accepts_marketing: 'acceptsMarketing',
+          });
+          if (Object.hasOwn(patch, 'phone') && payload.phone === null) {
+            const current = await commerce.customers.get(id);
+            if (!current) throw new Error(`Customer ${id} not found`);
+            if (current.phone)
+              throw new Error('Clearing a customer phone requires a native nullable-field update');
+            delete patch.phone;
+          }
+          if (Object.keys(patch).length) await commerce.customers.update(id, patch);
+          return Object.keys(patch);
+        });
       }
       // Create if not exists
       return createOrSkip('customers', mapped, (data) => commerce.customers.create(data));
@@ -71,12 +225,16 @@ export function createShopifyWebhookHandlers(commerce, idMapStore) {
       const mapped = mapProductToStateSet(payload);
       const existing = idMapStore.lookup(platform, 'products', mapped.externalId);
       if (existing) {
-        idMapStore.store(platform, 'products', mapped.externalId, existing.statesetId, mapped.raw);
-        return {
-          action: 'updated',
-          externalId: mapped.externalId,
-          statesetId: existing.statesetId,
-        };
+        return updateMapped('products', mapped, existing, async (id) => {
+          const patch = patchFields(payload, mapped.data, {
+            title: 'name',
+            handle: 'slug',
+            body_html: 'description',
+            status: 'status',
+          });
+          if (Object.keys(patch).length) await commerce.products.update(id, patch);
+          return [...Object.keys(patch), ...(await syncVariants(id, mapped))];
+        });
       }
       return createOrSkip('products', mapped, (data) => commerce.products.create(data));
     },
@@ -90,12 +248,44 @@ export function createShopifyWebhookHandlers(commerce, idMapStore) {
       const mapped = mapOrderToStateSet(payload, { idMap: idMapStore, platform });
       const existing = idMapStore.lookup(platform, 'orders', mapped.externalId);
       if (existing) {
-        idMapStore.store(platform, 'orders', mapped.externalId, existing.statesetId, mapped.raw);
-        return {
-          action: 'updated',
-          externalId: mapped.externalId,
-          statesetId: existing.statesetId,
-        };
+        return updateMapped('orders', mapped, existing, async (id) => {
+          assertUnchangedOrderEconomics(existing, payload);
+          const patch = {};
+          const paymentUpdated = Object.hasOwn(payload, 'financial_status')
+            ? await syncShopifyPayment(id, mapped)
+            : false;
+          if (Object.hasOwn(payload, 'fulfillment_status')) {
+            const statuses = {
+              unfulfilled: 'unfulfilled',
+              partial: 'partially_fulfilled',
+              fulfilled: 'fulfilled',
+              restocked: 'unfulfilled',
+            };
+            patch.fulfillmentStatus =
+              payload.fulfillment_status === null
+                ? 'unfulfilled'
+                : statuses[payload.fulfillment_status];
+            if (!patch.fulfillmentStatus)
+              throw new Error(
+                `Unsupported Shopify fulfillment status: ${payload.fulfillment_status}`,
+              );
+          }
+          if (payload.cancelled_at) patch.status = 'cancelled';
+          if (Object.hasOwn(payload, 'note')) patch.notes = payload.note || '';
+          if (payload.shipping_address) {
+            const address = payload.shipping_address;
+            patch.shippingAddress = {
+              line1: address.address1 || '',
+              line2: address.address2 || undefined,
+              city: address.city || '',
+              state: address.province_code || address.province || undefined,
+              postalCode: address.zip || '',
+              country: address.country_code || address.country || '',
+            };
+          }
+          if (Object.keys(patch).length) await commerce.orders.update(id, patch);
+          return paymentUpdated ? [...Object.keys(patch), 'paymentStatus'] : Object.keys(patch);
+        });
       }
       return createOrSkip('orders', mapped, (data) => commerce.orders.create(data));
     },
@@ -116,18 +306,28 @@ export function createShopifyWebhookHandlers(commerce, idMapStore) {
       const mapped = mapFulfillmentToStateSet(payload, { idMap: idMapStore, platform });
       const existing = idMapStore.lookup(platform, 'fulfillments', mapped.externalId);
       if (existing) {
-        idMapStore.store(
-          platform,
-          'fulfillments',
-          mapped.externalId,
-          existing.statesetId,
-          mapped.raw,
-        );
-        return {
-          action: 'updated',
-          externalId: mapped.externalId,
-          statesetId: existing.statesetId,
-        };
+        return updateMapped('fulfillments', mapped, existing, async (id) => {
+          const patch = {};
+          if (Object.hasOwn(payload, 'status')) {
+            const statuses = {
+              pending: 'pending',
+              open: 'pending',
+              success: 'shipped',
+              cancelled: 'cancelled',
+            };
+            patch.status = statuses[payload.status];
+            if (!patch.status)
+              throw new Error(`Unsupported Shopify fulfillment status: ${payload.status}`);
+          }
+          if (payload.shipment_status === 'delivered') patch.status = 'delivered';
+          if (mapped.data.trackingNumber) patch.trackingNumber = mapped.data.trackingNumber;
+          if (payload.tracking_company) {
+            const carrier = payload.tracking_company.toLowerCase();
+            patch.carrier = ['ups', 'fedex', 'usps', 'dhl'].includes(carrier) ? carrier : 'other';
+          }
+          if (Object.keys(patch).length) await commerce.shipments.update(id, patch);
+          return Object.keys(patch);
+        });
       }
       if (!commerce.shipments?.create) {
         return {

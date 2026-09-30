@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 971,
+  "totalTools": 973,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 953
+      "count": 955
     },
     {
       "name": "stateset-scaffold",
@@ -299,7 +299,7 @@
     },
     {
       "name": "shipments",
-      "count": 14
+      "count": 16
     },
     {
       "name": "shipping_zones",
@@ -393,18 +393,18 @@
     },
     {
       "name": "read",
-      "count": 479
+      "count": 480
     },
     {
       "name": "write",
-      "count": 424
+      "count": 425
     }
   ],
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
-    "read": 479,
-    "write": 424
+    "read": 480,
+    "write": 425
   },
   "tools": [
     {
@@ -2812,7 +2812,7 @@
     },
     {
       "name": "cancel_shipment",
-      "description": "Cancel a shipment before delivery is completed.",
+      "description": "Cancel a shipment before carrier handoff. Retains shipment history.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__cancel_shipment",
@@ -4333,7 +4333,7 @@
     },
     {
       "name": "deliver_shipment",
-      "description": "Mark a shipment as delivered.",
+      "description": "Mark an out_for_delivery shipment as delivered.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__deliver_shipment",
@@ -5926,7 +5926,7 @@
     },
     {
       "name": "handle_fulfillment_exception",
-      "description": "Execute governed fulfillment exception workflows for carrier failure, partial shipment, split tender, and returns arbitration.",
+      "description": "Plan or execute fulfillment exception workflows. Partial shipment returns a read-only reconciliation plan; automatic follow-up shipment creation is unavailable.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__handle_fulfillment_exception",
@@ -7329,6 +7329,15 @@
       "permission": "write"
     },
     {
+      "name": "plan_partial_shipment",
+      "description": "Read remaining order-line quantities and validate a partial-shipment recovery plan. Does not reserve stock or create a shipment; operator reconciliation is required.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__plan_partial_shipment",
+      "policyDomain": "shipments",
+      "permission": "read"
+    },
+    {
       "name": "post_depreciation",
       "description": "Post the next scheduled depreciation entries for a fixed asset (generate the schedule first).",
       "serverName": "stateset-commerce",
@@ -8005,7 +8014,7 @@
     },
     {
       "name": "ship_shipment",
-      "description": "Mark a shipment as shipped with an optional tracking number.",
+      "description": "Mark a ready_to_ship shipment as shipped with an optional tracking number.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__ship_shipment",
@@ -8541,6 +8550,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__update_segment",
       "policyDomain": "segments",
+      "permission": "write"
+    },
+    {
+      "name": "update_shipment",
+      "description": "Update shipment fields or move through the native lifecycle. Preserves omitted fields and rejects invalid transitions or stale expectedVersion. Cancellation requires cancel_shipment.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_shipment",
+      "policyDomain": "shipments",
       "permission": "write"
     },
     {

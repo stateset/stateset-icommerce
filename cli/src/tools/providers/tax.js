@@ -3,11 +3,15 @@ import {
   deterministicId,
   ensureProvider,
   filterProvidersByCapability,
-  moneyToNumber,
-  normalizeMoney,
   nowIso,
-  roundMoney,
 } from './runtime.js';
+import {
+  decimal,
+  formatMoney as normalizeMoney,
+  paymentAmount,
+  fromMinorUnits,
+  currencyCode,
+} from './money.js';
 
 const DEFAULT_TAX_PROVIDER = 'deterministic-mock';
 
@@ -142,10 +146,10 @@ function resolveCategoryRate(baseRate, taxCategory) {
     return 0;
   }
   if (taxCategory === 'reduced' || taxCategory === 'food' || taxCategory === 'medical') {
-    return baseRate * 0.5;
+    return decimal(baseRate).times('0.5').toFixed();
   }
   if (taxCategory === 'digital') {
-    return baseRate + 0.01;
+    return decimal(baseRate).plus('0.01').toFixed();
   }
   return baseRate;
 }
@@ -192,16 +196,12 @@ function deriveWebhookEventId(providerId, eventType, eventId, payload = {}) {
   return deterministicId('txevt', { providerId, eventType, payload });
 }
 
-function parseWebhookMoney(payload = {}, ...fields) {
+function parseWebhookMoney(payload = {}, currency, ...fields) {
   for (const field of fields) {
     const value = payload[field];
     if (value === null || value === undefined) continue;
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) continue;
-    if (field.toLowerCase().includes('minor') || field.toLowerCase().includes('cents')) {
-      return numeric / 100;
-    }
-    return numeric;
+    const amount = /minor|cents/i.test(field) ? fromMinorUnits(value, currency) : value;
+    return paymentAmount(amount, currency, { allowZero: true });
   }
   return null;
 }
@@ -397,7 +397,7 @@ export function calculateTaxQuote({
   providerId = DEFAULT_TAX_PROVIDER,
   lineItems = [],
   shippingAddress = {},
-  shippingAmount = 0,
+  shippingAmount = '0',
   customerId,
   orderId,
   currency = 'USD',
@@ -429,44 +429,52 @@ export function calculateTaxQuote({
   }
 
   const baseRate = resolveBaseRate(countryCode, stateCode);
-  const normalizedCurrency = currency.toUpperCase();
-  let subtotal = 0;
-  let totalTax = 0;
-  let taxableAmount = 0;
+  const normalizedCurrency = currencyCode(currency);
+  let subtotal = decimal('0');
+  let totalTax = decimal('0');
+  let taxableAmount = decimal('0');
 
   const itemBreakdown = lineItems.map((item, index) => {
-    const quantity = Math.max(1, Math.floor(moneyToNumber(item.quantity)));
-    const unitPrice = moneyToNumber(item.unitPrice);
-    const lineSubtotal = roundMoney(quantity * unitPrice);
+    const quantity = item.quantity;
+    if (!Number.isSafeInteger(quantity) || quantity <= 0)
+      throw new Error('Quantity must be a positive safe integer');
+    const unitPrice = decimal(
+      paymentAmount(item.unitPrice, normalizedCurrency, { allowZero: true }),
+    );
+    const lineSubtotal = unitPrice.times(String(quantity));
     const category = item.taxCategory || 'standard';
     const itemRate = taxExempt ? 0 : resolveCategoryRate(baseRate, category);
-    const lineTax = roundMoney(lineSubtotal * itemRate);
+    const lineTax = decimal(normalizeMoney(lineSubtotal.times(itemRate), normalizedCurrency));
 
-    subtotal = roundMoney(subtotal + lineSubtotal);
-    taxableAmount = roundMoney(taxableAmount + lineSubtotal);
-    totalTax = roundMoney(totalTax + lineTax);
+    subtotal = subtotal.plus(lineSubtotal);
+    taxableAmount = taxableAmount.plus(lineSubtotal);
+    totalTax = totalTax.plus(lineTax);
 
     return {
       index,
       lineItemId: item.id || `line-${index + 1}`,
       quantity,
-      unitPrice: normalizeMoney(unitPrice),
+      unitPrice: normalizeMoney(unitPrice, normalizedCurrency),
       taxCategory: category,
-      taxRate: itemRate,
-      taxableAmount: normalizeMoney(lineSubtotal),
-      taxAmount: normalizeMoney(lineTax),
+      taxRate: Number(itemRate),
+      taxableAmount: normalizeMoney(lineSubtotal, normalizedCurrency),
+      taxAmount: normalizeMoney(lineTax, normalizedCurrency),
     };
   });
 
-  const normalizedShippingAmount = roundMoney(shippingAmount || 0);
-  let shippingTax = 0;
-  if (!taxExempt && normalizedShippingAmount > 0 && shippingIsTaxable(countryCode, stateCode)) {
-    shippingTax = roundMoney(normalizedShippingAmount * baseRate);
-    totalTax = roundMoney(totalTax + shippingTax);
-    taxableAmount = roundMoney(taxableAmount + normalizedShippingAmount);
+  const normalizedShippingAmount = decimal(
+    paymentAmount(shippingAmount, normalizedCurrency, { allowZero: true }),
+  );
+  let shippingTax = decimal('0');
+  if (!taxExempt && normalizedShippingAmount.gt(0) && shippingIsTaxable(countryCode, stateCode)) {
+    shippingTax = decimal(
+      normalizeMoney(normalizedShippingAmount.times(baseRate), normalizedCurrency),
+    );
+    totalTax = totalTax.plus(shippingTax);
+    taxableAmount = taxableAmount.plus(normalizedShippingAmount);
   }
 
-  const total = roundMoney(subtotal + normalizedShippingAmount + totalTax);
+  const total = subtotal.plus(normalizedShippingAmount).plus(totalTax);
   const sequence = nextSequence(provider.id);
   const createdAt = nowIso();
 
@@ -475,8 +483,8 @@ export function calculateTaxQuote({
     sequence,
     countryCode,
     stateCode: stateCode || null,
-    subtotal: normalizeMoney(subtotal),
-    totalTax: normalizeMoney(totalTax),
+    subtotal: normalizeMoney(subtotal, normalizedCurrency),
+    totalTax: normalizeMoney(totalTax, normalizedCurrency),
     currency: normalizedCurrency,
   });
 
@@ -489,20 +497,20 @@ export function calculateTaxQuote({
     orderId: orderId || null,
     currency: normalizedCurrency,
     shippingAddress: clone(shippingAddress),
-    shippingAmount: normalizeMoney(normalizedShippingAmount),
-    shippingTax: normalizeMoney(shippingTax),
-    subtotal: normalizeMoney(subtotal),
-    taxableAmount: normalizeMoney(taxableAmount),
-    totalTax: normalizeMoney(totalTax),
-    total: normalizeMoney(total),
+    shippingAmount: normalizeMoney(normalizedShippingAmount, normalizedCurrency),
+    shippingTax: normalizeMoney(shippingTax, normalizedCurrency),
+    subtotal: normalizeMoney(subtotal, normalizedCurrency),
+    taxableAmount: normalizeMoney(taxableAmount, normalizedCurrency),
+    totalTax: normalizeMoney(totalTax, normalizedCurrency),
+    total: normalizeMoney(total, normalizedCurrency),
     lineItems: itemBreakdown,
     taxBreakdown: [
       {
         jurisdiction: stateCode || countryCode,
         taxType: countryCode === 'US' ? 'sales_tax' : 'vat',
         rate: baseRate,
-        taxableAmount: normalizeMoney(taxableAmount),
-        taxAmount: normalizeMoney(totalTax),
+        taxableAmount: normalizeMoney(taxableAmount, normalizedCurrency),
+        taxAmount: normalizeMoney(totalTax, normalizedCurrency),
       },
     ],
     metadata: metadata || {},
@@ -531,7 +539,7 @@ export function calculateTaxQuoteWithFailover({
   strictCompliance = true,
   lineItems = [],
   shippingAddress = {},
-  shippingAmount = 0,
+  shippingAmount = '0',
   customerId,
   orderId,
   currency = 'USD',
@@ -823,19 +831,27 @@ export function ingestTaxProviderWebhook({
       const updatedAt = nowIso();
       const newTotalTax = parseWebhookMoney(
         payload,
+        transaction.currency,
         'totalTax',
         'total_tax',
         'total_tax_minor',
         'totalTaxMinor',
       );
-      const newTotal = parseWebhookMoney(payload, 'total', 'amount', 'amount_minor', 'amountCents');
+      const newTotal = parseWebhookMoney(
+        payload,
+        transaction.currency,
+        'total',
+        'amount',
+        'amount_minor',
+        'amountCents',
+      );
 
       transaction.status = 'adjusted';
       if (newTotalTax !== null && newTotalTax !== undefined) {
-        transaction.totalTax = normalizeMoney(newTotalTax);
+        transaction.totalTax = normalizeMoney(newTotalTax, transaction.currency);
       }
       if (newTotal !== null && newTotal !== undefined) {
-        transaction.total = normalizeMoney(newTotal);
+        transaction.total = normalizeMoney(newTotal, transaction.currency);
       }
       transaction.adjustmentReason = payload.reason || payload.message || null;
       transaction.updatedAt = updatedAt;
@@ -843,10 +859,10 @@ export function ingestTaxProviderWebhook({
       if (quote) {
         quote.status = 'adjusted';
         if (newTotalTax !== null && newTotalTax !== undefined) {
-          quote.totalTax = normalizeMoney(newTotalTax);
+          quote.totalTax = normalizeMoney(newTotalTax, transaction.currency);
         }
         if (newTotal !== null && newTotal !== undefined) {
-          quote.total = normalizeMoney(newTotal);
+          quote.total = normalizeMoney(newTotal, transaction.currency);
         }
         quote.updatedAt = updatedAt;
       }

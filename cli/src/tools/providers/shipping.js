@@ -3,11 +3,9 @@ import {
   deterministicId,
   ensureProvider,
   filterProvidersByCapability,
-  moneyToNumber,
-  normalizeMoney,
   nowIso,
-  roundMoney,
 } from './runtime.js';
+import { decimal, formatMoney as normalizeMoney, currencyCode } from './money.js';
 
 const DEFAULT_SHIPPING_PROVIDER = 'deterministic-mock';
 
@@ -120,21 +118,49 @@ function calculateZoneFactor(originAddress = {}, destinationAddress = {}) {
   return 1.0;
 }
 
+function positiveMeasurement(value) {
+  const measurement = decimal(value);
+  if (!measurement.gt(0) || measurement.gt(String(Number.MAX_SAFE_INTEGER))) {
+    throw new Error('Parcel measurements must be positive finite numbers');
+  }
+  // Physical measurements retain the public numeric representation; pricing
+  // converts each measurement to decimal before any multiplication or addition.
+  return measurement.toNumber();
+}
+
 function normalizeParcels(parcels) {
   return parcels.map((parcel, index) => ({
     index,
-    weightGrams: parcel.weightGrams ? moneyToNumber(parcel.weightGrams) : 500,
-    lengthCm: parcel.lengthCm ? moneyToNumber(parcel.lengthCm) : null,
-    widthCm: parcel.widthCm ? moneyToNumber(parcel.widthCm) : null,
-    heightCm: parcel.heightCm ? moneyToNumber(parcel.heightCm) : null,
+    weightGrams: positiveMeasurement(parcel.weightGrams ?? 500),
+    lengthCm:
+      parcel.lengthCm === null || parcel.lengthCm === undefined
+        ? null
+        : positiveMeasurement(parcel.lengthCm),
+    widthCm:
+      parcel.widthCm === null || parcel.widthCm === undefined
+        ? null
+        : positiveMeasurement(parcel.widthCm),
+    heightCm:
+      parcel.heightCm === null || parcel.heightCm === undefined
+        ? null
+        : positiveMeasurement(parcel.heightCm),
   }));
 }
 
-function estimateBaseRate({ parcels, zoneFactor }) {
-  const totalWeightKg =
-    parcels.reduce((sum, parcel) => sum + moneyToNumber(parcel.weightGrams), 0) / 1000;
+function estimateBaseRate({ parcels, zoneFactor, currency }) {
+  const totalWeightKg = parcels
+    .reduce((sum, parcel) => sum.plus(String(parcel.weightGrams)), decimal('0'))
+    .shiftedBy(-3);
   const parcelCount = parcels.length || 1;
-  return roundMoney((4.5 + totalWeightKg * 1.3 + parcelCount * 0.6) * zoneFactor);
+  return decimal(
+    normalizeMoney(
+      decimal('4.5')
+        .plus(totalWeightKg.times('1.3'))
+        .plus(decimal(String(parcelCount)).times('0.6'))
+        .times(String(zoneFactor)),
+      currency,
+    ),
+  );
 }
 
 function ensureLabelByLookup({ labelId, trackingNumber }) {
@@ -271,15 +297,19 @@ export function quoteShippingRates({
   const provider = ensureProvider(SHIPPING_PROVIDERS, providerId, DEFAULT_SHIPPING_PROVIDER);
   const normalizedParcels = normalizeParcels(parcels);
   const zoneFactor = calculateZoneFactor(originAddress, destinationAddress);
-  const baseRate = estimateBaseRate({ parcels: normalizedParcels, zoneFactor });
-  const normalizedCurrency = currency.toUpperCase();
+  const normalizedCurrency = currencyCode(currency);
+  const baseRate = estimateBaseRate({
+    parcels: normalizedParcels,
+    zoneFactor,
+    currency: normalizedCurrency,
+  });
   const allowedServices =
     Array.isArray(serviceCodes) && serviceCodes.length > 0
       ? provider.services.filter((service) => serviceCodes.includes(service.code))
       : provider.services;
 
   const rates = allowedServices.map((service) => {
-    const rateAmount = roundMoney(baseRate * service.rateMultiplier);
+    const rateAmount = baseRate.times(String(service.rateMultiplier));
     const rateId = deterministicId('rate', {
       providerId: provider.id,
       serviceCode: service.code,
@@ -295,7 +325,7 @@ export function quoteShippingRates({
       providerName: provider.name,
       serviceCode: service.code,
       serviceName: service.name,
-      amount: normalizeMoney(rateAmount),
+      amount: normalizeMoney(rateAmount, normalizedCurrency),
       currency: normalizedCurrency,
       minDeliveryDays: service.minDays,
       maxDeliveryDays: service.maxDays,
@@ -363,13 +393,15 @@ export function createShippingLabel({
     throw new Error(`Service "${serviceCode}" is not available for provider "${provider.id}"`);
   }
 
+  const normalizedCurrency = currencyCode(quote?.currency || currency);
   const baseRate = estimateBaseRate({
+    currency: normalizedCurrency,
     parcels: finalParcels,
     zoneFactor: calculateZoneFactor(finalOriginAddress, finalDestinationAddress),
   });
   const computedRate =
-    quote?.amount || normalizeMoney(roundMoney(baseRate * service.rateMultiplier));
-  const normalizedCurrency = (quote?.currency || currency).toUpperCase();
+    quote?.amount ||
+    normalizeMoney(baseRate.times(String(service.rateMultiplier)), normalizedCurrency);
 
   const sequence = nextSequence(provider.id);
   const createdAt = nowIso();

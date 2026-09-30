@@ -4,16 +4,16 @@
     "registry": "cli/src/mcp-server-registry.js"
   },
   "totalAgents": 20,
-  "totalCommerceTools": 953,
+  "totalCommerceTools": 955,
   "totalScaffoldTools": 13,
   "totalX402Tools": 5,
   "fullAccessAgentCount": 1,
   "scopedAgentCount": 19,
-  "totalScopedToolReferences": 308,
+  "totalScopedToolReferences": 310,
   "supportedServers": [
     {
       "name": "stateset-commerce",
-      "toolCount": 953,
+      "toolCount": 955,
       "source": "cli/src/mcp-server.js"
     },
     {
@@ -88,10 +88,10 @@
       "id": "customer-service",
       "name": "Customer Service",
       "description": "Full-service agent with access to all commerce tools",
-      "toolCount": 953,
+      "toolCount": 955,
       "usesAllCommerceTools": true,
       "serverCounts": {
-        "stateset-commerce": 953
+        "stateset-commerce": 955
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -200,10 +200,10 @@
       "id": "shipments",
       "name": "Shipments Agent",
       "description": "Shipment tracking and delivery management specialist",
-      "toolCount": 16,
+      "toolCount": 18,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 16
+        "stateset-commerce": 18
       },
       "serverNamespaces": [
         "stateset-commerce"

@@ -2,7 +2,7 @@
 
 AI-powered command-line interface for autonomous commerce operations.
 
-**Version:** 1.35.3
+**Version:** 1.36.0
 
 [![npm version](https://img.shields.io/npm/v/@stateset/cli.svg)](https://www.npmjs.com/package/@stateset/cli)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
@@ -18,6 +18,7 @@ AI-powered command-line interface for autonomous commerce operations.
 - **Autonomous Business Engine** - Scheduled jobs, workflows, policies, approvals (`stateset-autonomous`)
 - **Multi-Chain Stablecoin Payments** - Native crypto payments on Solana, Base, Ethereum, SET Chain, Zcash, and Bitcoin (`stateset-pay`)
 - **x402 Payments** - Config + MCP server for paid API calls (`stateset-x402`, `stateset-x402-mcp`)
+- **Meta Muse Connector** - Authenticated HTTP/OpenAPI commerce tools with write previews (`stateset-muse`); see the [setup guide](../docs/src/guides/meta-muse-connector.md)
 
 ## Philosophy
 
@@ -857,7 +858,7 @@ The exact current tool count, policy-domain breakdown, and permission summary ar
 generated from the live MCP server export in `cli/src/mcp-server.js`. See the generated
 [MCP Tool Inventory](../docs/src/appendix/mcp-tool-inventory.md).
 
-The registry currently exposes **802 tools across 73 domains**. Highlights by area
+Highlights by area
 (see [docs/TOOLS.md](docs/TOOLS.md) for the complete per-tool catalog):
 
 | Area | Domains | Examples |
@@ -868,6 +869,21 @@ The registry currently exposes **802 tools across 73 domains**. Highlights by ar
 | **Supply chain** | suppliers, supplier-skus, inbound-shipments, transfer-orders, production-batches, price-schedules, price-levels, edi-documents | `create_transfer_order`, `receive_inbound_shipment_line`, `resolve_scheduled_price`, `get_edi_summary` |
 | **Growth** | analytics, promotions, subscriptions, loyalty, gift-cards, store-credits, segments, reviews, wishlists | `get_revenue_forecast`, `create_promotion`, `create_subscription` |
 | **Payments & agent commerce** | payments, stablecoin, treasury, x402, erc8004, a2a, agent-cards, policies, audit, proofs | `create_refund`, `create_stablecoin_payment`, `x402_create_payment_intent` |
+
+### Partial-shipment recovery
+
+`plan_partial_shipment` is a read-only tool available without `--apply`. Provide
+`orderId`, optionally `shipmentId`, and optionally `remainingItems` containing
+`orderItemId` (or an unambiguous `sku`) and a positive integer `quantity`.
+It reads persisted order-line `shippedQuantity`, rejects requests above the
+remaining quantity, and returns the observed order version. Omitting
+`remainingItems` selects all remaining lines.
+
+The result is a snapshot, not a stock reservation. Shipment tracking and order
+fulfillment are separate records and require reconciliation before a follow-up
+shipment. `handle_fulfillment_exception` returns this plan for `partial_shipment`;
+requesting automatic compensation returns a blocked action and creates no shipment.
+Atomic recovery with durable idempotency remains under development.
 
 ## Configuration
 

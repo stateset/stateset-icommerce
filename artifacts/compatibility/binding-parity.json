@@ -1798,9 +1798,9 @@
       "evidence": "traced: #[napi] methods -> engine calls",
       "engineBacked": true,
       "gated": true,
-      "exposedCount": 738,
+      "exposedCount": 740,
       "applicableCount": 1217,
-      "coverage": 60.6,
+      "coverage": 60.8,
       "notes": null,
       "domains": {
         "commerce": {
@@ -2577,7 +2577,7 @@
           ]
         },
         "orders": {
-          "coverage": 50,
+          "coverage": 55.6,
           "exposed": [
             "cancel",
             "count",
@@ -2587,6 +2587,7 @@
             "get_by_number",
             "list",
             "ship",
+            "update",
             "update_status"
           ],
           "missing": [
@@ -2597,8 +2598,7 @@
             "list_for_customer",
             "remove_item",
             "remove_item_with",
-            "ship_lines",
-            "update"
+            "ship_lines"
           ]
         },
         "payment_obligations": {
@@ -3013,7 +3013,7 @@
           ]
         },
         "shipments": {
-          "coverage": 31.8,
+          "coverage": 36.4,
           "exposed": [
             "cancel",
             "count",
@@ -3021,7 +3021,8 @@
             "get",
             "list",
             "mark_delivered",
-            "ship"
+            "ship",
+            "update"
           ],
           "missing": [
             "add_event",
@@ -3037,8 +3038,7 @@
             "mark_out_for_delivery",
             "mark_processing",
             "mark_ready",
-            "remove_item",
-            "update"
+            "remove_item"
           ]
         },
         "shipping_zones": {
@@ -7173,9 +7173,9 @@
       "evidence": "native reach: engine calls anywhere in the Rust layer",
       "engineBacked": true,
       "gated": false,
-      "exposedCount": 59,
+      "exposedCount": 61,
       "applicableCount": 1217,
-      "coverage": 4.8,
+      "coverage": 5,
       "notes": "host (Kotlin/JNI) layer is not traced",
       "domains": {
         "accounts_payable": {
@@ -7314,13 +7314,15 @@
           ]
         },
         "shipments": {
-          "coverage": 27.3,
+          "coverage": 36.4,
           "exposed": [
             "cancel",
             "create",
             "get",
             "list",
             "mark_delivered",
+            "mark_in_transit",
+            "mark_out_for_delivery",
             "ship"
           ]
         },
@@ -7862,8 +7864,8 @@
   "parityVsReference": {
     "python": {
       "shared": 588,
-      "referenceExposed": 738,
-      "parity": 79.7,
+      "referenceExposed": 740,
+      "parity": 79.5,
       "beyondReference": [
         "accounts_payable.pay_bill",
         "cost_accounting.get_inventory_valuation",
@@ -7874,13 +7876,13 @@
     },
     "go": {
       "shared": 80,
-      "referenceExposed": 738,
+      "referenceExposed": 740,
       "parity": 10.8,
       "beyondReference": []
     },
     "dotnet": {
       "shared": 47,
-      "referenceExposed": 738,
+      "referenceExposed": 740,
       "parity": 6.4,
       "beyondReference": [
         "accounts_receivable.get_customer_aging"
@@ -7888,7 +7890,7 @@
     },
     "java": {
       "shared": 71,
-      "referenceExposed": 738,
+      "referenceExposed": 740,
       "parity": 9.6,
       "beyondReference": [
         "fulfillment.create_picks_for_order",
@@ -7901,13 +7903,16 @@
     },
     "kotlin": {
       "shared": 59,
-      "referenceExposed": 738,
+      "referenceExposed": 740,
       "parity": 8,
-      "beyondReference": []
+      "beyondReference": [
+        "shipments.mark_in_transit",
+        "shipments.mark_out_for_delivery"
+      ]
     },
     "php": {
       "shared": 161,
-      "referenceExposed": 738,
+      "referenceExposed": 740,
       "parity": 21.8,
       "beyondReference": [
         "bom.delete",
@@ -7931,19 +7936,19 @@
     },
     "ruby": {
       "shared": 0,
-      "referenceExposed": 738,
+      "referenceExposed": 740,
       "parity": 0,
       "beyondReference": []
     },
     "swift": {
       "shared": 51,
-      "referenceExposed": 738,
+      "referenceExposed": 740,
       "parity": 6.9,
       "beyondReference": []
     },
     "wasm": {
       "shared": 0,
-      "referenceExposed": 738,
+      "referenceExposed": 740,
       "parity": 0,
       "beyondReference": []
     }
@@ -8993,7 +8998,7 @@
       {
         "className": "Orders",
         "domain": "orders",
-        "methodCount": 9
+        "methodCount": 10
       },
       {
         "className": "PaymentObligations",
@@ -9093,7 +9098,7 @@
       {
         "className": "Shipments",
         "domain": "shipments",
-        "methodCount": 7
+        "methodCount": 8
       },
       {
         "className": "ShippingZones",

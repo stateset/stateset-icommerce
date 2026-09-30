@@ -465,6 +465,7 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         // GST no longer stacks on HST; Nova Scotia 14%; NL, PE and the
         // territories; QST no longer compounds on GST.
         ("099_canadian_sales_tax", include_str!("../migrations/099_canadian_sales_tax.sql")),
+        ("100_shipment_version", include_str!("../migrations/100_shipment_version.sql")),
     ]
 }
 

@@ -6,6 +6,21 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.36.0] - 2026-09-29
+
+### Added
+
+- WebMCP and Meta Muse connector surfaces for agentic commerce.
+- Auditable shipment lifecycle updates with optimistic concurrency and
+  cross-shipment allocation limits on SQLite and PostgreSQL.
+- Exact-decimal sandbox payment, tax, and shipping providers plus native
+  Shopify synchronization safeguards.
+
+### Changed
+
+- Governed checkout, order, shipment, return, and recovery paths now preserve
+  preview-first writes, tenant isolation, and durable outbox records.
+
 ### Changed (behaviour, needs a release note)
 
 - **Strict kernel endpoints can run a checkout end to end.** Eleven storefront

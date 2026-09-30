@@ -34,16 +34,16 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 
 | Language | Ecosystem | Package | Version | Coverage | Summary |
 | --- | --- | --- | --- | --- | --- |
-| .NET | NuGet | `StateSet.Embedded` | `1.35.3` | `detailed` | 245 API methods |
+| .NET | NuGet | `StateSet.Embedded` | `1.36.0` | `detailed` | 245 API methods |
 | Go | Go modules | `github.com/stateset/stateset-icommerce/bindings/go/stateset` | — | `detailed` | 81 API methods |
-| Java | Maven | `com.stateset:embedded` | `1.35.3` | `package-manifest` | manifest coverage |
-| Kotlin | Maven | `com.stateset:embedded-kotlin` | `1.35.3` | `package-manifest` | manifest coverage |
-| Node.js | npm | `@stateset/embedded` | `1.35.3` | `detailed` | 9 export entrypoints |
-| PHP | Composer | `stateset/embedded` | `1.35.3` | `package-manifest` | manifest coverage |
-| Python | PyPI | `stateset-embedded` | `1.35.3` | `detailed` | 257 public symbols |
-| Ruby | RubyGems | `stateset_embedded` | `1.35.3` | `package-manifest` | manifest coverage |
+| Java | Maven | `com.stateset:embedded` | `1.36.0` | `package-manifest` | manifest coverage |
+| Kotlin | Maven | `com.stateset:embedded-kotlin` | `1.36.0` | `package-manifest` | manifest coverage |
+| Node.js | npm | `@stateset/embedded` | `1.36.0` | `detailed` | 10 export entrypoints |
+| PHP | Composer | `stateset/embedded` | `1.36.0` | `package-manifest` | manifest coverage |
+| Python | PyPI | `stateset-embedded` | `1.36.0` | `detailed` | 257 public symbols |
+| Ruby | RubyGems | `stateset_embedded` | `1.36.0` | `package-manifest` | manifest coverage |
 | Swift | SwiftPM | `StateSet` | — | `detailed` | 71 API methods |
-| WASM | npm | `@stateset/embedded-wasm` | `1.35.3` | `package-manifest` | manifest coverage |
+| WASM | npm | `@stateset/embedded-wasm` | `1.36.0` | `package-manifest` | manifest coverage |
 
 ## Node.js Exports
 
@@ -58,6 +58,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `./openai` | `./openai.mjs` | `./openai.d.ts` |
 | `./purchase-runtime` | `./purchase-runtime.mjs` | `./purchase-runtime.d.ts` |
 | `./vercel-ai` | `./vercel-ai.mjs` | `./vercel-ai.d.ts` |
+| `./webmcp` | `./webmcp.mjs` | `./webmcp.d.ts` |
 
 ## Go Surface Summary
 

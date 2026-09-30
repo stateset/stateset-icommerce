@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:a83a60cb4ccd7b348ef9f439982896c91b5d1632b3bb54853376fe67f6e6c571",
+  "digest": "sha256:bfdd86f273b0415553bf431d0159ccd204adcedc861fce705c476de9ce4e1532",
   "counts": {
-    "total": 953,
-    "readOnly": 470,
-    "mutations": 483,
+    "total": 955,
+    "readOnly": 471,
+    "mutations": 484,
     "governed": 36,
     "governedComposite": 1,
-    "blocked": 446
+    "blocked": 447
   },
   "entries": [
     {
@@ -5394,6 +5394,13 @@
       "commandType": null
     },
     {
+      "name": "plan_partial_shipment",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
       "name": "post_depreciation",
       "permission": "write",
       "mutation": true,
@@ -6333,6 +6340,13 @@
     },
     {
       "name": "update_segment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_shipment",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",

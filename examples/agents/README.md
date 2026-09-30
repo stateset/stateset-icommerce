@@ -34,6 +34,12 @@ back to workspace modules when you are developing inside this repository.
 
 ## Embedded Runtime Examples
 
+The [WebMCP browser demo](webmcp/server.mjs) exposes a read-only product catalog
+to browser agents. Run `node examples/agents/webmcp/server.mjs`, then open
+`http://127.0.0.1:8091`. Registration requires a WebMCP-capable browser; the
+catalog button also works in ordinary browsers. See the
+[connector guide](../../docs/src/ai-agents.md#webmcp-browser-connector) for backend integration.
+
 | File | What it demonstrates |
 |------|----------------------|
 | `openai-embedded-toolkit.mjs` | OpenAI-style tool definitions plus `executeOpenAIToolCall()` round-tripping |

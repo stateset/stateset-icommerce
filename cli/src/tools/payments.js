@@ -219,7 +219,9 @@ export const paymentTools = [
       'Create a provider-backed payment intent with idempotency support for governed checkout flows.',
     inputSchema: {
       providerId: z.string().optional().describe('Provider ID (default: deterministic-mock)'),
-      amount: z.number().positive().describe('Payment amount'),
+      amount: agentMoneyAmount.describe(
+        'Payment amount as an exact decimal string (legacy safe numbers accepted)',
+      ),
       currency: z.string().max(10).optional().describe('Currency code (default: USD)'),
       captureMethod: z
         .enum(['manual', 'automatic'])
@@ -464,7 +466,7 @@ export const paymentTools = [
     description: 'Capture all or part of a provider-backed payment intent.',
     inputSchema: {
       intentId: z.string().min(1).describe('Payment intent ID'),
-      amount: z.number().positive().optional().describe('Optional partial capture amount'),
+      amount: agentMoneyAmount.optional().describe('Optional exact partial capture amount'),
       idempotencyKey: z.string().max(255).optional().describe('Idempotency key for safe retries'),
     },
     permission: 'write',
@@ -523,7 +525,7 @@ export const paymentTools = [
     description: 'Refund all or part of a captured provider-backed payment intent.',
     inputSchema: {
       intentId: z.string().min(1).describe('Payment intent ID'),
-      amount: z.number().positive().optional().describe('Optional partial refund amount'),
+      amount: agentMoneyAmount.optional().describe('Optional exact partial refund amount'),
       reason: z.string().max(500).optional().describe('Refund reason'),
       idempotencyKey: z.string().max(255).optional().describe('Idempotency key for safe retries'),
     },
