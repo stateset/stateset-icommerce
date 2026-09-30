@@ -525,6 +525,7 @@ fn full_order_ship_carries_open_shipments_but_partial_does_not() {
     let processing = open_shipment(&db, order.id, "Processing");
     db.shipments().mark_processing(processing.id).expect("processing");
     let ready = open_shipment(&db, order.id, "Ready");
+    db.shipments().mark_processing(ready.id).expect("processing");
     db.shipments().mark_ready(ready.id).expect("ready");
     let held = open_shipment(&db, order.id, "Held");
     db.shipments().hold(held.id).expect("hold");
