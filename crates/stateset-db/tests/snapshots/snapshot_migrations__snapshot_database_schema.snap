@@ -1,6 +1,5 @@
 ---
 source: crates/stateset-db/tests/snapshot_migrations.rs
-assertion_line: 75
 expression: tables
 ---
 [
@@ -330,7 +329,7 @@ expression: tables
     ),
     (
         "http_idempotency_keys",
-        "CREATE TABLE http_idempotency_keys (\n    tenant TEXT NOT NULL,\n    idempotency_key TEXT NOT NULL,\n    request_fingerprint TEXT NOT NULL,\n    response_status INTEGER NOT NULL,\n    content_type TEXT,\n    response_body BLOB NOT NULL,\n    created_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant, idempotency_key)\n)",
+        "CREATE TABLE http_idempotency_keys (\n    tenant TEXT NOT NULL,\n    idempotency_key TEXT NOT NULL,\n    request_fingerprint TEXT NOT NULL,\n    response_status INTEGER NOT NULL,\n    content_type TEXT,\n    response_body BLOB NOT NULL,\n    created_at INTEGER NOT NULL, created_at_sub_ms_ns INTEGER\n    CHECK (created_at_sub_ms_ns BETWEEN 0 AND 999999),\n    PRIMARY KEY (tenant, idempotency_key)\n)",
     ),
     (
         "inbound_shipment_items",
