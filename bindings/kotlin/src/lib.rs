@@ -1438,6 +1438,38 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeShipmen
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeShipmentOutForDelivery<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid shipment UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.shipments().mark_out_for_delivery(uuid.into()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(shipment) => to_json_string(&env, &shipment),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeShipmentDeliver<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,

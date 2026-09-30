@@ -213,6 +213,8 @@ class StateSetCommerce(dbPath: String) : Closeable {
     internal external fun nativeShipmentList(ptr: Long): String?
     @JvmName("nativeShipmentShip")
     internal external fun nativeShipmentShip(ptr: Long, id: String, trackingNumber: String): String?
+    @JvmName("nativeShipmentOutForDelivery")
+    internal external fun nativeShipmentOutForDelivery(ptr: Long, id: String): String?
     @JvmName("nativeShipmentDeliver")
     internal external fun nativeShipmentDeliver(ptr: Long, id: String): String?
     @JvmName("nativeShipmentCancel")
