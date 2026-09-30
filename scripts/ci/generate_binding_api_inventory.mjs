@@ -11,11 +11,11 @@ const jsonOutputPath = path.join(rootDir, 'artifacts/compatibility/binding-api-i
 const markdownOutputPath = path.join(rootDir, 'docs/src/appendix/binding-api-inventory.md');
 const checkMode = process.argv.includes('--check');
 
-function compareStrings(left, right) {
+export function compareStrings(left, right) {
   return left.replace(/\r\n/g, '\n') === right.replace(/\r\n/g, '\n');
 }
 
-function renderMarkdownTable(headers, rows) {
+export function renderMarkdownTable(headers, rows) {
   const headerRow = `| ${headers.join(' | ')} |`;
   const dividerRow = `| ${headers.map(() => '---').join(' | ')} |`;
   const bodyRows = rows.map((row) => `| ${row.join(' | ')} |`);
@@ -195,7 +195,7 @@ async function buildWasmBindingInventory() {
   };
 }
 
-async function buildGoBindingInventory() {
+export async function buildGoBindingInventory() {
   const manifestPath = 'bindings/go/stateset/go.mod';
   const readmePath = 'bindings/go/README.md';
   const sourceFiles = [
@@ -288,7 +288,7 @@ async function buildRubyBindingInventory() {
   };
 }
 
-async function buildSwiftBindingInventory() {
+export async function buildSwiftBindingInventory() {
   const manifestPath = 'bindings/swift/Package.swift';
   const readmePath = 'bindings/swift/README.md';
   const sourceFiles = [
@@ -387,7 +387,7 @@ async function buildKotlinBindingInventory() {
   };
 }
 
-async function buildDotnetBindingInventory() {
+export async function buildDotnetBindingInventory() {
   const manifestPath = 'bindings/dotnet/dotnet/StateSet/StateSet.csproj';
   const readmePath = 'bindings/dotnet/README.md';
   const sourceFiles = [
@@ -711,4 +711,8 @@ async function main() {
   );
 }
 
-await main();
+// Imported by generate_binding_parity.mjs for its shared helpers and the
+// .NET/Swift surface parsers; only run when executed directly.
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  await main();
+}

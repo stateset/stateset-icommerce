@@ -3,6 +3,11 @@ use super::Commerce;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use stateset_core::{
+    AddCartItemCommand, AddReturnTracking, ApplyCartCoupon, CalculateCartTax, CompletePayment,
+    CreateCart, CreateCustomer, CreateReturn, CreateShipment, SetCartPaymentMethod,
+    SetCartShippingAddress,
+};
+use stateset_core::{
     CanonicalTransactionApi, ChargeSubscription, CommandEnvelope, CommerceError, CommitCheckout,
     ConfirmInventoryReservation, CreateA2AEscrow, CreateInventoryItem, CreatePayment,
     CreateProduct, CreateRefund, DisputeA2AEscrow, EconomicAgent, EconomicAuthority,
@@ -242,6 +247,21 @@ impl Commerce {
             "a2a.dispute.resolve" => {
                 execute!(ResolveA2ADispute, execute_resolve_a2a_dispute)
             }
+            "customers.create" => execute!(CreateCustomer, execute_create_customer),
+            "carts.create" => execute!(CreateCart, execute_create_cart),
+            "carts.item.add" => execute!(AddCartItemCommand, execute_add_cart_item),
+            "carts.shipping_address.set" => {
+                execute!(SetCartShippingAddress, execute_set_cart_shipping_address)
+            }
+            "carts.payment_method.set" => {
+                execute!(SetCartPaymentMethod, execute_set_cart_payment_method)
+            }
+            "carts.coupon.apply" => execute!(ApplyCartCoupon, execute_apply_cart_coupon),
+            "carts.tax.calculate" => execute!(CalculateCartTax, execute_calculate_cart_tax),
+            "payments.complete" => execute!(CompletePayment, execute_complete_payment),
+            "shipments.create" => execute!(CreateShipment, execute_create_shipment),
+            "returns.create" => execute!(CreateReturn, execute_create_return),
+            "returns.tracking.add" => execute!(AddReturnTracking, execute_add_return_tracking),
             _ => Err(CommerceError::ValidationError(format!(
                 "unsupported governed kernel command type: {command_type}"
             ))),

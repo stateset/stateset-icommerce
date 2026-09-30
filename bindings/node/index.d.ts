@@ -14,6 +14,58 @@ export interface CreateBillInput {
   paymentTerms?: string
   referenceNumber?: string
   notes?: string
+  /**
+   * Bill lines. Optional: omitted (or empty) creates a header-only bill,
+   * as before. The engine derives each line amount and the bill totals.
+   */
+  items?: Array<CreateBillItemInput>
+}
+/**
+ * A bill line. Money follows the binding convention: send the `...Exact`
+ * base-10 string (preferred) or the float.
+ */
+export interface CreateBillItemInput {
+  description: string
+  accountCode?: string
+  /** Float quantity. Optional: send `quantity_exact` instead. */
+  quantity?: number
+  /** Exact base-10 quantity. Takes precedence over `quantity` when present. */
+  quantityExact?: string
+  /** Float unit price. Optional: send `unit_price_exact` instead for exact money. */
+  unitPrice?: number
+  /** Exact base-10 unit price. Takes precedence over `unit_price` when present. */
+  unitPriceExact?: string
+  /** Tax rate as a fraction (`0.08` = 8%). */
+  taxRate?: number
+  /** Exact base-10 tax rate. Takes precedence over `tax_rate` when present. */
+  taxRateExact?: string
+  poLineId?: string
+}
+/** A bill line as stored, with engine-derived `amount` and `taxAmount`. */
+export interface BillItemOutput {
+  id: string
+  billId: string
+  lineNumber: number
+  description: string
+  accountCode?: string
+  /** Exact base-10 quantity. */
+  quantityExact: string
+  /** @deprecated Use the `unitPriceExact` twin; float money will be removed in 2.0. */
+  unitPrice: number
+  /** Exact base-10 unit price. */
+  unitPriceExact: string
+  /** @deprecated Use the `amountExact` twin; float money will be removed in 2.0. */
+  amount: number
+  /** Exact base-10 line amount (quantity x unit price). */
+  amountExact: string
+  /** Exact base-10 tax rate (a fraction), when set. */
+  taxRateExact?: string
+  /** @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0. */
+  taxAmount: number
+  /** Exact base-10 line tax. */
+  taxAmountExact: string
+  poLineId?: string
+  createdAt: string
 }
 export interface BillOutput {
   id: string
@@ -2708,6 +2760,18 @@ export interface OrderOutput {
   totalAmount: number
   /** Exact base-10 order total. Prefer this field for calculations. */
   totalAmountExact: string
+  /** @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0. */
+  taxAmount: number
+  /** Exact base-10 order-level tax, already included in the total. */
+  taxAmountExact: string
+  /** @deprecated Use the `shippingAmountExact` twin; float money will be removed in 2.0. */
+  shippingAmount: number
+  /** Exact base-10 shipping charge, already included in the total. */
+  shippingAmountExact: string
+  /** @deprecated Use the `discountAmountExact` twin; float money will be removed in 2.0. */
+  discountAmount: number
+  /** Exact base-10 order-level discount, already subtracted from the total. */
+  discountAmountExact: string
   currency: string
   paymentStatus: PaymentStatus
   fulfillmentStatus: FulfillmentStatus
@@ -2814,6 +2878,13 @@ export interface PaymentOutput {
   amount: number
   /** Exact base-10 amount. Prefer this field for all calculations. */
   amountExact: string
+  /** @deprecated Use the `amountRefundedExact` twin; float money will be removed in 2.0. */
+  amountRefunded: number
+  /**
+   * Exact base-10 total of COMPLETED refunds. A refund only counts here
+   * once `completeRefund` settles it; pending refunds are not included.
+   */
+  amountRefundedExact: string
   currency: string
   status: PaymentTransactionStatus
   version: number
@@ -2844,9 +2915,16 @@ export interface RefundOutput {
   amount: number
   /** Exact base-10 amount. Prefer this field for all calculations. */
   amountExact: string
+  currency: string
   status: RefundStatus
   reason?: string
+  externalId?: string
+  /** Why the refund failed (set by `failRefund`). */
+  failureReason?: string
+  /** RFC 3339; set when `completeRefund` settles the refund. */
+  refundedAt?: string
   createdAt: string
+  updatedAt: string
   idempotencyKey?: string
 }
 export interface StrictSigningKeypairOutput {
@@ -3255,12 +3333,46 @@ export interface CreatePromotionInput {
   eligibleCustomerIds?: Array<string>
   /** Eligible customer groups */
   eligibleCustomerGroups?: Array<string>
+  /**
+   * Conditions the cart must meet (minimum subtotal, first order, shipping
+   * country, ...). Each is validated before anything is stored.
+   */
+  conditions?: Array<PromotionConditionInput>
   /** Currency code */
   currency?: string
   /** Priority (lower = applied first) */
   priority?: number
   /** Metadata as JSON */
   metadata?: string
+}
+/** A condition a cart must meet for a promotion to apply. */
+export interface PromotionConditionInput {
+  /**
+   * What is tested: minimum_subtotal, minimum_quantity, product_in_cart,
+   * category_in_cart, sku_in_cart, first_order, shipping_country,
+   * shipping_state, cart_item_count, customer_id, ...
+   */
+  conditionType: PromotionConditionType
+  /** How it is compared: equals, not_equals, greater_than, in, ... */
+  operator: PromotionConditionOperator
+  /**
+   * The value compared against: a decimal, an integer, a boolean, or a
+   * comma-separated list, as the condition type requires.
+   */
+  value: string
+  /**
+   * Required conditions must all be met; when optional ones exist, at
+   * least one must be. Defaults to `true`.
+   */
+  isRequired?: boolean
+}
+/** A condition attached to a promotion. */
+export interface PromotionConditionOutput {
+  id: string
+  conditionType: PromotionConditionType
+  operator: PromotionConditionOperator
+  value: string
+  isRequired: boolean
 }
 /** Input for updating a promotion */
 export interface UpdatePromotionInput {
@@ -3326,6 +3438,8 @@ export interface PromotionOutput {
   currency: string
   priority: number
   metadata?: string
+  /** Conditions the cart must meet for this promotion to apply. */
+  conditions: Array<PromotionConditionOutput>
   createdAt: string
   updatedAt: string
 }
@@ -3423,6 +3537,17 @@ export interface ApplyPromotionsOutput {
   /** Exact base-10 grand total, straight from the engine's `Decimal`. Prefer this field for money. */
   grandTotalExact: string
   appliedPromotions: Array<AppliedPromotionOutput>
+  /** Promotions and coupons considered but not applied, with the reason. */
+  rejectedPromotions: Array<RejectedPromotionOutput>
+}
+/** A promotion or coupon that was considered and refused. */
+export interface RejectedPromotionOutput {
+  promotionId?: string
+  couponCode?: string
+  /** Human-readable reason. */
+  reason: string
+  /** Machine-readable reason. */
+  reasonCode: PromotionRejectionReason
 }
 /** An applied promotion */
 export interface AppliedPromotionOutput {
@@ -3449,6 +3574,19 @@ export interface PromotionUsageOutput {
   discountAmountExact: string
   currency: string
   usedAt: string
+}
+/**
+ * Optional filters for `Promotions.listUsage`. Every set field narrows the
+ * result; no argument lists the whole ledger (engine default page size).
+ */
+export interface PromotionUsageFilterInput {
+  promotionId?: string
+  couponId?: string
+  customerId?: string
+  orderId?: string
+  cartId?: string
+  limit?: number
+  offset?: number
 }
 export interface CreateSupplierInput {
   name: string
@@ -3550,6 +3688,37 @@ export interface CreateInspectionInput {
   warehouseId?: number
   assignedTo?: string
   notes?: string
+  /**
+   * Lines to inspect. Optional: omitted (or empty) creates an inspection
+   * with no lines, as before.
+   */
+  items?: Array<CreateInspectionItemInput>
+}
+/** A line to inspect. */
+export interface CreateInspectionItemInput {
+  sku: string
+  lotNumber?: string
+  serialNumber?: string
+  /** Float quantity. Optional: send `quantity_to_inspect_exact` instead. */
+  quantityToInspect?: number
+  /** Exact base-10 quantity. Takes precedence over `quantity_to_inspect`. */
+  quantityToInspectExact?: string
+}
+/** An inspection line as stored. Quantities are exact base-10 strings. */
+export interface InspectionItemOutput {
+  id: string
+  inspectionId: string
+  sku: string
+  lotNumber?: string
+  serialNumber?: string
+  quantityInspectedExact: string
+  quantityPassedExact: string
+  quantityFailedExact: string
+  defectCodes: Array<string>
+  /** `pending`, `pass`, `fail`, ... (the engine's snake_case result). */
+  result: string
+  notes?: string
+  createdAt: string
 }
 export interface InspectionOutput {
   id: string
@@ -3579,7 +3748,36 @@ export interface NcrOutput {
   quantityAffected: number
   status: NcrStatus
   description: string
+  /** What was decided for the non-conforming material. Closing requires one. */
+  disposition?: NcrDisposition
+  /** @deprecated Use the `dispositionQuantityExact` twin; float quantities will be removed in 2.0. */
+  dispositionQuantity?: number
+  /** Exact base-10 quantity the disposition covers. */
+  dispositionQuantityExact?: string
+  rootCause?: string
+  correctiveAction?: string
+  preventiveAction?: string
+  assignedTo?: string
   createdAt: string
+  closedAt?: string
+}
+/**
+ * Fields for `Quality.updateNcr`. Every field is optional; omitted fields are
+ * left unchanged. Closing (`status: 'closed'`) requires a disposition, already
+ * recorded or set in the same call.
+ */
+export interface UpdateNcrInput {
+  status?: NcrStatusInput
+  severity?: NcrSeverityInput
+  rootCause?: string
+  correctiveAction?: string
+  preventiveAction?: string
+  disposition?: NcrDispositionInput
+  /** @deprecated Use the `dispositionQuantityExact` twin; float quantities will be removed in 2.0. */
+  dispositionQuantity?: number
+  /** Exact base-10 quantity the disposition covers. Wins over the float. */
+  dispositionQuantityExact?: string
+  assignedTo?: string
 }
 export interface CreateQualityHoldInput {
   sku: string
@@ -3618,6 +3816,54 @@ export interface CreateReceiptInput {
   purchaseOrderId?: string
   carrier?: string
   trackingNumber?: string
+  /**
+   * Expected lines. Optional: omitted (or empty) creates a receipt with no
+   * lines, as before.
+   */
+  items?: Array<CreateReceiptItemInput>
+}
+/**
+ * An expected receipt line. Money follows the binding convention: send the
+ * `...Exact` base-10 string (preferred) or the float.
+ */
+export interface CreateReceiptItemInput {
+  sku: string
+  description?: string
+  poLineId?: string
+  /** Float quantity. Optional: send `expected_quantity_exact` instead. */
+  expectedQuantity?: number
+  /** Exact base-10 quantity. Takes precedence over `expected_quantity`. */
+  expectedQuantityExact?: string
+  /** Float unit cost. Optional: send `unit_cost_exact` instead for exact money. */
+  unitCost?: number
+  /** Exact base-10 unit cost. Takes precedence over `unit_cost` when present. */
+  unitCostExact?: string
+  lotNumber?: string
+  /** RFC 3339 timestamp. */
+  expirationDate?: string
+  notes?: string
+}
+/** A receipt line as stored. Quantities are exact base-10 strings. */
+export interface ReceiptItemOutput {
+  id: string
+  receiptId: string
+  lineNumber: number
+  sku: string
+  description?: string
+  poLineId?: string
+  expectedQuantityExact: string
+  receivedQuantityExact: string
+  rejectedQuantityExact: string
+  /** @deprecated Use the `unitCostExact` twin; float money will be removed in 2.0. */
+  unitCost?: number
+  /** Exact base-10 unit cost, when set. */
+  unitCostExact?: string
+  lotNumber?: string
+  expirationDate?: string
+  /** The engine's snake_case line status (`pending`, `received`, ...). */
+  status: string
+  notes?: string
+  createdAt: string
 }
 export interface ReceiptOutput {
   id: string
@@ -5725,6 +5971,8 @@ export declare class Commerce {
 export declare class AccountsPayable {
   /** Create a bill */
   createBill(input: CreateBillInput): Promise<BillOutput>
+  /** The lines of a bill, in line order. */
+  getBillItems(billId: string): Promise<Array<BillItemOutput>>
   /** Get a bill by ID */
   getBill(id: string): Promise<BillOutput | null>
   /** Get a bill by bill number */
@@ -6491,6 +6739,8 @@ export declare class Orders {
   /** Update fields without bypassing native state-transition or money guards. */
   update(id: string, input: UpdateOrderInput): Promise<OrderOutput>
   get(id: string): Promise<OrderOutput | null>
+  /** Get an order by its human-readable order number. `null` when none matches. */
+  getByNumber(orderNumber: string): Promise<OrderOutput | null>
   /**
    * List orders, optionally filtered/paginated.
    *
@@ -6534,6 +6784,18 @@ export declare class Payments {
   createRefund(input: CreateRefundInput): Promise<RefundOutput>
   /** Create a refund without any floating-point conversion. */
   createRefundExact(input: CreateRefundExactInput): Promise<RefundOutput>
+  /** Get a refund by id. `null` when it does not exist. */
+  getRefund(id: string): Promise<RefundOutput | null>
+  /** Every refund recorded against a payment, in any status. */
+  getRefunds(paymentId: string): Promise<Array<RefundOutput>>
+  /**
+   * Settle a pending refund: marks it `completed` and folds its amount
+   * into the payment's `amountRefunded` (moving the payment to
+   * `partially_refunded` or `refunded`).
+   */
+  completeRefund(id: string): Promise<RefundOutput>
+  /** Mark a pending refund as failed, releasing its reserved amount. */
+  failRefund(id: string, reason: string): Promise<RefundOutput>
   count(): Promise<number>
 }
 export declare class Prepayments {
@@ -6663,6 +6925,14 @@ export declare class Promotions {
   activate(id: string): Promise<PromotionOutput>
   /** Deactivate (pause) a promotion */
   deactivate(id: string): Promise<PromotionOutput>
+  /**
+   * Add a condition to an existing promotion.
+   *
+   * The condition is validated — its value must parse for its type and
+   * its operator must apply to it — and then stored, so it takes part in
+   * every later evaluation.
+   */
+  addCondition(promotionId: string, condition: PromotionConditionInput): Promise<PromotionOutput>
   /** Get all currently active promotions */
   getActive(): Promise<Array<PromotionOutput>>
   /** Check if a promotion is currently valid */
@@ -6679,8 +6949,21 @@ export declare class Promotions {
   validateCoupon(code: string): Promise<CouponOutput | null>
   /** Apply promotions to cart/order items */
   apply(input: ApplyPromotionsInput): Promise<ApplyPromotionsOutput>
+  /**
+   * Evaluate a persisted cart's promotions and write the result onto it.
+   *
+   * Prices the cart's lines, its coupon and every automatic promotion,
+   * stores the discount on the cart and its lines, and returns the
+   * evaluation, including what was refused and why.
+   */
+  applyToCart(cartId: string): Promise<ApplyPromotionsOutput>
   /** Record promotion usage (after order completion) */
   recordUsage(promotionId: string, couponId: string | undefined | null, customerId: string | undefined | null, orderId: string | undefined | null, cartId: string | undefined | null, discountAmount: number, currency: string): Promise<PromotionUsageOutput>
+  /**
+   * Read the promotion usage ledger, oldest first: which promotions an
+   * order (or customer, cart, coupon) redeemed, and for how much.
+   */
+  listUsage(filter?: PromotionUsageFilterInput | undefined | null): Promise<Array<PromotionUsageOutput>>
 }
 export declare class PurchaseOrders {
   createSupplier(input: CreateSupplierInput): Promise<SupplierOutput>
@@ -6721,6 +7004,8 @@ export declare class Purgatory {
 export declare class Quality {
   /** Create a new inspection */
   createInspection(input: CreateInspectionInput): Promise<InspectionOutput>
+  /** The lines of an inspection. */
+  getInspectionItems(inspectionId: string): Promise<Array<InspectionItemOutput>>
   /** Get an inspection by ID */
   getInspection(id: string): Promise<InspectionOutput | null>
   /**
@@ -6743,7 +7028,17 @@ export declare class Quality {
    * Calling with no argument keeps the previous behaviour (server default page size).
    */
   listNcrs(filter?: NcrFilterInput | undefined | null): Promise<Array<NcrOutput>>
-  /** Close an NCR */
+  /**
+   * Update an open NCR: root cause, actions, disposition, status and so on.
+   * Omitted fields are left unchanged. Setting `status: 'closed'` requires
+   * a disposition, already recorded or set in the same call.
+   */
+  updateNcr(id: string, input: UpdateNcrInput): Promise<NcrOutput>
+  /**
+   * Close an NCR. It must have a disposition (see `updateNcr`); an NCR
+   * without one is refused with a validation error. Re-closing a closed
+   * NCR is a no-op.
+   */
   closeNcr(id: string): Promise<NcrOutput>
   /** Create a quality hold */
   createHold(input: CreateQualityHoldInput): Promise<QualityHoldOutput>
@@ -6761,6 +7056,8 @@ export declare class Quality {
 export declare class Receiving {
   /** Create a new receipt */
   createReceipt(input: CreateReceiptInput): Promise<ReceiptOutput>
+  /** The lines of a receipt, in line order. */
+  getReceiptItems(receiptId: string): Promise<Array<ReceiptItemOutput>>
   /** Get a receipt by ID */
   getReceipt(id: string): Promise<ReceiptOutput | null>
   /** Get a receipt by receipt number */
@@ -7642,6 +7939,12 @@ export type NcrSeverity = 'Critical' | 'Major' | 'Minor' | 'Observation'
 export type NcrSeverityInput = 'critical' | 'major' | 'minor' | 'observation'
 /** Non-conformance report status as rendered on `NcrOutput.status` (Rust `Debug` form). */
 export type NcrStatus = 'Open' | 'UnderReview' | 'PendingDisposition' | 'CorrectiveAction' | 'PreventiveAction' | 'Verification' | 'Closed' | 'Cancelled'
+/** Non-conformance report status accepted by `UpdateNcrInput.status` (case-insensitive; `_` optional). */
+export type NcrStatusInput = 'open' | 'under_review' | 'pending_disposition' | 'corrective_action' | 'preventive_action' | 'verification' | 'closed' | 'cancelled' | NcrStatus
+/** NCR disposition as rendered on `NcrOutput.disposition` (Rust `Debug` form). */
+export type NcrDisposition = 'UseAsIs' | 'Rework' | 'Repair' | 'Scrap' | 'ReturnToVendor' | 'Downgrade' | 'SortAndScreen'
+/** NCR disposition accepted by `UpdateNcrInput.disposition` (case-insensitive; `_` optional). */
+export type NcrDispositionInput = 'use_as_is' | 'rework' | 'repair' | 'scrap' | 'return_to_vendor' | 'downgrade' | 'sort_and_screen' | NcrDisposition
 /** Quality hold type as rendered on `QualityHoldOutput.holdType` (Rust `Debug` form). */
 export type QualityHoldType = 'QualityInspection' | 'CustomerReturn' | 'Recall' | 'Damaged' | 'Expired' | 'Quarantine' | 'RegulatoryHold' | 'InvestigationHold'
 /** Quality hold type accepted by `CreateQualityHoldInput.holdType` (case-insensitive). */
@@ -7784,7 +8087,7 @@ export type SubscriptionEventType = 'created' | 'activated' | 'trialstarted' | '
 /** Promotion type as rendered on `PromotionOutput.promotionType` and `AppliedPromotionOutput.discountType` (lower-cased Rust `Debug` form). */
 export type PromotionType = 'percentageoff' | 'fixedamountoff' | 'buyxgety' | 'freeshipping' | 'tiereddiscount' | 'bundlediscount' | 'firstorderdiscount' | 'giftwithpurchase'
 /** Promotion type accepted on input (case-insensitive). */
-export type PromotionTypeInput = 'percentage_off' | 'percentageoff' | 'fixed_amount_off' | 'fixedamountoff' | 'buy_x_get_y' | 'buyxgety' | 'bogo' | 'free_shipping' | 'freeshipping' | 'tiered_discount' | 'tiereddiscount' | 'bundle' | 'bundle_discount' | 'bundlediscount'
+export type PromotionTypeInput = 'percentage_off' | 'percentageoff' | 'fixed_amount_off' | 'fixedamountoff' | 'buy_x_get_y' | 'buyxgety' | 'bogo' | 'free_shipping' | 'freeshipping' | 'tiered_discount' | 'tiereddiscount' | 'bundle' | 'bundle_discount' | 'bundlediscount' | 'first_order_discount' | 'firstorderdiscount'
 /** Promotion trigger as rendered on `PromotionOutput.trigger` (lower-cased Rust `Debug` form). */
 export type PromotionTrigger = 'automatic' | 'couponcode' | 'both'
 /** Promotion trigger accepted on input (case-insensitive). */
@@ -7797,6 +8100,12 @@ export type PromotionTargetInput = 'order' | 'product' | 'category' | 'shipping'
 export type PromotionStacking = 'stackable' | 'exclusive' | 'selectivestack'
 /** Stacking behaviour accepted on input (case-insensitive). */
 export type PromotionStackingInput = 'stackable' | 'exclusive' | 'selective_stack' | 'selectivestack'
+/** Why a promotion or coupon was considered and not applied, as rendered on `RejectedPromotionOutput.reasonCode`. */
+export type PromotionRejectionReason = 'invalid_code' | 'expired' | 'not_yet_active' | 'usage_limit_reached' | 'customer_limit_reached' | 'minimum_not_met' | 'product_not_eligible' | 'customer_not_eligible' | 'not_stackable' | 'already_applied' | 'internal_error' | 'currency_mismatch'
+/** What a promotion condition tests; accepted on `PromotionConditionInput.conditionType` (case-insensitive) and rendered in this snake_case form on `PromotionConditionOutput.conditionType`. */
+export type PromotionConditionType = 'minimum_subtotal' | 'minimum_quantity' | 'product_in_cart' | 'category_in_cart' | 'sku_in_cart' | 'customer_group' | 'first_order' | 'customer_email_domain' | 'shipping_country' | 'shipping_state' | 'payment_method' | 'cart_item_count' | 'customer_id'
+/** How a promotion condition compares its value; accepted on `PromotionConditionInput.operator` (case-insensitive) and rendered in this snake_case form on `PromotionConditionOutput.operator`. */
+export type PromotionConditionOperator = 'equals' | 'not_equals' | 'greater_than' | 'greater_than_or_equal' | 'less_than' | 'less_than_or_equal' | 'contains' | 'not_contains' | 'in' | 'not_in'
 /** Promotion status, shared by `PromotionOutput.status` and the update/filter inputs (case-insensitive on input). */
 export type PromotionStatus = 'draft' | 'scheduled' | 'active' | 'paused' | 'expired' | 'exhausted' | 'archived'
 /** Coupon status, shared by `CouponOutput.status` and `CouponFilterInput.status` (case-insensitive on input). */

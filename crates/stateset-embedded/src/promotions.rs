@@ -37,7 +37,7 @@ use rust_decimal::Decimal;
 use stateset_core::{
     ApplyPromotionsRequest, ApplyPromotionsResult, CartId, CouponCode, CouponFilter,
     CreateCouponCode, CreatePromotion, CreatePromotionCondition, CustomerId, OrderId, Promotion,
-    PromotionFilter, PromotionId, PromotionUsage, Result, UpdatePromotion,
+    PromotionFilter, PromotionId, PromotionUsage, PromotionUsageFilter, Result, UpdatePromotion,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -305,6 +305,15 @@ impl Promotions {
         )
     }
 
+    /// Read the promotion usage ledger, oldest first.
+    ///
+    /// Filter by promotion, coupon, customer, order and/or cart; every set
+    /// field narrows the result. This is how to answer "which promotions did
+    /// order X redeem, and for how much?".
+    pub fn list_usage(&self, filter: PromotionUsageFilter) -> Result<Vec<PromotionUsage>> {
+        self.db.promotions().list_usage(filter)
+    }
+
     // ========================================================================
     // Convenience Methods
     // ========================================================================
@@ -320,27 +329,22 @@ impl Promotions {
     }
 
     /// Add a condition to an existing promotion.
+    ///
+    /// The condition is validated first — its value must parse for its type
+    /// and its operator must apply to it — and then stored, so it takes part
+    /// in every later evaluation.
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::ValidationError`](stateset_core::CommerceError::ValidationError)
+    /// for a malformed condition, and
+    /// [`CommerceError::NotFound`](stateset_core::CommerceError::NotFound)
+    /// when the promotion does not exist.
     pub fn add_condition(
         &self,
         promotion_id: PromotionId,
         condition: CreatePromotionCondition,
     ) -> Result<Promotion> {
-        // Get current promotion
-        let promo = self.get(promotion_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
-
-        // Re-create with new condition
-        // Note: In a production system, you'd want a separate conditions API
-        // For now, this is a simplified approach
-        let mut conditions = promo.conditions.clone();
-        conditions.push(stateset_core::PromotionCondition {
-            id: Uuid::new_v4(),
-            promotion_id,
-            condition_type: condition.condition_type,
-            operator: condition.operator,
-            value: condition.value,
-            is_required: condition.is_required,
-        });
-
-        Ok(promo)
+        self.db.promotions().add_condition(promotion_id, condition)
     }
 }

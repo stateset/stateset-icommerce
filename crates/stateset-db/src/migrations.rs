@@ -455,7 +455,17 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
             include_str!("../migrations/095_kernel_economic_budgets.sql"),
         ),
         ("096_kernel_outbox_tier", include_str!("../migrations/096_kernel_outbox_tier.sql")),
-        ("097_shipment_version", include_str!("../migrations/097_shipment_version.sql")),
+        (
+            "097_http_idempotency_sub_ms",
+            include_str!("../migrations/097_http_idempotency_sub_ms.sql"),
+        ),
+        // Hyphenate the ids 008/009/011 seeded as bare hex, so seeded tax
+        // rates match their jurisdictions and seeded plans are found by id.
+        ("098_seeded_uuid_ids", include_str!("../migrations/098_seeded_uuid_ids.sql")),
+        // GST no longer stacks on HST; Nova Scotia 14%; NL, PE and the
+        // territories; QST no longer compounds on GST.
+        ("099_canadian_sales_tax", include_str!("../migrations/099_canadian_sales_tax.sql")),
+        ("100_shipment_version", include_str!("../migrations/100_shipment_version.sql")),
     ]
 }
 

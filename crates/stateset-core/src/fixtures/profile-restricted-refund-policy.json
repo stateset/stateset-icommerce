@@ -1,0 +1,16 @@
+{
+  "version": "profile-refunds-v2",
+  "commands": {
+    "payments.create_refund": {
+      "required_capabilities": ["payments.create_refund"],
+      "requires_approval": true,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:acme"],
+      "allowed_store_ids": ["store:production"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    }
+  },
+  "trusted_authority_keys": {}
+}

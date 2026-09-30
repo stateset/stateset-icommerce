@@ -156,7 +156,7 @@ impl PgCustomerRepository {
         Self { pool }
     }
 
-    fn validate_customer_input(input: &CreateCustomer) -> Result<()> {
+    pub(crate) fn validate_customer_input(input: &CreateCustomer) -> Result<()> {
         validate_email(&input.email)?;
         validate_required_text("customer.first_name", &input.first_name, 100)?;
         validate_required_text("customer.last_name", &input.last_name, 100)?;
@@ -292,7 +292,7 @@ impl PgCustomerRepository {
     /// and `create_batch_atomic_async`). The e-mail is normalised and checked
     /// against live accounts; the `email_key` unique index (mapped to
     /// `EmailAlreadyExists` by `map_db_error`) backstops the race window.
-    async fn insert_customer_tx(
+    pub(crate) async fn insert_customer_tx(
         conn: &mut PgConnection,
         input: &CreateCustomer,
     ) -> Result<Customer> {

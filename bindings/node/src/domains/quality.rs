@@ -21,6 +21,77 @@ pub struct CreateInspectionInput {
     pub warehouse_id: Option<i32>,
     pub assigned_to: Option<String>,
     pub notes: Option<String>,
+    /// Lines to inspect. Optional: omitted (or empty) creates an inspection
+    /// with no lines, as before.
+    pub items: Option<Vec<CreateInspectionItemInput>>,
+}
+
+/// A line to inspect.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateInspectionItemInput {
+    pub sku: String,
+    pub lot_number: Option<String>,
+    pub serial_number: Option<String>,
+    /// Float quantity. Optional: send `quantity_to_inspect_exact` instead.
+    pub quantity_to_inspect: Option<f64>,
+    /// Exact base-10 quantity. Takes precedence over `quantity_to_inspect`.
+    pub quantity_to_inspect_exact: Option<String>,
+}
+
+impl TryFrom<CreateInspectionItemInput> for stateset_core::CreateInspectionItem {
+    type Error = Error;
+
+    fn try_from(i: CreateInspectionItemInput) -> Result<Self> {
+        Ok(Self {
+            sku: i.sku,
+            lot_number: i.lot_number,
+            serial_number: i.serial_number,
+            quantity_to_inspect: money_input(
+                i.quantity_to_inspect_exact.as_deref(),
+                i.quantity_to_inspect,
+                "inspection item quantity",
+            )?,
+        })
+    }
+}
+
+/// An inspection line as stored. Quantities are exact base-10 strings.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct InspectionItemOutput {
+    pub id: String,
+    pub inspection_id: String,
+    pub sku: String,
+    pub lot_number: Option<String>,
+    pub serial_number: Option<String>,
+    pub quantity_inspected_exact: String,
+    pub quantity_passed_exact: String,
+    pub quantity_failed_exact: String,
+    pub defect_codes: Vec<String>,
+    /// `pending`, `pass`, `fail`, ... (the engine's snake_case result).
+    pub result: String,
+    pub notes: Option<String>,
+    pub created_at: String,
+}
+
+impl From<stateset_core::InspectionItem> for InspectionItemOutput {
+    fn from(i: stateset_core::InspectionItem) -> Self {
+        Self {
+            id: i.id.to_string(),
+            inspection_id: i.inspection_id.to_string(),
+            sku: i.sku,
+            lot_number: i.lot_number,
+            serial_number: i.serial_number,
+            quantity_inspected_exact: i.quantity_inspected.to_string(),
+            quantity_passed_exact: i.quantity_passed.to_string(),
+            quantity_failed_exact: i.quantity_failed.to_string(),
+            defect_codes: i.defect_codes,
+            result: i.result.to_string(),
+            notes: i.notes,
+            created_at: i.created_at.to_rfc3339(),
+        }
+    }
 }
 
 #[napi(object)]
@@ -81,13 +152,49 @@ pub struct NcrOutput {
     #[napi(ts_type = "NcrStatus")]
     pub status: String,
     pub description: String,
+    /// What was decided for the non-conforming material. Closing requires one.
+    #[napi(ts_type = "NcrDisposition")]
+    pub disposition: Option<String>,
+    /// @deprecated Use the `dispositionQuantityExact` twin; float quantities will be removed in 2.0.
+    pub disposition_quantity: Option<f64>,
+    /// Exact base-10 quantity the disposition covers.
+    pub disposition_quantity_exact: Option<String>,
+    pub root_cause: Option<String>,
+    pub corrective_action: Option<String>,
+    pub preventive_action: Option<String>,
+    pub assigned_to: Option<String>,
     pub created_at: String,
+    pub closed_at: Option<String>,
+}
+
+/// Fields for `Quality.updateNcr`. Every field is optional; omitted fields are
+/// left unchanged. Closing (`status: 'closed'`) requires a disposition, already
+/// recorded or set in the same call.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct UpdateNcrInput {
+    #[napi(ts_type = "NcrStatusInput")]
+    pub status: Option<String>,
+    #[napi(ts_type = "NcrSeverityInput")]
+    pub severity: Option<String>,
+    pub root_cause: Option<String>,
+    pub corrective_action: Option<String>,
+    pub preventive_action: Option<String>,
+    #[napi(ts_type = "NcrDispositionInput")]
+    pub disposition: Option<String>,
+    /// @deprecated Use the `dispositionQuantityExact` twin; float quantities will be removed in 2.0.
+    pub disposition_quantity: Option<f64>,
+    /// Exact base-10 quantity the disposition covers. Wins over the float.
+    pub disposition_quantity_exact: Option<String>,
+    pub assigned_to: Option<String>,
 }
 
 impl TryFrom<stateset_core::NonConformance> for NcrOutput {
     type Error = Error;
 
     fn try_from(n: stateset_core::NonConformance) -> Result<Self> {
+        let (disposition_quantity, disposition_quantity_exact) =
+            optional_money_pair(n.disposition_quantity, "ncr disposition quantity")?;
         Ok(Self {
             id: n.id.to_string(),
             ncr_number: n.ncr_number,
@@ -97,7 +204,15 @@ impl TryFrom<stateset_core::NonConformance> for NcrOutput {
             quantity_affected: to_f64_checked(n.quantity_affected, "ncr quantity affected")?,
             status: format!("{:?}", n.status),
             description: n.description,
+            disposition: n.disposition.map(|d| format!("{d:?}")),
+            disposition_quantity,
+            disposition_quantity_exact,
+            root_cause: n.root_cause,
+            corrective_action: n.corrective_action,
+            preventive_action: n.preventive_action,
+            assigned_to: n.assigned_to,
             created_at: n.created_at.to_rfc3339(),
+            closed_at: n.closed_at.map(|t| t.to_rfc3339()),
         })
     }
 }
@@ -191,6 +306,70 @@ pub(crate) fn parse_ncr_source(s: &str) -> Result<stateset_core::NonConformanceS
                     "supplier_issue",
                     "internal_audit",
                     "shipping_damage",
+                ],
+            ));
+        }
+    })
+}
+
+/// Lowercase with `_`, `-` and spaces removed, so `corrective_action`,
+/// `CorrectiveAction` and `corrective-action` compare equal.
+fn variant_key(s: &str) -> String {
+    s.chars().filter(|c| !matches!(c, '_' | '-' | ' ')).flat_map(char::to_lowercase).collect()
+}
+
+pub(crate) fn parse_ncr_status(s: &str) -> Result<stateset_core::NcrStatus> {
+    use stateset_core::NcrStatus;
+    Ok(match variant_key(s).as_str() {
+        "open" => NcrStatus::Open,
+        "underreview" => NcrStatus::UnderReview,
+        "pendingdisposition" => NcrStatus::PendingDisposition,
+        "correctiveaction" => NcrStatus::CorrectiveAction,
+        "preventiveaction" => NcrStatus::PreventiveAction,
+        "verification" => NcrStatus::Verification,
+        "closed" => NcrStatus::Closed,
+        "cancelled" | "canceled" => NcrStatus::Cancelled,
+        _ => {
+            return Err(unknown_variant(
+                "NCR status",
+                s,
+                &[
+                    "open",
+                    "under_review",
+                    "pending_disposition",
+                    "corrective_action",
+                    "preventive_action",
+                    "verification",
+                    "closed",
+                    "cancelled",
+                ],
+            ));
+        }
+    })
+}
+
+pub(crate) fn parse_disposition(s: &str) -> Result<stateset_core::Disposition> {
+    use stateset_core::Disposition;
+    Ok(match variant_key(s).as_str() {
+        "useasis" => Disposition::UseAsIs,
+        "rework" => Disposition::Rework,
+        "repair" => Disposition::Repair,
+        "scrap" => Disposition::Scrap,
+        "returntovendor" => Disposition::ReturnToVendor,
+        "downgrade" => Disposition::Downgrade,
+        "sortandscreen" => Disposition::SortAndScreen,
+        _ => {
+            return Err(unknown_variant(
+                "NCR disposition",
+                s,
+                &[
+                    "use_as_is",
+                    "rework",
+                    "repair",
+                    "scrap",
+                    "return_to_vendor",
+                    "downgrade",
+                    "sort_and_screen",
                 ],
             ));
         }
@@ -305,11 +484,33 @@ impl Quality {
                 inspector_id: input.assigned_to,
                 scheduled_at: None,
                 notes: input.notes,
-                items: vec![],
+                items: input
+                    .items
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(TryInto::try_into)
+                    .collect::<Result<Vec<_>>>()?,
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to create inspection", e))?;
 
         Ok(inspection.into())
+    }
+
+    /// The lines of an inspection.
+    #[napi]
+    pub async fn get_inspection_items(
+        &self,
+        inspection_id: String,
+    ) -> Result<Vec<InspectionItemOutput>> {
+        let commerce = self.commerce.get()?;
+        let uuid: uuid::Uuid = inspection_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid inspection UUID"))?;
+        let items = commerce
+            .quality()
+            .get_inspection_items(uuid)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get inspection items", e))?;
+        Ok(items.into_iter().map(Into::into).collect())
     }
 
     /// Get an inspection by ID
@@ -419,7 +620,38 @@ impl Quality {
         convert_outputs(ncrs)
     }
 
-    /// Close an NCR
+    /// Update an open NCR: root cause, actions, disposition, status and so on.
+    /// Omitted fields are left unchanged. Setting `status: 'closed'` requires
+    /// a disposition, already recorded or set in the same call.
+    #[napi]
+    pub async fn update_ncr(&self, id: String, input: UpdateNcrInput) -> Result<NcrOutput> {
+        let commerce = self.commerce.get()?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
+        let update = stateset_core::UpdateNonConformance {
+            status: input.status.as_deref().map(parse_ncr_status).transpose()?,
+            severity: input.severity.as_deref().map(parse_severity).transpose()?,
+            root_cause: input.root_cause,
+            corrective_action: input.corrective_action,
+            preventive_action: input.preventive_action,
+            disposition: input.disposition.as_deref().map(parse_disposition).transpose()?,
+            disposition_quantity: optional_money_input(
+                input.disposition_quantity_exact.as_deref(),
+                input.disposition_quantity,
+                "ncr disposition quantity",
+            )?,
+            assigned_to: input.assigned_to,
+        };
+        let ncr = commerce
+            .quality()
+            .update_ncr(uuid, update)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update NCR", e))?;
+        convert_output(ncr)
+    }
+
+    /// Close an NCR. It must have a disposition (see `updateNcr`); an NCR
+    /// without one is refused with a validation error. Re-closing a closed
+    /// NCR is a no-op.
     #[napi]
     pub async fn close_ncr(&self, id: String) -> Result<NcrOutput> {
         let commerce = self.commerce.get()?;

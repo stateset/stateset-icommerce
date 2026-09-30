@@ -59,7 +59,7 @@
             "crates/stateset-db/src/shipment_updates.rs",
             "crates/stateset-db/src/sqlite/shipments.rs",
             "crates/stateset-db/src/postgres/shipments.rs",
-            "crates/stateset-db/migrations/097_shipment_version.sql",
+            "crates/stateset-db/migrations/100_shipment_version.sql",
             "bindings/node/src/domains/shipments.rs"
           ],
           "validation": [
@@ -191,7 +191,7 @@
           "requirement": "Enforce shipment transitions, optimistic concurrency, timestamps and durable outbox records consistently across update, ship, deliver, cancel and batch paths on SQLite and PostgreSQL",
           "evidence": [
             "crates/stateset-db/src/shipment_updates.rs: shared transition, version and timestamp rules",
-            "crates/stateset-db/migrations/097_shipment_version.sql: backfills SQLite shipment versions",
+            "crates/stateset-db/migrations/100_shipment_version.sql: backfills SQLite shipment versions",
             "crates/stateset-db/tests/sqlite_shipment_lifecycle.rs: 8 tests passed",
             "crates/stateset-db/tests/postgres_shipment_lifecycle.rs: 5 tests passed against isolated PostgreSQL 12.22"
           ],

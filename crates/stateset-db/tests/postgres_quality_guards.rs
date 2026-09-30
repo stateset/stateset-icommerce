@@ -17,7 +17,7 @@
 use rust_decimal_macros::dec;
 use stateset_core::{
     CommerceError, CreateInspection, CreateInspectionItem, CreateLot, CreateNonConformance,
-    CreateQualityHold, InspectionResult, InspectionStatus, InspectionType, LotStatus,
+    CreateQualityHold, Disposition, InspectionResult, InspectionStatus, InspectionType, LotStatus,
     LotTransactionType, NcrStatus, NonConformanceSource, RecordInspectionResult,
     ReleaseQualityHold, Severity, UpdateNonConformance,
 };
@@ -271,6 +271,7 @@ async fn postgres_terminal_ncrs_refuse_further_status_writes() {
     };
 
     let closed = make(format!("Q3-{}", Uuid::new_v4().simple())).await;
+    dispose(&db, closed.id).await;
     let done = db.quality().close_ncr_async(closed.id).await.expect("close");
     assert_eq!(done.status, NcrStatus::Closed);
     let closed_at = done.closed_at.expect("closed_at stamped");
@@ -318,6 +319,7 @@ async fn postgres_terminal_ncrs_refuse_further_status_writes() {
             UpdateNonConformance {
                 status: Some(NcrStatus::CorrectiveAction),
                 root_cause: Some("tooling wear".into()),
+                disposition: Some(Disposition::Rework),
                 ..Default::default()
             },
         )
@@ -327,6 +329,107 @@ async fn postgres_terminal_ncrs_refuse_further_status_writes() {
     assert_eq!(updated.root_cause.as_deref(), Some("tooling wear"));
     assert_eq!(
         db.quality().close_ncr_async(open.id).await.expect("close").status,
+        NcrStatus::Closed
+    );
+}
+
+/// Record a disposition, which closing requires.
+async fn dispose(db: &PostgresDatabase, id: Uuid) {
+    db.quality()
+        .update_ncr_async(
+            id,
+            UpdateNonConformance { disposition: Some(Disposition::Scrap), ..Default::default() },
+        )
+        .await
+        .expect("record disposition");
+}
+
+/// Closing through `update_ncr` stamps `closed_at` like `close_ncr`. One
+/// update may record the disposition and close.
+#[tokio::test]
+async fn postgres_update_ncr_to_closed_records_the_close_time() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let ncr = db
+        .quality()
+        .create_ncr_async(CreateNonConformance {
+            inspection_id: None,
+            source: NonConformanceSource::InternalAudit,
+            severity: Severity::Minor,
+            sku: format!("NCR-UPD-{}", Uuid::new_v4().simple()),
+            lot_number: None,
+            serial_number: None,
+            quantity_affected: dec!(1),
+            description: "defect".into(),
+            assigned_to: None,
+        })
+        .await
+        .expect("create ncr");
+    let closed = db
+        .quality()
+        .update_ncr_async(
+            ncr.id,
+            UpdateNonConformance {
+                status: Some(NcrStatus::Closed),
+                disposition: Some(Disposition::UseAsIs),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("close via update");
+    assert_eq!(closed.status, NcrStatus::Closed);
+    assert_eq!(closed.disposition, Some(Disposition::UseAsIs));
+    assert!(closed.closed_at.is_some(), "a closed NCR records when it closed");
+}
+
+/// Closing an NCR with no disposition is refused -- through `close_ncr` and
+/// through `update_ncr` -- and leaves it open.
+#[tokio::test]
+async fn postgres_closing_an_ncr_requires_a_disposition() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let ncr = db
+        .quality()
+        .create_ncr_async(CreateNonConformance {
+            inspection_id: None,
+            source: NonConformanceSource::InternalAudit,
+            severity: Severity::Minor,
+            sku: format!("NCR-DISP-{}", Uuid::new_v4().simple()),
+            lot_number: None,
+            serial_number: None,
+            quantity_affected: dec!(1),
+            description: "defect".into(),
+            assigned_to: None,
+        })
+        .await
+        .expect("create ncr");
+
+    let err = db.quality().close_ncr_async(ncr.id).await.expect_err("close without a disposition");
+    assert_validation_mentions(&err, &["close", "disposition"]);
+    let err = db
+        .quality()
+        .update_ncr_async(
+            ncr.id,
+            UpdateNonConformance { status: Some(NcrStatus::Closed), ..Default::default() },
+        )
+        .await
+        .expect_err("close via update without a disposition");
+    assert_validation_mentions(&err, &["close", "disposition"]);
+    let still = db.quality().get_ncr_async(ncr.id).await.unwrap().unwrap();
+    assert_eq!(still.status, NcrStatus::Open);
+    assert!(still.closed_at.is_none());
+
+    dispose(&db, ncr.id).await;
+    let closed = db.quality().close_ncr_async(ncr.id).await.expect("close once disposed");
+    assert_eq!(closed.status, NcrStatus::Closed);
+    assert_eq!(
+        db.quality().close_ncr_async(ncr.id).await.expect("re-close").status,
         NcrStatus::Closed
     );
 }

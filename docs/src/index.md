@@ -6,7 +6,7 @@ StateSet iCommerce is a portable, AI-native commerce engine that runs in-process
 
 Think of it as the **SQLite of Commerce**: embed a full commerce engine in any application, in any language, with a single dependency.
 
-Current release: **1.35.2**
+Current release: **1.36.0**
 
 Before depending on this stack for regulated or infrastructure-grade workloads, read the
 [Trust Foundation](trust-foundation.md). It states the current guarantees, residual trust
@@ -98,9 +98,10 @@ No data migration between tiers. See [Product Tiers](tiers.md).
 
 1. [What is iCommerce?](concepts/icommerce.md) — Understand the paradigm shift
 2. [Getting Started](getting-started.md) — Install and run in 60 seconds
-3. [AI Agent Quickstart](ai-agents.md) — OpenAI, Vercel AI SDK, LangChain, MCP
-4. [Policy Engine](policy/engine.md) — Safety guardrails for autonomous agents
-5. [MCP Tools](guides/mcp-tools.md) — hundreds of operations your agent can call
+3. [Business profiles](guides/business-profiles.md) — Make the operating model yours
+4. [AI Agent Quickstart](ai-agents.md) — OpenAI, Vercel AI SDK, LangChain, MCP
+5. [Policy Engine](policy/engine.md) — Safety guardrails for autonomous agents
+6. [MCP Tools](guides/mcp-tools.md) — hundreds of operations your agent can call
 
 ### I'm connecting an existing store (Shopify, Stripe, WooCommerce)
 
@@ -135,4 +136,4 @@ No data migration between tiers. See [Product Tiers](tiers.md).
 Current workspace and binding counts live in [Workspace Inventory](appendix/workspace-inventory.md).
 6. [Trust Foundation](trust-foundation.md) — current trust posture and open gaps
 
-Current release: **1.35.2**
+Current release: **1.36.0**

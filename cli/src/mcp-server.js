@@ -49,7 +49,11 @@ import {
   createSimulateMutationToolCall,
 } from './mcp/mutation-simulator.js';
 // Aug 2026 extraction — orchestration factories (see each module's header).
-import { createA2AServiceBinding, initializeIntelligenceServices } from './mcp/a2a-service.js';
+import {
+  createA2AServiceBinding,
+  disposeA2AServices,
+  initializeIntelligenceServices,
+} from './mcp/a2a-service.js';
 import { buildReadOnlyToolSet, createCheckPermission } from './mcp/permission-gating.js';
 import { createPreparePaymentForTool, createResolveMppPaymentContext } from './mcp/mpp-payment.js';
 import { createToolCatalogHelpers } from './mcp/tool-catalog.js';
@@ -67,12 +71,8 @@ import { selectStrictKernelToolDefinitions } from './kernel-boundary.js';
 import { buildMppServiceInfo } from './mpp/index.js';
 
 // Domain tool registry
-import {
-  ALL_DOMAIN_TOOLS,
-  TOOL_MODULE_BY_NAME,
-  TOOL_POLICY_DOMAIN_BY_NAME,
-} from './tools/domain-registry.js';
-import { resolveMcpToolDomains } from './mcp/tool-profiles.js';
+import { ALL_DOMAIN_TOOLS, TOOL_POLICY_DOMAIN_BY_NAME } from './tools/domain-registry.js';
+import { resolveMcpToolFilter } from './mcp/tool-profiles.js';
 
 // AGENTIC_TOOL_RESULT_SCHEMA_VERSION lives in ./mcp/result-builders.js. We
 // re-alias it locally so existing call sites in this file (and any reverse
@@ -238,11 +238,8 @@ export function createStatesetMcpServer({
   toolDomains = [],
 }) {
   const strictKernelBoundary = Boolean(kernel && kernel.strict !== false);
-  const selectedDomains = resolveMcpToolDomains({ profile: toolProfile, domains: toolDomains });
-  const profileToolDefs = ALL_TOOL_DEFS.filter(
-    (tool) =>
-      !TOOL_MODULE_BY_NAME[tool.name] || selectedDomains.has(TOOL_MODULE_BY_NAME[tool.name]),
-  );
+  const isToolInProfile = resolveMcpToolFilter({ profile: toolProfile, domains: toolDomains });
+  const profileToolDefs = ALL_TOOL_DEFS.filter((tool) => isToolInProfile(tool.name));
   const exposedToolDefs = strictKernelBoundary
     ? selectStrictKernelToolDefinitions(profileToolDefs, KERNEL_CAPABILITY_BY_TOOL)
     : profileToolDefs;
@@ -282,11 +279,29 @@ export function createStatesetMcpServer({
   // ---------------------------------------------------------------------------
   // Lazy-loaded (body in ./mcp/a2a-service.js) so a failing module never
   // blocks startup.
-  initializeIntelligenceServices({
+  // A2A agent checkpoints are files; keep them beside the policy store /
+  // replay log, and only when there is somewhere durable to put them.
+  const isFileBackedDb =
+    typeof dbPath === 'string' &&
+    dbPath !== '' &&
+    dbPath !== ':memory:' &&
+    !dbPath.startsWith('file::memory:');
+  const a2aStateDir =
+    policyStorePath ||
+    (isFileBackedDb ? path.join(path.dirname(path.resolve(dbPath)), '.stateset') : null);
+  const a2aServicesReady = initializeIntelligenceServices({
     commerceWithA2A,
     a2aStore,
     setA2AServiceFactory: a2aBinding.setFactory,
+    agentConfig,
+    checkpointDir: a2aStateDir ? path.join(a2aStateDir, 'a2a-checkpoints') : null,
   });
+  // Stops service loops/timers. Re-run after init settles so a dispose that
+  // races initialization still stops what initialization attaches.
+  const disposeA2A = () => {
+    disposeA2AServices(commerceWithA2A);
+    a2aServicesReady.then(() => disposeA2AServices(commerceWithA2A));
+  };
 
   // ---------------------------------------------------------------------------
   // Permission helpers — body in ./mcp/permission-gating.js
@@ -545,8 +560,28 @@ export function createStatesetMcpServer({
   /**
    * Context object passed to every domain tool handler.
    */
+  // Tools read and write this server's store, never a per-machine default
+  // under ~/.stateset: two servers on one machine must not see each other's
+  // records. `a2aStore` is opened on `dbPath` (see above); the audit log is a
+  // sibling of it (`store.db` -> `store.audit.db`, src/audit-store.js), or the
+  // permission gate's log when one is attached, since that is where this
+  // server's permission checks are recorded.
+  let memoryAuditStore = null;
+  const getScopedAuditStore = async () => {
+    if (permissionGate?.auditStore) return permissionGate.auditStore;
+    const { auditDbPathFor, getAuditStoreForDb } = await import('./audit-store.js');
+    if (auditDbPathFor(dbPath) === ':memory:') {
+      memoryAuditStore ??= getAuditStoreForDb(dbPath);
+      return memoryAuditStore;
+    }
+    return getAuditStoreForDb(dbPath);
+  };
+
   const toolContext = {
     commerce: commerceWithA2A,
+    a2aStore,
+    dbPath,
+    getAuditStore: getScopedAuditStore,
     allowApply,
     autonomousEngine,
     autoIndexEntity,
@@ -618,7 +653,14 @@ export function createStatesetMcpServer({
   server.executeTool = executeTool;
   server.executeToolWithPayment = executeToolWithPayment;
   server.connect = (...args) => server.instance.connect(...args);
-  server.close = (...args) => server.instance.server.close(...args);
+  server.close = (...args) => {
+    disposeA2A();
+    return server.instance.server.close(...args);
+  };
+  /** Resolves once the A2A intelligence/automation services are attached. */
+  server.servicesReady = a2aServicesReady;
+  /** Stop A2A service loops and timers without closing the transport. */
+  server.dispose = disposeA2A;
   server.getRuntimeContract = getAgenticRuntimeContract;
   server.simulatePlan = simulateAgenticPlan;
   server.executePlan = executeAgenticPlan;

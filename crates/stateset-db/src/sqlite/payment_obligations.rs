@@ -219,6 +219,15 @@ impl PaymentObligationRepository for SqlitePaymentObligationRepository {
         let id_str = id.to_string();
         let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
+            let current = Self::fetch(tx, &id_str)?;
+            if !current.status.allows_manual_transition(status) {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict(format!(
+                        "cannot set payment obligation status from {} to {}",
+                        current.status, status
+                    )),
+                )));
+            }
             tx.execute(
                 "UPDATE payment_obligations SET status = ?, updated_at = ? WHERE id = ?",
                 rusqlite::params![status.to_string(), &now, &id_str],
@@ -371,5 +380,22 @@ mod tests {
         let o = new_obl(&repo, dec!(100), day(2026, 7, 1));
         repo.set_status(o.id, PaymentObligationStatus::Cancelled).expect("cancel");
         assert!(repo.record_payment(o.id, dec!(10)).is_err());
+    }
+
+    #[test]
+    fn manual_status_cannot_forge_payment_or_reopen_terminal_obligation() {
+        let repo = test_repo();
+        let o = new_obl(&repo, dec!(100), day(2026, 7, 1));
+        assert!(repo.set_status(o.id, PaymentObligationStatus::Paid).is_err());
+        assert!(repo.set_status(o.id, PaymentObligationStatus::PartiallyPaid).is_err());
+        repo.set_status(o.id, PaymentObligationStatus::Scheduled).expect("schedule");
+        repo.record_payment(o.id, dec!(40)).expect("partial payment");
+        assert!(repo.set_status(o.id, PaymentObligationStatus::Pending).is_err());
+        repo.set_status(o.id, PaymentObligationStatus::Cancelled).expect("cancel remainder");
+        assert!(repo.set_status(o.id, PaymentObligationStatus::Scheduled).is_err());
+        assert!(repo.record_payment(o.id, dec!(60)).is_err());
+        let after = repo.get(o.id).expect("get").expect("obligation");
+        assert_eq!(after.status, PaymentObligationStatus::Cancelled);
+        assert_eq!(after.amount_paid, dec!(40));
     }
 }

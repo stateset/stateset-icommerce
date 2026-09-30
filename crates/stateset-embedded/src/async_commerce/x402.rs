@@ -113,17 +113,14 @@ impl AsyncX402 {
     }
 
     /// Mark a sequenced intent as included in a published batch commitment
-    /// (`Sequenced -> Batched`).
+    /// (`Sequenced -> Batched`). The inclusion proof is verified against the
+    /// leaf rebuilt from the stored intent before anything is recorded.
     pub async fn mark_batched(
         &self,
         id: Uuid,
-        batch_merkle_root: &str,
-        inclusion_proof: Vec<String>,
+        inclusion: &X402BatchInclusion,
     ) -> Result<X402PaymentIntent> {
-        self.db
-            .x402_payment_intents()
-            .mark_batched_async(id, batch_merkle_root, inclusion_proof)
-            .await
+        self.db.x402_payment_intents().mark_batched_async(id, inclusion).await
     }
 
     /// Mark an intent as failed.

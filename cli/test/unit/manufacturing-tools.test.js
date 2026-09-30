@@ -209,14 +209,16 @@ describe('manufacturingTools — input schemas', () => {
     assert.ok(schema.revision, 'missing revision field');
   });
 
-  it('add_bom_component has bomId, name, sku, quantity, unitOfMeasure, notes fields', () => {
+  it('add_bom_component has bomId, name, sku, quantity, unitOfMeasure fields', () => {
     const schema = findTool('add_bom_component').inputSchema;
     assert.ok(schema.bomId, 'missing bomId field');
     assert.ok(schema.name, 'missing name field');
     assert.ok(schema.sku, 'missing sku field');
     assert.ok(schema.quantity, 'missing quantity field');
     assert.ok(schema.unitOfMeasure, 'missing unitOfMeasure field');
-    assert.ok(schema.notes, 'missing notes field');
+    // The binding's CreateBomComponentInput has no notes field, so the tool
+    // does not advertise one it would silently drop.
+    assert.equal(schema.notes, undefined);
   });
 
   it('activate_bom has bomId field', () => {
@@ -386,6 +388,33 @@ describe('manufacturingTools — add_bom_component handler', () => {
     assert.equal(result.success, true);
     assert.ok(result.message.includes('Component added'));
     assert.ok(result.component);
+  });
+
+  it('sends the binding CreateBomComponentInput shape: numeric quantity, no nulls', async () => {
+    const tool = findTool('add_bom_component');
+    const calls = [];
+    const commerce = {
+      bom: {
+        addComponent: async (bomId, input) => {
+          calls.push([bomId, input]);
+          return { id: 'comp_x', ...input };
+        },
+      },
+    };
+    await tool.handler({
+      commerce,
+      params: { bomId: 'bom_001', name: 'Screw', quantity: 8 },
+      allowApply: true,
+    });
+    await tool.handler({
+      commerce,
+      params: { bomId: 'bom_001', name: 'Nut', sku: 'NUT-1', quantity: 2.5, unitOfMeasure: 'kg' },
+      allowApply: true,
+    });
+    assert.deepStrictEqual(calls, [
+      ['bom_001', { name: 'Screw', quantity: 8, unitOfMeasure: 'each' }],
+      ['bom_001', { name: 'Nut', quantity: 2.5, unitOfMeasure: 'kg', componentSku: 'NUT-1' }],
+    ]);
   });
 });
 

@@ -66,6 +66,13 @@ export function createA2AServiceBinding(a2aStore) {
     updateNotificationLog: (id, u) => a2aStore.updateNotificationLog(id, u),
     listNotificationLog: (f) => a2aStore.listNotificationLog(f),
     getPendingNotifications: (max, lim) => a2aStore.getPendingNotifications(max, lim),
+    // Webhook dead-letter queue methods
+    quarantineFailedNotifications: (o) => a2aStore.quarantineFailedNotifications(o),
+    listDLQ: (f) => a2aStore.listDLQ(f),
+    getDLQEntry: (id) => a2aStore.getDLQEntry(id),
+    countDLQ: (f) => a2aStore.countDLQ(f),
+    replayDLQEntry: (id) => a2aStore.replayDLQEntry(id),
+    purgeDLQ: (o) => a2aStore.purgeDLQ(o),
     // Webhook config methods
     upsertWebhookConfig: (c) => a2aStore.upsertWebhookConfig(c),
     getWebhookConfig: (addr) => a2aStore.getWebhookConfig(addr),
@@ -137,14 +144,169 @@ export function createA2AServiceBinding(a2aStore) {
 }
 
 /**
- * Lazily load the A2A intelligence services and attach them to the commerce
- * wrapper. Modules are dynamically imported so a failure in any of them
- * degrades gracefully instead of blocking server startup.
+ * Wrap an A2A store so the billing executor only sees subscriptions this
+ * agent is the subscriber of. The executor pays every due subscription it is
+ * handed from its one wallet; without this scoping a tick would pay other
+ * agents' subscriptions out of this agent's wallet.
+ *
+ * @param {object} store
+ * @param {string} walletAddress
+ * @returns {object}
+ */
+function scopeStoreToSubscriber(store, walletAddress) {
+  const mine = (sub) =>
+    String(sub?.subscriber_address || '').toLowerCase() === walletAddress.toLowerCase();
+  return {
+    getExpiredTrials: async (now) => (await store.getExpiredTrials(now)).filter(mine),
+    getDueSubscriptions: async (now, limit) =>
+      (await store.getDueSubscriptions(now, limit)).filter(mine),
+    updateSubscription: (id, updates) => store.updateSubscription(id, updates),
+  };
+}
+
+/**
+ * Construct and attach the A2A automation/platform services the tool modules
+ * guard on (`commerce._billingExecutor`, `_disputeResolver`, ...).
+ *
+ * Construction starts no background work: the billing executor and dispute
+ * resolver only run a (unref'd) timer after an explicit `*_start` tool call,
+ * and `disposeA2AServices` stops them. Services whose inputs this server does
+ * not have (a wallet, a data directory, a sequencer) are left unattached and
+ * their tools answer with `A2A_SERVICE_REQUIREMENTS`
+ * (src/a2a/service-requirements.js), which names what is missing.
+ *
+ * @param {object} commerceWithA2A
+ * @param {object} a2aStore
+ * @param {{ agentConfig?: object|null, checkpointDir?: string|null }} options
+ * @returns {Promise<void>}
+ */
+async function attachAutomationServices(commerceWithA2A, a2aStore, options) {
+  const { agentConfig = null, checkpointDir = null } = options;
+  const [
+    { createNotificationService },
+    { createEscrowService },
+    { createDisputeService },
+    { createDisputeResolver },
+    { createSLAService },
+    { createMarketplaceService },
+    { createHealthService },
+    { createSagaOrchestrator },
+    { createFanOutCoordinator },
+    { createHandshakeService },
+    { createDataExportService },
+    { createCheckpointService },
+    { createBillingExecutor },
+    { createBatchService },
+    { createA2AService },
+  ] = await Promise.all([
+    import('../a2a/notifications.js'),
+    import('../a2a/escrow.js'),
+    import('../a2a/disputes.js'),
+    import('../a2a/dispute-resolver.js'),
+    import('../a2a/sla.js'),
+    import('../a2a/marketplace.js'),
+    import('../a2a/health.js'),
+    import('../a2a/saga.js'),
+    import('../a2a/fan-out.js'),
+    import('../a2a/handshake.js'),
+    import('../a2a/data-export.js'),
+    import('../a2a/checkpoint.js'),
+    import('../a2a/billing-executor.js'),
+    import('../a2a/batch.js'),
+    import('../a2a/index.js'),
+  ]);
+
+  const notificationService = createNotificationService(a2aStore);
+  const escrowService = createEscrowService(a2aStore);
+  const disputeResolver = createDisputeResolver(
+    a2aStore,
+    createDisputeService(a2aStore),
+    escrowService,
+    notificationService,
+  );
+
+  // Wallet-bound services: only when the embedder configured an agent wallet.
+  // This is the same A2A service `a2a_pay` builds from `agentConfig`.
+  const walletAddress = agentConfig?.walletAddress || null;
+  const walletA2A = walletAddress ? createA2AService(commerceWithA2A, agentConfig) : null;
+  const billingExecutor = walletA2A
+    ? createBillingExecutor(
+        scopeStoreToSubscriber(a2aStore, walletAddress),
+        walletA2A,
+        notificationService,
+      )
+    : null;
+
+  const sequencerClient =
+    typeof agentConfig?.sequencerClient?.getCircuitStatus === 'function'
+      ? agentConfig.sequencerClient
+      : null;
+
+  commerceWithA2A._notificationService = notificationService;
+  commerceWithA2A._escrowService = escrowService;
+  commerceWithA2A._disputeResolver = disputeResolver;
+  commerceWithA2A._slaService = createSLAService(a2aStore);
+  // No A2A service: RFQ awards are recorded in the store; accepting the
+  // winning quote stays with the buyer (same wiring as the agent-runtime tools).
+  commerceWithA2A._marketplace = createMarketplaceService(a2aStore, null);
+  commerceWithA2A._healthService = createHealthService(a2aStore, sequencerClient, {
+    ...(billingExecutor ? { billingExecutor } : {}),
+    disputeResolver,
+  });
+  commerceWithA2A._sagaOrchestrator = createSagaOrchestrator(a2aStore, {});
+  commerceWithA2A._fanOutCoordinator = createFanOutCoordinator();
+  commerceWithA2A._handshakeService = createHandshakeService(agentConfig || {});
+  commerceWithA2A._dataExportService = createDataExportService(a2aStore);
+  if (checkpointDir) {
+    // Lazy: the directory is only created on the first save.
+    commerceWithA2A._checkpointService = createCheckpointService(checkpointDir);
+  }
+  if (billingExecutor) commerceWithA2A._billingExecutor = billingExecutor;
+  if (walletA2A) commerceWithA2A._batchService = createBatchService(walletA2A, a2aStore);
+  if (sequencerClient) commerceWithA2A._sequencerClient = sequencerClient;
+}
+
+/**
+ * Stop everything the attached A2A services may have started: the billing
+ * executor, dispute resolver and scheduler loops, the rate limiter's cleanup
+ * interval (created at construction), and fan-out timeout timers. Safe to
+ * call more than once and before initialization finished.
+ *
+ * @param {object} commerceWithA2A
+ */
+export function disposeA2AServices(commerceWithA2A) {
+  if (!commerceWithA2A) return;
+  for (const key of ['_billingExecutor', '_disputeResolver', '_schedulerService']) {
+    try {
+      commerceWithA2A[key]?.stop?.();
+    } catch (err) {
+      console.debug(`[mcp-server] ${key} stop failed:`, err.message);
+    }
+  }
+  try {
+    commerceWithA2A._rateLimiter?.destroy?.();
+  } catch (err) {
+    console.debug('[mcp-server] rate limiter destroy failed:', err.message);
+  }
+  try {
+    commerceWithA2A._fanOutCoordinator?.destroy?.();
+  } catch (err) {
+    console.debug('[mcp-server] fan-out destroy failed:', err.message);
+  }
+}
+
+/**
+ * Lazily load the A2A intelligence and automation services and attach them
+ * to the commerce wrapper. Modules are dynamically imported so a failure in
+ * any of them degrades gracefully instead of blocking server startup; the
+ * two groups degrade independently.
  *
  * @param {{
  *   commerceWithA2A: object,
  *   a2aStore: import('../a2a/store.js').A2AStore,
  *   setA2AServiceFactory: (factory: () => object) => void,
+ *   agentConfig?: object|null,
+ *   checkpointDir?: string|null,
  * }} deps
  * @returns {Promise<void>} resolves once wiring (or its graceful fallback) is done
  */
@@ -152,8 +314,10 @@ export function initializeIntelligenceServices({
   commerceWithA2A,
   a2aStore,
   setA2AServiceFactory,
+  agentConfig = null,
+  checkpointDir = null,
 }) {
-  return Promise.all([
+  const intelligence = Promise.all([
     import('../a2a/agent-memory.js'),
     import('../a2a/rules-engine.js'),
     import('../a2a/idempotency.js'),
@@ -226,4 +390,14 @@ export function initializeIntelligenceServices({
       console.debug('[mcp-server] Intelligence services init skipped:', err.message);
       commerceWithA2A._store = a2aStore;
     });
+
+  const automation = attachAutomationServices(commerceWithA2A, a2aStore, {
+    agentConfig,
+    checkpointDir,
+  }).catch((err) => {
+    // Graceful degradation — the tools answer "not initialized" instead.
+    console.debug('[mcp-server] A2A automation services init skipped:', err.message);
+  });
+
+  return Promise.all([intelligence, automation]).then(() => undefined);
 }

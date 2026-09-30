@@ -301,6 +301,59 @@ shows a signed procurement-style rule with a `$25,000.00` hard ceiling and
 human approval above `$2,500.00`; its all-zero public key is intentionally a
 non-production placeholder.
 
+## A complete checkout on the strict profile
+
+Strict mode exposes only governed writes, so the storefront journey itself is
+governed. A strict endpoint whose policy and principal grant these commands can
+run the whole customer journey — account, cart, pricing, checkout, capture,
+fulfilment, return and refund — without any legacy write:
+
+| MCP tool | Command | Delegates to |
+| --- | --- | --- |
+| `create_customer` | `customers.create` | customer insert (normalised e-mail, uniqueness) |
+| `create_cart` | `carts.create` | cart create (currency, catalogue line guard) |
+| `add_cart_item` | `carts.item.add` | cart add-item (exact price, catalogue guard, reprice) |
+| `set_cart_shipping_address` | `carts.shipping_address.set` | cart shipping address |
+| `set_cart_payment` | `carts.payment_method.set` | cart payment method (token redacted on the receipt) |
+| `apply_cart_discount` | `carts.coupon.apply` | coupon redemption rules (window, limits, conditions) |
+| `calculate_cart_tax` | `carts.tax.calculate` | tax engine + cart `set_tax` |
+| `complete_checkout` | `checkout.commit` | checkout (see above) |
+| `create_payment` | `payments.create` | payment create |
+| `complete_payment` | `payments.complete` | payment capture (state machine, order capture capacity) |
+| `update_order_status` | `orders.transition` | order state machine |
+| `create_shipment` | `shipments.create` | shipment create (order must exist and not be cancelled/refunded) |
+| `ship_order` | `orders.ship` | line-aware shipment |
+| `create_return` | `returns.create` | return request (returnable quantities) |
+| `add_return_tracking` | `returns.tracking.add` | return update to `in_transit` |
+| `approve_return` … `complete_return` | `returns.transition` | return state machine |
+| `create_refund` | `payments.create_refund` | refund create |
+
+Each storefront command runs the same repository function the ungoverned API
+uses, on the kernel's transaction and inside a savepoint: a business refusal
+(missing cart, invalid coupon, unreturnable quantity, illegal capture) becomes
+a durable rejection receipt with a stable code (`commerce.cart_not_found`,
+`commerce.validation_failed`, `commerce.return.exceeds_shipped`, …), a
+preview rolls the savepoint back only after the step proved it would apply,
+and an apply commits the mutation, its `*.v1` command-context fact and the
+sealed receipt together. Both backends take that decision in one place
+(`kernel::plans::storefront::seal_decision`). `carts.tax.calculate` prices the
+tax before taking the cart lock and refuses (`commerce.conflict`, retry after
+conflict) if the cart's tax basis changed before the write.
+
+Promotions and coupons are merchant configuration, not agent actions:
+`create_promotion`, `activate_promotion` and `create_coupon` stay outside the
+governed catalog and are blocked on a strict endpoint. The operator provisions
+them (for example directly on `Commerce`, or through a separate
+`--kernel-allow-legacy-writes` admin endpoint); agents redeem them with
+`carts.coupon.apply`, which enforces every redemption rule.
+
+Once kernel configuration is present (strict or `--kernel-allow-legacy-writes`
+with a policy), these tools always run as kernel commands, so an existing
+policy must grant the new capabilities for them to keep working. Without any
+kernel configuration (the ephemeral HTTP sandbox, or legacy writes with no
+policy) the storefront tools keep their previous legacy handlers; the commands
+that were already governed still refuse apply without a kernel.
+
 ## Exact money
 
 Agent-facing JSON uses `MoneyWire`:
@@ -411,7 +464,9 @@ check. It supports confirmation, processing, delivery, refund, and cancellation;
 cancellation releases linked inventory reservations and backorders in the same
 transaction. Shipment targets are rejected with
 `commerce.shipment_command_required` because fulfillment needs the separate
-line-aware `orders.ship` contract. Transition receipts identify the order
+line-aware `orders.ship` contract. A command that declares a `payment_status` is
+rejected with `commerce.payment_status_derived`: an order's payment status is
+derived from its payments and refunds, never declared. Transition receipts identify the order
 version before and after the mutation, and the committed `orders.updated.v1`
 fact carries the authenticated command context.
 
@@ -421,8 +476,11 @@ state and validates line ownership, remaining quantities, reservation expiry,
 policy, and order version without mutation. Apply confirms the exact inventory
 reservation portions, increments line shipment quantities, records tracking,
 updates the order, and commits every inventory and order fact plus one receipt
-atomically. Every caused fact is listed in the receipt and inherits the command's
-principal, correlation, and causation context.
+atomically. When the shipment completes the order, the order's open shipment
+records (`pending`, `processing`, `ready_to_ship`) move to `shipped` in the same
+transaction, adopting the command's tracking number when they have none, each
+with a `shipment.status_changed` fact. Every caused fact is listed in the receipt
+and inherits the command's principal, correlation, and causation context.
 
 `returns.transition` applies the return state machine under the same governed
 boundary. Preview reports the current return and predicted version; apply locks

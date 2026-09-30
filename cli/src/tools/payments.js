@@ -57,7 +57,15 @@ export const paymentTools = [
     handler: async ({ commerce, params }) => {
       const { paymentId } = params;
       const payment = await commerce.payments.get(paymentId);
-      return { success: true, payment };
+      // Refunds (any status) recorded against the payment, when the binding
+      // exposes them.
+      const refunds =
+        payment && typeof commerce.payments.getRefunds === 'function'
+          ? await commerce.payments.getRefunds(paymentId)
+          : undefined;
+      return refunds === undefined
+        ? { success: true, payment }
+        : { success: true, payment, refunds };
     },
   },
 

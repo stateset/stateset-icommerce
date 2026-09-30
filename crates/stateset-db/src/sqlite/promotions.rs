@@ -10,8 +10,8 @@ use stateset_core::{
     CouponCode, CouponFilter, CouponStatus, CreateCouponCode, CreatePromotion,
     CreatePromotionCondition, CurrencyCode, CustomerId, CustomerUsageCounts, OrderId, Promotion,
     PromotionCondition, PromotionFilter, PromotionId, PromotionRepository, PromotionStatus,
-    PromotionUsage, RejectedPromotion, RejectionReason, Result, UpdatePromotion,
-    evaluate_promotions, generate_promotion_code, validate_coupon_redemption,
+    PromotionUsage, PromotionUsageFilter, RejectedPromotion, RejectionReason, Result,
+    UpdatePromotion, evaluate_promotions, generate_promotion_code, validate_coupon_redemption,
 };
 use uuid::Uuid;
 
@@ -377,39 +377,58 @@ impl SqlitePromotionRepository {
     // Conditions
     // ========================================================================
 
-    #[allow(dead_code)]
-    fn create_condition(
+    /// Attach a validated condition to an existing promotion.
+    ///
+    /// The insert is guarded on the promotion existing in the same statement,
+    /// so a promotion deleted concurrently is reported as not found rather
+    /// than left with an orphaned condition, and the `promotion.condition_added`
+    /// fact commits in the same transaction as the row.
+    pub fn add_condition(
         &self,
         promotion_id: PromotionId,
         input: CreatePromotionCondition,
-    ) -> Result<PromotionCondition> {
-        let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
+    ) -> Result<Promotion> {
+        input.validate()?;
+        let condition = input.into_condition(promotion_id);
+        with_immediate_transaction(&self.pool, |tx| {
+            let inserted = tx.execute(
+                "INSERT INTO promotion_conditions
+                    (id, promotion_id, condition_type, operator, value, is_required)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6
+                 WHERE EXISTS (SELECT 1 FROM promotions WHERE id = ?2)",
+                rusqlite::params![
+                    condition.id.to_string(),
+                    promotion_id.to_string(),
+                    condition.condition_type.to_string(),
+                    condition.operator.to_string(),
+                    condition.value,
+                    i32::from(condition.is_required),
+                ],
+            )?;
+            if inserted == 0 {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::NotFound,
+                )));
+            }
+            super::kernel_outbox::record_outbox_fact(
+                tx,
+                crate::kernel_outbox::RecordedFact {
+                    event_type: "promotion.condition_added",
+                    aggregate_type: "promotion",
+                    aggregate_id: &promotion_id.to_string(),
+                    payload: serde_json::json!({
+                        "promotion_id": promotion_id,
+                        "condition_id": condition.id,
+                        "condition_type": condition.condition_type.to_string(),
+                        "operator": condition.operator.to_string(),
+                        "value": condition.value,
+                        "is_required": condition.is_required,
+                    }),
+                },
+            )?;
+            Ok(())
         })?;
-
-        let id = Uuid::new_v4();
-
-        conn.execute(
-            "INSERT INTO promotion_conditions (id, promotion_id, condition_type, operator, value, is_required)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![
-                id.to_string(),
-                promotion_id.to_string(),
-                input.condition_type.to_string(),
-                input.operator.to_string(),
-                input.value,
-                i32::from(input.is_required),
-            ],
-        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}")))?;
-
-        Ok(PromotionCondition {
-            id,
-            promotion_id,
-            condition_type: input.condition_type,
-            operator: input.operator,
-            value: input.value,
-            is_required: input.is_required,
-        })
+        self.get(promotion_id)?.ok_or(CommerceError::NotFound)
     }
 
     fn row_to_condition(row: &rusqlite::Row<'_>) -> rusqlite::Result<PromotionCondition> {
@@ -631,7 +650,7 @@ impl SqlitePromotionRepository {
 
     pub fn apply_promotions(
         &self,
-        request: ApplyPromotionsRequest,
+        mut request: ApplyPromotionsRequest,
     ) -> Result<ApplyPromotionsResult> {
         let mut result = ApplyPromotionsResult {
             original_subtotal: request.subtotal,
@@ -642,6 +661,8 @@ impl SqlitePromotionRepository {
         let conn = self.pool.get().map_err(|e| {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
+        Self::settle_first_order_with_conn(&conn, &mut request, None)
+            .map_err(|e| CommerceError::DatabaseError(format!("Query error: {e}")))?;
 
         let candidates = Self::candidate_promotions_with_conn(
             &conn,
@@ -664,6 +685,34 @@ impl SqlitePromotionRepository {
         evaluate_promotions(&request, candidates, &customer_usage, &mut result)?;
 
         Ok(result)
+    }
+
+    /// Decide `request.is_first_order` from the customer's order history.
+    ///
+    /// An identified customer is on their first order when no OTHER order is
+    /// on record for them, whatever its status: a cancelled order still
+    /// counts, so placing and cancelling cannot mint a fresh welcome discount.
+    /// `placing` names the order checkout has already inserted in this
+    /// transaction, which must not count as history. The caller's own value
+    /// is overruled — a returning customer cannot claim to be new — and kept
+    /// only for an anonymous request, which has no history to consult and is
+    /// re-decided at checkout, where the customer is always known.
+    fn settle_first_order_with_conn(
+        conn: &rusqlite::Connection,
+        request: &mut ApplyPromotionsRequest,
+        placing: Option<OrderId>,
+    ) -> rusqlite::Result<()> {
+        let Some(customer_id) = request.customer_id else {
+            return Ok(());
+        };
+        let placing = placing.map(|id| id.to_string()).unwrap_or_default();
+        let has_other_orders: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM orders WHERE customer_id = ?1 AND id != ?2)",
+            [customer_id.to_string(), placing],
+            |row| row.get(0),
+        )?;
+        request.is_first_order = !has_other_orders;
+        Ok(())
     }
 
     /// THE candidate selection for `request` at `now`, shared by pricing
@@ -827,6 +876,7 @@ impl SqlitePromotionRepository {
         let mut request = ApplyPromotionsRequest::from_cart(cart, "");
         request.coupon_codes = cart.coupon_code.iter().map(|c| c.to_uppercase()).collect();
         request.customer_id = customer_id.or(cart.customer_id);
+        Self::settle_first_order_with_conn(tx, &mut request, Some(order_id))?;
 
         // The SAME candidate selection pricing used (`apply_promotions`), so
         // stacking at checkout equals stacking at pricing: a coupon that is
@@ -909,6 +959,8 @@ impl SqlitePromotionRepository {
         let mut request = ApplyPromotionsRequest::from_cart(cart, "");
         request.coupon_codes = cart.coupon_code.iter().map(|c| c.to_uppercase()).collect();
         request.customer_id = customer_id.or(cart.customer_id);
+        Self::settle_first_order_with_conn(conn, &mut request, None)
+            .map_err(|e| CommerceError::DatabaseError(format!("Query error: {e}")))?;
 
         let candidates =
             Self::candidate_promotions_with_conn(conn, &request, Utc::now(), &mut Vec::new())?;
@@ -1237,7 +1289,9 @@ impl SqlitePromotionRepository {
             .get_with_conn(conn, coupon.promotion_id)?
             .ok_or_else(|| CommerceError::ValidationError("Promotion not found".into()))?;
 
-        let request = ApplyPromotionsRequest::from_cart(cart, coupon_code);
+        let mut request = ApplyPromotionsRequest::from_cart(cart, coupon_code);
+        Self::settle_first_order_with_conn(conn, &mut request, None)
+            .map_err(|e| CommerceError::DatabaseError(format!("Query error: {e}")))?;
         validate_coupon_redemption(&coupon, &promotion, &request, now)?;
 
         if let Some(customer_id) = cart.customer_id {
@@ -1289,18 +1343,39 @@ impl SqlitePromotionRepository {
 
     /// Usage ledger rows recorded against a cart.
     pub fn usage_for_cart(&self, cart_id: CartId) -> Result<Vec<PromotionUsage>> {
+        self.list_usage_rows(&PromotionUsageFilter { cart_id: Some(cart_id), ..Default::default() })
+    }
+
+    /// Usage ledger rows matching `filter`, oldest first (`used_at`, `id`).
+    pub fn list_usage_rows(&self, filter: &PromotionUsageFilter) -> Result<Vec<PromotionUsage>> {
         let conn = self
             .pool
             .get()
             .map_err(|e| CommerceError::DatabaseError(format!("Connection error: {e}")))?;
+        let mut sql = "SELECT id, promotion_id, coupon_id, customer_id, order_id, cart_id, discount_amount, currency, used_at
+                 FROM promotion_usage WHERE 1=1"
+            .to_string();
+        let mut params: Vec<String> = Vec::new();
+        let clauses: [(&str, Option<String>); 5] = [
+            ("promotion_id", filter.promotion_id.map(|v| v.to_string())),
+            ("coupon_id", filter.coupon_id.map(|v| v.to_string())),
+            ("customer_id", filter.customer_id.map(|v| v.to_string())),
+            ("order_id", filter.order_id.map(|v| v.to_string())),
+            ("cart_id", filter.cart_id.map(|v| v.to_string())),
+        ];
+        for (column, value) in clauses {
+            if let Some(value) = value {
+                sql.push_str(&format!(" AND {column} = ?"));
+                params.push(value);
+            }
+        }
+        sql.push_str(" ORDER BY used_at, id");
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
         let mut stmt = conn
-            .prepare(
-                "SELECT id, promotion_id, coupon_id, customer_id, order_id, cart_id, discount_amount, currency, used_at
-                 FROM promotion_usage WHERE cart_id = ?1 ORDER BY used_at",
-            )
+            .prepare(&sql)
             .map_err(|e| CommerceError::DatabaseError(format!("Query error: {e}")))?;
         let rows = stmt
-            .query_map([cart_id.to_string()], |row| {
+            .query_map(rusqlite::params_from_iter(params.iter()), |row| {
                 Ok(PromotionUsage {
                     id: parse_uuid_row(&row.get::<_, String>(0)?, "promotion_usage", "id")?,
                     promotion_id: PromotionId::from(parse_uuid_row(
@@ -1558,6 +1633,10 @@ impl SqlitePromotionRepository {
 // ============================================================================
 
 impl PromotionRepository for SqlitePromotionRepository {
+    fn list_usage(&self, filter: PromotionUsageFilter) -> Result<Vec<PromotionUsage>> {
+        self.list_usage_rows(&filter)
+    }
+
     fn create(&self, input: CreatePromotion) -> Result<Promotion> {
         Self::create(self, input)
     }
@@ -1588,6 +1667,14 @@ impl PromotionRepository for SqlitePromotionRepository {
 
     fn deactivate(&self, id: PromotionId) -> Result<Promotion> {
         Self::deactivate(self, id)
+    }
+
+    fn add_condition(
+        &self,
+        promotion_id: PromotionId,
+        condition: CreatePromotionCondition,
+    ) -> Result<Promotion> {
+        Self::add_condition(self, promotion_id, condition)
     }
 
     fn create_coupon(&self, input: CreateCouponCode) -> Result<CouponCode> {
@@ -2494,7 +2581,7 @@ mod tests {
             let promo = make_pct_promo(&repo, code, dec!(0.10));
             // make_pct_promo creates without conditions; add them individually.
             for v in values {
-                repo.create_condition(promo.id, condition(v)).expect("add condition");
+                repo.add_condition(promo.id, condition(v)).expect("add condition");
             }
         }
 
@@ -2798,5 +2885,143 @@ mod tests {
             })
             .expect("price");
         assert_eq!(priced.total_discount, dec!(10.00), "{priced:?}");
+    }
+
+    #[test]
+    fn list_usage_filters_the_ledger_by_order_promotion_customer_and_cart() {
+        use stateset_core::{
+            CartRepository, CreateCart, CreateOrder, CreateOrderItem, OrderRepository, ProductId,
+        };
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.promotions();
+        let ten = make_pct_promo(&repo, "LEDGER-10", dec!(0.10));
+        let five = make_pct_promo(&repo, "LEDGER-5", dec!(0.05));
+        let (alice, bob) = (make_customer(&db), make_customer(&db));
+        let order_for = |customer_id| {
+            db.orders()
+                .create(CreateOrder {
+                    customer_id,
+                    items: vec![CreateOrderItem {
+                        product_id: ProductId::new(),
+                        sku: "LEDGER-SKU".into(),
+                        name: "Ledger".into(),
+                        quantity: 1,
+                        unit_price: dec!(10.00),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })
+                .expect("create order")
+                .id
+        };
+        let (order_a, order_b) = (order_for(alice), order_for(bob));
+        let cart = db
+            .carts()
+            .create(CreateCart { customer_id: Some(bob), ..Default::default() })
+            .expect("create cart")
+            .id;
+
+        repo.record_usage(ten.id, None, Some(alice), Some(order_a), None, dec!(2.00), "USD")
+            .expect("use 1");
+        repo.record_usage(five.id, None, Some(alice), Some(order_a), None, dec!(1.00), "USD")
+            .expect("use 2");
+        repo.record_usage(ten.id, None, Some(bob), Some(order_b), Some(cart), dec!(3.00), "USD")
+            .expect("use 3");
+
+        assert_eq!(repo.list_usage(PromotionUsageFilter::default()).expect("all").len(), 3);
+
+        let for_a = repo
+            .list_usage(PromotionUsageFilter { order_id: Some(order_a), ..Default::default() })
+            .expect("by order");
+        assert_eq!(for_a.len(), 2);
+        assert!(for_a.iter().all(|u| u.order_id == Some(order_a)));
+        let mut amounts: Vec<Decimal> = for_a.iter().map(|u| u.discount_amount).collect();
+        amounts.sort();
+        assert_eq!(amounts, vec![dec!(1.00), dec!(2.00)]);
+
+        let ten_bob = repo
+            .list_usage(PromotionUsageFilter {
+                promotion_id: Some(ten.id),
+                customer_id: Some(bob),
+                ..Default::default()
+            })
+            .expect("by promotion and customer");
+        assert_eq!(ten_bob.len(), 1);
+        assert_eq!(ten_bob[0].order_id, Some(order_b));
+
+        let by_cart = repo
+            .list_usage(PromotionUsageFilter { cart_id: Some(cart), ..Default::default() })
+            .expect("by cart");
+        assert_eq!(by_cart.len(), 1);
+        assert_eq!(repo.usage_for_cart(cart).expect("cart helper").len(), 1);
+
+        let page = repo
+            .list_usage(PromotionUsageFilter { limit: Some(2), ..Default::default() })
+            .expect("page");
+        assert_eq!(page.len(), 2);
+        let rest = repo
+            .list_usage(PromotionUsageFilter { offset: Some(2), ..Default::default() })
+            .expect("rest");
+        assert_eq!(rest.len(), 1);
+        assert!(!page.iter().any(|u| u.id == rest[0].id), "pages must not overlap");
+
+        assert!(
+            repo.list_usage(PromotionUsageFilter {
+                order_id: Some(OrderId::new()),
+                ..Default::default()
+            })
+            .expect("none")
+            .is_empty()
+        );
+    }
+
+    /// The backend reports a failed condition with the code of its class,
+    /// not a blanket `MinimumNotMet`.
+    #[test]
+    fn failed_conditions_carry_a_class_specific_rejection_code() {
+        let repo = fresh_repo();
+        let make = |code: &str, condition_type: ConditionType, operator, value: &str| {
+            let promo = repo
+                .create(CreatePromotion {
+                    code: Some(code.into()),
+                    name: code.into(),
+                    promotion_type: PromotionType::PercentageOff,
+                    trigger: PromotionTrigger::Automatic,
+                    percentage_off: Some(dec!(0.10)),
+                    conditions: Some(vec![CreatePromotionCondition {
+                        condition_type,
+                        operator,
+                        value: value.into(),
+                        is_required: true,
+                    }]),
+                    ..Default::default()
+                })
+                .expect("create promo");
+            repo.activate(promo.id).expect("activate").id
+        };
+        let first_order =
+            make("RC-FIRST", ConditionType::FirstOrder, ConditionOperator::Equals, "true");
+        let sku = make("RC-SKU", ConditionType::SkuInCart, ConditionOperator::In, "OTHER");
+        let minimum = make(
+            "RC-MIN",
+            ConditionType::MinimumSubtotal,
+            ConditionOperator::GreaterThanOrEqual,
+            "1000",
+        );
+        let mut request = eval_request("UNUSED", None);
+        request.coupon_codes.clear();
+        request.line_items = vec![line_item("MINE", None, dec!(100.00))];
+        let result = repo.apply_promotions(request).expect("eval");
+        let code_for = |id: PromotionId| {
+            result
+                .rejected_promotions
+                .iter()
+                .find(|r| r.promotion_id == Some(id))
+                .map(|r| r.reason_code)
+                .unwrap_or_else(|| panic!("{id} not rejected"))
+        };
+        assert_eq!(code_for(first_order), RejectionReason::CustomerNotEligible);
+        assert_eq!(code_for(sku), RejectionReason::ProductNotEligible);
+        assert_eq!(code_for(minimum), RejectionReason::MinimumNotMet);
     }
 }

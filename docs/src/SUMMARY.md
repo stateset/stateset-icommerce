@@ -158,6 +158,7 @@
 - [Agent Inventory](appendix/agent-inventory.md)
 - [API Command Coverage](appendix/api-command-coverage.md)
 - [Binding API Inventory](appendix/binding-api-inventory.md)
+- [Binding Parity](appendix/binding-parity.md)
 - [MCP API Coverage](appendix/mcp-api-coverage.md)
 - [MCP Tool Inventory](appendix/mcp-tool-inventory.md)
 - [HTTP Gateway Inventory](appendix/http-gateway-inventory.md)

@@ -12,9 +12,10 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{OptionalExtension, Row, params};
 use stateset_core::{
     BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CurrencyCode,
-    CustomerId, InvoiceId, OrderId, OrderStatus, Payment, PaymentFilter, PaymentId, PaymentMethod,
-    PaymentRepository, PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment,
-    Validate, generate_payment_number, generate_refund_number, validate_batch_size,
+    CustomerId, InvoiceId, OrderId, OrderPaymentLedger, OrderStatus, Payment, PaymentFilter,
+    PaymentId, PaymentMethod, PaymentRepository, PaymentStatus, PaymentTransactionStatus, Refund,
+    RefundStatus, Result, UpdatePayment, Validate, generate_payment_number, generate_refund_number,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -111,11 +112,16 @@ fn statuses_allowing_transition_to(target: PaymentTransactionStatus) -> String {
 /// order could never be cancelled or deleted cleanly. A no-op write (already
 /// in that status) is still allowed so metadata patches on refunded payments
 /// keep working. Worded identically in the Postgres backend.
+///
+/// `Disputed -> Refunded` is the one exception: it is a lost chargeback, and
+/// the caller records it on the ledger with [`record_lost_chargeback_tx`] in
+/// the same transaction.
 pub(crate) fn ensure_not_refund_by_status_flip(
     current: PaymentTransactionStatus,
     target: PaymentTransactionStatus,
 ) -> Result<()> {
     if current != target
+        && !current.is_lost_chargeback(target)
         && matches!(
             target,
             PaymentTransactionStatus::Refunded | PaymentTransactionStatus::PartiallyRefunded
@@ -344,6 +350,82 @@ pub(crate) fn create_refund_in_tx(
     Ok(id)
 }
 
+/// Record a lost chargeback on `payment` (currently `Disputed`, being moved to
+/// `Refunded` by the caller's status write) inside the caller's transaction.
+///
+/// The card network has already reversed the charge, so the payment's whole
+/// remaining balance (`amount - amount_refunded`) has left the merchant. It is
+/// recorded where every other money-out is: a `completed` refund-ledger row
+/// for that balance, stamped `reason =`
+/// [`stateset_core::LOST_CHARGEBACK_REFUND_REASON`] so it is distinguishable
+/// from a refund the merchant issued, and `amount_refunded = amount`. That
+/// keeps `amount_refunded == Σ completed refunds`, makes the payment
+/// unrefundable (nothing remains to refund), frees the order for cancel/delete
+/// guards, and lets the caller's `sync_order_payment_status_tx` re-derive the
+/// order from the ledger (full order lost -> `refunded`, part ->
+/// `partially_refunded`). Emits `payments.chargeback_lost.v1`. Returns the
+/// ledger row's id. Mirrored exactly in the Postgres backend.
+pub(crate) fn record_lost_chargeback_tx(
+    tx: &rusqlite::Transaction<'_>,
+    payment: &Payment,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<Uuid> {
+    let reversed = (payment.amount - payment.amount_refunded).max(rust_decimal::Decimal::ZERO);
+    let id = Uuid::new_v4();
+    let refund_number = generate_refund_number();
+    tx.execute(
+        "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason,
+                              external_id, idempotency_key, notes, refunded_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)",
+        params![
+            id.to_string(),
+            refund_number,
+            payment.id.to_string(),
+            RefundStatus::Completed.to_string(),
+            reversed.to_string(),
+            payment.currency,
+            stateset_core::LOST_CHARGEBACK_REFUND_REASON,
+            "chargeback lost: the card network reversed the charge",
+            now.to_rfc3339(),
+            now.to_rfc3339(),
+            now.to_rfc3339(),
+        ],
+    )?;
+    let rows = tx.execute(
+        "UPDATE payments SET amount_refunded = ?, updated_at = ? WHERE id = ? AND status = ?",
+        params![
+            payment.amount.to_string(),
+            now.to_rfc3339(),
+            payment.id.to_string(),
+            PaymentTransactionStatus::Refunded.to_string(),
+        ],
+    )?;
+    if rows == 0 {
+        return Err(domain_err(transition_conflict(
+            PaymentTransactionStatus::Disputed,
+            PaymentTransactionStatus::Refunded,
+        )));
+    }
+    append_kernel_event_tx(
+        tx,
+        &KernelOutboxEvent::domain(
+            "payments.chargeback_lost.v1",
+            "payment",
+            payment.id.to_string(),
+            serde_json::json!({
+                "payment_id": payment.id.to_string(),
+                "order_id": payment.order_id.map(|id| id.to_string()),
+                "refund_id": id.to_string(),
+                "refund_number": refund_number,
+                "amount": reversed.to_string(),
+                "currency": payment.currency.as_str(),
+            }),
+            None,
+        ),
+    )?;
+    Ok(id)
+}
+
 /// Statuses a payment can be voided from when its order is force-cancelled:
 /// money that is in flight but not yet captured.
 const IN_FLIGHT_STATUSES: [PaymentTransactionStatus; 3] = [
@@ -396,6 +478,118 @@ pub(crate) fn order_has_payments_conn(
     conn.query_row("SELECT EXISTS(SELECT 1 FROM payments WHERE order_id = ?)", [order_id], |row| {
         row.get::<_, bool>(0)
     })
+}
+
+/// The order's payment ledger (every payment row against `order_id`), summed
+/// in exact `Decimal` — `amount`/`amount_refunded` are TEXT money columns, so
+/// nothing is added in SQL.
+pub(crate) fn order_payment_ledger_conn(
+    conn: &rusqlite::Connection,
+    order_id: &str,
+) -> rusqlite::Result<OrderPaymentLedger> {
+    let mut stmt =
+        conn.prepare("SELECT status, amount, amount_refunded FROM payments WHERE order_id = ?")?;
+    let rows = stmt.query_map([order_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+    })?;
+    let mut ledger = OrderPaymentLedger::default();
+    for row in rows {
+        let (status, amount, refunded) = row?;
+        ledger.record(
+            parse_enum_row(&status, "payment", "status")?,
+            parse_decimal_row(&amount, "payment", "amount")?,
+            parse_decimal_row(&refunded, "payment", "amount_refunded")?,
+        );
+    }
+    Ok(ledger)
+}
+
+/// The payment status `order_id`'s ledger implies, given the order's stored
+/// `total` and `current` payment status ([`PaymentStatus::derive`]).
+pub(crate) fn derive_order_payment_status_conn(
+    conn: &rusqlite::Connection,
+    order_id: &str,
+    total: rust_decimal::Decimal,
+    current: PaymentStatus,
+) -> rusqlite::Result<PaymentStatus> {
+    Ok(PaymentStatus::derive(total, &order_payment_ledger_conn(conn, order_id)?, current))
+}
+
+/// Recompute `orders.payment_status` for `order_id` from its payment ledger,
+/// on the caller's transaction, and write it when it changed (bumping the
+/// order's `version` and `updated_at` like every other order write, and
+/// emitting `orders.payment_status_changed.v1` in the same commit).
+///
+/// Every payment/refund write that moves money on an order calls this before
+/// its transaction commits, so the order never disagrees with its ledger.
+/// A payment whose `order_id` does not resolve to an order is a no-op.
+/// Returns the emitted event's id, or `None` when nothing changed. Mirrored
+/// exactly in the Postgres backend (`sync_order_payment_status_pg`).
+pub(crate) fn sync_order_payment_status_tx(
+    tx: &rusqlite::Transaction<'_>,
+    order_id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<Option<Uuid>> {
+    let Some((raw_total, raw_status, version)) = tx
+        .query_row(
+            "SELECT total_amount, payment_status, version FROM orders WHERE id = ?",
+            [order_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i32>(2)?)),
+        )
+        .optional()?
+    else {
+        return Ok(None);
+    };
+    let total = parse_decimal_row(&raw_total, "order", "total_amount")?;
+    let before: PaymentStatus = parse_enum_row(&raw_status, "order", "payment_status")?;
+    let after = derive_order_payment_status_conn(tx, order_id, total, before)?;
+    if after == before {
+        return Ok(None);
+    }
+    let rows = tx.execute(
+        "UPDATE orders SET payment_status = ?, updated_at = ?, version = version + 1
+         WHERE id = ? AND version = ?",
+        params![after.to_string(), now.to_rfc3339(), order_id, version],
+    )?;
+    if rows == 0 {
+        return Err(domain_err(CommerceError::VersionConflict {
+            entity: "order".to_string(),
+            id: order_id.to_string(),
+            expected_version: version,
+        }));
+    }
+    let event = KernelOutboxEvent::domain(
+        "orders.payment_status_changed.v1",
+        "order",
+        order_id,
+        serde_json::json!({
+            "order_id": order_id,
+            "payment_status_before": before.to_string(),
+            "payment_status_after": after.to_string(),
+            "version_before": version,
+            "version_after": version + 1,
+            "total_amount": total.to_string(),
+        }),
+        None,
+    );
+    append_kernel_event_tx(tx, &event)?;
+    Ok(Some(event.id))
+}
+
+/// [`sync_order_payment_status_tx`] for the order `payment_id` belongs to.
+pub(crate) fn sync_order_payment_status_for_payment_tx(
+    tx: &rusqlite::Transaction<'_>,
+    payment_id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<Option<Uuid>> {
+    let order_id: Option<String> = tx
+        .query_row("SELECT order_id FROM payments WHERE id = ?", [payment_id], |row| row.get(0))
+        .optional()?
+        .flatten();
+    match order_id {
+        Some(order_id) => sync_order_payment_status_tx(tx, &order_id, now),
+        None => Ok(None),
+    }
 }
 
 #[derive(Debug)]
@@ -620,6 +814,65 @@ impl SqlitePaymentRepository {
     }
 }
 
+/// Capture payment `id` on the caller's transaction (shared by
+/// [`PaymentRepository::mark_completed`] and the governed `payments.complete`
+/// kernel command).
+///
+/// Two guards, in this order:
+///   1. the state machine — only a payment that may legally reach `Completed`
+///      may be completed (never a cancelled/failed/refunded one);
+///   2. the order's capacity, re-checked at completion time: a payment that
+///      was failed/cancelled while still in flight (and so released its slice
+///      of the total) must not be completed on top of captures made since.
+pub(crate) fn mark_completed_tx(
+    tx: &rusqlite::Transaction<'_>,
+    id: PaymentId,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<()> {
+    let target = PaymentTransactionStatus::Completed;
+    let (raw_status, order_id, raw_amount, currency): (
+        String,
+        Option<String>,
+        String,
+        CurrencyCode,
+    ) = tx
+        .query_row(
+            "SELECT status, order_id, amount, currency FROM payments WHERE id = ?",
+            [id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => domain_err(CommerceError::NotFound),
+            other => other,
+        })?;
+    let current: PaymentTransactionStatus = parse_enum_row(&raw_status, "payment", "status")?;
+    if !payment_transition_allowed(current, target) {
+        return Err(domain_err(transition_conflict(current, target)));
+    }
+
+    if let Some(order_id) = &order_id {
+        let amount = parse_decimal_row(&raw_amount, "payment", "amount")?;
+        check_order_capture_capacity_tx(tx, order_id, Some(&id.to_string()), amount, currency)?;
+    }
+
+    let sql = format!(
+        "UPDATE payments SET status = ?, paid_at = ?, updated_at = ?
+         WHERE id = ? AND status IN ({})",
+        statuses_allowing_transition_to(target)
+    );
+    let rows = tx.execute(
+        &sql,
+        params![target.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
+    )?;
+    if rows == 0 {
+        return Err(domain_err(transition_conflict(current, target)));
+    }
+    if let Some(order_id) = order_id {
+        sync_order_payment_status_tx(tx, &order_id, now)?;
+    }
+    Ok(())
+}
+
 impl PaymentRepository for SqlitePaymentRepository {
     fn create(&self, input: CreatePayment) -> Result<Payment> {
         input.validate()?;
@@ -700,6 +953,9 @@ impl PaymentRepository for SqlitePaymentRepository {
                 ],
             )?;
             append_kernel_event_tx(tx, &outbox_event)?;
+            if let Some(order_id) = input.order_id {
+                sync_order_payment_status_tx(tx, &order_id.to_string(), now)?;
+            }
             Ok(())
         });
 
@@ -808,6 +1064,9 @@ impl PaymentRepository for SqlitePaymentRepository {
                 }
             }
 
+            // A lost chargeback is recorded on the ledger after the status
+            // write; keep the pre-write payment for it.
+            let chargeback = current.is_lost_chargeback(target).then(|| payment.clone());
             let sql = format!(
                 "UPDATE payments SET status = ?, external_id = ?, failure_reason = ?,
                  failure_code = ?, metadata = ?, updated_at = ? WHERE id = ? AND status IN ({})",
@@ -827,6 +1086,14 @@ impl PaymentRepository for SqlitePaymentRepository {
             )?;
             if rows == 0 {
                 return Err(domain_err(transition_conflict(current, target)));
+            }
+            if let Some(disputed) = &chargeback {
+                record_lost_chargeback_tx(tx, disputed, now)?;
+            }
+            if current != target {
+                if let Some(order_id) = payment.order_id {
+                    sync_order_payment_status_tx(tx, &order_id.to_string(), now)?;
+                }
             }
             Ok(())
         })?;
@@ -899,65 +1166,7 @@ impl PaymentRepository for SqlitePaymentRepository {
 
     fn mark_completed(&self, id: PaymentId) -> Result<Payment> {
         let now = chrono::Utc::now();
-
-        let target = PaymentTransactionStatus::Completed;
-
-        with_immediate_transaction(&self.pool, |tx| {
-            // Two guards, in this order:
-            //   1. the state machine — only a payment that may legally reach
-            //      `Completed` may be completed (never a cancelled/failed/
-            //      refunded one);
-            //   2. the order's capacity, re-checked at completion time: a
-            //      payment that was failed/cancelled while still in flight (and
-            //      so released its slice of the total) must not be completed on
-            //      top of captures made since.
-            let (raw_status, order_id, raw_amount, currency): (
-                String,
-                Option<String>,
-                String,
-                CurrencyCode,
-            ) = tx
-                .query_row(
-                    "SELECT status, order_id, amount, currency FROM payments WHERE id = ?",
-                    [id.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                )
-                .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => domain_err(CommerceError::NotFound),
-                    other => other,
-                })?;
-            let current: PaymentTransactionStatus =
-                parse_enum_row(&raw_status, "payment", "status")?;
-            if !payment_transition_allowed(current, target) {
-                return Err(domain_err(transition_conflict(current, target)));
-            }
-
-            if let Some(order_id) = order_id {
-                let amount = parse_decimal_row(&raw_amount, "payment", "amount")?;
-                check_order_capture_capacity_tx(
-                    tx,
-                    &order_id,
-                    Some(&id.to_string()),
-                    amount,
-                    currency,
-                )?;
-            }
-
-            let sql = format!(
-                "UPDATE payments SET status = ?, paid_at = ?, updated_at = ?
-                 WHERE id = ? AND status IN ({})",
-                statuses_allowing_transition_to(target)
-            );
-            let rows = tx.execute(
-                &sql,
-                params![target.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-            )?;
-            if rows == 0 {
-                return Err(domain_err(transition_conflict(current, target)));
-            }
-            Ok(())
-        })?;
-
+        with_immediate_transaction(&self.pool, |tx| mark_completed_tx(tx, id, now))?;
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
@@ -995,6 +1204,7 @@ impl PaymentRepository for SqlitePaymentRepository {
             if rows == 0 {
                 return Err(domain_err(transition_conflict(current, target)));
             }
+            sync_order_payment_status_for_payment_tx(tx, &id.to_string(), now)?;
             Ok(())
         })?;
 
@@ -1251,6 +1461,7 @@ impl PaymentRepository for SqlitePaymentRepository {
             if rows == 0 {
                 return Err(domain_err(transition_conflict(payment_status, new_status)));
             }
+            sync_order_payment_status_for_payment_tx(tx, &refund.payment_id.to_string(), now)?;
 
             Ok(())
         })?;
@@ -1496,6 +1707,10 @@ impl PaymentRepository for SqlitePaymentRepository {
                 input.idempotency_key.clone(),
             );
             append_kernel_event_tx(&tx, &outbox_event).map_err(map_db_error)?;
+            if let Some(order_id) = input.order_id {
+                sync_order_payment_status_tx(&tx, &order_id.to_string(), now)
+                    .map_err(map_db_error)?;
+            }
 
             results.push(Payment {
                 id: PaymentId::from(id),
@@ -1611,6 +1826,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                     .map_err(map_db_error)?;
                 }
             }
+            let chargeback = current.is_lost_chargeback(target).then(|| payment.clone());
             let sql = format!(
                 "UPDATE payments SET status = ?, external_id = ?, failure_reason = ?,
                  failure_code = ?, metadata = ?, updated_at = ? WHERE id = ? AND status IN ({})",
@@ -1632,6 +1848,15 @@ impl PaymentRepository for SqlitePaymentRepository {
                 .map_err(map_db_error)?;
             if rows == 0 {
                 return Err(transition_conflict(current, target));
+            }
+            if let Some(disputed) = &chargeback {
+                record_lost_chargeback_tx(&tx, disputed, now).map_err(map_db_error)?;
+            }
+            if current != target {
+                if let Some(order_id) = payment.order_id {
+                    sync_order_payment_status_tx(&tx, &order_id.to_string(), now)
+                        .map_err(map_db_error)?;
+                }
             }
 
             // Fetch the updated payment

@@ -21,6 +21,28 @@ import {
   voidTaxTransaction,
 } from './providers/tax.js';
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Today's date as the binding's `YYYY-MM-DD` NaiveDate string (UTC). */
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Drop undefined/null keys: the binding's `Option<String>` fields accept an
+ * absent key but refuse `null`.
+ * @template {Record<string, unknown>} T
+ * @param {T} input
+ * @returns {T}
+ */
+function omitAbsent(input) {
+  return /** @type {T} */ (
+    Object.fromEntries(
+      Object.entries(input).filter(([, value]) => value !== undefined && value !== null),
+    )
+  );
+}
+
 const US_STATE_TAX_INFO = {
   CA: {
     stateCode: 'CA',
@@ -398,14 +420,30 @@ export const taxTools = [
       rate: z.number().min(0).describe('Tax rate as decimal'),
       name: z.string().min(1).describe('Rate name'),
       isCompound: z.boolean().optional().describe('Whether the rate compounds'),
-      effectiveFrom: z.string().optional().describe('Effective date/time'),
+      effectiveFrom: z
+        .string()
+        .regex(ISO_DATE, 'must be YYYY-MM-DD')
+        .optional()
+        .describe('First day the rate applies (YYYY-MM-DD). Defaults to today (UTC).'),
+      effectiveTo: z
+        .string()
+        .regex(ISO_DATE, 'must be YYYY-MM-DD')
+        .optional()
+        .describe('Last day the rate applies (YYYY-MM-DD). Omit for open-ended.'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
+      // The binding requires effectiveFrom (a YYYY-MM-DD NaiveDate); a newly
+      // created rate with no stated start applies from today, the same default
+      // create_tax_exemption uses.
+      const input = omitAbsent({
+        ...params,
+        effectiveFrom: params.effectiveFrom ?? todayIsoDate(),
+      });
       if (!allowApply) {
-        return applyRequired('Create tax rate', params);
+        return applyRequired('Create tax rate', input);
       }
-      const rate = await commerce.tax.createRate(params);
+      const rate = await commerce.tax.createRate(input);
       return { success: true, message: 'Tax rate created', rate };
     },
   },
@@ -502,7 +540,11 @@ export const taxTools = [
         ),
       certificateNumber: z.string().optional().describe('Exemption certificate number'),
       issuingAuthority: z.string().optional().describe('Issuing authority (e.g., state name)'),
-      expiresAt: z.string().optional().describe('Expiration date (YYYY-MM-DD)'),
+      expiresAt: z
+        .string()
+        .regex(ISO_DATE, 'must be YYYY-MM-DD')
+        .optional()
+        .describe('Expiration date (YYYY-MM-DD)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -513,17 +555,18 @@ export const taxTools = [
           error: 'Write operations require --apply flag. Would create tax exemption for customer.',
           preview: { customerId, exemptionType, certificateNumber, issuingAuthority },
         };
-      const today = new Date().toISOString().split('T')[0];
-      const exemption = await commerce.tax.createExemption({
-        customerId,
-        exemptionType,
-        certificateNumber,
-        issuingAuthority,
-        effectiveFrom: today,
-        expiresAt: expiresAt || null,
-        jurisdictionIds: [],
-        exemptCategories: [],
-      });
+      const exemption = await commerce.tax.createExemption(
+        omitAbsent({
+          customerId,
+          exemptionType,
+          certificateNumber,
+          issuingAuthority,
+          effectiveFrom: todayIsoDate(),
+          expiresAt,
+          jurisdictionIds: [],
+          exemptCategories: [],
+        }),
+      );
       return {
         success: true,
         message: 'Tax exemption created for customer',
@@ -554,32 +597,104 @@ export const taxTools = [
     description:
       'Calculate and apply tax to a cart based on its shipping address. Must set shipping address first. Returns tax breakdown and updates cart totals.',
     inputSchema: { cartId: z.string().min(1).describe('Cart ID to calculate tax for') },
-    permission: 'read',
-    handler: async ({ commerce, params }) => {
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
       const { cartId } = params;
-      const result = await commerce.calculateCartTax(cartId);
+      // The Node binding has no cart-tax entry point, so this composes the
+      // engine's `Commerce::calculate_cart_tax` from binding pieces: the same
+      // address mapping, the same line mapping (standard tax category), the
+      // cart's shipping amount, then `set_tax` with the engine's exact total.
+      const cart = await commerce.carts.get(cartId);
+      if (!cart) {
+        return { success: false, error: `Cart not found: ${cartId}` };
+      }
+      const address = cart.shippingAddress;
+      if (!address) {
+        return {
+          success: false,
+          error: 'Shipping address required to calculate tax',
+          hint: 'Set the cart shipping address first.',
+        };
+      }
+      const items = await commerce.carts.getItems(cartId);
+
+      // TaxCalculationInput takes f64 money on this binding; the exact cart
+      // strings are converted at the last step and the engine re-derives a
+      // Decimal from each.
+      const result = await commerce.tax.calculate({
+        lineItems: items.map((item) => ({
+          id: item.id,
+          sku: item.sku,
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: Number(item.unitPriceExact),
+          discountAmount: Number(item.discountAmountExact),
+          taxCategory: 'standard',
+          description: item.name,
+        })),
+        shippingAddress: {
+          line1: address.line1,
+          line2: address.line2,
+          city: address.city,
+          state: address.state,
+          postalCode: address.postalCode,
+          country: address.country,
+        },
+        customerId: cart.customerId,
+        currency: cart.currency,
+        shippingAmount: Number(cart.shippingAmountExact),
+      });
+
+      // Applying the tax writes the cart, so it honours the --apply gate like
+      // every other write; without it the calculation is a preview.
+      const updated = allowApply
+        ? await commerce.carts.setTax(cartId, undefined, result.totalTaxExact)
+        : null;
+
       return {
         success: true,
         cartId,
+        applied: Boolean(updated),
+        ...(updated
+          ? {}
+          : { hint: 'Preview only: run with --apply to write this tax to the cart.' }),
         tax: {
-          subtotal: result.subtotal,
-          totalTax: result.totalTax,
-          total: result.total,
-          taxInclusive: result.taxInclusive,
-          breakdown:
-            result.taxBreakdown?.map((b) => ({
-              jurisdiction: b.jurisdictionName,
-              rate: `${(b.rate * 100).toFixed(2)}%`,
-              taxAmount: b.taxAmount,
-            })) || [],
+          subtotal: result.subtotalExact,
+          totalTax: result.totalTaxExact,
+          shippingTax: result.shippingTaxExact,
+          total: result.totalExact,
+          exemptionsApplied: result.exemptionsApplied,
+          isEstimate: result.isEstimate,
+          breakdown: result.taxBreakdown.map((b) => ({
+            jurisdiction: b.jurisdictionName,
+            taxType: b.taxType,
+            rate: `${(b.rate * 100).toFixed(2)}%`,
+            taxableAmount: b.taxableAmountExact,
+            taxAmount: b.taxAmountExact,
+          })),
         },
-        lineItems:
-          result.lineItemTaxes?.map((item) => ({
-            id: item.lineItemId,
-            subtotal: item.subtotal,
-            taxAmount: item.taxAmount,
-            total: item.total,
-          })) || [],
+        lineItems: result.lineItemTaxes.map((item) => ({
+          id: item.lineItemId,
+          taxableAmount: item.taxableAmountExact,
+          taxAmount: item.taxAmountExact,
+          effectiveRate: item.effectiveRate,
+          isExempt: item.isExempt,
+        })),
+        cart: updated
+          ? {
+              subtotal: updated.subtotalExact,
+              taxAmount: updated.taxAmountExact,
+              shippingAmount: updated.shippingAmountExact,
+              discountAmount: updated.discountAmountExact,
+              grandTotal: updated.grandTotalExact,
+            }
+          : {
+              subtotal: cart.subtotalExact,
+              taxAmount: cart.taxAmountExact,
+              shippingAmount: cart.shippingAmountExact,
+              discountAmount: cart.discountAmountExact,
+              grandTotal: cart.grandTotalExact,
+            },
       };
     },
   },

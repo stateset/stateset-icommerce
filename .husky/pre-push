@@ -1,0 +1,22 @@
+# shellcheck shell=sh
+. "$(dirname "$0")/node-env.sh"
+set -e
+
+# Opt-in generated-artifact freshness check (fast subset: node-only
+# generators in --check mode, no cargo, nothing is rewritten). CI still runs
+# the full set. It takes a few seconds on an idle machine and much longer
+# under load, so it is off unless you enable it:
+#
+#   git config stateset.prepushRegen true     # this clone
+#   STATESET_PREPUSH_REGEN=1 git push          # one push
+#
+# Bypass once with SKIP_REGEN_CHECK=1 git push.
+enabled="${STATESET_PREPUSH_REGEN:-$(git config --bool stateset.prepushRegen 2>/dev/null || echo false)}"
+if [ "${SKIP_REGEN_CHECK:-0}" != "1" ] && { [ "$enabled" = "1" ] || [ "$enabled" = "true" ]; }; then
+  if ! node ./scripts/regen.mjs --check --fast --quiet; then
+    echo ""
+    echo "pre-push: generated artifacts are stale. Run 'npm run regen', commit, and push again."
+    echo "pre-push: (bypass once with SKIP_REGEN_CHECK=1 git push ...)"
+    exit 1
+  fi
+fi

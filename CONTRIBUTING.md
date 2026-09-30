@@ -248,6 +248,49 @@ mod tests {
 }
 ```
 
+### Generated Artifacts
+
+Several committed files are generated from the code and checked for freshness
+in CI: the MCP tool, agent, binding API, HTTP gateway, workspace and Rust
+OpenAPI inventories (`docs/src/appendix/*.md` plus
+`artifacts/compatibility/*.json`), the API command and MCP API coverage
+reports, `kernel/mutation-boundary.json`, `cli/docs/TOOLS.md`, and the Node
+binding's `index.d.ts` augment block, `tool-descriptors.json` and
+`docs/src/api/node-reference.md`.
+
+**After changing tools, agents, bindings, HTTP routes or crates, run:**
+
+```bash
+npm run regen                   # rewrite every generated artifact, in order
+npm run regen -- --skip-rust    # same, without the generator that compiles Rust
+npm run regen:check             # verify only; lists every stale file
+```
+
+`npm run regen` prints the exact `git add` command for whatever it rewrote.
+Run it again and it should report nothing to do. A Node binding change also
+needs `npm run build` in `bindings/node` first, which regenerates
+`index.d.ts` from the Rust source.
+
+`scripts/ci/check_release_hygiene.sh` (the Release Hygiene CI job) reports
+every stale artifact in one run and points back at `npm run regen`.
+
+An opt-in `pre-push` hook runs the fast, node-only subset
+(`node scripts/regen.mjs --check --fast`) and refuses a push with stale
+artifacts. It never rewrites files. Enable it with
+`git config stateset.prepushRegen true`, or for a single push with
+`STATESET_PREPUSH_REGEN=1 git push`. Skip it once with
+`SKIP_REGEN_CHECK=1 git push`.
+
+### Slow Machines and Test Timeouts
+
+Tests that spawn MCP servers wait for them to boot with a budget from
+`cli/test/helpers/startup-budget.js`. When load is at or below the core count,
+the budget is the fixed CI value. When the machine is oversubscribed (for
+example during a parallel Rust build), the budget stretches with
+`loadavg / cpus`, up to 10x. Set `STATESET_TEST_STARTUP_TIMEOUT_MS` to use an
+absolute budget instead, or `STATESET_TEST_LOAD_FACTOR=1` to turn the
+stretching off.
+
 ## Pull Request Process
 
 1. **Sync with upstream**:
@@ -268,6 +311,7 @@ mod tests {
    cargo test
    cargo clippy -- -D warnings
    cargo fmt --check
+   npm run regen:check   # generated artifacts are current (see Generated Artifacts)
    ```
 
 5. **Push your branch**:

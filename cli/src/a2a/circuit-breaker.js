@@ -44,7 +44,7 @@ const DEFAULT_CONFIG = {
 // SQL schema for circuit breaker tables
 // ---------------------------------------------------------------------------
 
-const CB_SCHEMA = `
+export const CB_SCHEMA = `
 CREATE TABLE IF NOT EXISTS a2a_circuit_breaker_events (
   id TEXT PRIMARY KEY,
   agent_name TEXT NOT NULL,

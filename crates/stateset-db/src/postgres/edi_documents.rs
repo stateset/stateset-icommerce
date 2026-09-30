@@ -153,8 +153,9 @@ impl PgEdiDocumentRepository {
         error_message: Option<String>,
     ) -> Result<EdiDocument> {
         let now = Utc::now();
-        sqlx::query(
-            "UPDATE edi_documents SET status = $1, error_message = $2, updated_at = $3 WHERE id = $4",
+        let changed = sqlx::query(
+            "UPDATE edi_documents SET status = $1, error_message = $2, updated_at = $3
+             WHERE id = $4 AND status NOT IN ('processed', 'acknowledged')",
         )
         .bind(status.to_string())
         .bind(&error_message)
@@ -163,6 +164,14 @@ impl PgEdiDocumentRepository {
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
+
+        if changed.rows_affected() == 0 {
+            let current = self.fetch_async(id.into()).await?.ok_or(CommerceError::NotFound)?;
+            return Err(CommerceError::Conflict(format!(
+                "Cannot update an EDI document in terminal status {}",
+                current.status
+            )));
+        }
 
         self.fetch_async(id.into()).await?.ok_or(CommerceError::NotFound)
     }

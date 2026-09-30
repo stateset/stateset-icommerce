@@ -13,6 +13,8 @@
     "format": "prettier --write 'cli/{src,bin}/**/*.js'",
     "format:check": "prettier --check 'cli/{src,bin}/**/*.js'",
     "check:env": "node scripts/check-node.mjs 20.20.0 10.0.0",
+    "regen": "npm run check:env && node ./scripts/regen.mjs",
+    "regen:check": "npm run check:env && node ./scripts/regen.mjs --check",
     "generate:agent-inventory": "npm run check:env && node ./scripts/ci/generate_agent_inventory.mjs",
     "generate:api-command-coverage": "npm run check:env && node ./scripts/ci/generate_api_command_coverage.mjs",
     "generate:binding-api-inventory": "npm run check:env && node ./scripts/ci/generate_binding_api_inventory.mjs",
@@ -42,10 +44,12 @@
     "test:release-tag": "npm run check:env && bash ./scripts/release-tag.test.sh",
     "test:release-guard": "npm run check:env && bash ./scripts/ci/check_release_guard.test.sh",
     "test:embedded-range": "npm run check:env && node --test ./scripts/ci/set_embedded_registry_range.test.mjs",
+    "test:binding-parity": "npm run check:env && node --test ./scripts/ci/generate_binding_parity.test.mjs",
     "test:env-check": "node --test scripts/check-node.test.mjs",
-    "check:shell": "bash -n examples/setup-sync.sh examples/verify-setup.sh scripts/arc_e2e_demo.sh scripts/ci/cargo_ci.sh scripts/ci/check_python_bindings.sh scripts/ci/check_rust_feature_matrix.sh scripts/ci/check_release_hygiene.sh scripts/ci/check_release_hygiene.test.sh .github/scripts/shellcheck.sh .github/scripts/actionlint.sh scripts/release-bump.sh scripts/release-tag.sh scripts/release-tag.test.sh scripts/ci/check_version_sync.sh scripts/ci/check_required_checks.sh scripts/ci/check_release_guard.sh scripts/ci/check_release_guard.test.sh scripts/ci/check_registry_consistency.sh scripts/ci/run_storefront_golden_path.sh",
+    "check:shell": "bash -n examples/setup-sync.sh examples/verify-setup.sh scripts/arc_e2e_demo.sh scripts/ci/cargo_ci.sh scripts/ci/check_python_bindings.sh scripts/ci/check_rust_feature_matrix.sh scripts/ci/check_rust_quickstart.sh scripts/ci/check_release_hygiene.sh scripts/ci/check_release_hygiene.test.sh .github/scripts/shellcheck.sh .github/scripts/actionlint.sh scripts/release-bump.sh scripts/release-tag.sh scripts/release-tag.test.sh scripts/ci/check_version_sync.sh scripts/ci/check_required_checks.sh scripts/ci/check_release_guard.sh scripts/ci/check_release_guard.test.sh scripts/ci/check_registry_consistency.sh scripts/ci/run_storefront_golden_path.sh",
     "check:rust:lint": "bash ./scripts/ci/cargo_ci.sh clippy -p stateset-db -p stateset-embedded --all-features --tests --quiet && bash ./scripts/ci/cargo_ci.sh clippy -p stateset-crypto -p stateset-sync --all-targets --quiet -- -D warnings",
     "check:rust:feature-matrix": "bash ./scripts/ci/check_rust_feature_matrix.sh",
+    "check:rust:quickstart": "bash ./scripts/ci/check_rust_quickstart.sh",
     "check:rust": "cargo fmt --all -- --check && bash ./scripts/ci/cargo_ci.sh test -p stateset-core -p stateset-db -p stateset-embedded -p stateset-observability -p stateset-integration-tests --quiet && bash ./scripts/ci/cargo_ci.sh test -p stateset-core --features metrics --quiet && npm run check:rust:lint && npm run check:rust:feature-matrix",
     "check:bindings:node": "npm --prefix bindings/node run check",
     "check:bindings:python": "bash ./scripts/ci/check_python_bindings.sh",
@@ -64,6 +68,9 @@
     "globals": "^17.3.0",
     "husky": "^9.1.7",
     "prettier": "^3.8.1"
+  },
+  "overrides": {
+    "@humanfs/node": "0.16.8"
   },
   "dependencies": {
     "@clack/prompts": "^1.0.1"

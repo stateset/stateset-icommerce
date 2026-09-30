@@ -160,6 +160,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`BackupReportOutput`](#backupreportoutput)
   - [`BalanceSheetOutput`](#balancesheetoutput)
   - [`BillFilterInput`](#billfilterinput)
+  - [`BillItemOutput`](#billitemoutput)
   - [`BillOutput`](#billoutput)
   - [`BillStatus`](#billstatus)
   - [`BillStatusInput`](#billstatusinput)
@@ -223,6 +224,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`CreateAgentValidationResponseInput`](#createagentvalidationresponseinput)
   - [`CreateBackorderInput`](#createbackorderinput)
   - [`CreateBillInput`](#createbillinput)
+  - [`CreateBillItemInput`](#createbilliteminput)
   - [`CreateBomComponentInput`](#createbomcomponentinput)
   - [`CreateBomInput`](#createbominput)
   - [`CreateCartInput`](#createcartinput)
@@ -250,6 +252,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`CreateInboundShipmentInput`](#createinboundshipmentinput)
   - [`CreateInboundShipmentItemInput`](#createinboundshipmentiteminput)
   - [`CreateInspectionInput`](#createinspectioninput)
+  - [`CreateInspectionItemInput`](#createinspectioniteminput)
   - [`CreateIntegrationFieldMappingInput`](#createintegrationfieldmappinginput)
   - [`CreateIntegrationMappingInput`](#createintegrationmappinginput)
   - [`CreateInventoryItemInput`](#createinventoryiteminput)
@@ -280,6 +283,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`CreatePurchaseOrderItemInput`](#createpurchaseorderiteminput)
   - [`CreateQualityHoldInput`](#createqualityholdinput)
   - [`CreateReceiptInput`](#createreceiptinput)
+  - [`CreateReceiptItemInput`](#createreceiptiteminput)
   - [`CreateRefundExactInput`](#createrefundexactinput)
   - [`CreateRefundInput`](#createrefundinput)
   - [`CreateReturnInput`](#createreturninput)
@@ -429,6 +433,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`IngestLineItemInput`](#ingestlineiteminput)
   - [`IngestOrderInput`](#ingestorderinput)
   - [`InspectionFilterInput`](#inspectionfilterinput)
+  - [`InspectionItemOutput`](#inspectionitemoutput)
   - [`InspectionOutput`](#inspectionoutput)
   - [`InspectionStatus`](#inspectionstatus)
   - [`InspectionType`](#inspectiontype)
@@ -513,6 +518,8 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`MapPurgatoryLineInput`](#mappurgatorylineinput)
   - [`MappingLookupInput`](#mappinglookupinput)
   - [`MoneyWire`](#moneywire)
+  - [`NcrDisposition`](#ncrdisposition)
+  - [`NcrDispositionInput`](#ncrdispositioninput)
   - [`NcrFilterInput`](#ncrfilterinput)
   - [`NcrOutput`](#ncroutput)
   - [`NcrSeverity`](#ncrseverity)
@@ -520,6 +527,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`NcrSource`](#ncrsource)
   - [`NcrSourceInput`](#ncrsourceinput)
   - [`NcrStatus`](#ncrstatus)
+  - [`NcrStatusInput`](#ncrstatusinput)
   - [`OpenOptions`](#openoptions)
   - [`OrderAddressInput`](#orderaddressinput)
   - [`OrderAddressOutput`](#orderaddressoutput)
@@ -575,9 +583,14 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`ProductionBatchFilterInput`](#productionbatchfilterinput)
   - [`ProductionBatchOutput`](#productionbatchoutput)
   - [`ProductionBatchStatus`](#productionbatchstatus)
+  - [`PromotionConditionInput`](#promotionconditioninput)
+  - [`PromotionConditionOperator`](#promotionconditionoperator)
+  - [`PromotionConditionOutput`](#promotionconditionoutput)
+  - [`PromotionConditionType`](#promotionconditiontype)
   - [`PromotionFilterInput`](#promotionfilterinput)
   - [`PromotionLineItemInput`](#promotionlineiteminput)
   - [`PromotionOutput`](#promotionoutput)
+  - [`PromotionRejectionReason`](#promotionrejectionreason)
   - [`PromotionStacking`](#promotionstacking)
   - [`PromotionStackingInput`](#promotionstackinginput)
   - [`PromotionStatus`](#promotionstatus)
@@ -587,6 +600,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`PromotionTriggerInput`](#promotiontriggerinput)
   - [`PromotionType`](#promotiontype)
   - [`PromotionTypeInput`](#promotiontypeinput)
+  - [`PromotionUsageFilterInput`](#promotionusagefilterinput)
   - [`PromotionUsageOutput`](#promotionusageoutput)
   - [`PurchaseOrderFilterInput`](#purchaseorderfilterinput)
   - [`PurchaseOrderOutput`](#purchaseorderoutput)
@@ -601,6 +615,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`QualityHoldTypeFilter`](#qualityholdtypefilter)
   - [`QualityHoldTypeInput`](#qualityholdtypeinput)
   - [`ReceiptFilterInput`](#receiptfilterinput)
+  - [`ReceiptItemOutput`](#receiptitemoutput)
   - [`ReceiptOutput`](#receiptoutput)
   - [`ReceiptStatus`](#receiptstatus)
   - [`ReceiptStatusInput`](#receiptstatusinput)
@@ -614,6 +629,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`RecordPaymentInput`](#recordpaymentinput)
   - [`RefundOutput`](#refundoutput)
   - [`RefundStatus`](#refundstatus)
+  - [`RejectedPromotionOutput`](#rejectedpromotionoutput)
   - [`ReservationOutput`](#reservationoutput)
   - [`ReservationStatus`](#reservationstatus)
   - [`RestoreOptionsInput`](#restoreoptionsinput)
@@ -762,6 +778,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`UpdateGiftCardInput`](#updategiftcardinput)
   - [`UpdateIntegrationFieldMappingInput`](#updateintegrationfieldmappinginput)
   - [`UpdateIntegrationMappingInput`](#updateintegrationmappinginput)
+  - [`UpdateNcrInput`](#updatencrinput)
   - [`UpdateOrderInput`](#updateorderinput)
   - [`UpdatePriceLevelInput`](#updatepricelevelinput)
   - [`UpdatePriceScheduleInput`](#updatepricescheduleinput)
@@ -1090,6 +1107,12 @@ Class `Orders`.
   Types: [`UpdateOrderInput`](#updateorderinput), [`OrderOutput`](#orderoutput)
 
 - **`get(id: string): Promise<OrderOutput | null>`**
+
+  Types: [`OrderOutput`](#orderoutput)
+
+- **`getByNumber(orderNumber: string): Promise<OrderOutput | null>`**
+
+  Get an order by its human-readable order number. `null` when none matches.
 
   Types: [`OrderOutput`](#orderoutput)
 
@@ -1602,6 +1625,32 @@ Class `Payments`.
   Create a refund without any floating-point conversion.
 
   Types: [`CreateRefundExactInput`](#createrefundexactinput), [`RefundOutput`](#refundoutput)
+
+- **`getRefund(id: string): Promise<RefundOutput | null>`**
+
+  Get a refund by id. `null` when it does not exist.
+
+  Types: [`RefundOutput`](#refundoutput)
+
+- **`getRefunds(paymentId: string): Promise<Array<RefundOutput>>`**
+
+  Every refund recorded against a payment, in any status.
+
+  Types: [`RefundOutput`](#refundoutput)
+
+- **`completeRefund(id: string): Promise<RefundOutput>`**
+
+  Settle a pending refund: marks it `completed` and folds its amount
+  into the payment's `amountRefunded` (moving the payment to
+  `partially_refunded` or `refunded`).
+
+  Types: [`RefundOutput`](#refundoutput)
+
+- **`failRefund(id: string, reason: string): Promise<RefundOutput>`**
+
+  Mark a pending refund as failed, releasing its reserved amount.
+
+  Types: [`RefundOutput`](#refundoutput)
 
 - **`count(): Promise<number>`**
 
@@ -2468,6 +2517,16 @@ Promotions API for managing discounts and coupon codes
 
   Types: [`PromotionOutput`](#promotionoutput)
 
+- **`addCondition(promotionId: string, condition: PromotionConditionInput): Promise<PromotionOutput>`**
+
+  Add a condition to an existing promotion.
+
+  The condition is validated — its value must parse for its type and
+  its operator must apply to it — and then stored, so it takes part in
+  every later evaluation.
+
+  Types: [`PromotionConditionInput`](#promotionconditioninput), [`PromotionOutput`](#promotionoutput)
+
 - **`getActive(): Promise<Array<PromotionOutput>>`**
 
   Get all currently active promotions
@@ -2514,11 +2573,28 @@ Promotions API for managing discounts and coupon codes
 
   Types: [`ApplyPromotionsInput`](#applypromotionsinput), [`ApplyPromotionsOutput`](#applypromotionsoutput)
 
+- **`applyToCart(cartId: string): Promise<ApplyPromotionsOutput>`**
+
+  Evaluate a persisted cart's promotions and write the result onto it.
+
+  Prices the cart's lines, its coupon and every automatic promotion,
+  stores the discount on the cart and its lines, and returns the
+  evaluation, including what was refused and why.
+
+  Types: [`ApplyPromotionsOutput`](#applypromotionsoutput)
+
 - **`recordUsage(promotionId: string, couponId: string | undefined | null, customerId: string | undefined | null, orderId: string | undefined | null, cartId: string | undefined | null, discountAmount: number, currency: string): Promise<PromotionUsageOutput>`**
 
   Record promotion usage (after order completion)
 
   Types: [`PromotionUsageOutput`](#promotionusageoutput)
+
+- **`listUsage(filter?: PromotionUsageFilterInput | undefined | null): Promise<Array<PromotionUsageOutput>>`**
+
+  Read the promotion usage ledger, oldest first: which promotions an
+  order (or customer, cart, coupon) redeemed, and for how much.
+
+  Types: [`PromotionUsageFilterInput`](#promotionusagefilterinput), [`PromotionUsageOutput`](#promotionusageoutput)
 
 ### commerce.tax
 
@@ -2660,6 +2736,12 @@ Class `Quality`.
 
   Types: [`CreateInspectionInput`](#createinspectioninput), [`InspectionOutput`](#inspectionoutput)
 
+- **`getInspectionItems(inspectionId: string): Promise<Array<InspectionItemOutput>>`**
+
+  The lines of an inspection.
+
+  Types: [`InspectionItemOutput`](#inspectionitemoutput)
+
 - **`getInspection(id: string): Promise<InspectionOutput | null>`**
 
   Get an inspection by ID
@@ -2706,9 +2788,19 @@ Class `Quality`.
 
   Types: [`NcrFilterInput`](#ncrfilterinput), [`NcrOutput`](#ncroutput)
 
+- **`updateNcr(id: string, input: UpdateNcrInput): Promise<NcrOutput>`**
+
+  Update an open NCR: root cause, actions, disposition, status and so on.
+  Omitted fields are left unchanged. Setting `status: 'closed'` requires
+  a disposition, already recorded or set in the same call.
+
+  Types: [`UpdateNcrInput`](#updatencrinput), [`NcrOutput`](#ncroutput)
+
 - **`closeNcr(id: string): Promise<NcrOutput>`**
 
-  Close an NCR
+  Close an NCR. It must have a disposition (see `updateNcr`); an NCR
+  without one is refused with a validation error. Re-closing a closed
+  NCR is a no-op.
 
   Types: [`NcrOutput`](#ncroutput)
 
@@ -2944,6 +3036,12 @@ Class `Receiving`.
 
   Types: [`CreateReceiptInput`](#createreceiptinput), [`ReceiptOutput`](#receiptoutput)
 
+- **`getReceiptItems(receiptId: string): Promise<Array<ReceiptItemOutput>>`**
+
+  The lines of a receipt, in line order.
+
+  Types: [`ReceiptItemOutput`](#receiptitemoutput)
+
 - **`getReceipt(id: string): Promise<ReceiptOutput | null>`**
 
   Get a receipt by ID
@@ -3081,6 +3179,12 @@ Class `AccountsPayable`.
   Create a bill
 
   Types: [`CreateBillInput`](#createbillinput), [`BillOutput`](#billoutput)
+
+- **`getBillItems(billId: string): Promise<Array<BillItemOutput>>`**
+
+  The lines of a bill, in line order.
+
+  Types: [`BillItemOutput`](#billitemoutput)
 
 - **`getBill(id: string): Promise<BillOutput | null>`**
 
@@ -5637,6 +5741,7 @@ Result of applying promotions
 | `grandTotal` | `number` | **Deprecated.** Use the `grandTotalExact` twin; float money will be removed in 2.0. |
 | `grandTotalExact` | `string` | Exact base-10 grand total, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `appliedPromotions` | `Array<AppliedPromotionOutput>` | Types: [`AppliedPromotionOutput`](#appliedpromotionoutput) |
+| `rejectedPromotions` | `Array<RejectedPromotionOutput>` | Promotions and coupons considered but not applied, with the reason. Types: [`RejectedPromotionOutput`](#rejectedpromotionoutput) |
 
 ### ApplyVendorCreditInput
 
@@ -5884,6 +5989,28 @@ Optional filters for `AccountsPayable.listBills`. No argument lists all.
 | `toDate?` | `string` | RFC 3339 timestamp. |
 | `limit?` | `number` |  |
 | `offset?` | `number` |  |
+
+### BillItemOutput
+
+A bill line as stored, with engine-derived `amount` and `taxAmount`.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `billId` | `string` |  |
+| `lineNumber` | `number` |  |
+| `description` | `string` |  |
+| `accountCode?` | `string` |  |
+| `quantityExact` | `string` | Exact base-10 quantity. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `unitPrice` | `number` | **Deprecated.** Use the `unitPriceExact` twin; float money will be removed in 2.0. |
+| `unitPriceExact` | `string` | Exact base-10 unit price. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `amount` | `number` | **Deprecated.** Use the `amountExact` twin; float money will be removed in 2.0. |
+| `amountExact` | `string` | Exact base-10 line amount (quantity x unit price). _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `taxRateExact?` | `string` | Exact base-10 tax rate (a fraction), when set. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `taxAmount` | `number` | **Deprecated.** Use the `taxAmountExact` twin; float money will be removed in 2.0. |
+| `taxAmountExact` | `string` | Exact base-10 line tax. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `poLineId?` | `string` |  |
+| `createdAt` | `string` |  |
 
 ### BillOutput
 
@@ -6724,6 +6851,24 @@ One of: `'active'`, `'disabled'`, `'exhausted'`, `'expired'`.
 | `paymentTerms?` | `string` |  |
 | `referenceNumber?` | `string` |  |
 | `notes?` | `string` |  |
+| `items?` | `Array<CreateBillItemInput>` | Bill lines. Optional: omitted (or empty) creates a header-only bill, as before. The engine derives each line amount and the bill totals. Types: [`CreateBillItemInput`](#createbilliteminput) |
+
+### CreateBillItemInput
+
+A bill line. Money follows the binding convention: send the `...Exact`
+base-10 string (preferred) or the float.
+
+| Field | Type | Description |
+|---|---|---|
+| `description` | `string` |  |
+| `accountCode?` | `string` |  |
+| `quantity?` | `number` | Float quantity. Optional: send `quantity_exact` instead. |
+| `quantityExact?` | `string` | Exact base-10 quantity. Takes precedence over `quantity` when present. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `unitPrice?` | `number` | Float unit price. Optional: send `unit_price_exact` instead for exact money. |
+| `unitPriceExact?` | `string` | Exact base-10 unit price. Takes precedence over `unit_price` when present. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `taxRate?` | `number` | Tax rate as a fraction (`0.08` = 8%). |
+| `taxRateExact?` | `string` | Exact base-10 tax rate. Takes precedence over `tax_rate` when present. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `poLineId?` | `string` |  |
 
 ### CreateBomComponentInput
 
@@ -7024,6 +7169,19 @@ Input for creating a coupon code
 | `warehouseId?` | `number` |  |
 | `assignedTo?` | `string` |  |
 | `notes?` | `string` |  |
+| `items?` | `Array<CreateInspectionItemInput>` | Lines to inspect. Optional: omitted (or empty) creates an inspection with no lines, as before. Types: [`CreateInspectionItemInput`](#createinspectioniteminput) |
+
+### CreateInspectionItemInput
+
+A line to inspect.
+
+| Field | Type | Description |
+|---|---|---|
+| `sku` | `string` |  |
+| `lotNumber?` | `string` |  |
+| `serialNumber?` | `string` |  |
+| `quantityToInspect?` | `number` | Float quantity. Optional: send `quantity_to_inspect_exact` instead. |
+| `quantityToInspectExact?` | `string` | Exact base-10 quantity. Takes precedence over `quantity_to_inspect`. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 
 ### CreateIntegrationFieldMappingInput
 
@@ -7349,6 +7507,7 @@ Input for creating a promotion
 | `excludedCategoryIds?` | `Array<string>` | Excluded category IDs |
 | `eligibleCustomerIds?` | `Array<string>` | Eligible customer IDs |
 | `eligibleCustomerGroups?` | `Array<string>` | Eligible customer groups |
+| `conditions?` | `Array<PromotionConditionInput>` | Conditions the cart must meet (minimum subtotal, first order, shipping country, ...). Each is validated before anything is stored. Types: [`PromotionConditionInput`](#promotionconditioninput) |
 | `currency?` | `string` | Currency code |
 | `priority?` | `number` | Priority (lower = applied first) |
 | `metadata?` | `string` | Metadata as JSON |
@@ -7391,6 +7550,25 @@ Input for creating a promotion
 | `purchaseOrderId?` | `string` |  |
 | `carrier?` | `string` |  |
 | `trackingNumber?` | `string` |  |
+| `items?` | `Array<CreateReceiptItemInput>` | Expected lines. Optional: omitted (or empty) creates a receipt with no lines, as before. Types: [`CreateReceiptItemInput`](#createreceiptiteminput) |
+
+### CreateReceiptItemInput
+
+An expected receipt line. Money follows the binding convention: send the
+`...Exact` base-10 string (preferred) or the float.
+
+| Field | Type | Description |
+|---|---|---|
+| `sku` | `string` |  |
+| `description?` | `string` |  |
+| `poLineId?` | `string` |  |
+| `expectedQuantity?` | `number` | Float quantity. Optional: send `expected_quantity_exact` instead. |
+| `expectedQuantityExact?` | `string` | Exact base-10 quantity. Takes precedence over `expected_quantity`. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `unitCost?` | `number` | Float unit cost. Optional: send `unit_cost_exact` instead for exact money. |
+| `unitCostExact?` | `string` | Exact base-10 unit cost. Takes precedence over `unit_cost` when present. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `lotNumber?` | `string` |  |
+| `expirationDate?` | `string` | RFC 3339 timestamp. |
+| `notes?` | `string` |  |
 
 ### CreateRefundExactInput
 
@@ -9027,6 +9205,25 @@ Filter for `quality.listInspections()`
 | `offset?` | `number` |  |
 | `afterCursor?` | `Array<string>` | Keyset cursor: `[createdAt, id]` |
 
+### InspectionItemOutput
+
+An inspection line as stored. Quantities are exact base-10 strings.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `inspectionId` | `string` |  |
+| `sku` | `string` |  |
+| `lotNumber?` | `string` |  |
+| `serialNumber?` | `string` |  |
+| `quantityInspectedExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `quantityPassedExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `quantityFailedExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `defectCodes` | `Array<string>` |  |
+| `result` | `string` | `pending`, `pass`, `fail`, ... (the engine's snake_case result). |
+| `notes?` | `string` |  |
+| `createdAt` | `string` |  |
+
 ### InspectionOutput
 
 | Field | Type | Description |
@@ -10093,6 +10290,26 @@ Exact money on the wire (`stateset_primitives::MoneyWire`).
 | `amount` | `string` | Base-10 decimal amount, for example `"29.99"`. |
 | `currency` | `string` | ISO 4217 code that fixes the permitted minor-unit scale, e.g. `"USD"`. |
 
+### NcrDisposition
+
+NCR disposition as rendered on `NcrOutput.disposition` (Rust `Debug` form).
+
+```ts
+type NcrDisposition = 'UseAsIs' | 'Rework' | 'Repair' | 'Scrap' | 'ReturnToVendor' | 'Downgrade' | 'SortAndScreen'
+```
+
+One of: `'UseAsIs'`, `'Rework'`, `'Repair'`, `'Scrap'`, `'ReturnToVendor'`, `'Downgrade'`, `'SortAndScreen'`.
+
+### NcrDispositionInput
+
+NCR disposition accepted by `UpdateNcrInput.disposition` (case-insensitive; `_` optional).
+
+```ts
+type NcrDispositionInput = 'use_as_is' | 'rework' | 'repair' | 'scrap' | 'return_to_vendor' | 'downgrade' | 'sort_and_screen' | NcrDisposition
+```
+
+Types: [`NcrDisposition`](#ncrdisposition)
+
 ### NcrFilterInput
 
 Filter for `quality.listNcrs()`
@@ -10123,7 +10340,15 @@ Filter for `quality.listNcrs()`
 | `quantityAffected` | `number` |  |
 | `status` | `NcrStatus` | Types: [`NcrStatus`](#ncrstatus) |
 | `description` | `string` |  |
+| `disposition?` | `NcrDisposition` | What was decided for the non-conforming material. Closing requires one. Types: [`NcrDisposition`](#ncrdisposition) |
+| `dispositionQuantity?` | `number` | **Deprecated.** Use the `dispositionQuantityExact` twin; float quantities will be removed in 2.0. |
+| `dispositionQuantityExact?` | `string` | Exact base-10 quantity the disposition covers. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `rootCause?` | `string` |  |
+| `correctiveAction?` | `string` |  |
+| `preventiveAction?` | `string` |  |
+| `assignedTo?` | `string` |  |
 | `createdAt` | `string` |  |
+| `closedAt?` | `string` |  |
 
 ### NcrSeverity
 
@@ -10174,6 +10399,16 @@ type NcrStatus = 'Open' | 'UnderReview' | 'PendingDisposition' | 'CorrectiveActi
 ```
 
 One of: `'Open'`, `'UnderReview'`, `'PendingDisposition'`, `'CorrectiveAction'`, `'PreventiveAction'`, `'Verification'`, `'Closed'`, `'Cancelled'`.
+
+### NcrStatusInput
+
+Non-conformance report status accepted by `UpdateNcrInput.status` (case-insensitive; `_` optional).
+
+```ts
+type NcrStatusInput = 'open' | 'under_review' | 'pending_disposition' | 'corrective_action' | 'preventive_action' | 'verification' | 'closed' | 'cancelled' | NcrStatus
+```
+
+Types: [`NcrStatus`](#ncrstatus)
 
 ### OpenOptions
 
@@ -10245,6 +10480,12 @@ Filter for `orders.list()`
 | `status` | `OrderStatus` | Types: [`OrderStatus`](#orderstatus) |
 | `totalAmount` | `number` | **Deprecated.** Use the `totalAmountExact` twin; float money will be removed in 2.0. |
 | `totalAmountExact` | `string` | Exact base-10 order total. Prefer this field for calculations. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `taxAmount` | `number` | **Deprecated.** Use the `taxAmountExact` twin; float money will be removed in 2.0. |
+| `taxAmountExact` | `string` | Exact base-10 order-level tax, already included in the total. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `shippingAmount` | `number` | **Deprecated.** Use the `shippingAmountExact` twin; float money will be removed in 2.0. |
+| `shippingAmountExact` | `string` | Exact base-10 shipping charge, already included in the total. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `discountAmount` | `number` | **Deprecated.** Use the `discountAmountExact` twin; float money will be removed in 2.0. |
+| `discountAmountExact` | `string` | Exact base-10 order-level discount, already subtracted from the total. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `currency` | `string` |  |
 | `paymentStatus` | `PaymentStatus` | Types: [`PaymentStatus`](#paymentstatus) |
 | `fulfillmentStatus` | `FulfillmentStatus` | Types: [`FulfillmentStatus`](#fulfillmentstatus) |
@@ -10401,6 +10642,8 @@ One of: `'pending'`, `'scheduled'`, `'partially_paid'`, `'paid'`, `'cancelled'`.
 | `idempotencyKey?` | `string` |  |
 | `amount` | `number` | **Deprecated.** Use the `amountExact` twin; float money will be removed in 2.0. |
 | `amountExact` | `string` | Exact base-10 amount. Prefer this field for all calculations. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `amountRefunded` | `number` | **Deprecated.** Use the `amountRefundedExact` twin; float money will be removed in 2.0. |
+| `amountRefundedExact` | `string` | Exact base-10 total of COMPLETED refunds. A refund only counts here once `completeRefund` settles it; pending refunds are not included. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `currency` | `string` |  |
 | `status` | `PaymentTransactionStatus` | Types: [`PaymentTransactionStatus`](#paymenttransactionstatus) |
 | `version` | `number` |  |
@@ -10818,6 +11061,49 @@ type ProductionBatchStatus = 'planned' | 'in_progress' | 'completed' | 'cancelle
 
 One of: `'planned'`, `'in_progress'`, `'completed'`, `'cancelled'`.
 
+### PromotionConditionInput
+
+A condition a cart must meet for a promotion to apply.
+
+| Field | Type | Description |
+|---|---|---|
+| `conditionType` | `PromotionConditionType` | What is tested: minimum_subtotal, minimum_quantity, product_in_cart, category_in_cart, sku_in_cart, first_order, shipping_country, shipping_state, cart_item_count, customer_id, ... Types: [`PromotionConditionType`](#promotionconditiontype) |
+| `operator` | `PromotionConditionOperator` | How it is compared: equals, not_equals, greater_than, in, ... Types: [`PromotionConditionOperator`](#promotionconditionoperator) |
+| `value` | `string` | The value compared against: a decimal, an integer, a boolean, or a comma-separated list, as the condition type requires. |
+| `isRequired?` | `boolean` | Required conditions must all be met; when optional ones exist, at least one must be. Defaults to `true`. |
+
+### PromotionConditionOperator
+
+How a promotion condition compares its value; accepted on `PromotionConditionInput.operator` (case-insensitive) and rendered in this snake_case form on `PromotionConditionOutput.operator`.
+
+```ts
+type PromotionConditionOperator = 'equals' | 'not_equals' | 'greater_than' | 'greater_than_or_equal' | 'less_than' | 'less_than_or_equal' | 'contains' | 'not_contains' | 'in' | 'not_in'
+```
+
+One of: `'equals'`, `'not_equals'`, `'greater_than'`, `'greater_than_or_equal'`, `'less_than'`, `'less_than_or_equal'`, `'contains'`, `'not_contains'`, `'in'`, `'not_in'`.
+
+### PromotionConditionOutput
+
+A condition attached to a promotion.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `conditionType` | `PromotionConditionType` | Types: [`PromotionConditionType`](#promotionconditiontype) |
+| `operator` | `PromotionConditionOperator` | Types: [`PromotionConditionOperator`](#promotionconditionoperator) |
+| `value` | `string` |  |
+| `isRequired` | `boolean` |  |
+
+### PromotionConditionType
+
+What a promotion condition tests; accepted on `PromotionConditionInput.conditionType` (case-insensitive) and rendered in this snake_case form on `PromotionConditionOutput.conditionType`.
+
+```ts
+type PromotionConditionType = 'minimum_subtotal' | 'minimum_quantity' | 'product_in_cart' | 'category_in_cart' | 'sku_in_cart' | 'customer_group' | 'first_order' | 'customer_email_domain' | 'shipping_country' | 'shipping_state' | 'payment_method' | 'cart_item_count' | 'customer_id'
+```
+
+One of: `'minimum_subtotal'`, `'minimum_quantity'`, `'product_in_cart'`, `'category_in_cart'`, `'sku_in_cart'`, `'customer_group'`, `'first_order'`, `'customer_email_domain'`, `'shipping_country'`, `'shipping_state'`, `'payment_method'`, `'cart_item_count'`, `'customer_id'`.
+
 ### PromotionFilterInput
 
 Filter for listing promotions
@@ -10879,8 +11165,19 @@ Promotion output
 | `currency` | `string` |  |
 | `priority` | `number` |  |
 | `metadata?` | `string` |  |
+| `conditions` | `Array<PromotionConditionOutput>` | Conditions the cart must meet for this promotion to apply. Types: [`PromotionConditionOutput`](#promotionconditionoutput) |
 | `createdAt` | `string` |  |
 | `updatedAt` | `string` |  |
+
+### PromotionRejectionReason
+
+Why a promotion or coupon was considered and not applied, as rendered on `RejectedPromotionOutput.reasonCode`.
+
+```ts
+type PromotionRejectionReason = 'invalid_code' | 'expired' | 'not_yet_active' | 'usage_limit_reached' | 'customer_limit_reached' | 'minimum_not_met' | 'product_not_eligible' | 'customer_not_eligible' | 'not_stackable' | 'already_applied' | 'internal_error' | 'currency_mismatch'
+```
+
+One of: `'invalid_code'`, `'expired'`, `'not_yet_active'`, `'usage_limit_reached'`, `'customer_limit_reached'`, `'minimum_not_met'`, `'product_not_eligible'`, `'customer_not_eligible'`, `'not_stackable'`, `'already_applied'`, `'internal_error'`, `'currency_mismatch'`.
 
 ### PromotionStacking
 
@@ -10967,10 +11264,25 @@ One of: `'percentageoff'`, `'fixedamountoff'`, `'buyxgety'`, `'freeshipping'`, `
 Promotion type accepted on input (case-insensitive).
 
 ```ts
-type PromotionTypeInput = 'percentage_off' | 'percentageoff' | 'fixed_amount_off' | 'fixedamountoff' | 'buy_x_get_y' | 'buyxgety' | 'bogo' | 'free_shipping' | 'freeshipping' | 'tiered_discount' | 'tiereddiscount' | 'bundle' | 'bundle_discount' | 'bundlediscount'
+type PromotionTypeInput = 'percentage_off' | 'percentageoff' | 'fixed_amount_off' | 'fixedamountoff' | 'buy_x_get_y' | 'buyxgety' | 'bogo' | 'free_shipping' | 'freeshipping' | 'tiered_discount' | 'tiereddiscount' | 'bundle' | 'bundle_discount' | 'bundlediscount' | 'first_order_discount' | 'firstorderdiscount'
 ```
 
-One of: `'percentage_off'`, `'percentageoff'`, `'fixed_amount_off'`, `'fixedamountoff'`, `'buy_x_get_y'`, `'buyxgety'`, `'bogo'`, `'free_shipping'`, `'freeshipping'`, `'tiered_discount'`, `'tiereddiscount'`, `'bundle'`, `'bundle_discount'`, `'bundlediscount'`.
+One of: `'percentage_off'`, `'percentageoff'`, `'fixed_amount_off'`, `'fixedamountoff'`, `'buy_x_get_y'`, `'buyxgety'`, `'bogo'`, `'free_shipping'`, `'freeshipping'`, `'tiered_discount'`, `'tiereddiscount'`, `'bundle'`, `'bundle_discount'`, `'bundlediscount'`, `'first_order_discount'`, `'firstorderdiscount'`.
+
+### PromotionUsageFilterInput
+
+Optional filters for `Promotions.listUsage`. Every set field narrows the
+result; no argument lists the whole ledger (engine default page size).
+
+| Field | Type | Description |
+|---|---|---|
+| `promotionId?` | `string` |  |
+| `couponId?` | `string` |  |
+| `customerId?` | `string` |  |
+| `orderId?` | `string` |  |
+| `cartId?` | `string` |  |
+| `limit?` | `number` |  |
+| `offset?` | `number` |  |
 
 ### PromotionUsageOutput
 
@@ -11152,6 +11464,29 @@ Optional filters for `Receiving.listReceipts`. No argument lists all.
 | `limit?` | `number` |  |
 | `offset?` | `number` |  |
 
+### ReceiptItemOutput
+
+A receipt line as stored. Quantities are exact base-10 strings.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `receiptId` | `string` |  |
+| `lineNumber` | `number` |  |
+| `sku` | `string` |  |
+| `description?` | `string` |  |
+| `poLineId?` | `string` |  |
+| `expectedQuantityExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `receivedQuantityExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `rejectedQuantityExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `unitCost?` | `number` | **Deprecated.** Use the `unitCostExact` twin; float money will be removed in 2.0. |
+| `unitCostExact?` | `string` | Exact base-10 unit cost, when set. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `lotNumber?` | `string` |  |
+| `expirationDate?` | `string` |  |
+| `status` | `string` | The engine's snake_case line status (`pending`, `received`, ...). |
+| `notes?` | `string` |  |
+| `createdAt` | `string` |  |
+
 ### ReceiptOutput
 
 | Field | Type | Description |
@@ -11273,9 +11608,14 @@ Types: [`RecognitionMethod`](#recognitionmethod)
 | `paymentId` | `string` |  |
 | `amount` | `number` | **Deprecated.** Use the `amountExact` twin; float money will be removed in 2.0. |
 | `amountExact` | `string` | Exact base-10 amount. Prefer this field for all calculations. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `currency` | `string` |  |
 | `status` | `RefundStatus` | Types: [`RefundStatus`](#refundstatus) |
 | `reason?` | `string` |  |
+| `externalId?` | `string` |  |
+| `failureReason?` | `string` | Why the refund failed (set by `failRefund`). |
+| `refundedAt?` | `string` | RFC 3339; set when `completeRefund` settles the refund. |
 | `createdAt` | `string` |  |
+| `updatedAt` | `string` |  |
 | `idempotencyKey?` | `string` |  |
 
 ### RefundStatus
@@ -11287,6 +11627,17 @@ type RefundStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancell
 ```
 
 One of: `'pending'`, `'processing'`, `'completed'`, `'failed'`, `'cancelled'`.
+
+### RejectedPromotionOutput
+
+A promotion or coupon that was considered and refused.
+
+| Field | Type | Description |
+|---|---|---|
+| `promotionId?` | `string` |  |
+| `couponCode?` | `string` |  |
+| `reason` | `string` | Human-readable reason. |
+| `reasonCode` | `PromotionRejectionReason` | Machine-readable reason. Types: [`PromotionRejectionReason`](#promotionrejectionreason) |
 
 ### ReservationOutput
 
@@ -12996,6 +13347,24 @@ Filter for `listRules()`; omit for every rule.
 |---|---|---|
 | `internalValue?` | `string` |  |
 | `isActive?` | `boolean` |  |
+
+### UpdateNcrInput
+
+Fields for `Quality.updateNcr`. Every field is optional; omitted fields are
+left unchanged. Closing (`status: 'closed'`) requires a disposition, already
+recorded or set in the same call.
+
+| Field | Type | Description |
+|---|---|---|
+| `status?` | `NcrStatusInput` | Types: [`NcrStatusInput`](#ncrstatusinput) |
+| `severity?` | `NcrSeverityInput` | Types: [`NcrSeverityInput`](#ncrseverityinput) |
+| `rootCause?` | `string` |  |
+| `correctiveAction?` | `string` |  |
+| `preventiveAction?` | `string` |  |
+| `disposition?` | `NcrDispositionInput` | Types: [`NcrDispositionInput`](#ncrdispositioninput) |
+| `dispositionQuantity?` | `number` | **Deprecated.** Use the `dispositionQuantityExact` twin; float quantities will be removed in 2.0. |
+| `dispositionQuantityExact?` | `string` | Exact base-10 quantity the disposition covers. Wins over the float. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `assignedTo?` | `string` |  |
 
 ### UpdateOrderInput
 

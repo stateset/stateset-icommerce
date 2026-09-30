@@ -1,0 +1,33 @@
+{
+  "_why": "MCP tools known to crash on a fresh store (see test/integration/mcp-tool-smoke.test.js). This list only shrinks: fix a tool, then remove it here.",
+  "defects": [
+    {
+      "tool": "a2a_billing_tick",
+      "reason": "Billing executor not initialized"
+    },
+    {
+      "tool": "a2a_billing_start",
+      "reason": "Billing executor not initialized"
+    },
+    {
+      "tool": "a2a_billing_stop",
+      "reason": "Billing executor not initialized"
+    },
+    {
+      "tool": "a2a_billing_metrics",
+      "reason": "Billing executor not initialized"
+    },
+    {
+      "tool": "a2a_batch_pay",
+      "reason": "Batch service not initialized"
+    },
+    {
+      "tool": "a2a_batch_request_quotes",
+      "reason": "Batch service not initialized"
+    },
+    {
+      "tool": "a2a_tick_metrics",
+      "reason": "Tick optimizer not initialized"
+    }
+  ]
+}

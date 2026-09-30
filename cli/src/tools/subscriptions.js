@@ -14,6 +14,58 @@ const billingIntervalEnum = z.enum([
   'annual',
 ]);
 
+// Fields the binding's UpdateSubscriptionPlanInput / UpdateSubscriptionInput
+// accept, mapped to their kind. `number` fields (money included) are `number`
+// in the binding, so decimal strings from a model are coerced here rather than
+// rejected by napi; anything else is refused instead of being silently dropped.
+const PLAN_UPDATE_FIELDS = {
+  name: 'string',
+  description: 'string',
+  price: 'number',
+  setupFee: 'number',
+  trialDays: 'number',
+  trialRequiresPaymentMethod: 'boolean',
+  minCycles: 'number',
+  maxCycles: 'number',
+  discountPercent: 'number',
+  discountAmount: 'number',
+};
+
+const SUBSCRIPTION_UPDATE_FIELDS = {
+  status: 'string',
+  price: 'number',
+  paymentMethodId: 'string',
+  nextBillingDate: 'string',
+  discountPercent: 'number',
+  discountAmount: 'number',
+  couponCode: 'string',
+};
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function toBindingInput(updates, fields) {
+  const input = {};
+  const unsupported = [];
+  for (const [key, value] of Object.entries(updates ?? {})) {
+    if (!Object.hasOwn(fields, key)) {
+      unsupported.push(key);
+      continue;
+    }
+    if (value === undefined || value === null) continue;
+    if (fields[key] === 'number' && typeof value === 'string' && value.trim() !== '') {
+      const n = Number(value);
+      if (!Number.isFinite(n)) {
+        unsupported.push(`${key} (not a number: ${JSON.stringify(value)})`);
+        continue;
+      }
+      input[key] = n;
+    } else {
+      input[key] = value;
+    }
+  }
+  return { input, unsupported };
+}
+
 export const subscriptionTools = [
   {
     name: 'list_subscription_plans',
@@ -26,7 +78,7 @@ export const subscriptionTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { status, billingInterval } = params;
-      const plans = await commerce.listSubscriptionPlans({ status, billingInterval });
+      const plans = await commerce.subscriptions.listPlans({ status, billingInterval });
       return {
         success: true,
         count: plans.length,
@@ -36,7 +88,7 @@ export const subscriptionTools = [
           name: p.name,
           status: p.status,
           billingInterval: p.billingInterval,
-          price: p.price,
+          price: p.priceExact ?? p.price,
           currency: p.currency,
           trialDays: p.trialDays,
         })),
@@ -50,10 +102,10 @@ export const subscriptionTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { planId } = params;
-      let plan = await commerce.getSubscriptionPlan(planId);
-      if (!plan && typeof commerce.getSubscriptionPlanByCode === 'function') {
-        plan = await commerce.getSubscriptionPlanByCode(planId);
-      }
+      // getPlan rejects a non-UUID argument outright, so route codes to getPlanByCode.
+      const plan = UUID_RE.test(planId)
+        ? await commerce.subscriptions.getPlan(planId)
+        : await commerce.subscriptions.getPlanByCode(planId);
       if (!plan) return { success: false, error: 'Plan not found' };
       return { success: true, plan };
     },
@@ -80,14 +132,15 @@ export const subscriptionTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: { name, billingInterval, price },
         };
-      const plan = await commerce.createSubscriptionPlan({
+      // The binding's CreateSubscriptionPlanInput takes money as `number`.
+      const plan = await commerce.subscriptions.createPlan({
         name,
         billingInterval,
-        price: price.toString(),
+        price,
         currency,
         trialDays,
         description,
-        setupFee: setupFee?.toString(),
+        setupFee,
       });
       return { success: true, message: `Created subscription plan "${plan.name}"`, plan };
     },
@@ -107,7 +160,7 @@ export const subscriptionTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldActivate: planId,
         };
-      const plan = await commerce.activateSubscriptionPlan(planId);
+      const plan = await commerce.subscriptions.activatePlan(planId);
       return { success: true, message: `Plan "${plan.name}" activated`, plan };
     },
   },
@@ -116,7 +169,11 @@ export const subscriptionTools = [
     description: 'Update an existing subscription plan. Requires --apply flag.',
     inputSchema: {
       planId: z.string().min(1).describe('Plan ID'),
-      updates: z.record(z.string(), z.any()).describe('Partial plan fields to update'),
+      updates: z
+        .record(z.string(), z.any())
+        .describe(
+          'Partial plan fields: name, description, price, setupFee, trialDays, trialRequiresPaymentMethod, minCycles, maxCycles, discountPercent (fraction 0-1), discountAmount',
+        ),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -128,7 +185,15 @@ export const subscriptionTools = [
           wouldUpdate: { planId: params.planId, updates: params.updates },
         };
       }
-      const plan = await commerce.updateSubscriptionPlan(params.planId, params.updates);
+      const { input, unsupported } = toBindingInput(params.updates, PLAN_UPDATE_FIELDS);
+      if (unsupported.length > 0) {
+        return {
+          success: false,
+          error: `Unsupported plan update field(s): ${unsupported.join(', ')}`,
+          allowedFields: Object.keys(PLAN_UPDATE_FIELDS),
+        };
+      }
+      const plan = await commerce.subscriptions.updatePlan(params.planId, input);
       return { success: true, message: `Plan "${plan.name}" updated`, plan };
     },
   },
@@ -147,7 +212,7 @@ export const subscriptionTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldArchive: planId,
         };
-      const plan = await commerce.archiveSubscriptionPlan(planId);
+      const plan = await commerce.subscriptions.archivePlan(planId);
       return { success: true, message: `Plan "${plan.name}" archived`, plan };
     },
   },
@@ -165,7 +230,7 @@ export const subscriptionTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { customerId, planId, status } = params;
-      const subscriptions = await commerce.listSubscriptions({ customerId, planId, status });
+      const subscriptions = await commerce.subscriptions.list({ customerId, planId, status });
       return {
         count: subscriptions.length,
         subscriptions: subscriptions.map((s) => ({
@@ -174,7 +239,7 @@ export const subscriptionTools = [
           customerId: s.customerId,
           planName: s.planName,
           status: s.status,
-          price: s.price,
+          price: s.priceExact ?? s.price,
           currency: s.currency,
           nextBillingDate: s.nextBillingDate,
           billingCycleCount: s.billingCycleCount,
@@ -189,10 +254,10 @@ export const subscriptionTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { subscriptionId } = params;
-      let subscription = await commerce.getSubscription(subscriptionId);
-      if (!subscription && typeof commerce.getSubscriptionByNumber === 'function') {
-        subscription = await commerce.getSubscriptionByNumber(subscriptionId);
-      }
+      // get rejects a non-UUID argument outright, so route numbers to getByNumber.
+      const subscription = UUID_RE.test(subscriptionId)
+        ? await commerce.subscriptions.get(subscriptionId)
+        : await commerce.subscriptions.getByNumber(subscriptionId);
       if (!subscription) return { success: false, error: 'Subscription not found' };
       return subscription;
     },
@@ -217,7 +282,7 @@ export const subscriptionTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldSubscribe: { customerId, planId },
         };
-      const subscription = await commerce.createSubscription({
+      const subscription = await commerce.subscriptions.subscribe({
         customerId,
         planId,
         paymentMethodId,
@@ -249,7 +314,7 @@ export const subscriptionTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldPause: subscriptionId,
         };
-      const subscription = await commerce.pauseSubscription(subscriptionId, {
+      const subscription = await commerce.subscriptions.pause(subscriptionId, {
         resumeAt: resumeAt ? new Date(resumeAt).toISOString() : undefined,
         reason,
       });
@@ -263,10 +328,12 @@ export const subscriptionTools = [
   {
     name: 'update_subscription',
     description:
-      'Update subscription fields such as payment method or metadata. Requires --apply flag.',
+      'Update subscription fields (status, price, paymentMethodId, nextBillingDate, discountPercent as a 0-1 fraction, discountAmount, couponCode). Requires --apply flag.',
     inputSchema: {
       subscriptionId: z.string().min(1).describe('Subscription ID'),
-      updates: z.record(z.string(), z.any()).describe('Partial subscription fields to update'),
+      updates: z
+        .record(z.string(), z.any())
+        .describe('Partial subscription fields to update (see description for allowed keys)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -278,7 +345,15 @@ export const subscriptionTools = [
           wouldUpdate: { subscriptionId: params.subscriptionId, updates: params.updates },
         };
       }
-      const subscription = await commerce.updateSubscription(params.subscriptionId, params.updates);
+      const { input, unsupported } = toBindingInput(params.updates, SUBSCRIPTION_UPDATE_FIELDS);
+      if (unsupported.length > 0) {
+        return {
+          success: false,
+          error: `Unsupported subscription update field(s): ${unsupported.join(', ')}`,
+          allowedFields: Object.keys(SUBSCRIPTION_UPDATE_FIELDS),
+        };
+      }
+      const subscription = await commerce.subscriptions.update(params.subscriptionId, input);
       return {
         success: true,
         message: `Subscription ${subscription.subscriptionNumber} updated`,
@@ -300,7 +375,7 @@ export const subscriptionTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldResume: subscriptionId,
         };
-      const subscription = await commerce.resumeSubscription(subscriptionId);
+      const subscription = await commerce.subscriptions.resume(subscriptionId);
       return {
         success: true,
         message: `Subscription ${subscription.subscriptionNumber} resumed`,
@@ -330,7 +405,10 @@ export const subscriptionTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldCancel: subscriptionId,
         };
-      const subscription = await commerce.cancelSubscription(subscriptionId, { immediate, reason });
+      const subscription = await commerce.subscriptions.cancel(subscriptionId, {
+        immediate,
+        reason,
+      });
       return {
         success: true,
         message: immediate
@@ -357,7 +435,7 @@ export const subscriptionTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldSkip: subscriptionId,
         };
-      const subscription = await commerce.skipBillingCycle(subscriptionId, { reason });
+      const subscription = await commerce.subscriptions.skipBilling(subscriptionId, { reason });
       return {
         success: true,
         message: `Next billing cycle skipped for ${subscription.subscriptionNumber}`,
@@ -379,7 +457,7 @@ export const subscriptionTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { subscriptionId, status } = params;
-      const cycles = await commerce.listBillingCycles({ subscriptionId, status });
+      const cycles = await commerce.subscriptions.listBillingCycles({ subscriptionId, status });
       return {
         count: cycles.length,
         cycles: cycles.map((c) => ({
@@ -388,7 +466,7 @@ export const subscriptionTools = [
           status: c.status,
           periodStart: c.periodStart,
           periodEnd: c.periodEnd,
-          total: c.total,
+          total: c.totalExact ?? c.total,
           currency: c.currency,
           billedAt: c.billedAt,
         })),
@@ -402,7 +480,7 @@ export const subscriptionTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { cycleId } = params;
-      const cycle = await commerce.getBillingCycle(cycleId);
+      const cycle = await commerce.subscriptions.getBillingCycle(cycleId);
       if (!cycle) return { success: false, error: 'Billing cycle not found' };
       return cycle;
     },
@@ -417,7 +495,9 @@ export const subscriptionTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { subscriptionId, limit } = params;
-      const events = await commerce.getSubscriptionEvents(subscriptionId, limit);
+      // The binding's getEvents takes no limit; apply it here.
+      const all = await commerce.subscriptions.getEvents(subscriptionId);
+      const events = typeof limit === 'number' && limit >= 0 ? all.slice(0, limit) : all;
       return {
         count: events.length,
         events: events.map((e) => ({

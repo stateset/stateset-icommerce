@@ -7,9 +7,9 @@
   "openapiVersion": "3.1.0",
   "title": "StateSet Commerce API",
   "version": "1.0.4",
-  "totalPaths": 352,
-  "totalOperations": 471,
-  "totalSchemas": 455,
+  "totalPaths": 353,
+  "totalOperations": 473,
+  "totalSchemas": 457,
   "totalTags": 64,
   "methods": [
     {
@@ -22,11 +22,11 @@
     },
     {
       "name": "PATCH",
-      "count": 13
+      "count": 14
     },
     {
       "name": "POST",
-      "count": 232
+      "count": 233
     },
     {
       "name": "PUT",
@@ -272,7 +272,7 @@
     {
       "name": "shipments",
       "description": "Shipment tracking and management",
-      "count": 4
+      "count": 6
     },
     {
       "name": "shipping",
@@ -414,6 +414,7 @@
     "BulkCreateRequest",
     "BulkDeleteRequest",
     "BulkResultResponse",
+    "CancelShipmentRequest",
     "CaptureLineRequest",
     "CaptureRequest",
     "CartAddressRequest",
@@ -785,6 +786,7 @@
     "UpdatePurchaseOrderRequest",
     "UpdateReturnRequest",
     "UpdateRevenueContractRequest",
+    "UpdateShipmentRequest",
     "UpdateSupplierRequest",
     "UpdateWarehouseRequest",
     "UpdateWorkOrderRequest",
@@ -3989,6 +3991,24 @@
         "shipments"
       ],
       "summary": "`GET /api/v1/shipments/:id`"
+    },
+    {
+      "path": "/api/v1/shipments/{id}",
+      "method": "PATCH",
+      "operationId": "update_shipment",
+      "tags": [
+        "shipments"
+      ],
+      "summary": "Patch one native shipment without skipping lifecycle guards."
+    },
+    {
+      "path": "/api/v1/shipments/{id}/cancel",
+      "method": "POST",
+      "operationId": "cancel_shipment",
+      "tags": [
+        "shipments"
+      ],
+      "summary": "Cancel before carrier handoff, retaining shipment items and tracking history."
     },
     {
       "path": "/api/v1/shipments/{id}/deliver",

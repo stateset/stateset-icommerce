@@ -101,4 +101,11 @@ async fn postgres_saga_smoke() {
     for step in steps {
         assert!(step.rollback_at.is_some(), "expected rollback_at to be set");
     }
+
+    coordinator
+        .rollback_saga(saga.id, |_comp_step_id, _payload| async move {
+            panic!("recorded compensation must not run twice")
+        })
+        .await
+        .expect("repeated rollback skips recorded compensations");
 }

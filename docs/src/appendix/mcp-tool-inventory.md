@@ -13,11 +13,11 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 968 |
+| Total tools | 973 |
 | MCP servers | 3 |
-| Policy domains | 89 |
-| Read tools | 478 |
-| Write tools | 422 |
+| Policy domains | 90 |
+| Read tools | 480 |
+| Write tools | 425 |
 | Delete tools | 21 |
 | Admin tools | 47 |
 | Unknown permission | 0 |
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 950 | `cli/src/mcp-server.js` |
+| stateset-commerce | 955 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -65,6 +65,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | cycle_counts | 7 |
 | edi_documents | 5 |
 | erc8004 | 5 |
+| explain | 2 |
 | fixed_assets | 9 |
 | fraud | 6 |
 | fulfillment | 14 |
@@ -90,7 +91,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | print-stations | 8 |
 | production_batches | 8 |
 | products | 14 |
-| promotions | 15 |
+| promotions | 17 |
 | proofs | 7 |
 | purgatory | 6 |
 | quality | 15 |
@@ -100,9 +101,9 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | reviews | 7 |
 | scaffold | 13 |
 | search-config | 7 |
-| segments | 6 |
+| segments | 5 |
 | serials | 8 |
-| shipments | 14 |
+| shipments | 16 |
 | shipping_zones | 7 |
 | stablecoin | 4 |
 | stock-snapshots | 5 |
@@ -130,8 +131,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | --- | --- |
 | admin | 47 |
 | delete | 21 |
-| read | 478 |
-| write | 422 |
+| read | 480 |
+| write | 425 |
 
 ## Tool Registry
 
@@ -285,6 +286,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `add_customer_address` | `stateset-commerce` | `customers` | `write` |
 | `add_product_variant` | `stateset-commerce` | `products` | `write` |
 | `add_production_batch_work_orders` | `stateset-commerce` | `production_batches` | `write` |
+| `add_promotion_condition` | `stateset-commerce` | `promotions` | `write` |
 | `add_return_tracking` | `stateset-commerce` | `returns` | `write` |
 | `add_to_wishlist` | `stateset-commerce` | `wishlists` | `write` |
 | `adjust_credit_limit` | `stateset-commerce` | `credit` | `write` |
@@ -370,7 +372,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `approve_warranty_claim` | `stateset-commerce` | `warranties` | `write` |
 | `archive_product` | `stateset-commerce` | `products` | `write` |
 | `archive_subscription_plan` | `stateset-commerce` | `subscriptions` | `delete` |
-| `assess_order_fraud` | `stateset-commerce` | `fraud` | `read` |
+| `assess_order_fraud` | `stateset-commerce` | `fraud` | `write` |
 | `assess_wasm_connector_safety` | `stateset-commerce` | `connectors` | `read` |
 | `assign_pick_task` | `stateset-commerce` | `fulfillment` | `write` |
 | `audit_export` | `stateset-commerce` | `audit` | `admin` |
@@ -384,7 +386,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `bulk_delete_integration_field_mappings` | `stateset-commerce` | `integration-field-mappings` | `write` |
 | `bulk_upsert_integration_mappings` | `stateset-commerce` | `integration-mappings` | `write` |
 | `bulk_upsert_supplier_skus` | `stateset-commerce` | `supplier_skus` | `write` |
-| `calculate_cart_tax` | `stateset-commerce` | `tax` | `read` |
+| `calculate_cart_tax` | `stateset-commerce` | `tax` | `write` |
 | `calculate_item_tax` | `stateset-commerce` | `tax` | `read` |
 | `calculate_shipping_rate` | `stateset-commerce` | `shipping_zones` | `read` |
 | `calculate_tax` | `stateset-commerce` | `tax` | `read` |
@@ -592,6 +594,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `execute_wasm_connector` | `stateset-commerce` | `connectors` | `write` |
 | `expire_backorder_allocations` | `stateset-commerce` | `backorders` | `write` |
 | `expire_cart` | `stateset-commerce` | `carts` | `write` |
+| `explain_cart_pricing` | `stateset-commerce` | `explain` | `read` |
+| `explain_order` | `stateset-commerce` | `explain` | `read` |
 | `explain_policy_denial` | `stateset-commerce` | `policies` | `read` |
 | `export_agent_catalog` | `stateset-commerce` | `catalog` | `read` |
 | `export_audit_trail` | `stateset-commerce` | `compliance` | `admin` |
@@ -903,6 +907,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `pause_subscription` | `stateset-commerce` | `subscriptions` | `write` |
 | `pick_up_next_print_job` | `stateset-commerce` | `print-stations` | `write` |
 | `place_asset_in_service` | `stateset-commerce` | `fixed_assets` | `write` |
+| `plan_partial_shipment` | `stateset-commerce` | `shipments` | `read` |
 | `post_depreciation` | `stateset-commerce` | `fixed_assets` | `write` |
 | `post_journal_entry` | `stateset-commerce` | `general_ledger` | `write` |
 | `post_purgatory_order` | `stateset-commerce` | `purgatory` | `write` |
@@ -912,9 +917,9 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `quarantine_lot` | `stateset-commerce` | `lots` | `write` |
 | `quarantine_serial` | `stateset-commerce` | `serials` | `write` |
 | `query_agent_catalog` | `stateset-commerce` | `catalog` | `read` |
+| `quote_promotions` | `stateset-commerce` | `promotions` | `read` |
 | `quote_shipping_rates` | `stateset-commerce` | `shipments` | `read` |
 | `reactivate_credit_account` | `stateset-commerce` | `credit` | `write` |
-| `rebuild_dynamic_segment` | `stateset-commerce` | `segments` | `write` |
 | `recalculate_cart` | `stateset-commerce` | `carts` | `write` |
 | `receive_inbound_shipment_line` | `stateset-commerce` | `inbound_shipments` | `write` |
 | `receive_transfer_order_line` | `stateset-commerce` | `transfer_orders` | `write` |
@@ -1038,6 +1043,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `update_promotion` | `stateset-commerce` | `promotions` | `write` |
 | `update_search_config` | `stateset-commerce` | `search-config` | `write` |
 | `update_segment` | `stateset-commerce` | `segments` | `write` |
+| `update_shipment` | `stateset-commerce` | `shipments` | `write` |
 | `update_shipping_zone` | `stateset-commerce` | `shipping_zones` | `write` |
 | `update_subscription` | `stateset-commerce` | `subscriptions` | `write` |
 | `update_subscription_plan` | `stateset-commerce` | `subscriptions` | `write` |

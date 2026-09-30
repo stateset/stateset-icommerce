@@ -1,6 +1,6 @@
 {
   "_description": "StateSet iCommerce Channel Gateway - Example Configuration",
-  "_version": "1.35.2",
+  "_version": "1.36.0",
 
   "channels": {
     "telegram": {
@@ -44,7 +44,7 @@
       "pollIntervalMs": 3000
     },
     "teams": {
-      "_description": "Microsoft Teams via Bot Framework. Requires TEAMS_APP_ID and TEAMS_APP_PASSWORD env vars.",
+      "_description": "Microsoft Teams via signed Bot Connector activities. Requires TEAMS_APP_ID and TEAMS_APP_PASSWORD; writes remain preview-only unless shared.allowApply is enabled.",
       "enabled": false,
       "allowlist": [],
       "webhookPort": 3978

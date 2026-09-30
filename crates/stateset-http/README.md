@@ -21,7 +21,7 @@ use std::net::SocketAddr;
 # #[tokio::main]
 # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 let commerce = Commerce::new(":memory:")?;
-let addr: SocketAddr = "0.0.0.0:3000".parse()?;
+let addr: SocketAddr = "127.0.0.1:3000".parse()?;
 
 ServerBuilder::new_from_env(commerce)?
     .bind(addr)
@@ -59,17 +59,27 @@ ServerBuilder::new_from_env(commerce)?
 - **Server-Sent Events** for live order and inventory changes
 - **Cursor pagination** with consistent envelope shapes
 - **Structured errors** — typed JSON bodies, not bare status codes
-- **Bearer auth** by default, with optional CORS and request-ID propagation
+- **Bearer auth** by default, with CORS and request-ID propagation as opt-in layers
 - **OpenAPI** description generated from the route table
 
 ## Security Defaults
 
-`ServerBuilder::new` generates a bearer token and protects API routes by default.
-Configure an operator-owned token with `with_bearer_auth`, or use actor-bound
-tokens with an authorization engine to enforce resource permissions. Disabling
-authentication requires the explicit `without_auth` option. See the
-[deployment guide](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/advanced/deployment.md)
-before exposing it publicly.
+The builder creates a random bearer token by default. Call
+`bearer_auth_token()` before `serve()` if you need that token for a local
+development client; startup logs do not reveal the full value. A non-loopback
+bind requires an explicit operator-owned token set with `with_bearer_auth`
+or an actor/tenant-bound variant. Public startup also requires fail-closed
+API authorization via `with_authz_engine` and rate limiting via
+`with_rate_limit`. If a trusted gateway supplies both controls instead, call
+`with_trusted_gateway_controls()` explicitly; the gateway must authenticate
+actors, enforce permissions, strip client-supplied actor/forwarding headers,
+and throttle traffic before forwarding it. Public binds cannot trust
+`x-actor-id` or forwarded client IP headers without that declaration.
+`/metrics` has a separate bearer token: `with_bearer_auth` only replaces the
+API token. Configure `with_metrics_bearer_auth` with an operator-owned scrape
+token before serving; keep that credential separate from the write-capable API
+token. Without it, `/metrics` retains its generated default token. See the
+[deployment guide](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/advanced/deployment.md).
 
 For shared hosting, configure `with_tenant_db_dir` and bind tokens to tenants
 and actors. API requests include `x-tenant-id`; in tenant-bound deployments it

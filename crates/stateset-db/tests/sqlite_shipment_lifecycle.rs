@@ -711,7 +711,7 @@ fn shipment_version_migration_preserves_existing_records_and_can_be_rerun() {
     let s = shipment(&db);
     {
         let mut conn = db.conn().unwrap();
-        conn.execute_batch("ALTER TABLE shipments DROP COLUMN version; DELETE FROM _migrations WHERE name = '097_shipment_version';").unwrap();
+        conn.execute_batch("ALTER TABLE shipments DROP COLUMN version; DELETE FROM _migrations WHERE name = '100_shipment_version';").unwrap();
         stateset_db::migrations::run_migrations(&mut conn).unwrap();
         stateset_db::migrations::run_migrations(&mut conn).unwrap();
     }

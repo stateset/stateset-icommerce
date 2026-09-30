@@ -15,7 +15,7 @@ import { isSafeDisplayUrl } from '../utils/url-validator.js';
  *
  * @param {Object} options
  * @param {string}   [options.dbPath='./store.db']
- * @param {boolean}  [options.allowApply=true]
+ * @param {boolean}  [options.allowApply=false]
  * @param {string}   [options.model]
  * @param {number}   [options.maxTurns=10]
  * @param {boolean}  [options.verbose=false]
@@ -27,7 +27,7 @@ import { isSafeDisplayUrl } from '../utils/url-validator.js';
  */
 export async function startSlackGateway({
   dbPath = './store.db',
-  allowApply = true,
+  allowApply = false,
   model,
   maxTurns = 10,
   verbose = false,

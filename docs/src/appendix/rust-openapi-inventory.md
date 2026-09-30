@@ -16,9 +16,9 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | OpenAPI version | `3.1.0` |
 | API title | StateSet Commerce API |
 | API version | `1.0.4` |
-| Paths | 352 |
-| Operations | 471 |
-| Schemas | 455 |
+| Paths | 353 |
+| Operations | 473 |
+| Schemas | 457 |
 | Tags | 64 |
 
 ## Method Counts
@@ -27,8 +27,8 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | --- | --- |
 | DELETE | 25 |
 | GET | 188 |
-| PATCH | 13 |
-| POST | 232 |
+| PATCH | 14 |
+| POST | 233 |
 | PUT | 13 |
 
 ## Tag Counts
@@ -82,7 +82,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `reviews` | 4 | Product review management |
 | `segments` | 6 | Customer segment management |
 | `serials` | 8 | Serial number tracking: creation, lookup, reservations, and lifecycle transitions |
-| `shipments` | 4 | Shipment tracking and management |
+| `shipments` | 6 | Shipment tracking and management |
 | `shipping` | 4 | Shipping zone management |
 | `stock_snapshots` | 5 | Point-in-time inventory snapshots |
 | `store_credits` | 5 | Store credit management |
@@ -457,6 +457,8 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `GET` | `/api/v1/shipments` | `shipments` | `list_shipments` | `GET /api/v1/shipments` |
 | `POST` | `/api/v1/shipments` | `shipments` | `create_shipment` | `POST /api/v1/shipments` |
 | `GET` | `/api/v1/shipments/{id}` | `shipments` | `get_shipment` | `GET /api/v1/shipments/:id` |
+| `PATCH` | `/api/v1/shipments/{id}` | `shipments` | `update_shipment` | Patch one native shipment without skipping lifecycle guards. |
+| `POST` | `/api/v1/shipments/{id}/cancel` | `shipments` | `cancel_shipment` | Cancel before carrier handoff, retaining shipment items and tracking history. |
 | `POST` | `/api/v1/shipments/{id}/deliver` | `shipments` | `deliver_shipment` | `POST /api/v1/shipments/:id/deliver` |
 | `GET` | `/api/v1/shipping-zones` | `shipping` | `list_zones` | — |
 | `POST` | `/api/v1/shipping-zones` | `shipping` | `create_zone` | — |

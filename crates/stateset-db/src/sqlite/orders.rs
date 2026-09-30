@@ -11,7 +11,7 @@ use super::{
     map_db_error, params_refs, parse_datetime_row, parse_decimal_row, parse_enum, parse_enum_row,
     parse_json_opt_row, parse_uuid_row,
     payments::{
-        open_captures_for_order_conn, order_has_payments_conn,
+        derive_order_payment_status_conn, open_captures_for_order_conn, order_has_payments_conn,
         void_in_flight_payments_for_order_conn,
     },
     resolve_currency_in_tx, sum_decimal_query, uuid_params, with_immediate_transaction,
@@ -1247,6 +1247,9 @@ impl SqliteOrderRepository {
         input: &UpdateOrder,
         ship: &ShipMode<'_>,
     ) -> std::result::Result<UpdateOutcome, rusqlite::Error> {
+        // The payment status is derived from the payment ledger, never
+        // declared (see `UpdateOrder::payment_status`).
+        input.ensure_payment_status_not_declared().map_err(to_sql_err)?;
         if let Some(address) = &input.shipping_address {
             Self::validate_address_input(address, "order.shipping_address").map_err(to_sql_err)?;
         }
@@ -1332,9 +1335,10 @@ impl SqliteOrderRepository {
                     )));
                 }
 
+                // Refundability is judged on the payment status the order
+                // already has, never on one the same update declares.
                 if status == OrderStatus::Refunded {
-                    let effective_payment_status =
-                        input.payment_status.unwrap_or(current_payment_status);
+                    let effective_payment_status = current_payment_status;
                     if !matches!(
                         effective_payment_status,
                         PaymentStatus::Paid
@@ -1420,6 +1424,36 @@ impl SqliteOrderRepository {
                 }
             }
 
+            // Derived statuses (`PaymentStatus::derive`,
+            // `FulfillmentStatus::for_order_status`), written in this same
+            // UPDATE. An explicit fulfillment status in the input still wins;
+            // a payment status never comes from the input (refused above).
+            //
+            // Voiding in-flight payments changes the payment ledger, so the
+            // money status is re-derived from it.
+            let payment_status = if cancel_money.voided_payment_ids.is_empty() {
+                None
+            } else {
+                let raw_total: String = tx.query_row(
+                    "SELECT total_amount FROM orders WHERE id = ?",
+                    [id.to_string()],
+                    |row| row.get(0),
+                )?;
+                let total = parse_decimal_row(&raw_total, "order", "total_amount")?;
+                let derived = derive_order_payment_status_conn(
+                    tx,
+                    &id.to_string(),
+                    total,
+                    current_payment_status,
+                )?;
+                (derived != current_payment_status).then_some(derived)
+            };
+            // Shipping/delivery moves the fulfillment status with the order
+            // status (itself derived from per-line shipped quantities).
+            let fulfillment_status = input
+                .fulfillment_status
+                .or_else(|| effective_status.and_then(FulfillmentStatus::for_order_status));
+
             // Build dynamic update
             let mut updates = vec!["updated_at = ?"];
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
@@ -1428,11 +1462,11 @@ impl SqliteOrderRepository {
                 updates.push("status = ?");
                 params.push(Box::new(status.to_string()));
             }
-            if let Some(payment_status) = &input.payment_status {
+            if let Some(payment_status) = &payment_status {
                 updates.push("payment_status = ?");
                 params.push(Box::new(payment_status.to_string()));
             }
-            if let Some(fulfillment_status) = &input.fulfillment_status {
+            if let Some(fulfillment_status) = &fulfillment_status {
                 updates.push("fulfillment_status = ?");
                 params.push(Box::new(fulfillment_status.to_string()));
             }
@@ -1504,6 +1538,17 @@ impl SqliteOrderRepository {
 
             order.items = Self::load_order_items_with_conn(tx, id)
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+
+            // The order just became fully shipped: its open shipment records
+            // follow it (a partial shipment cannot say which package moved).
+            if order.status == OrderStatus::Shipped && current_status != OrderStatus::Shipped {
+                super::shipments::ship_open_shipments_for_order_in_tx(
+                    tx,
+                    &id.to_string(),
+                    order.tracking_number.as_deref(),
+                    now,
+                )?;
+            }
 
             append_kernel_event_tx(
                 tx,

@@ -539,6 +539,14 @@ impl PostgresDatabase {
             "103_kernel_outbox_tier",
             include_str!("migrations/103_kernel_outbox_tier.sql"),
         ));
+        migrations.push((
+            "104_http_idempotency_exact_time",
+            include_str!("migrations/104_http_idempotency_exact_time.sql"),
+        ));
+        // The tax jurisdictions and rates a fresh SQLite store seeds (its
+        // state after 099), so a fresh Postgres store stops charging zero
+        // tax. Skipped on a store that already has any tax rate.
+        migrations.push(("105_seed_tax_rates", include_str!("migrations/105_seed_tax_rates.sql")));
 
         migrations
     }

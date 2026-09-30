@@ -9,6 +9,42 @@ import { applyRequired } from '../utils/apply-guard.js';
 
 const withPolicyDomain = (policyDomain, tools) => tools.map((tool) => ({ policyDomain, ...tool }));
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const DECIMAL = /^\d+(?:\.\d+)?$/;
+
+const FIXED_ASSET_CATEGORIES = [
+  'land',
+  'building',
+  'machinery',
+  'equipment',
+  'vehicle',
+  'furniture_and_fixtures',
+  'computer_hardware',
+  'software',
+  'leasehold_improvement',
+  'other',
+];
+
+/** Today's date as the binding's `YYYY-MM-DD` string (UTC). */
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Drop undefined/null keys: the binding's `Option<String>` fields accept an
+ * absent key but refuse `null`.
+ * @template {Record<string, unknown>} T
+ * @param {T} input
+ * @returns {T}
+ */
+function omitAbsent(input) {
+  return /** @type {T} */ (
+    Object.fromEntries(
+      Object.entries(input).filter(([, value]) => value !== undefined && value !== null),
+    )
+  );
+}
+
 export const fixedAssetTools = withPolicyDomain('fixed_assets', [
   {
     name: 'list_fixed_assets',
@@ -40,34 +76,59 @@ export const fixedAssetTools = withPolicyDomain('fixed_assets', [
     description: 'Create a fixed asset.',
     inputSchema: {
       name: z.string().min(1).describe('Asset name'),
-      assetType: z.string().min(1).describe('Asset type'),
-      acquisitionCost: z.string().min(1).describe('Acquisition cost as an exact decimal string'),
-      acquisitionDate: z.string().min(1).describe('Acquisition date in ISO 8601'),
-      depreciationMethod: z.string().min(1).optional().describe('Depreciation method'),
-      usefulLifeMonths: z.number().int().positive().optional().describe('Useful life in months'),
+      category: z.enum(FIXED_ASSET_CATEGORIES).describe('Asset category'),
+      acquisitionCost: z
+        .string()
+        .regex(DECIMAL, 'must be an exact decimal string')
+        .describe('Acquisition cost as an exact decimal string (e.g. "10000.00")'),
+      acquisitionDate: z
+        .string()
+        .regex(ISO_DATE, 'must be YYYY-MM-DD')
+        .describe('Acquisition date (YYYY-MM-DD)'),
+      depreciationMethod: z
+        .enum(['straight_line', 'declining_balance', 'units_of_production'])
+        .describe('Depreciation method (declining_balance also needs decliningBalanceRate)'),
+      usefulLifeMonths: z.number().int().positive().describe('Useful life in months'),
       salvageValue: z
         .string()
-        .min(1)
+        .regex(DECIMAL, 'must be an exact decimal string')
         .optional()
-        .describe('Salvage value as an exact decimal string'),
+        .describe('Salvage value as an exact decimal string. Defaults to "0".'),
+      decliningBalanceRate: z
+        .string()
+        .regex(DECIMAL, 'must be an exact decimal string')
+        .optional()
+        .describe('Periodic rate strictly between 0 and 1 (required for declining_balance)'),
+      inServiceDate: z
+        .string()
+        .regex(ISO_DATE, 'must be YYYY-MM-DD')
+        .optional()
+        .describe('When supplied, the asset is created in service on this date (YYYY-MM-DD)'),
+      currency: z.string().length(3).optional().describe('Currency code, e.g. USD'),
       description: z.string().max(2000).optional().describe('Optional description'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
+      // Binding CreateFixedAssetInput. salvageValue is required there; an
+      // unstated salvage value is zero, the same default the HTTP API applies.
+      const input = omitAbsent({
+        name: params.name,
+        description: params.description,
+        category: params.category,
+        acquisitionDate: params.acquisitionDate,
+        acquisitionCost: params.acquisitionCost,
+        salvageValue: params.salvageValue ?? '0',
+        usefulLifeMonths: params.usefulLifeMonths,
+        depreciationMethod: params.depreciationMethod,
+        decliningBalanceRate: params.decliningBalanceRate,
+        inServiceDate: params.inServiceDate,
+        currency: params.currency,
+      });
       if (!allowApply) {
-        return applyRequired('Create fixed asset', params);
+        return applyRequired('Create fixed asset', input);
       }
 
-      const asset = await commerce.fixedAssets.create({
-        name: params.name,
-        assetType: params.assetType,
-        acquisitionCost: params.acquisitionCost,
-        acquisitionDate: params.acquisitionDate,
-        depreciationMethod: params.depreciationMethod,
-        usefulLifeMonths: params.usefulLifeMonths,
-        salvageValue: params.salvageValue,
-        description: params.description,
-      });
+      const asset = await commerce.fixedAssets.create(input);
       return { success: true, message: 'Fixed asset created', asset };
     },
   },
@@ -76,15 +137,22 @@ export const fixedAssetTools = withPolicyDomain('fixed_assets', [
     description: 'Place a fixed asset in service.',
     inputSchema: {
       assetId: z.string().min(1).describe('Fixed asset ID'),
-      inServiceDate: z.string().min(1).optional().describe('In-service date in ISO 8601'),
+      inServiceDate: z
+        .string()
+        .regex(ISO_DATE, 'must be YYYY-MM-DD')
+        .optional()
+        .describe('In-service date (YYYY-MM-DD). Defaults to today (UTC).'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
+      // The binding requires the date; like its own dispose/writeOff, an
+      // unstated date means today.
+      const inServiceDate = params.inServiceDate ?? todayIsoDate();
       if (!allowApply) {
-        return applyRequired('Place asset in service', params);
+        return applyRequired('Place asset in service', { ...params, inServiceDate });
       }
 
-      const asset = await commerce.fixedAssets.placeInService(params.assetId, params.inServiceDate);
+      const asset = await commerce.fixedAssets.placeInService(params.assetId, inServiceDate);
       return { success: true, message: 'Asset placed in service', asset };
     },
   },
@@ -93,12 +161,17 @@ export const fixedAssetTools = withPolicyDomain('fixed_assets', [
     description: 'Dispose of a fixed asset.',
     inputSchema: {
       assetId: z.string().min(1).describe('Fixed asset ID'),
-      disposalDate: z.string().min(1).describe('Disposal date in ISO 8601'),
       disposalProceeds: z
         .string()
-        .min(1)
+        .regex(DECIMAL, 'must be an exact decimal string')
+        .describe(
+          'Disposal proceeds as an exact decimal string (use write_off_fixed_asset for no proceeds)',
+        ),
+      disposalDate: z
+        .string()
+        .regex(ISO_DATE, 'must be YYYY-MM-DD')
         .optional()
-        .describe('Disposal proceeds as an exact decimal string'),
+        .describe('Disposal date (YYYY-MM-DD). Defaults to today.'),
       notes: z.string().max(2000).optional().describe('Optional notes'),
     },
     permission: 'write',
@@ -107,11 +180,13 @@ export const fixedAssetTools = withPolicyDomain('fixed_assets', [
         return applyRequired('Dispose fixed asset', params);
       }
 
-      const asset = await commerce.fixedAssets.dispose(params.assetId, {
-        disposalDate: params.disposalDate,
-        disposalProceeds: params.disposalProceeds,
-        notes: params.notes,
-      });
+      // Binding: dispose(id, proceeds, date?, notes?) -- positional, not an object.
+      const asset = await commerce.fixedAssets.dispose(
+        params.assetId,
+        params.disposalProceeds,
+        params.disposalDate ?? undefined,
+        params.notes ?? undefined,
+      );
       return { success: true, message: 'Fixed asset disposed', asset };
     },
   },
@@ -128,7 +203,9 @@ export const fixedAssetTools = withPolicyDomain('fixed_assets', [
         return applyRequired('Write off fixed asset', params);
       }
 
-      const asset = await commerce.fixedAssets.writeOff(params.assetId, params.reason);
+      // Binding: writeOff(id, date?, notes?) -- the reason is the notes; the
+      // date defaults to today.
+      const asset = await commerce.fixedAssets.writeOff(params.assetId, undefined, params.reason);
       return { success: true, message: 'Fixed asset written off', asset };
     },
   },
@@ -165,18 +242,26 @@ export const fixedAssetTools = withPolicyDomain('fixed_assets', [
   },
   {
     name: 'post_depreciation',
-    description: 'Post depreciation for a period.',
+    description:
+      'Post the next scheduled depreciation entries for a fixed asset (generate the schedule first).',
     inputSchema: {
       assetId: z.string().min(1).describe('Fixed asset ID'),
-      periodDate: z.string().min(1).describe('Period date in ISO 8601'),
+      periods: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .default(1)
+        .describe('How many of the next scheduled periods to post (default 1)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
+      const periods = params.periods ?? 1;
       if (!allowApply) {
-        return applyRequired('Post depreciation', params);
+        return applyRequired('Post depreciation', { ...params, periods });
       }
 
-      const result = await commerce.fixedAssets.postDepreciation(params.assetId, params.periodDate);
+      const result = await commerce.fixedAssets.postDepreciation(params.assetId, periods);
       return { success: true, message: 'Depreciation posted', result };
     },
   },

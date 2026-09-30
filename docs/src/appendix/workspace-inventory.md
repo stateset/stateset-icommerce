@@ -13,14 +13,14 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 
 | Metric | Value |
 | --- | --- |
-| Workspace version | `1.35.2` |
+| Workspace version | `1.36.0` |
 | Workspace members | 30 |
 | Default members | 19 |
 | Rust crates in workspace | 22 |
 | Binding crates in workspace | 8 |
 | Excluded local binding manifests | 2 |
-| CLI binaries | 53 |
-| CLI optional dependencies | 15 |
+| CLI binaries | 56 |
+| CLI optional dependencies | 12 |
 | Admin local embedded binding | `file:../bindings/node` |
 
 ## Product Graph Layers
@@ -80,31 +80,32 @@ workspace membership because they require host runtimes or headers.
 
 | Metric | Value |
 | --- | --- |
-| Top-level source groups | 107 |
-| Tool modules | 93 |
-| A2A modules | 61 |
-| JS dependencies | 13 |
-| Optional integrations | 15 |
+| Top-level source groups | 108 |
+| Tool modules | 98 |
+| A2A modules | 62 |
+| JS dependencies | 15 |
+| Optional integrations | 12 |
 
 ## CLI Top-Level Source Groups
 
 | Group | Files |
 | --- | --- |
-| `tools` | 93 |
-| `commands` | 88 |
-| `a2a` | 61 |
-| `mcp` | 31 |
+| `tools` | 98 |
+| `commands` | 89 |
+| `a2a` | 62 |
+| `mcp` | 33 |
 | `channels` | 29 |
 | `adapters` | 20 |
 | `sync` | 20 |
-| `utils` | 15 |
+| `utils` | 16 |
 | `harness` | 14 |
+| `chains` | 10 |
 | `x402` | 10 |
-| `chains` | 9 |
 | `knowledge` | 6 |
 | `memory` | 6 |
 | `skills` | 5 |
 | `treasury` | 5 |
+| `connectors` | 4 |
 | `providers` | 4 |
 | `autonomous` | 3 |
 | `heartbeat` | 3 |
@@ -116,6 +117,7 @@ workspace membership because they require host runtimes or headers.
 | `approvals` | 2 |
 | `coverage` | 2 |
 | `marketplace` | 2 |
+| `teams` | 2 |
 | `webhooks` | 2 |
 | `whatsapp` | 2 |
 | `agent-catalog.js` | 1 |
@@ -127,6 +129,7 @@ workspace membership because they require host runtimes or headers.
 | `agent-toolkit.js` | 1 |
 | `audit-store.js` | 1 |
 | `browser` | 1 |
+| `business-profile.js` | 1 |
 | `catalog` | 1 |
 | `checkout` | 1 |
 | `claude-harness.js` | 1 |
@@ -137,7 +140,6 @@ workspace membership because they require host runtimes or headers.
 | `compliance` | 1 |
 | `config` | 1 |
 | `config.js` | 1 |
-| `connectors` | 1 |
 | `context-guard.js` | 1 |
 | `context.js` | 1 |
 | `conversation-history.js` | 1 |
@@ -188,7 +190,6 @@ workspace membership because they require host runtimes or headers.
 | `slack` | 1 |
 | `standalone.js` | 1 |
 | `suggestions.js` | 1 |
-| `teams` | 1 |
 | `telegram` | 1 |
 | `telemetry.js` | 1 |
 | `theme.js` | 1 |

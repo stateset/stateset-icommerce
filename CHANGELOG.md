@@ -6,6 +6,156 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.36.0] - 2026-09-29
+
+### Added
+
+- WebMCP and Meta Muse connector surfaces for agentic commerce.
+- Auditable shipment lifecycle updates with optimistic concurrency and
+  cross-shipment allocation limits on SQLite and PostgreSQL.
+- Exact-decimal sandbox payment, tax, and shipping providers plus native
+  Shopify synchronization safeguards.
+
+### Changed
+
+- Governed checkout, order, shipment, return, and recovery paths now preserve
+  preview-first writes, tenant isolation, and durable outbox records.
+
+### Changed (behaviour, needs a release note)
+
+- **Strict kernel endpoints can run a checkout end to end.** Eleven storefront
+  writes are now governed kernel commands, each with a sealed, policy-checked,
+  audit-hashed receipt: `customers.create`, `carts.create`, `carts.item.add`,
+  `carts.shipping_address.set`, `carts.payment_method.set`,
+  `carts.coupon.apply`, `carts.tax.calculate`, `payments.complete`,
+  `shipments.create`, `returns.create` and `returns.tracking.add`. **A
+  deployment with a kernel configured now routes these tools through it, so
+  its policy and principal must grant the new capabilities** (see
+  `kernel/examples/strict-*.json`). Without a kernel the tools keep their
+  previous handlers. Promotions stay merchant configuration: a strict agent
+  can redeem a coupon but cannot create one.
+
+- **An order can only be refunded if it was paid.** The refund guard (SQLite,
+  PostgreSQL and the kernel) read the payment status supplied in the same
+  update, and `orders.update_status(id, Refunded)` supplies `Refunded`
+  itself, so any order -- including one never paid -- could be marked
+  refunded. Refundability is now judged on the order's stored payment status;
+  record the payment first, then refund.
+- **x402 batch inclusion proofs are verified before they are recorded.**
+  `mark_batched` stored any Merkle root and proof it was handed. It now takes
+  an `X402BatchInclusion` (`merkle_root`, `inclusion_proof`, `leaf_index`,
+  `total_leaves`) instead of `(batch_merkle_root, inclusion_proof)`, rebuilds
+  the leaf from the stored intent (`X402PaymentIntent::batch_leaf_hash`, the
+  same leaf `X402PaymentReceipt::verify_inclusion` checks) and verifies the
+  proof inside the write transaction (SQLite and PostgreSQL). A wrong root,
+  tampered proof, wrong leaf index, or a proof for another intent is refused
+  with `ValidationError` and the intent stays `Sequenced`.
+  `X402BatchInclusion::from_leaves` builds the evidence for a batcher.
+  `mark_settled` still accepts `Sequenced` as well as `Batched` intents (the
+  documented direct on-chain settlement path).
+- **Agent cards govern who may buy and sell in A2A commerce.** A2A
+  `create_quote` / `create_purchase` accepted any `buyer_agent_id` /
+  `seller_agent_id`. The buyer must now be a registered, active,
+  non-suspended agent card that can buy (`buy` / `request_quote` skill) and
+  the seller one that can sell (`sell` / `quote` skill); otherwise the call is
+  refused with a `ValidationError` naming the side. The cards are read inside
+  the insert's write transaction (PostgreSQL: `FOR SHARE`), and SQLite
+  `create_quote` now runs in a `BEGIN IMMEDIATE` transaction. Register agent
+  cards before creating quotes or purchases.
+
+- **A PostgreSQL store now seeds the same tax rates as a SQLite store.** A
+  fresh SQLite store has always seeded US state sales tax, EU/UK VAT
+  (standard and reduced) and Canadian sales tax; a fresh PostgreSQL store
+  seeded none, so it charged zero tax on every sale. Postgres migration 105
+  seeds the same jurisdictions and rates, in the corrected state SQLite
+  reaches after its migration 099 (HST alone in the harmonized provinces,
+  Nova Scotia 14% from 2025-04-01, Quebec QST not compounded on GST, GST
+  only in the territories). **The seed runs only on a store with no tax rates
+  at all**: an existing Postgres store that already configured tax keeps
+  exactly what it has. An existing store that never configured any rate
+  starts charging the seeded rates after upgrading -- review them, or set
+  `enabled` to false in the tax settings, if that store should not charge tax.
+
+- **Closing a non-conformance report (NCR) requires a disposition.** A closed
+  NCR is the quality record of what was done with the non-conforming
+  material, yet `close_ncr` and `update_ncr { status: Closed }` closed one
+  with none. Both backends now refuse with a validation error naming the
+  missing disposition. Record it first (`update_ncr { disposition }`, or
+  `POST /api/v1/quality/ncrs/{id}/disposition`), or set it in the same
+  `update_ncr` call that closes. Re-closing an already-closed NCR is still a
+  no-op. So that every surface can still close an NCR, the Node binding gains
+  `quality.updateNcr(id, input)`, the Python binding gains
+  `quality.update_ncr(...)` and `quality.close_ncr(id)`, `NcrOutput` /
+  `NonConformance` now carry the disposition, and the `close_ncr` MCP tool
+  and `stateset quality close-ncr` take an optional `disposition` (plus an
+  exact `dispositionQuantity`) that they record before closing.
+
+- **Shipping an order in full ships its open shipment records.** When an
+  order becomes fully `shipped` (`orders.ship`, a `Shipped` status update, or
+  the kernel `orders.ship` command; SQLite and PostgreSQL), every shipment of
+  that order still `pending`, `processing` or `ready_to_ship` moves to
+  `shipped` in the same transaction, with `shipped_at` set. A shipment with
+  no tracking number adopts the order's (and the carrier's tracking URL); one
+  with its own keeps it. `on_hold`, `cancelled` and already shipped/delivered
+  shipments are untouched, and a partial shipment moves none (which package
+  carried which units is not knowable from the order lines -- ship those with
+  `shipments.ship`). Each moved shipment records a `shipment.status_changed`
+  outbox fact; under the kernel the facts carry the command's context and
+  are listed on its receipt.
+- **A lost chargeback moves the order out of `paid`.** Resolving a
+  `disputed` payment against the merchant (`payments.update` to `refunded`)
+  was refused as a "refund by status flip", so the order kept reading `paid`
+  after the network had taken the money back. The write is now accepted and
+  records the loss in the same transaction: a completed refund-ledger row for
+  the payment's whole remaining balance with `reason = "chargeback_lost"`
+  (so reports can tell it from a refund the merchant issued),
+  `amount_refunded = amount`, a `payments.chargeback_lost.v1` event, and the
+  order's payment status re-derived from the ledger (whole order lost ->
+  `refunded`, part of it -> `partially_refunded`). The charged-back payment
+  cannot be refunded again. A won dispute (`disputed` -> `completed`) changes
+  nothing else. Every other bare flip to `refunded` / `partially_refunded` is
+  still refused.
+- **An order's payment status can only be changed by recording payments.**
+  `orders.update` with a `payment_status` (and the kernel `orders.transition`
+  with one) let any caller declare an order paid or refunded. Both backends
+  now refuse it with a `ValidationError` ("order payment_status is derived
+  from the order's payments and refunds ...") and the kernel rejects the
+  command with `commerce.payment_status_derived`; the field stays on
+  `UpdateOrder` / `TransitionOrder` for compatibility but must be `None`.
+  Record a payment (create + complete) or a refund (`create_refund` +
+  `complete_refund`) instead. `orders.update_status(id, Refunded)` (Rust,
+  Node, Python, Go and the other FFI bindings, and the `update_order_status`
+  MCP tool) no longer forces `payment_status = refunded`: it moves the order
+  status only, and the payment status keeps saying what the ledger holds --
+  record the refund first if it should read `refunded`.
+
+### Fixed
+
+- Three SQLite cart writes (`set_shipping_address`, `set_payment`,
+  `apply_discount`) ran outside a transaction; they now run in one.
+- `executeTool` returned `result: '[truncated]'` for every governed tool.
+
+## [1.35.3] - 2026-09-26
+
+### Verified commerce invariants
+
+- Expanded TLA+ models and Lean proofs across accounts payable, fulfillment,
+  billing, synchronization, order-to-cash, inventory and material consumption,
+  credit, quarantine, returns, idempotency, loyalty, prepayments, quality
+  holds, EDI, and lifecycle boundaries.
+- Added TLA+ models and Lean proofs for exchange-rate publication, payment
+  obligations, FIFO/LIFO cost-layer issues, inbound shipment cancellation and
+  receipt, and vendor-return decisions. The models include broken interleavings
+  as counterexamples and document the bounds of each proof.
+- Exchange-rate updates now publish the current rate and history atomically in
+  SQLite and PostgreSQL. Manual payment-obligation status changes cannot forge
+  payment progress or reopen a paid or cancelled obligation. Cost-layer issues
+  reject zero and negative quantities.
+- Durable HTTP idempotency now preserves the creation timestamp to nanosecond
+  precision in SQLite and PostgreSQL. A live retry is no longer expired early
+  when its timestamp and the TTL cutoff fall within one stored millisecond or
+  microsecond.
+
 ### Changed (behaviour, needs a release note)
 
 - **`@stateset/embedded`: an explicit blank is refused, not treated as

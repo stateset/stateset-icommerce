@@ -1518,7 +1518,12 @@ fn test_add_item_refuses_client_price_that_differs_from_catalog() {
 fn test_cart_tax_follows_item_mutations() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let cart = create_test_cart(&commerce);
-    commerce.carts().set_shipping_address(cart.id, create_test_address()).expect("address");
+    // An address no seeded jurisdiction covers, so the stored tax is carried
+    // proportionally rather than recalculated from a rate. (California only
+    // looked uncovered while the seeded rates never matched their
+    // jurisdictions.)
+    let uncovered = CartAddress { country: "AQ".into(), state: None, ..create_test_address() };
+    commerce.carts().set_shipping_address(cart.id, uncovered).expect("address");
     add_test_item(&commerce, cart.id); // 2 x 29.99 = 59.98
     let taxed = commerce.carts().set_tax(cart.id, dec!(5.40)).expect("tax");
     assert_eq!(taxed.grand_total, dec!(65.38));

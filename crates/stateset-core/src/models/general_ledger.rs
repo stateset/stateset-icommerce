@@ -1338,6 +1338,33 @@ mod tests {
     }
 
     #[test]
+    fn posting_gate_matches_lean_debit_credit_model() {
+        // LedgerPosting treats each line as exact debit/credit minor units.
+        // The actual posting gate should accept these valid one-sided lines
+        // exactly when their independently summed totals match.
+        // Normal tests cover the full grid. The Miri grid still has balanced
+        // and unbalanced entries for every debit pair at much lower cost.
+        let max_debit = if cfg!(miri) { 4 } else { 12 };
+        let max_credit = if cfg!(miri) { 9 } else { 25 };
+        for debit_a in 1i64..=max_debit {
+            for debit_b in 1i64..=max_debit {
+                for credit in 1i64..=max_credit {
+                    let entry = draft_entry(vec![
+                        line(Decimal::new(debit_a, 2), Decimal::ZERO, 1),
+                        line(Decimal::new(debit_b, 2), Decimal::ZERO, 2),
+                        line(Decimal::ZERO, Decimal::new(credit, 2), 3),
+                    ]);
+                    assert_eq!(
+                        entry.ensure_postable().is_ok(),
+                        debit_a + debit_b == credit,
+                        "debits=({debit_a},{debit_b}), credit={credit}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn ensure_postable_reports_unbalanced_separately_from_other_rejections() {
         let entry = draft_entry(vec![line(dec!(10), dec!(0), 1), line(dec!(0), dec!(4), 2)]);
         let err = entry.ensure_postable().expect_err("unbalanced");
@@ -1474,6 +1501,71 @@ mod tests {
         let credits: Decimal = je_lines.iter().map(|l| l.credit_amount).sum();
         assert_eq!(debits, credits);
         assert!(je_lines.iter().all(|l| l.reference_type.as_deref() == Some("fx_revaluation")));
+    }
+
+    #[test]
+    fn revaluation_journal_matches_lean_signed_model() {
+        // LedgerRevaluation.split and journal prove that any signed input
+        // produces one-sided lines and a balanced FX offset. Compare the
+        // actual builder with that model across signs, zeros, and both
+        // normal-balance directions.
+        let asset = foreign_account(AccountType::Asset, Decimal::ZERO);
+        let liability = foreign_account(AccountType::Liability, Decimal::ZERO);
+        for a in -2i64..=2 {
+            for b in -2i64..=2 {
+                for c in -2i64..=2 {
+                    for mask in 0u8..8 {
+                        let fx_account = Uuid::new_v4();
+                        let mut inputs = Vec::new();
+                        let mut expected = Vec::new();
+                        let mut net = 0i64;
+                        for (index, raw) in [a, b, c].into_iter().enumerate() {
+                            let credit_normal = mask & (1 << index) != 0;
+                            let account = if credit_normal { &liability } else { &asset };
+                            let mut line =
+                                compute_revaluation_line(account, Decimal::ZERO, dec!(1), 2);
+                            line.account_id = Uuid::new_v4();
+                            line.adjustment = Decimal::new(raw, 2);
+                            inputs.push(line);
+
+                            let signed = if credit_normal { -raw } else { raw };
+                            net += signed;
+                            if signed > 0 {
+                                expected.push((Decimal::new(signed, 2), Decimal::ZERO));
+                            } else if signed < 0 {
+                                expected.push((Decimal::ZERO, Decimal::new(-signed, 2)));
+                            }
+                        }
+                        if net > 0 {
+                            expected.push((Decimal::ZERO, Decimal::new(net, 2)));
+                        } else if net < 0 {
+                            expected.push((Decimal::new(-net, 2), Decimal::ZERO));
+                        }
+
+                        let actual = build_revaluation_journal_lines(&inputs, fx_account);
+                        let actual_amounts: Vec<_> = actual
+                            .iter()
+                            .map(|line| (line.debit_amount, line.credit_amount))
+                            .collect();
+                        assert_eq!(
+                            actual_amounts, expected,
+                            "adjustments=({a},{b},{c}), normal-side mask={mask}"
+                        );
+                        assert!(actual.iter().all(|line| {
+                            (line.debit_amount > Decimal::ZERO && line.credit_amount.is_zero())
+                                || (line.debit_amount.is_zero()
+                                    && line.credit_amount > Decimal::ZERO)
+                        }));
+                        let debits: Decimal = actual.iter().map(|line| line.debit_amount).sum();
+                        let credits: Decimal = actual.iter().map(|line| line.credit_amount).sum();
+                        assert_eq!(debits, credits);
+                        if net != 0 {
+                            assert_eq!(actual.last().expect("FX offset").account_id, fx_account);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

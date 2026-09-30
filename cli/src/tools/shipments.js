@@ -191,16 +191,22 @@ export const shipmentTools = [
         return applyRequired('Create shipment', params);
       }
 
-      const shipment = await commerce.shipments.create({
-        orderId: params.orderId,
-        carrier: params.carrier,
-        shippingMethod: params.shippingMethod || params.service,
-        recipientName: params.recipientName,
-        shippingAddress: params.shippingAddress,
-        recipientEmail: params.recipientEmail,
-        recipientPhone: params.recipientPhone,
-        trackingNumber: params.trackingNumber,
-      });
+      // Binding CreateShipmentInput: recipientName + shippingAddress are
+      // required; the service level travels as shippingMethod; absent
+      // optionals are omitted (never null).
+      const input = Object.fromEntries(
+        Object.entries({
+          orderId: params.orderId,
+          recipientName: params.recipientName,
+          shippingAddress: params.shippingAddress,
+          carrier: params.carrier,
+          shippingMethod: params.shippingMethod || params.service,
+          trackingNumber: params.trackingNumber,
+          recipientEmail: params.recipientEmail,
+          recipientPhone: params.recipientPhone,
+        }).filter(([, value]) => value !== undefined && value !== null),
+      );
+      const shipment = await commerce.shipments.create(input);
       return { success: true, message: 'Shipment created', shipment };
     },
   },

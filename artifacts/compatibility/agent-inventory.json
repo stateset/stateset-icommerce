@@ -4,16 +4,16 @@
     "registry": "cli/src/mcp-server-registry.js"
   },
   "totalAgents": 20,
-  "totalCommerceTools": 950,
+  "totalCommerceTools": 955,
   "totalScaffoldTools": 13,
   "totalX402Tools": 5,
   "fullAccessAgentCount": 1,
   "scopedAgentCount": 19,
-  "totalScopedToolReferences": 301,
+  "totalScopedToolReferences": 310,
   "supportedServers": [
     {
       "name": "stateset-commerce",
-      "toolCount": 950,
+      "toolCount": 955,
       "source": "cli/src/mcp-server.js"
     },
     {
@@ -60,10 +60,10 @@
       "id": "checkout",
       "name": "Checkout Agent",
       "description": "Shopping cart and protocol-neutral checkout flow specialist",
-      "toolCount": 32,
+      "toolCount": 33,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 32
+        "stateset-commerce": 33
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -88,10 +88,10 @@
       "id": "customer-service",
       "name": "Customer Service",
       "description": "Full-service agent with access to all commerce tools",
-      "toolCount": 950,
+      "toolCount": 955,
       "usesAllCommerceTools": true,
       "serverCounts": {
-        "stateset-commerce": 950
+        "stateset-commerce": 955
       },
       "serverNamespaces": [
         "stateset-commerce"
@@ -144,6 +144,48 @@
       "id": "orders",
       "name": "Orders Agent",
       "description": "Order lifecycle management specialist",
+      "toolCount": 9,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 9
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "payments",
+      "name": "Payments Agent",
+      "description": "Payment processing and refund management specialist",
+      "toolCount": 22,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 22
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "promotions",
+      "name": "Promotions Agent",
+      "description": "Promotions, discounts, and coupon code management specialist",
+      "toolCount": 20,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 20
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "returns",
+      "name": "Returns Agent",
+      "description": "Return request processing specialist",
       "toolCount": 8,
       "usesAllCommerceTools": false,
       "serverCounts": {
@@ -155,55 +197,13 @@
       "unknownTools": []
     },
     {
-      "id": "payments",
-      "name": "Payments Agent",
-      "description": "Payment processing and refund management specialist",
-      "toolCount": 21,
-      "usesAllCommerceTools": false,
-      "serverCounts": {
-        "stateset-commerce": 21
-      },
-      "serverNamespaces": [
-        "stateset-commerce"
-      ],
-      "unknownTools": []
-    },
-    {
-      "id": "promotions",
-      "name": "Promotions Agent",
-      "description": "Promotions, discounts, and coupon code management specialist",
-      "toolCount": 17,
-      "usesAllCommerceTools": false,
-      "serverCounts": {
-        "stateset-commerce": 17
-      },
-      "serverNamespaces": [
-        "stateset-commerce"
-      ],
-      "unknownTools": []
-    },
-    {
-      "id": "returns",
-      "name": "Returns Agent",
-      "description": "Return request processing specialist",
-      "toolCount": 7,
-      "usesAllCommerceTools": false,
-      "serverCounts": {
-        "stateset-commerce": 7
-      },
-      "serverNamespaces": [
-        "stateset-commerce"
-      ],
-      "unknownTools": []
-    },
-    {
       "id": "shipments",
       "name": "Shipments Agent",
       "description": "Shipment tracking and delivery management specialist",
-      "toolCount": 16,
+      "toolCount": 18,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 16
+        "stateset-commerce": 18
       },
       "serverNamespaces": [
         "stateset-commerce"

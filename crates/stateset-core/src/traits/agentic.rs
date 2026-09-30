@@ -30,18 +30,21 @@ pub trait X402PaymentIntentRepository: Send + Sync {
     ) -> Result<X402PaymentIntent>;
 
     /// Mark a `Sequenced` intent as `Batched`: it has been included in a
-    /// published batch commitment (`batch_merkle_root` + `inclusion_proof`).
+    /// published batch commitment (`inclusion.merkle_root` +
+    /// `inclusion.inclusion_proof`).
+    ///
+    /// The proof is verified before anything is recorded: the leaf is rebuilt
+    /// from the *stored* intent (`X402PaymentIntent::batch_leaf_hash`) and
+    /// checked against the root at `inclusion.leaf_index` in a tree of
+    /// `inclusion.total_leaves`, inside the write transaction. A root, proof,
+    /// or index that does not prove this intent is refused with
+    /// `ValidationError` and the intent stays `Sequenced`.
     ///
     /// A batched intent is no longer subject to the wall-clock sweeper
     /// (`expire_stale_intents`): its outcome is decided by the batch's
     /// on-chain result via `mark_settled` / `mark_failed`. The transition is
     /// guarded (`Sequenced` only) and conditional on the stored status.
-    fn mark_batched(
-        &self,
-        id: Uuid,
-        batch_merkle_root: &str,
-        inclusion_proof: Vec<String>,
-    ) -> Result<X402PaymentIntent>;
+    fn mark_batched(&self, id: Uuid, inclusion: &X402BatchInclusion) -> Result<X402PaymentIntent>;
 
     /// Mark intent as settled (confirmed on-chain). Allowed from `Sequenced`
     /// or `Batched`.

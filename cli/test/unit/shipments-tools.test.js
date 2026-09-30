@@ -9,6 +9,7 @@
 
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { z } from 'zod';
 
 import { shipmentTools } from '../../src/tools/shipments.js';
 import {
@@ -191,7 +192,47 @@ describe('get_shipment', () => {
 
 describe('create_shipment', () => {
   const tool = findTool('create_shipment');
-  const params = { orderId: 'ord_001', carrier: 'FedEx', service: 'Ground' };
+  const params = {
+    orderId: 'ord_001',
+    recipientName: 'Ada Lovelace',
+    shippingAddress: '1 Main St, Austin, TX 78701, US',
+    carrier: 'FedEx',
+    service: 'Ground',
+  };
+
+  it('requires recipientName and shippingAddress (the binding has no default for them)', () => {
+    const schema = z.object(tool.inputSchema);
+    assert.strictEqual(schema.safeParse({ orderId: 'ord_001' }).success, false);
+    assert.strictEqual(schema.safeParse(params).success, true);
+  });
+
+  it('sends the binding CreateShipmentInput: service -> shippingMethod, no nulls', async () => {
+    const calls = [];
+    const commerce = {
+      shipments: {
+        create: async (input) => {
+          calls.push(input);
+          return { id: 'ship_new', ...input };
+        },
+      },
+    };
+    await tool.handler({ commerce, params, allowApply: true });
+    await tool.handler({
+      commerce,
+      params: { orderId: 'ord_002', recipientName: 'B', shippingAddress: 'Somewhere' },
+      allowApply: true,
+    });
+    assert.deepStrictEqual(calls, [
+      {
+        orderId: 'ord_001',
+        recipientName: 'Ada Lovelace',
+        shippingAddress: '1 Main St, Austin, TX 78701, US',
+        carrier: 'FedEx',
+        shippingMethod: 'Ground',
+      },
+      { orderId: 'ord_002', recipientName: 'B', shippingAddress: 'Somewhere' },
+    ]);
+  });
 
   it('has write permission', () => {
     assert.strictEqual(tool.permission, 'write');

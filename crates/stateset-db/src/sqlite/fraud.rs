@@ -108,13 +108,20 @@ impl FraudRepository for SqliteFraudRepository {
             .collect();
 
         let risk_score = FraudAssessment::calculate_risk_score(&signals);
-        let decision =
-            if risk_score >= 0.8 { FraudDecision::Review } else { FraudDecision::Accept };
 
         let signals_json = serde_json::to_string(&signals)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         with_immediate_transaction(&self.pool, |tx| {
+            // The enabled rules decide, read in the same transaction as the
+            // write: a matching reject rule rejects, a matching review rule
+            // reviews, and a risk score of 0.8 falls back to review.
+            let rules = tx
+                .prepare("SELECT * FROM fraud_rules WHERE enabled = 1 ORDER BY created_at DESC")?
+                .query_map([], Self::row_to_rule)?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let decision = FraudAssessment::decide(risk_score, &rules, &signals);
+
             tx.execute(
                 "INSERT INTO fraud_assessments (order_id, risk_score, signals, decision, reviewed_by, review_notes, created_at, updated_at)
                  VALUES (?, ?, ?, ?, NULL, NULL, ?, ?)",

@@ -48,7 +48,7 @@
       "readmePath": "bindings/dotnet/README.md",
       "coverageLevel": "detailed",
       "packageName": "StateSet.Embedded",
-      "version": "1.35.2",
+      "version": "1.36.0",
       "sourceFiles": [
         "bindings/dotnet/dotnet/StateSet/StateSetCommerce.cs",
         "bindings/dotnet/dotnet/StateSet/APIs.cs",
@@ -1786,7 +1786,7 @@
       "readmePath": "bindings/java/README.md",
       "coverageLevel": "package-manifest",
       "packageName": "com.stateset:embedded",
-      "version": "1.35.2",
+      "version": "1.36.0",
       "targetJava": "11"
     },
     {
@@ -1797,7 +1797,7 @@
       "readmePath": null,
       "coverageLevel": "package-manifest",
       "packageName": "com.stateset:embedded-kotlin",
-      "version": "1.35.2",
+      "version": "1.36.0",
       "targetJava": "11"
     },
     {
@@ -1808,7 +1808,7 @@
       "readmePath": "bindings/node/README.md",
       "coverageLevel": "detailed",
       "packageName": "@stateset/embedded",
-      "version": "1.35.2",
+      "version": "1.36.0",
       "runtime": "napi-rs",
       "entrypointCount": 10,
       "packedFilePatternCount": 9,
@@ -1876,7 +1876,7 @@
       "readmePath": "bindings/php/README.md",
       "coverageLevel": "package-manifest",
       "packageName": "stateset/embedded",
-      "version": "1.35.2",
+      "version": "1.36.0",
       "requiresPhp": ">=8.1",
       "autoloadFiles": [
         "stubs/StateSet.php"
@@ -1893,7 +1893,7 @@
       "readmePath": "bindings/python/README.md",
       "coverageLevel": "detailed",
       "packageName": "stateset-embedded",
-      "version": "1.35.2",
+      "version": "1.36.0",
       "requiresPython": ">=3.9",
       "optionalDependencyGroups": [
         "agents",
@@ -1903,7 +1903,7 @@
         "langchain"
       ],
       "moduleCount": 7,
-      "publicSymbolCount": 254,
+      "publicSymbolCount": 257,
       "helperModules": [
         "agent_toolkit",
         "autogen",
@@ -2062,6 +2062,9 @@
         "Products",
         "ProductSearchResult",
         "ProductVariant",
+        "PromotionCondition",
+        "PromotionConditionInput",
+        "PromotionLineItemInput",
         "PurchaseOrder",
         "PurchaseOrders",
         "Purgatory",
@@ -2178,7 +2181,7 @@
       "readmePath": "bindings/ruby/README.md",
       "coverageLevel": "package-manifest",
       "packageName": "stateset_embedded",
-      "version": "1.35.2",
+      "version": "1.36.0",
       "requiredVersion": ">= 3.0",
       "nativeExtensions": [
         "ext/stateset_embedded/extconf.rb"
@@ -2739,7 +2742,7 @@
       "readmePath": "bindings/wasm/README.md",
       "coverageLevel": "package-manifest",
       "packageName": "@stateset/embedded-wasm",
-      "version": "1.35.2",
+      "version": "1.36.0",
       "entrypoints": {
         "main": "pkg/stateset_embedded.js",
         "module": "pkg/stateset_embedded.js",

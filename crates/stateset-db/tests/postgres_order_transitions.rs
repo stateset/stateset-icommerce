@@ -3,8 +3,9 @@
 use chrono::{Duration, Utc};
 use rust_decimal_macros::dec;
 use stateset_core::{
-    CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CustomerId,
-    OrderStatus, PaymentStatus, ProductId, ReservationStatus, UpdateOrder,
+    CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
+    CreatePayment, CreateRefund, CustomerId, OrderId, OrderStatus, PaymentMethodType,
+    PaymentStatus, ProductId, ReservationStatus, UpdateOrder,
 };
 use stateset_db::PostgresDatabase;
 use std::collections::HashMap;
@@ -63,6 +64,25 @@ async fn create_order(
         })
         .await
         .expect("create order")
+}
+
+/// Record a real payment for the order's whole total (create + complete), so
+/// the order's derived payment status becomes `paid`.
+#[cfg(feature = "postgres")]
+async fn pay_in_full(db: &PostgresDatabase, order_id: OrderId) -> stateset_core::Payment {
+    let order = db.orders().get_async(order_id.into()).await.expect("get order").expect("order");
+    let payment = db
+        .payments()
+        .create_async(CreatePayment {
+            order_id: Some(order_id),
+            payment_method: PaymentMethodType::CreditCard,
+            amount: order.total_amount,
+            currency: Some(order.currency),
+            ..Default::default()
+        })
+        .await
+        .expect("create payment");
+    db.payments().mark_completed_async(payment.id.into()).await.expect("complete payment")
 }
 
 #[cfg(feature = "postgres")]
@@ -191,11 +211,7 @@ async fn postgres_rejects_refund_without_paid_status() {
         .orders()
         .update_async(
             order.id.into(),
-            UpdateOrder {
-                status: Some(OrderStatus::Refunded),
-                payment_status: Some(PaymentStatus::Pending),
-                ..Default::default()
-            },
+            UpdateOrder { status: Some(OrderStatus::Refunded), ..Default::default() },
         )
         .await;
 
@@ -242,19 +258,63 @@ async fn postgres_allows_refund_with_paid_status() {
         .await
         .expect("update order to delivered");
 
+    // An order's payment status is derived from its payments and refunds: an
+    // update that declares one is refused outright — alone, alongside a
+    // refund transition (so an unpaid order cannot be made refundable by
+    // declaring it paid), and inside an atomic batch — and nothing is written.
+    let before = db.orders().get_async(order.id.into()).await.expect("get").expect("order");
+    for declared in [PaymentStatus::Paid, PaymentStatus::Refunded] {
+        for status in [None, Some(OrderStatus::Refunded)] {
+            let result = db
+                .orders()
+                .update_async(
+                    order.id.into(),
+                    UpdateOrder { status, payment_status: Some(declared), ..Default::default() },
+                )
+                .await;
+            assert!(
+                matches!(&result, Err(CommerceError::ValidationError(m)) if m.contains("derived")),
+                "declaring {declared} must be refused: {result:?}"
+            );
+        }
+    }
+    let batch = db
+        .orders()
+        .update_batch_atomic_async(vec![
+            (order.id.into(), UpdateOrder { notes: Some("fine".into()), ..Default::default() }),
+            (
+                order.id.into(),
+                UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
+            ),
+        ])
+        .await;
+    assert!(matches!(batch, Err(CommerceError::ValidationError(_))), "{batch:?}");
+    let stored = db.orders().get_async(order.id.into()).await.expect("get").expect("order");
+    assert_eq!(stored.status, OrderStatus::Delivered);
+    assert_eq!(stored.payment_status, PaymentStatus::Pending);
+    assert_eq!(stored.version, before.version, "nothing was written");
+
+    // The supported path: record the payment and the refund; the order's
+    // payment status follows them.
+    let payment = pay_in_full(&db, order.id).await;
+    let paid = db.orders().get_async(order.id.into()).await.expect("get").expect("order");
+    assert_eq!(paid.payment_status, PaymentStatus::Paid);
+    let refund = db
+        .payments()
+        .create_refund_async(CreateRefund { payment_id: payment.id, ..Default::default() })
+        .await
+        .expect("create refund");
+    db.payments().complete_refund_async(refund.id).await.expect("complete refund");
     let updated = db
         .orders()
         .update_async(
             order.id.into(),
-            UpdateOrder {
-                status: Some(OrderStatus::Refunded),
-                payment_status: Some(PaymentStatus::Paid),
-                ..Default::default()
-            },
+            UpdateOrder { status: Some(OrderStatus::Refunded), ..Default::default() },
         )
         .await
         .expect("refund order");
 
+    assert_eq!(updated.payment_status, PaymentStatus::Refunded, "derived from the refund");
     assert_eq!(updated.status, OrderStatus::Refunded);
 }
 

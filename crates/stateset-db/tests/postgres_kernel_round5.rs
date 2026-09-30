@@ -212,6 +212,9 @@ async fn postgres_kernel_cancel_is_refused_while_captured_money_is_outstanding()
     let order = order_with_stock(&db, dec!(100.00)).await;
     let captured = payment(&db, order.id.into_uuid(), dec!(60.00)).await;
     db.payments().mark_completed_async(captured.id.into_uuid()).await.expect("complete");
+    // Completing the capture moves the order to `partially_paid` (a versioned
+    // order write), so read the order the transition will actually see.
+    let order = db.orders().get_async(order.id.into_uuid()).await.expect("get").expect("order");
 
     let mut preview =
         transition_command(key("r5-cancel-preview"), order.id, OrderStatus::Cancelled);
@@ -780,6 +783,8 @@ async fn postgres_preview_envelopes_are_durable_non_mutating_and_replayable_acro
     let order = order_with_stock(&db, dec!(20.00)).await;
     let captured = payment(&db, order.id.into_uuid(), dec!(20.00)).await;
     db.payments().mark_completed_async(captured.id.into_uuid()).await.expect("complete");
+    // Completing the capture marks the order `paid` (a versioned order write).
+    let order = db.orders().get_async(order.id.into_uuid()).await.expect("get").expect("order");
     preview!(
         execute_create_refund_async,
         command(

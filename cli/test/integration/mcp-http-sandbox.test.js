@@ -20,8 +20,19 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { ALL_DOMAIN_TOOLS } from '../../src/tools/domain-registry.js';
+import { AGENTIC_RUNTIME_TOOLS } from '../../src/mcp/agentic-runtime-tools.js';
+import { toolTier } from '../../src/tools/tool-tiers.js';
+import { startupBudgetMs } from '../helpers/startup-budget.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(__dirname, '../../bin/stateset-mcp-http.js');
+
+/** With no --profile the server exposes the core tier, exactly. */
+const CORE_TIER = [...ALL_DOMAIN_TOOLS, ...AGENTIC_RUNTIME_TOOLS]
+  .filter((tool) => toolTier(tool.name) === 'core')
+  .map((tool) => tool.name)
+  .sort();
 const DEFAULT_PORT = 18091 + (process.pid % 400);
 const STRICT_PORT = DEFAULT_PORT + 400;
 
@@ -32,7 +43,7 @@ const ENVELOPE = {
   'io.modelcontextprotocol/clientCapabilities': {},
 };
 
-async function waitForHealth(base, timeoutMs = 60_000) {
+async function waitForHealth(base, timeoutMs = startupBudgetMs(60_000)) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -43,7 +54,7 @@ async function waitForHealth(base, timeoutMs = 60_000) {
     }
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error('server did not become healthy in time');
+  throw new Error(`server did not become healthy within ${timeoutMs}ms`);
 }
 
 function parseBody(text) {
@@ -140,7 +151,11 @@ describe('mcp http — protocol 2026-07-28, stateless', () => {
   it('lists tools over the 2026-07-28 envelope', async () => {
     const res = await modern(BASE, { method: 'tools/list' });
     const tools = res.json.result.tools;
-    assert.ok(tools.length > 500, `expected the full tool surface, got ${tools.length}`);
+    assert.deepEqual(
+      tools.map((t) => t.name).sort(),
+      CORE_TIER,
+      'with no --profile the server exposes exactly the core tier',
+    );
     const listCustomers = tools.find((t) => t.name === 'list_customers');
     assert.ok(listCustomers, 'list_customers must be advertised');
     assert.equal(listCustomers.inputSchema.type, 'object', 'schemas must render as JSON Schema');
@@ -170,6 +185,21 @@ describe('mcp http — protocol 2026-07-28, stateless', () => {
     const listed = toolText(await callTool(BASE, 'list_customers', {}, 11));
     const emails = (listed.customers || []).map((c) => c.email);
     assert.ok(emails.includes(marker), 'a later request must see the earlier write');
+  });
+
+  it('carries the result contract on the wire: isError and structuredContent', async () => {
+    const ok = (await callTool(BASE, 'list_customers', {}, 12)).json.result;
+    assert.notEqual(ok.isError, true);
+    assert.equal(ok.structuredContent.ok, true);
+    assert.equal(ok.structuredContent.preview, false);
+
+    // A malformed id is refused by the engine with a stable binding code.
+    const refused = (await callTool(BASE, 'get_payment', { paymentId: 'not-a-uuid' }, 13)).json
+      .result;
+    assert.equal(refused.isError, true, JSON.stringify(refused).slice(0, 400));
+    assert.equal(refused.structuredContent.ok, false);
+    assert.equal(refused.structuredContent.error.code, 'VALIDATION');
+    assert.equal(typeof refused.structuredContent.error.retryable, 'boolean');
   });
 
   it('refuses the 2025 session verbs GET and DELETE', async () => {
@@ -207,7 +237,7 @@ describe('mcp http — --strict-protocol', () => {
 
   it('still serves 2026-07-28 traffic', async () => {
     const res = await modern(BASE, { method: 'tools/list' });
-    assert.ok(res.json.result.tools.length > 500);
+    assert.ok(res.json.result.tools.length === CORE_TIER.length);
   });
 
   it('rejects a 2025-era client', async () => {
@@ -233,7 +263,7 @@ function spawnAndCollect(args) {
     child.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
     });
-    const killer = setTimeout(() => child.kill('SIGKILL'), 20_000);
+    const killer = setTimeout(() => child.kill('SIGKILL'), startupBudgetMs(20_000));
     child.once('close', (code) => {
       clearTimeout(killer);
       resolve({ code, stderr });
@@ -293,7 +323,7 @@ describe('mcp http — Origin validation', () => {
   it('serves a request from an allowed Origin', async () => {
     const res = await listWithOrigin(BASE, 'https://agent.example.com');
     assert.equal(res.status, 200);
-    assert.ok(parseBody(await res.text()).result.tools.length > 500);
+    assert.ok(parseBody(await res.text()).result.tools.length === CORE_TIER.length);
   });
 
   it('matches allowed origins by hostname, ignoring scheme and port', async () => {
@@ -304,7 +334,7 @@ describe('mcp http — Origin validation', () => {
   it('serves a request with no Origin header (non-browser client)', async () => {
     const res = await listWithOrigin(BASE, null);
     assert.equal(res.status, 200);
-    assert.ok(parseBody(await res.text()).result.tools.length > 500);
+    assert.ok(parseBody(await res.text()).result.tools.length === CORE_TIER.length);
   });
 });
 
@@ -406,7 +436,7 @@ describe('mcp http — auth off by default on a loopback bind', () => {
     assert.equal(health.auth, 'off');
     const res = await listWithHeaders(BASE);
     assert.equal(res.status, 200);
-    assert.ok(parseBody(await res.text()).result.tools.length > 500);
+    assert.ok(parseBody(await res.text()).result.tools.length === CORE_TIER.length);
   });
 });
 
@@ -449,7 +479,7 @@ describe('mcp http — API-key authentication', () => {
   it('serves a modern request with a valid Bearer key', async () => {
     const res = await listWithHeaders(BASE, { Authorization: `Bearer ${API_KEY}` });
     assert.equal(res.status, 200);
-    assert.ok(parseBody(await res.text()).result.tools.length > 500);
+    assert.ok(parseBody(await res.text()).result.tools.length === CORE_TIER.length);
   });
 
   it('serves a request with a valid X-API-Key, including one from the env var', async () => {

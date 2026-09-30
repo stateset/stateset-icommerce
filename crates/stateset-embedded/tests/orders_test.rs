@@ -49,6 +49,34 @@ fn create_test_order(commerce: &Commerce, customer_id: CustomerId) -> Order {
         .expect("Failed to create order")
 }
 
+/// Record a payment of `amount` against the order and leave it `pending`.
+/// An order's payment status is derived from its payments, so tests move it
+/// by recording payments rather than declaring it.
+fn open_payment(
+    commerce: &Commerce,
+    order_id: OrderId,
+    amount: rust_decimal::Decimal,
+) -> stateset_embedded::Payment {
+    commerce
+        .payments()
+        .create(CreatePayment {
+            order_id: Some(order_id),
+            payment_method: stateset_embedded::PaymentMethodType::CreditCard,
+            amount,
+            ..Default::default()
+        })
+        .expect("create payment")
+}
+
+/// Record and complete a payment for the order's whole total: the order
+/// derives `paid`.
+fn pay_in_full(commerce: &Commerce, order_id: OrderId) -> Order {
+    let order = commerce.orders().get(order_id).expect("get order").expect("order");
+    let payment = open_payment(commerce, order_id, order.total_amount);
+    commerce.payments().mark_completed(payment.id).expect("complete payment");
+    commerce.orders().get(order_id).expect("get order").expect("order")
+}
+
 /// Helper to create a shipping address
 fn create_test_address() -> Address {
     Address {
@@ -844,14 +872,25 @@ fn test_update_order_payment_status() {
     let customer_id = create_test_customer(&commerce);
     let order = create_test_order(&commerce, customer_id);
 
-    let updated = commerce
+    // The payment status is derived from the payment ledger: declaring it is
+    // refused and changes nothing.
+    let err = commerce
         .orders()
         .update(
             order.id,
             UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
         )
-        .expect("Failed to update order");
+        .expect_err("a declared payment status is refused");
+    assert!(
+        matches!(&err, stateset_embedded::CommerceError::ValidationError(m) if m.contains("derived")),
+        "{err:?}"
+    );
+    let stored = commerce.orders().get(order.id).expect("get").expect("order");
+    assert_eq!(stored.payment_status, PaymentStatus::Pending);
+    assert_eq!(stored.version, order.version);
 
+    // Recording the payment is what makes the order paid.
+    let updated = pay_in_full(&commerce, order.id);
     assert_eq!(updated.payment_status, PaymentStatus::Paid);
 }
 
@@ -911,13 +950,16 @@ fn test_update_order_multiple_fields() {
         .update_status(order.id, OrderStatus::Confirmed)
         .expect("Failed to confirm order");
 
+    // An authorized (processing) payment makes the order `authorized`.
+    let payment = open_payment(&commerce, order.id, order.total_amount);
+    commerce.payments().mark_processing(payment.id).expect("authorize payment");
+
     let updated = commerce
         .orders()
         .update(
             order.id,
             UpdateOrder {
                 status: Some(OrderStatus::Processing),
-                payment_status: Some(PaymentStatus::Authorized),
                 tracking_number: Some("UPS1234567890".into()),
                 notes: Some("Processing for shipment".into()),
                 ..Default::default()
@@ -1266,24 +1308,15 @@ fn test_order_payment_status_transitions() {
     let customer_id = create_test_customer(&commerce);
     let order = create_test_order(&commerce, customer_id);
 
-    // Pending -> Authorized
-    let order = commerce
-        .orders()
-        .update(
-            order.id,
-            UpdateOrder { payment_status: Some(PaymentStatus::Authorized), ..Default::default() },
-        )
-        .expect("Failed to update");
+    // Pending -> Authorized: a payment the processor is working on.
+    let payment = open_payment(&commerce, order.id, order.total_amount);
+    commerce.payments().mark_processing(payment.id).expect("authorize payment");
+    let order = commerce.orders().get(order.id).expect("get").expect("order");
     assert_eq!(order.payment_status, PaymentStatus::Authorized);
 
-    // Authorized -> Paid
-    let order = commerce
-        .orders()
-        .update(
-            order.id,
-            UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
-        )
-        .expect("Failed to update");
+    // Authorized -> Paid: the capture completes for the whole total.
+    commerce.payments().mark_completed(payment.id).expect("capture payment");
+    let order = commerce.orders().get(order.id).expect("get").expect("order");
     assert_eq!(order.payment_status, PaymentStatus::Paid);
 }
 
@@ -1293,16 +1326,10 @@ fn test_order_payment_partially_paid() {
     let customer_id = create_test_customer(&commerce);
     let order = create_test_order(&commerce, customer_id);
 
-    let updated = commerce
-        .orders()
-        .update(
-            order.id,
-            UpdateOrder {
-                payment_status: Some(PaymentStatus::PartiallyPaid),
-                ..Default::default()
-            },
-        )
-        .expect("Failed to update");
+    // A completed capture for part of the total.
+    let payment = open_payment(&commerce, order.id, dec!(10.00));
+    commerce.payments().mark_completed(payment.id).expect("capture payment");
+    let updated = commerce.orders().get(order.id).expect("get").expect("order");
 
     assert_eq!(updated.payment_status, PaymentStatus::PartiallyPaid);
 }
@@ -1313,13 +1340,10 @@ fn test_order_payment_failed() {
     let customer_id = create_test_customer(&commerce);
     let order = create_test_order(&commerce, customer_id);
 
-    let updated = commerce
-        .orders()
-        .update(
-            order.id,
-            UpdateOrder { payment_status: Some(PaymentStatus::Failed), ..Default::default() },
-        )
-        .expect("Failed to update");
+    // Only a failed attempt against the order.
+    let payment = open_payment(&commerce, order.id, order.total_amount);
+    commerce.payments().mark_failed(payment.id, "card declined", None).expect("fail payment");
+    let updated = commerce.orders().get(order.id).expect("get").expect("order");
 
     assert_eq!(updated.payment_status, PaymentStatus::Failed);
 }
@@ -1401,21 +1425,8 @@ fn test_list_orders_by_payment_status() {
     let order2 = create_test_order(&commerce, customer_id);
     let order3 = create_test_order(&commerce, customer_id);
 
-    commerce
-        .orders()
-        .update(
-            order1.id,
-            UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
-        )
-        .expect("Failed to update");
-
-    commerce
-        .orders()
-        .update(
-            order2.id,
-            UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
-        )
-        .expect("Failed to update");
+    pay_in_full(&commerce, order1.id);
+    pay_in_full(&commerce, order2.id);
 
     // order3 remains Pending
 
@@ -1495,13 +1506,10 @@ fn test_list_orders_with_combined_filters() {
         .orders()
         .update(
             order1.id,
-            UpdateOrder {
-                status: Some(OrderStatus::Confirmed),
-                payment_status: Some(PaymentStatus::Paid),
-                ..Default::default()
-            },
+            UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
         )
         .expect("Failed to update");
+    pay_in_full(&commerce, order1.id);
 
     // Update order2: Confirmed + Pending payment
     commerce

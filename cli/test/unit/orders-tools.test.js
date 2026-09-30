@@ -194,6 +194,28 @@ describe('get_order', () => {
     assert.equal(result.order.status, 'pending');
   });
 
+  it('looks a non-UUID identifier up by order number when the binding supports it', async () => {
+    const calls = [];
+    const commerce = makeOrderCommerce({
+      get: async (id) => {
+        calls.push(['get', id]);
+        return mockOrder;
+      },
+      getByNumber: async (number) => {
+        calls.push(['getByNumber', number]);
+        return mockOrder;
+      },
+    });
+    const byNumber = await tool.handler({ commerce, params: { identifier: 'ORD-1001' } });
+    assert.equal(byNumber.success, true);
+    const uuid = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+    await tool.handler({ commerce, params: { identifier: uuid } });
+    assert.deepEqual(calls, [
+      ['getByNumber', 'ORD-1001'],
+      ['get', uuid],
+    ]);
+  });
+
   it('maps items array on the returned order', async () => {
     const result = await tool.handler({
       commerce: makeOrderCommerce(),
