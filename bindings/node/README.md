@@ -44,6 +44,15 @@ in `scripts/types/*.d.ts` to the napi-generated `index.d.ts`, regenerates
 `docs/src/api/node-reference.md`; tests fail if any of those are stale. A bare
 `napi build` skips all of that — use the npm scripts.
 
+## Fulfillment visibility
+
+Order items expose `shippedQuantity`, the quantity recorded by the order engine.
+Shipment reads expose persisted `items` with order-item and product references,
+recipient contact details, and notes. Shipment tracking does not itself reserve
+inventory or update order fulfillment quantities. Reconcile both records before
+creating replacement or follow-up shipments; the Node shipment creation input
+does not yet support item assignment or parent-shipment linkage.
+
 ## Quick Start
 
 ```javascript
@@ -172,6 +181,7 @@ The adapter subpaths work with nothing but this package installed:
 - `@stateset/embedded/generic` — framework-neutral `{ name, description, schema, execute }` descriptors
 - `@stateset/embedded/langchain` — `DynamicStructuredTool` instances
 - `@stateset/embedded/vercel-ai` — Vercel AI SDK `tool()` map
+- `@stateset/embedded/webmcp` — browser tool registration from StateSet descriptors
 - `@stateset/embedded/native-toolkit` — the toolkit behind them (`getTools({ format })`, `executeTool`, …)
 
 They are backed by `tool-descriptors.json`, a catalog generated from

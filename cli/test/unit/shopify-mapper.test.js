@@ -83,8 +83,8 @@ describe('mapCustomerStatus', () => {
     assert.equal(mapCustomerStatus('disabled'), 'inactive');
   });
 
-  it('maps "invited" to "pending"', () => {
-    assert.equal(mapCustomerStatus('invited'), 'pending');
+  it('maps "invited" to native "inactive"', () => {
+    assert.equal(mapCustomerStatus('invited'), 'inactive');
   });
 
   it('maps unknown value to "active" (default)', () => {
@@ -101,16 +101,16 @@ describe('mapFinancialStatus', () => {
     assert.equal(mapFinancialStatus('pending'), 'pending');
   });
 
-  it('maps "authorized" to "pending"', () => {
-    assert.equal(mapFinancialStatus('authorized'), 'pending');
+  it('preserves "authorized"', () => {
+    assert.equal(mapFinancialStatus('authorized'), 'authorized');
   });
 
   it('maps "paid" to "paid"', () => {
     assert.equal(mapFinancialStatus('paid'), 'paid');
   });
 
-  it('maps "partially_paid" to "pending"', () => {
-    assert.equal(mapFinancialStatus('partially_paid'), 'pending');
+  it('preserves "partially_paid"', () => {
+    assert.equal(mapFinancialStatus('partially_paid'), 'partially_paid');
   });
 
   it('maps "partially_refunded" to "partially_refunded"', () => {
@@ -121,8 +121,8 @@ describe('mapFinancialStatus', () => {
     assert.equal(mapFinancialStatus('refunded'), 'refunded');
   });
 
-  it('maps "voided" to "refunded"', () => {
-    assert.equal(mapFinancialStatus('voided'), 'refunded');
+  it('maps "voided" to "failed" without inventing a refund', () => {
+    assert.equal(mapFinancialStatus('voided'), 'failed');
   });
 });
 
@@ -174,7 +174,7 @@ describe('mapCustomerToStateSet', () => {
 
   it('maps customer with null phone', () => {
     const result = mapCustomerToStateSet(bob);
-    assert.equal(result.data.phone, null);
+    assert.equal(result.data.phone, undefined);
   });
 
   it('maps disabled customer to inactive', () => {
@@ -182,9 +182,9 @@ describe('mapCustomerToStateSet', () => {
     assert.equal(result.data.status, 'inactive');
   });
 
-  it('maps invited customer to pending', () => {
+  it('maps invited customer to inactive', () => {
     const result = mapCustomerToStateSet(diana);
-    assert.equal(result.data.status, 'pending');
+    assert.equal(result.data.status, 'inactive');
   });
 
   it('preserves email, firstName, lastName, acceptsMarketing', () => {
@@ -273,8 +273,8 @@ describe('mapProductToStateSet', () => {
     const v = result.data.variants[0];
     assert.equal(v.sku, 'WIDGET-SM');
     assert.equal(v.name, 'Small');
-    assert.equal(v.price, 19.99);
-    assert.equal(v.compareAtPrice, 24.99);
+    assert.equal(v.priceExact, '19.99');
+    assert.equal(v.compareAtPriceExact, '24.99');
     assert.equal(v.weight, 100);
     assert.equal(v.barcode, '123456789');
   });
@@ -351,25 +351,25 @@ describe('mapOrderToStateSet', () => {
     assert.equal(li.sku, 'WIDGET-SM');
     assert.equal(li.name, 'Classic Widget - Small');
     assert.equal(li.quantity, 2);
-    assert.equal(li.unitPrice, 19.99);
-    assert.equal(li.totalPrice, 19.99 * 2);
+    assert.equal(li.unitPriceExact, '19.99');
+    assert.equal(li.totalPrice, '39.98');
   });
 
   it('maps shipping address correctly', () => {
     const result = mapOrderToStateSet(orderPaid);
     assert.deepEqual(result.data.shippingAddress, {
-      address1: '123 Main St',
-      address2: 'Apt 4',
+      line1: '123 Main St',
+      line2: 'Apt 4',
       city: 'Anytown',
-      province: 'CA',
-      zip: '90210',
+      state: 'CA',
+      postalCode: '90210',
       country: 'US',
     });
   });
 
-  it('sets shippingAddress to null when not present', () => {
+  it('omits shippingAddress when not present', () => {
     const result = mapOrderToStateSet(orderPartialRefund);
-    assert.equal(result.data.shippingAddress, null);
+    assert.equal(result.data.shippingAddress, undefined);
   });
 
   it('preserves currency from Shopify', () => {
@@ -381,7 +381,7 @@ describe('mapOrderToStateSet', () => {
 
   it('uses total_price from Shopify as totalAmount', () => {
     const result = mapOrderToStateSet(orderPaid);
-    assert.equal(result.data.totalAmount, 49.98);
+    assert.equal(result.data.totalAmount, '49.98');
   });
 
   it('metadata includes shopifyId and shopifyOrderNumber', () => {

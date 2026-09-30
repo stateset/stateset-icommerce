@@ -1,0 +1,27 @@
+[Unit]
+Description=StateSet iCommerce connector for Muse
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=stateset
+Group=stateset
+WorkingDirectory=/var/lib/stateset-muse
+StateDirectory=stateset-muse
+StateDirectoryMode=0750
+Environment=NODE_ENV=production
+# Replace the domain and code location before installing this unit.
+ExecStart=/usr/bin/node /opt/stateset-icommerce/cli/bin/stateset-muse.js --host 127.0.0.1 --port 8092 --public-url https://commerce.example.com --allowed-host 127.0.0.1 --db /var/lib/stateset-muse/store.db --api-key-file /etc/stateset/muse-keys.txt
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

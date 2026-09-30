@@ -5,6 +5,16 @@
  * No I/O — fully deterministic and trivially testable.
  */
 
+import { decimal } from '../../tools/providers/money.js';
+
+function exactAmount(value, field) {
+  if (value === null || value === undefined || value === '')
+    throw new Error(`Missing Shopify ${field}`);
+  const amount = decimal(value);
+  if (amount.isNegative()) throw new Error(`Shopify ${field} must be non-negative`);
+  return amount.toFixed();
+}
+
 // ---------------------------------------------------------------------------
 // HTML stripping
 // ---------------------------------------------------------------------------
@@ -41,18 +51,18 @@ export function stripHtml(html) {
 const CUSTOMER_STATUS_MAP = {
   enabled: 'active',
   disabled: 'inactive',
-  invited: 'pending',
+  invited: 'inactive',
   declined: 'inactive',
 };
 
 const FINANCIAL_STATUS_MAP = {
   pending: 'pending',
-  authorized: 'pending',
+  authorized: 'authorized',
   paid: 'paid',
-  partially_paid: 'pending',
+  partially_paid: 'partially_paid',
   partially_refunded: 'partially_refunded',
   refunded: 'refunded',
-  voided: 'refunded',
+  voided: 'failed',
 };
 
 const FULFILLMENT_STATUS_MAP = {
@@ -102,7 +112,7 @@ export function mapCustomerToStateSet(shopifyCustomer) {
       email: c.email || '',
       firstName: c.first_name || '',
       lastName: c.last_name || '',
-      phone: c.phone || null,
+      phone: c.phone || undefined,
       status: mapCustomerStatus(c.state),
       acceptsMarketing: c.accepts_marketing || false,
       metadata: {
@@ -126,8 +136,11 @@ export function mapProductToStateSet(shopifyProduct) {
   const variants = (p.variants || []).map((v) => ({
     sku: v.sku || '',
     name: v.title || 'Default',
-    price: parseFloat(v.price) || 0,
-    compareAtPrice: v.compare_at_price ? parseFloat(v.compare_at_price) : null,
+    priceExact: exactAmount(v.price, 'variant price'),
+    compareAtPriceExact:
+      v.compare_at_price === null || v.compare_at_price === undefined
+        ? undefined
+        : exactAmount(v.compare_at_price, 'compare-at price'),
     weight: v.weight ? parseFloat(v.weight) : null,
     weightUnit: v.weight_unit || null,
     barcode: v.barcode || null,
@@ -144,7 +157,7 @@ export function mapProductToStateSet(shopifyProduct) {
       name: p.title || '',
       description: stripHtml(p.body_html),
       slug: p.handle || '',
-      status: p.status === 'active' ? 'active' : 'draft',
+      status: p.status === 'archived' ? 'archived' : p.status === 'active' ? 'active' : 'draft',
       productType: p.product_type || null,
       vendor: p.vendor || null,
       tags: p.tags ? p.tags.split(',').map((t) => t.trim()) : [],
@@ -178,12 +191,16 @@ export function mapOrderToStateSet(shopifyOrder, context = {}) {
     customerId = mapping?.statesetId || null;
   }
 
+  for (const item of o.line_items || []) {
+    if (!Number.isSafeInteger(item.quantity) || item.quantity <= 0)
+      throw new Error('Shopify line quantity must be a positive safe integer');
+  }
   const items = (o.line_items || []).map((li) => ({
     sku: li.sku || '',
     name: li.name || li.title || '',
-    quantity: li.quantity || 1,
-    unitPrice: parseFloat(li.price) || 0,
-    totalPrice: parseFloat(li.price) * (li.quantity || 1),
+    quantity: li.quantity,
+    unitPriceExact: exactAmount(li.price, 'line price'),
+    totalPrice: decimal(exactAmount(li.price, 'line price')).times(String(li.quantity)).toFixed(),
     metadata: {
       shopifyLineItemId: String(li.id),
       shopifyVariantId: li.variant_id ? String(li.variant_id) : null,
@@ -191,7 +208,10 @@ export function mapOrderToStateSet(shopifyOrder, context = {}) {
     },
   }));
 
-  const totalAmount = parseFloat(o.total_price) || items.reduce((s, i) => s + i.totalPrice, 0);
+  const totalAmount =
+    o.total_price === null || o.total_price === undefined
+      ? items.reduce((sum, item) => sum.plus(item.totalPrice), decimal('0')).toFixed()
+      : exactAmount(o.total_price, 'order total');
 
   return {
     entityType: 'orders',
@@ -205,14 +225,14 @@ export function mapOrderToStateSet(shopifyOrder, context = {}) {
       items,
       shippingAddress: o.shipping_address
         ? {
-            address1: o.shipping_address.address1 || '',
-            address2: o.shipping_address.address2 || '',
+            line1: o.shipping_address.address1 || '',
+            line2: o.shipping_address.address2 || undefined,
             city: o.shipping_address.city || '',
-            province: o.shipping_address.province || '',
-            zip: o.shipping_address.zip || '',
-            country: o.shipping_address.country || '',
+            state: o.shipping_address.province_code || o.shipping_address.province || undefined,
+            postalCode: o.shipping_address.zip || '',
+            country: o.shipping_address.country_code || o.shipping_address.country || '',
           }
-        : null,
+        : undefined,
       metadata: {
         shopifyId: String(o.id),
         shopifyOrderNumber: o.order_number ? String(o.order_number) : null,
@@ -331,14 +351,18 @@ export function mapProductFromStateSet(statesetProduct) {
     title: p.name,
     body_html: p.description || '',
     handle: p.slug || '',
-    status: p.status === 'active' ? 'active' : 'draft',
+    status: p.status === 'archived' ? 'archived' : p.status === 'active' ? 'active' : 'draft',
     product_type: p.productType || p.product_type || '',
     vendor: p.vendor || '',
     variants: (p.variants || []).map((v) => ({
       sku: v.sku || '',
       title: v.name || 'Default',
-      price: String(v.price || 0),
-      compare_at_price: v.compareAtPrice ? String(v.compareAtPrice) : null,
+      price: exactAmount(v.priceExact ?? v.price ?? '0', 'variant price'),
+      compare_at_price:
+        (v.compareAtPriceExact !== null && v.compareAtPriceExact !== undefined) ||
+        (v.compareAtPrice !== null && v.compareAtPrice !== undefined)
+          ? exactAmount(v.compareAtPriceExact ?? v.compareAtPrice, 'compare-at price')
+          : null,
     })),
   };
 }

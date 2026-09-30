@@ -1024,6 +1024,16 @@ impl SqliteOrderRepository {
         )
         .map_err(to_sql_err)?;
 
+        let has_shipments: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM shipments WHERE order_id = ?1) OR EXISTS(SELECT 1 FROM shipment_items si JOIN order_items oi ON oi.id = si.order_item_id WHERE oi.order_id = ?1)",
+            [id.to_string()],
+            |row| row.get(0),
+        )?;
+        if has_shipments {
+            return Err(to_sql_err(CommerceError::ValidationError(
+                "Cannot delete an order with shipment history".into(),
+            )));
+        }
         Self::release_order_stock_in_tx(tx, id)?;
         tx.execute("DELETE FROM order_items WHERE order_id = ?", [id.to_string()])?;
         tx.execute("DELETE FROM orders WHERE id = ?", [id.to_string()])?;
@@ -1790,6 +1800,16 @@ impl OrderRepository for SqliteOrderRepository {
                 }
                 Err(e) => return Err(e),
             };
+
+            let assigned: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM shipment_items si JOIN shipments s ON s.id = si.shipment_id WHERE si.order_item_id = ? OR (si.order_item_id IS NULL AND s.order_id = ? AND si.sku = ?))",
+                rusqlite::params![item_id.to_string(), order_id.to_string(), removed.sku], |row| row.get(0),
+            )?;
+            if assigned {
+                return Err(to_sql_err(CommerceError::ValidationError(
+                    "Cannot remove an order item referenced by shipment history".into(),
+                )));
+            }
 
             // Give the line's stock back and drop its backorder in the same
             // transaction as the delete, so removal never leaks a hold.

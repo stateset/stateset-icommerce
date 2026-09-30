@@ -1,0 +1,16 @@
+{
+  "accounts": [
+    {
+      "id": "catalog-reviewer",
+      "apiKeyFile": "./catalog-reviewer-keys.txt",
+      "tools": ["list_products", "get_product", "get_stock", "create_product"],
+      "allowApply": false
+    },
+    {
+      "id": "store-operator",
+      "apiKeyFile": "./store-operator-keys.txt",
+      "tools": ["list_products", "get_product", "create_product", "update_order_status"],
+      "allowApply": true
+    }
+  ]
+}

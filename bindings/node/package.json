@@ -29,6 +29,10 @@
       "types": "./openai.d.ts",
       "default": "./openai.mjs"
     },
+    "./webmcp": {
+      "types": "./webmcp.d.ts",
+      "default": "./webmcp.mjs"
+    },
     "./generic": {
       "types": "./generic.d.ts",
       "default": "./generic.mjs"

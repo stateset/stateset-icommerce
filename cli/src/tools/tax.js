@@ -3,6 +3,10 @@
  */
 
 import { z } from 'zod';
+
+const providerMoney = z
+  .union([z.string().regex(/^\d{1,40}(?:\.\d{1,36})?$/), z.number().nonnegative().finite()])
+  .describe('Exact decimal string (preferred) or legacy safe number');
 import { applyRequired } from '../utils/apply-guard.js';
 import {
   calculateTaxQuote,
@@ -713,7 +717,7 @@ export const taxTools = [
         .array(
           z.object({
             id: z.string().optional().describe('Line item identifier'),
-            unitPrice: z.number().positive().describe('Unit price per item'),
+            unitPrice: providerMoney.describe('Exact unit price per item'),
             quantity: z.number().int().positive().describe('Quantity'),
             taxCategory: z
               .string()
@@ -732,7 +736,7 @@ export const taxTools = [
           postalCode: z.string().optional().describe('Postal/ZIP code'),
         })
         .describe('Shipping address'),
-      shippingAmount: z.number().min(0).optional().describe('Shipping amount'),
+      shippingAmount: providerMoney.optional().describe('Exact shipping amount'),
       customerId: z.string().optional().describe('Customer ID'),
       orderId: z.string().optional().describe('Order ID'),
       currency: z.string().max(10).optional().describe('Currency code (default: USD)'),
@@ -789,7 +793,7 @@ export const taxTools = [
         .array(
           z.object({
             id: z.string().optional().describe('Line item identifier'),
-            unitPrice: z.number().positive().describe('Unit price per item'),
+            unitPrice: providerMoney.describe('Exact unit price per item'),
             quantity: z.number().int().positive().describe('Quantity'),
             taxCategory: z
               .string()
@@ -808,7 +812,7 @@ export const taxTools = [
           postalCode: z.string().optional().describe('Postal/ZIP code'),
         })
         .describe('Shipping address'),
-      shippingAmount: z.number().min(0).optional().describe('Shipping amount'),
+      shippingAmount: providerMoney.optional().describe('Exact shipping amount'),
       customerId: z.string().optional().describe('Customer ID'),
       orderId: z.string().optional().describe('Order ID'),
       currency: z.string().max(10).optional().describe('Currency code (default: USD)'),

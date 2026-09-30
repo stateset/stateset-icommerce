@@ -6,6 +6,7 @@
 - [Getting Started](getting-started.md)
 - [CLI Quickstart](standalone-quickstart.md)
 - [AI Agent Quickstart](ai-agents.md)
+- [Meta Muse Connector](guides/meta-muse-connector.md)
 - [Product Tiers](tiers.md)
 - [Trust Foundation](trust-foundation.md)
 

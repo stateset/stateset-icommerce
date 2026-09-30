@@ -8,13 +8,14 @@ use axum::{
 };
 
 use crate::dto::{
-    CreateShipmentRequest, ShipmentFilterParams, ShipmentListResponse, ShipmentResponse,
-    finalize_page, overfetch_limit,
+    CancelShipmentRequest, CreateShipmentRequest, ShipmentFilterParams, ShipmentListResponse,
+    ShipmentResponse, UpdateShipmentRequest, finalize_page, overfetch_limit,
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{
     CreateShipment, OrderId, ShipmentFilter, ShipmentId, ShipmentStatus, ShippingCarrier,
+    ShippingMethod, UpdateShipment,
 };
 use std::str::FromStr;
 
@@ -22,7 +23,8 @@ use std::str::FromStr;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/shipments", post(create_shipment).get(list_shipments))
-        .route("/shipments/{id}", get(get_shipment))
+        .route("/shipments/{id}", get(get_shipment).patch(update_shipment))
+        .route("/shipments/{id}/cancel", post(cancel_shipment))
         .route("/shipments/{id}/deliver", post(deliver_shipment))
 }
 
@@ -86,7 +88,7 @@ pub(crate) async fn list_shipments(
         .as_deref()
         .map(ShipmentStatus::from_str)
         .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: pending, processing, shipped, in_transit, delivered, failed, cancelled")))?;
+        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: pending, processing, ready_to_ship, shipped, in_transit, out_for_delivery, delivered, failed, returned, cancelled, on_hold")))?;
     let carrier =
         params.carrier.as_deref().map(ShippingCarrier::from_str).transpose().map_err(|e| {
             HttpError::BadRequest(format!(
@@ -159,16 +161,119 @@ pub(crate) async fn create_shipment(
             ))
         })?;
 
+    let shipping_method = req
+        .shipping_method
+        .as_deref()
+        .map(ShippingMethod::from_str)
+        .transpose()
+        .map_err(|error| HttpError::BadRequest(format!("Invalid shipping_method: {error}")))?;
+
     let input = CreateShipment {
         order_id: req.order_id,
         carrier,
+        shipping_method,
         tracking_number: req.tracking_number,
         recipient_name: req.recipient_name.unwrap_or_default(),
+        recipient_email: req.recipient_email,
+        recipient_phone: req.recipient_phone,
+        shipping_address: req.shipping_address.unwrap_or_default(),
         notes: req.notes,
         ..Default::default()
     };
     let shipment = commerce.shipments().create(input)?;
     Ok((StatusCode::CREATED, Json(ShipmentResponse::from(shipment))))
+}
+
+/// Patch one native shipment without skipping lifecycle guards.
+#[utoipa::path(patch, path = "/api/v1/shipments/{id}", tag = "shipments",
+    params(("id" = String, Path, description = "Shipment ID (UUID)")),
+    request_body = UpdateShipmentRequest,
+    responses((status = 200, description = "Updated shipment", body = ShipmentResponse),
+        (status = 404, description = "Shipment not found", body = ErrorBody),
+        (status = 409, description = "Stale shipment version", body = ErrorBody),
+        (status = 422, description = "Invalid fields or lifecycle transition", body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn update_shipment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<ShipmentId>,
+    Json(req): Json<UpdateShipmentRequest>,
+) -> Result<Json<ShipmentResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let status = req
+        .status
+        .as_deref()
+        .map(ShipmentStatus::from_str)
+        .transpose()
+        .map_err(|error| HttpError::ValidationError(format!("Invalid status: {error}")))?;
+    if status == Some(ShipmentStatus::Cancelled) {
+        return Err(HttpError::ValidationError("Use the shipment cancellation endpoint".into()));
+    }
+    let carrier = req
+        .carrier
+        .as_deref()
+        .map(ShippingCarrier::from_str)
+        .transpose()
+        .map_err(|error| HttpError::ValidationError(format!("Invalid carrier: {error}")))?;
+    let decimal = |name: &str,
+                   value: Option<String>|
+     -> Result<Option<rust_decimal::Decimal>, HttpError> {
+        value
+            .map(|value| {
+                rust_decimal::Decimal::from_str_exact(&value)
+                    .map_err(|error| HttpError::ValidationError(format!("Invalid {name}: {error}")))
+            })
+            .transpose()
+    };
+    let input = UpdateShipment {
+        expected_version: req.expected_version,
+        status,
+        carrier,
+        tracking_number: req.tracking_number,
+        recipient_name: req.recipient_name,
+        recipient_email: req.recipient_email,
+        recipient_phone: req.recipient_phone,
+        shipping_address: req.shipping_address,
+        weight_kg: decimal("weight_kg", req.weight_kg)?,
+        dimensions: req.dimensions,
+        shipping_cost: decimal("shipping_cost", req.shipping_cost)?,
+        estimated_delivery: req.estimated_delivery,
+        notes: req.notes,
+    };
+    Ok(Json(commerce.shipments().update(id, input)?.into()))
+}
+
+/// Cancel before carrier handoff, retaining shipment items and tracking history.
+#[utoipa::path(post, path = "/api/v1/shipments/{id}/cancel", tag = "shipments",
+    params(("id" = String, Path, description = "Shipment ID (UUID)")),
+    request_body = CancelShipmentRequest,
+    responses((status = 200, description = "Cancelled shipment", body = ShipmentResponse),
+        (status = 404, description = "Shipment not found", body = ErrorBody),
+        (status = 409, description = "Stale shipment version", body = ErrorBody),
+        (status = 422, description = "Shipment cannot be cancelled", body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn cancel_shipment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<ShipmentId>,
+    Json(req): Json<CancelShipmentRequest>,
+) -> Result<Json<ShipmentResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    Ok(Json(
+        commerce
+            .shipments()
+            .update(
+                id,
+                UpdateShipment {
+                    status: Some(ShipmentStatus::Cancelled),
+                    expected_version: req.expected_version,
+                    ..Default::default()
+                },
+            )?
+            .into(),
+    ))
 }
 
 /// `POST /api/v1/shipments/:id/deliver`

@@ -117,6 +117,8 @@ pub struct OrderItemOutput {
     pub sku: String,
     pub name: String,
     pub quantity: i32,
+    /// Units recorded as fulfilled by the order engine; shipment tracking is separate.
+    pub shipped_quantity: i32,
     /// @deprecated Use the `unitPriceExact` twin; float money will be removed in 2.0.
     pub unit_price: f64,
     /// Exact base-10 unit price. Prefer this field for calculations.
@@ -211,6 +213,7 @@ impl TryFrom<stateset_core::Order> for OrderOutput {
                         sku: i.sku,
                         name: i.name,
                         quantity: i.quantity,
+                        shipped_quantity: i.shipped_quantity,
                         unit_price,
                         unit_price_exact,
                         total,
@@ -223,6 +226,22 @@ impl TryFrom<stateset_core::Order> for OrderOutput {
             updated_at: o.updated_at.to_rfc3339(),
         })
     }
+}
+
+/// Patch supported fields through the native engine validation and audit path.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateOrderInput {
+    #[napi(ts_type = "OrderStatusUpdate")]
+    pub status: Option<String>,
+    #[napi(ts_type = "PaymentStatus")]
+    pub payment_status: Option<String>,
+    #[napi(ts_type = "FulfillmentStatus")]
+    pub fulfillment_status: Option<String>,
+    pub tracking_number: Option<String>,
+    pub notes: Option<String>,
+    pub shipping_address: Option<OrderAddressInput>,
+    pub billing_address: Option<OrderAddressInput>,
 }
 
 #[napi]
@@ -343,6 +362,50 @@ impl Orders {
         }
         .map_err(|e| wrap(ErrCode::Internal, "Failed to create order", e))?;
         convert_output(order)
+    }
+
+    /// Update fields without bypassing native state-transition or money guards.
+    #[napi]
+    pub async fn update(&self, id: String, input: UpdateOrderInput) -> Result<OrderOutput> {
+        let commerce = self.commerce.get()?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
+        let update = stateset_core::UpdateOrder {
+            status: input
+                .status
+                .map(|value| {
+                    value
+                        .parse::<stateset_core::OrderStatus>()
+                        .map_err(|e| wrap(ErrCode::Validation, "Invalid status", e))
+                })
+                .transpose()?,
+            payment_status: input
+                .payment_status
+                .map(|value| {
+                    value
+                        .parse::<stateset_core::PaymentStatus>()
+                        .map_err(|e| wrap(ErrCode::Validation, "Invalid payment_status", e))
+                })
+                .transpose()?,
+            fulfillment_status: input
+                .fulfillment_status
+                .map(|value| {
+                    value
+                        .parse::<stateset_core::FulfillmentStatus>()
+                        .map_err(|e| wrap(ErrCode::Validation, "Invalid fulfillment_status", e))
+                })
+                .transpose()?,
+            tracking_number: input.tracking_number,
+            notes: input.notes,
+            shipping_address: input.shipping_address.map(input_to_order_address),
+            billing_address: input.billing_address.map(input_to_order_address),
+            ..Default::default()
+        };
+        let result = commerce
+            .orders()
+            .update(uuid.into(), update)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to update order", e))?;
+        convert_output(result)
     }
 
     #[napi]

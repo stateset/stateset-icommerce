@@ -487,7 +487,8 @@ export const ORCHESTRATION_PLANS = {
     'quote_shipping_rates', // Step 7: Request provider rates
     'create_shipping_label', // Step 8: Generate label
     'track_shipping_label', // Step 9: Monitor handoff
-    'handle_fulfillment_exception', // Step 10: Auto-resolve disruptions
+    'plan_partial_shipment', // Step 10: Inspect remaining quantities without writes
+    'handle_fulfillment_exception', // Step 11: Handle or route exceptions for reconciliation
   ],
   return_process: [
     'get_order', // Step 1: Get order details

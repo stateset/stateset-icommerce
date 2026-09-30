@@ -1,0 +1,10 @@
+# Replace this hostname with the origin passed to stateset-muse --public-url.
+commerce.example.com {
+    reverse_proxy 127.0.0.1:8092 {
+        header_up Host commerce.example.com
+        health_uri /health
+        health_headers {
+            Host commerce.example.com
+        }
+    }
+}

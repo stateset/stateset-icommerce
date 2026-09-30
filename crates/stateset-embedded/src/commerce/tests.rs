@@ -158,6 +158,11 @@ fn test_metrics_record_key_engine_operations() {
             ..Default::default()
         })
         .unwrap();
+    commerce.shipments().mark_processing(shipment.id).unwrap();
+    commerce.shipments().mark_ready(shipment.id).unwrap();
+    commerce.shipments().ship(shipment.id, None).unwrap();
+    commerce.shipments().mark_in_transit(shipment.id).unwrap();
+    commerce.shipments().mark_out_for_delivery(shipment.id).unwrap();
     commerce.shipments().mark_delivered(shipment.id).unwrap();
 
     let plan = commerce
@@ -290,7 +295,31 @@ fn test_shipment_operations() {
     use stateset_core::{CreateShipment, CreateShipmentItem, ShipmentStatus, ShippingCarrier};
 
     let commerce = Commerce::new(":memory:").unwrap();
-    let order_id: crate::OrderId = uuid::Uuid::new_v4().into();
+    let customer = commerce
+        .customers()
+        .create(stateset_core::CreateCustomer {
+            email: "shipment@example.com".into(),
+            first_name: "Alice".into(),
+            last_name: "Smith".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let order_id = commerce
+        .orders()
+        .create(stateset_core::CreateOrder {
+            customer_id: customer.id,
+            items: vec![stateset_core::CreateOrderItem {
+                product_id: stateset_core::ProductId::new(),
+                sku: "SKU-001".into(),
+                name: "Widget".into(),
+                quantity: 2,
+                unit_price: rust_decimal::Decimal::ONE,
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap()
+        .id;
 
     // Create shipment
     let shipment = commerce
@@ -323,6 +352,8 @@ fn test_shipment_operations() {
     let shipment = commerce.shipments().mark_processing(shipment.id).unwrap();
     assert_eq!(shipment.status, ShipmentStatus::Processing);
 
+    commerce.shipments().mark_ready(shipment.id).unwrap();
+
     // Ship with tracking number
     let shipment =
         commerce.shipments().ship(shipment.id, Some("1Z999AA10123456784".into())).unwrap();
@@ -333,6 +364,8 @@ fn test_shipment_operations() {
     // Mark in transit
     let shipment = commerce.shipments().mark_in_transit(shipment.id).unwrap();
     assert_eq!(shipment.status, ShipmentStatus::InTransit);
+
+    commerce.shipments().mark_out_for_delivery(shipment.id).unwrap();
 
     // Mark delivered
     let shipment = commerce.shipments().mark_delivered(shipment.id).unwrap();

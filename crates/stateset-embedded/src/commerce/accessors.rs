@@ -267,7 +267,7 @@ impl Commerce {
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// let shipment = commerce.shipments().create(CreateShipment {
-    ///     order_id: Uuid::new_v4(),
+    ///     order_id: order.id, // Existing order with at least two SKU-001 units.
     ///     carrier: Some(ShippingCarrier::Ups),
     ///     recipient_name: "Alice Smith".into(),
     ///     shipping_address: "123 Main St, City, ST 12345".into(),
@@ -281,9 +281,13 @@ impl Commerce {
     /// })?;
     ///
     /// // Ship with tracking number
+    /// commerce.shipments().mark_processing(shipment.id)?;
+    /// commerce.shipments().mark_ready(shipment.id)?;
     /// let shipment = commerce.shipments().ship(shipment.id, Some("1Z999AA10123456784".into()))?;
     ///
     /// // Mark as delivered
+    /// commerce.shipments().mark_in_transit(shipment.id)?;
+    /// commerce.shipments().mark_out_for_delivery(shipment.id)?;
     /// let shipment = commerce.shipments().mark_delivered(shipment.id)?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```

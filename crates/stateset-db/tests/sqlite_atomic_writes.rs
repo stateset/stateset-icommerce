@@ -7,6 +7,9 @@ use stateset_core::{
     InventoryRepository, InvoiceRepository, PurchaseOrderRepository, ReserveInventory,
     ShipmentRepository,
 };
+use stateset_core::{
+    CreateCustomer, CreateOrder, CreateOrderItem, CustomerRepository, OrderRepository,
+};
 use stateset_db::SqliteDatabase;
 use uuid::Uuid;
 
@@ -75,14 +78,38 @@ fn sqlite_purchase_order_create_rolls_back_when_item_insert_fails() {
 #[test]
 fn sqlite_shipment_create_rolls_back_when_item_insert_fails() {
     let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
+    let customer = db
+        .customers()
+        .create(CreateCustomer {
+            email: "shipment-rollback@example.com".into(),
+            first_name: "A".into(),
+            last_name: "B".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let order = db
+        .orders()
+        .create(CreateOrder {
+            customer_id: customer.id,
+            items: vec![CreateOrderItem {
+                product_id: stateset_core::ProductId::new(),
+                sku: "SKU-1".into(),
+                name: "Test item".into(),
+                quantity: 1,
+                unit_price: Decimal::ONE,
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
     {
         let conn = db.conn().expect("get sqlite connection");
-        conn.execute("DROP TABLE shipment_items", []).expect("drop shipment_items");
+        conn.execute_batch("CREATE TRIGGER reject_shipment_item BEFORE INSERT ON shipment_items BEGIN SELECT RAISE(ABORT, 'item insert unavailable'); END;").unwrap();
     }
 
     let repo = db.shipments();
     repo.create(CreateShipment {
-        order_id: Uuid::new_v4().into(),
+        order_id: order.id,
         recipient_name: "Test recipient".to_string(),
         shipping_address: "123 Test St".to_string(),
         items: Some(vec![CreateShipmentItem {

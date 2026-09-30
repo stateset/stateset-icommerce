@@ -201,9 +201,13 @@ fn test_full_commerce_lifecycle() {
     commerce.orders().update_status(order.id, OrderStatus::Processing).expect("set processing");
     commerce.orders().update_status(order.id, OrderStatus::Shipped).expect("set shipped");
 
+    commerce.shipments().mark_processing(shipment.id).expect("processing");
+    commerce.shipments().mark_ready(shipment.id).expect("ready");
     let shipment = commerce.shipments().ship(shipment.id, None).expect("Failed to ship");
     assert_eq!(shipment.status, ShipmentStatus::Shipped);
 
+    commerce.shipments().mark_in_transit(shipment.id).expect("in transit");
+    commerce.shipments().mark_out_for_delivery(shipment.id).expect("out for delivery");
     let shipment = commerce.shipments().mark_delivered(shipment.id).expect("Failed to deliver");
     assert_eq!(shipment.status, ShipmentStatus::Delivered);
 

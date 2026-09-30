@@ -5,7 +5,7 @@
 
 Source of truth: `cli/src/tools/domain-registry.js`.
 
-**935 tools** across **87 domains**.
+**937 tools** across **87 domains**.
 
 ## Domains
 
@@ -33,7 +33,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | [agent-cards](#agent-cards) | 5 |
 | [a2a](#a2a) | 59 |
 | [agent-runtime](#agent-runtime) | 29 |
-| [shipments](#shipments) | 14 |
+| [shipments](#shipments) | 16 |
 | [suppliers](#suppliers) | 10 |
 | [invoices](#invoices) | 7 |
 | [warranties](#warranties) | 7 |
@@ -564,12 +564,14 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 
 | Tool | Permission | Description |
 | --- | --- | --- |
+| `plan_partial_shipment` | read | Read remaining order-line quantities and validate a partial-shipment recovery plan. Does not reserve stock or create a shipment; operator reconciliation is required. |
 | `list_shipments` | read | List all shipments. |
 | `get_shipment` | read | Get a shipment by ID. |
 | `create_shipment` | write | Create a shipment for an order. |
-| `ship_shipment` | write | Mark a shipment as shipped with an optional tracking number. |
-| `deliver_shipment` | write | Mark a shipment as delivered. |
-| `cancel_shipment` | delete | Cancel a shipment before delivery is completed. |
+| `update_shipment` | write | Update shipment fields or move through the native lifecycle. Preserves omitted fields and rejects invalid transitions or stale expectedVersion. Cancellation requires cancel_shipment. |
+| `ship_shipment` | write | Mark a ready_to_ship shipment as shipped with an optional tracking number. |
+| `deliver_shipment` | write | Mark an out_for_delivery shipment as delivered. |
+| `cancel_shipment` | delete | Cancel a shipment before carrier handoff. Retains shipment history. |
 | `list_shipping_providers` | read | List shipping providers and capabilities for quoting, labeling, and tracking. |
 | `quote_shipping_rates` | read | Quote carrier rates from provider adapters using structured parcel data and destination address. |
 | `create_shipping_label` | write | Create a carrier label from quoted rates or explicit service code. |
@@ -577,7 +579,7 @@ Source of truth: `cli/src/tools/domain-registry.js`.
 | `track_shipping_label` | read | Track a shipping label by label ID or tracking number. |
 | `list_shipping_labels` | read | List provider-backed shipping labels with optional filtering. |
 | `ingest_shipping_provider_webhook` | write | Ingest a shipping provider webhook event and reconcile label/tracking state for shadow mode operations. |
-| `handle_fulfillment_exception` | write | Execute governed fulfillment exception workflows for carrier failure, partial shipment, split tender, and returns arbitration. |
+| `handle_fulfillment_exception` | write | Plan or execute fulfillment exception workflows. Partial shipment returns a read-only reconciliation plan; automatic follow-up shipment creation is unavailable. |
 
 ## suppliers
 

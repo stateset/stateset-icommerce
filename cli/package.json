@@ -4,6 +4,7 @@
   "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
+    "stateset-muse": "bin/stateset-muse.js",
     "ss": "bin/stateset.js",
     "stateset": "bin/stateset.js",
     "stateset-chat": "bin/stateset-chat.js",
@@ -202,6 +203,7 @@
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@stateset/embedded": "file:../bindings/node",
+    "bignumber.js": "^9.3.1",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "ethers": "^6.16.0",

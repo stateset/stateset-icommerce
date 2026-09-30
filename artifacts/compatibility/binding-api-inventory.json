@@ -1810,7 +1810,7 @@
       "packageName": "@stateset/embedded",
       "version": "1.35.2",
       "runtime": "napi-rs",
-      "entrypointCount": 9,
+      "entrypointCount": 10,
       "packedFilePatternCount": 9,
       "peerDependencies": [
         "@stateset/cli"
@@ -1860,6 +1860,11 @@
           "subpath": "./vercel-ai",
           "runtimeEntry": "./vercel-ai.mjs",
           "typesEntry": "./vercel-ai.d.ts"
+        },
+        {
+          "subpath": "./webmcp",
+          "runtimeEntry": "./webmcp.mjs",
+          "typesEntry": "./webmcp.d.ts"
         }
       ]
     },

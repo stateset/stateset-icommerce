@@ -19,8 +19,15 @@ function createMockCommerce() {
     shipments: [],
   };
 
+  const updateRecord = (entity) => async (id, patch) => {
+    const record = store[entity].find((item) => item.id === id);
+    if (!record) throw new Error(`${entity} record not found`);
+    Object.assign(record, patch);
+    return record;
+  };
   return {
     customers: {
+      update: updateRecord('customers'),
       create: async (data) => {
         const id = `cust-${store.customers.length + 1}`;
         const record = { id, ...data };
@@ -29,6 +36,7 @@ function createMockCommerce() {
       },
     },
     products: {
+      update: updateRecord('products'),
       create: async (data) => {
         const id = `prod-${store.products.length + 1}`;
         const record = { id, ...data };
@@ -37,6 +45,7 @@ function createMockCommerce() {
       },
     },
     orders: {
+      update: updateRecord('orders'),
       create: async (data) => {
         const id = `ord-${store.orders.length + 1}`;
         const record = { id, ...data };
@@ -61,6 +70,7 @@ function createMockCommerce() {
       },
     },
     shipments: {
+      update: updateRecord('shipments'),
       create: async (data) => {
         const id = `ship-${store.shipments.length + 1}`;
         const record = { id, ...data };
@@ -173,7 +183,8 @@ describe('webhook: customers/update', () => {
     handlers = createShopifyWebhookHandlers(commerce, idMapStore);
   });
 
-  it('updates an existing customer mapping', async () => {
+  it('updates the underlying customer and then its mapping', async () => {
+    commerce._store.customers.push({ id: 'existing-id', email: 'old@example.com' });
     idMapStore.store('shopify', 'customers', '1001', 'existing-id');
 
     const payload = {
@@ -186,6 +197,8 @@ describe('webhook: customers/update', () => {
     const result = await handlers['customers/update'](payload);
     assert.equal(result.action, 'updated');
     assert.equal(result.statesetId, 'existing-id');
+    assert.equal(commerce._store.customers[0].email, 'updated@example.com');
+    assert.equal(commerce._store.customers[0].firstName, 'Updated');
   });
 
   it('creates customer if not exists', async () => {
@@ -260,7 +273,8 @@ describe('webhook: products/update', () => {
     handlers = createShopifyWebhookHandlers(commerce, idMapStore);
   });
 
-  it('updates existing product mapping', async () => {
+  it('updates the underlying product and then its mapping', async () => {
+    commerce._store.products.push({ id: 'existing-prod', name: 'Old' });
     idMapStore.store('shopify', 'products', '2001', 'existing-prod');
 
     const payload = {
@@ -272,6 +286,7 @@ describe('webhook: products/update', () => {
     };
     const result = await handlers['products/update'](payload);
     assert.equal(result.action, 'updated');
+    assert.equal(commerce._store.products[0].name, 'Updated');
   });
 
   it('creates product if not exists', async () => {
@@ -358,7 +373,8 @@ describe('webhook: fulfillments/*', () => {
     assert.equal(commerce._store.shipments[0].orderId, 'ord-1');
   });
 
-  it('updates existing fulfillment mapping', async () => {
+  it('updates the underlying shipment and then its mapping', async () => {
+    commerce._store.shipments.push({ id: 'ship-4', status: 'pending' });
     idMapStore.store('shopify', 'fulfillments', '7002', 'ship-4');
     const result = await handlers['fulfillments/update']({
       id: 7002,
@@ -368,6 +384,7 @@ describe('webhook: fulfillments/*', () => {
 
     assert.equal(result.action, 'updated');
     assert.equal(result.statesetId, 'ship-4');
+    assert.equal(commerce._store.shipments[0].status, 'cancelled');
   });
 });
 

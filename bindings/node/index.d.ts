@@ -2680,6 +2680,8 @@ export interface OrderItemOutput {
   sku: string
   name: string
   quantity: number
+  /** Units recorded as fulfilled by the order engine; shipment tracking is separate. */
+  shippedQuantity: number
   /** @deprecated Use the `unitPriceExact` twin; float money will be removed in 2.0. */
   unitPrice: number
   /** Exact base-10 unit price. Prefer this field for calculations. */
@@ -2718,6 +2720,16 @@ export interface OrderOutput {
   version: number
   createdAt: string
   updatedAt: string
+}
+/** Patch supported fields through the native engine validation and audit path. */
+export interface UpdateOrderInput {
+  status?: OrderStatusUpdate
+  paymentStatus?: PaymentStatus
+  fulfillmentStatus?: FulfillmentStatus
+  trackingNumber?: string
+  notes?: string
+  shippingAddress?: OrderAddressInput
+  billingAddress?: OrderAddressInput
 }
 export interface CreatePaymentObligationInput {
   supplierId: string
@@ -4000,6 +4012,15 @@ export interface CreateShipmentInput {
   recipientEmail?: string
   recipientPhone?: string
 }
+export interface ShipmentItemOutput {
+  id: string
+  shipmentId: string
+  orderItemId?: string
+  productId?: string
+  sku: string
+  name: string
+  quantity: number
+}
 export interface ShipmentOutput {
   id: string
   shipmentNumber: string
@@ -4010,10 +4031,27 @@ export interface ShipmentOutput {
   trackingNumber?: string
   trackingUrl?: string
   recipientName: string
+  recipientEmail?: string
+  recipientPhone?: string
   shippingAddress: string
+  notes?: string
+  /** Persisted tracking contents; does not reserve inventory or fulfill order lines. */
+  items: Array<ShipmentItemOutput>
   version: number
   createdAt: string
   updatedAt: string
+}
+/** Patch supported shipment fields through the native repository. */
+export interface UpdateShipmentInput {
+  expectedVersion?: number
+  status?: ShipmentStatus
+  carrier?: ShippingCarrier
+  trackingNumber?: string
+  recipientName?: string
+  recipientEmail?: string
+  recipientPhone?: string
+  shippingAddress?: string
+  notes?: string
 }
 export interface CreateShippingZoneInput {
   name: string
@@ -6450,6 +6488,8 @@ export declare class Orders {
   create(input: CreateOrderInput): Promise<OrderOutput>
   /** Create an order without any floating-point conversion. */
   createExact(input: CreateOrderExactInput): Promise<OrderOutput>
+  /** Update fields without bypassing native state-transition or money guards. */
+  update(id: string, input: UpdateOrderInput): Promise<OrderOutput>
   get(id: string): Promise<OrderOutput | null>
   /**
    * List orders, optionally filtered/paginated.
@@ -6839,6 +6879,8 @@ export declare class Serials {
 }
 export declare class Shipments {
   create(input: CreateShipmentInput): Promise<ShipmentOutput>
+  /** Update shipment metadata and status through the native repository. */
+  update(id: string, input: UpdateShipmentInput): Promise<ShipmentOutput>
   get(id: string): Promise<ShipmentOutput | null>
   /**
    * List shipments, optionally filtered/paginated.

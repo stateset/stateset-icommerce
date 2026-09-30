@@ -96,6 +96,96 @@ await delegatedToolkit.executeTool('delegate_to_agent', {
 });
 ```
 
+## Meta Muse personal assistant
+
+For the Meta Muse personal assistant, use the separate
+[Muse HTTP/OpenAPI connector](guides/meta-muse-connector.md). It exposes a
+curated store tool list with Bearer authentication and write previews.
+
+## WebMCP browser connector
+
+The dependency-free `@stateset/embedded/webmcp` entrypoint registers commerce
+tools with the browser's `document.modelContext` API, with feature detection
+for the older `navigator.modelContext` entrypoint. It follows the
+[WebMCP draft](https://webmachinelearning.github.io/webmcp/). Browser support is
+experimental; when unavailable, registration returns `supported: false`.
+
+Keep the native `Commerce` instance and toolkit on your backend. Serialize a
+small allowlist of descriptors for the current page and authenticated user:
+
+```javascript
+// Server: use your existing policy-configured toolkit.
+const descriptors = toolkit.createToolDescriptors({ filter: ['list_products', 'get_product'] });
+const browserCatalog = descriptors.map(({ name, description, inputSchema, permission }) => ({
+  name,
+  description,
+  inputSchema,
+  permission,
+}));
+// Return browserCatalog from your authenticated GET /api/commerce/tools route.
+```
+
+Native toolkit names use `products.list` and `products.get`; CLI toolkit names
+use `list_products` and `get_product`. Use names from your chosen toolkit.
+
+```javascript
+// Browser: no native bindings or CLI dependencies are imported here.
+import { registerWebMCPTools } from '@stateset/embedded/webmcp';
+
+const response = await fetch('/api/commerce/tools');
+if (!response.ok) throw new Error('Could not load commerce tools');
+const descriptors = await response.json();
+const registration = await registerWebMCPTools(descriptors, {
+  // Writes remain preview-only unless trusted host code enables allowApply.
+  executeTool: async (name, params, { signal }) => {
+    const response = await fetch('/api/commerce/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, params }),
+      signal,
+    });
+    if (!response.ok) throw new Error('Commerce tool failed');
+    return response.json();
+  },
+});
+
+// Call when the view unmounts, tools change, or the user signs out.
+registration.dispose();
+```
+
+The backend execute route must independently authenticate the user, authorize
+the tool and record scope, validate arguments, and enforce the toolkit's
+`allowApply`, capabilities, and kernel policy. Browser hints and browser
+configuration do not grant backend permissions. Keep policy, principal,
+credentials, and database paths on the server. The adapter passes decimal
+strings and results through unchanged. Cancellation is forwarded to the
+executor; it does not roll back a mutation already committed on the server.
+
+`createWebMCPTools()` builds tool definitions without registering them. Both
+helpers accept JSON descriptors plus an `executeTool` transport, or local
+descriptors with `execute` callbacks (for an existing browser/WASM app).
+Only descriptors with `permission: 'read'` are classified as reads; unknown
+permissions remain preview-only. `filter: []` exposes no tools. Registration
+uses an owned abort signal to clean up tools, including on partial failure,
+without affecting unrelated tools. A host `signal` can also end registration.
+
+Run the local read-only catalog demo from the repository:
+
+```bash
+node examples/agents/webmcp/server.mjs
+# Open http://127.0.0.1:8091 in a WebMCP-capable browser.
+```
+
+The demo uses a fresh in-memory database and exposes only `products.list` and
+`products.get`. Its catalog button works when WebMCP is unavailable. It is a
+local example; production storefronts should reuse their authenticated API.
+
+The [browser verification guide](../../examples/agents/webmcp/README.md)
+includes Chrome's local feature flag and a repeatable native browser check.
+Discovery, execution, previews, rollback, and cleanup have been verified with
+Chromium 153.0.8010.47. Legacy implementations with `unregisterTool` receive
+explicit cleanup, including when a host aborts during registration.
+
 ## Vercel AI SDK
 
 ```javascript

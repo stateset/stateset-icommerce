@@ -14,7 +14,7 @@ use stateset_db::migrations::run_migrations;
 fn get_all_tables(conn: &Connection) -> Result<Vec<(String, String)>, rusqlite::Error> {
     let mut stmt = conn.prepare(
         "SELECT name, sql FROM sqlite_master 
-         WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_%'
+         WHERE type='table' AND name NOT GLOB 'sqlite_*' AND name NOT GLOB '_*'
          ORDER BY name",
     )?;
 
@@ -70,6 +70,7 @@ fn snapshot_database_schema() {
     run_migrations(&mut conn).expect("Failed to run migrations");
 
     let tables = get_all_tables(&conn).expect("Failed to get tables");
+    assert!(tables.iter().any(|(name, _)| name == "shipments"));
 
     assert_debug_snapshot!(tables);
 }

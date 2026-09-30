@@ -285,7 +285,7 @@
         "className": "X402"
       }
     ],
-    "toolCount": 750,
+    "toolCount": 752,
     "readOnlyCount": 378,
     "readOnlyPrefixes": [
       "calculate",
@@ -8610,6 +8610,62 @@
       },
       "additionalProperties": false
     },
+    "UpdateOrderInput": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "confirmed",
+            "processing",
+            "shipped",
+            "delivered",
+            "cancelled",
+            "refunded"
+          ],
+          "description": "The statuses `orders.updateStatus` accepts (`partially_shipped` is derived by `ship` and cannot be set directly)."
+        },
+        "paymentStatus": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "authorized",
+            "paid",
+            "partially_paid",
+            "refunded",
+            "partially_refunded",
+            "failed"
+          ],
+          "description": "Order-level payment status (`OrderOutput.paymentStatus`, `OrderFilterInput.paymentStatus`)."
+        },
+        "fulfillmentStatus": {
+          "type": "string",
+          "enum": [
+            "unfulfilled",
+            "partially_fulfilled",
+            "fulfilled",
+            "shipped",
+            "delivered"
+          ],
+          "description": "Order-level fulfillment status (`OrderOutput.fulfillmentStatus`, `OrderFilterInput.fulfillmentStatus`)."
+        },
+        "trackingNumber": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "shippingAddress": {
+          "$ref": "#/definitions/OrderAddressInput"
+        },
+        "billingAddress": {
+          "$ref": "#/definitions/OrderAddressInput"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Patch supported fields through the native engine validation and audit path."
+    },
     "UpdatePriceLevelInput": {
       "type": "object",
       "properties": {
@@ -8881,6 +8937,64 @@
         }
       },
       "additionalProperties": false
+    },
+    "UpdateShipmentInput": {
+      "type": "object",
+      "properties": {
+        "expectedVersion": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "processing",
+            "ready_to_ship",
+            "shipped",
+            "in_transit",
+            "out_for_delivery",
+            "delivered",
+            "failed",
+            "returned",
+            "cancelled",
+            "on_hold"
+          ],
+          "description": "Shipment lifecycle status (`ShipmentOutput.status`, `ShipmentFilterInput.status`)."
+        },
+        "carrier": {
+          "type": "string",
+          "enum": [
+            "other",
+            "ups",
+            "fed_ex",
+            "usps",
+            "dhl",
+            "on_trac",
+            "laser_ship"
+          ],
+          "description": "Carrier as rendered on `ShipmentOutput.carrier` (the engine renders the underscored spelling of multi-word carriers)."
+        },
+        "trackingNumber": {
+          "type": "string"
+        },
+        "recipientName": {
+          "type": "string"
+        },
+        "recipientEmail": {
+          "type": "string"
+        },
+        "recipientPhone": {
+          "type": "string"
+        },
+        "shippingAddress": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Patch supported shipment fields through the native repository."
     },
     "UpdateShippingZoneInput": {
       "type": "object",
@@ -20676,6 +20790,37 @@
       }
     },
     {
+      "name": "orders.update",
+      "module": "orders",
+      "className": "Orders",
+      "method": "update",
+      "description": "Update fields without bypassing native state-transition or money guards.",
+      "signature": "update(id: string, input: UpdateOrderInput): Promise<OrderOutput>",
+      "returnType": "Promise<OrderOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/definitions/UpdateOrderInput"
+          }
+        },
+        "required": [
+          "id",
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "orders.updateStatus",
       "module": "orders",
       "className": "Orders",
@@ -26167,6 +26312,37 @@
         },
         "required": [
           "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "shipments.update",
+      "module": "shipments",
+      "className": "Shipments",
+      "method": "update",
+      "description": "Update shipment metadata and status through the native repository.",
+      "signature": "update(id: string, input: UpdateShipmentInput): Promise<ShipmentOutput>",
+      "returnType": "Promise<ShipmentOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/definitions/UpdateShipmentInput"
+          }
+        },
+        "required": [
+          "id",
+          "input"
         ],
         "additionalProperties": false
       }

@@ -488,8 +488,8 @@ pub fn create_shipment_input(order_id: OrderId) -> CreateShipment {
         estimated_delivery: None,
         notes: None,
         items: Some(vec![CreateShipmentItem {
-            order_item_id: Some(Uuid::new_v4()),
-            product_id: Some(ProductId::new()),
+            order_item_id: None,
+            product_id: None,
             sku: "TEST-SKU-001".into(),
             name: "Test Product".into(),
             quantity: 2,
