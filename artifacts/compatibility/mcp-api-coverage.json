@@ -353,11 +353,8 @@
   ],
   "totalAuditedClasses": 32,
   "totalAuditedMethods": 416,
-  "mappedAuditedMethods": 414,
-  "uncoveredAuditedMethods": [
-    "Orders.update",
-    "Shipments.update"
-  ],
+  "mappedAuditedMethods": 416,
+  "uncoveredAuditedMethods": [],
   "staleAuditedMethodMappings": [],
   "invalidAuditedToolReferences": [],
   "auditedClasses": [
@@ -492,10 +489,8 @@
     {
       "className": "Orders",
       "methodCount": 10,
-      "mappedMethodCount": 9,
-      "uncoveredMethods": [
-        "update"
-      ],
+      "mappedMethodCount": 10,
+      "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
@@ -566,10 +561,8 @@
     {
       "className": "Shipments",
       "methodCount": 8,
-      "mappedMethodCount": 7,
-      "uncoveredMethods": [
-        "update"
-      ],
+      "mappedMethodCount": 8,
+      "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
@@ -622,5 +615,5 @@
       "invalidToolReferences": []
     }
   ],
-  "fullyCovered": false
+  "fullyCovered": true
 }
