@@ -413,7 +413,9 @@ async fn postgres_item_audit_failure_and_version_overflow_roll_back_items_and_pa
     let before = repo.get_async(id).await.unwrap().unwrap();
     let trigger = format!("shipment_items_{}", id.simple());
     sqlx::query(&format!("CREATE FUNCTION {trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$")).execute(db.pool()).await.unwrap();
-    sqlx::query(&format!("CREATE TRIGGER {trigger} BEFORE INSERT ON kernel_outbox FOR EACH ROW WHEN (NEW.aggregate_id = '{id}') EXECUTE FUNCTION {trigger}()")).execute(db.pool()).await.unwrap();
+    // This database is dedicated to the test, so the failure trigger can apply
+    // to every outbox row without embedding the shipment id in SQL text.
+    sqlx::query(&format!("CREATE TRIGGER {trigger} BEFORE INSERT ON kernel_outbox FOR EACH ROW EXECUTE FUNCTION {trigger}()")).execute(db.pool()).await.unwrap();
     let add = repo.add_item_async(id, item_input()).await;
     let remove = repo.remove_item_async(item.id).await;
     sqlx::query(&format!("DROP TRIGGER {trigger} ON kernel_outbox"))
@@ -766,7 +768,9 @@ async fn postgres_shipment_outbox_failure_rolls_back_update() {
     let id = s.id.into_uuid();
     let trigger = format!("shipment_audit_{}", id.simple());
     sqlx::query(&format!("CREATE FUNCTION {trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$" )).execute(db.pool()).await.unwrap();
-    sqlx::query(&format!("CREATE TRIGGER {trigger} BEFORE INSERT ON kernel_outbox FOR EACH ROW WHEN (NEW.aggregate_id = '{id}') EXECUTE FUNCTION {trigger}()" )).execute(db.pool()).await.unwrap();
+    // This database is dedicated to the test, so the failure trigger can apply
+    // to every outbox row without embedding the shipment id in SQL text.
+    sqlx::query(&format!("CREATE TRIGGER {trigger} BEFORE INSERT ON kernel_outbox FOR EACH ROW EXECUTE FUNCTION {trigger}()" )).execute(db.pool()).await.unwrap();
     let result = db.shipments().mark_processing_async(id).await;
     sqlx::query(&format!("DROP TRIGGER {trigger} ON kernel_outbox"))
         .execute(db.pool())
