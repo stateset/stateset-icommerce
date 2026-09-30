@@ -39,7 +39,7 @@ fn order(db: &SqliteDatabase) -> stateset_core::Order {
 fn shipment(db: &SqliteDatabase) -> Shipment {
     db.shipments()
         .create(CreateShipment {
-            order_id: order(&db).id,
+            order_id: order(db).id,
             recipient_name: "Ada".into(),
             shipping_address: "1 Main".into(),
             carrier: Some(ShippingCarrier::Ups),
