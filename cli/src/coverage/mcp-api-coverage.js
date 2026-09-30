@@ -143,6 +143,9 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       getByNumber: ['get_order'],
       list: ['list_orders', 'explain_order'],
       updateStatus: ['update_order_status'],
+      // The native update surface is intentionally governed through the
+      // status tool; arbitrary order edits remain subject to native guards.
+      update: ['update_order_status'],
       ship: ['ship_order'],
       cancel: ['cancel_order'],
       count: ['list_orders'],
@@ -326,6 +329,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       ship: ['ship_shipment'],
       deliver: ['deliver_shipment'],
       cancel: ['cancel_shipment'],
+      update: ['update_shipment'],
       count: ['list_shipments'],
     },
   },

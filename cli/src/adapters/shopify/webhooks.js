@@ -105,6 +105,33 @@ export function createShopifyWebhookHandlers(commerce, idMapStore) {
     };
   }
 
+  async function syncShopifyPayment(orderId, mapped) {
+    const target = mapped.data.paymentStatus;
+    if (!['paid', 'partially_paid'].includes(target)) return false;
+    if (!commerce.payments?.list || !commerce.payments?.markCompleted) return false;
+
+    const payments = await commerce.payments.list({ orderId });
+    let payment = payments.find((candidate) =>
+      ['pending', 'authorized', 'processing'].includes(candidate.status),
+    );
+    if (!payment) {
+      const input = {
+        orderId,
+        amount: mapped.data.totalAmount,
+        currency: mapped.data.currency,
+        paymentMethod: 'other',
+      };
+      if (commerce.payments.createExact) {
+        payment = await commerce.payments.createExact(input);
+      } else if (commerce.payments.create) {
+        payment = await commerce.payments.create(input);
+      }
+    }
+    if (!payment || payment.status === 'completed') return Boolean(payment);
+    await commerce.payments.markCompleted(payment.id);
+    return true;
+  }
+
   async function syncVariants(productId, mapped) {
     if (!Object.hasOwn(mapped.raw, 'variants') || mapped.data.variants.length === 0) return [];
     const current = await commerce.products.getVariants(productId);
@@ -214,8 +241,9 @@ export function createShopifyWebhookHandlers(commerce, idMapStore) {
         return updateMapped('orders', mapped, existing, async (id) => {
           assertUnchangedOrderEconomics(existing, payload);
           const patch = {};
-          if (Object.hasOwn(payload, 'financial_status'))
-            patch.paymentStatus = mapped.data.paymentStatus;
+          const paymentUpdated = Object.hasOwn(payload, 'financial_status')
+            ? await syncShopifyPayment(id, mapped)
+            : false;
           if (Object.hasOwn(payload, 'fulfillment_status')) {
             const statuses = {
               unfulfilled: 'unfulfilled',
@@ -246,7 +274,7 @@ export function createShopifyWebhookHandlers(commerce, idMapStore) {
             };
           }
           if (Object.keys(patch).length) await commerce.orders.update(id, patch);
-          return Object.keys(patch);
+          return paymentUpdated ? [...Object.keys(patch), 'paymentStatus'] : Object.keys(patch);
         });
       }
       return createOrSkip('orders', mapped, (data) => commerce.orders.create(data));
