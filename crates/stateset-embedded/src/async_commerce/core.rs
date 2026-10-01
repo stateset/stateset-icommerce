@@ -260,9 +260,15 @@ impl AsyncInventory {
     /// Adjust inventory quantity.
     pub async fn adjust_inventory(&self, input: AdjustInventory) -> Result<InventoryTransaction> {
         let sku = input.sku.clone();
+        let received = input.quantity > Decimal::ZERO;
         let delta = input.quantity.to_f64().unwrap_or(0.0);
         let transaction = self.db.inventory().adjust_async(input).await?;
         self.metrics.record_inventory_adjusted(&sku, delta);
+        if received {
+            if let Err(error) = self.db.backorder().auto_allocate_inventory_async(&sku).await {
+                tracing::warn!(%error, %sku, "automatic backorder allocation after receipt failed");
+            }
+        }
         Ok(transaction)
     }
 

@@ -110,6 +110,18 @@ impl Inventory {
         self.emit(event(reservation, sku));
     }
 
+    /// Best-effort allocation of newly received stock to open backorders.
+    ///
+    /// The inventory mutation has already committed when this hook runs. A
+    /// transient allocation failure must therefore not turn a successful
+    /// receipt into an error or invite callers to retry the stock adjustment;
+    /// the explicit backorder allocation command remains available for retry.
+    fn allocate_backorders_after_receipt(&self, sku: &str) {
+        if let Err(error) = self.db.backorder().auto_allocate_inventory(sku) {
+            tracing::warn!(%error, %sku, "automatic backorder allocation after receipt failed");
+        }
+    }
+
     /// Create a new inventory item (SKU).
     ///
     /// # Example
@@ -206,6 +218,9 @@ impl Inventory {
             reference_id: None,
         })?;
         self.metrics.record_inventory_adjusted(sku, quantity.to_f64().unwrap_or(0.0));
+        if quantity > Decimal::ZERO {
+            self.allocate_backorders_after_receipt(sku);
+        }
         #[cfg(feature = "events")]
         {
             self.emit_adjustment_events(&transaction, sku, reason);
@@ -230,6 +245,9 @@ impl Inventory {
             reference_id: None,
         })?;
         self.metrics.record_inventory_adjusted(sku, quantity.to_f64().unwrap_or(0.0));
+        if quantity > Decimal::ZERO {
+            self.allocate_backorders_after_receipt(sku);
+        }
         #[cfg(feature = "events")]
         {
             self.emit_adjustment_events(&transaction, sku, reason);

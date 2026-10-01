@@ -17,6 +17,9 @@ This project follows Keep a Changelog and Semantic Versioning.
   validation, and isolated database maintenance tests.
 - Native-engine database manager backups with checksum manifests and safe,
   non-overwriting recovery to a new path.
+- Positive inventory receipts now automatically reserve available units for
+  matching open backorders in priority order; allocation remains retryable and
+  separate from physical fulfillment.
 
 ### Changed
 
