@@ -314,14 +314,10 @@ for (const strict of [false, true]) {
       },
     );
 
-    it(
-      'keeps the order payment and fulfillment status in step with payments and shipments',
-      { todo: 'nothing maintains orders.payment_status / fulfillment_status after checkout' },
-      () => {
-        assert.notEqual(journey.finalOrder.paymentStatus, 'pending');
-        assert.notEqual(journey.finalOrder.fulfillmentStatus, 'unfulfilled');
-      },
-    );
+    it('keeps the order payment and fulfillment status in step with payments and shipments', () => {
+      assert.equal(journey.finalOrder.paymentStatus, 'paid');
+      assert.equal(journey.finalOrder.fulfillmentStatus, 'shipped');
+    });
   });
 }
 
