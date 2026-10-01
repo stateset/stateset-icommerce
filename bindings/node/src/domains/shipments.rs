@@ -386,18 +386,25 @@ impl Shipments {
         let uuid: uuid::Uuid =
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
-        let shipment = commerce
-            .shipments()
-            .update(
-                uuid.into(),
-                stateset_core::UpdateShipment {
-                    status: Some(stateset_core::ShipmentStatus::Shipped),
-                    tracking_number,
-                    expected_version: shipment_version(expected_version)?,
-                    ..Default::default()
-                },
-            )
-            .map_err(|e| wrap(ErrCode::Internal, "Failed to ship", e))?;
+        let shipment = if let Some(expected_version) = expected_version {
+            commerce
+                .shipments()
+                .update(
+                    uuid.into(),
+                    stateset_core::UpdateShipment {
+                        status: Some(stateset_core::ShipmentStatus::Shipped),
+                        tracking_number,
+                        expected_version: shipment_version(Some(expected_version))?,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to ship", e))?
+        } else {
+            commerce
+                .shipments()
+                .ship(uuid.into(), tracking_number)
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to ship", e))?
+        };
 
         Ok(shipment.into())
     }
@@ -413,17 +420,24 @@ impl Shipments {
         let uuid: uuid::Uuid =
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
-        let shipment = commerce
-            .shipments()
-            .update(
-                uuid.into(),
-                stateset_core::UpdateShipment {
-                    status: Some(stateset_core::ShipmentStatus::Delivered),
-                    expected_version: shipment_version(expected_version)?,
-                    ..Default::default()
-                },
-            )
-            .map_err(|e| wrap(ErrCode::Internal, "Failed to deliver", e))?;
+        let shipment = if let Some(expected_version) = expected_version {
+            commerce
+                .shipments()
+                .update(
+                    uuid.into(),
+                    stateset_core::UpdateShipment {
+                        status: Some(stateset_core::ShipmentStatus::Delivered),
+                        expected_version: shipment_version(Some(expected_version))?,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to deliver", e))?
+        } else {
+            commerce
+                .shipments()
+                .mark_delivered(uuid.into())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to deliver", e))?
+        };
 
         Ok(shipment.into())
     }
@@ -439,17 +453,24 @@ impl Shipments {
         let uuid: uuid::Uuid =
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
-        let shipment = commerce
-            .shipments()
-            .update(
-                uuid.into(),
-                stateset_core::UpdateShipment {
-                    status: Some(stateset_core::ShipmentStatus::Cancelled),
-                    expected_version: shipment_version(expected_version)?,
-                    ..Default::default()
-                },
-            )
-            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel shipment", e))?;
+        let shipment = if let Some(expected_version) = expected_version {
+            commerce
+                .shipments()
+                .update(
+                    uuid.into(),
+                    stateset_core::UpdateShipment {
+                        status: Some(stateset_core::ShipmentStatus::Cancelled),
+                        expected_version: shipment_version(Some(expected_version))?,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel shipment", e))?
+        } else {
+            commerce
+                .shipments()
+                .cancel(uuid.into())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel shipment", e))?
+        };
 
         Ok(shipment.into())
     }

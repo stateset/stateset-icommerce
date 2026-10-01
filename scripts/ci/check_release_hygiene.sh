@@ -105,10 +105,16 @@ if [[ -z "$raw_release_version" && "${GITHUB_REF:-}" == refs/tags/* ]]; then
   raw_release_version="${GITHUB_REF#refs/tags/}"
 fi
 
+# A release bump updates the workspace and lockfile root metadata before the
+# platform packages are published. Keep the registry pins at the last released
+# package until that publication lands; check_node_binding_lock validates that
+# this is exactly the immediately previous release. The standalone
+# check_version_sync.sh command remains strict for callers that need to detect
+# the intermediate state directly.
 if (( print_version != 0 )); then
-  bash ./scripts/ci/check_version_sync.sh >&2
+  RELEASE_LOCK_SYNC_DEFERRED=true bash ./scripts/ci/check_version_sync.sh >&2
 else
-  bash ./scripts/ci/check_version_sync.sh
+  RELEASE_LOCK_SYNC_DEFERRED=true bash ./scripts/ci/check_version_sync.sh
 fi
 
 workspace_version="$(extract_with_regex '^[[:space:]]*version = "[0-9]+\.[0-9]+\.[0-9]+"' Cargo.toml 's/^[^"]*"([^"]+)".*$/\1/')"

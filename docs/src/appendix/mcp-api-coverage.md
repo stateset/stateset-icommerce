@@ -19,9 +19,9 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | Commerce getters | 68 |
 | Mapped getters | 68 |
 | Audited classes | 32 |
-| Audited methods | 416 |
+| Audited methods | 418 |
 | Mapped audited methods | 416 |
-| Fully covered | yes |
+| Fully covered | no |
 
 ## Commerce Getter Coverage
 
@@ -125,7 +125,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `Receiving` | 10 | 10 | 0 | 0 | 0 |
 | `Returns` | 13 | 13 | 0 | 0 | 0 |
 | `Serials` | 9 | 9 | 0 | 0 | 0 |
-| `Shipments` | 8 | 8 | 0 | 0 | 0 |
+| `Shipments` | 10 | 8 | 2 | 0 | 0 |
 | `Subscriptions` | 19 | 19 | 0 | 0 | 0 |
 | `Tax` | 18 | 18 | 0 | 0 | 0 |
 | `Warehouse` | 10 | 10 | 0 | 0 | 0 |
@@ -143,7 +143,8 @@ None.
 
 ## Uncovered Audited Methods
 
-None.
+- `Shipments.addItem`
+- `Shipments.removeItem`
 
 ## Stale Audited Method Mappings
 

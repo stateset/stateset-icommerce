@@ -352,9 +352,12 @@
     }
   ],
   "totalAuditedClasses": 32,
-  "totalAuditedMethods": 416,
+  "totalAuditedMethods": 418,
   "mappedAuditedMethods": 416,
-  "uncoveredAuditedMethods": [],
+  "uncoveredAuditedMethods": [
+    "Shipments.addItem",
+    "Shipments.removeItem"
+  ],
   "staleAuditedMethodMappings": [],
   "invalidAuditedToolReferences": [],
   "auditedClasses": [
@@ -560,9 +563,12 @@
     },
     {
       "className": "Shipments",
-      "methodCount": 8,
+      "methodCount": 10,
       "mappedMethodCount": 8,
-      "uncoveredMethods": [],
+      "uncoveredMethods": [
+        "addItem",
+        "removeItem"
+      ],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
@@ -615,5 +621,5 @@
       "invalidToolReferences": []
     }
   ],
-  "fullyCovered": true
+  "fullyCovered": false
 }

@@ -710,12 +710,14 @@
         "quarantine"
       ],
       "shipments": [
+        "add_item_with_version",
         "cancel",
         "count",
         "create",
         "get",
         "list",
         "mark_delivered",
+        "remove_item_with_version",
         "ship",
         "update"
       ],
@@ -1930,6 +1932,8 @@
         "quarantine"
       ],
       "shipments": [
+        "add_item_with_version",
+        "remove_item_with_version",
         "update"
       ],
       "subscriptions": [
@@ -2572,7 +2576,9 @@
         "quarantine"
       ],
       "shipments": [
+        "add_item_with_version",
         "count",
+        "remove_item_with_version",
         "update"
       ],
       "shipping_zones": [

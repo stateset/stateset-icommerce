@@ -16,19 +16,19 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | OpenAPI version | `3.1.0` |
 | API title | StateSet Commerce API |
 | API version | `1.0.4` |
-| Paths | 353 |
-| Operations | 473 |
-| Schemas | 457 |
+| Paths | 355 |
+| Operations | 475 |
+| Schemas | 459 |
 | Tags | 64 |
 
 ## Method Counts
 
 | Method | Operations |
 | --- | --- |
-| DELETE | 25 |
+| DELETE | 26 |
 | GET | 188 |
 | PATCH | 14 |
-| POST | 233 |
+| POST | 234 |
 | PUT | 13 |
 
 ## Tag Counts
@@ -82,7 +82,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `reviews` | 4 | Product review management |
 | `segments` | 6 | Customer segment management |
 | `serials` | 8 | Serial number tracking: creation, lookup, reservations, and lifecycle transitions |
-| `shipments` | 6 | Shipment tracking and management |
+| `shipments` | 8 | Shipment tracking and management |
 | `shipping` | 4 | Shipping zone management |
 | `stock_snapshots` | 5 | Point-in-time inventory snapshots |
 | `store_credits` | 5 | Store credit management |
@@ -460,6 +460,8 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `PATCH` | `/api/v1/shipments/{id}` | `shipments` | `update_shipment` | Patch one native shipment without skipping lifecycle guards. |
 | `POST` | `/api/v1/shipments/{id}/cancel` | `shipments` | `cancel_shipment` | Cancel before carrier handoff, retaining shipment items and tracking history. |
 | `POST` | `/api/v1/shipments/{id}/deliver` | `shipments` | `deliver_shipment` | `POST /api/v1/shipments/:id/deliver` |
+| `POST` | `/api/v1/shipments/{id}/items` | `shipments` | `add_shipment_item` | Add manifest contents while packing, using native order allocation guards. |
+| `DELETE` | `/api/v1/shipments/{id}/items/{item_id}` | `shipments` | `remove_shipment_item` | Remove a manifest item belonging to this shipment. Requires delete permission. |
 | `GET` | `/api/v1/shipping-zones` | `shipping` | `list_zones` | — |
 | `POST` | `/api/v1/shipping-zones` | `shipping` | `create_zone` | — |
 | `DELETE` | `/api/v1/shipping-zones/{id}` | `shipping` | `delete_zone` | — |

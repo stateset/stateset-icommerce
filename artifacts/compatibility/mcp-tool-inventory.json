@@ -8239,7 +8239,7 @@
     },
     {
       "name": "sync_status",
-      "description": "Get the current sync status between local database and remote sequencer. Shows pending events, sync lag, and connection status.",
+      "description": "Get sync connection, sequence gap, pending writes, verified receive counts, quarantine and retained failure diagnostics. Received events are not projected into commerce records.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__sync_status",
