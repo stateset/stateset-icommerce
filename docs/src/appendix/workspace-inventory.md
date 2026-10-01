@@ -13,7 +13,7 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 
 | Metric | Value |
 | --- | --- |
-| Workspace version | `1.36.0` |
+| Workspace version | `1.37.0` |
 | Workspace members | 30 |
 | Default members | 19 |
 | Rust crates in workspace | 22 |
@@ -31,8 +31,8 @@ and 'stateset-test-utils') so the runtime/product graph is easier to read.
 
 | Layer | Packages |
 | --- | --- |
-| L1 | `stateset-a2a`, `stateset-authz`, `stateset-crypto`, `stateset-icp-client`, `stateset-jobs`, `stateset-macros`, `stateset-migrations`, `stateset-observability`, `stateset-policy`, `stateset-pricing`, `stateset-primitives` |
-| L2 | `stateset-core`, `stateset-icp-iut`, `stateset-sync` |
+| L1 | `stateset-a2a`, `stateset-authz`, `stateset-crypto`, `stateset-icp-client`, `stateset-jobs`, `stateset-macros`, `stateset-migrations`, `stateset-observability`, `stateset-policy`, `stateset-primitives` |
+| L2 | `stateset-core`, `stateset-icp-iut`, `stateset-pricing`, `stateset-sync` |
 | L3 | `stateset-db`, `stateset-embedded-wasm` |
 | L4 | `stateset-embedded` |
 | L5 | `stateset-dotnet`, `stateset-embedded-node`, `stateset-go`, `stateset-http`, `stateset-java`, `stateset-kotlin`, `stateset-sdk`, `stateset-swift` |
@@ -45,7 +45,7 @@ and 'stateset-test-utils') so the runtime/product graph is easier to read.
 | `stateset-core` | 13 |
 | `stateset-crypto` | 12 |
 | `stateset-embedded` | 10 |
-| `stateset-primitives` | 6 |
+| `stateset-primitives` | 7 |
 | `stateset-db` | 4 |
 | `stateset-observability` | 3 |
 | `stateset-pricing` | 2 |
@@ -95,8 +95,8 @@ workspace membership because they require host runtimes or headers.
 | `a2a` | 62 |
 | `mcp` | 33 |
 | `channels` | 29 |
+| `sync` | 26 |
 | `adapters` | 20 |
-| `sync` | 20 |
 | `utils` | 16 |
 | `harness` | 14 |
 | `chains` | 10 |
@@ -108,6 +108,7 @@ workspace membership because they require host runtimes or headers.
 | `connectors` | 4 |
 | `providers` | 4 |
 | `autonomous` | 3 |
+| `compliance` | 3 |
 | `heartbeat` | 3 |
 | `mpp` | 3 |
 | `plugins` | 3 |
@@ -137,7 +138,6 @@ workspace membership because they require host runtimes or headers.
 | `command-queue.js` | 1 |
 | `command-tooling.js` | 1 |
 | `commerce.js` | 1 |
-| `compliance` | 1 |
 | `config` | 1 |
 | `config.js` | 1 |
 | `context-guard.js` | 1 |

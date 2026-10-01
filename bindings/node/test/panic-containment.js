@@ -1,11 +1,9 @@
 /**
  * Panic containment at the Node binding boundary.
  *
- * The workspace release profile is `panic = "abort"`, so a panic reached from a
- * `#[napi]` call would take the host Node process down. `[profile.release-node]`
- * keeps every release optimisation but restores `panic = "unwind"`, and the
- * guards in `bindings/node/src/errors.rs` turn the unwind into a JavaScript
- * error with `code: 'INTERNAL_PANIC'`.
+ * The workspace `release` and `release-node` profiles use `panic = "unwind"`.
+ * The guards in `bindings/node/src/errors.rs` turn the unwind into a JavaScript
+ * error with `code: 'INTERNAL_PANIC'`. Custom builds must retain unwinding.
  *
  * The async entry points have a second net underneath that one:
  * `napi::tokio_runtime::execute_tokio_future` watches every spawned task and

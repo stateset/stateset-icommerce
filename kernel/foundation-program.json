@@ -59,7 +59,7 @@
             "crates/stateset-db/src/shipment_updates.rs",
             "crates/stateset-db/src/sqlite/shipments.rs",
             "crates/stateset-db/src/postgres/shipments.rs",
-            "crates/stateset-db/migrations/100_shipment_version.sql",
+            "crates/stateset-migrations/migrations/100_shipment_version.sql",
             "bindings/node/src/domains/shipments.rs"
           ],
           "validation": [
@@ -180,8 +180,560 @@
           "limitations": [
             "Item writes remain tracking operations, not inventory reservations or order fulfillment",
             "Order-line membership, cross-shipment quantity limits, parent linkage and durable request-bound idempotency remain open for automatic recovery",
-            "Tracking-event mutations still require audit and concurrency guards",
+            "Tracking-event audit and concurrency were not covered by this increment; later tracking-event evidence below provides local verification",
             "The existing PostgreSQL 16 CI lane auto-discovers these tests but was not run locally for this increment"
+          ]
+        },
+        {
+          "scope": "Native tracking-event appends with atomic parent versioning and outbox facts on SQLite and PostgreSQL",
+          "implementation": [
+            "crates/stateset-db/src/shipment_updates.rs",
+            "crates/stateset-db/src/sqlite/shipments.rs",
+            "crates/stateset-db/src/postgres/shipments.rs",
+            "crates/stateset-core/src/traits/fulfillment.rs",
+            "crates/stateset-db/README.md"
+          ],
+          "validation": [
+            {
+              "command": "POSTGRES_URL=<isolated-local-database> CARGO_BUILD_JOBS=1 cargo test --locked -p stateset-db --features postgres --test sqlite_shipment_lifecycle --test postgres_shipment_lifecycle -- --test-threads=4",
+              "result": "24 SQLite and 21 PostgreSQL lifecycle tests passed; 12 new tracking tests cover round-trip precision, payload-to-fact agreement, stale updates, late observations, validation, rollback, version overflow and concurrent appends/cancellation. PostgreSQL 12.22 executed actual queries; 11 tracking rows and 11 matching tracking facts persisted, with no failure-injection triggers left installed."
+            },
+            {
+              "command": "CARGO_BUILD_JOBS=1 cargo clippy --locked -p stateset-db --features postgres --test sqlite_shipment_lifecycle --test postgres_shipment_lifecycle -- -D warnings",
+              "result": "Passed with both database backends and lifecycle integration test targets enabled; formatting and diff whitespace checks also passed"
+            }
+          ],
+          "limitations": [
+            "Local database tests do not replace the PostgreSQL 16 CI matrix or immutable release evidence",
+            "Each call appends a distinct observation; provider delivery deduplication and durable request idempotency remain the responsibility of the caller",
+            "Tracking observations do not certify carrier claims, change lifecycle status or fulfill order quantities",
+            "Typed governed tracking commands, language binding parity and live carrier verification were not established by this increment"
+          ]
+        },
+        {
+          "scope": "Durable outbox claim fencing for SQLite, PostgreSQL and the CLI VES pump",
+          "implementation": [
+            "crates/stateset-db/src/sqlite/kernel_outbox.rs",
+            "crates/stateset-db/src/postgres/kernel_outbox.rs",
+            "crates/stateset-db/src/kernel_outbox.rs",
+            "cli/src/sync/outbox-pump.js",
+            "docs/src/kernel-execution.md"
+          ],
+          "validation": [
+            {
+              "command": "POSTGRES_URL=<isolated-local-database> CARGO_BUILD_JOBS=1 cargo test --locked -p stateset-db --features postgres --test sqlite_outbox_fencing --test postgres_outbox_fencing --test sqlite_kernel_outbox --test postgres_kernel_executor -- --test-threads=1",
+              "result": "77 tests passed: 58 SQLite kernel, 16 live PostgreSQL kernel, two SQLite fencing tests and one PostgreSQL fencing test. PostgreSQL 12.22 used an isolated database. The PostgreSQL fencing test was extended and rerun successfully to cover four simultaneous same-label claims, distinct tokens and disjoint rows."
+            },
+            {
+              "command": "node --test cli/test/unit/sync-outbox-pump.test.js",
+              "result": "35 tests passed under Node 22.18.0 using the rebuilt better-sqlite3 native module, including expiry, stale same-label success/failure/parking, timezone encodings and invalid lease configuration."
+            },
+            {
+              "command": "cargo clippy --locked -p stateset-db --features postgres --test sqlite_outbox_fencing --test postgres_outbox_fencing --test sqlite_kernel_outbox --test postgres_kernel_executor -- -D warnings",
+              "result": "Passed; the final expanded PostgreSQL target also passed a focused rerun. CLI source ESLint, Prettier and Rust formatting checks passed."
+            }
+          ],
+          "limitations": [
+            "Consumers must pass the returned opaque lease_owner token when settling; configured worker labels alone no longer acknowledge claims. Upgrade and restart all consumers together.",
+            "Legacy unleased settlement rejects leased, retry-scheduled, dead-lettered, missing and already-published events; no schema migration is required.",
+            "Leases fence database settlement, not external side effects. Delivery remains at least once and downstream consumers must deduplicate by event ID.",
+            "Local tests do not establish live-provider delivery or replace immutable CI release evidence."
+          ]
+        },
+        {
+          "scope": "Native recorded facts through signed VES storage, restart replay and REST serialization",
+          "implementation": [
+            "crates/stateset-db/examples/recorded_outbox_fixture.rs",
+            "cli/src/sync/outbox-pump.js",
+            "cli/src/sync/outbox.js",
+            "cli/src/sync/engine.js",
+            "cli/test/integration/native-outbox-pump.test.js"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/sync-outbox-pump.test.js cli/test/unit/sync-engine-verification.test.js cli/test/sync-outbox.test.js cli/test/integration/native-outbox-pump.test.js",
+              "result": "186 passed, zero skipped, under Node 22.18.0. The native fixture emits eight recorded facts, including seven previously unmapped names, and governed facts that remain untouched. Replay preserves signed identities; REST serialization preserves exact timestamps, decimal strings, Ed25519 and hybrid signatures. Encrypted stored-event tests cover nanosecond and offset timestamps."
+            },
+            {
+              "command": "cargo clippy --locked -p stateset-db --example recorded_outbox_fixture -- -D warnings",
+              "result": "Passed. Changed CLI sources passed ESLint; JavaScript and Rust formatting checks passed."
+            }
+          ],
+          "limitations": [
+            "The HTTP request boundary is intercepted locally; this does not prove external sequencer acceptance or application of replicated business records.",
+            "The integration test requires Cargo and a native binding with hybrid signing support; missing prerequisites fail rather than skip. CLI CI coverage includes the test, but CI was not executed in this local run.",
+            "gRPC interoperability remains unresolved: its protobuf Timestamp cannot retain original RFC3339 spelling. This increment verifies REST only; subsequent transport hardening is recorded separately."
+          ]
+        },
+        {
+          "scope": "gRPC streaming profile enforcement, envelope preservation and outgoing timestamp precision",
+          "implementation": [
+            "cli/src/sync/engine.js",
+            "cli/src/sync/grpc-client.js",
+            "cli/src/sync/grpc-timestamp.js",
+            "cli/test/unit/grpc-envelope.test.js"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/grpc-envelope.test.js cli/test/integration/grpc-client.test.js cli/test/unit/sync-engine-verification.test.js cli/test/sync-outbox.test.js cli/test/integration/native-outbox-pump.test.js",
+              "result": "196 passed, zero skipped, under Node 22.18.0. Includes 31 new tests covering actual protobuf serialization, streaming signature/encryption fields, hybrid and strict profile refusal before any batch write, nanoseconds, offsets, epoch zero, negative instants, calendar validation and protobuf bounds. Changed JavaScript sources passed ESLint."
+            }
+          ],
+          "limitations": [
+            "Local protobuf boundary tests do not validate cryptographic authenticity or establish external sequencer acceptance.",
+            "Protobuf Timestamp still loses original RFC3339 offset/fraction spelling, and the receive path converts it to Date. A coordinated protocol change remains necessary for arbitrary signed timestamps.",
+            "No live gRPC endpoint, immutable CI run or release certification was established."
+          ]
+        },
+        {
+          "scope": "Sync profile validation and gRPC signed identity preservation",
+          "implementation": [
+            "cli/src/sync/pqc.js",
+            "cli/src/sync/grpc-client.js",
+            "cli/test/unit/grpc-envelope.test.js"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/grpc-envelope.test.js cli/test/integration/grpc-client.test.js cli/test/unit/pqc-strict-profile.test.js cli/test/unit/pqc-cross-language.test.js cli/test/unit/sync-client.test.js cli/test/unit/sync-config-security.test.js cli/test/unit/sync-engine-verification.test.js cli/test/sync-outbox.test.js cli/test/integration/native-outbox-pump.test.js",
+              "result": "392 passed, zero skipped, under Node 22.18.0. Includes 36 additional cases for unary/stream profile refusal, valid encryption aliases, missing/malformed recipient wraps, material types, destination mismatch, source/version preservation and strict-profile Ed25519 exclusion. Changed sources passed ESLint."
+            }
+          ],
+          "limitations": [
+            "Profile guards validate structure and presence, not cryptographic authenticity; cryptographic verification remains separate.",
+            "gRPC now rejects supplied tenant/store mismatches instead of rewriting them. Source authorship is preserved while batch sender remains configured.",
+            "Original signed timestamp spelling, live gRPC acceptance and independent release evidence remain unresolved."
+          ]
+        },
+        {
+          "scope": "Atomic CLI receive persistence with durable storage-failure recovery",
+          "implementation": [
+            "cli/src/sync/engine.js",
+            "cli/src/sync/outbox.js",
+            "cli/src/commands/sync.js",
+            "cli/bin/stateset-sync.js",
+            "cli/test/unit/sync-engine-verification.test.js",
+            "cli/test/unit/sync-doctor.test.js",
+            "docs/src/guides/sync.md"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/sync-engine-verification.test.js cli/test/unit/sync-doctor.test.js cli/test/sync-outbox.test.js cli/test/unit/grpc-envelope.test.js cli/test/integration/native-outbox-pump.test.js",
+              "result": "239 passed, zero skipped, under Node 22.18.0. Verified receive/quarantine schema refusals retain normalized records, file-backed restart and identical replay clear repaired failures, journal/cursor fault injection rolls back the batch, and doctor reports retained failures without promoting them. Changed sources passed ESLint."
+            }
+          ],
+          "limitations": [
+            "Failure injection tests stub signature resolution to isolate persistence; existing real signature and native REST contract tests also ran in the focused suite.",
+            "The recovery journal is created automatically; older clients do not provide this retention guarantee. receive-store-dropped is replaced by receive-store-retained after commit.",
+            "Recovery requires repair and an explicit replay through normal verification; journal entries are not applied business records. This does not guarantee upstream event retention or establish live sequencer acceptance."
+          ]
+        },
+        {
+          "scope": "Receive and promotion security profiles with scheme-specific PQ verification",
+          "implementation": [
+            "cli/src/sync/engine.js",
+            "cli/src/sync/client.js",
+            "cli/src/sync/outbox.js",
+            "cli/src/commands/sync.js",
+            "cli/test/unit/sync-receive-profiles.test.js",
+            "docs/src/guides/sync.md"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/sync-receive-profiles.test.js cli/test/unit/sync-engine-verification.test.js cli/test/unit/sync-doctor.test.js cli/test/unit/sync-client.test.js cli/test/unit/pqc-strict-profile.test.js cli/test/unit/pqc-cross-language.test.js cli/test/unit/sync-config-security.test.js cli/test/sync-outbox.test.js cli/test/unit/grpc-envelope.test.js cli/test/integration/native-outbox-pump.test.js",
+              "result": "409 passed, zero skipped, under Node 22.18.0. Mandatory native signature cases verify hybrid and ML-DSA-only acceptance during pull and promotion, and reject incomplete PQ keys, malformed PQ signatures and unknown schemes without classical fallback. Profile refusal occurs before key lookup. Changed source ESLint passed."
+            }
+          ],
+          "limitations": [
+            "Upgrade behavior changes: hybrid/strict receive paths now quarantine legacy signatures as security_profile_mismatch. Legacy interoperability requires explicit operator policy; historical stored events are not reclassified.",
+            "New native-signature policy tests inject key resolution to isolate policy and cryptography; they do not establish independent directory trust or live sequencer interoperability.",
+            "Profile validation does not replace cryptographic verification, business-state application or immutable release evidence."
+          ]
+        },
+        {
+          "scope": "Received payload integrity before event signature acceptance",
+          "implementation": [
+            "cli/src/sync/payload-integrity.js",
+            "cli/src/sync/client.js",
+            "cli/test/unit/sync-payload-integrity.test.js",
+            "cli/test/unit/sync-engine-verification.test.js"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/sync-payload-integrity.test.js cli/test/unit/sync-receive-profiles.test.js cli/test/unit/sync-engine-verification.test.js cli/test/unit/sync-doctor.test.js cli/test/unit/sync-client.test.js cli/test/unit/pqc-strict-profile.test.js cli/test/unit/pqc-cross-language.test.js cli/test/unit/sync-config-security.test.js cli/test/sync-outbox.test.js cli/test/unit/grpc-envelope.test.js cli/test/integration/native-outbox-pump.test.js",
+              "result": "414 passed, zero skipped, under Node 22.18.0. Real legacy/hybrid/strict encryption matches reconstructed cipher hashes through REST serialization/normalization; tampered payload, cipher, tag, recipient and alias cases fail with signatures untouched. The real-client receive test quarantines payload replacement under an otherwise unchanged signed envelope. Changed sources passed ESLint."
+            }
+          ],
+          "limitations": [
+            "Encrypted plaintext authenticity is checked on decryption using the salted hash; ciphertext integrity does not prove recipient decryptability or valid business content.",
+            "REST request boundaries are intercepted locally. No independent implementation, live sequencer or immutable release evidence was established.",
+            "Malformed payload/hash combinations previously accepted by signature-only checking now fail verification and are quarantined as signature_invalid."
+          ]
+        },
+        {
+          "scope": "Configured tenant/store isolation on receive and quarantine promotion",
+          "implementation": [
+            "cli/src/sync/receive-scope.js",
+            "cli/src/sync/engine.js",
+            "cli/src/commands/sync.js",
+            "cli/src/sync/outbox.js",
+            "cli/test/unit/sync-receive-profiles.test.js",
+            "cli/test/unit/sync-engine-verification.test.js",
+            "cli/test/unit/sync-doctor.test.js"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/sync-payload-integrity.test.js cli/test/unit/sync-receive-profiles.test.js cli/test/unit/sync-engine-verification.test.js cli/test/unit/sync-doctor.test.js cli/test/unit/sync-client.test.js cli/test/unit/pqc-strict-profile.test.js cli/test/unit/pqc-cross-language.test.js cli/test/unit/sync-config-security.test.js cli/test/sync-outbox.test.js cli/test/unit/grpc-envelope.test.js cli/test/integration/native-outbox-pump.test.js",
+              "result": "422 passed, zero skipped, under Node 22.18.0. Real hybrid and ML-DSA signatures authenticate foreign-scope events, which pull and promotion nevertheless refuse before key lookup. Mixed batches retain valid events; missing scope fields go to the recovery journal; unconfigured promotion fails while local inspection works. Changed source ESLint passed."
+            }
+          ],
+          "limitations": [
+            "Programmatic syncDoctor promotion now requires configured client scope or explicit operator scope; CLI callers use their configured destination.",
+            "Scope matches exact tenant/store identifiers and does not retroactively audit historical stored events.",
+            "New cryptographic isolation tests inject key resolution. This is local receive-boundary evidence, not independent tenant-isolation certification or live sequencer evidence."
+          ]
+        },
+        {
+          "scope": "Immutable received identities, retained replay conflicts and atomic promotion",
+          "implementation": [
+            "cli/src/sync/outbox.js",
+            "cli/src/sync/engine.js",
+            "cli/src/commands/sync.js",
+            "cli/test/sync-outbox.test.js",
+            "cli/test/unit/sync-engine-verification.test.js",
+            "cli/test/unit/sync-doctor.test.js"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/sync-payload-integrity.test.js cli/test/unit/sync-receive-profiles.test.js cli/test/unit/sync-engine-verification.test.js cli/test/unit/sync-doctor.test.js cli/test/unit/sync-client.test.js cli/test/unit/pqc-strict-profile.test.js cli/test/unit/pqc-cross-language.test.js cli/test/unit/sync-config-security.test.js cli/test/sync-outbox.test.js cli/test/unit/grpc-envelope.test.js cli/test/integration/native-outbox-pump.test.js",
+              "result": "427 passed, zero skipped, under Node 22.18.0. Exact replays preserve original rows, canonical JSON comparison accepts reordered keys, conflicting IDs/sequences roll back direct batches, the engine retains conflict evidence without overwrite, and failed quarantine deletion rolls promotion back. Changed sources passed ESLint."
+            }
+          ],
+          "limitations": [
+            "Receive APIs no longer overwrite prior events; correction callers must emit new events. Existing rows are preserved without retrospective auditing.",
+            "The receive journal preserves the first identity conflict per sequence rather than every conflicting variant. Resolving competing histories requires operator investigation.",
+            "Persistence tests isolate storage using stub verification; real cryptographic and native bridge suites also ran. No live sequencer, concurrent deployment test or independent release certification was established."
+          ]
+        },
+        {
+          "scope": "Validated and atomic push acknowledgement settlement",
+          "implementation": [
+            "cli/src/sync/push-receipt.js",
+            "cli/src/sync/engine.js",
+            "cli/src/sync/outbox.js",
+            "cli/test/unit/sync-push-settlement.test.js",
+            "docs/src/guides/sync.md"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/sync-push-settlement.test.js cli/test/unit/sync-payload-integrity.test.js cli/test/unit/sync-receive-profiles.test.js cli/test/unit/sync-engine-verification.test.js cli/test/unit/sync-doctor.test.js cli/test/unit/sync-client.test.js cli/test/unit/pqc-strict-profile.test.js cli/test/unit/pqc-cross-language.test.js cli/test/unit/sync-config-security.test.js cli/test/sync-outbox.test.js cli/test/unit/grpc-envelope.test.js cli/test/integration/native-outbox-pump.test.js",
+              "result": "444 passed, zero skipped, under Node 22.18.0. Seventeen new settlement tests cover malformed receipts, full rejection, ordered partial acceptance, cursor rollback/retry and overlapping push responses. Changed sources passed ESLint."
+            }
+          ],
+          "limitations": [
+            "Validation enforces the existing ordered contiguous receipt contract, not cryptographic sequencer acceptance or noncontiguous per-event acknowledgements.",
+            "Retry after an external acceptance still requires sequencer deduplication. Duplicate rejection without local acknowledgement needs operator reconciliation.",
+            "lastPushedSequence now records own accepted sequences separately from the global head. Overlap tests exercise one local database with controlled response ordering, not a distributed deployment."
+          ]
+        },
+        {
+          "scope": "Outgoing engine/REST scope enforcement and expanded sync verification",
+          "implementation": [
+            "cli/src/sync/receive-scope.js",
+            "cli/src/sync/client.js",
+            "cli/src/sync/engine.js",
+            "cli/test/unit/sync-push-settlement.test.js",
+            "docs/src/guides/sync.md"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/sync*.test.js cli/test/sync*.test.js cli/test/unit/pqc*.test.js cli/test/unit/grpc-envelope.test.js cli/test/integration/grpc-client.test.js cli/test/integration/native-outbox-pump.test.js",
+              "result": "749 passed, zero skipped, across 138 suites under Node 22.18.0. Expanded coverage includes crypto, quarantine, key directory, tools, groups, doctor, native bridge and transport checks. Six new cases cover changed tenant/store configuration, previews, mixed-scope REST batches, missing scope fields and refusal before retry. Changed sources passed ESLint."
+            }
+          ],
+          "limitations": [
+            "Scope mismatch refuses the entire pending batch; it does not migrate, rewrite or discard signed records. Operators must correct configuration or use a reviewed migration.",
+            "Network boundaries are intercepted locally in refusal tests. This is expanded local verification, not a complete CLI/workspace CI run, live provider proof or independent certification."
+          ]
+        },
+        {
+          "scope": "CLI REST pull page validation and monotonic receive cursors",
+          "implementation": [
+            "cli/src/sync/pull-page.js",
+            "cli/src/sync/client.js",
+            "cli/src/sync/engine.js",
+            "cli/test/unit/sync-client.test.js",
+            "cli/test/unit/sync-engine-verification.test.js",
+            "docs/src/guides/sync.md"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/sync*.test.js cli/test/sync*.test.js cli/test/unit/pqc*.test.js cli/test/unit/grpc-envelope.test.js cli/test/integration/grpc-client.test.js cli/test/integration/native-outbox-pump.test.js",
+              "result": "768 passed, zero skipped, across 138 suites under Node 22.18.0. Nineteen new cases cover malformed pages, invalid requests, empty-page progress, explicit continuation on underfilled pages, overlapping responses and replay without cursor regression. Changed JavaScript sources passed ESLint."
+            }
+          ],
+          "limitations": [
+            "The CLI retains its inclusive next-request cursor convention; Rust transport cursor semantics are unchanged. Sequence gaps are permitted and page checks cannot prove feed completeness.",
+            "JavaScript receive sequences must remain below Number.MAX_SAFE_INTEGER. Empty continuing pages are refused because they provide no usable next cursor.",
+            "Verification is local with intercepted network boundaries; gRPC receive, external interoperability and release certification remain incomplete."
+          ]
+        },
+        {
+          "scope": "Consistent sync health, durable receive diagnostics and honest freshness timestamps",
+          "implementation": [
+            "cli/src/sync/status.js",
+            "cli/src/sync/outbox.js",
+            "cli/src/sync/engine.js",
+            "cli/src/sync/client.js",
+            "cli/src/commands/sync.js",
+            "cli/src/tools/sync.js",
+            "cli/bin/stateset-sync.js",
+            "cli/test/unit/sync-status.test.js",
+            "cli/test/unit/sync-engine-verification.test.js",
+            "cli/test/unit/sync-client.test.js",
+            "cli/docs/TOOLS.md",
+            "docs/src/guides/sync.md"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/sync*.test.js cli/test/sync*.test.js cli/test/unit/pqc*.test.js cli/test/unit/grpc-envelope.test.js cli/test/integration/grpc-client.test.js cli/test/integration/native-outbox-pump.test.js cli/test/unit/tool-docs-up-to-date.test.js",
+              "result": "794 passed, zero skipped, across 140 suites under Node 22.18.0. Includes real SQLite receive outcomes, timestamp rollback, offline/regressed/invalid heads, status reads during a pull, backlog thresholds, failure counts beyond 1,000 records after restart, quarantine aggregates, and command/tool parity without payload disclosure. Changed JavaScript sources passed ESLint and generated tool catalog checks passed."
+            }
+          ],
+          "limitations": [
+            "Health describes transport and durable queues, not entity projection, feed completeness, provider settlement or overall application readiness. Verified counts describe the receive table; they do not retroactively reverify historical records.",
+            "localHead now excludes the next-cursor offset, lag is a sequence distance, and unknown timestamps are null. Consumers must accommodate these corrected semantics; older stores have no lastPullAt until a new nonempty batch commits.",
+            "Network responses were intercepted locally. No live endpoint, independent security review or full release certification was established."
+          ]
+        },
+        {
+          "scope": "Bounded REST requests and recoverable uncertain push outcomes",
+          "implementation": [
+            "cli/src/sync/client.js",
+            "cli/src/sync/config.js",
+            "cli/test/unit/sync-client.test.js",
+            "cli/test/integration/sync-rest-timeouts.test.js",
+            "docs/src/guides/sync.md"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/sync*.test.js cli/test/sync*.test.js cli/test/unit/pqc*.test.js cli/test/unit/grpc-envelope.test.js cli/test/integration/grpc-client.test.js cli/test/integration/native-outbox-pump.test.js cli/test/integration/sync-rest-timeouts.test.js cli/test/unit/tool-docs-up-to-date.test.js",
+              "result": "814 passed, zero skipped, under Node 22.18.0. Covers deadline configuration, retry validation, zero retries from configuration and explicit overrides, and the first four real-socket timeout cases. Changed sources passed ESLint."
+            },
+            {
+              "command": "node --test cli/test/integration/sync-rest-timeouts.test.js",
+              "result": "5 passed, zero skipped, after adding automatic timeout retry coverage. Real loopback HTTP sockets stall headers and success/error bodies, verify cancellation and subsequent request recovery, verify fresh deadlines for retries, and demonstrate file-backed restart preserving signed pending events after an uncertain push."
+            }
+          ],
+          "limitations": [
+            "The 30-second default applies per REST request, including its response body; retries and backoff add to total elapsed time. gRPC transport deadlines are unchanged.",
+            "Aborting a request does not cancel a remote write. Receiver deduplication or reconciliation remains necessary; the loopback fixture does not certify production sequencer behavior or exactly-once effects.",
+            "These are local tests, including actual HTTP sockets. Full release CI, external provider verification and independent assurance remain incomplete."
+          ]
+        },
+        {
+          "scope": "REST shutdown cancellation and isolation of replacement connections",
+          "implementation": [
+            "cli/src/sync/client.js",
+            "cli/src/sync/unified-client.js",
+            "cli/test/unit/sync-client.test.js",
+            "cli/test/unit/sync-unified-client.test.js",
+            "cli/test/integration/sync-rest-timeouts.test.js",
+            "docs/src/guides/sync.md"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/sync*.test.js cli/test/sync*.test.js cli/test/unit/pqc*.test.js cli/test/unit/grpc-envelope.test.js cli/test/integration/grpc-client.test.js cli/test/integration/native-outbox-pump.test.js cli/test/integration/sync-rest-timeouts.test.js cli/test/unit/tool-docs-up-to-date.test.js",
+              "result": "826 passed, zero skipped, across 142 suites under Node 22.18.0. Real HTTP socket cases cover cancellation during headers and success/error bodies, shutdown with file-backed pending signed events, shared pending handshakes, immediate disconnect before transport discovery, and reconnect. Unit cases cover cancellation of 30-second backoff, stale pull iterators and handshake callbacks, plus retired gRPC event forwarding and cleanup with mocked handshakes. Changed sources passed ESLint."
+            }
+          ],
+          "limitations": [
+            "REST cancellation prevents new requests from the retired client generation; it does not undo remote effects or establish exactly-once settlement.",
+            "Engine shutdown is not a general drain of all application work. Callers must await outstanding operations before closing database handles.",
+            "gRPC wrapper lifecycle tests use mocked handshakes, not a live gRPC endpoint. Low-level gRPC cancellation and interoperability remain separate work; no release certification was established."
+          ]
+        },
+        {
+          "scope": "Order-linked shipment manifests through Node and governed agent tools",
+          "implementation": [
+            "bindings/node/src/domains/shipments.rs",
+            "bindings/node/index.d.ts",
+            "bindings/node/tool-descriptors.json",
+            "bindings/node/README.md",
+            "cli/src/tools/shipments.js",
+            "cli/src/kernel-tool-execution.js",
+            "cli/test/integration/shipment-manifest.test.js",
+            "docs/src/api/node.md",
+            "docs/src/api/node-reference.md"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/integration/shipment-manifest.test.js cli/test/integration/shipment-public-tools.test.js cli/test/integration/fulfillment-recovery.test.js cli/test/unit/shipments-tools.test.js cli/test/unit/kernel-boundary.test.js",
+              "result": "53 passed, zero skipped, under Node 22.18.0 against the rebuilt native binding. Nine new manifest cases cover fractional/overflow refusal, order membership and product matching, ambiguous SKUs, cumulative quantity limits, concurrent creators, packing lifecycle/version guards, restart, outbox fault rollback, preview-only native item tools and strict governed creation/replay."
+            },
+            {
+              "command": "node --test bindings/node/test/native-toolkit.js",
+              "result": "10 passed; generated descriptor parity and standalone adapter execution verified."
+            },
+            {
+              "command": "node --test bindings/node/test/types-g1.js bindings/node/test/api-reference.js bindings/node/test/lifecycle.js",
+              "result": "23 passed; declarations, generated API reference and native handle lifecycle verified."
+            },
+            {
+              "command": "cargo clippy -p stateset-embedded-node -- -D warnings",
+              "result": "Passed with one Cargo build job. Native debug build, scoped Rust formatting and changed JavaScript source ESLint checks also passed."
+            }
+          ],
+          "limitations": [
+            "These are shipment manifest assignments, not inventory reservations or order fulfillment. Parent-shipment linkage and automatic replacement compensation remain incomplete.",
+            "Node integration evidence uses SQLite. Other language bindings, PostgreSQL binding parity and live carrier/provider settlement were not certified by this increment.",
+            "Existing add/remove repository methods enforce transactional quantity/lifecycle guards but do not accept an expected-version argument. No new governed packing-edit commands were added."
+          ]
+        },
+        {
+          "scope": "HTTP shipment manifests, scoped packing edits and idempotent replay",
+          "implementation": [
+            "crates/stateset-http/src/dto.rs",
+            "crates/stateset-http/src/routes/shipments.rs",
+            "crates/stateset-http/src/idempotency.rs",
+            "crates/stateset-http/src/openapi.rs",
+            "crates/stateset-http/tests/shipment_lifecycle.rs",
+            "crates/stateset-http/tests/openapi_validation.rs",
+            "crates/stateset-http/README.md"
+          ],
+          "validation": [
+            {
+              "command": "cargo test -p stateset-http --test shipment_lifecycle --test openapi_validation",
+              "result": "8 shipment and 53 OpenAPI checks passed, including manifest normalization, invalid allocation refusal, create/add/delete replay, packing lifecycle/version guards, parent and tenant scope, permissions and database failure rollback."
+            },
+            {
+              "command": "cargo test -p stateset-http --lib idempotency::tests",
+              "result": "21 passed, including concurrent ownership, tenant scope, expiry, durable restart and uncertain-outcome recovery regressions."
+            },
+            {
+              "command": "cargo test -p stateset-http --test shipment_lifecycle --test http_integration",
+              "result": "163 general HTTP integration tests and all 8 shipment tests passed. The final shipment run additionally confirms that cached successful add/delete responses cannot bypass current caller permissions."
+            },
+            {
+              "command": "cargo clippy -p stateset-http --lib --test shipment_lifecycle --test openapi_validation -- -D warnings",
+              "result": "Passed with warnings denied. Scoped Rust formatting and git diff --check also passed."
+            }
+          ],
+          "limitations": [
+            "HTTP integration evidence uses SQLite. PostgreSQL service deployments and live carrier effects were not certified by this increment.",
+            "Item edits reuse native transactional packing/allocation guards but do not accept expected_version. Manifest contents remain separate from inventory reservation and order fulfillment.",
+            "Idempotency remains request-bound and tenant-scoped, with the existing retention and uncertain-outcome reconciliation rules. Linked replacements, governed recovery commands and full release certification remain incomplete."
+          ]
+        },
+        {
+          "scope": "Transactional shipment packing version preconditions and query-bound idempotency",
+          "implementation": [
+            "crates/stateset-core/src/traits/fulfillment.rs",
+            "crates/stateset-db/src/shipment_updates.rs",
+            "crates/stateset-db/src/sqlite/shipments.rs",
+            "crates/stateset-db/src/postgres/shipments.rs",
+            "crates/stateset-embedded/src/shipments.rs",
+            "crates/stateset-embedded/src/async_commerce/core.rs",
+            "crates/stateset-http/src/routes/shipments.rs",
+            "crates/stateset-http/src/idempotency.rs",
+            "crates/stateset-db/tests/sqlite_shipment_lifecycle.rs",
+            "crates/stateset-db/tests/postgres_shipment_lifecycle.rs",
+            "crates/stateset-http/tests/shipment_lifecycle.rs",
+            "crates/stateset-http/tests/openapi_validation.rs",
+            "crates/stateset-http/README.md",
+            "docs/src/api/rust.md"
+          ],
+          "validation": [
+            {
+              "command": "POSTGRES_URL=postgres://dom@127.0.0.1:55479/packing_version_checks cargo test -p stateset-db --features postgres --test sqlite_shipment_lifecycle --test postgres_shipment_lifecycle",
+              "result": "26 SQLite and 23 PostgreSQL tests passed against an isolated PostgreSQL 12.22 database. New tests cover stale versions, unchanged persisted snapshots/outbox facts, concurrent additions with spare allocation capacity, and competing add/remove edits. SQLite concurrency uses separate database instances sharing one file."
+            },
+            {
+              "command": "cargo test -p stateset-http --test shipment_lifecycle --test openapi_validation --test http_integration",
+              "result": "163 general HTTP integration, 53 OpenAPI and 10 shipment tests passed. Version preconditions reject stale edits with 409, malformed or unknown query fields with 400, and changed query strings with an existing idempotency key with 422; identical retries replay the original success. The final OpenAPI contract documents query placement, optional int32 versions and 400/409 responses."
+            },
+            {
+              "command": "cargo test -p stateset-http --lib idempotency::tests",
+              "result": "21 passed, covering replica ownership, tenant scope, durable restart, expiry, unavailable storage and uncertain-outcome recovery. Combined with the shipment/backend/HTTP suites, 296 distinct scoped tests passed."
+            },
+            {
+              "command": "cargo clippy -p stateset-db -p stateset-embedded -p stateset-http --features stateset-db/postgres,stateset-embedded/postgres --lib --test sqlite_shipment_lifecycle --test postgres_shipment_lifecycle --test shipment_lifecycle --test openapi_validation -- -D warnings",
+              "result": "Passed with warnings denied across both database backends, synchronous/asynchronous facades, HTTP handlers and all four changed integration targets. Scoped Rust formatting, evidence JSON formatting and git diff --check also passed."
+            }
+          ],
+          "limitations": [
+            "Version preconditions are optional. Existing unconditional methods retain their behavior. Other language bindings and governed packing commands do not yet expose these new versioned methods.",
+            "Idempotency fingerprints now include the exact query string. Legacy persisted receipts for requests with query strings cannot replay under the new fingerprint; reconcile outcomes before using new keys. Requests without query strings preserve their fingerprints.",
+            "Manifest edits remain separate from inventory reservation, order fulfillment and carrier effects. This increment does not certify live providers, linked replacement compensation or the full platform release."
+          ]
+        },
+        {
+          "scope": "Node shipment version preconditions, numeric boundary validation and isolated SQL inspection",
+          "implementation": [
+            "bindings/node/src/domains/shipments.rs",
+            "bindings/node/scripts/generate-tool-descriptors.mjs",
+            "bindings/node/index.d.ts",
+            "bindings/node/tool-descriptors.json",
+            "bindings/node/test/native-toolkit.js",
+            "bindings/node/README.md",
+            "docs/src/api/node.md",
+            "docs/src/api/node-reference.md",
+            "cli/src/tools/shipments.js",
+            "cli/test/integration/shipment-manifest.test.js",
+            "cli/test/unit/shipments-tools.test.js",
+            "cli/test/helpers/sqlite-process.js",
+            "cli/test/helpers/sqlite-process-worker.mjs"
+          ],
+          "validation": [
+            {
+              "command": "Node 22.18.0 napi build --platform --js native-binding.js followed by scripts/postbuild.mjs",
+              "result": "Native debug binding rebuilt successfully; declarations, tool descriptors and API reference regenerated. Before the fix, the new regression test demonstrated that expectedVersion 1.5 was silently accepted as version 1."
+            },
+            {
+              "command": "node --test bindings/node/test/native-toolkit.js bindings/node/test/types-g1.js bindings/node/test/api-reference.js bindings/node/test/lifecycle.js bindings/node/test/error-codes.js",
+              "result": "61 passed, zero skipped, against the rebuilt native binding. Includes deterministic generated artifacts, optional version parameter forwarding contracts and explicit positive int32 tool schema bounds."
+            },
+            {
+              "command": "cargo clippy -p stateset-embedded-node -- -D warnings",
+              "result": "Passed with warnings denied. Scoped Rust formatting and JavaScript ESLint checks also passed."
+            },
+            {
+              "command": "node --test cli/test/integration/shipment-manifest.test.js cli/test/integration/shipment-public-tools.test.js cli/test/integration/fulfillment-recovery.test.js cli/test/unit/fulfillment-recovery.test.js cli/test/unit/shipments-tools.test.js cli/test/unit/tool-docs-up-to-date.test.js",
+              "result": "78 passed, zero skipped, under Node 22.18.0 with the rebuilt native binding. Tests cover invalid numeric and nonnumeric versions, stale versions, separate native handles, lifecycle guards, atomic audit facts, apply-gated generated tools and strict governed shipment creation. Combined with 61 binding checks, 139 distinct scoped tests passed."
+            },
+            {
+              "command": "Five fresh Node processes running --test --test-name-pattern=\"versioned Node packing\" cli/test/integration/shipment-manifest.test.js",
+              "result": "All five passed after SQL inspection moved out of the native engine process. Earlier same-process auxiliary-reader failures were investigated with WAL inode/file-descriptor evidence, not dismissed as flaky assertions."
+            }
+          ],
+          "limitations": [
+            "Node evidence uses SQLite; other language bindings and governed packing-edit commands still need versioned support. Manifest edits do not reserve inventory or fulfill order lines.",
+            "Optional positional version arguments accept null; UpdateShipmentInput.expectedVersion accepts an omitted field or a numeric value, not null.",
+            "A repeatable diagnostic reproduced a multiple-SQLite-library hazard: after native engine reopen, a same-process better-sqlite3 reader retained deleted WAL/SHM descriptors and returned an older snapshot. Shipment tests now inspect and fault-inject through a separate process, including transactional snapshots; this does not certify shared-file runtime integrations.",
+            "Full release, live provider, compensation and independent assurance evidence remain incomplete."
+          ]
+        },
+        {
+          "scope": "Native-owned database manager snapshots and verified non-overwriting recovery",
+          "implementation": [
+            "cli/src/database.js",
+            "cli/test/integration/database-maintenance.test.js",
+            "cli/test/unit/database.test.js",
+            "docs/src/guides/operations-recovery.md"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/database.test.js cli/test/integration/database-maintenance.test.js cli/test/unit/tools-maintenance.test.js bindings/node/test/maintenance.js",
+              "result": "62 passed, zero skipped under Node 22.18.0. Real native-engine tests verify WAL-backed snapshot contents, continued source writes, default-file and memory snapshots, unique concurrent backup paths, checksums, missing/newer manifests, occupied and dangling-symlink target refusal, temporary-file cleanup and single-winner competing restores. Existing maintenance tool apply gates and binding maintenance checks also pass."
+            },
+            {
+              "command": "Scoped ESLint --no-ignore --max-warnings=0, Prettier --check and git diff --check",
+              "result": "Passed."
+            }
+          ],
+          "limitations": [
+            "DatabaseManager backup and restore now return promises; callers must await them. Restore requires a new offline file path and hard-link support; it never replaces existing targets. External process coordination and application cutover remain operator responsibilities.",
+            "Only the database manager maintenance path was migrated off the second SQLite library. Compliance, sync and other shared-file runtime integrations still require an ownership audit. Manager cache close/eviction resource lifecycle remains separate follow-up work.",
+            "Backups and manifests must remain immutable during restore. Full release, power-loss, live-provider and independent-assurance evidence remain incomplete."
           ]
         }
       ],
@@ -191,7 +743,7 @@
           "requirement": "Enforce shipment transitions, optimistic concurrency, timestamps and durable outbox records consistently across update, ship, deliver, cancel and batch paths on SQLite and PostgreSQL",
           "evidence": [
             "crates/stateset-db/src/shipment_updates.rs: shared transition, version and timestamp rules",
-            "crates/stateset-db/migrations/100_shipment_version.sql: backfills SQLite shipment versions",
+            "crates/stateset-migrations/migrations/100_shipment_version.sql: backfills SQLite shipment versions",
             "crates/stateset-db/tests/sqlite_shipment_lifecycle.rs: 8 tests passed",
             "crates/stateset-db/tests/postgres_shipment_lifecycle.rs: 5 tests passed against isolated PostgreSQL 12.22"
           ],
@@ -216,8 +768,10 @@
             "cli/src/tools/fulfillment-recovery.js: read-only plans validate persisted order-line shipped quantities, aggregate requests and reject excess quantities, ambiguous SKUs and cross-order shipment references",
             "cli/src/tools/shipments.js: unsupported automatic partial-shipment creation is removed; requests return an explicit blocked action with a reconciliation plan",
             "bindings/node/src/domains/orders.rs and shipments.rs: rebuilt native binding exposes shippedQuantity, persisted shipment items and recipient context; native integration tests passed",
-            "Node shipment creation still lacks item assignment and parent linkage; shipment tracking and order fulfillment remain separate aggregates",
-            "SQLite and PostgreSQL item writes now lock the parent, enforce packing-state guards, advance versions, and commit item audit facts atomically; 25 backend lifecycle tests passed locally"
+            "Node shipment creation now accepts validated item assignments through direct and governed tool paths; parent linkage remains unsupported, and shipment tracking and order fulfillment remain separate aggregates",
+            "HTTP create/detail/list now preserve manifest items; scoped POST/DELETE packing edits enforce native guards, permissions and idempotent replay, with 8 shipment integration tests passing",
+            "SQLite and PostgreSQL item writes now lock the parent, enforce packing-state guards, advance versions, and commit item audit facts atomically; 25 backend lifecycle tests passed locally",
+            "Native SQLite/PostgreSQL packing edits and HTTP item endpoints now accept transactional version preconditions; 26 SQLite and 23 live local PostgreSQL lifecycle tests passed, including competing versioned writers. Language-binding and governed packing preconditions remain open."
           ],
           "status": "in_progress",
           "remaining": [
@@ -225,6 +779,17 @@
             "Reconcile already assigned shipment quantities with order fulfillment and inventory reservations under concurrency",
             "Expose and verify typed governed recovery commands with restart, replay, concurrent-conflict and rollback tests"
           ]
+        },
+        {
+          "priority": "high",
+          "requirement": "Remove same-process access to one live commerce file through independently bundled SQLite libraries; use native connection ownership, separate storage or process-isolated SQL access",
+          "evidence": [
+            "Local Node diagnostic: WAL inode changed from 24308305 to 24308307 after native reopen; better-sqlite3 retained deleted WAL/SHM descriptors and read one customer while the native engine read two. Closing/reopening the auxiliary reader did not reliably recover its view.",
+            "https://www.sqlite.org/howtocorrupt.html#multiple_copies_of_sqlite_linked_into_the_same_application documents independent lock bookkeeping when multiple SQLite copies share one process.",
+            "cli/test/helpers/sqlite-process.js and sqlite-process-worker.mjs isolate shipment test inspection and fault injection in another process.",
+            "cli/src/database.js now uses native Commerce maintenance exclusively: consistent snapshots, checksum/schema-verified staging and atomic non-overwriting publication; 62 scoped maintenance tests passed. cli/src/compliance/exports.js still lazily opens the commerce file directly. Compliance and sync/database ownership require further remediation and validation."
+          ],
+          "status": "in_progress"
         }
       ]
     },

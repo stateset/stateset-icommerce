@@ -1,6 +1,8 @@
-//! Built-in migrations for the StateSet iCommerce schema.
+//! Canonical engine registry and historical standalone schema constructors.
 //!
-//! These migrations define the complete database schema evolution path.
+//! `builtin_registry` uses the engine SQL and runner. The individual v1–v9
+//! constructors below preserve the historical standalone API only.
+//! These historical migrations define their own schema evolution path.
 //! They are organized into four major versions:
 //!
 //! - **V1**: Core tables (customers, products, orders, inventory, returns,
@@ -22,6 +24,22 @@ use crate::registry::MigrationRegistry;
 /// Returns an error if any migration version conflicts (should never happen
 /// with the built-in set).
 pub fn builtin_registry() -> crate::error::Result<MigrationRegistry> {
+    let mut registry = MigrationRegistry::new();
+    for (name, sql) in crate::engine::migration_definitions() {
+        let version = name.split('_').next().and_then(|v| v.parse().ok()).ok_or_else(|| {
+            crate::MigrationError::InvalidMigration {
+                reason: format!("invalid engine migration name: {name}"),
+            }
+        })?;
+        registry.register(Migration::new(version, name, sql))?;
+    }
+    registry.engine_schema = true;
+    Ok(registry)
+}
+
+/// Historical standalone schema (versions 1–9), retained only for existing
+/// callers. It is not the engine schema; use [`builtin_registry`] for new stores.
+pub fn legacy_registry() -> crate::error::Result<MigrationRegistry> {
     MigrationRegistry::builder()
         .add(v1_core_tables())
         .add(v2_commerce_extensions())
@@ -1601,20 +1619,20 @@ mod tests {
 
     #[test]
     fn builtin_registry_builds_successfully() {
-        let reg = builtin_registry().unwrap();
+        let reg = legacy_registry().unwrap();
         assert_eq!(reg.len(), 9);
     }
 
     #[test]
     fn builtin_versions_are_sequential() {
-        let reg = builtin_registry().unwrap();
+        let reg = legacy_registry().unwrap();
         let versions: Vec<u32> = reg.list().iter().map(|m| m.version).collect();
         assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
 
     #[test]
     fn all_builtins_have_down_sql() {
-        let reg = builtin_registry().unwrap();
+        let reg = legacy_registry().unwrap();
         for m in reg.list() {
             assert!(m.has_down(), "migration v{} '{}' should have down SQL", m.version, m.name);
         }
@@ -1679,7 +1697,7 @@ mod tests {
 
     #[test]
     fn all_down_sqls_have_drop_statements() {
-        let reg = builtin_registry().unwrap();
+        let reg = legacy_registry().unwrap();
         for m in reg.list() {
             let down = m.down_sql.as_ref().unwrap();
             assert!(
@@ -1708,7 +1726,7 @@ mod tests {
     fn all_versions_apply_cleanly() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        let reg = builtin_registry().unwrap();
+        let reg = legacy_registry().unwrap();
         for m in reg.list() {
             conn.execute_batch(&m.up_sql)
                 .unwrap_or_else(|e| panic!("v{} '{}' failed: {e}", m.version, m.name));
@@ -1727,7 +1745,7 @@ mod tests {
     fn idempotent_rerun_all() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        let reg = builtin_registry().unwrap();
+        let reg = legacy_registry().unwrap();
         for m in reg.list() {
             conn.execute_batch(&m.up_sql).unwrap();
         }
@@ -1741,7 +1759,7 @@ mod tests {
     fn rollback_v4_then_reapply() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        let reg = builtin_registry().unwrap();
+        let reg = legacy_registry().unwrap();
         for m in reg.list() {
             conn.execute_batch(&m.up_sql).unwrap();
         }
@@ -1756,7 +1774,7 @@ mod tests {
     fn rollback_all_versions() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        let reg = builtin_registry().unwrap();
+        let reg = legacy_registry().unwrap();
 
         // Apply all
         for m in reg.list() {

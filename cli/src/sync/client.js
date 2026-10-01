@@ -6,6 +6,11 @@
  */
 
 import { createHash } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+import { verifyPayloadIntegrity } from './payload-integrity.js';
+import { assertOutgoingScope } from './receive-scope.js';
+import { validatePullRequest, validatePullPage } from './pull-page.js';
+import { DEFAULT_REQUEST_TIMEOUT_MS } from './config.js';
 import {
   canonicalizeJson,
   computeEventSigningHash,
@@ -363,6 +368,16 @@ export class SequencerClient {
   constructor(config) {
     this.config = config;
     this._connected = false;
+    this._lifecycle = new AbortController();
+    this.requestTimeoutMs =
+      config.requestTimeoutMs ?? config.sync?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    if (
+      !Number.isInteger(this.requestTimeoutMs) ||
+      this.requestTimeoutMs < 1 ||
+      this.requestTimeoutMs > 2147483647
+    ) {
+      throw new Error('requestTimeoutMs must be an integer between 1 and 2147483647');
+    }
     this.securityProfile = resolveSecurityProfile(
       config.securityProfile ?? config.sync?.securityProfile,
     );
@@ -417,6 +432,8 @@ export class SequencerClient {
    * @returns {Promise<Object>}
    */
   async _request(method, path, body) {
+    const lifecycle = this._lifecycle.signal;
+    lifecycle.throwIfAborted();
     const url = `${this.baseUrl}${path}`;
     const options = {
       method,
@@ -427,14 +444,30 @@ export class SequencerClient {
       options.body = JSON.stringify(body);
     }
 
-    const response = await fetch(url, options);
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Sequencer request failed: ${response.status} ${text}`);
+    const controller = new AbortController();
+    const cancel = () => controller.abort(lifecycle.reason);
+    lifecycle.addEventListener('abort', cancel, { once: true });
+    options.signal = controller.signal;
+    const timeout = setTimeout(() => {
+      const error = new Error(`Sequencer request timed out after ${this.requestTimeoutMs}ms`);
+      error.code = 'SEQUENCER_TIMEOUT';
+      controller.abort(error);
+    }, this.requestTimeoutMs);
+    try {
+      const response = await fetch(url, options);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Sequencer request failed: ${response.status} ${text}`);
+      }
+      // Await consumption here so the deadline covers a stalled response body.
+      return await response.json();
+    } catch (error) {
+      if (controller.signal.aborted) throw controller.signal.reason;
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      lifecycle.removeEventListener('abort', cancel);
     }
-
-    return response.json();
   }
 
   /**
@@ -442,12 +475,19 @@ export class SequencerClient {
    * @returns {Promise<void>}
    */
   async connect() {
+    if (this._lifecycle.signal.aborted) this._lifecycle = new AbortController();
+    const lifecycle = this._lifecycle;
     try {
       await this._request('GET', '/health');
+      lifecycle.signal.throwIfAborted();
       this._connected = true;
     } catch (error) {
-      this._connected = false;
-      throw new Error(`Failed to connect to sequencer: ${error.message}`);
+      if (this._lifecycle === lifecycle) this._connected = false;
+      const failure = new Error(`Failed to connect to sequencer: ${error.message}`, {
+        cause: error,
+      });
+      if (error.code) failure.code = error.code;
+      throw failure;
     }
   }
 
@@ -457,6 +497,9 @@ export class SequencerClient {
    */
   async disconnect() {
     this._connected = false;
+    const error = new Error('Sequencer client disconnected');
+    error.code = 'SEQUENCER_DISCONNECTED';
+    this._lifecycle.abort(error);
   }
 
   /**
@@ -475,6 +518,7 @@ export class SequencerClient {
    * @returns {Promise<IngestReceipt>}
    */
   async push(batch) {
+    assertOutgoingScope(batch.events, this.config);
     for (const event of batch.events) {
       assertEventMatchesSecurityProfile(event, this.securityProfile);
     }
@@ -532,23 +576,47 @@ export class SequencerClient {
    * @param {number} [maxRetries]
    * @returns {Promise<IngestReceipt>}
    */
-  async pushWithRetry(batch, maxRetries = 3) {
+  async pushWithRetry(batch, maxRetries) {
+    // Capture this connection generation: reconnect must not revive old work.
+    const lifecycle = this._lifecycle.signal;
+    lifecycle.throwIfAborted();
+    // Configuration mistakes cannot be repaired by network retries.
+    assertOutgoingScope(batch.events, this.config);
     const { retryPolicy } = this.config;
-    const max = maxRetries || retryPolicy.maxRetries;
+    const max = maxRetries ?? retryPolicy.maxRetries;
+    if (!Number.isSafeInteger(max) || max < 0) {
+      throw new Error('maxRetries must be a safe nonnegative integer');
+    }
+    for (const key of ['baseDelay', 'maxDelay']) {
+      if (
+        !Number.isInteger(retryPolicy[key]) ||
+        retryPolicy[key] < 0 ||
+        retryPolicy[key] > 2147483647
+      ) {
+        throw new Error(`${key} must be an integer between 0 and 2147483647`);
+      }
+    }
     let lastError;
 
     for (let attempt = 0; attempt <= max; attempt++) {
+      lifecycle.throwIfAborted();
       try {
         return await this.push(batch);
       } catch (error) {
+        lifecycle.throwIfAborted();
         lastError = error;
 
         if (attempt < max) {
-          const delay = Math.min(
-            retryPolicy.baseDelay * Math.pow(2, attempt),
+          const backoff = Math.min(
+            retryPolicy.baseDelay * Math.pow(2, Math.min(attempt, 31)),
             retryPolicy.maxDelay,
           );
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          try {
+            await delay(backoff, undefined, { signal: lifecycle });
+          } catch (error) {
+            lifecycle.throwIfAborted();
+            throw error;
+          }
         }
       }
     }
@@ -563,6 +631,7 @@ export class SequencerClient {
    * @returns {Promise<{events: SequencedEvent[], nextSequence: number, hasMore: boolean, headSequence: number}>}
    */
   async pull(fromSequence, limit = 100) {
+    validatePullRequest(fromSequence, limit);
     const params = new URLSearchParams({
       tenant_id: this.config.tenantId,
       store_id: this.config.storeId,
@@ -614,12 +683,15 @@ export class SequencerClient {
     const maxSeq =
       events.length > 0 ? Math.max(...events.map((e) => e.sequenceNumber)) : fromSequence;
 
-    return {
+    const page = {
       events,
-      nextSequence: maxSeq + 1,
-      hasMore: events.length === limit,
-      headSequence: response.head_sequence || maxSeq,
+      nextSequence: events.length ? maxSeq + 1 : fromSequence,
+      hasMore: response.has_more ?? events.length === limit,
+      headSequence:
+        response.head_sequence ?? (events.length ? maxSeq : Math.max(0, fromSequence - 1)),
     };
+    validatePullPage(page, fromSequence, limit);
+    return page;
   }
 
   /**
@@ -628,13 +700,16 @@ export class SequencerClient {
    * @returns {AsyncIterable<SequencedEvent>}
    */
   async *pullStream(fromSequence) {
+    const lifecycle = this._lifecycle.signal;
     let cursor = fromSequence;
     let hasMore = true;
 
     while (hasMore) {
+      lifecycle.throwIfAborted();
       const result = await this.pull(cursor, 100);
 
       for (const event of result.events) {
+        lifecycle.throwIfAborted();
         yield event;
       }
 
@@ -654,11 +729,14 @@ export class SequencerClient {
     });
 
     const response = await this._request('GET', `/api/v1/head?${params}`);
+    if (!Number.isSafeInteger(response?.head_sequence) || response.head_sequence < 0) {
+      throw new Error('Invalid remote head: expected a safe nonnegative sequence number');
+    }
 
     return {
       tenantId: this.config.tenantId,
       storeId: this.config.storeId,
-      headSequence: response.head_sequence || 0,
+      headSequence: response.head_sequence,
       stateRoot: response.state_root,
       lastCommitmentId: response.latest_commitment?.batch_id,
     };
@@ -800,6 +878,7 @@ export class SequencerClient {
    * @returns {boolean}
    */
   verifyEventSignature(envelope, publicKey) {
+    if (!verifyPayloadIntegrity(envelope)) return false;
     // Reconstruct the signing hash. payloadKind is part of the canonical signing
     // preimage and MUST be bound so an encrypted envelope cannot verify under the
     // plaintext signing hash (or vice versa).
@@ -824,24 +903,35 @@ export class SequencerClient {
     const publicKeyBundle = normalizeVerificationPublicKeyBundle(publicKey);
     const signatureBundle = envelope.agentSignatureBundle || null;
 
-    if (
-      Number(envelope.agentSignatureScheme || 0) === SIGNATURE_SCHEME_ED25519_ML_DSA_65 &&
-      signatureBundle &&
-      publicKeyBundle?.ed25519PublicKey &&
-      publicKeyBundle?.mlDsa65PublicKey
-    ) {
+    const scheme = Number(envelope.agentSignatureScheme ?? 0);
+    if (scheme === SIGNATURE_SCHEME_ED25519_ML_DSA_65) {
+      if (
+        !signatureBundle ||
+        !publicKeyBundle?.ed25519PublicKey ||
+        !publicKeyBundle?.mlDsa65PublicKey
+      )
+        return false;
       try {
         return verifyEventSignatureHybrid(eventSigningHash, signatureBundle, publicKeyBundle);
-      } catch (error) {
-        console.debug(
-          '[sync-client] Hybrid signature verification failed:',
-          error?.message || error,
-        );
+      } catch {
+        return false;
       }
     }
-
-    // Fall back to verifying the classical Ed25519 component when a full
-    // hybrid bundle is unavailable to the caller.
+    if (scheme === SIGNATURE_SCHEME_ML_DSA_65) {
+      if (!signatureBundle?.mlDsa65Signature || !publicKeyBundle?.mlDsa65PublicKey) return false;
+      try {
+        return verifyEventSignatureStrict(
+          eventSigningHash,
+          signatureBundle.mlDsa65Signature,
+          publicKeyBundle,
+        );
+      } catch {
+        return false;
+      }
+    }
+    // Only explicitly classical or legacy-unspecified events use Ed25519.
+    // Missing PQ material, verifier errors, and unknown schemes never downgrade.
+    if (scheme !== 0 && scheme !== 1) return false;
     const signatureHex = envelope.agentSignature || signatureBundle?.ed25519Signature || null;
     if (!signatureHex) {
       return false;

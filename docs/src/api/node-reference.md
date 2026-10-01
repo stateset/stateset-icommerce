@@ -295,6 +295,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`CreateSegmentInput`](#createsegmentinput)
   - [`CreateSerialInput`](#createserialinput)
   - [`CreateShipmentInput`](#createshipmentinput)
+  - [`CreateShipmentItemInput`](#createshipmentiteminput)
   - [`CreateShippingZoneInput`](#createshippingzoneinput)
   - [`CreateStoreCreditInput`](#createstorecreditinput)
   - [`CreateSubscriptionInput`](#createsubscriptioninput)
@@ -1732,6 +1733,18 @@ Class `Shipments`.
 
   Types: [`CreateShipmentInput`](#createshipmentinput), [`ShipmentOutput`](#shipmentoutput)
 
+- **`addItem(shipmentId: string, input: CreateShipmentItemInput, expectedVersion?: number | undefined | null): Promise<ShipmentItemOutput>`**
+
+  Add an order-linked manifest item while packing. Does not fulfill the order or reserve stock.
+  Optional expectedVersion is a positive integer at most 2147483647, checked atomically.
+
+  Types: [`CreateShipmentItemInput`](#createshipmentiteminput), [`ShipmentItemOutput`](#shipmentitemoutput)
+
+- **`removeItem(itemId: string, expectedVersion?: number | undefined | null): Promise<void>`**
+
+  Remove a manifest item while packing, advancing the shipment version atomically.
+  Optional expectedVersion is a positive integer at most 2147483647, checked atomically.
+
 - **`update(id: string, input: UpdateShipmentInput): Promise<ShipmentOutput>`**
 
   Update shipment metadata and status through the native repository.
@@ -1750,15 +1763,21 @@ Class `Shipments`.
 
   Types: [`ShipmentFilterInput`](#shipmentfilterinput), [`ShipmentOutput`](#shipmentoutput)
 
-- **`ship(id: string, trackingNumber?: string | undefined | null): Promise<ShipmentOutput>`**
+- **`ship(id: string, trackingNumber?: string | undefined | null, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>`**
+
+  Ship a shipment; optional expectedVersion must be an integer from 1 to 2147483647.
 
   Types: [`ShipmentOutput`](#shipmentoutput)
 
-- **`deliver(id: string): Promise<ShipmentOutput>`**
+- **`deliver(id: string, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>`**
+
+  Deliver a shipment; optional expectedVersion must be an integer from 1 to 2147483647.
 
   Types: [`ShipmentOutput`](#shipmentoutput)
 
-- **`cancel(id: string): Promise<ShipmentOutput>`**
+- **`cancel(id: string, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>`**
+
+  Cancel a shipment; optional expectedVersion must be an integer from 1 to 2147483647.
 
   Types: [`ShipmentOutput`](#shipmentoutput)
 
@@ -7684,6 +7703,17 @@ Exact-money refund input for agent and financial integrations.
 | `trackingNumber?` | `string` |  |
 | `recipientEmail?` | `string` |  |
 | `recipientPhone?` | `string` |  |
+| `items?` | `Array<CreateShipmentItemInput>` | Order-linked manifest items, validated atomically with shipment creation. Types: [`CreateShipmentItemInput`](#createshipmentiteminput) |
+
+### CreateShipmentItemInput
+
+| Field | Type | Description |
+|---|---|---|
+| `orderItemId?` | `string` |  |
+| `productId?` | `string` |  |
+| `sku` | `string` |  |
+| `name` | `string` |  |
+| `quantity` | `number` | Positive integer, at most 2147483647; fractional values are refused. |
 
 ### CreateShippingZoneInput
 
@@ -12267,7 +12297,7 @@ Types: [`ShippingCarrier`](#shippingcarrier)
 
 ### ShippingCarrierInput
 
-Carriers `CreateShipmentInput.carrier` recognises; anything else is stored as `other`.
+Carriers `CreateShipmentInput.carrier` recognises; anything else is refused with `VALIDATION`.
 
 ```ts
 type ShippingCarrierInput = 'ups' | 'fedex' | 'usps' | 'dhl' | 'other'
@@ -13484,7 +13514,7 @@ Patch supported shipment fields through the native repository.
 
 | Field | Type | Description |
 |---|---|---|
-| `expectedVersion?` | `number` |  |
+| `expectedVersion?` | `number` | Positive integer, at most 2147483647; stale versions are refused atomically. |
 | `status?` | `ShipmentStatus` | Types: [`ShipmentStatus`](#shipmentstatus) |
 | `carrier?` | `ShippingCarrier` | Types: [`ShippingCarrier`](#shippingcarrier) |
 | `trackingNumber?` | `string` |  |

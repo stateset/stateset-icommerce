@@ -68,8 +68,8 @@ function makeConfig({
   jwt = null,
   securityProfile = 'legacy',
   allowInsecureTransport = false,
-  tenantId = '550e8400-e29b-41d4-a716-446655440001',
-  storeId = '550e8400-e29b-41d4-a716-446655440002',
+  tenantId = '550e8400-e29b-41d4-a716-446655440002',
+  storeId = '550e8400-e29b-41d4-a716-446655440003',
   maxRetries = 3,
   baseDelay = 10,
   maxDelay = 100,
@@ -687,6 +687,82 @@ describe('SequencerClient — push', () => {
 describe('SequencerClient — pushWithRetry', () => {
   afterEach(() => restoreFetch());
 
+  it(
+    'cancels retry backoff immediately and reconnect does not revive the old batch',
+    { timeout: 3000 },
+    async () => {
+      const client = new SequencerClient(makeConfig({ baseDelay: 30000, maxDelay: 30000 }));
+      let attempts = 0;
+      client.push = async () => {
+        attempts++;
+        if (attempts === 1) throw new Error('temporary failure');
+        return { batchId: 'new-work' };
+      };
+      const batch = { agentId: UUID1, events: [makeEnvelope()] };
+      const cancelled = assert.rejects(client.pushWithRetry(batch), {
+        code: 'SEQUENCER_DISCONNECTED',
+      });
+      // Let the first rejection enter its 30-second backoff.
+      await new Promise((resolve) => setImmediate(resolve));
+      await client.disconnect();
+      client._request = async () => ({});
+      await client.connect();
+      await cancelled;
+      assert.equal(attempts, 1);
+      assert.equal((await client.pushWithRetry(batch)).batchId, 'new-work');
+      assert.equal(attempts, 2);
+    },
+  );
+
+  for (const explicit of [undefined, 0]) {
+    it(`honors zero retries from ${explicit === undefined ? 'configuration' : 'an explicit override'}`, async () => {
+      let attempts = 0;
+      mockFetch(() => {
+        attempts++;
+        throw new Error('unavailable');
+      });
+      const client = new SequencerClient(
+        makeConfig({ maxRetries: explicit === undefined ? 0 : 3, baseDelay: 1, maxDelay: 1 }),
+      );
+      await assert.rejects(
+        client.pushWithRetry({ agentId: UUID1, events: [makeEnvelope()] }, explicit),
+        /unavailable/,
+      );
+      assert.equal(attempts, 1);
+    });
+  }
+
+  for (const max of [-1, 0.5, Infinity, '2']) {
+    it(`refuses invalid retry limits before making a request: ${max}`, async () => {
+      let requests = 0;
+      mockFetch(() => {
+        requests++;
+        throw new Error('unexpected request');
+      });
+      const client = new SequencerClient(makeConfig());
+      await assert.rejects(
+        client.pushWithRetry({ agentId: UUID1, events: [makeEnvelope()] }, max),
+        /maxRetries/,
+      );
+      assert.equal(requests, 0);
+    });
+  }
+
+  for (const key of ['baseDelay', 'maxDelay']) {
+    it(`refuses an overflowing ${key} before making a request`, async () => {
+      let requests = 0;
+      mockFetch(() => {
+        requests++;
+      });
+      const client = new SequencerClient(makeConfig({ [key]: 2147483648 }));
+      await assert.rejects(
+        client.pushWithRetry({ agentId: UUID1, events: [makeEnvelope()] }),
+        new RegExp(key),
+      );
+      assert.equal(requests, 0);
+    });
+  }
+
   it('returns receipt immediately on first success', async () => {
     mockFetch(() => okResponse({ batchId: 'B-1', eventsAccepted: 1, headSequence: 1 }));
 
@@ -733,6 +809,62 @@ describe('SequencerClient — pushWithRetry', () => {
       client.pushWithRetry({ agentId: UUID1, events: [makeEnvelope()] }, 2),
     );
     assert.strictEqual(attempts, 3); // attempt 0, 1, 2
+  });
+});
+
+describe('SequencerClient — request deadline configuration', () => {
+  it('defaults to 30 seconds and reads the SyncConfig override', () => {
+    assert.equal(new SequencerClient(makeConfig()).requestTimeoutMs, 30000);
+    const config = new SyncConfig({
+      sequencer: { url: 'https://sequencer.invalid' },
+      identity: { tenantId: UUID2, storeId: UUID3 },
+      sync: { securityProfile: 'legacy', requestTimeoutMs: 250 },
+    });
+    assert.equal(new SequencerClient(config).requestTimeoutMs, 250);
+  });
+
+  for (const requestTimeoutMs of [0, -1, 0.5, Infinity, NaN, '100', 2147483648]) {
+    it(`refuses invalid request deadlines: ${String(requestTimeoutMs)}`, () => {
+      assert.throws(
+        () => new SequencerClient({ ...makeConfig(), requestTimeoutMs }),
+        /requestTimeoutMs/,
+      );
+    });
+  }
+});
+
+describe('SequencerClient — connection generation', () => {
+  it('a late cancelled handshake cannot mark a newer connection disconnected', async () => {
+    const client = new SequencerClient(makeConfig());
+    const handshake = Promise.withResolvers();
+    client._request = () => handshake.promise;
+    const cancelled = assert.rejects(client.connect(), { code: 'SEQUENCER_DISCONNECTED' });
+    await client.disconnect();
+    client._request = async () => ({});
+    await client.connect();
+    handshake.resolve({});
+    await cancelled;
+    assert.equal(client.isConnected(), true);
+  });
+
+  it('an old pull iterator stops yielding buffered events after disconnect and reconnect', async () => {
+    const client = new SequencerClient(makeConfig());
+    let requests = 0;
+    client.pull = async () => {
+      requests++;
+      return {
+        events: [{ sequenceNumber: 1 }, { sequenceNumber: 2 }],
+        nextSequence: 3,
+        hasMore: true,
+      };
+    };
+    const iterator = client.pullStream(0);
+    assert.equal((await iterator.next()).value.sequenceNumber, 1);
+    await client.disconnect();
+    client._request = async () => ({});
+    await client.connect();
+    await assert.rejects(iterator.next(), { code: 'SEQUENCER_DISCONNECTED' });
+    assert.equal(requests, 1);
   });
 });
 
@@ -855,7 +987,7 @@ describe('SequencerClient — pull', () => {
 
     const client = new SequencerClient(makeConfig());
     const result = await client.pull(42, 10);
-    assert.strictEqual(result.nextSequence, 43);
+    assert.strictEqual(result.nextSequence, 42);
   });
 
   it('returns headSequence from response', async () => {
@@ -885,6 +1017,38 @@ describe('SequencerClient — pull', () => {
 
 describe('SequencerClient — pullStream', () => {
   afterEach(() => restoreFetch());
+
+  it('follows an explicit continuation even when a page is shorter than the limit', async () => {
+    let page = 0;
+    mockFetch(() => {
+      page++;
+      return okResponse({
+        events: [makeServerEvent(page)],
+        head_sequence: 2,
+        has_more: page === 1,
+      });
+    });
+    const client = new SequencerClient(makeConfig());
+    const seen = [];
+    for await (const event of client.pullStream(1)) seen.push(event.sequenceNumber);
+    assert.deepEqual(seen, [1, 2]);
+    assert.equal(page, 2);
+  });
+
+  it('refuses a non-progressing empty continuation instead of looping', async () => {
+    let calls = 0;
+    mockFetch(() => {
+      calls++;
+      return okResponse({ events: [], head_sequence: 10, has_more: true });
+    });
+    const client = new SequencerClient(makeConfig());
+    await assert.rejects(async () => {
+      for await (const _event of client.pullStream(1)) {
+        /* consume */
+      }
+    }, /Invalid pull page/);
+    assert.equal(calls, 1);
+  });
 
   it('yields all events from a single page', async () => {
     const events = [makeServerEvent(1), makeServerEvent(2)];
@@ -981,13 +1145,13 @@ describe('SequencerClient — getHead', () => {
     assert.strictEqual(state.storeId, UUID3);
   });
 
-  it('defaults headSequence to 0 when missing', async () => {
-    mockFetch(() => okResponse({}));
-
-    const client = new SequencerClient(makeConfig());
-    const state = await client.getHead();
-    assert.strictEqual(state.headSequence, 0);
-  });
+  for (const head of [undefined, null, false, '0', -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+    it(`rejects a missing or invalid head instead of reporting an empty store: ${String(head)}`, async () => {
+      mockFetch(() => okResponse({ head_sequence: head }));
+      const client = new SequencerClient(makeConfig());
+      await assert.rejects(client.getHead(), /Invalid remote head/);
+    });
+  }
 
   it('sets lastCommitmentId to undefined when no latest_commitment', async () => {
     mockFetch(() => okResponse({ head_sequence: 5 }));
@@ -2005,6 +2169,7 @@ describe('SequencerClient — verifyEventSignature', () => {
     const zeroCipherHash = Buffer.alloc(32, 0);
 
     const envelope = makeEnvelope({
+      payload: { test: 'sign' },
       payloadPlainHash: payloadPlainHash.toString('hex'),
       payloadCipherHash: zeroCipherHash.toString('hex'),
       agentKeyId: 1,
@@ -2046,6 +2211,7 @@ describe('SequencerClient — verifyEventSignature', () => {
     const payloadPlainHash = computePayloadPlainHash({ x: 1 });
     const zeroCipherHash = Buffer.alloc(32, 0);
     const envelope = makeEnvelope({
+      payload: { x: 1 },
       payloadPlainHash: payloadPlainHash.toString('hex'),
       payloadCipherHash: zeroCipherHash.toString('hex'),
     });
@@ -2127,6 +2293,7 @@ describe('SequencerClient — verifyEventSignature', () => {
       const payloadPlainHash = computePayloadPlainHash({ amount: 123 });
       const zeroCipherHash = Buffer.alloc(32, 0);
       const envelope = makeEnvelope({
+        payload: { amount: 123 },
         payloadPlainHash: payloadPlainHash.toString('hex'),
         payloadCipherHash: zeroCipherHash.toString('hex'),
         agentSignatureScheme: SIGNATURE_SCHEME_ED25519_ML_DSA_65,
@@ -2177,6 +2344,7 @@ describe('SequencerClient — verifyEventSignature', () => {
       const payloadPlainHash = computePayloadPlainHash({ amount: 321 });
       const zeroCipherHash = Buffer.alloc(32, 0);
       const envelope = makeEnvelope({
+        payload: { amount: 321 },
         payloadPlainHash: payloadPlainHash.toString('hex'),
         payloadCipherHash: zeroCipherHash.toString('hex'),
         agentSignatureScheme: SIGNATURE_SCHEME_ED25519_ML_DSA_65,

@@ -76,6 +76,28 @@ let on_event = Schedule::OnEvent("order.created".into());
 rather than being retried forever — the state machine rejects the transition. Timeouts
 are per-attempt, not per-job.
 
+The background runner polls ready handlers concurrently, saves each result as
+soon as it completes, and keeps serving status and trigger commands while other
+handlers await work. Triggers wait in the bounded queue when all execution slots
+are occupied. A handler panic is recorded as a failed attempt rather than ending
+the runner (with an unwinding build).
+
+`shutdown().await` drops active handler futures and records interrupted attempts
+as failures; their configured retry policy applies on durable restart. Queued
+operator triggers are cancelled. Recovered active jobs keep their existing
+identity and retry deadline during bootstrap. Job handlers must yield, support
+cancellation, and tolerate retries: cancellation cannot undo external side
+effects, and synchronous blocking work cannot be preempted by an async timeout.
+
+`FileJobStore` commits changes through a unique temporary snapshot, syncs its
+contents, and atomically replaces the previous file. On Unix it also syncs the
+containing directory. Failures before replacement preserve both the previous
+snapshot and the in-memory state. A directory-sync failure after replacement is
+reported as uncertain durability; memory continues to match the visible file.
+Empty, malformed, or mismatched-ID snapshots fail to open rather than silently
+starting an empty queue. Share a store through `clone()` for concurrent callers;
+independent writers to the same snapshot path are not coordinated.
+
 ## Part of StateSet iCommerce
 
 Designed to run alongside

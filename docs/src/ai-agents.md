@@ -14,14 +14,14 @@ MCP-native clients.
 ## Install
 
 ```bash
-npm install @stateset/cli@1.36.0 @stateset/embedded@1.36.0
+npm install @stateset/cli@1.37.0 @stateset/embedded@1.37.0
 ```
 
 For Python runtimes:
 
 ```bash
-pip install stateset-embedded==1.36.0
-pip install "stateset-embedded[agents]==1.36.0"
+pip install stateset-embedded==1.37.0
+pip install "stateset-embedded[agents]==1.37.0"
 ```
 
 From the repo checkout, the examples under `examples/agents/` also run against
@@ -488,7 +488,7 @@ The setup creates a configuration entry in your MCP client's config file:
   "mcpServers": {
     "stateset-commerce": {
       "command": "npx",
-      "args": ["-y", "-p", "@stateset/cli@1.36.0", "stateset-mcp", "--db", "./store.db"]
+      "args": ["-y", "-p", "@stateset/cli@1.37.0", "stateset-mcp", "--db", "./store.db"]
     }
   }
 }

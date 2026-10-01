@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.36.0",
+    "version": "1.37.0",
     "memberCount": 30,
     "defaultMemberCount": 19,
     "rustCrateCount": 22,
@@ -173,7 +173,8 @@
       ],
       "stateset-crypto": [],
       "stateset-db": [
-        "stateset-core"
+        "stateset-core",
+        "stateset-migrations"
       ],
       "stateset-dotnet": [
         "stateset-core",
@@ -245,7 +246,9 @@
       "stateset-migrations": [],
       "stateset-observability": [],
       "stateset-policy": [],
-      "stateset-pricing": [],
+      "stateset-pricing": [
+        "stateset-primitives"
+      ],
       "stateset-primitives": [],
       "stateset-sdk": [
         "stateset-core",
@@ -278,12 +281,12 @@
         "stateset-migrations",
         "stateset-observability",
         "stateset-policy",
-        "stateset-pricing",
         "stateset-primitives"
       ],
       [
         "stateset-core",
         "stateset-icp-iut",
+        "stateset-pricing",
         "stateset-sync"
       ],
       [
@@ -364,13 +367,14 @@
       },
       {
         "name": "stateset-primitives",
-        "dependentCount": 6,
+        "dependentCount": 7,
         "dependents": [
           "stateset-core",
           "stateset-embedded-python",
           "stateset-ffi",
           "stateset-http",
           "stateset-java",
+          "stateset-pricing",
           "stateset-sdk"
         ]
       },
@@ -435,6 +439,13 @@
         "dependentCount": 1,
         "dependents": [
           "stateset-sdk"
+        ]
+      },
+      {
+        "name": "stateset-migrations",
+        "dependentCount": 1,
+        "dependents": [
+          "stateset-db"
         ]
       },
       {
@@ -578,11 +589,11 @@
         "count": 29
       },
       {
-        "name": "adapters",
-        "count": 20
+        "name": "sync",
+        "count": 26
       },
       {
-        "name": "sync",
+        "name": "adapters",
         "count": 20
       },
       {
@@ -627,6 +638,10 @@
       },
       {
         "name": "autonomous",
+        "count": 3
+      },
+      {
+        "name": "compliance",
         "count": 3
       },
       {
@@ -743,10 +758,6 @@
       },
       {
         "name": "commerce.js",
-        "count": 1
-      },
-      {
-        "name": "compliance",
         "count": 1
       },
       {

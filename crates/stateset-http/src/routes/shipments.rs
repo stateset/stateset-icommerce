@@ -4,12 +4,13 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 
 use crate::dto::{
-    CancelShipmentRequest, CreateShipmentRequest, ShipmentFilterParams, ShipmentListResponse,
-    ShipmentResponse, UpdateShipmentRequest, finalize_page, overfetch_limit,
+    CancelShipmentRequest, CreateShipmentItemRequest, CreateShipmentRequest, ShipmentFilterParams,
+    ShipmentItemResponse, ShipmentListResponse, ShipmentResponse, UpdateShipmentRequest,
+    finalize_page, overfetch_limit,
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
@@ -26,6 +27,8 @@ pub fn router() -> Router<AppState> {
         .route("/shipments/{id}", get(get_shipment).patch(update_shipment))
         .route("/shipments/{id}/cancel", post(cancel_shipment))
         .route("/shipments/{id}/deliver", post(deliver_shipment))
+        .route("/shipments/{id}/items", post(add_shipment_item))
+        .route("/shipments/{id}/items/{item_id}", delete(remove_shipment_item))
 }
 
 /// `GET /api/v1/shipments/:id`
@@ -178,10 +181,77 @@ pub(crate) async fn create_shipment(
         recipient_phone: req.recipient_phone,
         shipping_address: req.shipping_address.unwrap_or_default(),
         notes: req.notes,
+        items: req.items.map(|items| items.into_iter().map(Into::into).collect()),
         ..Default::default()
     };
     let shipment = commerce.shipments().create(input)?;
     Ok((StatusCode::CREATED, Json(ShipmentResponse::from(shipment))))
+}
+
+/// Optional parent version for packing edits. Checked inside the native transaction.
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[serde(deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct PackingPrecondition {
+    /// Version read from the shipment; stale edits return 409.
+    expected_version: Option<i32>,
+}
+
+/// Add manifest contents while packing, using native order allocation guards.
+#[utoipa::path(post, path = "/api/v1/shipments/{id}/items", tag = "shipments",
+    params(("id" = String, Path, description = "Shipment ID (UUID)"), PackingPrecondition),
+    request_body = CreateShipmentItemRequest,
+    responses((status = 201, description = "Manifest item added", body = ShipmentItemResponse),
+        (status = 400, description = "Malformed or unknown version precondition"),
+        (status = 404, description = "Shipment not found", body = ErrorBody),
+        (status = 409, description = "Stale shipment version", body = ErrorBody),
+        (status = 422, description = "Invalid allocation or shipment no longer packing", body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn add_shipment_item(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<ShipmentId>,
+    Query(precondition): Query<PackingPrecondition>,
+    Json(req): Json<CreateShipmentItemRequest>,
+) -> Result<(StatusCode, Json<ShipmentItemResponse>), HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let item = commerce.shipments().add_item_with_version(
+        id,
+        req.into(),
+        precondition.expected_version,
+    )?;
+    Ok((StatusCode::CREATED, Json(item.into())))
+}
+
+/// Remove a manifest item belonging to this shipment. Requires delete permission.
+#[utoipa::path(delete, path = "/api/v1/shipments/{id}/items/{item_id}", tag = "shipments",
+    params(("id" = String, Path, description = "Shipment ID (UUID)"),
+        ("item_id" = String, Path, description = "Shipment item ID (UUID)"), PackingPrecondition),
+    responses((status = 204, description = "Manifest item removed"),
+        (status = 400, description = "Malformed or unknown version precondition"),
+        (status = 404, description = "Shipment or its item not found", body = ErrorBody),
+        (status = 409, description = "Stale shipment version", body = ErrorBody),
+        (status = 422, description = "Shipment no longer packing", body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn remove_shipment_item(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((id, item_id)): Path<(ShipmentId, uuid::Uuid)>,
+    Query(precondition): Query<PackingPrecondition>,
+) -> Result<StatusCode, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let shipment = commerce
+        .shipments()
+        .get(id)?
+        .ok_or_else(|| HttpError::NotFound(format!("Shipment {id} not found")))?;
+    // Parent linkage is immutable. Never let an item ID bypass the path's shipment scope.
+    if !shipment.items.iter().any(|item| item.id == item_id) {
+        return Err(HttpError::NotFound(format!("Item {item_id} not found in shipment {id}")));
+    }
+    commerce.shipments().remove_item_with_version(item_id, precondition.expected_version)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Patch one native shipment without skipping lifecycle guards.

@@ -43,7 +43,7 @@ impl HttpIdempotencyRepository for SqliteHttpIdempotencyRepository {
         conn.execute(
             "DELETE FROM http_idempotency_keys
              WHERE tenant = ?1 AND idempotency_key = ?2
-               AND (created_at < ?3 OR
+               AND response_status != 0 AND (created_at < ?3 OR
                     (created_at = ?3 AND created_at_sub_ms_ns IS NOT NULL
                      AND created_at_sub_ms_ns <= ?4))",
             rusqlite::params![
@@ -136,14 +136,42 @@ impl HttpIdempotencyRepository for SqliteHttpIdempotencyRepository {
         Ok(inserted > 0)
     }
 
+    fn complete(&self, record: &HttpIdempotencyRecord) -> Result<bool> {
+        if record.response_status == 0 {
+            return Err(CommerceError::ValidationError(
+                "completion requires an HTTP response".into(),
+            ));
+        }
+        let updated = self
+            .conn()?
+            .execute(
+                "UPDATE http_idempotency_keys SET response_status = ?1, content_type = ?2,
+             response_body = ?3, created_at = ?4, created_at_sub_ms_ns = ?5
+             WHERE tenant = ?6 AND idempotency_key = ?7 AND request_fingerprint = ?8
+               AND response_status = 0",
+                rusqlite::params![
+                    record.response_status,
+                    record.content_type,
+                    record.response_body,
+                    record.created_at.timestamp_millis(),
+                    i64::from(record.created_at.timestamp_subsec_nanos() % 1_000_000),
+                    record.tenant,
+                    record.idempotency_key,
+                    record.request_fingerprint
+                ],
+            )
+            .map_err(map_err)?;
+        Ok(updated == 1)
+    }
+
     fn purge_expired(&self, expired_before: DateTime<Utc>) -> Result<u64> {
         let conn = self.conn()?;
         let deleted = conn
             .execute(
                 "DELETE FROM http_idempotency_keys
-                 WHERE created_at < ?1 OR
+                 WHERE response_status != 0 AND (created_at < ?1 OR
                        (created_at = ?1 AND created_at_sub_ms_ns IS NOT NULL
-                        AND created_at_sub_ms_ns <= ?2)",
+                        AND created_at_sub_ms_ns <= ?2))",
                 rusqlite::params![
                     expired_before.timestamp_millis(),
                     i64::from(expired_before.timestamp_subsec_nanos() % 1_000_000),
@@ -195,6 +223,29 @@ mod tests {
         // Other tenants and keys see nothing.
         assert!(repo.get("tenant-b", "k1", cutoff).unwrap().is_none());
         assert!(repo.get("tenant-a", "other", cutoff).unwrap().is_none());
+    }
+
+    #[test]
+    fn unresolved_claims_never_expire_and_complete_once() {
+        let repo = repo();
+        let now = Utc::now();
+        let mut pending = record("pending", now - Duration::days(30));
+        pending.response_status = 0;
+        pending.response_body.clear();
+        assert!(repo.put(&pending).unwrap());
+        assert!(!repo.put(&pending).unwrap());
+        assert_eq!(repo.purge_expired(now).unwrap(), 0);
+        assert_eq!(repo.get("tenant-a", "pending", now).unwrap().unwrap().response_status, 0);
+        let mut response = record("pending", now);
+        response.request_fingerprint = "different".into();
+        assert!(!repo.complete(&response).unwrap());
+        response.request_fingerprint = pending.request_fingerprint;
+        assert!(repo.complete(&response).unwrap());
+        assert!(!repo.complete(&response).unwrap());
+        assert_eq!(
+            repo.get("tenant-a", "pending", now - Duration::hours(1)).unwrap().unwrap(),
+            response
+        );
     }
 
     #[test]

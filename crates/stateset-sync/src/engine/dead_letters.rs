@@ -81,6 +81,7 @@ impl SyncEngine {
     /// [`SyncError::DuplicateEvent`] if the event is already pending in the
     /// outbox, or [`SyncError::Storage`] if persistence fails.
     pub fn requeue_dead_letter(&mut self, event_id: Uuid) -> Result<u64, SyncError> {
+        self.finish_outbox_cleanup()?;
         let Some(index) = self.dead_letter_index(event_id) else {
             return Err(SyncError::NotFound(format!("dead-letter event {event_id}")));
         };

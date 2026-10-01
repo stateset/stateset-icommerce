@@ -743,14 +743,15 @@ fn outbox_leases_prevent_double_delivery_and_dead_letter_exhausted_events() {
         .expect("create event");
     let claimed = db.kernel_outbox().claim_pending("worker-a", 10, 30).expect("claim event");
     assert_eq!(claimed.len(), 1);
-    assert_eq!(claimed[0].lease_owner.as_deref(), Some("worker-a"));
+    let token_a = claimed[0].lease_owner.as_deref().unwrap();
+    assert!(token_a.starts_with("worker-a:"));
     assert!(
         db.kernel_outbox().claim_pending("worker-b", 10, 30).expect("competing claim").is_empty()
     );
     assert!(!db.kernel_outbox().mark_published_by(claimed[0].id, "worker-b").expect("wrong ack"));
     assert!(
         db.kernel_outbox()
-            .record_failure_by(claimed[0].id, "worker-a", "temporary", 60, 2)
+            .record_failure_by(claimed[0].id, token_a, "temporary", 60, 2)
             .expect("schedule retry")
     );
     assert!(db.kernel_outbox().pending(10).expect("delayed pending").is_empty());
@@ -771,7 +772,13 @@ fn outbox_leases_prevent_double_delivery_and_dead_letter_exhausted_events() {
     assert_eq!(retried[0].attempts, 1);
     assert!(
         db.kernel_outbox()
-            .record_failure_by(retried[0].id, "worker-b", "permanent", 60, 2)
+            .record_failure_by(
+                retried[0].id,
+                retried[0].lease_owner.as_deref().unwrap(),
+                "permanent",
+                60,
+                2
+            )
             .expect("dead letter")
     );
     assert!(db.kernel_outbox().pending(10).expect("pending after dead letter").is_empty());
@@ -796,7 +803,11 @@ fn outbox_leases_prevent_double_delivery_and_dead_letter_exhausted_events() {
     assert_eq!(health.ready, 1);
     let redriven = db.kernel_outbox().claim_pending("worker-c", 1, 30).expect("claim redrive");
     assert_eq!(redriven[0].attempts, 0);
-    assert!(db.kernel_outbox().mark_published_by(redriven[0].id, "worker-c").expect("ack"));
+    assert!(
+        db.kernel_outbox()
+            .mark_published_by(redriven[0].id, redriven[0].lease_owner.as_deref().unwrap())
+            .expect("ack")
+    );
     assert_eq!(db.kernel_outbox().delivery_health().expect("final health").published, 1);
 }
 

@@ -11,6 +11,7 @@ import { createOutbox } from '../sync/outbox.js';
 import { createSyncEngine } from '../sync/engine.js';
 import { createSequencerClient } from '../sync/client.js';
 import { getPayloadWrapScheme } from '../sync/pqc.js';
+import { readSyncStatus } from '../sync/status.js';
 
 function getDefaultSecurityProfile() {
   if (!isSyncConfigured()) {
@@ -124,7 +125,7 @@ export const syncTools = [
   {
     name: 'sync_status',
     description:
-      'Get the current sync status between local database and remote sequencer. Shows pending events, sync lag, and connection status.',
+      'Get sync connection, sequence gap, pending writes, verified receive counts, quarantine and retained failure diagnostics. Received events are not projected into commerce records.',
     inputSchema: {},
     permission: 'read',
     handler: async ({ commerce }) => {
@@ -137,9 +138,7 @@ export const syncTools = [
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
       const outbox = createConfiguredOutbox(requireSyncDb(commerce));
-      const stats = outbox.getStats();
-      const syncState = outbox.getSyncState();
-      let remoteHead = syncState.headSequence;
+      let remoteHead;
       let connected = false;
       let connectionError = null;
       try {
@@ -151,30 +150,12 @@ export const syncTools = [
       } catch (error) {
         connectionError = error.message;
       }
-      const lag = remoteHead - syncState.lastPulledSequence;
       return {
+        ...readSyncStatus(outbox, { connected, remoteHead }),
         configured: true,
-        connected,
         connectionError,
         sequencer: config.sequencerUrl,
         identity: { tenantId: config.tenantId, storeId: config.storeId, agentId: config.agentId },
-        localState: {
-          lastPushedSequence: syncState.lastPushedSequence,
-          lastPulledSequence: syncState.lastPulledSequence,
-          lastSyncAt: syncState.lastSyncAt,
-        },
-        remoteHead,
-        lag,
-        outbox: {
-          total: stats.total,
-          pending: stats.pending,
-          synced: stats.synced,
-          failed: stats.failed,
-          rejected: stats.rejected,
-          oldestPending: stats.oldestPending,
-          lastSynced: stats.lastSynced,
-        },
-        health: lag > 100 ? 'degraded' : connected ? 'healthy' : 'offline',
       };
     },
   },

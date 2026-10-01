@@ -559,6 +559,26 @@ jobs:
         run: |
           cargo test -p stateset-crypto -p stateset-sync
 
+      - name: Test pricing, migrations, jobs, schemas, and host boundaries
+        run: |
+          cargo test --locked -p stateset-primitives -p stateset-pricing \
+            -p stateset-migrations -p stateset-jobs -p stateset-macros \
+            -p stateset-http -p stateset-ffi
+          cargo check --locked --release -p stateset-ffi
+
+      - name: Install Node for protocol interoperability tests
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Test policy, authorization, agent commerce, and SDK contracts
+        # The Rust protocol client drives the zero-dependency JS reference
+        # handler and must fail if that integration cannot actually execute.
+        run: |
+          cargo test --locked -p stateset-policy -p stateset-authz -p stateset-a2a \
+            -p stateset-sdk -p stateset-icp-iut -p stateset-icp-client
+          cargo test --locked -p stateset-sdk --no-default-features --features sync
+
       - name: Run documented Rust quickstart
         run: bash scripts/ci/check_rust_quickstart.sh
 
@@ -765,7 +785,7 @@ jobs:
   cli:
     name: CLI Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
 
     steps:
       - uses: actions/checkout@v7
@@ -820,6 +840,8 @@ jobs:
 
       # Runs the suite once, with coverage, and enforces the floor that used to
       # live in coverage.yml's duplicate `cli-coverage` job.
+      # Includes native-outbox-pump.test.js, which builds the Rust fixture from
+      # this checkout and verifies signed envelopes through REST serialization.
       - name: Test (with coverage)
         working-directory: cli
         # Explicit `shell: bash` enables pipefail so test failures are not
@@ -1104,6 +1126,9 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Check portable pricing in release mode
+        run: cargo check --locked --release -p stateset-pricing --target wasm32-unknown-unknown
 
       - name: Build WASM crate
         run: cargo build -p stateset-embedded-wasm --target wasm32-unknown-unknown

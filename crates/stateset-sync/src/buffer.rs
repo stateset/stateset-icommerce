@@ -25,13 +25,18 @@ use crate::event::SyncEvent;
 /// assert_eq!(evicted.unwrap().event_type, "a");
 /// assert_eq!(buffer.len(), 2);
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EventBuffer {
     buffer: VecDeque<SyncEvent>,
     capacity: usize,
 }
 
 impl EventBuffer {
+    /// Restore all pending events, including a backlog above a reduced limit.
+    pub(crate) fn from_snapshot(capacity: usize, events: Vec<SyncEvent>) -> Self {
+        Self { buffer: events.into(), capacity }
+    }
+
     /// Create a new `EventBuffer` with the given capacity.
     ///
     /// A capacity of 0 means the buffer will evict every event immediately.

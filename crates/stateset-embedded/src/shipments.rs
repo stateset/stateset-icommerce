@@ -208,6 +208,25 @@ impl Shipments {
         self.db.shipments().remove_item(item_id)
     }
 
+    /// Add an item with a transactionally checked parent version precondition.
+    pub fn add_item_with_version(
+        &self,
+        shipment_id: ShipmentId,
+        item: CreateShipmentItem,
+        expected_version: Option<i32>,
+    ) -> Result<ShipmentItem> {
+        self.db.shipments().add_item_with_version(shipment_id, item, expected_version)
+    }
+
+    /// Remove an item with a transactionally checked parent version precondition.
+    pub fn remove_item_with_version(
+        &self,
+        item_id: Uuid,
+        expected_version: Option<i32>,
+    ) -> Result<()> {
+        self.db.shipments().remove_item_with_version(item_id, expected_version)
+    }
+
     /// Get items in a shipment
     pub fn get_items(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentItem>> {
         self.db.shipments().get_items(shipment_id)

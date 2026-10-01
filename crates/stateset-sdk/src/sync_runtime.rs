@@ -603,10 +603,35 @@ impl SyncRuntime {
         self.engine.buffered_count()
     }
 
-    /// Drain all buffered pulled events.
+    /// Compatibility drain; returns no events on a storage failure and retains
+    /// the buffer. Prefer [`Self::try_drain_buffer`] or acknowledgement after
+    /// application commit.
     #[must_use]
     pub fn drain_buffer(&mut self) -> Vec<SyncEvent> {
         self.engine.drain_buffer()
+    }
+
+    /// Read pending inbox events without consuming them.
+    #[must_use]
+    pub fn buffered_events(&self) -> Vec<SyncEvent> {
+        self.engine.buffered_events()
+    }
+
+    /// Drain pending events, reporting storage failures instead of hiding them.
+    /// Prefer acknowledgement after application commit for crash-safe processing.
+    ///
+    /// # Errors
+    /// Returns the same storage errors as [`SyncEngine::try_drain_buffer`].
+    pub fn try_drain_buffer(&mut self) -> Result<Vec<SyncEvent>, SyncError> {
+        self.engine.try_drain_buffer()
+    }
+
+    /// Acknowledge event ids after their application changes have committed.
+    ///
+    /// # Errors
+    /// Returns the same storage errors as [`SyncEngine::acknowledge_buffered_events`].
+    pub fn acknowledge_buffered_events(&mut self, event_ids: &[Uuid]) -> Result<usize, SyncError> {
+        self.engine.acknowledge_buffered_events(event_ids)
     }
 
     /// Snapshot runtime status, confirmations, dead letters, and buffered events.
@@ -1452,6 +1477,20 @@ mod tests {
         assert_eq!(drained[0].entity_id, "SKU-1");
         assert_eq!(drained[0].canonical_sequence(), Some(7));
         assert_eq!(runtime.buffered_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn runtime_reads_and_acknowledges_buffered_events() {
+        let mut engine = SyncEngine::new(make_config()).unwrap();
+        let page = engine.pull(&PullTransport).await.unwrap();
+        let mut runtime = SyncRuntime::from_parts(engine, make_runtime_transport());
+        assert_eq!(runtime.buffered_events(), page.events);
+        assert_eq!(runtime.buffered_count(), 1);
+        let ids: Vec<_> = page.events.iter().map(|event| event.id).collect();
+        assert_eq!(runtime.acknowledge_buffered_events(&ids).unwrap(), 1);
+        assert_eq!(runtime.acknowledge_buffered_events(&ids).unwrap(), 0);
+        assert!(runtime.try_drain_buffer().unwrap().is_empty());
+        assert_eq!(runtime.snapshot().status.buffered_events, 0);
     }
 
     #[tokio::test]

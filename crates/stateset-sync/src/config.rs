@@ -140,7 +140,7 @@ pub struct SyncConfig {
     pub tenant_id: String,
     /// Store identifier within the tenant.
     pub store_id: String,
-    /// Maximum number of events the in-memory buffer can hold.
+    /// Maximum pending pulled events before the engine applies backpressure.
     pub buffer_capacity: usize,
     /// Maximum events per push/pull batch.
     pub batch_size: usize,

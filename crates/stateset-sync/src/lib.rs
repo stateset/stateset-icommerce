@@ -31,6 +31,7 @@ pub mod event;
 pub mod http_transport;
 pub mod kernel;
 pub mod outbox;
+mod snapshot;
 pub mod state;
 pub mod transport;
 

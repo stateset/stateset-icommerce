@@ -274,7 +274,7 @@ pub fn try_evaluate_promotions(
         );
     }
 
-    let total_discount: Decimal = applied.iter().map(|a| a.discount_amount).sum();
+    let total_discount = crate::arithmetic::sum(applied.iter().map(|a| a.discount_amount))?;
 
     Ok(PromotionResult { applied, rejected, total_discount })
 }
@@ -351,9 +351,9 @@ fn check_rules(rules: &[PromotionRule], ctx: &PromotionContext) -> Vec<String> {
 fn try_compute_discount_amount(discount: &LineDiscount, base: Decimal) -> PricingResult<Decimal> {
     validate_base_discount(discount, base)?;
     let amount = match discount {
-        LineDiscount::Percentage(pct) => base * *pct,
+        LineDiscount::Percentage(pct) => crate::arithmetic::mul(base, *pct)?,
         LineDiscount::FixedAmount(amt) => *amt,
-        LineDiscount::FixedPrice(price) => base - *price,
+        LineDiscount::FixedPrice(price) => crate::arithmetic::sub(base, *price)?,
     };
     Ok(amount)
 }

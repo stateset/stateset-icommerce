@@ -52,3 +52,7 @@ stateset-crypto = { workspace = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "sdk_integration_test"
+required-features = ["core"]

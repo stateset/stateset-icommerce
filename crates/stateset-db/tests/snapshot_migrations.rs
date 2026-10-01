@@ -47,14 +47,9 @@ fn fts5_available(conn: &Connection) -> bool {
 }
 
 fn expected_applied_migration_names(conn: &Connection) -> Vec<String> {
-    let mut names = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))
-        .expect("Failed to list migrations directory")
-        .map(|entry| entry.expect("Failed to read migrations directory entry"))
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| name.ends_with(".sql"))
-        .map(|name| {
-            name.strip_suffix(".sql").expect("Migration file should end with .sql").to_string()
-        })
+    let mut names = stateset_db::migrations::known_migration_names()
+        .into_iter()
+        .map(str::to_owned)
         .collect::<Vec<_>>();
 
     names.sort();

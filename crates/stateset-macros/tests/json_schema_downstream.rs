@@ -5,6 +5,19 @@
 
 use stateset_macros::JsonSchema;
 
+#[derive(Debug, JsonSchema, serde::Serialize)]
+pub struct ExactMoney {
+    pub amount: rust_decimal::Decimal,
+}
+
+#[test]
+fn decimal_schema_matches_wire_serialization() {
+    let value = ExactMoney { amount: "12345678901234567890.12".parse().unwrap() };
+    let wire = serde_json::to_value(&value).unwrap();
+    assert!(wire["amount"].is_string());
+    assert_eq!(exact_money_json_schema()["properties"]["amount"]["type"], "string");
+}
+
 #[derive(Debug, JsonSchema)]
 pub struct CreateOrder {
     pub customer_id: String,

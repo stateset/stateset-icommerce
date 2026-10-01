@@ -11,6 +11,7 @@ impl SyncEngine {
     ///
     /// Returns [`SyncError::OutboxFull`] if the outbox is at capacity.
     pub fn record(&mut self, event: SyncEvent) -> Result<u64, SyncError> {
+        self.finish_outbox_cleanup()?;
         let seq = self.outbox.append(event)?;
         self.state.local_head = seq;
         self.state.pending_count = self.outbox.count();
@@ -82,6 +83,11 @@ impl SyncEngine {
     }
 
     pub(super) fn pending_events(&self) -> Vec<&SyncEvent> {
-        self.outbox.peek(self.outbox.count())
+        let removals: HashSet<_> = self.pending_outbox_removals.iter().copied().collect();
+        self.outbox
+            .peek(self.outbox.count())
+            .into_iter()
+            .filter(|event| !removals.contains(&event.id))
+            .collect()
     }
 }

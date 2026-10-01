@@ -392,7 +392,7 @@ Tier: **experimental** — needs a configured sync endpoint and a database handl
 
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
-| `sync_status` | experimental | read | Get the current sync status between local database and remote sequencer. Shows pending events, sync lag, and connection status. |
+| `sync_status` | experimental | read | Get sync connection, sequence gap, pending writes, verified receive counts, quarantine and retained failure diagnostics. Received events are not projected into commerce records. |
 | `sync_push` | experimental | write | Push pending local events to the remote sequencer. Requires --apply flag for actual push. |
 | `sync_pull` | experimental | write | Pull events from the remote sequencer and store them locally. |
 | `sync_outbox` | experimental | read | List events in the local outbox. Shows pending, synced, failed, and rejected events. |

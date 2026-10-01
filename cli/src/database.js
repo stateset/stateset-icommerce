@@ -9,13 +9,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
 
 const require = createRequire(import.meta.url);
 
 /** @type {any} */
 let _CommerceCtor = null;
-/** @type {any} */
-let _SqliteCtor = undefined;
 
 function getCommerceCtor() {
   if (_CommerceCtor) return _CommerceCtor;
@@ -34,71 +33,6 @@ function getCommerceCtor() {
 
   _CommerceCtor = CommerceCtor;
   return CommerceCtor;
-}
-
-function getSqliteCtor() {
-  if (_SqliteCtor !== undefined) return _SqliteCtor;
-
-  try {
-    const mod = require('better-sqlite3');
-    _SqliteCtor = mod.default || mod;
-  } catch {
-    _SqliteCtor = null;
-  }
-
-  return _SqliteCtor;
-}
-
-function getSqliteArtifactPath(basePath, suffix = '') {
-  return `${basePath}${suffix}`;
-}
-
-function copySqliteArtifacts(sourceBasePath, targetBasePath, { removeStaleSidecars = false } = {}) {
-  const suffixes = ['', '-wal', '-shm'];
-  const copied = [];
-
-  for (const suffix of suffixes) {
-    const sourcePath = getSqliteArtifactPath(sourceBasePath, suffix);
-    const targetPath = getSqliteArtifactPath(targetBasePath, suffix);
-
-    if (!fs.existsSync(sourcePath)) {
-      if (removeStaleSidecars && suffix !== '' && fs.existsSync(targetPath)) {
-        fs.unlinkSync(targetPath);
-      }
-      continue;
-    }
-
-    fs.copyFileSync(sourcePath, targetPath);
-    copied.push(targetPath);
-  }
-
-  return copied;
-}
-
-function totalArtifactSize(paths) {
-  return paths.reduce((total, artifactPath) => total + fs.statSync(artifactPath).size, 0);
-}
-
-function checkpointSqliteDatabase(resolvedPath) {
-  const Database = getSqliteCtor();
-  if (!Database || resolvedPath === ':memory:' || !fs.existsSync(resolvedPath)) {
-    return;
-  }
-
-  let db = null;
-  try {
-    db = new Database(resolvedPath, { fileMustExist: true });
-    db.pragma('busy_timeout = 5000');
-    db.pragma('wal_checkpoint(PASSIVE)');
-  } catch (err) {
-    console.debug('[database] WAL checkpoint skipped:', err.message || err);
-  } finally {
-    try {
-      db?.close();
-    } catch (err) {
-      console.debug('[database] SQLite close failed:', err.message || err);
-    }
-  }
 }
 
 /**
@@ -308,58 +242,106 @@ export class DatabaseManager {
   }
 
   /**
-   * Backup database
+   * Take a consistent native-engine snapshot plus its checksum manifest.
+   * Await this method. The source may remain open and accept writes.
    */
-  backup(dbPath = this.activeConnection, backupDir = null) {
+  async backup(dbPath = this.activeConnection || this.defaultPath, backupDir = null) {
     const resolvedPath = this.resolvePath(dbPath);
-
-    if (!this.exists(dbPath)) {
+    const cached = this.connections.get(resolvedPath)?.commerce;
+    if (!cached && (resolvedPath === ':memory:' || !this.exists(dbPath))) {
       throw new Error(`Database does not exist: ${resolvedPath}`);
     }
 
-    const targetDir = backupDir || path.join(os.homedir(), '.stateset', 'backups');
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
-    }
-
+    const targetDir = this.resolvePath(
+      backupDir || path.join(os.homedir(), '.stateset', 'backups'),
+    );
+    fs.mkdirSync(targetDir, { recursive: true });
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const basename = path.basename(resolvedPath, '.db');
-    const backupPath = path.join(targetDir, `${basename}-${timestamp}.db`);
-
-    checkpointSqliteDatabase(resolvedPath);
-    const copiedArtifacts = copySqliteArtifacts(resolvedPath, backupPath);
-
-    return {
-      source: resolvedPath,
-      backup: backupPath,
-      size: totalArtifactSize(copiedArtifacts),
-    };
+    const basename = resolvedPath === ':memory:' ? 'memory' : path.basename(resolvedPath, '.db');
+    const backupPath = path.join(targetDir, `${basename}-${timestamp}-${randomUUID()}.db`);
+    const commerce = cached || new (getCommerceCtor())(resolvedPath);
+    try {
+      const report = await commerce.maintenance.backup(backupPath);
+      return {
+        source: resolvedPath,
+        backup: report.backupPath,
+        size: report.manifest.sizeBytes,
+        manifestPath: report.manifestPath,
+        manifest: report.manifest,
+      };
+    } finally {
+      // Borrowed handles stay open; temporary handles never enter the manager's cache.
+      if (!cached) await commerce.close();
+    }
   }
 
   /**
-   * Restore from backup
+   * Verify and restore a backup to a NEW, offline database path. Await this method.
+   * Existing files (including empty files and SQLite sidecars) are never replaced.
+   * Coordinate recovery/cutover with all external readers and writers separately.
    */
-  restore(backupPath, targetPath = null) {
-    if (!fs.existsSync(backupPath)) {
-      throw new Error(`Backup does not exist: ${backupPath}`);
+  async restore(backupPath, targetPath = null) {
+    const resolvedBackup = this.resolvePath(backupPath);
+    if (!fs.existsSync(resolvedBackup)) {
+      throw new Error(`Backup does not exist: ${resolvedBackup}`);
     }
-
-    const target = targetPath || this.defaultPath;
-    const resolvedTarget = this.resolvePath(target);
-
-    // Close any existing connection
-    this.close(target);
-
-    // Copy the full SQLite artifact set and remove stale sidecars if needed.
-    const copiedArtifacts = copySqliteArtifacts(backupPath, resolvedTarget, {
-      removeStaleSidecars: true,
-    });
-
-    return {
-      backup: backupPath,
-      restored: resolvedTarget,
-      size: totalArtifactSize(copiedArtifacts),
+    const resolvedTarget = this.resolvePath(targetPath || this.defaultPath);
+    if (resolvedTarget === ':memory:') {
+      throw new Error('Restore requires a new file path, not :memory:');
+    }
+    const assertNewTarget = () => {
+      if (this.connections.has(resolvedTarget)) {
+        throw new Error(`Restore target is managed by an open connection: ${resolvedTarget}`);
+      }
+      for (const suffix of ['', '-wal', '-shm', '-journal']) {
+        // lstat also rejects dangling symlinks; existsSync does not.
+        try {
+          fs.lstatSync(`${resolvedTarget}${suffix}`);
+        } catch (err) {
+          if (err.code === 'ENOENT') continue;
+          throw err;
+        }
+        throw new Error(`Restore requires a new database path: ${resolvedTarget}${suffix}`);
+      }
     };
+    assertNewTarget();
+    const parent = path.dirname(resolvedTarget);
+    fs.mkdirSync(parent, { recursive: true });
+    const stagingDir = fs.mkdtempSync(path.join(parent, '.stateset-restore-'));
+    let commerce;
+    try {
+      commerce = new (getCommerceCtor())(':memory:');
+      const stagedPath = path.join(stagingDir, 'restored.db');
+      const report = await commerce.maintenance.restore(resolvedBackup, stagedPath);
+      assertNewTarget();
+      // Same-filesystem hard-link publication is atomic and refuses an existing
+      // destination, including one created after the preflight check. Rename
+      // would silently overwrite it on POSIX systems.
+      fs.linkSync(stagedPath, resolvedTarget);
+      // The native restore fsyncs the file. Persist our final directory entry
+      // too on platforms that support opening directory handles.
+      if (process.platform !== 'win32') {
+        const directory = fs.openSync(parent, 'r');
+        try {
+          fs.fsyncSync(directory);
+        } finally {
+          fs.closeSync(directory);
+        }
+      }
+      return {
+        backup: resolvedBackup,
+        restored: resolvedTarget,
+        size: report.sizeBytes,
+        checksumVerified: report.checksumVerified,
+        schemaVersion: report.schemaVersion,
+      };
+    } finally {
+      try {
+        if (commerce) await commerce.close();
+      } finally {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+      }
+    }
   }
 
   /**

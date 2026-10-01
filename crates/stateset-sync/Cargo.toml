@@ -23,9 +23,9 @@ tokio = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
 stateset-crypto = { workspace = true }
+tempfile = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "test-util"] }
 proptest = "1.4"
 

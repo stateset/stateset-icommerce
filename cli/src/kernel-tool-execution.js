@@ -381,7 +381,10 @@ function payloadFor(toolName, params, issuedAt = new Date(), actorAddress = null
       return {
         order_id: params.orderId,
         carrier: normalizedEnum(params.carrier, SHIPPING_CARRIER_ALIASES),
-        shipping_method: normalizedEnum(params.service, SHIPPING_METHOD_ALIASES),
+        shipping_method: normalizedEnum(
+          params.shippingMethod ?? params.service,
+          SHIPPING_METHOD_ALIASES,
+        ),
         tracking_number: params.trackingNumber ?? null,
         recipient_name: params.recipientName,
         recipient_email: params.recipientEmail ?? null,
@@ -394,7 +397,14 @@ function payloadFor(toolName, params, issuedAt = new Date(), actorAddress = null
         signature_required: null,
         estimated_delivery: null,
         notes: null,
-        items: null,
+        items:
+          params.items?.map((item) => ({
+            order_item_id: item.orderItemId ?? null,
+            product_id: item.productId ?? null,
+            sku: item.sku,
+            name: item.name,
+            quantity: item.quantity,
+          })) ?? null,
       };
     case 'create_return':
       return {

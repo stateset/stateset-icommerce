@@ -6,6 +6,28 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.37.0] - 2026-10-01
+
+### Added
+
+- Version-checked shipment packing and lifecycle updates across the Rust,
+  HTTP, Node, and governed tool surfaces, with bounded integer validation and
+  durable conflict handling.
+- Durable synchronization recovery, payload integrity checks, scoped receive
+  validation, and isolated database maintenance tests.
+- Native-engine database manager backups with checksum manifests and safe,
+  non-overwriting recovery to a new path.
+
+### Changed
+
+- Compliance operations for file-backed stores run in a process-isolated
+  SQLite worker, avoiding multiple independently bundled SQLite libraries in
+  the commerce engine process.
+- GDPR erasure clears the customer email lookup key and related profile fields
+  so an erased address can be reused safely.
+- Release and generated-artifact checks now cover the expanded recovery,
+  synchronization, and shipment evidence surfaces.
+
 ## [1.36.0] - 2026-09-29
 
 ### Added

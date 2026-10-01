@@ -13,6 +13,49 @@ fn spec_json() -> Value {
     serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI spec should serialize to JSON")
 }
 
+#[test]
+fn shipment_manifest_contract_documents_paths_items_and_integer_bounds() {
+    let spec = spec_json();
+    let schemas = &spec["components"]["schemas"];
+    let item = &schemas["CreateShipmentItemRequest"];
+    assert_eq!(item["properties"]["quantity"]["type"], "integer");
+    assert_eq!(item["properties"]["quantity"]["minimum"].as_f64(), Some(1.0));
+    assert_eq!(item["properties"]["quantity"]["maximum"].as_f64(), Some(2147483647.0));
+    assert_eq!(item["additionalProperties"], false);
+    assert_eq!(
+        schemas["ShipmentResponse"]["properties"]["items"]["items"]["$ref"],
+        "#/components/schemas/ShipmentItemResponse"
+    );
+    assert!(
+        schemas["CreateShipmentRequest"]["properties"]["items"]
+            .to_string()
+            .contains("CreateShipmentItemRequest")
+    );
+    let paths = &spec["paths"];
+    for (path, method) in [
+        ("/api/v1/shipments/{id}/items", "post"),
+        ("/api/v1/shipments/{id}/items/{item_id}", "delete"),
+    ] {
+        let operation = &paths[path][method];
+        assert!(operation["responses"]["400"].is_object());
+        assert!(operation["responses"]["409"].is_object());
+        let precondition = operation["parameters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|parameter| parameter["name"] == "expected_version")
+            .unwrap();
+        assert_eq!(precondition["in"], "query");
+        assert_eq!(precondition["required"], false);
+        assert_eq!(precondition["schema"]["format"], "int32");
+    }
+
+    assert!(paths["/api/v1/shipments/{id}/items"]["post"]["responses"]["201"].is_object());
+    assert!(
+        paths["/api/v1/shipments/{id}/items/{item_id}"]["delete"]["responses"]["204"].is_object()
+    );
+}
+
 // ============================================================================
 // 1. Info Block Validation
 // ============================================================================

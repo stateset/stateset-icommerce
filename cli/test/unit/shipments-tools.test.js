@@ -625,3 +625,15 @@ describe('handle_fulfillment_exception', () => {
     assert.equal(calledWith, null);
   });
 });
+
+it('all shipment version schemas refuse fractional and wrapping preconditions', () => {
+  for (const name of ['update_shipment', 'ship_shipment', 'deliver_shipment', 'cancel_shipment']) {
+    const schema = findTool(name).inputSchema.expectedVersion;
+    for (const version of [1.5, 4294967297, 0, -1, NaN, Infinity, 2147483648]) {
+      assert.equal(schema.safeParse(version).success, false, `${name}: ${version}`);
+    }
+    for (const version of [1, 2147483647, undefined]) {
+      assert.equal(schema.safeParse(version).success, true, `${name}: ${version}`);
+    }
+  }
+});

@@ -27,6 +27,7 @@ const shipmentPatchSchema = z
       .number()
       .int()
       .positive()
+      .max(2147483647)
       .optional()
       .describe('Reject a stale shipment version'),
     status: z
@@ -184,6 +185,22 @@ export const shipmentTools = [
         .optional()
         .describe('Native shipping method, e.g. ground or express'),
       service: z.string().optional().describe('Legacy alias for shippingMethod'),
+      items: z
+        .array(
+          z.object({
+            orderItemId: z
+              .string()
+              .uuid()
+              .optional()
+              .describe('Order line ID; required for ambiguous SKUs'),
+            productId: z.string().uuid().optional().describe('Must match the selected order line'),
+            sku: z.string().min(1),
+            name: z.string().min(1),
+            quantity: z.number().int().positive().max(2147483647),
+          }),
+        )
+        .optional()
+        .describe('Shipment manifest contents; does not reserve stock or fulfill order lines'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -204,6 +221,7 @@ export const shipmentTools = [
           trackingNumber: params.trackingNumber,
           recipientEmail: params.recipientEmail,
           recipientPhone: params.recipientPhone,
+          items: params.items,
         }).filter(([, value]) => value !== undefined && value !== null),
       );
       const shipment = await commerce.shipments.create(input);
@@ -234,6 +252,7 @@ export const shipmentTools = [
         .number()
         .int()
         .positive()
+        .max(2147483647)
         .optional()
         .describe('Reject a stale shipment version'),
       trackingNumber: z.string().optional().describe('Carrier tracking number'),
@@ -265,6 +284,7 @@ export const shipmentTools = [
         .number()
         .int()
         .positive()
+        .max(2147483647)
         .optional()
         .describe('Reject a stale shipment version'),
     },
@@ -295,6 +315,7 @@ export const shipmentTools = [
         .number()
         .int()
         .positive()
+        .max(2147483647)
         .optional()
         .describe('Reject a stale shipment version'),
     },

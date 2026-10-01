@@ -8,10 +8,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-stateset-embedded = "1.36.0"
+stateset-embedded = "1.37.0"
 
 # For PostgreSQL support
-stateset-embedded = { version = "1.36.0", features = ["postgres"] }
+stateset-embedded = { version = "1.37.0", features = ["postgres"] }
 ```
 
 ## Quick Start
@@ -161,6 +161,41 @@ fn process_order(commerce: &Commerce, order_id: &str) -> Result<(), CommerceErro
     }
 }
 ```
+
+## Versioned shipment packing
+
+Packing edits can use the version returned by `shipments().get(id)`:
+
+```rust
+use stateset_embedded::{Commerce, CommerceError, CreateShipmentItem, ShipmentId};
+
+fn pack(commerce: &Commerce, shipment_id: ShipmentId) -> Result<(), CommerceError> {
+    let shipment = commerce.shipments().get(shipment_id)?.ok_or(CommerceError::NotFound)?;
+    commerce.shipments().add_item_with_version(
+        shipment_id,
+        CreateShipmentItem {
+            sku: "WIDGET-001".into(),
+            name: "Widget".into(),
+            quantity: 1,
+            ..Default::default()
+        },
+        Some(shipment.version),
+    )?;
+    Ok(())
+}
+```
+
+`remove_item_with_version(item_id, Some(version))` uses the same parent-version
+precondition. SQLite and PostgreSQL check it inside the transaction that changes
+the item, advances the shipment version and records the outbox fact. A stale
+version returns `CommerceError::VersionConflict` without changing those records;
+read the latest shipment and reconcile before retrying. Existing `add_item` and
+`remove_item` methods remain available without a caller version precondition.
+
+The asynchronous PostgreSQL facade exposes the same `*_with_version` methods
+with `.await` (its shipment ID argument is a `Uuid`). Allocation and packing-state
+guards still apply. These operations assign manifest contents; they do not
+reserve inventory or fulfill order lines.
 
 ## Async API (PostgreSQL)
 

@@ -784,6 +784,25 @@ impl AsyncShipments {
         self.db.shipments().remove_item_async(item_id).await
     }
 
+    /// Add an item with a transactionally checked parent version precondition.
+    pub async fn add_item_with_version(
+        &self,
+        shipment_id: Uuid,
+        item: CreateShipmentItem,
+        expected_version: Option<i32>,
+    ) -> Result<ShipmentItem> {
+        self.db.shipments().add_item_with_version_async(shipment_id, item, expected_version).await
+    }
+
+    /// Remove an item with a transactionally checked parent version precondition.
+    pub async fn remove_item_with_version(
+        &self,
+        item_id: Uuid,
+        expected_version: Option<i32>,
+    ) -> Result<()> {
+        self.db.shipments().remove_item_with_version_async(item_id, expected_version).await
+    }
+
     /// Get items in shipment.
     pub async fn get_items(&self, shipment_id: Uuid) -> Result<Vec<ShipmentItem>> {
         self.db.shipments().get_items_async(shipment_id).await

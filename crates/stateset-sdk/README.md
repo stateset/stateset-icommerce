@@ -12,7 +12,7 @@ crates by hand; it pins compatible versions of the whole set for you.
 
 ```toml
 [dependencies]
-stateset-sdk = { version = "1.36.0", features = ["full"] }
+stateset-sdk = { version = "1.37.0", features = ["full"] }
 ```
 
 Or: `cargo add stateset-sdk --features full`
@@ -20,8 +20,10 @@ Or: `cargo add stateset-sdk --features full`
 ## Usage
 
 ```rust,no_run
+# #[cfg(feature = "core")]
 use stateset_sdk::prelude::*;
 
+# #[cfg(feature = "core")]
 # fn main() -> Result<()> {
 let commerce = Commerce::new("store.db")?;
 
@@ -34,6 +36,8 @@ let customer = commerce.customers().create(CreateCustomer {
 # let _ = customer;
 # Ok(())
 # }
+# #[cfg(not(feature = "core"))]
+# fn main() {}
 ```
 
 ## Feature Flags
@@ -54,6 +58,30 @@ sequencer HTTP transport, and runtime auth into a single surface: config loading
 sync operations, JSON-ready snapshots, kernel receipt queries, and
 confirmation/dead-letter inspection. `SyncRuntimeConfig` loads from a file, a JSON
 string, or the environment via `from_file`, `from_json_str`, and `from_env`.
+
+For durable incoming events, configure a state snapshot path, read the inbox,
+commit application changes, then acknowledge the processed ids. Application
+updates must deduplicate event ids because a crash before acknowledgement can
+replay an already-applied event. A full inbox stops new pulls with `BufferFull`;
+acknowledge processed events and resume from the saved cursor.
+
+```rust,no_run
+# #[cfg(feature = "sync")]
+# mod example {
+use stateset_sdk::{SyncRuntime, sync::SyncEvent};
+use std::error::Error;
+
+fn apply_pending(
+    runtime: &mut SyncRuntime,
+    commit: impl FnOnce(&[SyncEvent]) -> Result<(), Box<dyn Error>>,
+) -> Result<usize, Box<dyn Error>> {
+    let events = runtime.buffered_events();
+    commit(&events)?; // Commit idempotent application updates before acknowledgement.
+    let ids: Vec<_> = events.iter().map(|event| event.id).collect();
+    Ok(runtime.acknowledge_buffered_events(&ids)?)
+}
+# }
+```
 
 ## What's Underneath
 

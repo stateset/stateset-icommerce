@@ -43,6 +43,8 @@ subtle = "2"
 workspace = true
 
 [dev-dependencies]
+tempfile = { workspace = true }
+rusqlite = { workspace = true }
 tokio = { version = "1", features = ["rt", "macros", "test-util"] }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

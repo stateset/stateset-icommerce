@@ -222,16 +222,7 @@ impl Currency {
     /// Get the number of decimal places for this currency
     #[must_use]
     pub const fn decimal_places(&self) -> u8 {
-        match self {
-            // Zero decimal currencies
-            Self::JPY | Self::KRW | Self::VND => 0,
-            // Crypto with 8 decimals
-            Self::BTC => 8,
-            // Crypto with 18 decimals (but we'll use 8 for practical purposes)
-            Self::ETH => 8,
-            // All others use 2 decimals
-            _ => 2,
-        }
+        stateset_primitives::currency_decimal_places(self.code())
     }
 
     /// Check if this is a cryptocurrency

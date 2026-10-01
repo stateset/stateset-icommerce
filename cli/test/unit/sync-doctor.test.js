@@ -7,7 +7,13 @@ import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 
 import { createOutbox } from '../../src/sync/outbox.js';
-import { syncDoctor } from '../../src/commands/sync.js';
+import { syncDoctor as runSyncDoctor } from '../../src/commands/sync.js';
+
+const scope = {
+  tenantId: '22222222-2222-2222-2222-222222222222',
+  storeId: '33333333-3333-3333-3333-333333333333',
+};
+const syncDoctor = (options) => runSyncDoctor({ scope, ...options });
 
 const AGENT = '44444444-4444-4444-4444-444444444444';
 
@@ -44,6 +50,98 @@ describe('syncDoctor', () => {
   });
 
   afterEach(() => db.close());
+
+  it('promotes atomically with quarantine deletion and recovery cleanup', async () => {
+    const event = sampleEvent();
+    outbox.storeQuarantinedEvents([event], 'key_unresolved');
+    outbox.storeReceiveFailure(event, 'verified', null, 'previous storage failure');
+    db.exec(
+      "CREATE TRIGGER block_quarantine_delete BEFORE DELETE ON _ves_quarantined_events BEGIN SELECT RAISE(ABORT, 'cannot delete'); END",
+    );
+    const options = {
+      outbox,
+      promote: true,
+      client: { verifyEventSignature: () => true },
+      keyDirectory: { resolve: async () => ({ publicKey: '0xaa' }) },
+    };
+    assert.equal((await syncDoctor(options)).promoted, 0);
+    assert.equal(outbox.getPulledEvents().length, 0);
+    assert.equal(outbox.getQuarantinedEvents().length, 1);
+    assert.equal(outbox.getReceiveFailures().length, 1);
+    db.exec('DROP TRIGGER block_quarantine_delete');
+    assert.equal((await syncDoctor(options)).promoted, 1);
+    assert.equal(outbox.getPulledEvents().length, 1);
+    assert.equal(outbox.getQuarantinedEvents().length, 0);
+    assert.equal(outbox.getReceiveFailures().length, 0);
+  });
+
+  it('does not promote a conflicting event over a verified record', async () => {
+    outbox.storePulledEvent(sampleEvent());
+    const original = db.prepare('SELECT * FROM _ves_pulled_events').get();
+    outbox.storeQuarantinedEvents(
+      [{ ...sampleEvent(), entityId: 'different-order' }],
+      'key_unresolved',
+    );
+    const report = await syncDoctor({
+      outbox,
+      promote: true,
+      client: { verifyEventSignature: () => true },
+      keyDirectory: { resolve: async () => ({ publicKey: '0xaa' }) },
+    });
+    assert.equal(report.promoted, 0);
+    assert.equal(outbox.getQuarantineReason(sampleEvent().eventId), 'event_identity_conflict');
+    assert.deepEqual(db.prepare('SELECT * FROM _ves_pulled_events').get(), original);
+  });
+
+  it('requires operator scope for promotion but permits unconfigured local inspection', async () => {
+    outbox.storeQuarantinedEvents([sampleEvent()], 'key_unresolved');
+    await assert.rejects(
+      runSyncDoctor({ outbox, client: {}, keyDirectory: {}, promote: true }),
+      /requires configured tenantId and storeId/,
+    );
+    const report = await runSyncDoctor({ outbox, client: {}, keyDirectory: {} });
+    assert.equal(report.total, 1);
+    assert.equal(outbox.getPulledEvents().length, 0);
+  });
+
+  for (const securityProfile of ['hybrid', 'pqc-strict']) {
+    it(`${securityProfile} promotion cannot bypass receive policy`, async () => {
+      outbox = createOutbox(db, { securityProfile });
+      outbox.storeQuarantinedEvents([sampleEvent()], 'key_unresolved');
+      const report = await syncDoctor({
+        outbox,
+        promote: true,
+        client: {
+          verifyEventSignature: () => {
+            throw new Error('must not verify');
+          },
+        },
+        keyDirectory: {
+          resolve: () => {
+            throw new Error('must not resolve');
+          },
+        },
+      });
+      assert.equal(report.promoted, 0);
+      assert.equal(outbox.getPulledEvents().length, 0);
+      assert.equal(outbox.getQuarantineReason(sampleEvent().eventId), 'security_profile_mismatch');
+    });
+  }
+
+  it('reports retained receive failures without exposing payloads or promoting them', async () => {
+    outbox.storeReceiveFailure(sampleEvent(4), 'verified', null, 'storage refused');
+    outbox.storeReceiveFailure(
+      sampleEvent(2),
+      'quarantine',
+      'signature_invalid',
+      'storage refused',
+    );
+    const report = await syncDoctor({ outbox, client: {}, keyDirectory: {}, promote: true });
+    assert.deepEqual(report.receiveFailures, { count: 2, oldestSequence: 2 });
+    assert.equal(report.promoted, 0);
+    assert.equal(outbox.getReceiveFailures().length, 2);
+    assert.equal(outbox.getPulledEvents().length, 0);
+  });
 
   it('summarizes quarantined events by reason', async () => {
     outbox.storeQuarantinedEvents([sampleEvent()], 'key_unresolved');
