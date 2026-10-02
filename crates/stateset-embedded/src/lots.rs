@@ -8,18 +8,18 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{Commerce, CreateLot};
 //! use chrono::{Utc, Duration};
 //! use rust_decimal_macros::dec;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create a lot for received materials
 //! let lot = commerce.lots().create(CreateLot {
 //!     lot_number: Some("LOT-2025-001".into()),
 //!     sku: "RAW-MAT-001".into(),
-//!     quantity_produced: dec!(1000),
+//!     quantity: dec!(1000),
 //!     expiration_date: Some(Utc::now() + Duration::days(365)),
 //!     ..Default::default()
 //! })?;
@@ -62,7 +62,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateLot};
     /// use chrono::{Utc, Duration};
     /// use rust_decimal_macros::dec;
@@ -72,7 +72,7 @@ impl Lots {
     /// let lot = commerce.lots().create(CreateLot {
     ///     lot_number: Some("BATCH-001".into()),
     ///     sku: "PROD-001".into(),
-    ///     quantity_produced: dec!(500),
+    ///     quantity: dec!(500),
     ///     production_date: Some(Utc::now()),
     ///     expiration_date: Some(Utc::now() + Duration::days(180)),
     ///     ..Default::default()
@@ -97,7 +97,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, LotFilter, LotStatus};
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -132,13 +132,19 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
+    /// # use stateset_embedded::CreateLot;
+    /// # let lot = commerce.lots().create(CreateLot {
+    /// #     sku: "RAW-MAT-001".into(),
+    /// #     quantity: rust_decimal_macros::dec!(1000),
+    /// #     ..Default::default()
+    /// # })?;
     ///
-    /// commerce.lots().quarantine(Uuid::new_v4(), "Quality issue detected")?;
+    /// commerce.lots().quarantine(lot.id, "Quality issue detected")?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn quarantine(&self, id: Uuid, reason: &str) -> Result<Lot> {
@@ -158,17 +164,23 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, AdjustLot};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
+    /// # use stateset_embedded::CreateLot;
+    /// # let lot = commerce.lots().create(CreateLot {
+    /// #     sku: "RAW-MAT-001".into(),
+    /// #     quantity: rust_decimal_macros::dec!(1000),
+    /// #     ..Default::default()
+    /// # })?;
     /// // Remove 10 units due to damage
     /// commerce.lots().adjust(AdjustLot {
-    ///     lot_id: Uuid::new_v4(),
-    ///     quantity: dec!(-10),
+    ///     lot_id: lot.id,
+    ///     quantity_change: dec!(-10),
     ///     reason: "Damaged in storage".into(),
     ///     performed_by: Some("warehouse_user".into()),
     ///     ..Default::default()
@@ -183,15 +195,21 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, ConsumeLot};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
+    /// # use stateset_embedded::CreateLot;
+    /// # let lot = commerce.lots().create(CreateLot {
+    /// #     sku: "RAW-MAT-001".into(),
+    /// #     quantity: rust_decimal_macros::dec!(1000),
+    /// #     ..Default::default()
+    /// # })?;
     /// commerce.lots().consume(ConsumeLot {
-    ///     lot_id: Uuid::new_v4(),
+    ///     lot_id: lot.id,
     ///     quantity: dec!(25),
     ///     reference_type: "work_order".into(),
     ///     reference_id: Uuid::new_v4(),
@@ -229,16 +247,22 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, SplitLot};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
+    /// # use stateset_embedded::CreateLot;
+    /// # let lot = commerce.lots().create(CreateLot {
+    /// #     sku: "RAW-MAT-001".into(),
+    /// #     quantity: rust_decimal_macros::dec!(1000),
+    /// #     ..Default::default()
+    /// # })?;
     /// // Split 100 units into a new lot
     /// let new_lot = commerce.lots().split(SplitLot {
-    ///     source_lot_id: Uuid::new_v4(),
+    ///     lot_id: lot.id,
     ///     new_lot_number: Some("LOT-2025-001B".into()),
     ///     quantity: dec!(100),
     ///     reason: Some("Customer allocation".into()),
@@ -263,14 +287,20 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, AddLotCertificate, CertificateType};
     /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
+    /// # use stateset_embedded::CreateLot;
+    /// # let lot = commerce.lots().create(CreateLot {
+    /// #     sku: "RAW-MAT-001".into(),
+    /// #     quantity: rust_decimal_macros::dec!(1000),
+    /// #     ..Default::default()
+    /// # })?;
     /// commerce.lots().add_certificate(AddLotCertificate {
-    ///     lot_id: Uuid::new_v4(),
+    ///     lot_id: lot.id,
     ///     certificate_type: CertificateType::Coa,
     ///     document_url: Some("https://storage.example.com/certs/coa-123.pdf".into()),
     ///     issued_by: Some("Quality Lab Inc.".into()),
@@ -337,7 +367,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     /// use uuid::Uuid;
     ///
@@ -365,13 +395,19 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
-    /// let trace = commerce.lots().trace(Uuid::new_v4())?;
+    /// # use stateset_embedded::CreateLot;
+    /// # let lot = commerce.lots().create(CreateLot {
+    /// #     sku: "RAW-MAT-001".into(),
+    /// #     quantity: rust_decimal_macros::dec!(1000),
+    /// #     ..Default::default()
+    /// # })?;
+    /// let trace = commerce.lots().trace(lot.id)?;
     ///
     /// println!("Upstream sources: {} nodes", trace.upstream.len());
     /// println!("Downstream destinations: {} nodes", trace.downstream.len());

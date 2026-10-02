@@ -19,7 +19,7 @@ use uuid::Uuid;
 /// use stateset_embedded::{Commerce, CreateWorkOrder, CreateWorkOrderTask, ProductId};
 /// use rust_decimal_macros::dec;
 ///
-/// let commerce = Commerce::new("./store.db")?;
+/// let commerce = Commerce::new(":memory:")?;
 ///
 /// // Create a work order
 /// let wo = commerce.work_orders().create(CreateWorkOrder {

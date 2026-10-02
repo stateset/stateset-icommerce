@@ -118,11 +118,11 @@ pub enum CommerceBackend {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust
 /// use stateset_embedded::Commerce;
 ///
 /// // SQLite (default)
-/// let commerce = Commerce::new("./store.db")?;
+/// let commerce = Commerce::new(":memory:")?;
 ///
 /// // Access different domains
 /// let orders = commerce.orders();

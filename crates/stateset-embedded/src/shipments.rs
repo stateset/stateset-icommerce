@@ -5,7 +5,7 @@
 //! ```ignore
 //! use stateset_embedded::{Commerce, CreateShipment, CreateShipmentItem, OrderId};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Assumes `order` was created with SKU-001 and a quantity of at least two.
 //! let shipment = commerce.shipments().create(CreateShipment {
@@ -67,7 +67,7 @@ impl Shipments {
     /// use stateset_embedded::{Commerce, CreateShipment, CreateShipmentItem, OrderId, ShippingCarrier};
     /// # fn example(order_id: OrderId) -> Result<(), stateset_embedded::CommerceError> {
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// // Supply an existing order with a PROD-001 line containing at least one unit.
     /// let shipment = commerce.shipments().create(CreateShipment {
@@ -144,7 +144,7 @@ impl Shipments {
     /// ```rust,no_run
     /// use stateset_embedded::{Commerce, ShipmentId};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// // Ship with a tracking number
     /// let shipment = commerce.shipments().ship(
@@ -220,7 +220,7 @@ impl Shipments {
     /// ```rust,no_run
     /// use stateset_embedded::{Commerce, AddShipmentEvent, ShipmentId};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// commerce.shipments().add_event(ShipmentId::new(), AddShipmentEvent {
     ///     event_type: "departed_facility".into(),

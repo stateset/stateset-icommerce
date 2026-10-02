@@ -8,21 +8,25 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{Commerce, CreateBackorder, BackorderPriority};
 //! use rust_decimal_macros::dec;
 //! use uuid::Uuid;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create a backorder when inventory is unavailable
 //! let backorder = commerce.backorder().create_backorder(CreateBackorder {
 //!     order_id: Uuid::new_v4(),
+//!     order_line_id: None,
 //!     customer_id: Uuid::new_v4(),
 //!     sku: "WIDGET-001".into(),
 //!     quantity: dec!(50),
 //!     priority: Some(BackorderPriority::High),
-//!     ..Default::default()
+//!     expected_date: None,
+//!     promised_date: None,
+//!     source_location_id: None,
+//!     notes: None,
 //! })?;
 //!
 //! println!("Created backorder {}", backorder.backorder_number);
@@ -62,7 +66,7 @@ impl Backorders {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateBackorder, BackorderPriority};
     /// use rust_decimal_macros::dec;
     /// use chrono::{Utc, Duration};
@@ -78,8 +82,9 @@ impl Backorders {
     ///     quantity: dec!(25),
     ///     priority: Some(BackorderPriority::Critical),
     ///     expected_date: Some(Utc::now() + Duration::days(7)),
+    ///     promised_date: None,
+    ///     source_location_id: None,
     ///     notes: Some("Rush order - customer requested expedite".into()),
-    ///     ..Default::default()
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
@@ -106,7 +111,7 @@ impl Backorders {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, BackorderFilter, BackorderStatus, BackorderPriority};
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -159,7 +164,7 @@ impl Backorders {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, FulfillBackorder, FulfillmentSourceType};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -241,7 +246,7 @@ impl Backorders {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     ///
     /// let commerce = Commerce::new(":memory:")?;

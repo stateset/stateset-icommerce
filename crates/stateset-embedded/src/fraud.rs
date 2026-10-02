@@ -2,15 +2,14 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{Commerce, CreateFraudAssessment, OrderId};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! let assessment = commerce.fraud().create_assessment(CreateFraudAssessment {
 //!     order_id: OrderId::new(),
 //!     signals: vec![],
-//!     ..Default::default()
 //! })?;
 //!
 //! println!("Risk score: {}", assessment.risk_score);
@@ -58,15 +57,14 @@ impl Fraud {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateFraudAssessment, OrderId};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let assessment = commerce.fraud().create_assessment(CreateFraudAssessment {
     ///     order_id: OrderId::new(),
     ///     signals: vec![],
-    ///     ..Default::default()
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```

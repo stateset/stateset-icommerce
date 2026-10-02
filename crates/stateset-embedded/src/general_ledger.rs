@@ -9,10 +9,10 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{Commerce, CreateGlAccount, AccountType};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Initialize standard chart of accounts
 //! commerce.general_ledger().initialize_chart_of_accounts()?;
@@ -21,8 +21,13 @@
 //! let account = commerce.general_ledger().create_account(CreateGlAccount {
 //!     account_number: "6100".into(),
 //!     name: "Marketing Expense".into(),
+//!     description: None,
 //!     account_type: AccountType::Expense,
-//!     ..Default::default()
+//!     account_sub_type: None,
+//!     parent_account_id: None,
+//!     is_header: None,
+//!     is_posting: Some(true),
+//!     currency: None,
 //! })?;
 //! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
@@ -86,7 +91,7 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateGlAccount, AccountType, AccountSubType, CurrencyCode};
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -98,8 +103,9 @@ impl GeneralLedger {
     ///     account_type: AccountType::Asset,
     ///     account_sub_type: Some(AccountSubType::Cash),
     ///     is_posting: Some(true),
+    ///     parent_account_id: None,
+    ///     is_header: None,
     ///     currency: Some(CurrencyCode::USD),
-    ///     ..Default::default()
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
@@ -144,7 +150,7 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -165,7 +171,7 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateGlPeriod};
     /// use chrono::NaiveDate;
     ///
@@ -232,24 +238,41 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateJournalEntry, CreateJournalEntryLine};
     /// use rust_decimal_macros::dec;
     /// use chrono::NaiveDate;
     /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
+    /// let gl = commerce.general_ledger();
+    /// gl.initialize_chart_of_accounts()?;
+    /// # let account = |n: &str| -> Result<Uuid, stateset_embedded::CommerceError> {
+    /// #     Ok(gl.get_account_by_number(n)?.expect("standard account").id)
+    /// # };
+    /// let cash_account_id = account("1010")?;
+    /// let sales_account_id = account("4010")?;
+    /// # let period = gl.create_period(stateset_embedded::CreateGlPeriod {
+    /// #     period_name: "January 2025".into(),
+    /// #     fiscal_year: 2025,
+    /// #     period_number: 1,
+    /// #     start_date: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+    /// #     end_date: NaiveDate::from_ymd_opt(2025, 1, 31).unwrap(),
+    /// # })?;
+    /// # gl.open_period(period.id)?;
     ///
     /// // Debit Cash, Credit Sales Revenue
-    /// let entry = commerce.general_ledger().create_journal_entry(CreateJournalEntry {
+    /// let entry = gl.create_journal_entry(CreateJournalEntry {
     ///     entry_date: NaiveDate::from_ymd_opt(2025, 1, 15).unwrap(),
     ///     description: "Cash sale".into(),
     ///     lines: vec![
     ///         CreateJournalEntryLine::debit(cash_account_id, dec!(100.00), Some("Cash received".into())),
     ///         CreateJournalEntryLine::credit(sales_account_id, dec!(100.00), Some("Sales revenue".into())),
     ///     ],
+    ///     entry_type: None,
+    ///     source_document_type: None,
+    ///     source_document_id: None,
     ///     auto_post: Some(true),
-    ///     ..Default::default()
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
@@ -313,22 +336,32 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateAutoPostingConfig};
     /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
+    /// let gl = commerce.general_ledger();
+    /// gl.initialize_chart_of_accounts()?;
+    /// # let account = |n: &str| -> Result<Uuid, stateset_embedded::CommerceError> {
+    /// #     Ok(gl.get_account_by_number(n)?.expect("standard account").id)
+    /// # };
     ///
     /// // Set up automatic GL postings for commerce transactions
-    /// commerce.general_ledger().set_auto_posting_config(CreateAutoPostingConfig {
+    /// gl.set_auto_posting_config(CreateAutoPostingConfig {
     ///     config_name: "Default".into(),
-    ///     cash_account_id: cash_id,
-    ///     accounts_receivable_account_id: ar_id,
-    ///     inventory_account_id: inv_id,
-    ///     accounts_payable_account_id: ap_id,
-    ///     sales_revenue_account_id: revenue_id,
-    ///     cogs_account_id: cogs_id,
-    ///     ..Default::default()
+    ///     cash_account_id: account("1010")?,
+    ///     accounts_receivable_account_id: account("1100")?,
+    ///     inventory_account_id: account("1200")?,
+    ///     accounts_payable_account_id: account("2010")?,
+    ///     sales_revenue_account_id: account("4010")?,
+    ///     cogs_account_id: account("5010")?,
+    ///     bad_debt_expense_account_id: Some(account("5900")?),
+    ///     unearned_revenue_account_id: None,
+    ///     shipping_revenue_account_id: None,
+    ///     fx_gain_loss_account_id: None,
+    ///     auto_post_depreciation: false,
+    ///     auto_post_revenue_recognition: false,
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
@@ -381,7 +414,7 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     /// use chrono::NaiveDate;
     ///
@@ -405,7 +438,7 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     /// use chrono::NaiveDate;
     ///
@@ -429,7 +462,7 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     /// use chrono::NaiveDate;
     ///

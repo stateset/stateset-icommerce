@@ -15,6 +15,8 @@ use stateset_db::PostgresDatabase;
 use std::sync::Arc;
 use uuid::Uuid;
 
+mod common;
+
 fn postgres_url() -> Option<String> {
     std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
 }
@@ -165,6 +167,7 @@ async fn postgres_x402_mark_batched_is_guarded_and_settles_from_batched() {
         eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
         return;
     };
+    let _guard = common::sweeper_exclusive(&url).await;
     let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
     let repo = db.x402_payment_intents();
     let intent = create_intent(&db).await;

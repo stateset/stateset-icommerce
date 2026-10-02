@@ -8,14 +8,27 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { CLI_VERSION } from '../config.js';
-import {
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  makeCacheableSignalKeyStore,
-  makeWASocket,
-  normalizeMessageContent,
-  useMultiFileAuthState,
-} from '@whiskeysockets/baileys';
+
+/** @type {typeof import('@whiskeysockets/baileys') | null} */
+let baileys = null;
+
+/**
+ * Load Baileys on demand — clear error if not installed.
+ *
+ * @returns {Promise<typeof import('@whiskeysockets/baileys')>}
+ */
+async function loadBaileys() {
+  if (baileys) return baileys;
+  try {
+    baileys = await import('@whiskeysockets/baileys');
+  } catch (err) {
+    throw new Error(
+      '@whiskeysockets/baileys is not installed. Install it with: ' +
+        `npm install @whiskeysockets/baileys (${err.message || err})`,
+    );
+  }
+  return baileys;
+}
 
 // Default auth directory under user home
 const DEFAULT_AUTH_DIR = path.join(
@@ -52,6 +65,13 @@ export async function createWhatsAppSocket({
   onConnectionUpdate,
 } = {}) {
   ensureDir(authDir);
+
+  const {
+    fetchLatestBaileysVersion,
+    makeCacheableSignalKeyStore,
+    makeWASocket,
+    useMultiFileAuthState,
+  } = await loadBaileys();
 
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
   const { version } = await fetchLatestBaileysVersion();
@@ -97,11 +117,10 @@ export async function createWhatsAppSocket({
     }
 
     if (connection === 'close') {
-      const statusCode = getStatusCode(lastDisconnect?.error);
       if (onConnectionUpdate) {
         onConnectionUpdate('close', lastDisconnect?.error);
       }
-      if (statusCode === DisconnectReason.loggedOut) {
+      if (isLoggedOut(lastDisconnect?.error)) {
         console.error(
           'WhatsApp session logged out. Delete auth directory and re-scan QR:',
           authDir,
@@ -149,7 +168,8 @@ export function waitForConnection(sock) {
 /**
  * Extract text content from a raw WhatsApp message.
  * Uses Baileys normalizeMessageContent to unwrap the nested message
- * structure (viewOnce, ephemeral, etc.) before extracting text.
+ * structure (viewOnce, ephemeral, etc.) before extracting text. Messages only
+ * arrive through a live socket, so Baileys is always loaded by this point.
  *
  * @param {Object} rawMessage - Baileys proto.IMessage
  * @returns {string|undefined}
@@ -158,7 +178,7 @@ export function extractText(rawMessage) {
   if (!rawMessage) return undefined;
 
   // Normalize first — unwraps viewOnce, ephemeral, documentWithCaption, etc.
-  const message = normalizeMessageContent(rawMessage) || rawMessage;
+  const message = baileys?.normalizeMessageContent(rawMessage) || rawMessage;
 
   // Simple conversation text
   if (typeof message.conversation === 'string' && message.conversation.trim()) {
@@ -229,7 +249,16 @@ export function getStatusCode(err) {
   return err?.output?.statusCode ?? err?.status;
 }
 
-export { DisconnectReason };
+/**
+ * Whether a disconnect error means WhatsApp logged the session out, which is
+ * unrecoverable without a fresh QR scan.
+ *
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isLoggedOut(err) {
+  return getStatusCode(err) === baileys?.DisconnectReason?.loggedOut;
+}
 
 /**
  * Create a minimal pino-compatible logger that suppresses output unless verbose.

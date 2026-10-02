@@ -6,7 +6,7 @@
 //! use stateset_embedded::{Commerce, CreateWarranty, ProductId, WarrantyType};
 //! use uuid::Uuid;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Register a warranty for a product
 //! let warranty = commerce.warranties().create(CreateWarranty {
@@ -66,7 +66,7 @@ impl Warranties {
     /// use stateset_embedded::{Commerce, CreateWarranty, ProductId, WarrantyType};
     /// use uuid::Uuid;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let warranty = commerce.warranties().create(CreateWarranty {
     ///     customer_id: Uuid::new_v4().into(),
@@ -145,7 +145,7 @@ impl Warranties {
     /// use stateset_embedded::{Commerce, CreateWarrantyClaim};
     /// use uuid::Uuid;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let claim = commerce.warranties().create_claim(CreateWarrantyClaim {
     ///     warranty_id: Uuid::new_v4().into(),
@@ -203,7 +203,7 @@ impl Warranties {
     /// use stateset_embedded::{Commerce, ClaimResolution};
     /// use uuid::Uuid;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let claim = commerce.warranties().complete_claim(
     ///     Uuid::new_v4(),

@@ -11,7 +11,7 @@
 //! ```ignore
 //! use stateset_embedded::{Commerce, CreateSerialNumber};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create a serial number for a high-value item
 //! let serial = commerce.serials().create(CreateSerialNumber {

@@ -2,16 +2,20 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use stateset_embedded::{Commerce, CreateGiftCard, CustomerId};
+//! ```rust
+//! use stateset_embedded::{Commerce, CreateGiftCard, CurrencyCode};
 //! use rust_decimal_macros::dec;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! let gift_card = commerce.gift_cards().create(CreateGiftCard {
+//!     code: None, // generated when omitted
 //!     initial_balance: dec!(50.00),
-//!     customer_id: Some(CustomerId::new()),
-//!     ..Default::default()
+//!     currency: CurrencyCode::USD,
+//!     recipient_email: Some("friend@example.com".into()),
+//!     sender_name: None,
+//!     message: None,
+//!     expires_at: None,
 //! })?;
 //!
 //! println!("Gift card code: {}", gift_card.code);
@@ -56,16 +60,20 @@ impl GiftCards {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, CreateGiftCard, CustomerId};
+    /// ```rust
+    /// use stateset_embedded::{Commerce, CreateGiftCard, CurrencyCode};
     /// use rust_decimal_macros::dec;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let gift_card = commerce.gift_cards().create(CreateGiftCard {
+    ///     code: None, // generated when omitted
     ///     initial_balance: dec!(100.00),
-    ///     customer_id: Some(CustomerId::new()),
-    ///     ..Default::default()
+    ///     currency: CurrencyCode::USD,
+    ///     recipient_email: None,
+    ///     sender_name: None,
+    ///     message: None,
+    ///     expires_at: None,
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```

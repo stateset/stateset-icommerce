@@ -18,7 +18,7 @@
 //! ```ignore
 //! use stateset_embedded::Commerce;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Nightly backup.
 //! let report = commerce.maintenance().backup_to("./backups/store-nightly.db")?;

@@ -15,12 +15,14 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,ignore
-//! use stateset_embedded::{Commerce, CreateCustomer, CreateOrder, CreateOrderItem, CreateInventoryItem};
+//! ```rust
+//! use stateset_embedded::{
+//!     Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CreateProduct,
+//! };
 //! use rust_decimal_macros::dec;
 //!
-//! // Initialize with a database file (creates if not exists)
-//! let commerce = Commerce::new("./store.db")?;
+//! // Initialize with a database file (creates if not exists), or ":memory:"
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create a customer
 //! let customer = commerce.customers().create(CreateCustomer {
@@ -30,7 +32,12 @@
 //!     ..Default::default()
 //! })?;
 //!
-//! // Create inventory
+//! // Create a product to order, and inventory to fulfil it from
+//! let product = commerce.products().create(CreateProduct {
+//!     name: "Widget".into(),
+//!     ..Default::default()
+//! })?;
+//!
 //! commerce.inventory().create_item(CreateInventoryItem {
 //!     sku: "SKU-001".into(),
 //!     name: "Widget".into(),
@@ -42,6 +49,7 @@
 //! let order = commerce.orders().create(CreateOrder {
 //!     customer_id: customer.id,
 //!     items: vec![CreateOrderItem {
+//!         product_id: product.id,
 //!         sku: "SKU-001".into(),
 //!         name: "Widget".into(),
 //!         quantity: 2,
@@ -69,28 +77,39 @@
 //! ## Database Backends
 //!
 //! ### SQLite (default)
-//! ```rust,ignore
+//! Examples that open a database file are compiled but not run, so building the
+//! docs never writes a `store.db` into the working directory.
+//!
+//! ```rust,no_run
+//! use stateset_embedded::Commerce;
+//!
 //! let commerce = Commerce::new("./store.db")?;
 //! // or in-memory for testing
 //! let commerce = Commerce::new(":memory:")?;
+//! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
 //!
-//! ### PostgreSQL (requires `postgres` feature)
+//! ### PostgreSQL (requires the `postgres` feature, so this example is not
+//! compiled under the default feature set)
 //! ```rust,ignore
+//! use stateset_embedded::Commerce;
+//!
 //! let commerce = Commerce::with_postgres("postgres://user:pass@localhost/db")?;
 //! // or via builder
 //! let commerce = Commerce::builder()
 //!     .postgres("postgres://localhost/stateset")
 //!     .max_connections(20)
 //!     .build()?;
+//! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
 //!
 //! ### Async PostgreSQL API
 //!
-//! For true async operations with PostgreSQL, use `AsyncCommerce`:
+//! For true async operations with PostgreSQL, use `AsyncCommerce` (also behind
+//! the `postgres` feature):
 //!
 //! ```rust,ignore
-//! use stateset_embedded::{AsyncCommerce, CreateOrder, CreateOrderItem};
+//! use stateset_embedded::{AsyncCommerce, CreateOrder, CreateOrderItem, CustomerId};
 //! use rust_decimal_macros::dec;
 //!
 //! #[tokio::main]
@@ -99,7 +118,7 @@
 //!
 //!     // All operations are truly async
 //!     let order = commerce.orders().create(CreateOrder {
-//!         customer_id: uuid::Uuid::new_v4(),
+//!         customer_id: CustomerId::new(),
 //!         items: vec![CreateOrderItem {
 //!             sku: "SKU-001".into(),
 //!             name: "Widget".into(),
@@ -1058,6 +1077,19 @@ pub use stateset_core::{
     AdjustBinLevel, BinLevel, BinMovement, BinMovementType, BinReconciliation, BinRepository,
     BinType, CreateWarehouseBin, MoveBetweenBins, ReturnDisposition, SetReturnDisposition,
     UpdateWarehouseBin, WarehouseBin, WarehouseBinFilter,
+};
+
+// Typed ids that appear in this crate's public signatures. Without these a
+// caller cannot name the argument types of methods they are meant to call.
+pub use stateset_core::{
+    ActivityLogId, CartId, ChannelId, CompanyId, ContactId, CreditId, EdiDocumentId, FraudRuleId,
+    GiftCardId, InboundShipmentId, InboundShipmentItemId, IntegrationFieldMappingId,
+    IntegrationMappingId, LoyaltyAccountId, LoyaltyProgramId, PaymentObligationId,
+    PrepaymentApplicationId, PrepaymentId, PriceLevelId, PriceScheduleId, PrintJobId,
+    PrintStationId, ProductionBatchId, PromotionId, ReviewId, RewardId, SearchConfigId, SegmentId,
+    ShippingMethodId, ShippingZoneId, StockSnapshotId, StoreCreditId, SubscriptionId,
+    SupplierSkuId, TransferOrderId, TransferOrderItemId, UnitClassId, UnitConversionRuleId,
+    UnitOfMeasureId, VendorCreditApplicationId, VendorCreditId, VendorReturnId, WishlistId,
 };
 
 // Vector search types (feature-gated)

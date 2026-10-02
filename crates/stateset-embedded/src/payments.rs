@@ -6,7 +6,7 @@
 //! use stateset_embedded::{Commerce, CreatePayment, PaymentMethodType, OrderId};
 //! use rust_decimal_macros::dec;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create a payment for an order
 //! let payment = commerce.payments().create(CreatePayment {
@@ -66,7 +66,7 @@ impl Payments {
     /// use stateset_embedded::{Commerce, CreatePayment, PaymentMethodType, CardBrand, OrderId, CurrencyCode};
     /// use rust_decimal_macros::dec;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let payment = commerce.payments().create(CreatePayment {
     ///     order_id: Some(OrderId::new()),
@@ -175,7 +175,7 @@ impl Payments {
     /// use stateset_embedded::{Commerce, CreateRefund, PaymentId};
     /// use rust_decimal_macros::dec;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// // Full refund (omit amount for full refund)
     /// let refund = commerce.payments().create_refund(CreateRefund {
@@ -237,7 +237,7 @@ impl Payments {
     /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreatePaymentMethod, PaymentMethodType, CardBrand, CustomerId};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let method = commerce.payments().create_payment_method(CreatePaymentMethod {
     ///     customer_id: CustomerId::new(),

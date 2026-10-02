@@ -2,18 +2,18 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{Commerce, CreateWishlist, CustomerId};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! let wishlist = commerce.wishlists().create(CreateWishlist {
 //!     customer_id: CustomerId::new(),
-//!     name: Some("Birthday Wishes".into()),
-//!     ..Default::default()
+//!     name: "Birthday Wishes".into(),
+//!     is_public: false,
 //! })?;
 //!
-//! println!("Wishlist created: {:?}", wishlist.name);
+//! println!("Wishlist created: {}", wishlist.name);
 //! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
 
@@ -54,15 +54,15 @@ impl Wishlists {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateWishlist, CustomerId};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let wishlist = commerce.wishlists().create(CreateWishlist {
     ///     customer_id: CustomerId::new(),
-    ///     name: Some("Holiday Gift Ideas".into()),
-    ///     ..Default::default()
+    ///     name: "Holiday Gift Ideas".into(),
+    ///     is_public: false,
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```

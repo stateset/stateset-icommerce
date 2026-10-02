@@ -18,7 +18,7 @@ use uuid::Uuid;
 /// use stateset_embedded::{Commerce, CreateBom, CreateBomComponent, ProductId};
 /// use rust_decimal_macros::dec;
 ///
-/// let commerce = Commerce::new("./store.db")?;
+/// let commerce = Commerce::new(":memory:")?;
 ///
 /// // Create a BOM
 /// let bom = commerce.bom().create(CreateBom {

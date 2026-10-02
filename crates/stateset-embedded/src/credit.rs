@@ -12,7 +12,7 @@
 //! use stateset_embedded::{Commerce, CreateCreditAccount, CustomerId};
 //! use rust_decimal_macros::dec;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create a credit account for a customer
 //! let account = commerce.credit().create_credit_account(CreateCreditAccount {

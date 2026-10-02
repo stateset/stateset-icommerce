@@ -7,7 +7,7 @@
 //! use rust_decimal_macros::dec;
 //! use uuid::Uuid;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create a supplier
 //! let supplier = commerce.purchase_orders().create_supplier(CreateSupplier {
@@ -72,7 +72,7 @@ impl PurchaseOrders {
     /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateSupplier, PaymentTerms};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let supplier = commerce.purchase_orders().create_supplier(CreateSupplier {
     ///     name: "Quality Parts Inc".into(),
@@ -124,7 +124,7 @@ impl PurchaseOrders {
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let po = commerce.purchase_orders().create(CreatePurchaseOrder {
     ///     supplier_id: Uuid::new_v4(),
@@ -265,7 +265,7 @@ impl PurchaseOrders {
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// // Receive items (can be partial)
     /// commerce.purchase_orders().receive(Uuid::new_v4(), ReceivePurchaseOrderItems {

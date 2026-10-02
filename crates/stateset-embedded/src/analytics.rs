@@ -19,7 +19,7 @@ use std::sync::Arc;
 /// ```rust,no_run
 /// use stateset_embedded::{Commerce, AnalyticsQuery, TimePeriod};
 ///
-/// let commerce = Commerce::new("./store.db")?;
+/// let commerce = Commerce::new(":memory:")?;
 ///
 /// // Get sales summary for last 30 days
 /// let summary = commerce.analytics().sales_summary(

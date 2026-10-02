@@ -28,7 +28,7 @@ import {
   jidToPhone,
   isGroup,
   getStatusCode,
-  DisconnectReason,
+  isLoggedOut,
   clearAuth,
   DEFAULT_AUTH_DIR,
 } from './session.js';
@@ -222,7 +222,7 @@ export async function startWhatsAppGateway({
       sock.ev.on('connection.update', (update) => {
         if (update.connection === 'close') {
           const statusCode = getStatusCode(update.lastDisconnect?.error);
-          const loggedOut = statusCode === DisconnectReason.loggedOut;
+          const loggedOut = isLoggedOut(update.lastDisconnect?.error);
           resolve({ statusCode, loggedOut, error: update.lastDisconnect?.error });
         }
       });
@@ -272,10 +272,9 @@ export async function startWhatsAppGateway({
       } catch (err) {
         if (stopped) break;
 
-        const statusCode = getStatusCode(err);
-        const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+        const loggedOut = isLoggedOut(err);
 
-        if (isLoggedOut && !hasConnectedOnce) {
+        if (loggedOut && !hasConnectedOnce) {
           console.info('Stale credentials detected. Clearing auth and retrying with fresh QR...');
           clearAuth(resolvedAuthDir);
           reconnectAttempts = 0;

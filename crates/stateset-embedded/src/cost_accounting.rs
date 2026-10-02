@@ -14,7 +14,7 @@
 //! use stateset_embedded::{Commerce, SetItemCost, CostMethod};
 //! use rust_decimal_macros::dec;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Set standard cost for an item
 //! let cost = commerce.cost_accounting().set_item_cost(SetItemCost {
