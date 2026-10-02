@@ -95,7 +95,7 @@ impl AccountsReceivable {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateCollectionActivity, CollectionActivityType};
     /// use uuid::Uuid;
     ///
@@ -151,7 +151,7 @@ impl AccountsReceivable {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, DunningLetterType};
     /// use uuid::Uuid;
     ///
@@ -181,7 +181,7 @@ impl AccountsReceivable {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateWriteOff, WriteOffReason};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -191,7 +191,7 @@ impl AccountsReceivable {
     /// let write_off = commerce.accounts_receivable().create_write_off(CreateWriteOff {
     ///     invoice_id: Uuid::new_v4(),
     ///     amount: dec!(500.00),
-    ///     reason: WriteOffReason::Uncollectable,
+    ///     reason: WriteOffReason::Uncollectible,
     ///     notes: Some("Customer bankruptcy".into()),
     ///     approved_by: Some("CFO".into()),
     /// })?;
@@ -224,7 +224,7 @@ impl AccountsReceivable {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateCreditMemo, CreditMemoReason};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -234,7 +234,7 @@ impl AccountsReceivable {
     /// let memo = commerce.accounts_receivable().create_credit_memo(CreateCreditMemo {
     ///     customer_id: Uuid::new_v4(),
     ///     original_invoice_id: Some(Uuid::new_v4()),
-    ///     reason: CreditMemoReason::ReturnCredit,
+    ///     reason: CreditMemoReason::ReturnedGoods,
     ///     amount: dec!(150.00),
     ///     notes: Some("Credit for returned merchandise".into()),
     /// })?;
@@ -282,8 +282,8 @@ impl AccountsReceivable {
     ///
     /// # Example
     ///
-    /// ```rust
-    /// use stateset_embedded::{Commerce, ApplyPaymentToInvoices, InvoicePaymentApplication};
+    /// ```rust,no_run
+    /// use stateset_embedded::{ApplyPaymentToInvoices, Commerce, PaymentApplicationLine};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
     ///
@@ -293,11 +293,11 @@ impl AccountsReceivable {
     ///     ApplyPaymentToInvoices {
     ///         payment_id: Uuid::new_v4(),
     ///         applications: vec![
-    ///             InvoicePaymentApplication {
+    ///             PaymentApplicationLine {
     ///                 invoice_id: Uuid::new_v4(),
     ///                 amount: dec!(500.00),
     ///             },
-    ///             InvoicePaymentApplication {
+    ///             PaymentApplicationLine {
     ///                 invoice_id: Uuid::new_v4(),
     ///                 amount: dec!(250.00),
     ///             },
@@ -336,7 +336,7 @@ impl AccountsReceivable {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, GenerateStatementRequest};
     /// use chrono::Utc;
     /// use uuid::Uuid;

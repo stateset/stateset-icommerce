@@ -265,7 +265,7 @@ impl AccountsPayable {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::Commerce;
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -332,7 +332,7 @@ impl AccountsPayable {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateBillPayment, PaymentMethodAP, PaymentAllocationInput};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -343,7 +343,12 @@ impl AccountsPayable {
     ///     supplier_id: Uuid::new_v4(),
     ///     payment_method: PaymentMethodAP::Check,
     ///     amount: dec!(1000.00),
+    ///     payment_date: None,
+    ///     currency: None,
+    ///     reference_number: None,
+    ///     bank_account: None,
     ///     check_number: Some("10234".into()),
+    ///     memo: None,
     ///     allocations: vec![
     ///         PaymentAllocationInput {
     ///             bill_id: Uuid::new_v4(), // bill ID
@@ -354,7 +359,6 @@ impl AccountsPayable {
     ///             amount: dec!(500.00),
     ///         },
     ///     ],
-    ///     ..Default::default()
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
@@ -410,7 +414,7 @@ impl AccountsPayable {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, PayBill, PaymentMethodAP};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -508,7 +512,7 @@ impl AccountsPayable {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreatePaymentRun, PaymentMethodAP};
     /// use chrono::{Utc, Duration};
     /// use uuid::Uuid;

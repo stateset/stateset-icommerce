@@ -287,13 +287,7 @@ impl Tax {
     /// ```rust
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
-    /// # let jurisdiction_id = commerce.tax().create_jurisdiction(CreateTaxJurisdiction {
-    /// #     name: "California".into(),
-    /// #     code: "US-CA".into(),
-    /// #     level: JurisdictionLevel::State,
-    /// #     country_code: "US".into(),
-    /// #     ..Default::default()
-    /// # })?.id;
+    /// # let jurisdiction_id = commerce.tax().get_jurisdiction_by_code("US-CA")?.expect("seeded").id;
     /// // Get all active rates for a jurisdiction
     /// let rates = commerce.tax().list_rates(TaxRateFilter {
     ///     jurisdiction_id: Some(jurisdiction_id),
@@ -391,15 +385,23 @@ impl Tax {
     /// ```rust
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
-    /// # let customer_id = uuid::Uuid::new_v4();
+    /// # let customer = commerce.customers().create(CreateCustomer {
+    /// #     email: "buyer@example.com".into(),
+    /// #     first_name: "Pat".into(),
+    /// #     last_name: "Buyer".into(),
+    /// #     ..Default::default()
+    /// # })?;
+    /// # let customer_id = customer.id.into();
     /// let exemption = commerce.tax().create_exemption(CreateTaxExemption {
     ///     customer_id,
     ///     exemption_type: ExemptionType::Resale,
     ///     certificate_number: Some("RS-12345".into()),
     ///     issuing_authority: Some("California".into()),
+    ///     jurisdiction_ids: vec![],
+    ///     exempt_categories: vec![],
     ///     effective_from: chrono::Utc::now().date_naive(),
     ///     expires_at: Some(chrono::Utc::now().date_naive() + chrono::Duration::days(365)),
-    ///     ..Default::default()
+    ///     notes: None,
     /// })?;
     /// # Ok::<(), CommerceError>(())
     /// ```
@@ -424,11 +426,22 @@ impl Tax {
     /// ```rust
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
-    /// # let input = CreateTaxExemption {
-    /// #     customer_id: uuid::Uuid::new_v4(),
-    /// #     exemption_type: ExemptionType::Resale,
-    /// #     effective_from: chrono::Utc::now().date_naive(),
+    /// # let customer = commerce.customers().create(CreateCustomer {
+    /// #     email: "buyer@example.com".into(),
+    /// #     first_name: "Pat".into(),
+    /// #     last_name: "Buyer".into(),
     /// #     ..Default::default()
+    /// # })?;
+    /// # let input = CreateTaxExemption {
+    /// #     customer_id: customer.id.into(),
+    /// #     exemption_type: ExemptionType::Resale,
+    /// #     certificate_number: None,
+    /// #     issuing_authority: None,
+    /// #     jurisdiction_ids: vec![],
+    /// #     exempt_categories: vec![],
+    /// #     effective_from: chrono::Utc::now().date_naive(),
+    /// #     expires_at: None,
+    /// #     notes: None,
     /// # };
     /// let exemption = commerce.tax().create_exemption(input)?;
     /// assert!(!exemption.verified);

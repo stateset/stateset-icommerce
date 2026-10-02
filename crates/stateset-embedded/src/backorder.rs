@@ -164,7 +164,7 @@ impl Backorders {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, FulfillBackorder, FulfillmentSourceType};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;

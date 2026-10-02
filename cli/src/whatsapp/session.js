@@ -9,13 +9,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CLI_VERSION } from '../config.js';
 
-/** @type {any} */
+/** @type {typeof import('@whiskeysockets/baileys') | null} */
 let baileys = null;
 
 /**
  * Load Baileys on demand — clear error if not installed.
  *
- * @returns {Promise<any>}
+ * @returns {Promise<typeof import('@whiskeysockets/baileys')>}
  */
 async function loadBaileys() {
   if (baileys) return baileys;

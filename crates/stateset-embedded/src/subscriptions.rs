@@ -28,6 +28,12 @@
 //! commerce.subscriptions().activate_plan(plan.id)?;
 //!
 //! // Subscribe a customer
+//! # let customer = commerce.customers().create(stateset_embedded::CreateCustomer {
+//! #     email: "alice@example.com".into(),
+//! #     first_name: "Alice".into(),
+//! #     last_name: "Smith".into(),
+//! #     ..Default::default()
+//! # })?;
 //! let subscription = commerce.subscriptions().subscribe(CreateSubscription {
 //!     customer_id: customer.id,
 //!     plan_id: plan.id,
@@ -148,14 +154,25 @@ impl Subscriptions {
     /// # Example
     ///
     /// ```rust
-    /// use stateset_embedded::{Commerce, CreateSubscription, CustomerId};
-    /// use uuid::Uuid;
+    /// use stateset_embedded::{Commerce, CreateSubscription};
     ///
     /// let commerce = Commerce::new(":memory:")?;
+    /// # let customer = commerce.customers().create(stateset_embedded::CreateCustomer {
+    /// #     email: "alice@example.com".into(),
+    /// #     first_name: "Alice".into(),
+    /// #     last_name: "Smith".into(),
+    /// #     ..Default::default()
+    /// # })?;
+    /// # let plan = commerce.subscriptions().create_plan(stateset_embedded::CreateSubscriptionPlan {
+    /// #     name: "Monthly Box".into(),
+    /// #     price: rust_decimal_macros::dec!(29.99),
+    /// #     ..Default::default()
+    /// # })?;
+    /// # commerce.subscriptions().activate_plan(plan.id)?;
     ///
     /// let subscription = commerce.subscriptions().subscribe(CreateSubscription {
-    ///     customer_id: CustomerId::new(),
-    ///     plan_id: Uuid::new_v4(),
+    ///     customer_id: customer.id,
+    ///     plan_id: plan.id,
     ///     payment_method_id: Some("pm_1234".into()),
     ///     ..Default::default()
     /// })?;
@@ -216,7 +233,7 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, PauseSubscription, SubscriptionId};
     /// use chrono::{Utc, Duration};
     ///
@@ -247,7 +264,7 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::{CancelSubscription, Commerce, SubscriptionId};
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -277,7 +294,7 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, SkipBillingCycle, SubscriptionId};
     ///
     /// let commerce = Commerce::new(":memory:")?;

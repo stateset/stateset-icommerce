@@ -8,8 +8,8 @@
 //! # Example
 //!
 //! ```rust
-//! use stateset_embedded::{Commerce, CommerceEvent};
-//! use tokio_stream::StreamExt;
+//! use stateset_embedded::{Commerce, CreateCustomer};
+//! use futures::StreamExt;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,7 +26,12 @@
 //!     });
 //!
 //!     // Events are emitted automatically when operations occur
-//!     commerce.orders().create(...)?;  // Emits OrderCreated event
+//!     commerce.customers().create(CreateCustomer {
+//!         email: "alice@example.com".into(),
+//!         first_name: "Alice".into(),
+//!         last_name: "Smith".into(),
+//!         ..Default::default()
+//!     })?; // Emits CustomerCreated
 //!
 //!     Ok(())
 //! }

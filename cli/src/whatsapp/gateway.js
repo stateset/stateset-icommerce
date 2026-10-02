@@ -272,7 +272,6 @@ export async function startWhatsAppGateway({
       } catch (err) {
         if (stopped) break;
 
-        const statusCode = getStatusCode(err);
         const loggedOut = isLoggedOut(err);
 
         if (loggedOut && !hasConnectedOnce) {
