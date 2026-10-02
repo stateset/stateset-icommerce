@@ -68,6 +68,23 @@ fn payment_policy() -> KernelPolicy {
             KernelCommandPolicy::requiring(["a2a.dispute.evidence.submit"]),
         )
         .allow("a2a.dispute.resolve", KernelCommandPolicy::requiring(["a2a.dispute.resolve"]))
+        .allow("customers.create", KernelCommandPolicy::requiring(["customers.create"]))
+        .allow("carts.create", KernelCommandPolicy::requiring(["carts.create"]))
+        .allow("carts.item.add", KernelCommandPolicy::requiring(["carts.item.add"]))
+        .allow(
+            "carts.shipping_address.set",
+            KernelCommandPolicy::requiring(["carts.shipping_address.set"]),
+        )
+        .allow(
+            "carts.payment_method.set",
+            KernelCommandPolicy::requiring(["carts.payment_method.set"]),
+        )
+        .allow("carts.coupon.apply", KernelCommandPolicy::requiring(["carts.coupon.apply"]))
+        .allow("carts.tax.calculate", KernelCommandPolicy::requiring(["carts.tax.calculate"]))
+        .allow("payments.complete", KernelCommandPolicy::requiring(["payments.complete"]))
+        .allow("shipments.create", KernelCommandPolicy::requiring(["shipments.create"]))
+        .allow("returns.create", KernelCommandPolicy::requiring(["returns.create"]))
+        .allow("returns.tracking.add", KernelCommandPolicy::requiring(["returns.tracking.add"]))
 }
 
 fn inventory_item_command(key: &str, sku: &str) -> CommandEnvelope<CreateInventoryItem> {
@@ -2592,6 +2609,17 @@ fn kernel_subscription_charge_previews_applies_and_replays_pending_collection() 
         .execute_charge_subscription(&retry)
         .expect("replay charge");
     assert_eq!(replay.receipt_id, applied.receipt_id);
+    let mut competing = subscription_charge_command("subscription-charge-2", cycle_id);
+    competing.mode = ExecutionMode::Apply;
+    let rejected = db
+        .kernel_executor(payment_policy())
+        .execute_charge_subscription(&competing)
+        .expect("reject second live attempt");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    assert_eq!(
+        rejected.error_code.as_deref(),
+        Some("commerce.subscription.billing_cycle_not_chargeable")
+    );
     let conn = db.pool().get().expect("connection");
     let payments: i64 = conn
         .query_row("SELECT COUNT(*) FROM payments", [], |row| row.get(0))
@@ -2768,6 +2796,15 @@ fn kernel_a2a_escrow_create_fund_and_refund_are_exact_atomic_and_replayable() {
         .expect("replay refund");
     assert_eq!(replay.receipt_id, refunded.receipt_id);
 
+    let mut release_after_refund =
+        release_escrow_command("a2a-escrow-release-after-refund-1", &escrow.id);
+    release_after_refund.mode = ExecutionMode::Apply;
+    let rejected = db
+        .kernel_executor(payment_policy())
+        .execute_release_a2a_escrow(&release_after_refund)
+        .expect("reject release after refund");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+
     let conn = db.pool().get().expect("connection");
     let event_count: i64 = conn
         .query_row(
@@ -2914,6 +2951,29 @@ fn kernel_a2a_formal_dispute_is_scoped_exact_atomic_and_replayable() {
     assert_eq!(denied.status, ExecutionStatus::Rejected);
     assert_eq!(denied.error_code.as_deref(), Some("commerce.a2a.dispute_not_found"));
 
+    let mut unbalanced = governed_dispute_command(
+        "a2a.dispute.resolve",
+        "a2a-formal-unbalanced-split-1",
+        "agent:resolver",
+        ResolveA2ADispute {
+            dispute_id: dispute.id.clone(),
+            resolution_type: A2ADisputeResolutionType::Split,
+            buyer_amount: Some(dec!(40.000001)),
+            seller_amount: Some(dec!(84.000000)),
+            note: None,
+        },
+    );
+    unbalanced.mode = ExecutionMode::Apply;
+    let rejected = db
+        .kernel_executor(payment_policy())
+        .execute_resolve_a2a_dispute(&unbalanced)
+        .expect("durable unbalanced split rejection");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    assert_eq!(
+        rejected.error_code.as_deref(),
+        Some("commerce.a2a.dispute.allocations_do_not_balance")
+    );
+
     let mut resolve = governed_dispute_command(
         "a2a.dispute.resolve",
         "a2a-formal-resolve-1",
@@ -3051,6 +3111,18 @@ fn kernel_a2a_escrow_release_validates_conditions_previews_applies_and_replays()
         .execute_release_a2a_escrow(&retry)
         .expect("replay release");
     assert_eq!(replay.receipt_id, applied.receipt_id);
+    let mut refund_after_release = scope_escrow_command(CommandEnvelope::preview(
+        "a2a.escrow.refund",
+        "a2a-escrow-refund-after-release-1",
+        escrow_principal("a2a.escrow.refund"),
+        RefundA2AEscrow { escrow_id: escrow_id.clone(), reason: None },
+    ));
+    refund_after_release.mode = ExecutionMode::Apply;
+    let rejected = db
+        .kernel_executor(payment_policy())
+        .execute_refund_a2a_escrow(&refund_after_release)
+        .expect("reject refund after release");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
     let conn = db.pool().get().expect("connection");
     let released: (String, Option<String>) = conn
         .query_row(
@@ -3098,4 +3170,489 @@ fn kernel_a2a_escrow_unmet_conditions_are_durable_and_non_mutating() {
         .expect("count events");
     assert_eq!(status, "active");
     assert_eq!(events, 0);
+}
+
+#[test]
+fn kernel_outbox_rows_default_to_the_governed_tier() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+    let sku = format!("INV-{}", Uuid::new_v4());
+    let mut apply = inventory_item_command("kernel-outbox-tier-1", &sku);
+    apply.mode = ExecutionMode::Apply;
+    let applied = db
+        .kernel_executor(payment_policy())
+        .execute_create_inventory_item(&apply)
+        .expect("apply inventory item");
+    assert_eq!(applied.status, ExecutionStatus::Succeeded);
+    assert_eq!(applied.event_ids.len(), 1, "row must actually exist in kernel_outbox");
+
+    let conn = db.pool().get().expect("connection");
+    let row_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM kernel_outbox", [], |row| row.get(0))
+        .expect("count kernel_outbox rows");
+    assert!(row_count > 0, "test must exercise a table with a pre-existing row");
+
+    let tier: String = conn
+        .query_row(
+            "SELECT tier FROM kernel_outbox WHERE id = ?",
+            [applied.event_ids[0].to_string()],
+            |row| row.get(0),
+        )
+        .expect("tier column must exist after migration 096 and be populated for the applied row");
+
+    assert_eq!(
+        tier, "governed",
+        "pre-existing rows are governed by definition, so the default must backfill them"
+    );
+}
+
+#[test]
+fn recorded_facts_land_in_the_recorded_tier() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+
+    let customer = db
+        .customers()
+        .create(CreateCustomer {
+            email: "recorded-tier@example.com".into(),
+            first_name: "Kernel".into(),
+            last_name: "Recorded".into(),
+            phone: None,
+            accepts_marketing: None,
+            tags: None,
+            metadata: None,
+        })
+        .expect("create customer");
+
+    let conn = db.pool().get().expect("connection");
+    let (tier, aggregate_id): (String, String) = conn
+        .query_row(
+            "SELECT tier, aggregate_id FROM kernel_outbox
+             WHERE aggregate_type = 'customer' ORDER BY created_at DESC LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("creating a customer must emit an outbox fact");
+
+    assert_eq!(tier, "recorded");
+    assert_eq!(aggregate_id, customer.id.to_string());
+}
+
+#[test]
+fn a_failed_mutation_leaves_no_outbox_fact() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+
+    // A create that violates the unique-email constraint must roll the fact
+    // back with it.
+    let dup = CreateCustomer {
+        email: "rollback@example.com".into(),
+        first_name: "Kernel".into(),
+        last_name: "Rollback".into(),
+        phone: None,
+        accepts_marketing: None,
+        tags: None,
+        metadata: None,
+    };
+    db.customers().create(dup.clone()).expect("first create succeeds");
+    let conn = db.pool().get().expect("connection");
+    let before: i64 =
+        conn.query_row("SELECT COUNT(*) FROM kernel_outbox", [], |row| row.get(0)).expect("count");
+
+    let _ = db.customers().create(dup);
+
+    let after: i64 =
+        conn.query_row("SELECT COUNT(*) FROM kernel_outbox", [], |row| row.get(0)).expect("count");
+
+    assert_eq!(
+        before, after,
+        "the fact is written in the mutation's transaction, so a rollback must take it too"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Storefront commands: a complete checkout on the strict (governed-only)
+// surface. Each command previews without mutating, applies with one
+// command-context fact and a sealed receipt, replays the same receipt, and
+// seals business refusals as typed rejections.
+// ---------------------------------------------------------------------------
+
+fn storefront<C>(command_type: &str, key: &str, payload: C) -> CommandEnvelope<C> {
+    let mut command = CommandEnvelope::preview(
+        command_type,
+        key,
+        KernelPrincipal {
+            id: "agent:storefront-1".into(),
+            kind: PrincipalKind::Agent,
+            tenant_id: Some("tenant-1".into()),
+            delegated_by: Some("user-1".into()),
+            capabilities: vec![command_type.into()],
+        },
+        payload,
+    );
+    command.store_id = Some("store-1".into());
+    command.policy_version = Some("commerce-policy-1".into());
+    command
+}
+
+fn applied<C: Clone>(command: &CommandEnvelope<C>) -> CommandEnvelope<C> {
+    let mut apply = command.clone();
+    apply.command_id = Uuid::new_v4();
+    apply.mode = ExecutionMode::Apply;
+    apply
+}
+
+fn assert_sealed_success<T>(receipt: &stateset_core::ExecutionReceipt<T>, what: &str) {
+    assert_eq!(
+        receipt.status,
+        ExecutionStatus::Succeeded,
+        "{what}: {:?} {:?}",
+        receipt.error_code,
+        receipt.error_message
+    );
+    assert_eq!(receipt.event_ids.len(), 1, "{what} commits exactly one command fact");
+    assert!(receipt.audit_hash.is_some(), "{what} receipt is sealed into the audit chain");
+    assert!(receipt.policy.as_ref().is_some_and(|policy| policy.allowed), "{what} policy");
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn kernel_storefront_commands_run_a_complete_checkout_on_the_governed_surface() {
+    use stateset_core::{
+        AddCartItemCommand, AddReturnTracking, ApplyCartCoupon, CalculateCartTax, CompletePayment,
+        CreateCouponCode, CreatePromotion, CreateShipment, PromotionTrigger, PromotionType,
+        SetCartPaymentMethod, SetCartShippingAddress,
+    };
+    let db = SqliteDatabase::in_memory().expect("create database");
+    let kernel = db.kernel_executor(payment_policy());
+    let suffix = Uuid::new_v4().simple().to_string();
+    let email = format!("storefront-{suffix}@example.com");
+
+    // customers.create — preview writes nothing, apply commits, replay is stable.
+    let create_customer = storefront(
+        "customers.create",
+        "storefront-customer",
+        CreateCustomer {
+            email: email.clone(),
+            first_name: "Ada".into(),
+            last_name: "Lovelace".into(),
+            ..Default::default()
+        },
+    );
+    let preview = kernel.execute_create_customer(&create_customer).expect("preview customer");
+    assert_eq!(preview.status, ExecutionStatus::Previewed);
+    assert!(db.customers().get_by_email(&email).expect("lookup").is_none());
+    let customer = kernel.execute_create_customer(&applied(&create_customer)).expect("customer");
+    assert_sealed_success(&customer, "customers.create");
+    let replayed = kernel.execute_create_customer(&applied(&create_customer)).expect("replay");
+    assert_eq!(replayed.receipt_id, customer.receipt_id);
+    let customer = customer.result.expect("customer result");
+    let mut duplicate = applied(&create_customer);
+    duplicate.idempotency_key = "storefront-customer-duplicate".into();
+    let duplicate = kernel.execute_create_customer(&duplicate).expect("duplicate customer");
+    assert_eq!(duplicate.status, ExecutionStatus::Rejected);
+    assert_eq!(duplicate.error_code.as_deref(), Some("commerce.customer.email_conflict"));
+
+    // The operator provisions the welcome coupon; agents only redeem it.
+    let promotion = db
+        .promotions()
+        .create(CreatePromotion {
+            name: "Welcome 10%".into(),
+            promotion_type: PromotionType::PercentageOff,
+            trigger: PromotionTrigger::CouponCode,
+            percentage_off: Some(dec!(0.10)),
+            ..Default::default()
+        })
+        .expect("create promotion");
+    db.promotions().activate(promotion.id).expect("activate promotion");
+    db.promotions()
+        .create_coupon(CreateCouponCode {
+            promotion_id: promotion.id,
+            code: "WELCOME10".into(),
+            usage_limit: None,
+            per_customer_limit: None,
+            starts_at: None,
+            ends_at: None,
+            metadata: None,
+        })
+        .expect("create coupon");
+
+    // carts.create + carts.item.add
+    let cart = kernel
+        .execute_create_cart(&applied(&storefront(
+            "carts.create",
+            "storefront-cart",
+            CreateCart {
+                customer_id: Some(customer.id),
+                currency: Some(CurrencyCode::USD),
+                ..Default::default()
+            },
+        )))
+        .expect("create cart");
+    assert_sealed_success(&cart, "carts.create");
+    let cart_id = cart.result.expect("cart").id;
+    let add_item = storefront(
+        "carts.item.add",
+        "storefront-item",
+        AddCartItemCommand {
+            cart_id,
+            item: AddCartItem {
+                sku: format!("W-{suffix}"),
+                name: "Widget".into(),
+                quantity: 2,
+                unit_price: dec!(50.00),
+                ..Default::default()
+            },
+        },
+    );
+    let previewed = kernel.execute_add_cart_item(&add_item).expect("preview item");
+    assert_eq!(previewed.status, ExecutionStatus::Previewed);
+    assert!(db.carts().get(cart_id).expect("cart").expect("cart").items.is_empty());
+    let with_item = kernel.execute_add_cart_item(&applied(&add_item)).expect("add item");
+    assert_sealed_success(&with_item, "carts.item.add");
+    assert_eq!(with_item.result.as_ref().expect("cart").subtotal, dec!(100.00));
+    let mut missing_cart = applied(&add_item);
+    missing_cart.idempotency_key = "storefront-item-missing".into();
+    missing_cart.payload.cart_id = stateset_core::CartId::new();
+    let missing_cart = kernel.execute_add_cart_item(&missing_cart).expect("missing cart");
+    assert_eq!(missing_cart.status, ExecutionStatus::Rejected);
+    assert_eq!(missing_cart.error_code.as_deref(), Some("commerce.cart_not_found"));
+    assert!(missing_cart.audit_hash.is_some(), "rejections are sealed too");
+
+    // carts.shipping_address.set + carts.tax.calculate
+    let shipping = kernel
+        .execute_set_cart_shipping_address(&applied(&storefront(
+            "carts.shipping_address.set",
+            "storefront-shipping",
+            SetCartShippingAddress {
+                cart_id,
+                address: CartAddress {
+                    first_name: "Ada".into(),
+                    last_name: "Lovelace".into(),
+                    company: None,
+                    line1: "1 Main St".into(),
+                    line2: None,
+                    city: "Los Angeles".into(),
+                    state: Some("CA".into()),
+                    postal_code: "90001".into(),
+                    country: "US".into(),
+                    phone: None,
+                    email: None,
+                },
+            },
+        )))
+        .expect("set shipping address");
+    assert_sealed_success(&shipping, "carts.shipping_address.set");
+    let taxed = kernel
+        .execute_calculate_cart_tax(&applied(&storefront(
+            "carts.tax.calculate",
+            "storefront-tax",
+            CalculateCartTax { cart_id },
+        )))
+        .expect("calculate tax");
+    assert_sealed_success(&taxed, "carts.tax.calculate");
+    let taxed = taxed.result.expect("tax result");
+    assert_eq!(taxed.cart.tax_amount, taxed.calculation.total_tax);
+    let untaxable = kernel
+        .execute_create_cart(&applied(&storefront(
+            "carts.create",
+            "storefront-untaxable-cart",
+            CreateCart { customer_id: Some(customer.id), ..Default::default() },
+        )))
+        .expect("second cart")
+        .result
+        .expect("second cart");
+    let no_address = kernel
+        .execute_calculate_cart_tax(&applied(&storefront(
+            "carts.tax.calculate",
+            "storefront-tax-no-address",
+            CalculateCartTax { cart_id: untaxable.id },
+        )))
+        .expect("tax without address");
+    assert_eq!(no_address.status, ExecutionStatus::Rejected);
+    assert_eq!(no_address.error_code.as_deref(), Some("commerce.validation_failed"));
+
+    // carts.coupon.apply — an unknown code is a sealed refusal, the real one discounts.
+    let bogus = kernel
+        .execute_apply_cart_coupon(&applied(&storefront(
+            "carts.coupon.apply",
+            "storefront-coupon-bogus",
+            ApplyCartCoupon { cart_id, coupon_code: "NOPE".into() },
+        )))
+        .expect("bogus coupon");
+    assert_eq!(bogus.status, ExecutionStatus::Rejected);
+    assert_eq!(bogus.error_code.as_deref(), Some("commerce.validation_failed"));
+    let coupon = storefront(
+        "carts.coupon.apply",
+        "storefront-coupon",
+        ApplyCartCoupon { cart_id, coupon_code: "welcome10".into() },
+    );
+    assert_eq!(
+        kernel.execute_apply_cart_coupon(&coupon).expect("preview coupon").status,
+        ExecutionStatus::Previewed
+    );
+    assert_eq!(db.carts().get(cart_id).expect("cart").expect("cart").coupon_code, None);
+    let discounted = kernel.execute_apply_cart_coupon(&applied(&coupon)).expect("coupon");
+    assert_sealed_success(&discounted, "carts.coupon.apply");
+    let discounted = discounted.result.expect("discounted cart");
+    assert_eq!(discounted.coupon_code.as_deref(), Some("WELCOME10"));
+    assert_eq!(discounted.discount_amount, dec!(10.00));
+
+    // carts.payment_method.set — the token is stored but never sealed.
+    let paid = kernel
+        .execute_set_cart_payment_method(&applied(&storefront(
+            "carts.payment_method.set",
+            "storefront-payment-method",
+            SetCartPaymentMethod {
+                cart_id,
+                payment: SetCartPayment {
+                    payment_method: "credit_card".into(),
+                    payment_token: Some("tok_storefront_secret".into()),
+                    billing_address: None,
+                },
+            },
+        )))
+        .expect("set payment method");
+    assert_sealed_success(&paid, "carts.payment_method.set");
+    assert!(!serde_json::to_string(&paid).expect("receipt json").contains("tok_storefront_secret"));
+    assert_eq!(
+        db.carts().get(cart_id).expect("cart").expect("cart").payment_token.as_deref(),
+        Some("tok_storefront_secret")
+    );
+
+    // checkout.commit, payments.create, payments.complete
+    let checkout = kernel
+        .execute_commit_checkout(&applied(&storefront(
+            "checkout.commit",
+            "storefront-checkout",
+            CommitCheckout::new(cart_id),
+        )))
+        .expect("checkout");
+    assert_eq!(checkout.status, ExecutionStatus::Succeeded, "{:?}", checkout.error_message);
+    let checkout = checkout.result.expect("checkout result");
+    assert_eq!(checkout.total_charged, discounted.grand_total);
+    let order_id = checkout.order_id;
+    let mut create_payment = payment_command("storefront-payment", checkout.total_charged);
+    create_payment.payload.order_id = Some(order_id);
+    let payment = kernel.execute_create_payment(&applied(&create_payment)).expect("payment");
+    let payment_id = payment.result.expect("payment").id;
+    let complete =
+        storefront("payments.complete", "storefront-capture", CompletePayment { payment_id });
+    assert_eq!(
+        kernel.execute_complete_payment(&complete).expect("preview capture").status,
+        ExecutionStatus::Previewed
+    );
+    assert_eq!(
+        db.payments().get(payment_id).expect("payment").expect("payment").status,
+        stateset_core::PaymentTransactionStatus::Pending
+    );
+    let captured = kernel.execute_complete_payment(&applied(&complete)).expect("capture");
+    assert_sealed_success(&captured, "payments.complete");
+    assert_eq!(
+        captured.result.as_ref().expect("payment").status,
+        stateset_core::PaymentTransactionStatus::Completed
+    );
+    let replayed = kernel.execute_complete_payment(&applied(&complete)).expect("replay capture");
+    assert_eq!(replayed.receipt_id, captured.receipt_id);
+    let mut again = applied(&complete);
+    again.idempotency_key = "storefront-capture-again".into();
+    let again = kernel.execute_complete_payment(&again).expect("second capture");
+    assert_eq!(again.status, ExecutionStatus::Rejected);
+    assert_eq!(again.error_code.as_deref(), Some("commerce.payment.rejected"));
+
+    // orders.transition, shipments.create, orders.ship
+    let processing = kernel
+        .execute_transition_order(&applied(&storefront(
+            "orders.transition",
+            "storefront-processing",
+            TransitionOrder {
+                order_id,
+                status: OrderStatus::Processing,
+                payment_status: None,
+                void_payments: false,
+            },
+        )))
+        .expect("processing");
+    assert_eq!(processing.status, ExecutionStatus::Succeeded, "{:?}", processing.error_message);
+    let shipment_input = |order_id| CreateShipment {
+        order_id,
+        recipient_name: "Ada Lovelace".into(),
+        shipping_address: "1 Main St, Los Angeles, CA 90001, US".into(),
+        carrier: Some(stateset_core::ShippingCarrier::Ups),
+        ..Default::default()
+    };
+    let orphan = kernel
+        .execute_create_shipment(&applied(&storefront(
+            "shipments.create",
+            "storefront-shipment-orphan",
+            shipment_input(stateset_core::OrderId::new()),
+        )))
+        .expect("orphan shipment");
+    assert_eq!(orphan.status, ExecutionStatus::Rejected);
+    assert_eq!(orphan.error_code.as_deref(), Some("commerce.order_not_found"));
+    let shipment = kernel
+        .execute_create_shipment(&applied(&storefront(
+            "shipments.create",
+            "storefront-shipment",
+            shipment_input(order_id),
+        )))
+        .expect("shipment");
+    assert_sealed_success(&shipment, "shipments.create");
+    let shipped = kernel
+        .execute_ship_order(&applied(&storefront(
+            "orders.ship",
+            "storefront-ship",
+            ShipOrderCommand { order_id, tracking_number: Some("1Z999".into()), lines: None },
+        )))
+        .expect("ship");
+    assert_eq!(shipped.status, ExecutionStatus::Succeeded, "{:?}", shipped.error_message);
+
+    // returns.create, returns.transition, returns.tracking.add
+    let order = db.orders().get(order_id).expect("order").expect("order");
+    let return_input = |quantity| CreateReturn {
+        order_id,
+        reason: stateset_core::ReturnReason::Defective,
+        items: vec![CreateReturnItem {
+            order_item_id: order.items[0].id,
+            quantity,
+            condition: None,
+        }],
+        ..Default::default()
+    };
+    let too_many = kernel
+        .execute_create_return(&applied(&storefront(
+            "returns.create",
+            "storefront-return-too-many",
+            return_input(5),
+        )))
+        .expect("over-return");
+    assert_eq!(too_many.status, ExecutionStatus::Rejected);
+    assert_eq!(too_many.error_code.as_deref(), Some("commerce.return.exceeds_shipped"));
+    let create_return = storefront("returns.create", "storefront-return", return_input(1));
+    assert_eq!(
+        kernel.execute_create_return(&create_return).expect("preview return").status,
+        ExecutionStatus::Previewed
+    );
+    let returned = kernel.execute_create_return(&applied(&create_return)).expect("return");
+    assert_sealed_success(&returned, "returns.create");
+    let return_id = returned.result.expect("return").id;
+    let approved = kernel
+        .execute_transition_return(&applied(&storefront(
+            "returns.transition",
+            "storefront-return-approve",
+            TransitionReturn { return_id, status: ReturnStatus::Approved },
+        )))
+        .expect("approve");
+    assert_eq!(approved.status, ExecutionStatus::Succeeded, "{:?}", approved.error_message);
+    let tracked = kernel
+        .execute_add_return_tracking(&applied(&storefront(
+            "returns.tracking.add",
+            "storefront-return-tracking",
+            AddReturnTracking { return_id, tracking_number: "RET-1Z".into() },
+        )))
+        .expect("tracking");
+    assert_sealed_success(&tracked, "returns.tracking.add");
+    let tracked = tracked.result.expect("tracked return");
+    assert_eq!(tracked.status, ReturnStatus::InTransit);
+    assert_eq!(tracked.tracking_number.as_deref(), Some("RET-1Z"));
+
+    let chain = db.kernel_outbox().verify_audit_chain().expect("verify chain");
+    assert!(chain.valid, "{chain:?}");
 }

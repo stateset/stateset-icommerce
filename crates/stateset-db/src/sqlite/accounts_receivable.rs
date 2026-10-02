@@ -225,7 +225,7 @@ impl SqliteAccountsReceivableRepository {
     }
 
     fn recalculate_invoice_with_conn(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         invoice_id: InvoiceId,
     ) -> Result<()> {
         // Sum applications exactly in Rust: `SUM()` over a TEXT decimal column
@@ -300,6 +300,32 @@ impl SqliteAccountsReceivableRepository {
             ],
         )
         .map_err(map_db_error)?;
+
+        // The footing itself (amount_paid/balance_due) is derived noise every
+        // caller already has a fact for. But a status flip to/from `paid` is
+        // the lifecycle transition that starts or stops dunning and
+        // collections — a peer cannot derive "this invoice is now paid" from
+        // the application/write-off/credit-memo facts alone without also
+        // holding the invoice total and every prior application. Emit only
+        // on an actual change, so the noisy common case (status unchanged)
+        // stays silent.
+        if status != current_status {
+            super::kernel_outbox::record_outbox_fact(
+                conn,
+                crate::kernel_outbox::RecordedFact {
+                    event_type: "invoice.status_changed",
+                    aggregate_type: "invoice",
+                    aggregate_id: &invoice_id.to_string(),
+                    payload: serde_json::json!({
+                        "invoice_id": invoice_id,
+                        "previous_status": current_status,
+                        "status": status,
+                        "balance_due": balance_due.to_string(),
+                    }),
+                },
+            )
+            .map_err(map_db_error)?;
+        }
 
         Ok(())
     }
@@ -1139,6 +1165,20 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
+        // `ar_credit_memos.customer_id` carries no FK, so an unknown customer
+        // would otherwise yield an Open memo for nobody.
+        let customer_exists: Option<i64> = conn
+            .query_row(
+                "SELECT 1 FROM customers WHERE id = ?1",
+                params![input.customer_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_db_error)?;
+        if customer_exists.is_none() {
+            return Err(stateset_core::CommerceError::NotFound);
+        }
+
         let id = Uuid::new_v4();
         let now = Utc::now();
         let credit_memo_number = generate_credit_memo_number();
@@ -1242,12 +1282,18 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         // `unapplied_amount` is a TEXT decimal, so the has_unapplied filter is
         // applied below on the exact parsed `Decimal` (a SQL CAST(... AS REAL)
         // comparison coerces to IEEE-754 floats), and the LIMIT after it so
-        // filtering never eats into the page.
-        let has_unapplied = filter.has_unapplied.unwrap_or(false);
+        // filtering never eats into the page. A voided memo keeps its
+        // `unapplied_amount` as the audit record of what was never applied (as
+        // a cancelled vendor credit keeps `remaining`), so "unapplied" also
+        // gates on status.
+        // `Some(false)` means "only memos with nothing left to apply", not "no
+        // filter" -- Postgres reads it that way, and `unwrap_or(false)` here
+        // made the two backends answer the same filter differently.
+        let has_unapplied = filter.has_unapplied;
 
         sql.push_str(" ORDER BY issue_date DESC");
 
-        if !has_unapplied {
+        if has_unapplied.is_none() {
             if let Some(limit) = filter.limit {
                 sql.push_str(" LIMIT ?");
                 params_vec.push(Value::Integer(i64::from(limit)));
@@ -1259,8 +1305,12 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             .query_map(params_from_iter(params_vec), Self::map_credit_memo_row)
             .map_err(map_db_error)?;
         let mut memos = rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)?;
-        if has_unapplied {
-            memos.retain(|memo| memo.unapplied_amount > Decimal::ZERO);
+        if let Some(want_unapplied) = has_unapplied {
+            memos.retain(|memo| {
+                let unapplied = memo.unapplied_amount > Decimal::ZERO
+                    && memo.status != CreditMemoStatus::Voided;
+                unapplied == want_unapplied
+            });
             if let Some(limit) = filter.limit {
                 memos.truncate(limit as usize);
             }
@@ -1990,12 +2040,25 @@ mod tests {
         SqliteDatabase::in_memory().expect("in-memory").accounts_receivable()
     }
 
+    /// Credit memos require a real customer; seed a bare row (idempotent, so
+    /// tests that insert their own customer first are unaffected).
+    fn seed_customer_if_missing(repo: &SqliteAccountsReceivableRepository, id: Uuid) {
+        let conn = repo.pool.get().expect("conn");
+        conn.execute(
+            "INSERT OR IGNORE INTO customers (id, email, first_name, last_name)
+             VALUES (?1, ?2, 'Memo', 'Customer')",
+            params![id.to_string(), format!("memo-{id}@example.com")],
+        )
+        .expect("seed customer");
+    }
+
     fn make_memo(
         repo: &SqliteAccountsReceivableRepository,
         customer_id: Uuid,
         amount: Decimal,
         reason: CreditMemoReason,
     ) -> CreditMemo {
+        seed_customer_if_missing(repo, customer_id);
         repo.create_credit_memo(CreateCreditMemo {
             customer_id,
             original_invoice_id: None,
@@ -2269,6 +2332,45 @@ mod tests {
     }
 
     #[test]
+    fn has_unapplied_false_selects_the_memos_with_nothing_left_to_apply() {
+        // Postgres reads `Some(false)` as a filter; SQLite used to read it as
+        // "no filter" via unwrap_or(false), so the two backends answered the
+        // same query differently.
+        let repo = fresh_repo();
+        let cust = Uuid::new_v4();
+        seed_customer_if_missing(&repo, cust);
+        let open = make_memo(&repo, cust, dec!(10), CreditMemoReason::ReturnedGoods);
+        let spent = make_memo(&repo, cust, dec!(20), CreditMemoReason::ReturnedGoods);
+        {
+            let conn = repo.pool.get().expect("conn");
+            conn.execute(
+                "UPDATE ar_credit_memos SET unapplied_amount = '0' WHERE id = ?1",
+                params![spent.id.to_string()],
+            )
+            .expect("update memo");
+        }
+
+        let without = repo
+            .list_credit_memos(CreditMemoFilter {
+                customer_id: Some(cust),
+                has_unapplied: Some(false),
+                ..Default::default()
+            })
+            .expect("list");
+        assert_eq!(
+            without.iter().map(|m| m.id).collect::<Vec<_>>(),
+            vec![spent.id],
+            "Some(false) must select only memos with nothing left to apply"
+        );
+
+        let unfiltered = repo
+            .list_credit_memos(CreditMemoFilter { customer_id: Some(cust), ..Default::default() })
+            .expect("list");
+        assert_eq!(unfiltered.len(), 2, "None still means no filter");
+        let _ = open;
+    }
+
+    #[test]
     fn empty_aging_summary_is_zero() {
         let repo = fresh_repo();
         let summary = repo.get_aging_summary().expect("ok");
@@ -2406,6 +2508,50 @@ mod tests {
         let memo = make_memo(&repo, cust, dec!(15), CreditMemoReason::ReturnedGoods);
         let voided = repo.void_credit_memo(memo.id).expect("void");
         assert_eq!(voided.status, CreditMemoStatus::Voided);
+    }
+
+    #[test]
+    fn create_credit_memo_rejects_unknown_customer_and_writes_nothing() {
+        // `ar_credit_memos.customer_id` carries no FK in either backend, so an
+        // unknown customer used to yield an Open memo for nobody.
+        let repo = fresh_repo();
+        let ghost = Uuid::new_v4();
+        let err = repo
+            .create_credit_memo(CreateCreditMemo {
+                customer_id: ghost,
+                original_invoice_id: None,
+                reason: CreditMemoReason::ReturnedGoods,
+                amount: dec!(25),
+                notes: None,
+            })
+            .expect_err("unknown customer must be rejected");
+        assert!(matches!(err, stateset_core::CommerceError::NotFound), "got {err:?}");
+        let listed = repo
+            .list_credit_memos(CreditMemoFilter { customer_id: Some(ghost), ..Default::default() })
+            .expect("list");
+        assert!(listed.is_empty(), "nothing may be written for a rejected memo");
+    }
+
+    #[test]
+    fn void_credit_memo_drops_it_from_unapplied_credits() {
+        // Voiding only flipped `status`; `unapplied_amount` stayed at the full
+        // amount, so the voided memo still listed as applicable credit. Like a
+        // cancelled vendor credit (AP keeps `remaining`, gates on status), the
+        // amount is left as the audit record and the query gates on status.
+        let repo = fresh_repo();
+        let cust = Uuid::new_v4();
+        let voided = make_memo(&repo, cust, dec!(30), CreditMemoReason::ReturnedGoods);
+        let open = make_memo(&repo, cust, dec!(70), CreditMemoReason::ReturnedGoods);
+        repo.void_credit_memo(voided.id).expect("void");
+
+        let unapplied = repo.get_unapplied_credits(cust).expect("ok");
+        assert_eq!(
+            unapplied.iter().map(|m| m.id).collect::<Vec<_>>(),
+            vec![open.id],
+            "a voided memo is not applicable credit"
+        );
+        let fetched = repo.get_credit_memo(voided.id).expect("ok").expect("found");
+        assert!(!fetched.can_apply());
     }
 
     #[test]
@@ -2718,6 +2864,36 @@ mod tests {
         let after = repo.get_credit_memo(memo.id).expect("get").expect("memo");
         assert_eq!(after.applied_amount, dec!(100));
         assert_eq!(after.unapplied_amount, dec!(0));
+    }
+
+    #[test]
+    fn partial_credit_applications_preserve_memo_and_invoice_balances() {
+        // CreditAllocation.applyAll conserves the memo and cannot cross the
+        // invoice's due balance. Check the persisted amounts after each step.
+        let repo = fresh_repo();
+        let cust = Uuid::new_v4();
+        let memo = make_memo(&repo, cust, dec!(70), CreditMemoReason::ReturnedGoods);
+        let invoice_id = insert_invoice_for(&repo, cust, "INV-CREDIT-PARTS", "100");
+        let mut applied = Decimal::ZERO;
+        for amount in [dec!(12.34), dec!(17.66), dec!(40)] {
+            repo.apply_credit_memo(ApplyCreditMemo { credit_memo_id: memo.id, invoice_id, amount })
+                .expect("apply credit part");
+            applied += amount;
+            let current = repo.get_credit_memo(memo.id).expect("load memo").expect("memo");
+            assert_eq!(current.applied_amount, applied);
+            assert_eq!(current.unapplied_amount + current.applied_amount, dec!(70));
+            let balance: String = repo
+                .pool
+                .get()
+                .expect("connection")
+                .query_row(
+                    "SELECT balance_due FROM invoices WHERE id = ?1",
+                    params![invoice_id.to_string()],
+                    |row| row.get(0),
+                )
+                .expect("invoice balance");
+            assert_eq!(balance.parse::<Decimal>().expect("decimal"), dec!(100) - applied);
+        }
     }
 
     #[test]

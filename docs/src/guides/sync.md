@@ -18,8 +18,9 @@ Local Agent                    Sequencer                   Other Agents
     │◄── 4. Pull ─────────────────│                            │
     │   (events from other agents)│                            │
     │                              │                            │
-    │── 5. Verify & apply ──────► │                            │
-    │   (signature + Merkle check)│                            │
+    │── 5. Verify & store ──────► │                            │
+    │   (author signature; failures│                           │
+    │    quarantined, not applied) │                           │
 ```
 
 ## Setup
@@ -30,10 +31,21 @@ stateset-sync init \
     --sequencer-url https://sequencer.stateset.com \
     --tenant-id <uuid> \
     --store-id <uuid> \
-    --api-key <key>
+    --api-key <key> \
+    --sequencer-public-key <hex>
 ```
 
 This creates `.stateset/sync.json` which activates Tier 2 capabilities.
+
+`--sequencer-public-key` is **required to receive events.** Without it the agent
+can push, but every pulled event is quarantined (see
+[Receiving events](#receiving-events-verification-and-quarantine)) and nothing is
+stored. It can also be set afterwards:
+
+```bash
+stateset-sync config set sequencer-public-key <hex>
+stateset-sync config show          # secrets redacted
+```
 
 ## Core Operations
 
@@ -51,13 +63,105 @@ Pushes all unsent events from the local outbox to the sequencer. Each event is s
 stateset-sync pull
 ```
 
-Fetches new events from the sequencer and applies them to the local database after verifying signatures and Merkle proofs.
+Fetches new events from the sequencer, verifies each one against its author's
+signing key, and stores what verifies in the local pulled-event table. Nothing is
+applied to local entity state yet — pulled events are readable, not projected —
+and what fails verification is quarantined rather than stored. See
+[Receiving events](#receiving-events-verification-and-quarantine).
 
 ### Full Sync
 
 ```bash
 stateset-sync push && stateset-sync pull
 ```
+
+
+## Receiving events: verification and quarantine
+
+Every event returned by `pull()` is verified against the signing key its author
+claims, resolved through the sequencer's **signed key directory**. Nothing
+unverified is ever written to the pulled-event store, and there is no
+configuration flag that turns verification off.
+
+### Configuration
+
+| Field (`.stateset/sync.json`) | Default | Meaning |
+|---|---|---|
+| `sequencerPublicKey` | `null` | The sequencer's Ed25519 public key, used to verify the signature over each key-directory response. **Required to receive.** |
+| `peerKeyTtlSeconds` | `300` | How long a cached peer key directory is reused before re-fetching. Also the worst case for how long a revoked peer key keeps verifying events. |
+| `peerKeyMaxStaleSeconds` | `86400` | How long cached peer keys may keep serving while the sequencer is *unreachable*. Past this, affected events quarantine rather than sync halting. |
+
+**Encoding of `sequencerPublicKey`:** the raw 32-byte Ed25519 public key as 64
+hex characters, `0x` prefix optional. It is stored normalized as
+`0x`-prefixed lowercase hex. It is not a DER/SPKI blob and not base64; if you
+have a PEM key, export the raw key bytes (the last 32 bytes of the SPKI DER).
+
+Set it at `init` (`--sequencer-public-key`, `--peer-key-ttl-seconds`,
+`--peer-key-max-stale-seconds`) or afterwards with
+`stateset-sync config set <key> <value>`.
+
+### Pinning
+
+The first time a `(agent_id, key_id)` pair is resolved, its public key is
+pinned. A *different* public key later presented for an already-pinned
+`key_id` is refused — a sequencer that can silently swap key material can forge
+any agent's events. A *new* `key_id` for a known agent is accepted and pinned:
+that is the rotation path, and it is why rotation must always allocate a fresh
+`key_id`.
+
+### Quarantine reasons
+
+Events that cannot be verified go to `_ves_quarantined_events` and are never
+returned by application reads. The reason is the current diagnosis:
+
+| Reason | What it means | What to do |
+|---|---|---|
+| `sequencer_key_not_configured` | `sequencerPublicKey` is unset locally, so no directory can be verified. | `stateset-sync config set sequencer-public-key <hex>`, then `stateset-sync doctor --promote`. |
+| `key_unresolved` | The key could not be obtained: the sequencer was unreachable past `peerKeyMaxStaleSeconds`, or the peer has no such `key_id` yet. | Usually benign — a peer that pushed before registering its key. Re-run `doctor --promote` once the key lands. |
+| `directory_untrusted` | A key-directory response was refused: unsigned, bad signature, issued for a different agent or tenant, too stale, or (gRPC) never cryptographically attested. | **Not benign.** Investigate the sequencer and the transport. |
+| `signature_invalid` | The author signature did not verify under the key the directory names. | A forgery or a corrupted envelope. Investigate the peer. |
+| `key_revoked` | The key was revoked at or before the event's `createdAt`. | Expected after a revocation; the peer must re-push under a current key. |
+| `key_outside_validity_window` | The key exists but was not valid when the event was created. | Check the peer's key validity windows and clock. |
+| `peer_key_conflict` | The directory presented a different public key for an already-pinned `(agent_id, key_id)`. | Treat as a compromised or lying sequencer until proven otherwise. |
+
+### `stateset-sync doctor`
+
+```bash
+stateset-sync doctor              # counts by reason, current pins
+stateset-sync doctor --promote    # re-verify quarantined events, promote what now passes
+stateset-sync doctor --json
+```
+
+`--promote` is the designed recovery path for the common benign case: a peer
+pushed before its key reached the directory. Events that now verify are moved
+into the pulled-event store; events that still do not are left quarantined with
+their reason **updated** to the current diagnosis, so a `key_unresolved` that is
+really a forgery reads as `signature_invalid` afterwards.
+
+A reason is only ever sharpened, never weakened. A directory outage resolves
+every event as `key_unresolved`, so both the `--promote` sweep and the ordinary
+pull path refuse to overwrite a finding about the event (`signature_invalid`,
+`directory_untrusted`, `peer_key_conflict`, `key_revoked`,
+`key_outside_validity_window`) with a failure to *obtain* a key. Running
+`doctor --promote` while the sequencer is down is therefore safe: it cannot
+erase evidence, it simply promotes nothing.
+
+### Known limitations
+
+- **The gRPC receive path is unsupported.** `pull()` refuses to run on a gRPC
+  transport, and streamed events are never stored: the gRPC envelope omits
+  fields the signing hash binds, and the gRPC key directory carries no
+  directory signature, so it can be neither cached nor trusted. Use an
+  `https://` sequencer URL to receive. Pushing over gRPC is unaffected.
+- **`securityProfile` is not enforced on receive.** The push path calls
+  `assertEventMatchesSecurityProfile`; the receive path deliberately does not,
+  so an agent configured `hybrid` or `pqc-strict` still accepts a peer event
+  declaring plain Ed25519 (`agentSignatureScheme: 0`). Enforcing it today would
+  quarantine every peer that has not migrated. No forgery becomes possible in
+  the meantime — the attacker still needs the peer's Ed25519 private key — and
+  this is tracked for a release in which peers have migrated.
+- Pulled events are **stored and readable, not applied.** Nothing is projected
+  into local entity state yet.
 
 ## Key Management
 

@@ -80,6 +80,7 @@ When the user asks to create, update, or delete something, first explain what wo
       'mcp__stateset-commerce__set_cart_tax',
       'mcp__stateset-commerce__get_abandoned_carts',
       'mcp__stateset-commerce__get_expired_carts',
+      'mcp__stateset-commerce__explain_cart_pricing',
       // Also need customer lookup for checkout
       'mcp__stateset-commerce__get_customer',
       'mcp__stateset-commerce__list_customers',
@@ -110,6 +111,7 @@ Guide customers through the shopping cart and checkout process.
 - complete_checkout - Convert to order (requires --apply)
 - cancel_cart, abandon_cart, expire_cart - End cart lifecycle (requires --apply)
 - get_abandoned_carts, get_expired_carts - Recovery and cleanup views
+- explain_cart_pricing - Explain a cart's total: promotions applied/refused, tax, shipping (read-only)
 
 ## Safety Rules
 1. Preview totals before completing checkout
@@ -126,6 +128,7 @@ If --apply is not set, write operations show a preview instead of executing.`,
     tools: [
       'mcp__stateset-commerce__list_orders',
       'mcp__stateset-commerce__get_order',
+      'mcp__stateset-commerce__explain_order',
       'mcp__stateset-commerce__create_order',
       'mcp__stateset-commerce__update_order_status',
       'mcp__stateset-commerce__ship_order',
@@ -145,6 +148,7 @@ pending → confirmed → processing → shipped → delivered
 ## Available Tools
 - list_orders - List all orders
 - get_order - Get order details with items
+- explain_order - Explain an order end to end: timeline, money, inconsistencies (read-only)
 - create_order - Create new order (requires --apply)
 - update_order_status - Change status (requires --apply)
 - ship_order - Ship with tracking (requires --apply)
@@ -210,6 +214,7 @@ If --apply is not set, write operations show a preview instead of executing.`,
       'mcp__stateset-commerce__approve_return',
       'mcp__stateset-commerce__reject_return',
       'mcp__stateset-commerce__get_order',
+      'mcp__stateset-commerce__explain_order',
       'mcp__stateset-commerce__list_orders',
     ],
     systemPrompt: `You are a returns processing specialist for StateSet Commerce.
@@ -315,6 +320,7 @@ Note: All analytics tools are read-only. No --apply flag needed.`,
       'mcp__stateset-commerce__get_promotion',
       'mcp__stateset-commerce__update_promotion',
       'mcp__stateset-commerce__create_promotion',
+      'mcp__stateset-commerce__add_promotion_condition',
       'mcp__stateset-commerce__delete_promotion',
       'mcp__stateset-commerce__activate_promotion',
       'mcp__stateset-commerce__deactivate_promotion',
@@ -325,7 +331,9 @@ Note: All analytics tools are read-only. No --apply flag needed.`,
       'mcp__stateset-commerce__get_active_promotions',
       'mcp__stateset-commerce__check_promotion_validity',
       'mcp__stateset-commerce__apply_cart_promotions',
+      'mcp__stateset-commerce__quote_promotions',
       'mcp__stateset-commerce__record_promotion_usage',
+      'mcp__stateset-commerce__explain_cart_pricing',
       // Also need cart access for applying promotions
       'mcp__stateset-commerce__get_cart',
       'mcp__stateset-commerce__apply_cart_discount',
@@ -356,6 +364,7 @@ draft → active → (paused) → expired
 - get_promotion - Get promotion details
 - update_promotion - Update campaign details (requires --apply)
 - create_promotion - Create new promotion (requires --apply)
+- add_promotion_condition - Gate a promotion on a condition, e.g. first order or minimum subtotal (requires --apply)
 - delete_promotion - Delete promotion (requires --apply)
 - activate_promotion - Make promotion live (requires --apply)
 - deactivate_promotion - Pause promotion (requires --apply)
@@ -366,6 +375,8 @@ draft → active → (paused) → expired
 - get_active_promotions - Get currently running promotions
 - check_promotion_validity - Verify if a promotion can still apply
 - apply_cart_promotions - Apply discounts to cart (requires --apply)
+- quote_promotions - Price a basket and explain refused promotions, writing nothing
+- explain_cart_pricing - Explain why a cart's coupon applied or was refused (reason codes)
 - record_promotion_usage - Record applied discount usage (requires --apply)
 
 ## Safety Rules
@@ -693,6 +704,7 @@ If --apply is not set, write operations show a preview instead of executing.`,
       'mcp__stateset-commerce__ingest_payment_provider_webhook',
       // Also need order context
       'mcp__stateset-commerce__get_order',
+      'mcp__stateset-commerce__explain_order',
       'mcp__stateset-commerce__list_orders',
     ],
     systemPrompt: `You are a payment processing specialist for StateSet Commerce.
@@ -782,7 +794,9 @@ If --apply is not set, payment operations show a preview instead of executing.`,
     tools: [
       'mcp__stateset-commerce__list_shipments',
       'mcp__stateset-commerce__get_shipment',
+      'mcp__stateset-commerce__plan_partial_shipment',
       'mcp__stateset-commerce__create_shipment',
+      'mcp__stateset-commerce__update_shipment',
       'mcp__stateset-commerce__ship_shipment',
       'mcp__stateset-commerce__deliver_shipment',
       'mcp__stateset-commerce__cancel_shipment',
@@ -804,8 +818,8 @@ If --apply is not set, payment operations show a preview instead of executing.`,
 Manage shipment creation, tracking, and delivery confirmation.
 
 ## Shipment Status Flow
-created → shipped → in_transit → delivered
-                             ↘ exception
+pending → processing → ready_to_ship → shipped → in_transit → out_for_delivery → delivered
+Use observed carrier/warehouse events; do not invent intermediate physical stages.
 
 ## Shipping Carriers
 - FEDEX, UPS, USPS, DHL
@@ -815,10 +829,12 @@ created → shipped → in_transit → delivered
 ### Core Shipments
 - list_shipments - List all shipments
 - get_shipment - Get shipment details
+- plan_partial_shipment - Inspect remaining order quantities without writes
 - create_shipment - Create shipment with tracking (requires --apply)
+- update_shipment - Record lifecycle stages or metadata with expectedVersion (requires --apply)
 - ship_shipment - Mark shipment as shipped (requires --apply)
 - deliver_shipment - Mark as delivered (requires --apply)
-- cancel_shipment - Cancel shipment before delivery (requires --apply)
+- cancel_shipment - Cancel shipment before carrier handoff (requires --apply and cancellation permission)
 - ship_order - Ship order with tracking (requires --apply)
 
 ### Provider Labels and Exceptions
@@ -826,16 +842,17 @@ created → shipped → in_transit → delivered
 - quote_shipping_rates - Get provider-backed rate quotes
 - create_shipping_label - Purchase/create a shipping label (requires --apply)
 - void_shipping_label - Void an unused label (requires --apply)
-- track_shipping_label - Track a label with provider updates
+- track_shipping_label - Read current label tracking without advancing status
 - list_shipping_labels - List created labels
 - ingest_shipping_provider_webhook - Ingest shipping provider webhook (requires --apply)
-- handle_fulfillment_exception - Resolve delivery exceptions (requires --apply)
+- handle_fulfillment_exception - Handle exceptions; partial shipment returns a reconciliation plan and cannot automatically create a follow-up shipment (requires --apply)
 
 ## Safety Rules
 1. Verify tracking number format for carrier
 2. Confirm shipping address is complete
 3. Check inventory before shipping
-4. Update order status after shipment
+4. Shipment tracking and order fulfillment are separate; reconcile quantities and reservations before order fulfillment
+5. Partial-shipment plans are snapshots, not reservations or authorization to ship
 
 If --apply is not set, write operations show a preview instead of executing.`,
   },

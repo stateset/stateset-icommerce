@@ -174,6 +174,31 @@ fn disputed_payment_keeps_its_slice_of_the_order_total() {
 }
 
 #[test]
+fn concurrent_captures_cannot_exceed_one_order_total() {
+    let db = Arc::new(db());
+    let order_id = order_totalling(&db, dec!(3.00), CurrencyCode::USD);
+    let barrier = Arc::new(Barrier::new(2));
+    let handles: Vec<_> = (0..2)
+        .map(|_| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                db.payments().create(payment_input(Some(order_id), dec!(2.00)))
+            })
+        })
+        .collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+    assert!(
+        results.iter().any(|r| matches!(r, Err(CommerceError::CaptureExceedsOrderTotal { .. })))
+    );
+    let payments = db.payments().for_order(order_id).expect("payments");
+    assert_eq!(payments.len(), 1);
+    assert_eq!(payments[0].amount, dec!(2.00));
+}
+
+#[test]
 fn disputed_payment_is_an_open_capture() {
     let db = db();
     let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD);
@@ -714,16 +739,12 @@ fn refunded_cannot_be_reached_through_update() {
     let order_id = order_totalling(&db, dec!(100.00), CurrencyCode::USD);
     let p = completed_payment(&db, Some(order_id), dec!(100.00));
     set_status(&db, p.id, PaymentTransactionStatus::Disputed).expect("dispute");
-
-    // Disputed -> Refunded is a legal state-machine edge, but as a status
-    // flip it leaves amount_refunded at 0 and the capture "outstanding".
-    let err = set_status(&db, p.id, PaymentTransactionStatus::Refunded)
-        .expect_err("refund by status flip is refused");
-    assert_validation_mentioning(&err, "complete_refund");
-    assert_eq!(status(&db, p.id), PaymentTransactionStatus::Disputed);
     assert_eq!(db.payments().open_captures_for_order(order_id).unwrap().len(), 1);
+    // (`Disputed -> Refunded` is a lost chargeback, recorded on the ledger by
+    // the status write itself — see `sqlite_chargeback_lost.rs`.)
 
-    // Same for Completed -> Refunded / PartiallyRefunded.
+    // Completed -> Refunded / PartiallyRefunded as a bare flip would leave
+    // amount_refunded at 0 and the capture "outstanding".
     set_status(&db, p.id, PaymentTransactionStatus::Completed).expect("dispute won");
     for target in [PaymentTransactionStatus::Refunded, PaymentTransactionStatus::PartiallyRefunded]
     {

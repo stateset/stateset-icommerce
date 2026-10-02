@@ -44,15 +44,29 @@ export const proofTools = [
   // =========================================================================
   {
     name: 'generate_inclusion_proof',
-    description: 'Generate a Merkle inclusion proof for a specific event within a batch of events.',
+    description:
+      'Generate a Merkle inclusion proof for an event within a batch. Events carrying ' +
+      'tenantId, storeId, sequenceNumber, eventSigningHash and agentSignature get a ves-v1 ' +
+      'proof that the SDK spec verifier accepts; events with only id and eventSigningHash ' +
+      'get a legacy-v0 proof and a warning saying which fields are missing.',
     inputSchema: {
       eventId: z.string().min(1).describe('ID of the event to prove'),
       events: z
         .string()
         .min(1)
-        .describe('JSON-encoded array of events in the batch (each with id, eventSigningHash)'),
+        .describe(
+          'JSON-encoded array of events in the batch. For a ves-v1 proof each needs id, ' +
+            'tenantId, storeId, sequenceNumber, eventSigningHash and agentSignature.',
+        ),
       batchId: z.string().optional().describe('Optional batch identifier'),
       anchorTxHash: z.string().optional().describe('Optional on-chain anchor transaction hash'),
+      format: z
+        .enum(['ves-v1', 'legacy-v0'])
+        .optional()
+        .describe(
+          'Proof format. Omit to choose by the fields supplied. legacy-v0 exists only so ' +
+            'roots already anchored on-chain stay verifiable.',
+        ),
     },
     permission: 'read',
     handler: async ({ params }) => {
@@ -61,10 +75,12 @@ export const proofTools = [
         const { createProofGenerator } = await import('../sync/proof-generator.js');
         const pg = createProofGenerator(cryptoMod);
         const events = JSON.parse(params.events);
-        const proof = pg.generateInclusionProof(params.eventId, events, {
-          batchId: params.batchId,
-          anchorTxHash: params.anchorTxHash,
-        });
+        const proof = pg.generateInclusionProof(
+          params.eventId,
+          events,
+          { batchId: params.batchId, anchorTxHash: params.anchorTxHash },
+          { format: params.format },
+        );
         return { success: true, ...proof };
       } catch (error) {
         return { success: false, error: error.message };

@@ -1,6 +1,6 @@
 //! PostgreSQL vendor return (return-to-supplier) repository implementation
 
-use super::map_db_error;
+use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -164,9 +164,8 @@ impl PgVendorReturnRepository {
         let id_uuid = Uuid::from(id);
         let now = Utc::now();
         let number = format!("VR-{}", &id_uuid.to_string()[..8]);
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
-
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
         sqlx::query(
             "INSERT INTO vendor_returns (id, number, supplier_id, purchase_order_id, status, currency, credit_generated, notes, created_at, updated_at)
              VALUES ($1, $2, $3, $4, 'draft', $5, FALSE, $6, $7, $7)",

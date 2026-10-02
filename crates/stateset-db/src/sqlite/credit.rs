@@ -18,7 +18,7 @@ use uuid::Uuid;
 use super::{
     append_limit_offset, map_db_error, parse_datetime_opt_row, parse_datetime_row,
     parse_decimal_opt_row, parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
-    with_immediate_transaction,
+    resolve_currency_in_tx, with_immediate_transaction,
 };
 
 #[derive(Debug)]
@@ -282,21 +282,24 @@ impl SqliteCreditRepository {
     /// done with exact `rust_decimal::Decimal` and written back as an exact
     /// bound parameter rather than coercing to a float in SQL.
     fn release_reservation_with_conn(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         customer_id: CustomerId,
         order_id: OrderId,
         now: &str,
     ) -> rusqlite::Result<Decimal> {
-        let reserved = match conn.query_row(
-            "SELECT amount FROM credit_reservations
+        let released = match conn.query_row(
+            "SELECT id, amount FROM credit_reservations
              WHERE customer_id = ? AND order_id = ? AND status = 'active'",
             [customer_id.to_string(), order_id.to_string()],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         ) {
-            Ok(value) => parse_decimal_row(&value, "credit_reservation", "amount")?,
-            Err(rusqlite::Error::QueryReturnedNoRows) => Decimal::ZERO,
+            Ok((id, amount)) => {
+                Some((id, parse_decimal_row(&amount, "credit_reservation", "amount")?))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
             Err(e) => return Err(e),
         };
+        let reserved = released.as_ref().map_or(Decimal::ZERO, |(_, amount)| *amount);
 
         conn.execute(
             "UPDATE credit_reservations SET status = 'released', released_at = ?
@@ -317,6 +320,27 @@ impl SqliteCreditRepository {
             [&new_hold.to_string(), &customer_id.to_string()],
         )?;
 
+        // Only a release that actually freed a reservation is a fact. Calling
+        // this for an order that never reserved anything moves no money, and
+        // a "released 0" event would be noise a peer has to filter out.
+        if let Some((reservation_id, amount)) = released {
+            super::kernel_outbox::record_outbox_fact(
+                conn,
+                crate::kernel_outbox::RecordedFact {
+                    event_type: "credit_reservation.released",
+                    aggregate_type: "credit_reservation",
+                    aggregate_id: &reservation_id,
+                    payload: serde_json::json!({
+                        "id": reservation_id,
+                        "customer_id": customer_id,
+                        "order_id": order_id,
+                        "amount": amount.to_string(),
+                        "remaining_hold": new_hold.to_string(),
+                    }),
+                },
+            )?;
+        }
+
         Ok(new_hold)
     }
 
@@ -326,7 +350,7 @@ impl SqliteCreditRepository {
     /// just moved the balance in this transaction know the post-transaction
     /// figure exactly, and re-reading it would double-count a payment.
     fn insert_transaction_with_conn(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         id: Uuid,
         input: &RecordCreditTransaction,
         running_balance: Decimal,
@@ -348,17 +372,52 @@ impl SqliteCreditRepository {
                 now,
             ],
         )?;
+
+        // The ledger row is the credit account's fact: every movement of the
+        // balance or the limit lands here exactly once, so a peer that
+        // replays these reconstructs the account without needing a separate
+        // event per calling mutation.
+        super::kernel_outbox::record_outbox_fact(
+            conn,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "credit_account.transaction_recorded",
+                aggregate_type: "credit_account",
+                aggregate_id: &input.customer_id.to_string(),
+                payload: serde_json::json!({
+                    "transaction_id": id,
+                    "customer_id": input.customer_id,
+                    "transaction_type": input.transaction_type.to_string(),
+                    "amount": input.amount.to_string(),
+                    "running_balance": running_balance.to_string(),
+                    "reference_type": input.reference_type,
+                    "reference_id": input.reference_id,
+                    "notes": input.notes,
+                }),
+            },
+        )?;
         Ok(())
     }
 
-    /// Insert a credit account on the caller's connection.
+    /// A credit line is a non-negative ceiling: a negative limit opens an
+    /// account with negative available credit that is "over limit" with nothing
+    /// ever charged. Zero (a fully restricted line) is legitimate.
+    fn validate_credit_limit(limit: Decimal) -> Result<()> {
+        if limit < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(format!(
+                "Credit limit cannot be negative (got {limit})"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Insert a credit account on the caller's transaction.
     fn create_credit_account_with_conn(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         id: CreditId,
         input: &CreateCreditAccount,
         now: &str,
     ) -> rusqlite::Result<()> {
-        let currency = input.currency.unwrap_or_default();
+        let currency = resolve_currency_in_tx(input.currency, conn)?;
         conn.execute(
             "INSERT INTO credit_accounts (id, customer_id, credit_limit, available_credit, current_balance,
                 hold_amount, currency, status, payment_terms, risk_rating, notes, created_at, updated_at)
@@ -379,6 +438,24 @@ impl SqliteCreditRepository {
                 now,
             ],
         )?;
+
+        // Keyed by customer, not by `CreditId`: every other statement in this
+        // module addresses the account as `WHERE customer_id = ?`, so that is
+        // the identity a peer can actually resolve.
+        super::kernel_outbox::record_outbox_fact(
+            conn,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "credit_account.created",
+                aggregate_type: "credit_account",
+                aggregate_id: &input.customer_id.to_string(),
+                payload: serde_json::json!({
+                    "id": id,
+                    "customer_id": input.customer_id,
+                    "credit_limit": input.credit_limit.to_string(),
+                    "currency": currency,
+                }),
+            },
+        )?;
         Ok(())
     }
 
@@ -386,7 +463,7 @@ impl SqliteCreditRepository {
     /// recompute available credit — all on the caller's connection, so the
     /// limit and its audit trail can never disagree.
     fn adjust_credit_limit_with_conn(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         customer_id: CustomerId,
         new_limit: Decimal,
         reason: &str,
@@ -465,14 +542,17 @@ impl SqliteCreditRepository {
 
 impl CreditRepository for SqliteCreditRepository {
     fn create_credit_account(&self, input: CreateCreditAccount) -> Result<CreditAccount> {
+        Self::validate_credit_limit(input.credit_limit)?;
         let id = CreditId::new();
         let now = Utc::now();
 
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            Self::create_credit_account_with_conn(&conn, id, &input, &now.to_rfc3339())
-                .map_err(map_db_error)?;
-        }
+        // The account row and the fact announcing it commit together, so the
+        // standalone create takes the transaction the approval path
+        // (`review_application`) already held.
+        let now_str = now.to_rfc3339();
+        with_immediate_transaction(&self.pool, |tx| {
+            Self::create_credit_account_with_conn(tx, id, &input, &now_str)
+        })?;
 
         self.get_credit_account(id)?.ok_or(CommerceError::NotFound)
     }
@@ -526,6 +606,9 @@ impl CreditRepository for SqliteCreditRepository {
         // committing one without the other leaves `check_credit` approving
         // orders against a stale line.
         let now = Utc::now().to_rfc3339();
+        if let Some(limit) = input.credit_limit {
+            Self::validate_credit_limit(limit)?;
+        }
         let account = self.get_credit_account(id)?.ok_or(CommerceError::NotFound)?;
         let customer_id = account.customer_id;
 
@@ -639,6 +722,7 @@ impl CreditRepository for SqliteCreditRepository {
         // The limit write, its `limit_change` ledger row and the available-credit
         // recompute are ONE IMMEDIATE transaction: a limit that moved without an
         // audit row (or vice versa) is unreconcilable.
+        Self::validate_credit_limit(new_limit)?;
         let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
             Self::adjust_credit_limit_with_conn(tx, customer_id, new_limit, reason, &now)
@@ -1806,6 +1890,76 @@ mod tests {
     }
 
     #[test]
+    fn create_credit_account_rejects_negative_limit_and_writes_nothing() {
+        // A negative line opened an Active account with negative available
+        // credit, which then surfaced in `get_over_limit_customers` with nothing
+        // ever charged. Zero is a legitimate (fully restricted) line.
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        let err = repo
+            .create_credit_account(CreateCreditAccount {
+                customer_id: cust,
+                credit_limit: dec!(-100),
+                currency: None,
+                payment_terms: None,
+                risk_rating: None,
+                notes: None,
+            })
+            .expect_err("negative limit must be rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        assert!(
+            repo.get_credit_account_by_customer(cust).expect("ok").is_none(),
+            "nothing may be written for a rejected account"
+        );
+        assert!(repo.get_over_limit_customers().expect("ok").is_empty());
+
+        let zero = make_account(&repo, CustomerId::new(), Decimal::ZERO);
+        assert_eq!(zero.credit_limit, Decimal::ZERO);
+        assert_eq!(zero.available_credit, Decimal::ZERO);
+    }
+
+    #[test]
+    fn adjust_credit_limit_rejects_negative_limit_and_writes_nothing() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(500));
+
+        let err = repo
+            .adjust_credit_limit(cust, dec!(-1), "bad review")
+            .expect_err("negative limit must be rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+
+        let acct = repo.get_credit_account_by_customer(cust).expect("ok").expect("found");
+        assert_eq!(acct.credit_limit, dec!(500), "limit must be unchanged");
+        assert_eq!(acct.available_credit, dec!(500));
+        let ledger = repo
+            .list_transactions(CreditTransactionFilter {
+                customer_id: Some(cust),
+                transaction_type: Some(CreditTransactionType::LimitChange),
+                ..Default::default()
+            })
+            .expect("list");
+        assert!(ledger.is_empty(), "a rejected change must not leave a limit_change row");
+
+        // The blind update path has the same ceiling.
+        let err = repo
+            .update_credit_account(
+                acct.id,
+                UpdateCreditAccount { credit_limit: Some(dec!(-5)), ..Default::default() },
+            )
+            .expect_err("negative limit must be rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        assert_eq!(
+            repo.get_credit_account_by_customer(cust).expect("ok").expect("found").credit_limit,
+            dec!(500)
+        );
+
+        // Zero remains a legitimate target (freeze the line).
+        let frozen = repo.adjust_credit_limit(cust, Decimal::ZERO, "freeze").expect("zero ok");
+        assert_eq!(frozen.credit_limit, Decimal::ZERO);
+    }
+
+    #[test]
     fn create_credit_account_round_trips() {
         let repo = fresh_repo();
         let cust = CustomerId::new();
@@ -2044,6 +2198,25 @@ mod tests {
         // Overpaying must clamp the balance at exactly 0, never go negative.
         let acct = repo.apply_payment(cust, dec!(75), None).expect("overpay");
         assert_eq!(acct.current_balance, Decimal::ZERO);
+    }
+
+    #[test]
+    fn payment_ledger_running_balance_matches_account() {
+        let repo = fresh_repo();
+        let cust = CustomerId::new();
+        make_account(&repo, cust, dec!(100));
+        repo.charge_credit(cust, stateset_core::OrderId::new(), dec!(3)).expect("charge");
+        let acct = repo.apply_payment(cust, dec!(2), None).expect("payment");
+        let payments = repo
+            .list_transactions(CreditTransactionFilter {
+                customer_id: Some(cust),
+                transaction_type: Some(CreditTransactionType::Payment),
+                ..Default::default()
+            })
+            .unwrap_or_else(|_| panic!("credit payment lookup failed"));
+        assert_eq!(payments.len(), 1);
+        assert_eq!(payments[0].amount, dec!(2));
+        assert_eq!(payments[0].running_balance, acct.current_balance);
     }
 
     #[test]

@@ -62,9 +62,9 @@ use stateset_core::{
     A2APurchase, A2APurchaseFilter, AgentCard, AgentCardFilter, CreateA2APurchase, CreateA2AQuote,
     CreateAgentCard, CreateX402PaymentIntent, PurchaseStatus, QuoteStatus, Result,
     SignX402PaymentIntent, SkillQuote, SkillQuoteFilter, TrustLevel, UpdateAgentCard, X402Asset,
-    X402CreditAccount, X402CreditAdjustment, X402CreditDirection, X402CreditTransaction,
-    X402CreditTransactionFilter, X402IntentStatus, X402Network, X402PaymentIntent,
-    X402PaymentIntentFilter,
+    X402BatchInclusion, X402CreditAccount, X402CreditAdjustment, X402CreditDirection,
+    X402CreditTransaction, X402CreditTransactionFilter, X402IntentStatus, X402Network,
+    X402PaymentIntent, X402PaymentIntentFilter,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -341,17 +341,19 @@ impl X402 {
 
     /// Mark a sequenced intent as included in a published batch commitment
     ///
-    /// Records the batch merkle root and this intent's inclusion proof and
-    /// moves the intent `Sequenced -> Batched`. Batched intents are exempt
+    /// Verifies `inclusion` against the leaf rebuilt from the stored intent
+    /// ([`X402PaymentIntent::batch_leaf_hash`]), then records the batch
+    /// merkle root and this intent's inclusion proof and moves the intent
+    /// `Sequenced -> Batched`. A proof that does not verify is refused with
+    /// `ValidationError` and nothing is recorded. Batched intents are exempt
     /// from the validity sweeper: their outcome is decided by the batch's
     /// on-chain result (`mark_settled` / `mark_failed`).
     pub fn mark_batched(
         &self,
         id: Uuid,
-        batch_merkle_root: &str,
-        inclusion_proof: Vec<String>,
+        inclusion: &X402BatchInclusion,
     ) -> Result<X402PaymentIntent> {
-        self.db.x402_payment_intents().mark_batched(id, batch_merkle_root, inclusion_proof)
+        self.db.x402_payment_intents().mark_batched(id, inclusion)
     }
 
     /// Mark an intent as failed
@@ -922,6 +924,21 @@ mod tests {
         X402SignatureScheme,
     };
     use stateset_crypto::pqc::generate_hybrid_signing_keypair;
+
+    /// Register an agent card that may buy (A2A quotes/purchases require one).
+    fn register_buyer(commerce: &crate::Commerce) -> Uuid {
+        commerce
+            .x402()
+            .register_agent(CreateAgentCard {
+                name: "A2A Buyer".into(),
+                wallet_address: format!("0xbuyer-{}", Uuid::new_v4().as_simple()),
+                public_key: "buyer_pub".into(),
+                a2a_skills: Some(vec![A2ASkill::Buy]),
+                ..Default::default()
+            })
+            .expect("register buyer agent")
+            .id
+    }
 
     fn setup_commerce() -> crate::Commerce {
         crate::Commerce::in_memory().unwrap()
@@ -1567,30 +1584,36 @@ mod tests {
             .unwrap();
 
         // Only Sequenced intents can be batched.
+        let dummy = X402BatchInclusion::from_leaves(&[[1u8; 32], [2u8; 32]], 0).unwrap();
         let err = commerce
             .x402()
-            .mark_batched(intent.id, "0xroot", vec!["0xa".into()])
+            .mark_batched(intent.id, &dummy)
             .expect_err("created intent cannot be batched");
         assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "{err:?}");
 
-        advance_to_sequenced(&commerce, intent.id);
+        let sequenced = advance_to_sequenced(&commerce, intent.id);
+        let inclusion =
+            X402BatchInclusion::from_leaves(&[[9u8; 32], sequenced.batch_leaf_hash().unwrap()], 1)
+                .unwrap();
+        let mut blank = inclusion.clone();
+        blank.merkle_root = "  ".into();
+        let err =
+            commerce.x402().mark_batched(intent.id, &blank).expect_err("merkle root required");
+        assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "{err:?}");
+        // A proof that does not verify against the root is refused.
         let err = commerce
             .x402()
-            .mark_batched(intent.id, "  ", vec![])
-            .expect_err("merkle root required");
+            .mark_batched(intent.id, &dummy)
+            .expect_err("proof for another leaf is refused");
         assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "{err:?}");
 
-        let batched = commerce
-            .x402()
-            .mark_batched(intent.id, "0xroot", vec!["0xa".into(), "0xb".into()])
-            .expect("batch");
+        let batched = commerce.x402().mark_batched(intent.id, &inclusion).expect("batch");
         assert_eq!(batched.status, X402IntentStatus::Batched);
-        assert_eq!(batched.batch_merkle_root.as_deref(), Some("0xroot"));
-        assert_eq!(batched.inclusion_proof, Some(vec!["0xa".to_string(), "0xb".to_string()]));
+        assert_eq!(batched.batch_merkle_root.as_deref(), Some(inclusion.merkle_root.as_str()));
+        assert_eq!(batched.inclusion_proof.as_ref(), Some(&inclusion.inclusion_proof));
 
         // Batching twice is refused; settlement from Batched succeeds.
-        let err =
-            commerce.x402().mark_batched(intent.id, "0xroot", vec![]).expect_err("already batched");
+        let err = commerce.x402().mark_batched(intent.id, &inclusion).expect_err("already batched");
         assert!(matches!(err, stateset_core::CommerceError::ValidationError(_)), "{err:?}");
         let settled = commerce.x402().mark_settled(intent.id, "0xtx-batched", 7).expect("settle");
         assert_eq!(settled.status, X402IntentStatus::Settled);
@@ -1682,7 +1705,7 @@ mod tests {
             })
             .unwrap();
 
-        let buyer_id = Uuid::new_v4();
+        let buyer_id = register_buyer(&commerce);
         let quote = commerce
             .x402()
             .create_quote(CreateA2AQuote {
@@ -1842,7 +1865,7 @@ mod tests {
             })
             .unwrap();
 
-        let buyer_id = Uuid::new_v4();
+        let buyer_id = register_buyer(&commerce);
         let quote = commerce
             .x402()
             .create_quote(CreateA2AQuote {
@@ -1979,7 +2002,7 @@ mod tests {
             })
             .unwrap();
 
-        let buyer_id = Uuid::new_v4();
+        let buyer_id = register_buyer(&commerce);
         assert!(
             commerce
                 .x402()
@@ -2083,7 +2106,7 @@ mod tests {
             })
             .unwrap();
 
-        let buyer_id = Uuid::new_v4();
+        let buyer_id = register_buyer(&commerce);
         let now = chrono::Utc::now();
 
         let make_quote = |buyer_id: Uuid, seller_id: Uuid| CreateA2AQuote {
@@ -2160,7 +2183,7 @@ mod tests {
         );
 
         let disputed_quote =
-            commerce.x402().create_quote(make_quote(Uuid::new_v4(), seller.id)).unwrap();
+            commerce.x402().create_quote(make_quote(register_buyer(&commerce), seller.id)).unwrap();
         let disputed_quote =
             commerce.x402().update_quote_status(disputed_quote.id, QuoteStatus::Quoted).unwrap();
 

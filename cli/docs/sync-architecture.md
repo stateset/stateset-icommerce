@@ -358,18 +358,27 @@ Sync configuration management.
 1. Fetch Events (since last seq)
    │
    ▼
-2. Verify Signatures
+2. Resolve the author's key       ── PeerKeyDirectory ──▶ signed key directory
+   │                                                      (cached, TTL 300s; pinned)
+   ▼
+3. Verify the author signature
+   │
+   ├──[verifies]──▶ _ves_pulled_events        (readable; NOT applied to entity state)
+   │
+   └──[fails]────▶ _ves_quarantined_events    (never returned by application reads)
    │
    ▼
-3. Check for Conflicts
+4. Advance the cursor either way   (one bad event must not wedge sync)
    │
-   ├──[No Conflict]──▶ Apply Directly
-   │
-   └──[Conflict]──▶ Resolve
-                    │
-                    ▼
-                 Apply Resolution
+   ▼
+5. Detect conflicts against local pending events
 ```
+
+The counters `pull()` returns — `pulled`, `verified`, `quarantined`, `stored`,
+`conflicts` — are each computed from what actually happened. There is
+deliberately no `applied`: nothing is projected into local entity state yet.
+`conflicts` is `null`, never `0`, on branches that do not compute it (an empty
+pull, a dry run, a failed pull).
 
 ## CLI Commands
 
@@ -396,13 +405,51 @@ stateset-sync history <entityType> <entityId>
 stateset-sync init --endpoint <url> --key <api-key>
 ```
 
+### 10. Peer Key Directory (`src/sync/key-directory.js`)
+
+Resolves another agent's signing key so the receive path can verify what that
+agent wrote.
+
+- Keys come from the sequencer's **signed** key directory
+  (`GET /api/v1/agents/:agent_id/signing-keys`). The `directorySignature` is
+  verified against the configured `sequencerPublicKey` before any key is cached,
+  and the response is bound to the agent and tenant it was requested for — a
+  signature says who wrote the body, not which request it answers.
+- Keys are cached for `peerKeyTtlSeconds` (default 300). If a refresh fails
+  because the sequencer is *unreachable*, cached keys keep serving until
+  `peerKeyMaxStaleSeconds` (default 86400). A refusal that is not an outage —
+  unconfigured, forged, misdirected, stale, unattested — gets no cache fallback.
+- Keys are **pinned** on first use per `(agent_id, key_id)`. A changed public
+  key for a pinned `key_id` is refused; a new `key_id` is the rotation path.
+
+`resolve()` returns either `{publicKey, publicKeyBundle}` or
+`{error, detail}`, where `error` is the quarantine reason.
+
+### 11. Quarantine (`_ves_quarantined_events`)
+
+Events that fail verification are stored here with a reason and are never
+returned by application reads. The complete reason list is `QUARANTINE_REASONS`
+in `src/sync/outbox.js`; the operator-facing table lives in
+[docs/src/guides/sync.md](../../docs/src/guides/sync.md).
+
+`stateset-sync doctor` reports counts per reason (from SQL, not from a page of
+rows) and current pins; `doctor --promote` re-verifies quarantined events in
+pages, promotes what now verifies, and updates the stored reason of what still
+does not.
+
 ## Security Considerations
 
 1. **Key Storage**: Private keys are stored encrypted at rest
 2. **Transport**: All communication uses TLS 1.3
-3. **Signatures**: Every event is individually signed
+3. **Signatures**: Every event is individually signed, and every *received*
+   event is verified against a key from the sequencer-signed key directory
+   before it is stored. `storePulledEvent(s)` performs no verification of its
+   own: callers must verify first (see `SyncEngine._persistVerified`).
 4. **Commitments**: Batch commitments prevent tampering
 5. **Rotation**: Keys are rotated regularly
+6. **Receive-path limits**: the gRPC receive path is unsupported (`pull()`
+   refuses on it; use `https://`), and `securityProfile` is deliberately not
+   enforced on receive so that unmigrated peers are not all quarantined.
 
 ## Best Practices
 
@@ -425,6 +472,16 @@ stateset-sync init --endpoint <url> --key <api-key>
 ### "Too many conflicts"
 - Consider changing resolution strategy
 - Review concurrent modification patterns
+
+### `pull` reports `stored: 0` and everything quarantined
+- Run `stateset-sync doctor` and read the reason.
+- `sequencer_key_not_configured` — set the sequencer's public key:
+  `stateset-sync config set sequencer-public-key <hex>`, then
+  `stateset-sync doctor --promote`.
+- `key_unresolved` — usually a peer that pushed before registering its key;
+  re-run `doctor --promote` once the key lands.
+- `directory_untrusted` — not benign: the key directory was forged, misdirected,
+  replayed or (over gRPC) never attested. Check the sequencer and the transport.
 
 ## API Reference
 

@@ -3,7 +3,7 @@
  */
 
 import { loadSyncConfig, SyncConfig, isSyncConfigured } from '../sync/config.js';
-import { createOutbox } from '../sync/outbox.js';
+import { createOutbox, isQuarantineReasonDowngrade } from '../sync/outbox.js';
 import { createSyncEngine } from '../sync/engine.js';
 import { createSequencerClient } from '../sync/client.js';
 import { getPayloadWrapScheme } from '../sync/pqc.js';
@@ -41,6 +41,29 @@ function getAgentKeyManagerOptions(securityProfile) {
 
 function createConfiguredOutbox(db) {
   return createOutbox(db, getAgentKeyManagerOptions());
+}
+
+/**
+ * The SQLite handle the sync outbox and engine run on.
+ *
+ * The outbox is a better-sqlite3-style store (`prepare`/`exec`/`transaction`).
+ * The `@stateset/embedded` N-API `Commerce` does not expose one -- there is no
+ * `commerce.db` on the binding -- so a caller must pass it as `context.db`
+ * (e.g. `new Database('./store.db')`, as `stateset-sync` does). Without one,
+ * the command fails here with an explanation instead of a TypeError deep
+ * inside the outbox.
+ * @param {{ commerce?: any, db?: any }} context
+ */
+function requireSyncDb({ commerce, db }) {
+  const handle = db ?? commerce?.db;
+  if (!handle || typeof handle.prepare !== 'function') {
+    throw new Error(
+      'Sync commands need a SQLite database handle: pass `db` (a better-sqlite3 Database ' +
+        'on the store file) in the command context. The @stateset/embedded Commerce binding ' +
+        'does not expose one, so the local sync outbox is unavailable without it.',
+    );
+  }
+  return handle;
 }
 
 function ensureConfigured() {
@@ -106,13 +129,14 @@ async function collectFormattedPulledEvents(
   };
 }
 
-export async function execute(action, args, { commerce, output, jsonOutput }) {
+export async function execute(action, args, context) {
+  const { output, jsonOutput } = context;
   switch (action) {
     case 'status': {
       ensureConfigured();
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const outbox = createConfiguredOutbox(commerce.db);
+      const outbox = createConfiguredOutbox(requireSyncDb(context));
       const stats = outbox.getStats();
       const syncState = outbox.getSyncState();
       let remoteHead = syncState.headSequence;
@@ -158,7 +182,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       const dryRun = ['true', '1', 'yes', 'y'].includes(String(dryRunRaw || '').toLowerCase());
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       await engine.initialize();
       const result = await engine.push({ batchSize, dryRun });
       await engine.shutdown();
@@ -198,7 +222,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       const keyId = parseOptionalInt(keyIdRaw, 'keyId must be a positive integer');
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       await engine.initialize();
       const shouldIncludeEvents = includeEvents || includePayloads || decryptPayloads;
       const result = await engine.pull({ fromSequence, limit, includeEvents: shouldIncludeEvents });
@@ -217,19 +241,24 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       await engine.shutdown();
       return jsonOutput
         ? { ...result, events }
-        : { result, events, formatted: `Pulled ${result.pulled} events` };
+        : {
+            result,
+            events,
+            formatted: `Pulled ${result.pulled} events: ${result.stored} stored, ${result.quarantined} quarantined`,
+          };
     }
 
     case 'outbox': {
       ensureConfigured();
       const [status = 'all', limitRaw] = args;
       const limit = parseOptionalInt(limitRaw, 'Usage: sync outbox [status] [limit]') || 20;
-      const outbox = createConfiguredOutbox(commerce.db);
+      const syncDb = requireSyncDb(context);
+      const outbox = createConfiguredOutbox(syncDb);
       outbox.initialize();
       const stmt =
         status === 'all'
-          ? commerce.db.prepare('SELECT * FROM _ves_outbox ORDER BY local_seq DESC LIMIT ?')
-          : commerce.db.prepare(
+          ? syncDb.prepare('SELECT * FROM _ves_outbox ORDER BY local_seq DESC LIMIT ?')
+          : syncDb.prepare(
               'SELECT * FROM _ves_outbox WHERE sync_status = ? ORDER BY local_seq DESC LIMIT ?',
             );
       const rows = status === 'all' ? stmt.all(limit) : stmt.all(status, limit);
@@ -263,7 +292,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       const keyId = parseOptionalInt(keyIdRaw, 'keyId must be a positive integer');
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       const events = engine.getPulledEvents(limit);
       const formatted = await collectFormattedPulledEvents(engine, events, {
         includePayloads,
@@ -285,7 +314,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       }
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       const result = await engine.decryptStoredEvent({
         eventId: eventId || undefined,
         sequenceNumber: parseOptionalInt(
@@ -305,7 +334,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
 
     case 'retry': {
       ensureConfigured();
-      const outbox = createConfiguredOutbox(commerce.db);
+      const outbox = createConfiguredOutbox(requireSyncDb(context));
       const retriedCount = outbox.retryFailed();
       return { retriedCount, formatted: `Reset ${retriedCount} failed events to pending` };
     }
@@ -329,7 +358,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
       if (source === 'local') {
-        const engine = createSyncEngine({ db: commerce.db, config });
+        const engine = createSyncEngine({ db: requireSyncDb(context), config });
         const events = engine.getPulledEventsForEntity(
           entityType,
           entityId,
@@ -374,7 +403,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
         parseOptionalInt(pullLimitRaw, 'Usage: sync full [pushBatchSize] [pullLimit]') || 1000;
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       await engine.initialize();
       const push = await engine.push({ batchSize: pushBatchSize });
       const pull = await engine.pull({ limit: pullLimit });
@@ -392,7 +421,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       ensureConfigured();
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       await engine.initialize();
       const conflicts = await engine.getConflicts();
       await engine.shutdown();
@@ -405,7 +434,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       if (!conflictId) throw new Error('Usage: sync resolve <conflictId> [strategy]');
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       await engine.initialize();
       const result = await engine.resolveConflict(conflictId, strategy || undefined);
       await engine.shutdown();
@@ -417,7 +446,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       const strategy = args[0] || 'remote-wins';
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
-      const engine = createSyncEngine({ db: commerce.db, config });
+      const engine = createSyncEngine({ db: requireSyncDb(context), config });
       await engine.initialize();
       const result = await engine.rebase({ strategy });
       await engine.shutdown();
@@ -718,6 +747,153 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
           '  key-rotate <agentId> <keyType> [securityProfile]     Rotate agent key\n' +
           '  key-export <agentId> [keyType] [keyId] [securityProfile]  Export public key',
       );
+  }
+}
+
+/**
+ * Inspect the receive path: what is quarantined, what keys are pinned, and
+ * (when `promote` is true) which quarantined events now verify.
+ *
+ * The common benign case is an agent that pushed events before its signing
+ * key reached the directory: they quarantine as `key_unresolved`, and once
+ * the key is registered they should verify and become readable without a
+ * full re-pull. Promotion here follows the exact resolve -> verify -> store
+ * -> delete sequence `SyncEngine#_persistVerified` uses in `engine.js` (the
+ * pull-path promotion), so the two never diverge on what counts as
+ * "verified" - only `_persistVerified`'s batch/per-record retry fallback is
+ * not needed here, since doctor already operates one quarantined event at a
+ * time and a failed store or delete for one event must not affect another.
+ *
+ * This function is read-only unless `promote` is true: without it, it only
+ * reports, and calls no outbox write methods.
+ *
+ * The sweep pages rather than taking the default 1,000-row page, and the
+ * counts come from SQL rather than from the length of that page: a report that
+ * says `key_unresolved: 1000` when 50,000 are quarantined, and a `--promote`
+ * that silently stops after the first 1,000, are exactly the fabricated
+ * numbers this work set out to delete.
+ *
+ * @param {Object} params
+ * @param {import('../sync/outbox.js').Outbox} params.outbox
+ * @param {Object} params.client
+ * @param {Object} params.keyDirectory
+ * @param {boolean} [params.promote] - re-verify and promote what now passes
+ * @param {number} [params.pageSize=500] - rows per promotion page
+ * @returns {Promise<{quarantined: Array<{reason: string, count: number}>, total: number, pins: Array<Object>, promoted: number, rediagnosed: number}>}
+ */
+export async function syncDoctor({
+  outbox,
+  client,
+  keyDirectory,
+  promote = false,
+  pageSize = 500,
+}) {
+  let promoted = 0;
+  let rediagnosed = 0;
+
+  if (promote) {
+    // Promotion deletes the rows it promotes, so the remaining rows shift down
+    // by exactly the number left behind. Skipping that many is therefore a
+    // correct cursor, and the loop terminates because every row examined is
+    // either promoted (deleted) or skipped (counted).
+    let skipped = 0;
+    for (;;) {
+      const events = outbox.getQuarantinedEvents(pageSize, skipped);
+      if (events.length === 0) break;
+
+      for (const event of events) {
+        // A throw out of key resolution is a failure to resolve, not a reason
+        // to promote - mirrors _persistVerified's fail-closed handling.
+        let resolution;
+        try {
+          resolution = await keyDirectory.resolve(
+            event.sourceAgent,
+            event.agentKeyId,
+            event.createdAt,
+          );
+        } catch (error) {
+          resolution = { error: 'key_unresolved', detail: error?.message };
+        }
+
+        // What we learn replaces the stored diagnosis, the way `pull()`
+        // re-quarantines - but only ever upwards. Leaving the old reason meant
+        // a provably forged event still read as `key_unresolved` - the
+        // benign-outage diagnosis - in the very report built to surface
+        // forgeries; overwriting it with `key_unresolved` erases the forgery
+        // instead. See `rediagnose`.
+        if (resolution.error) {
+          rediagnosed += rediagnose(outbox, event, resolution.error);
+          skipped += 1;
+          continue;
+        }
+
+        let valid = false;
+        try {
+          valid = client.verifyEventSignature(
+            event,
+            resolution.publicKeyBundle ?? resolution.publicKey,
+          );
+        } catch {
+          valid = false;
+        }
+        if (!valid) {
+          rediagnosed += rediagnose(outbox, event, 'signature_invalid');
+          skipped += 1;
+          continue;
+        }
+
+        try {
+          outbox.storePulledEvents([event]);
+          outbox.deleteQuarantinedEvent(event.eventId);
+          promoted += 1;
+        } catch {
+          // Leave this event quarantined; other events still get a chance.
+          skipped += 1;
+        }
+      }
+    }
+  }
+
+  const quarantined = outbox.getQuarantinedCountsByReason();
+
+  return {
+    quarantined,
+    total: quarantined.reduce((sum, entry) => sum + entry.count, 0),
+    pins: outbox.getPeerKeyPins(),
+    promoted,
+    rediagnosed,
+  };
+}
+
+/**
+ * Record a new diagnosis for a still-quarantined event - but never a weaker one.
+ *
+ * While the sequencer is unreachable, `keyDirectory.resolve()` returns
+ * `key_unresolved` for EVERY event. Writing that back unconditionally walked
+ * every stricter diagnosis - `signature_invalid`, `directory_untrusted`,
+ * `peer_key_conflict`, `key_revoked` - down to the benign-outage reason, and
+ * silenced doctor's red hint block with it. Since `doctor` is meant to run
+ * during exactly that outage, and the documentation tells operators to run
+ * `--promote` to clear a backlog, the two composed into forgery evidence being
+ * erased by the recommended recovery procedure.
+ *
+ * The rule itself lives in {@link isQuarantineReasonDowngrade} because
+ * `SyncEngine._persistQuarantined` needs the same one on the pull path; stating
+ * it twice is how the two would drift.
+ *
+ * @param {import('../sync/outbox.js').Outbox} outbox
+ * @param {{eventId: string, reason: string}} event
+ * @param {string} reason
+ * @returns {number} 1 if the stored reason changed, else 0
+ */
+function rediagnose(outbox, event, reason) {
+  if (event.reason === reason) return 0;
+  if (isQuarantineReasonDowngrade(event.reason, reason)) return 0;
+  try {
+    outbox.updateQuarantineReason(event.eventId, reason);
+    return 1;
+  } catch {
+    return 0;
   }
 }
 

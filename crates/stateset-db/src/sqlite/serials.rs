@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use super::{
     SqliteLotRepository, SqliteWarrantyRepository, build_in_clause, map_db_error, params_refs,
-    parse_datetime_opt_row, parse_datetime_row, parse_enum_row, parse_json_opt_row,
+    parse_datetime_opt_row, parse_datetime_row, parse_enum_row, parse_json_opt_row, parse_uuid,
     parse_uuid_opt_row, parse_uuid_row, string_params, uuid_params,
 };
 
@@ -508,6 +508,31 @@ impl SqliteSerialRepository {
     }
 }
 
+/// Resolve the lot a serial belongs to.
+///
+/// `lot_id` wins when given. Otherwise a `lot_number` is looked up (lot
+/// numbers are globally unique) so the serial is keyed to the lot row and
+/// follows it through the lot-level cascades (quarantine, release); an
+/// unknown number is `NotFound` rather than an orphan text label.
+fn resolve_lot_id(
+    conn: &rusqlite::Connection,
+    lot_id: Option<Uuid>,
+    lot_number: Option<&str>,
+) -> stateset_core::Result<Option<Uuid>> {
+    match (lot_id, lot_number) {
+        (Some(id), _) => Ok(Some(id)),
+        (None, Some(number)) => {
+            let raw: Option<String> = conn
+                .query_row("SELECT id FROM lots WHERE lot_number = ?", [number], |row| row.get(0))
+                .optional()
+                .map_err(map_db_error)?;
+            let raw = raw.ok_or(CommerceError::NotFound)?;
+            Ok(Some(parse_uuid(&raw, "lot", "id")?))
+        }
+        (None, None) => Ok(None),
+    }
+}
+
 impl SerialRepository for SqliteSerialRepository {
     fn create(&self, input: CreateSerialNumber) -> stateset_core::Result<SerialNumber> {
         let id = Uuid::new_v4();
@@ -517,6 +542,7 @@ impl SerialRepository for SqliteSerialRepository {
 
         {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let lot_id = resolve_lot_id(&conn, input.lot_id, input.lot_number.as_deref())?;
             conn.execute(
                 "INSERT INTO serial_numbers (
                     id, serial, sku, status, lot_id, lot_number, current_location_id,
@@ -527,7 +553,7 @@ impl SerialRepository for SqliteSerialRepository {
                     serial,
                     input.sku,
                     SerialStatus::Available.to_string(),
-                    input.lot_id.map(|id| id.to_string()),
+                    lot_id.map(|id| id.to_string()),
                     input.lot_number,
                     input.location_id,
                     input.manufactured_at.map(|dt| dt.to_rfc3339()),
@@ -552,6 +578,7 @@ impl SerialRepository for SqliteSerialRepository {
 
         let mut serials = Vec::with_capacity(input.quantity as usize);
         let now = Utc::now().to_rfc3339();
+        let lot_id = resolve_lot_id(&tx, input.lot_id, input.lot_number.as_deref())?;
 
         for i in 0..input.quantity {
             let id = Uuid::new_v4();
@@ -570,7 +597,7 @@ impl SerialRepository for SqliteSerialRepository {
                     serial_number,
                     input.sku,
                     SerialStatus::Available.to_string(),
-                    input.lot_id.map(|id| id.to_string()),
+                    lot_id.map(|id| id.to_string()),
                     input.lot_number,
                     input.location_id,
                     input.manufactured_at.map(|dt| dt.to_rfc3339()),
@@ -602,7 +629,7 @@ impl SerialRepository for SqliteSerialRepository {
                 serial: serial_number,
                 sku: input.sku.clone(),
                 status: SerialStatus::Available,
-                lot_id: input.lot_id,
+                lot_id,
                 lot_number: input.lot_number.clone(),
                 current_location_id: input.location_id,
                 current_owner_id: None,
@@ -1867,13 +1894,97 @@ mod tests {
             serial: Some(serial.into()),
             sku: sku.into(),
             lot_id: None,
-            lot_number: Some("LOT-1".into()),
+            lot_number: None,
             location_id: Some(1),
             manufactured_at: None,
             notes: None,
             attributes: None,
         })
         .expect("create")
+    }
+
+    fn serial_in_lot(sku: &str, serial: &str, lot_number: &str) -> CreateSerialNumber {
+        CreateSerialNumber {
+            serial: Some(serial.into()),
+            sku: sku.into(),
+            lot_id: None,
+            lot_number: Some(lot_number.into()),
+            location_id: None,
+            manufactured_at: None,
+            notes: None,
+            attributes: None,
+        }
+    }
+
+    #[test]
+    fn binding_create_resolves_lot_number_to_lot_id_and_follows_lot_quarantine() {
+        // Regression: `lot_number` was stored as text and never resolved to
+        // `lot_id`, so the lot-quarantine cascade (keyed on `lot_id`) never
+        // reached the serial.
+        use stateset_core::{CreateLot, LotRepository};
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let lot = db
+            .lots()
+            .create(CreateLot {
+                sku: "SKU-LN".into(),
+                lot_number: Some("LOT-LN-1".into()),
+                quantity: rust_decimal::Decimal::from(10),
+                ..Default::default()
+            })
+            .expect("create lot");
+
+        let serial =
+            db.serials().create(serial_in_lot("SKU-LN", "SN-LN-1", "LOT-LN-1")).expect("create");
+        assert_eq!(serial.lot_id, Some(lot.id), "lot_number must resolve to the lot's id");
+        assert_eq!(serial.lot_number.as_deref(), Some("LOT-LN-1"));
+
+        let bulk = db
+            .serials()
+            .create_bulk(CreateSerialNumbersBulk {
+                sku: "SKU-LN".into(),
+                quantity: 2,
+                prefix: Some("BLK-LN".into()),
+                lot_id: None,
+                lot_number: Some("LOT-LN-1".into()),
+                location_id: None,
+                manufactured_at: None,
+            })
+            .expect("bulk");
+        assert!(bulk.iter().all(|s| s.lot_id == Some(lot.id)), "bulk create must resolve too");
+
+        db.lots().quarantine(lot.id, "recall").expect("quarantine lot");
+        for id in std::iter::once(serial.id).chain(bulk.iter().map(|s| s.id)) {
+            let after = db.serials().get(id).expect("get").expect("exists");
+            assert_eq!(
+                after.status,
+                SerialStatus::Quarantined,
+                "serial {id} did not follow its lot"
+            );
+        }
+    }
+
+    #[test]
+    fn binding_create_with_unknown_lot_number_is_not_found() {
+        let repo = fresh_repo();
+        let err = repo
+            .create(serial_in_lot("SKU-LN", "SN-LN-X", "LOT-DOES-NOT-EXIST"))
+            .expect_err("unknown lot number must be refused");
+        assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
+        assert_eq!(repo.count(SerialFilter::default()).expect("count"), 0);
+
+        let err = repo
+            .create_bulk(CreateSerialNumbersBulk {
+                sku: "SKU-LN".into(),
+                quantity: 2,
+                prefix: Some("BLK-X".into()),
+                lot_id: None,
+                lot_number: Some("LOT-DOES-NOT-EXIST".into()),
+                location_id: None,
+                manufactured_at: None,
+            })
+            .expect_err("unknown lot number must be refused in bulk");
+        assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
+        assert_eq!(repo.count(SerialFilter::default()).expect("count"), 0);
     }
 
     #[test]

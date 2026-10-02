@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCommerce } from '@/lib/commerce';
 import { verifyWalletRequest } from '@/lib/wallet-auth';
+import { walletMatches } from '@/lib/customer-metadata';
 
 export async function GET(request: NextRequest) {
   const customerId = request.nextUrl.searchParams.get('customerId');
@@ -15,7 +16,7 @@ export async function GET(request: NextRequest) {
     }
     const commerce = getCommerce();
     const customer = await commerce.customers.get(customerId);
-    if (customer?.metadata?.walletAddress?.toLowerCase() !== wallet.toLowerCase()) {
+    if (!walletMatches(customer?.metadata, wallet)) {
       return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
     }
     const subscriptions = await commerce.subscriptions.list({
@@ -45,7 +46,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Wallet signature required' }, { status: 401 });
     }
     const customer = await commerce.customers.get(customerId);
-    if (customer?.metadata?.walletAddress?.toLowerCase() !== walletAddress.toLowerCase()) {
+    if (!walletMatches(customer?.metadata, walletAddress)) {
       return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
     }
     const variant = await commerce.products.getVariantBySku(sku);

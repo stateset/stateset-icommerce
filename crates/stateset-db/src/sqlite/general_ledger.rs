@@ -2,7 +2,9 @@
 
 use crate::KernelOutboxEvent;
 use crate::sqlite::kernel_outbox::append_kernel_event_tx;
-use crate::sqlite::{map_db_error, parse_uuid, with_immediate_transaction};
+use crate::sqlite::{
+    map_db_error, parse_uuid, resolve_currency_with_conn, with_immediate_transaction,
+};
 use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -598,6 +600,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 .pool
                 .get()
                 .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            let currency = resolve_currency_with_conn(input.currency, &conn)?;
             conn.execute(
                 "INSERT INTO gl_accounts (id, account_number, name, description, account_type,
                  account_sub_type, parent_account_id, is_header, is_posting, normal_balance,
@@ -614,7 +617,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     i32::from(input.is_header.unwrap_or(false)),
                     i32::from(input.is_posting.unwrap_or(true)),
                     normal_balance.to_string(),
-                    input.currency.unwrap_or_default(),
+                    currency,
                     AccountStatus::Active.to_string(),
                     "0",
                     now.to_rfc3339(),
@@ -891,7 +894,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         match conn.query_row(
             "SELECT id, period_name, fiscal_year, period_number, start_date, end_date,
                     status, closed_at, closed_by, locked_at, locked_by, created_at, updated_at
-             FROM gl_periods WHERE start_date <= ?1 AND end_date >= ?1",
+             FROM gl_periods
+             WHERE start_date <= ?1 AND end_date >= ?1 AND status = 'open'
+             ORDER BY start_date DESC, period_number DESC
+             LIMIT 1",
             params![date.to_string()],
             Self::map_period_row,
         ) {
@@ -1371,6 +1377,25 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     ),
                 )));
             }
+
+            append_kernel_event_tx(
+                tx,
+                &KernelOutboxEvent::domain(
+                    "ledger.journal_entry_voided.v1",
+                    "journal_entry",
+                    id.to_string(),
+                    serde_json::json!({
+                        "journal_entry_id": id.to_string(),
+                        "entry_number": entry.entry_number,
+                        "source": entry.source.to_string(),
+                        "total_debits": entry.total_debits.to_string(),
+                        "total_credits": entry.total_credits.to_string(),
+                        "line_count": entry.lines.len(),
+                        "status": JournalEntryStatus::Voided.to_string(),
+                    }),
+                    None,
+                ),
+            )?;
 
             Ok(())
         })?;
@@ -2576,6 +2601,39 @@ mod tests {
     }
 
     #[test]
+    fn get_period_for_date_prefers_open_when_overlapping() {
+        let repo = fresh_repo();
+        // Two overlapping periods around mid-July 2026.
+        let p1 = repo
+            .create_period(CreateGlPeriod {
+                period_name: "2026-07 A".into(),
+                fiscal_year: 2026,
+                period_number: 7,
+                start_date: NaiveDate::from_ymd_opt(2026, 7, 1).expect("date"),
+                end_date: NaiveDate::from_ymd_opt(2026, 7, 31).expect("date"),
+            })
+            .expect("create p1");
+        let p2 = repo
+            .create_period(CreateGlPeriod {
+                period_name: "2026-07 B".into(),
+                fiscal_year: 2026,
+                period_number: 70,
+                start_date: NaiveDate::from_ymd_opt(2026, 7, 10).expect("date"),
+                end_date: NaiveDate::from_ymd_opt(2026, 7, 20).expect("date"),
+            })
+            .expect("create p2");
+        // Open p1, open then close p2 — both cover the date, only p1 is open.
+        let p1 = repo.open_period(p1.id).expect("open p1");
+        let p2 = repo.open_period(p2.id).expect("open p2");
+        let _ = repo.close_period(p2.id, "tester").expect("close p2");
+
+        let date = NaiveDate::from_ymd_opt(2026, 7, 15).expect("date");
+        let selected = repo.get_period_for_date(date).expect("lookup").expect("some");
+        assert_eq!(selected.id, p1.id, "must select the open period covering the date");
+        assert!(selected.can_post(), "selected period is open");
+    }
+
+    #[test]
     fn create_account_persists_and_round_trips() {
         let repo = fresh_repo();
         let acct = make_account(&repo, "1000", AccountType::Asset);
@@ -3061,8 +3119,20 @@ mod tests {
         let entry = make_balanced_entry(&repo, &cash, &revenue, dec!(25));
 
         repo.post_journal_entry(entry.id, "tester").expect("post");
-        repo.void_journal_entry(entry.id).expect("first void");
+        let voided = repo.void_journal_entry(entry.id).expect("first void");
+        assert_eq!(voided.status, JournalEntryStatus::Voided);
         assert_eq!(account_balance(&repo, cash.id), dec!(0));
+        let conn = repo.pool.get().expect("connection");
+        let payload: String = conn
+            .query_row(
+                "SELECT payload FROM kernel_outbox WHERE aggregate_id = ? AND event_type = ?",
+                params![entry.id.to_string(), "ledger.journal_entry_voided.v1"],
+                |row| row.get(0),
+            )
+            .expect("void event");
+        let payload: serde_json::Value = serde_json::from_str(&payload).expect("valid payload");
+        assert_eq!(payload["total_debits"], "25");
+        assert_eq!(payload["total_credits"], "25");
 
         let err = repo.void_journal_entry(entry.id).expect_err("second void must fail");
         assert!(

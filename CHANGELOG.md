@@ -6,6 +6,376 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.36.0] - 2026-09-29
+
+### Added
+
+- WebMCP and Meta Muse connector surfaces for agentic commerce.
+- Auditable shipment lifecycle updates with optimistic concurrency and
+  cross-shipment allocation limits on SQLite and PostgreSQL.
+- Exact-decimal sandbox payment, tax, and shipping providers plus native
+  Shopify synchronization safeguards.
+
+### Changed
+
+- Governed checkout, order, shipment, return, and recovery paths now preserve
+  preview-first writes, tenant isolation, and durable outbox records.
+
+### Changed (behaviour, needs a release note)
+
+- **Strict kernel endpoints can run a checkout end to end.** Eleven storefront
+  writes are now governed kernel commands, each with a sealed, policy-checked,
+  audit-hashed receipt: `customers.create`, `carts.create`, `carts.item.add`,
+  `carts.shipping_address.set`, `carts.payment_method.set`,
+  `carts.coupon.apply`, `carts.tax.calculate`, `payments.complete`,
+  `shipments.create`, `returns.create` and `returns.tracking.add`. **A
+  deployment with a kernel configured now routes these tools through it, so
+  its policy and principal must grant the new capabilities** (see
+  `kernel/examples/strict-*.json`). Without a kernel the tools keep their
+  previous handlers. Promotions stay merchant configuration: a strict agent
+  can redeem a coupon but cannot create one.
+
+- **An order can only be refunded if it was paid.** The refund guard (SQLite,
+  PostgreSQL and the kernel) read the payment status supplied in the same
+  update, and `orders.update_status(id, Refunded)` supplies `Refunded`
+  itself, so any order -- including one never paid -- could be marked
+  refunded. Refundability is now judged on the order's stored payment status;
+  record the payment first, then refund.
+- **x402 batch inclusion proofs are verified before they are recorded.**
+  `mark_batched` stored any Merkle root and proof it was handed. It now takes
+  an `X402BatchInclusion` (`merkle_root`, `inclusion_proof`, `leaf_index`,
+  `total_leaves`) instead of `(batch_merkle_root, inclusion_proof)`, rebuilds
+  the leaf from the stored intent (`X402PaymentIntent::batch_leaf_hash`, the
+  same leaf `X402PaymentReceipt::verify_inclusion` checks) and verifies the
+  proof inside the write transaction (SQLite and PostgreSQL). A wrong root,
+  tampered proof, wrong leaf index, or a proof for another intent is refused
+  with `ValidationError` and the intent stays `Sequenced`.
+  `X402BatchInclusion::from_leaves` builds the evidence for a batcher.
+  `mark_settled` still accepts `Sequenced` as well as `Batched` intents (the
+  documented direct on-chain settlement path).
+- **Agent cards govern who may buy and sell in A2A commerce.** A2A
+  `create_quote` / `create_purchase` accepted any `buyer_agent_id` /
+  `seller_agent_id`. The buyer must now be a registered, active,
+  non-suspended agent card that can buy (`buy` / `request_quote` skill) and
+  the seller one that can sell (`sell` / `quote` skill); otherwise the call is
+  refused with a `ValidationError` naming the side. The cards are read inside
+  the insert's write transaction (PostgreSQL: `FOR SHARE`), and SQLite
+  `create_quote` now runs in a `BEGIN IMMEDIATE` transaction. Register agent
+  cards before creating quotes or purchases.
+
+- **A PostgreSQL store now seeds the same tax rates as a SQLite store.** A
+  fresh SQLite store has always seeded US state sales tax, EU/UK VAT
+  (standard and reduced) and Canadian sales tax; a fresh PostgreSQL store
+  seeded none, so it charged zero tax on every sale. Postgres migration 105
+  seeds the same jurisdictions and rates, in the corrected state SQLite
+  reaches after its migration 099 (HST alone in the harmonized provinces,
+  Nova Scotia 14% from 2025-04-01, Quebec QST not compounded on GST, GST
+  only in the territories). **The seed runs only on a store with no tax rates
+  at all**: an existing Postgres store that already configured tax keeps
+  exactly what it has. An existing store that never configured any rate
+  starts charging the seeded rates after upgrading -- review them, or set
+  `enabled` to false in the tax settings, if that store should not charge tax.
+
+- **Closing a non-conformance report (NCR) requires a disposition.** A closed
+  NCR is the quality record of what was done with the non-conforming
+  material, yet `close_ncr` and `update_ncr { status: Closed }` closed one
+  with none. Both backends now refuse with a validation error naming the
+  missing disposition. Record it first (`update_ncr { disposition }`, or
+  `POST /api/v1/quality/ncrs/{id}/disposition`), or set it in the same
+  `update_ncr` call that closes. Re-closing an already-closed NCR is still a
+  no-op. So that every surface can still close an NCR, the Node binding gains
+  `quality.updateNcr(id, input)`, the Python binding gains
+  `quality.update_ncr(...)` and `quality.close_ncr(id)`, `NcrOutput` /
+  `NonConformance` now carry the disposition, and the `close_ncr` MCP tool
+  and `stateset quality close-ncr` take an optional `disposition` (plus an
+  exact `dispositionQuantity`) that they record before closing.
+
+- **Shipping an order in full ships its open shipment records.** When an
+  order becomes fully `shipped` (`orders.ship`, a `Shipped` status update, or
+  the kernel `orders.ship` command; SQLite and PostgreSQL), every shipment of
+  that order still `pending`, `processing` or `ready_to_ship` moves to
+  `shipped` in the same transaction, with `shipped_at` set. A shipment with
+  no tracking number adopts the order's (and the carrier's tracking URL); one
+  with its own keeps it. `on_hold`, `cancelled` and already shipped/delivered
+  shipments are untouched, and a partial shipment moves none (which package
+  carried which units is not knowable from the order lines -- ship those with
+  `shipments.ship`). Each moved shipment records a `shipment.status_changed`
+  outbox fact; under the kernel the facts carry the command's context and
+  are listed on its receipt.
+- **A lost chargeback moves the order out of `paid`.** Resolving a
+  `disputed` payment against the merchant (`payments.update` to `refunded`)
+  was refused as a "refund by status flip", so the order kept reading `paid`
+  after the network had taken the money back. The write is now accepted and
+  records the loss in the same transaction: a completed refund-ledger row for
+  the payment's whole remaining balance with `reason = "chargeback_lost"`
+  (so reports can tell it from a refund the merchant issued),
+  `amount_refunded = amount`, a `payments.chargeback_lost.v1` event, and the
+  order's payment status re-derived from the ledger (whole order lost ->
+  `refunded`, part of it -> `partially_refunded`). The charged-back payment
+  cannot be refunded again. A won dispute (`disputed` -> `completed`) changes
+  nothing else. Every other bare flip to `refunded` / `partially_refunded` is
+  still refused.
+- **An order's payment status can only be changed by recording payments.**
+  `orders.update` with a `payment_status` (and the kernel `orders.transition`
+  with one) let any caller declare an order paid or refunded. Both backends
+  now refuse it with a `ValidationError` ("order payment_status is derived
+  from the order's payments and refunds ...") and the kernel rejects the
+  command with `commerce.payment_status_derived`; the field stays on
+  `UpdateOrder` / `TransitionOrder` for compatibility but must be `None`.
+  Record a payment (create + complete) or a refund (`create_refund` +
+  `complete_refund`) instead. `orders.update_status(id, Refunded)` (Rust,
+  Node, Python, Go and the other FFI bindings, and the `update_order_status`
+  MCP tool) no longer forces `payment_status = refunded`: it moves the order
+  status only, and the payment status keeps saying what the ledger holds --
+  record the refund first if it should read `refunded`.
+
+### Fixed
+
+- Three SQLite cart writes (`set_shipping_address`, `set_payment`,
+  `apply_discount`) ran outside a transaction; they now run in one.
+- `executeTool` returned `result: '[truncated]'` for every governed tool.
+
+## [1.35.3] - 2026-09-26
+
+### Verified commerce invariants
+
+- Expanded TLA+ models and Lean proofs across accounts payable, fulfillment,
+  billing, synchronization, order-to-cash, inventory and material consumption,
+  credit, quarantine, returns, idempotency, loyalty, prepayments, quality
+  holds, EDI, and lifecycle boundaries.
+- Added TLA+ models and Lean proofs for exchange-rate publication, payment
+  obligations, FIFO/LIFO cost-layer issues, inbound shipment cancellation and
+  receipt, and vendor-return decisions. The models include broken interleavings
+  as counterexamples and document the bounds of each proof.
+- Exchange-rate updates now publish the current rate and history atomically in
+  SQLite and PostgreSQL. Manual payment-obligation status changes cannot forge
+  payment progress or reopen a paid or cancelled obligation. Cost-layer issues
+  reject zero and negative quantities.
+- Durable HTTP idempotency now preserves the creation timestamp to nanosecond
+  precision in SQLite and PostgreSQL. A live retry is no longer expired early
+  when its timestamp and the TTL cutoff fall within one stored millisecond or
+  microsecond.
+
+### Changed (behaviour, needs a release note)
+
+- **`@stateset/embedded`: an explicit blank is refused, not treated as
+  omitted.** All five optional parsers -- currency, ids, timestamps, dates and
+  JSON -- dropped a blank or whitespace-only string before parsing, so
+  `currency: ""` silently became the store default and `lotId: ""` meant "no
+  lot". The engine and the Python binding refuse the same input. Pass
+  `undefined` (or omit the key) to mean absent. Caught by the shared semantic
+  corpus, `bindings/test-vectors/semantics-v1.json`, on its first run against
+  this binding's strict inputs.
+
+- **An omitted currency now takes the store's configured base currency, not
+  USD.** The engine has had a store-level base currency since migration 008,
+  and exactly one path honoured it. Everywhere else an omitted `currency`
+  became a hardcoded USD, so a store configured for EUR silently recorded
+  payments, invoices, carts, GL accounts, price levels, prepayments, vendor
+  credits and company records in dollars. 26 call sites per backend, replacing
+  71 hardcoded expressions.
+
+  The seeded default is `USD`, so **a store that never changed the setting
+  sees no difference**. Only a store that explicitly configured another
+  currency changes -- which is the bug being fixed. A row holding an
+  unparsable currency code now raises rather than silently falling back.
+
+### Added
+
+- **`@stateset/embedded` lifecycle.** `Commerce.open(path, { maxConnections })`
+  runs migrations on a worker thread and resolves to the ready instance (the
+  constructor still does the same work synchronously). `commerce.close()`,
+  `commerce.isClosed` and `Symbol.asyncDispose` release the connection pool;
+  later calls reject with `err.code === 'PRECONDITION_FAILED'`. Sub-API getters
+  return the same object on every access.
+- **`@stateset/embedded` typed surface.** `index.d.ts` now declares 198
+  literal-union types for every status, kind, method and policy field (no
+  `status: string` remains), typed kernel commands, policies, receipts, budgets
+  and checkout snapshots (no `any` on the governed-write path), and optional
+  filter objects with `limit`/`offset` on every `list()` that used to return
+  an unbounded array.
+- **`@stateset/embedded` standalone agent adapters.** The `/openai`,
+  `/generic`, `/langchain` and `/vercel-ai` entrypoints and the new
+  `/native-toolkit` work with nothing but the binding installed, from a shipped
+  `tool-descriptors.json` (727 tools). Writes preview unless `allowApply` is
+  set. `@stateset/cli` is still preferred when it is installed.
+- **Generated Node.js API reference** at `docs/api/node-reference.md`,
+  regenerated on every build and guarded by a staleness test.
+- New binding test suites for promotions, subscriptions, credit, lots,
+  serials, fulfillment, receiving, backorders, cost accounting and accounts
+  receivable (600 tests in total; 22 marked todo document engine defects).
+- **`@stateset/embedded` event streams.** A subscription is async-iterable
+  (`for await (const event of subscription)`), and has `close()`, `isClosed`,
+  `ref()` and `unref()`. A pending `recv()` holds the process open only while
+  it is awaited; `close()`, leaving the loop, or closing the `Commerce` ends the
+  stream and lets the process exit.
+- **Verifiable receive path.** Every event returned by `stateset-sync pull` is now
+  verified against its author's signing key, resolved through the sequencer's
+  signed key directory and pinned on first use. What fails verification is
+  quarantined in `_ves_quarantined_events` and is never returned by application
+  reads. Verification is unconditional; there is no flag that disables it.
+- `stateset-sync init --sequencer-public-key <hex>` (plus
+  `--peer-key-ttl-seconds` and `--peer-key-max-stale-seconds`), and a new
+  `stateset-sync config show` / `stateset-sync config set <key> <value>`.
+- `stateset-sync doctor` — quarantine counts by reason and current peer key pins;
+  `--promote` re-verifies quarantined events and promotes what now passes.
+
+### Changed
+
+- **UPGRADE NOTE — `@stateset/embedded` inputs are strict.** A malformed input
+  that used to be coerced is now refused with `err.code === 'VALIDATION'`: an
+  unknown currency code (was: the store default), a non-UUID `productId`,
+  `variantId`, `customerId`, `cartId`, `couponId` or similar (was: dropped, or
+  the nil UUID), one bad id in an id list (was: skipped), a malformed
+  RFC 3339 timestamp or `YYYY-MM-DD` date on a create or a list filter (was:
+  ignored, so a filter typo listed everything), malformed JSON in `tiers` /
+  `metadata`, an unknown `paymentMethod` (was: credit card), and an unknown
+  currency on `tax.calculate` (was: USD). Callers that relied on the coercion
+  must send valid values.
+- **UPGRADE NOTE — `@stateset/embedded` enum inputs are strict.** Every
+  enumerated input (`promotionType`, `accountType`, `receiptType`,
+  `costMethod`, `priority`, `carrier`, `shippingMethod`, `warehouseType`,
+  `locationType`, tax types and categories, analytics `period`/`granularity`,
+  status filters, …) now refuses an unknown spelling with
+  `err.code === 'VALIDATION'` and a message listing the accepted values,
+  instead of silently using a default. Accepted spellings are unchanged and
+  still case-insensitive; the literal unions in `index.d.ts` list them.
+- **`@stateset/embedded` float money is optional.** `unitPrice`, `price`,
+  `amount` and `taxAmount` inputs accept the exact `*Exact` string alone;
+  sending neither form is a `VALIDATION` error naming the field. The float
+  fields are now typed `number | undefined` in `index.d.ts`.
+- **`@stateset/embedded` runs calls concurrently.** The binding no longer holds
+  one lock around the engine for the duration of every call; the engine's own
+  connection pool serialises what needs serialising.
+- **UPGRADE NOTE — configure `sequencerPublicKey` before upgrading, or the
+  receive path stops.** An agent without it can still push, but cannot verify
+  any key directory: every pulled event quarantines as
+  `sequencer_key_not_configured` and nothing is stored. Set it with
+  `stateset-sync config set sequencer-public-key <hex>` (the raw 32-byte Ed25519
+  key as hex, `0x` optional), then run `stateset-sync doctor --promote` to take
+  the backlog out of quarantine. The sequencer must also be serving
+  `GET /api/v1/agents/:agent_id/signing-keys`.
+- **UPGRADE NOTE — the gRPC receive path is unsupported.** `pull()` now refuses
+  on a gRPC transport with an explanation instead of storing nothing quietly,
+  and streamed events are never written to local state. gRPC deployments that
+  receive events must move to an `https://` sequencer URL; pushing over gRPC is
+  unaffected.
+- The `pull` result drops `applied` (nothing is applied to local entity state)
+  and reports `pulled`, `verified`, `quarantined`, `stored` and `conflicts`, each
+  computed from what happened. `conflicts` is `null`, never `0`, where it is not
+  computed.
+- `peerKeyTtlSeconds` defaults to 300 seconds (was 3600), matching the design:
+  it bounds how long a revoked peer key keeps verifying events.
+- `securityProfile` is deliberately **not** enforced on the receive path, so
+  agents on `hybrid`/`pqc-strict` still accept legacy Ed25519 peers. Tracked.
+
+### Fixed
+
+- Conflict rows are keyed by the conflict's identity instead of a fresh UUID per
+  detection, so repeated detection — now on the background sync timer — no longer
+  grows `_ves_conflicts`, the `sync conflicts` listing and the `sync_conflicts`
+  MCP count without bound.
+- `sync doctor` counts quarantined events with SQL rather than by measuring a
+  1,000-row page, and `--promote` pages through the whole table instead of
+  sweeping only the first 1,000.
+
+- **Quebec's tax rates were ten times too large.** `get_canadian_tax_info("QC")`
+  reported a 149.75% total rate, so a $100 Quebec sale computed $149.75 of tax.
+  Every other province stores a fraction; Quebec alone was written at the wrong
+  scale.
+
+## [1.35.2] - 2026-09-21
+
+### Fixed
+
+- **Engine guards surfaced by the Node binding's new test suites** (SQLite and
+  Postgres in parity, each with a red-then-green test):
+  - `backorder.get_summary` no longer fails with a NULL column on an empty
+    store or once every backorder is cancelled; both backends now `COALESCE`
+    the status counts.
+  - `create_backorder`, `lots.create`, `credit.create_credit_account` /
+    `adjust_credit_limit` / `update_credit_account`, and
+    `cost_accounting.set_item_cost` / `update_average_cost` /
+    `update_last_cost` refuse non-positive quantities, negative limits,
+    negative costs and blank SKUs with a validation error instead of writing
+    them.
+  - `serials.create` / `create_bulk` resolve `lot_number` to the lot's id (an
+    unknown lot number is not found), so quarantining a lot now reaches the
+    serials created against it.
+  - `receiving.create_receipt_from_po` refuses an unknown purchase order and
+    `fulfillment.create_wave` refuses an unknown order, both before writing.
+  - `accounts_receivable.create_credit_memo` refuses an unknown customer;
+    voided credit memos no longer appear among unapplied credits.
+  - `promotions.create_coupon` reports a duplicate code as a conflict and an
+    unknown promotion as not found rather than a database error;
+    `record_usage` refuses an unparsable currency instead of recording USD;
+    `validate_coupon` now applies the same promotion eligibility (active,
+    inside its window, under its usage limit) that `apply` uses, so a coupon
+    on a draft or expired promotion no longer validates.
+  - `subscriptions.skip_billing_cycle` marks the skipped cycle `skipped` and
+    seeds the next scheduled cycle, and advances `current_period_start` the
+    way a settled cycle does.
+
+## [1.35.1] - 2026-09-12
+
+### Fixed
+
+- Creating a subscription no longer fails with `Conflict("Subscription <id> is
+  leased for billing by another worker until <ts>")`. The create path seeded
+  billing cycle 1 in its own transaction, after the subscription row had already
+  committed, and went through the lease-guarded public billing mutation. A
+  subscription with a back-dated start date is due the instant it commits, so a
+  concurrent billing worker could lease the brand-new row in that gap and the
+  unclaimed seed was refused — the create returned `Conflict` and left a
+  committed subscription with no billing cycle behind. Both backends now seed
+  cycle 1 in the same transaction as the insert, priced off the row that
+  transaction just inserted, so nothing can hold a lease on a row that has never
+  been visible. The create is atomic as well: a failed seed previously returned
+  an error but kept the subscription. The lease guard itself is unchanged on
+  `create_billing_cycle` / `create_billing_cycle_async`, which still refuse a
+  foreign worker and an unclaimed caller.
+
+## [1.35.0] - 2026-09-10
+
+### Added
+
+- Node binding: every money output field has an exact-decimal twin (`<name>Exact`,
+  112 fields across 47 structs) rendered from the engine's `Decimal` with no float
+  round trip; money inputs on orders, payments, refunds, carts (including
+  `carts.setTax`), products, invoices and bills accept an `…Exact` string that takes
+  precedence over the float. The float fields remain and are marked `@deprecated`
+  in the generated typings. A fixture-driven test fails when a new float money
+  field ships without a twin.
+- ICP reference clients (JavaScript and Python) sign a real `principal_binding`
+  with `signPrincipalBinding` / `sign_principal_binding`; a client without a
+  principal identity sends no binding. Both SDKs' default `authority.verbs` cover
+  every verb that SDK can emit, pinned by a drift guard and a shared cross-language
+  signing vector. The CLI durable-store suite runs in enforce mode.
+- `auth.acting_party_mismatch` registered alongside `auth.buyer_mismatch`; the
+  reference handler's `delegation.*`, `auth.aid_*` and `settlement.*` codes are
+  registered in the spec's error-code table.
+
+### Fixed
+
+- Node binding: a `Decimal` that narrows to a non-finite `f64` is now a coded
+  `INTERNAL` error naming the field instead of a silent `NaN`/`Infinity`.
+- Reference handler: `payout.request` could not be delegated in enforce mode
+  because the binding was checked against `buyer`; it is now checked against the
+  intent's acting party (`seller` for payouts, fail-closed to `buyer` otherwise).
+- Reference handler: the intent signer is now bound to the acting party for every
+  verb in every trust mode, and an intent missing `signature.kid` or its acting-party
+  field is refused with `format.missing_field`. Previously only `purchase.create`
+  was checked, so in permissive mode a caller could submit a payout naming another
+  seller, or naming no party at all.
+
+### Changed (behaviour, needs a release note)
+
+- Intents whose signer is not the acting party now fail with `auth.acting_party_mismatch`
+  (401) on every verb; `purchase.create` keeps `auth.buyer_mismatch`.
+- JavaScript SDK default `authority.verbs` widens from 4 to 7; Python normalises a
+  string `expires_at` to millisecond ISO form, which changes the canonical bytes and
+  signature for that input.
+
 ## [1.34.0] - 2026-09-08
 
 ### Added

@@ -1,6 +1,6 @@
 //! PostgreSQL prepayment repository implementation
 
-use super::map_db_error;
+use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -142,7 +142,7 @@ impl PgPrepaymentRepository {
         let id_str = id.to_string();
         let number = format!("PRE-{}", &id_str[..8]);
         let now = Utc::now();
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
+        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
 
         sqlx::query(
             "INSERT INTO prepayments (id, number, supplier_id, amount, remaining, currency, status, method, reference, memo, created_at, updated_at)

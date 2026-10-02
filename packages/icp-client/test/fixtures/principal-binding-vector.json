@@ -1,0 +1,42 @@
+{
+  "description": "Cross-language PrincipalBinding vector. Asserted by BOTH packages/icp-client/test/client.test.mjs and packages/icp-python-client/tests/test_client.py: the same params and seed MUST produce the same canonical bytes and the same Ed25519 signature in every SDK. principal_seed_hex is RFC 8032 test key material - never a real key. The string expires_at is deliberate: it pins the normalisation (RFC 3339 in, JS toISOString() millisecond form out).",
+  "principal_seed_hex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+  "expected_principal_pubkey_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+  "params": {
+    "principal": "did:web:vector.example",
+    "agent": "aid:v1:zVectorAgent",
+    "expires_at": "2026-01-01T00:00:00Z",
+    "verbs": [
+      "purchase.create",
+      "inventory.query"
+    ],
+    "max_per_intent": {
+      "amount": "500.00",
+      "currency": "USDC"
+    },
+    "revocation": "https://vector.example/revoke"
+  },
+  "expected_binding": {
+    "principal": "did:web:vector.example",
+    "agent": "aid:v1:zVectorAgent",
+    "authority": {
+      "max_per_intent": {
+        "amount": "500.00",
+        "currency": "USDC"
+      },
+      "verbs": [
+        "purchase.create",
+        "inventory.query"
+      ]
+    },
+    "expiry": "2026-01-01T00:00:00.000Z",
+    "revocation": "https://vector.example/revoke",
+    "signature": {
+      "alg": "ed25519",
+      "kid": "did:web:vector.example",
+      "sig": "70f9e4fd1b2f081bd0f81c64c46d648d4730464a031122836c2fb931ff93fc86e8b6cf694d7389a1e61924ed69627d6dab62d050bfeb3c122a6f32573e1a6605"
+    }
+  },
+  "expected_canonical": "{\"agent\":\"aid:v1:zVectorAgent\",\"authority\":{\"max_per_intent\":{\"amount\":\"500.00\",\"currency\":\"USDC\"},\"verbs\":[\"purchase.create\",\"inventory.query\"]},\"expiry\":\"2026-01-01T00:00:00.000Z\",\"principal\":\"did:web:vector.example\",\"revocation\":\"https://vector.example/revoke\"}",
+  "expected_signature_hex": "70f9e4fd1b2f081bd0f81c64c46d648d4730464a031122836c2fb931ff93fc86e8b6cf694d7389a1e61924ed69627d6dab62d050bfeb3c122a6f32573e1a6605"
+}

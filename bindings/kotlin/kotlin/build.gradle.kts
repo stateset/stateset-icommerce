@@ -1,12 +1,12 @@
 plugins {
-    kotlin("jvm") version "1.9.21"
-    kotlin("plugin.serialization") version "1.9.21"
+    kotlin("jvm") version "2.4.20"
+    kotlin("plugin.serialization") version "2.4.20"
     `maven-publish`
     signing
 }
 
 group = "com.stateset"
-version = "1.34.0"
+version = "1.36.0"
 
 repositories {
     mavenCentral()

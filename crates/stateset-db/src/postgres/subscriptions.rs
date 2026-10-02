@@ -1,6 +1,7 @@
 //! PostgreSQL repository for subscriptions
 
 use super::map_db_error;
+use super::resolve_currency_with_executor;
 use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -666,6 +667,7 @@ impl PgSubscriptionRepository {
         // live plan with a partial item set — silently mispriced for every
         // subscriber. (Mirrors the SQLite backend.)
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
 
         sqlx::query(
             r#"
@@ -695,7 +697,7 @@ impl PgSubscriptionRepository {
         .bind(input.custom_interval_days)
         .bind(input.price)
         .bind(input.setup_fee)
-        .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
+        .bind(currency.as_str())
         .bind(input.trial_days.unwrap_or(0))
         .bind(input.trial_requires_payment_method.unwrap_or(true))
         .bind(input.min_cycles)
@@ -1108,6 +1110,36 @@ impl PgSubscriptionRepository {
                 .await?;
             }
 
+            // Seed the initial billing cycle (cycle 1) for the subscription's
+            // current period, matching the SQLite backend — a fresh
+            // subscription otherwise has no billing cycle at all, breaking
+            // dunning/next-charge/history consumers.
+            //
+            // It is seeded in THIS transaction, on the row this transaction
+            // just inserted. Seeding it afterwards, through the public
+            // billing path, made creating a subscription defeasible: a
+            // back-dated subscription is due the instant it commits, so a
+            // concurrent `claim_due_for_billing` could lease it in the gap
+            // and the seed — an unclaimed caller — was refused by the
+            // billing-lease guard. The create then failed with `Conflict`
+            // and left a committed subscription with no billing cycle
+            // behind. Nothing can hold a lease on a row that has never been
+            // visible, so the guard has nothing to say here; it stays on
+            // `create_billing_cycle_async`, which is the billing mutation it
+            // was written to protect.
+            let seeded = Self::get_subscription_for_update_tx(&mut tx, id)
+                .await?
+                .ok_or(CommerceError::NotFound)?;
+            Self::insert_billing_cycle_tx(
+                &mut tx,
+                &seeded,
+                1,
+                seeded.current_period_start,
+                seeded.current_period_end,
+                Utc::now(),
+            )
+            .await?;
+
             tx.commit().await.map_err(map_db_error)?;
             created_subscription_id = Some(id);
             break;
@@ -1119,23 +1151,9 @@ impl PgSubscriptionRepository {
             )
         })?;
 
-        let subscription = self.get_subscription_async(id).await?.ok_or_else(|| {
+        self.get_subscription_async(id).await?.ok_or_else(|| {
             CommerceError::DatabaseError("Failed to retrieve created subscription".into())
-        })?;
-
-        // Seed the initial billing cycle (cycle 1) for the subscription's current
-        // period, matching the SQLite backend — a fresh subscription otherwise has
-        // no billing cycle at all, breaking dunning/next-charge/history consumers.
-        self.create_billing_cycle_async(CreateBillingCycle {
-            subscription_id: id,
-            cycle_number: 1,
-            period_start: subscription.current_period_start,
-            period_end: subscription.current_period_end,
-            claimed_by: None,
         })
-        .await?;
-
-        Ok(subscription)
     }
 
     pub async fn get_subscription_async(&self, id: SubscriptionId) -> Result<Option<Subscription>> {
@@ -1635,6 +1653,16 @@ impl PgSubscriptionRepository {
         self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Skip the subscription's next billing cycle.
+    ///
+    /// The cycle that was due — the `scheduled` cycle whose `period_end` is
+    /// the current `next_billing_date` — is settled as `skipped`, and the
+    /// subscription's clock moves on exactly as it does after a paid cycle:
+    /// the current period becomes the next interval and a fresh `scheduled`
+    /// cycle is seeded for it, so the one-scheduled-cycle-per-current-period
+    /// invariant that `create_subscription_async` establishes still holds.
+    /// `billing_cycle_count` is untouched: nothing settled a charge. Mirrors
+    /// the SQLite backend.
     pub async fn skip_billing_cycle_async(
         &self,
         id: SubscriptionId,
@@ -1659,22 +1687,24 @@ impl PgSubscriptionRepository {
         }
 
         let now = Utc::now();
-        // Skip exactly one interval with the same calendar arithmetic the paid
-        // path uses (`advance`) — mirrors SQLite.
-        let new_billing_date = sub.billing_interval.advance(
-            sub.next_billing_date.unwrap_or(sub.current_period_end),
-            sub.custom_interval_days,
-        );
+        // The skipped period ends where the next charge was due; the new
+        // period runs from there for exactly one interval, with the same
+        // calendar arithmetic the paid path uses (`advance`) — mirrors SQLite.
+        let skipped_period_end = sub.next_billing_date.unwrap_or(sub.current_period_end);
+        let new_billing_date =
+            sub.billing_interval.advance(skipped_period_end, sub.custom_interval_days);
 
         // `AND next_billing_date IS NOT DISTINCT FROM $5` pins the read the new
         // date was derived from, so a racing skip that already moved the date
         // cannot be applied twice.
         let updated = sqlx::query(
-            "UPDATE subscriptions SET next_billing_date = $1, current_period_end = $2, updated_at = $3
+            "UPDATE subscriptions
+             SET next_billing_date = $1, current_period_start = $2, current_period_end = $1,
+                 updated_at = $3
              WHERE id = $4 AND next_billing_date IS NOT DISTINCT FROM $5",
         )
         .bind(new_billing_date)
-        .bind(new_billing_date)
+        .bind(skipped_period_end)
         .bind(now)
         .bind(id.into_uuid())
         .bind(sub.next_billing_date)
@@ -1687,6 +1717,41 @@ impl PgSubscriptionRepository {
                 "Subscription billing schedule changed concurrently; retry the skip".into(),
             ));
         }
+
+        // Settle the cycle that was due as `skipped`. Only a `scheduled`
+        // cycle can be skipped (`BillingCycleStatus::can_transition_to`); a
+        // cycle already paid / failed / voided for that period is left alone.
+        sqlx::query(
+            "UPDATE billing_cycles SET status = 'skipped', failure_reason = $1, updated_at = $2
+             WHERE subscription_id = $3 AND status = 'scheduled' AND period_end = $4",
+        )
+        .bind(&reason)
+        .bind(now)
+        .bind(id.into_uuid())
+        .bind(skipped_period_end)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        // Seed the scheduled cycle for the new current period, the way
+        // `create_subscription_async` seeds cycle 1 for the first one.
+        let next_cycle_number: i32 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM billing_cycles
+             WHERE subscription_id = $1",
+        )
+        .bind(id.into_uuid())
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        Self::insert_billing_cycle_tx(
+            &mut tx,
+            &sub,
+            next_cycle_number,
+            skipped_period_end,
+            new_billing_date,
+            now,
+        )
+        .await?;
 
         self.record_event_tx(&mut tx, id, SubscriptionEventType::Skipped, &reason, None, None)
             .await?;
@@ -1715,7 +1780,6 @@ impl PgSubscriptionRepository {
             period_end,
             claimed_by,
         } = input;
-        let id = Uuid::new_v4();
         let now = Utc::now();
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -1727,8 +1791,42 @@ impl PgSubscriptionRepository {
             .await?
             .ok_or(CommerceError::NotFound)?;
         Self::refuse_foreign_billing_lease(&sub, claimed_by.as_deref(), now)?;
+
+        let id = Self::insert_billing_cycle_tx(
+            &mut tx,
+            &sub,
+            cycle_number,
+            period_start,
+            period_end,
+            now,
+        )
+        .await?;
+
+        self.activate_if_trial_elapsed_tx(&mut tx, subscription_id, period_start, now).await?;
+
+        tx.commit().await.map_err(map_db_error)?;
+
+        self.get_billing_cycle_async(id).await?.ok_or(CommerceError::NotFound)
+    }
+
+    /// Insert one `scheduled` billing cycle for `sub` inside `tx`, priced off
+    /// the subscription row the caller already holds locked. Returns the new
+    /// cycle's id.
+    ///
+    /// The billing-lease guard is deliberately NOT here: it belongs to
+    /// [`Self::create_billing_cycle_async`], the billing mutation, and must
+    /// not reach the create path's own seed of cycle 1 (see
+    /// [`Self::create_subscription_async`]).
+    async fn insert_billing_cycle_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        sub: &Subscription,
+        cycle_number: i32,
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<Uuid> {
+        let id = Uuid::new_v4();
         let (subtotal, discount, total) = sub.billing_cycle_amounts();
-        let currency = sub.currency;
 
         sqlx::query(
             "INSERT INTO billing_cycles (id, subscription_id, cycle_number, status, period_start, period_end,
@@ -1736,15 +1834,15 @@ impl PgSubscriptionRepository {
              VALUES ($1,$2,$3,'scheduled',$4,$5,$6,$7,0,$8,$9,$10,$11,$12)",
         )
         .bind(id)
-        .bind(subscription_id.into_uuid())
+        .bind(sub.id.into_uuid())
         .bind(cycle_number)
         .bind(period_start)
         .bind(period_end)
         .bind(subtotal)
         .bind(discount)
         .bind(total)
-        .bind(currency.as_str())
-        .bind(Self::cycle_key(subscription_id, cycle_number))
+        .bind(sub.currency.as_str())
+        .bind(Self::cycle_key(sub.id, cycle_number))
         .bind(now)
         .bind(now)
         .execute(tx.as_mut())
@@ -1755,11 +1853,7 @@ impl PgSubscriptionRepository {
         // billed. (Mirrors the SQLite backend.)
         .map_err(map_db_error)?;
 
-        self.activate_if_trial_elapsed_tx(&mut tx, subscription_id, period_start, now).await?;
-
-        tx.commit().await.map_err(map_db_error)?;
-
-        self.get_billing_cycle_async(id).await?.ok_or(CommerceError::NotFound)
+        Ok(id)
     }
 
     /// `Trial -> Active` once the billing clock reaches `trial_ends_at`:

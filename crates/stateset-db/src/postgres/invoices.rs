@@ -1,6 +1,7 @@
 //! PostgreSQL implementation of invoice repository
 
 use super::map_db_error;
+use super::resolve_currency_with_executor;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::{FromRow, postgres::PgPool};
@@ -359,6 +360,7 @@ impl PgInvoiceRepository {
 
         // Start transaction
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
 
         sqlx::query(
             r#"INSERT INTO invoices (
@@ -381,7 +383,7 @@ impl PgInvoiceRepository {
         .bind(invoice_date)
         .bind(due_date)
         .bind(&input.payment_terms)
-        .bind(input.currency.unwrap_or(CurrencyCode::USD))
+        .bind(currency)
         .bind(&input.billing_name)
         .bind(&input.billing_email)
         .bind(&input.billing_address)
@@ -1138,6 +1140,7 @@ impl PgInvoiceRepository {
             let due_date = input.due_date.unwrap_or_else(|| {
                 invoice_date + chrono::Duration::days(input.days_until_due.unwrap_or(30) as i64)
             });
+            let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
 
             sqlx::query(
                 r#"INSERT INTO invoices (
@@ -1160,7 +1163,7 @@ impl PgInvoiceRepository {
             .bind(invoice_date)
             .bind(due_date)
             .bind(&input.payment_terms)
-            .bind(input.currency.unwrap_or(CurrencyCode::USD))
+            .bind(currency)
             .bind(&input.billing_name)
             .bind(&input.billing_email)
             .bind(&input.billing_address)
@@ -1277,7 +1280,7 @@ impl PgInvoiceRepository {
                 invoice_date,
                 due_date,
                 payment_terms: input.payment_terms,
-                currency: input.currency.unwrap_or(CurrencyCode::USD),
+                currency,
                 billing_name: input.billing_name,
                 billing_email: input.billing_email,
                 billing_address: input.billing_address,

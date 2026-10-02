@@ -74,7 +74,7 @@ function cleanForWhatsApp(text) {
  *
  * @param {Object} options
  * @param {string}   [options.dbPath='./store.db']  - Path to commerce SQLite DB
- * @param {boolean}  [options.allowApply=true]       - Enable write operations
+ * @param {boolean}  [options.allowApply=false]      - Enable write operations
  * @param {string}   [options.model]                 - Claude model override
  * @param {number}   [options.maxTurns=10]           - Max agent turns per message
  * @param {string}   [options.authDir]               - WhatsApp credentials directory
@@ -88,7 +88,7 @@ function cleanForWhatsApp(text) {
  */
 export async function startWhatsAppGateway({
   dbPath = './store.db',
-  allowApply = true,
+  allowApply = false,
   model,
   maxTurns = 10,
   authDir,

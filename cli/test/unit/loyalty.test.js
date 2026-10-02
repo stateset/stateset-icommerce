@@ -1,15 +1,9 @@
 /**
- * Loyalty Program Tools Test Suite
+ * Loyalty Program Tools — handler behaviour
  *
- * Tests for the loyaltyTools module (cli/src/tools/loyalty.js):
- * - create_loyalty_program (admin)
- * - get_loyalty_program (read)
- * - enroll_customer (write)
- * - get_loyalty_account (read)
- * - earn_points (write)
- * - redeem_points (write)
- * - list_rewards (read)
- * - create_reward (admin)
+ * Mocks here define only methods the Node binding's `Loyalty` class really has
+ * (checked against bindings/node/index.d.ts in loyalty-tools.test.js), and each
+ * test asserts the exact arguments the binding receives.
  */
 
 import { describe, it } from 'node:test';
@@ -17,732 +11,452 @@ import assert from 'node:assert/strict';
 
 import { loyaltyTools } from '../../src/tools/loyalty.js';
 
-// ============================================================================
-// Helper: find tool by name from a tools array
-// ============================================================================
-
-function findTool(tools, name) {
-  const tool = tools.find((t) => t.name === name);
+function findTool(name) {
+  const tool = loyaltyTools.find((t) => t.name === name);
   if (!tool) throw new Error(`Tool '${name}' not found`);
   return tool;
 }
 
 // ============================================================================
-// Mock data
+// Mock data — shaped like the binding's Loyalty*Output / RewardOutput
 // ============================================================================
 
+const PROGRAM_ID = 'lp_001';
+const CUSTOMER_ID = 'cust_001';
+const ACCOUNT_ID = 'la_001';
+
 const mockProgram = {
-  id: 'lp_001',
+  id: PROGRAM_ID,
   name: 'Gold Rewards',
   description: 'Earn points on every purchase',
   pointsPerDollar: 10,
-  currency: 'USD',
   tiers: [{ name: 'Bronze', minPoints: 0, multiplier: 1, perks: [] }],
-  totalMembers: 500,
-  memberCount: 500,
   status: 'active',
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
 };
 
 const mockAccount = {
-  id: 'la_001',
-  customerId: 'cust_001',
-  programId: 'lp_001',
-  pointsBalance: 2500,
-  lifetimePoints: 5000,
-  currentTier: 'Bronze',
-  tier: 'Bronze',
-  nextTier: 'Silver',
-  pointsToNextTier: 500,
-  enrolledAt: '2026-01-15T00:00:00Z',
+  id: ACCOUNT_ID,
+  programId: PROGRAM_ID,
+  customerId: CUSTOMER_ID,
+  pointsBalance: 500,
+  lifetimePoints: 800,
+  tier: 'bronze',
+  createdAt: '2026-01-15T00:00:00Z',
   updatedAt: '2026-02-01T00:00:00Z',
-};
-
-const mockTx = {
-  id: 'ltx_001',
-  programId: 'lp_001',
-  customerId: 'cust_001',
-  type: 'earn',
-  points: 100,
-  balance: 2600,
-  reason: 'purchase',
-  orderId: null,
-  note: null,
-  createdAt: '2026-02-01T00:00:00Z',
 };
 
 const mockReward = {
   id: 'rw_001',
-  programId: 'lp_001',
-  name: 'Free Shipping',
-  description: 'Free standard shipping on your next order',
-  pointsCost: 500,
-  type: 'free_shipping',
-  value: '0',
-  tier: null,
-  status: 'active',
-  remainingStock: null,
+  programId: PROGRAM_ID,
+  name: '$10 off',
+  description: 'Ten dollars off',
+  pointsCost: 200,
+  rewardType: 'discount',
+  value: '10.00',
+  isActive: true,
   createdAt: '2026-01-01T00:00:00Z',
+  updatedAt: '2026-01-01T00:00:00Z',
 };
 
-// ============================================================================
-// Mock commerce factory
-// ============================================================================
-
-function makeLoyaltyCommerce(overrides = {}) {
-  return {
-    loyalty: {
-      createProgram: async (data) => ({ ...mockProgram, ...data }),
-      getProgram: async (id) => (id === 'lp_001' ? mockProgram : null),
-      enrollCustomer: async (programId, customerId) => ({ ...mockAccount, programId, customerId }),
-      getAccount: async (programId, customerId) =>
-        programId === 'lp_001' && customerId === 'cust_001' ? mockAccount : null,
-      earnPoints: async (data) => ({ ...mockTx, ...data, type: 'earn' }),
-      redeemPoints: async (data) => ({ ...mockTx, ...data, type: 'redeem', points: -data.points }),
-      listRewards: async (_programId, _opts) => [mockReward],
-      createReward: async (programId, data) => ({ ...mockReward, programId, ...data }),
-      ...overrides,
-    },
+/** A `commerce.loyalty` mock that records every call. */
+function makeCommerce(overrides = {}) {
+  const calls = [];
+  const record =
+    (name, impl) =>
+    async (...args) => {
+      calls.push({ name, args });
+      return impl(...args);
+    };
+  const loyalty = {
+    createProgram: record('createProgram', (input) => ({ ...mockProgram, ...input })),
+    getProgram: record('getProgram', (id) => (id === PROGRAM_ID ? mockProgram : null)),
+    enroll: record('enroll', (input) => ({ ...mockAccount, ...input, pointsBalance: 0 })),
+    getAccountByCustomer: record('getAccountByCustomer', (customerId, programId) =>
+      customerId === CUSTOMER_ID && programId === PROGRAM_ID ? mockAccount : null,
+    ),
+    adjustPoints: record('adjustPoints', (input) => ({
+      id: 'lt_001',
+      ...input,
+      createdAt: '2026-02-01T00:00:00Z',
+    })),
+    getReward: record('getReward', (id) => (id === mockReward.id ? mockReward : null)),
+    listRewards: record('listRewards', () => [mockReward]),
+    createReward: record('createReward', (input) => ({ ...mockReward, ...input })),
   };
+  for (const [name, impl] of Object.entries(overrides)) loyalty[name] = record(name, impl);
+  return { commerce: { loyalty }, calls };
 }
 
 // ============================================================================
-// Structural sanity check
-// ============================================================================
-
-describe('Loyalty Tools — structure', () => {
-  it('exports an array', () => {
-    assert.ok(Array.isArray(loyaltyTools));
-  });
-
-  it('exports exactly 8 tools', () => {
-    assert.equal(loyaltyTools.length, 8);
-  });
-
-  it('every tool has name, handler, and permission', () => {
-    for (const tool of loyaltyTools) {
-      assert.ok(tool.name, `missing name`);
-      assert.equal(typeof tool.handler, 'function', `${tool.name} missing handler`);
-      assert.ok(tool.permission, `${tool.name} missing permission`);
-    }
-  });
-
-  it('admin tools have permission: admin', () => {
-    const adminTools = ['create_loyalty_program', 'create_reward'];
-    for (const name of adminTools) {
-      const tool = findTool(loyaltyTools, name);
-      assert.equal(tool.permission, 'admin', `${name} should have admin permission`);
-    }
-  });
-
-  it('write tools have permission: write', () => {
-    const writeTools = ['enroll_customer', 'earn_points', 'redeem_points'];
-    for (const name of writeTools) {
-      const tool = findTool(loyaltyTools, name);
-      assert.equal(tool.permission, 'write', `${name} should have write permission`);
-    }
-  });
-
-  it('read tools have permission: read', () => {
-    const readTools = ['get_loyalty_program', 'get_loyalty_account', 'list_rewards'];
-    for (const name of readTools) {
-      const tool = findTool(loyaltyTools, name);
-      assert.equal(tool.permission, 'read', `${name} should have read permission`);
-    }
-  });
-});
-
-// ============================================================================
-// create_loyalty_program
+// create_loyalty_program / get_loyalty_program
 // ============================================================================
 
 describe('create_loyalty_program', () => {
-  const tool = findTool(loyaltyTools, 'create_loyalty_program');
+  const tool = findTool('create_loyalty_program');
 
-  it('returns preview (success: false) without --apply', async () => {
-    const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: { name: 'Gold Rewards', pointsPerDollar: 10 },
-      allowApply: false,
-    });
+  it('previews without --apply', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params: { name: 'X' } });
     assert.equal(result.success, false);
-    assert.ok(result.error);
-    assert.ok(result.hint);
+    assert.equal(calls.length, 0);
   });
 
-  it('creates program with --apply and returns success: true', async () => {
+  it('passes a CreateLoyaltyProgramInput, filling tier multiplier and perks', async () => {
+    const { commerce, calls } = makeCommerce();
     const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
+      commerce,
       params: {
         name: 'Gold Rewards',
+        description: 'desc',
         pointsPerDollar: 10,
-        currency: 'USD',
-        tiers: [{ name: 'Bronze', minPoints: 0, multiplier: 1, perks: [] }],
+        tiers: [
+          { name: 'Bronze', minPoints: 0 },
+          { name: 'Gold', minPoints: 1000, multiplier: 1.5, perks: ['free shipping'] },
+        ],
       },
       allowApply: true,
     });
+    assert.deepEqual(calls, [
+      {
+        name: 'createProgram',
+        args: [
+          {
+            name: 'Gold Rewards',
+            description: 'desc',
+            pointsPerDollar: 10,
+            tiers: [
+              { name: 'Bronze', minPoints: 0, multiplier: 1, perks: [] },
+              { name: 'Gold', minPoints: 1000, multiplier: 1.5, perks: ['free shipping'] },
+            ],
+          },
+        ],
+      },
+    ]);
     assert.equal(result.success, true);
-    assert.ok(result.message.includes('created'));
-    assert.ok(result.program);
-    assert.equal(result.program.name, 'Gold Rewards');
   });
 
-  it('passes all fields to commerce.loyalty.createProgram', async () => {
-    let calledWith;
-    const commerce = makeLoyaltyCommerce({
-      createProgram: async (data) => {
-        calledWith = data;
-        return { ...mockProgram, ...data };
-      },
+  it('defaults pointsPerDollar to 1 and omits tiers when none are given', async () => {
+    const { commerce, calls } = makeCommerce();
+    await tool.handler({ commerce, params: { name: 'Basic' }, allowApply: true });
+    assert.deepEqual(calls[0].args[0], {
+      name: 'Basic',
+      description: undefined,
+      pointsPerDollar: 1,
+      tiers: undefined,
     });
-    await tool.handler({
-      commerce,
-      params: {
-        name: 'Silver Tier',
-        description: 'Mid-range program',
-        pointsPerDollar: 5,
-        currency: 'EUR',
-        tiers: [{ name: 'Entry', minPoints: 0, multiplier: 1 }],
-      },
-      allowApply: true,
-    });
-    assert.equal(calledWith.name, 'Silver Tier');
-    assert.equal(calledWith.description, 'Mid-range program');
-    assert.equal(calledWith.pointsPerDollar, 5);
-    assert.equal(calledWith.currency, 'EUR');
-  });
-
-  it('defaults pointsPerDollar to 1 when omitted', async () => {
-    let calledWith;
-    const commerce = makeLoyaltyCommerce({
-      createProgram: async (data) => {
-        calledWith = data;
-        return { ...mockProgram, ...data };
-      },
-    });
-    await tool.handler({
-      commerce,
-      params: { name: 'Basic Rewards' },
-      allowApply: true,
-    });
-    assert.ok(calledWith.pointsPerDollar >= 1);
-  });
-
-  it('returns error when commerce throws', async () => {
-    const commerce = makeLoyaltyCommerce({
-      createProgram: async () => {
-        throw new Error('program creation failed');
-      },
-    });
-    await assert.rejects(
-      () => tool.handler({ commerce, params: { name: 'Test' }, allowApply: true }),
-      /program creation failed/,
-    );
   });
 });
-
-// ============================================================================
-// get_loyalty_program
-// ============================================================================
 
 describe('get_loyalty_program', () => {
-  const tool = findTool(loyaltyTools, 'get_loyalty_program');
+  const tool = findTool('get_loyalty_program');
 
-  it('returns program details for valid ID', async () => {
-    const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: { programId: 'lp_001' },
-    });
-    assert.equal(result.success, true);
-    assert.equal(result.program.id, 'lp_001');
-    assert.equal(result.program.name, 'Gold Rewards');
-    assert.equal(result.program.pointsPerDollar, 10);
-    assert.ok(Array.isArray(result.program.tiers));
+  it('returns only fields LoyaltyProgramOutput has', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params: { programId: PROGRAM_ID } });
+    assert.deepEqual(calls, [{ name: 'getProgram', args: [PROGRAM_ID] }]);
+    assert.deepEqual(result, { success: true, program: mockProgram });
   });
 
-  it('returns success: false for unknown program ID', async () => {
-    const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: { programId: 'lp_nope' },
-    });
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('not found'));
-  });
-
-  it('returns error when commerce throws', async () => {
-    const commerce = makeLoyaltyCommerce({
-      getProgram: async () => {
-        throw new Error('DB error');
-      },
-    });
-    await assert.rejects(
-      () => tool.handler({ commerce, params: { programId: 'lp_001' } }),
-      /DB error/,
-    );
+  it('returns success: false for an unknown program', async () => {
+    const { commerce } = makeCommerce();
+    const result = await tool.handler({ commerce, params: { programId: 'nope' } });
+    assert.deepEqual(result, { success: false, error: 'Loyalty program not found' });
   });
 });
 
 // ============================================================================
-// enroll_customer
+// enroll_customer / get_loyalty_account
 // ============================================================================
 
 describe('enroll_customer', () => {
-  const tool = findTool(loyaltyTools, 'enroll_customer');
+  const tool = findTool('enroll_customer');
+  const params = { programId: PROGRAM_ID, customerId: CUSTOMER_ID };
 
-  it('returns preview (success: false) without --apply', async () => {
-    const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: { programId: 'lp_001', customerId: 'cust_001' },
-      allowApply: false,
-    });
+  it('previews without --apply', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params });
     assert.equal(result.success, false);
-    assert.ok(result.error);
+    assert.equal(calls.length, 0);
   });
 
-  it('enrolls customer with --apply and returns success: true', async () => {
-    const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: { programId: 'lp_001', customerId: 'cust_001' },
-      allowApply: true,
-    });
+  it('calls commerce.loyalty.enroll with an EnrollCustomerInput', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params, allowApply: true });
+    assert.deepEqual(calls, [
+      { name: 'enroll', args: [{ customerId: CUSTOMER_ID, programId: PROGRAM_ID }] },
+    ]);
     assert.equal(result.success, true);
-    assert.ok(result.message.includes('enrolled'));
-    assert.ok(result.account);
-    assert.equal(result.account.customerId, 'cust_001');
+    assert.equal(result.account.id, ACCOUNT_ID);
+    assert.equal(result.account.pointsBalance, 0);
   });
 
-  it('calls commerce.loyalty.enrollCustomer with programId and customerId', async () => {
-    let calledProgramId, calledCustomerId;
-    const commerce = makeLoyaltyCommerce({
-      enrollCustomer: async (pid, cid) => {
-        calledProgramId = pid;
-        calledCustomerId = cid;
-        return { ...mockAccount, programId: pid, customerId: cid };
-      },
-    });
-    await tool.handler({
-      commerce,
-      params: { programId: 'lp_001', customerId: 'cust_002' },
-      allowApply: true,
-    });
-    assert.equal(calledProgramId, 'lp_001');
-    assert.equal(calledCustomerId, 'cust_002');
-  });
-
-  it('returns error when commerce throws', async () => {
-    const commerce = makeLoyaltyCommerce({
-      enrollCustomer: async () => {
+  it('propagates binding errors', async () => {
+    const { commerce } = makeCommerce({
+      enroll: () => {
         throw new Error('already enrolled');
       },
     });
     await assert.rejects(
-      () =>
-        tool.handler({
-          commerce,
-          params: { programId: 'lp_001', customerId: 'cust_001' },
-          allowApply: true,
-        }),
+      () => tool.handler({ commerce, params, allowApply: true }),
       /already enrolled/,
     );
   });
 });
 
-// ============================================================================
-// get_loyalty_account
-// ============================================================================
-
 describe('get_loyalty_account', () => {
-  const tool = findTool(loyaltyTools, 'get_loyalty_account');
+  const tool = findTool('get_loyalty_account');
 
-  it('returns account details for valid program+customer', async () => {
+  it('looks the account up with getAccountByCustomer(customerId, programId)', async () => {
+    const { commerce, calls } = makeCommerce();
     const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: { programId: 'lp_001', customerId: 'cust_001' },
+      commerce,
+      params: { programId: PROGRAM_ID, customerId: CUSTOMER_ID },
     });
-    assert.equal(result.success, true);
-    assert.equal(result.account.customerId, 'cust_001');
-    assert.equal(result.account.programId, 'lp_001');
-    assert.equal(result.account.pointsBalance, 2500);
-    assert.equal(result.account.lifetimePoints, 5000);
-    assert.ok(result.account.currentTier);
+    assert.deepEqual(calls, [{ name: 'getAccountByCustomer', args: [CUSTOMER_ID, PROGRAM_ID] }]);
+    assert.deepEqual(result, { success: true, account: mockAccount });
   });
 
-  it('returns success: false when account not found', async () => {
+  it('returns success: false when the customer is not enrolled', async () => {
+    const { commerce } = makeCommerce();
     const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: { programId: 'lp_001', customerId: 'cust_nope' },
+      commerce,
+      params: { programId: PROGRAM_ID, customerId: 'other' },
     });
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('not found'));
-  });
-
-  it('returns error when commerce throws', async () => {
-    const commerce = makeLoyaltyCommerce({
-      getAccount: async () => {
-        throw new Error('account lookup failed');
-      },
-    });
-    await assert.rejects(
-      () => tool.handler({ commerce, params: { programId: 'lp_001', customerId: 'cust_001' } }),
-      /account lookup failed/,
-    );
+    assert.deepEqual(result, { success: false, error: 'Loyalty account not found' });
   });
 });
 
 // ============================================================================
-// earn_points
+// earn_points / redeem_points
 // ============================================================================
 
 describe('earn_points', () => {
-  const tool = findTool(loyaltyTools, 'earn_points');
+  const tool = findTool('earn_points');
+  const base = { programId: PROGRAM_ID, customerId: CUSTOMER_ID, points: 100 };
 
-  it('returns preview (success: false) without --apply', async () => {
+  it('previews without --apply', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params: base });
+    assert.equal(result.success, false);
+    assert.equal(calls.length, 0);
+  });
+
+  it('adjusts the account by +points as an earn transaction', async () => {
+    const { commerce, calls } = makeCommerce();
     const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: { programId: 'lp_001', customerId: 'cust_001', points: 100 },
-      allowApply: false,
+      commerce,
+      params: { ...base, reason: 'purchase', orderId: 'ord_1', note: 'first order' },
+      allowApply: true,
+    });
+    assert.deepEqual(calls, [
+      { name: 'getAccountByCustomer', args: [CUSTOMER_ID, PROGRAM_ID] },
+      {
+        name: 'adjustPoints',
+        args: [
+          {
+            accountId: ACCOUNT_ID,
+            points: 100,
+            transactionType: 'earn',
+            referenceId: 'ord_1',
+            description: 'purchase: first order',
+          },
+        ],
+      },
+    ]);
+    assert.equal(result.success, true);
+    assert.equal(result.message, '100 points awarded');
+    assert.equal(result.transaction.transactionType, 'earn');
+  });
+
+  it('records reason "manual" when none is given', async () => {
+    const { commerce, calls } = makeCommerce();
+    await tool.handler({ commerce, params: base, allowApply: true });
+    assert.equal(calls[1].args[0].description, 'manual');
+    assert.equal(calls[1].args[0].referenceId, undefined);
+  });
+
+  it('refuses a customer who is not enrolled, without adjusting', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({
+      commerce,
+      params: { ...base, customerId: 'other' },
+      allowApply: true,
     });
     assert.equal(result.success, false);
-    assert.ok(result.error);
-  });
-
-  it('awards points with --apply and returns success: true', async () => {
-    const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: { programId: 'lp_001', customerId: 'cust_001', points: 100, reason: 'purchase' },
-      allowApply: true,
-    });
-    assert.equal(result.success, true);
-    assert.ok(result.message.includes('100'));
-    assert.ok(result.transaction);
-  });
-
-  it('includes points count in success message', async () => {
-    const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: { programId: 'lp_001', customerId: 'cust_001', points: 250 },
-      allowApply: true,
-    });
-    assert.ok(result.message.includes('250'));
-  });
-
-  it('passes all optional fields to commerce.loyalty.earnPoints', async () => {
-    let calledWith;
-    const commerce = makeLoyaltyCommerce({
-      earnPoints: async (data) => {
-        calledWith = data;
-        return { ...mockTx, ...data };
-      },
-    });
-    await tool.handler({
-      commerce,
-      params: {
-        programId: 'lp_001',
-        customerId: 'cust_001',
-        points: 75,
-        reason: 'referral',
-        orderId: 'ord_001',
-        note: 'Referred cust_002',
-      },
-      allowApply: true,
-    });
-    assert.equal(calledWith.points, 75);
-    assert.equal(calledWith.reason, 'referral');
-    assert.equal(calledWith.orderId, 'ord_001');
-    assert.equal(calledWith.note, 'Referred cust_002');
-  });
-
-  it('defaults reason to manual when not provided', async () => {
-    let calledWith;
-    const commerce = makeLoyaltyCommerce({
-      earnPoints: async (data) => {
-        calledWith = data;
-        return { ...mockTx, ...data };
-      },
-    });
-    await tool.handler({
-      commerce,
-      params: { programId: 'lp_001', customerId: 'cust_001', points: 50 },
-      allowApply: true,
-    });
-    assert.equal(calledWith.reason, 'manual');
-  });
-
-  it('returns error when commerce throws', async () => {
-    const commerce = makeLoyaltyCommerce({
-      earnPoints: async () => {
-        throw new Error('points award failed');
-      },
-    });
-    await assert.rejects(
-      () =>
-        tool.handler({
-          commerce,
-          params: { programId: 'lp_001', customerId: 'cust_001', points: 100 },
-          allowApply: true,
-        }),
-      /points award failed/,
+    assert.match(result.error, /not enrolled/);
+    assert.deepEqual(
+      calls.map((c) => c.name),
+      ['getAccountByCustomer'],
     );
   });
 });
-
-// ============================================================================
-// redeem_points
-// ============================================================================
 
 describe('redeem_points', () => {
-  const tool = findTool(loyaltyTools, 'redeem_points');
+  const tool = findTool('redeem_points');
+  const base = { programId: PROGRAM_ID, customerId: CUSTOMER_ID, points: 200 };
 
-  it('returns preview (success: false) without --apply', async () => {
-    const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: { programId: 'lp_001', customerId: 'cust_001', points: 500 },
-      allowApply: false,
-    });
+  it('previews without --apply', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params: base });
     assert.equal(result.success, false);
-    assert.ok(result.error);
+    assert.equal(calls.length, 0);
   });
 
-  it('redeems points with --apply and returns success: true', async () => {
+  it('adjusts the account by -points as a redeem transaction', async () => {
+    const { commerce, calls } = makeCommerce();
     const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: {
-        programId: 'lp_001',
-        customerId: 'cust_001',
-        points: 500,
-        rewardId: 'rw_001',
-      },
+      commerce,
+      params: { ...base, orderId: 'ord_2', note: 'checkout' },
       allowApply: true,
     });
-    assert.equal(result.success, true);
-    assert.ok(result.message.includes('500'));
-    assert.ok(result.transaction);
+    assert.deepEqual(calls[1], {
+      name: 'adjustPoints',
+      args: [
+        {
+          accountId: ACCOUNT_ID,
+          points: -200,
+          transactionType: 'redeem',
+          referenceId: 'ord_2',
+          description: 'checkout',
+        },
+      ],
+    });
+    assert.equal(result.message, '200 points redeemed');
   });
 
-  it('passes rewardId and orderId to commerce.loyalty.redeemPoints', async () => {
-    let calledWith;
-    const commerce = makeLoyaltyCommerce({
-      redeemPoints: async (data) => {
-        calledWith = data;
-        return { ...mockTx, ...data, type: 'redeem' };
-      },
-    });
+  it('checks the reward and references it when no order is given', async () => {
+    const { commerce, calls } = makeCommerce();
     await tool.handler({
       commerce,
-      params: {
-        programId: 'lp_001',
-        customerId: 'cust_001',
-        points: 500,
-        rewardId: 'rw_001',
-        orderId: 'ord_002',
-        note: 'Reward redemption',
-      },
+      params: { ...base, rewardId: 'rw_001' },
       allowApply: true,
     });
-    assert.equal(calledWith.rewardId, 'rw_001');
-    assert.equal(calledWith.orderId, 'ord_002');
-    assert.equal(calledWith.note, 'Reward redemption');
+    assert.deepEqual(
+      calls.map((c) => c.name),
+      ['getAccountByCustomer', 'getReward', 'adjustPoints'],
+    );
+    assert.deepEqual(calls[2].args[0], {
+      accountId: ACCOUNT_ID,
+      points: -200,
+      transactionType: 'redeem',
+      referenceId: 'rw_001',
+      description: 'reward rw_001 ($10 off)',
+    });
   });
 
-  it('returns error when commerce throws', async () => {
-    const commerce = makeLoyaltyCommerce({
-      redeemPoints: async () => {
-        throw new Error('insufficient points');
+  it('refuses a reward that is not in the program', async () => {
+    const { commerce, calls } = makeCommerce({
+      getReward: () => ({ ...mockReward, programId: 'other' }),
+    });
+    const result = await tool.handler({
+      commerce,
+      params: { ...base, rewardId: 'rw_001' },
+      allowApply: true,
+    });
+    assert.deepEqual(result, {
+      success: false,
+      error: 'Reward not found in this loyalty program',
+    });
+    assert.equal(
+      calls.some((c) => c.name === 'adjustPoints'),
+      false,
+    );
+  });
+
+  it('refuses an inactive reward', async () => {
+    const { commerce } = makeCommerce({ getReward: () => ({ ...mockReward, isActive: false }) });
+    const result = await tool.handler({
+      commerce,
+      params: { ...base, rewardId: 'rw_001' },
+      allowApply: true,
+    });
+    assert.deepEqual(result, { success: false, error: 'Reward is not active' });
+  });
+
+  it('leaves the overdraft check to the engine and propagates its refusal', async () => {
+    const { commerce } = makeCommerce({
+      adjustPoints: () => {
+        throw new Error('Failed to adjust points: Validation error: Insufficient points balance');
       },
     });
     await assert.rejects(
-      () =>
-        tool.handler({
-          commerce,
-          params: { programId: 'lp_001', customerId: 'cust_001', points: 9999 },
-          allowApply: true,
-        }),
-      /insufficient points/,
+      () => tool.handler({ commerce, params: { ...base, points: 9999 }, allowApply: true }),
+      /Insufficient points balance/,
     );
   });
 });
 
 // ============================================================================
-// list_rewards
+// list_rewards / create_reward
 // ============================================================================
 
 describe('list_rewards', () => {
-  const tool = findTool(loyaltyTools, 'list_rewards');
+  const tool = findTool('list_rewards');
 
-  it('returns rewards for a program', async () => {
+  it('passes a RewardFilterInput and maps RewardOutput fields', async () => {
+    const { commerce, calls } = makeCommerce();
     const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: { programId: 'lp_001' },
+      commerce,
+      params: { programId: PROGRAM_ID, rewardType: 'discount', activeOnly: true, limit: 5 },
     });
-    assert.equal(result.success, true);
-    assert.equal(result.programId, 'lp_001');
+    assert.deepEqual(calls, [
+      {
+        name: 'listRewards',
+        args: [{ programId: PROGRAM_ID, rewardType: 'discount', isActive: true, limit: 5 }],
+      },
+    ]);
+    assert.deepEqual(result.rewards, [
+      {
+        id: 'rw_001',
+        name: '$10 off',
+        description: 'Ten dollars off',
+        pointsCost: 200,
+        rewardType: 'discount',
+        value: '10.00',
+        isActive: true,
+      },
+    ]);
     assert.equal(result.returned, 1);
-    assert.ok(Array.isArray(result.rewards));
-    assert.equal(result.rewards[0].id, 'rw_001');
-    assert.equal(result.rewards[0].name, 'Free Shipping');
-    assert.equal(result.rewards[0].pointsCost, 500);
   });
 
-  it('passes programId and tier filter to commerce.loyalty.listRewards', async () => {
-    let calledProgramId, calledOpts;
-    const commerce = makeLoyaltyCommerce({
-      listRewards: async (pid, opts) => {
-        calledProgramId = pid;
-        calledOpts = opts;
-        return [];
-      },
-    });
-    await tool.handler({ commerce, params: { programId: 'lp_001', tier: 'Gold' } });
-    assert.equal(calledProgramId, 'lp_001');
-    assert.equal(calledOpts.tier, 'Gold');
-  });
-
-  it('slices results to limit', async () => {
-    const manyRewards = Array.from({ length: 15 }, (_, i) => ({
-      ...mockReward,
-      id: `rw_${String(i).padStart(3, '0')}`,
-    }));
-    const commerce = makeLoyaltyCommerce({
-      listRewards: async () => manyRewards,
-    });
-    const result = await tool.handler({ commerce, params: { programId: 'lp_001', limit: 4 } });
-    assert.equal(result.returned, 4);
-    assert.equal(result.rewards.length, 4);
-  });
-
-  it('returns error when commerce throws', async () => {
-    const commerce = makeLoyaltyCommerce({
-      listRewards: async () => {
-        throw new Error('rewards query failed');
-      },
-    });
-    await assert.rejects(
-      () => tool.handler({ commerce, params: { programId: 'lp_001' } }),
-      /rewards query failed/,
-    );
+  it('does not filter on isActive unless activeOnly is set', async () => {
+    const { commerce, calls } = makeCommerce();
+    await tool.handler({ commerce, params: { programId: PROGRAM_ID, limit: 20 } });
+    assert.equal(calls[0].args[0].isActive, undefined);
   });
 });
 
-// ============================================================================
-// create_reward
-// ============================================================================
-
 describe('create_reward', () => {
-  const tool = findTool(loyaltyTools, 'create_reward');
+  const tool = findTool('create_reward');
+  const params = {
+    programId: PROGRAM_ID,
+    name: '$10 off',
+    description: 'Ten dollars off',
+    pointsCost: 200,
+    rewardType: 'discount',
+    value: '10.00',
+  };
 
-  it('returns preview (success: false) without --apply', async () => {
-    const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: {
-        programId: 'lp_001',
-        name: 'Free Shipping',
-        pointsCost: 500,
-        type: 'free_shipping',
-        value: 0,
-      },
-      allowApply: false,
-    });
+  it('previews without --apply', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params });
     assert.equal(result.success, false);
-    assert.ok(result.error);
-    assert.ok(result.hint);
+    assert.equal(calls.length, 0);
   });
 
-  it('creates reward with --apply and returns success: true', async () => {
-    const result = await tool.handler({
-      commerce: makeLoyaltyCommerce(),
-      params: {
-        programId: 'lp_001',
-        name: 'Free Shipping',
-        pointsCost: 500,
-        type: 'free_shipping',
-        value: 0,
-      },
-      allowApply: true,
-    });
+  it('passes a CreateRewardInput (programId inside, decimal-string value)', async () => {
+    const { commerce, calls } = makeCommerce();
+    const result = await tool.handler({ commerce, params, allowApply: true });
+    assert.deepEqual(calls, [{ name: 'createReward', args: [params] }]);
     assert.equal(result.success, true);
-    assert.ok(result.message.includes('created'));
-    assert.ok(result.reward);
-    assert.equal(result.reward.name, 'Free Shipping');
+    assert.equal(result.reward.value, '10.00');
   });
 
-  it('passes all fields to commerce.loyalty.createReward', async () => {
-    let calledProgramId, calledData;
-    const commerce = makeLoyaltyCommerce({
-      createReward: async (pid, data) => {
-        calledProgramId = pid;
-        calledData = data;
-        return { ...mockReward, programId: pid, ...data };
-      },
-    });
-    await tool.handler({
-      commerce,
-      params: {
-        programId: 'lp_001',
-        name: '10% Off',
-        description: 'Ten percent off your order',
-        pointsCost: 1000,
-        type: 'discount_percentage',
-        value: 10,
-        tier: 'Gold',
-        maxRedemptions: 100,
-        stock: 50,
-      },
-      allowApply: true,
-    });
-    assert.equal(calledProgramId, 'lp_001');
-    assert.equal(calledData.name, '10% Off');
-    assert.equal(calledData.pointsCost, 1000);
-    assert.equal(calledData.type, 'discount_percentage');
-    assert.equal(calledData.value, '10');
-    assert.equal(calledData.tier, 'Gold');
-    assert.equal(calledData.maxRedemptions, 100);
-    assert.equal(calledData.stock, 50);
-  });
-
-  it('converts numeric value to string before passing to commerce', async () => {
-    let calledData;
-    const commerce = makeLoyaltyCommerce({
-      createReward: async (_pid, data) => {
-        calledData = data;
-        return { ...mockReward, ...data };
-      },
-    });
-    await tool.handler({
-      commerce,
-      params: {
-        programId: 'lp_001',
-        name: 'Gift Card $25',
-        pointsCost: 2500,
-        type: 'gift_card',
-        value: 25,
-      },
-      allowApply: true,
-    });
-    assert.equal(typeof calledData.value, 'string');
-    assert.equal(calledData.value, '25');
-  });
-
-  it('returns error when commerce throws', async () => {
-    const commerce = makeLoyaltyCommerce({
-      createReward: async () => {
-        throw new Error('reward creation failed');
-      },
-    });
-    await assert.rejects(
-      () =>
-        tool.handler({
-          commerce,
-          params: {
-            programId: 'lp_001',
-            name: 'Test',
-            pointsCost: 100,
-            type: 'free_shipping',
-            value: 0,
-          },
-          allowApply: true,
-        }),
-      /reward creation failed/,
-    );
+  it('refuses a float value and an unknown reward type at the schema', () => {
+    assert.equal(tool.inputSchema.value.safeParse(10.5).success, false);
+    assert.equal(tool.inputSchema.value.safeParse('10.50').success, true);
+    assert.equal(tool.inputSchema.rewardType.safeParse('gift_card').success, false);
   });
 });

@@ -548,6 +548,59 @@ mod tests {
     }
 
     #[test]
+    fn ratable_schedule_matches_lean_minor_unit_model() {
+        // RevenueSchedule.ratable proves this capped-step/final-plug model
+        // conserves any amount for any positive number of periods. Exercise
+        // the Rust implementation over rounding ties and early exhaustion.
+        let start = date(2026, 1, 1);
+        for cents in 1i64..=120 {
+            for months in 1u32..=12 {
+                let amount = Decimal::new(cents, 2);
+                let method =
+                    RecognitionMethod::RatableOverTime { start, end: date(2026, months, 1) };
+                let entries = generate_revenue_schedule(method, amount, start);
+                assert_eq!(entries.len(), months as usize);
+
+                // Integer, ties-to-even rounding of cents / months, computed
+                // independently of rust_decimal's division and round_dp.
+                let divisor = i64::from(months);
+                let base = cents / divisor;
+                let twice_remainder = 2 * (cents % divisor);
+                let per = base
+                    + i64::from(
+                        twice_remainder > divisor || (twice_remainder == divisor && base % 2 != 0),
+                    );
+                let mut remaining = cents;
+                for (index, entry) in entries.iter().enumerate() {
+                    let expected =
+                        if index + 1 == months as usize { remaining } else { per.min(remaining) };
+                    assert_eq!(
+                        entry.amount,
+                        Decimal::new(expected, 2),
+                        "amount={cents} cents, months={months}, period={index}"
+                    );
+                    remaining -= expected;
+                }
+                assert_eq!(remaining, 0);
+
+                let mut tagged = entries;
+                for (index, entry) in tagged.iter_mut().enumerate() {
+                    if index % 2 == 0 {
+                        entry.status = RevenueEntryStatus::Recognized;
+                    }
+                }
+                let schedule = RevenueSchedule {
+                    obligation_id: Uuid::new_v4(),
+                    method,
+                    entries: tagged,
+                    total_amount: amount,
+                };
+                assert_eq!(schedule.recognized_total() + schedule.deferred_total(), amount);
+            }
+        }
+    }
+
+    #[test]
     fn ratable_schedule_period_dates_are_month_starts() {
         let entries = generate_revenue_schedule(
             RecognitionMethod::RatableOverTime { start: date(2026, 11, 20), end: date(2027, 2, 5) },

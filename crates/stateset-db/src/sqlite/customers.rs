@@ -54,7 +54,7 @@ const LIVE_CUSTOMER_BY_EMAIL: &str = "SELECT * FROM customers \
 /// Validation failures on the input, and database errors. A caller that loses
 /// the race never sees `EmailAlreadyExists`; it gets the winner's record.
 pub(crate) fn get_or_create_customer_with_conn(
-    conn: &rusqlite::Connection,
+    conn: &rusqlite::Transaction<'_>,
     input: &CreateCustomer,
 ) -> Result<(Customer, bool)> {
     validate_email(&input.email)?;
@@ -233,8 +233,19 @@ impl SqliteCustomerRepository {
     /// `create_batch_atomic`). The e-mail is normalised and checked against
     /// live accounts only; the `email_key` UNIQUE index (mapped to
     /// `EmailAlreadyExists` by `map_db_error`) backstops the race window.
-    fn insert_customer_tx(
-        tx: &rusqlite::Connection,
+    /// Field validation every customer create runs before touching the store.
+    pub(crate) fn validate_create(input: &CreateCustomer) -> Result<()> {
+        validate_email(&input.email)?;
+        validate_required_text("customer.first_name", &input.first_name, 100)?;
+        validate_required_text("customer.last_name", &input.last_name, 100)?;
+        if let Some(phone) = &input.phone {
+            validate_phone(phone)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn insert_customer_tx(
+        tx: &rusqlite::Transaction<'_>,
         input: &CreateCustomer,
     ) -> std::result::Result<Customer, rusqlite::Error> {
         let wrap = |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
@@ -280,6 +291,16 @@ impl SqliteCustomerRepository {
         // and the context makes the typed error name the address rather than
         // the column.
         .map_err(|e| wrap(map_db_error_with(e, ConflictValues::email(&email))))?;
+
+        super::kernel_outbox::record_outbox_fact(
+            tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer.created",
+                aggregate_type: "customer",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({ "id": id, "email": email }),
+            },
+        )?;
 
         Ok(Customer {
             id,
@@ -549,14 +570,7 @@ impl SqliteCustomerRepository {
 
 impl CustomerRepository for SqliteCustomerRepository {
     fn create(&self, input: CreateCustomer) -> Result<Customer> {
-        // Validate email format
-        validate_email(&input.email)?;
-        validate_required_text("customer.first_name", &input.first_name, 100)?;
-        validate_required_text("customer.last_name", &input.last_name, 100)?;
-        if let Some(phone) = &input.phone {
-            validate_phone(phone)?;
-        }
-
+        Self::validate_create(&input)?;
         with_immediate_transaction(&self.pool, |tx| Self::insert_customer_tx(tx, &input))
     }
 

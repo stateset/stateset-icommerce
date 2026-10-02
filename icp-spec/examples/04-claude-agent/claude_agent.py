@@ -32,7 +32,7 @@ from pathlib import Path
 SDK = Path(__file__).resolve().parents[3] / "packages" / "icp-python-client"
 sys.path.insert(0, str(SDK))
 
-from icp_client import ICPClient, ICPError  # noqa: E402
+from icp_client import ICPClient, ICPError, generate_principal_identity  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -45,10 +45,10 @@ HANDLER_SCRIPT = (
 
 
 class HandlerProc:
-    def __init__(self):
+    def __init__(self, env: dict | None = None):
         self.proc = subprocess.Popen(
             ["node", str(HANDLER_SCRIPT)],
-            env={**os.environ, "PORT": "0"},
+            env={**os.environ, "PORT": "0", **(env or {})},
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -358,12 +358,28 @@ Walk through these steps:
 Be concise. After the purchase completes, summarize what happened."""
 
 
+PRINCIPAL = "did:web:claude-agent-demo.example"
+
+
 def main():
-    handler = HandlerProc()
+    # The principal is the organization the agent acts for. Its PUBLIC key is
+    # operator configuration on the merchant side; the private half signs the
+    # PrincipalBinding on every Intent. A handler verifies any principal it was
+    # configured with, in every trust mode — so this delegation is really
+    # checked, not waved through.
+    principal_identity = generate_principal_identity()
+    handler = HandlerProc(
+        {
+            "ICP_PRINCIPAL_KEYS_JSON": json.dumps(
+                {PRINCIPAL: principal_identity.ed25519_pubkey.hex()}
+            )
+        }
+    )
     try:
         client = ICPClient.create(
             handler_url=handler.base_url,
-            principal="did:web:claude-agent-demo.example",
+            principal=PRINCIPAL,
+            principal_identity=principal_identity,
         )
         caps = client.capabilities()
         dispatcher = ICPToolDispatcher(client, caps["merchant_aid"], "settler:stateset.usdc.base-sepolia")

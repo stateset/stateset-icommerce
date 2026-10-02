@@ -5,6 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { isRetryableError, computeRetryDelay, sleep } from '../../src/retry-helpers.js';
+import { scaleForLoad } from '../helpers/startup-budget.js';
 
 // ===========================================================================
 // isRetryableError
@@ -208,6 +209,8 @@ describe('sleep', () => {
     const start = Date.now();
     await sleep(0);
     const elapsed = Date.now() - start;
-    assert.ok(elapsed < 50, `0ms sleep took ${elapsed}ms`);
+    // Upper bound on a timer turn; stretched only on an oversubscribed machine.
+    const bound = scaleForLoad(50);
+    assert.ok(elapsed < bound, `0ms sleep took ${elapsed}ms (bound ${bound}ms)`);
   });
 });

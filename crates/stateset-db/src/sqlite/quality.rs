@@ -80,6 +80,9 @@ impl SqliteQualityRepository {
             return Ok(ncr); // Idempotent.
         }
         Self::ensure_ncr_open(&ncr, if to == NcrStatus::Closed { "close" } else { "cancel" })?;
+        if to == NcrStatus::Closed {
+            ncr.ensure_closable()?;
+        }
 
         let closed_at = (to == NcrStatus::Closed).then(|| now.to_rfc3339());
         let rows = tx
@@ -1018,6 +1021,11 @@ impl QualityRepository for SqliteQualityRepository {
 
         let existing = Self::load_ncr_on(&tx, id)?;
         Self::ensure_ncr_open(&existing, "update")?;
+        // Judge the NCR as this update leaves it: an update that sets the
+        // disposition may also close.
+        if input.status == Some(NcrStatus::Closed) && input.disposition.is_none() {
+            existing.ensure_closable()?;
+        }
 
         let mut updates = vec!["updated_at = ?"];
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
@@ -1025,6 +1033,11 @@ impl QualityRepository for SqliteQualityRepository {
         if let Some(status) = &input.status {
             updates.push("status = ?");
             params.push(Box::new(status.to_string()));
+            // Closing through update records the close time, as close_ncr does.
+            if *status == NcrStatus::Closed {
+                updates.push("closed_at = ?");
+                params.push(Box::new(now.to_rfc3339()));
+            }
         }
         if let Some(severity) = &input.severity {
             updates.push("severity = ?");
@@ -1467,9 +1480,10 @@ mod tests {
     use rust_decimal_macros::dec;
     use stateset_core::{
         CreateDefectCode, CreateInspection, CreateInspectionItem, CreateNonConformance,
-        CreateQualityHold, InspectionFilter, InspectionType, NonConformanceFilter,
+        CreateQualityHold, Disposition, InspectionFilter, InspectionType, NonConformanceFilter,
         NonConformanceSource, QualityHoldFilter, QualityRepository, Severity, UpdateNonConformance,
     };
+    use std::sync::{Arc, Barrier};
 
     fn fresh_repo() -> SqliteQualityRepository {
         SqliteDatabase::in_memory().expect("in-memory").quality()
@@ -1582,6 +1596,15 @@ mod tests {
         .expect("create ncr")
     }
 
+    /// Record a disposition, which closing requires.
+    fn dispose(repo: &SqliteQualityRepository, id: Uuid) {
+        repo.update_ncr(
+            id,
+            UpdateNonConformance { disposition: Some(Disposition::Scrap), ..Default::default() },
+        )
+        .expect("record disposition");
+    }
+
     /// A finished NCR is evidence: closing is idempotent, cancelling a closed
     /// NCR (or closing a cancelled one) is refused, and `update_ncr` will not
     /// edit either. Before this the status column was written blind, so a
@@ -1591,6 +1614,7 @@ mod tests {
         let repo = fresh_repo();
 
         let closed = make_ncr(&repo, "SKU-NCR-CLOSE");
+        dispose(&repo, closed.id);
         let done = repo.close_ncr(closed.id).expect("close");
         assert_eq!(done.status, NcrStatus::Closed);
         let closed_at = done.closed_at.expect("closed_at stamped");
@@ -1633,6 +1657,7 @@ mod tests {
                 UpdateNonConformance {
                     status: Some(NcrStatus::CorrectiveAction),
                     root_cause: Some("tooling wear".into()),
+                    disposition: Some(Disposition::Rework),
                     ..Default::default()
                 },
             )
@@ -1640,6 +1665,54 @@ mod tests {
         assert_eq!(updated.status, NcrStatus::CorrectiveAction);
         assert_eq!(updated.root_cause.as_deref(), Some("tooling wear"));
         assert_eq!(repo.close_ncr(ncr.id).expect("close").status, NcrStatus::Closed);
+    }
+
+    /// Closing through `update_ncr` stamps `closed_at` like `close_ncr`. One
+    /// update may record the disposition and close.
+    #[test]
+    fn update_ncr_to_closed_records_the_close_time() {
+        let repo = fresh_repo();
+        let ncr = make_ncr(&repo, "SKU-NCR-UPDATE-CLOSE");
+        let closed = repo
+            .update_ncr(
+                ncr.id,
+                UpdateNonConformance {
+                    status: Some(NcrStatus::Closed),
+                    disposition: Some(Disposition::UseAsIs),
+                    ..Default::default()
+                },
+            )
+            .expect("close via update");
+        assert_eq!(closed.status, NcrStatus::Closed);
+        assert_eq!(closed.disposition, Some(Disposition::UseAsIs));
+        assert!(closed.closed_at.is_some(), "a closed NCR records when it closed");
+    }
+
+    /// A closed NCR is the record of what was done with the material, so
+    /// closing one with no disposition is refused -- through `close_ncr` and
+    /// through `update_ncr` -- and leaves it open.
+    #[test]
+    fn closing_an_ncr_requires_a_disposition() {
+        let repo = fresh_repo();
+        let ncr = make_ncr(&repo, "SKU-NCR-NO-DISPOSITION");
+
+        let err = repo.close_ncr(ncr.id).expect_err("close without a disposition");
+        assert_validation_mentions(&err, &["close", "disposition"]);
+        let err = repo
+            .update_ncr(
+                ncr.id,
+                UpdateNonConformance { status: Some(NcrStatus::Closed), ..Default::default() },
+            )
+            .expect_err("close via update without a disposition");
+        assert_validation_mentions(&err, &["close", "disposition"]);
+        let still = repo.get_ncr(ncr.id).unwrap().unwrap();
+        assert_eq!(still.status, NcrStatus::Open);
+        assert!(still.closed_at.is_none());
+
+        dispose(&repo, ncr.id);
+        let closed = repo.close_ncr(ncr.id).expect("close once disposed");
+        assert_eq!(closed.status, NcrStatus::Closed);
+        assert_eq!(repo.close_ncr(ncr.id).expect("re-close").status, NcrStatus::Closed);
     }
 
     #[test]
@@ -2258,6 +2331,40 @@ mod tests {
             .expect_err("unknown"),
             CommerceError::NotFound
         ));
+    }
+
+    #[test]
+    fn competing_hold_releases_preserve_first_audit_record() {
+        let repo = Arc::new(fresh_repo());
+        let hold = repo
+            .create_hold(CreateQualityHold {
+                sku: "HOLD-RACE".into(),
+                quantity: dec!(1),
+                reason: "inspection".into(),
+                placed_by: "qa".into(),
+                ..Default::default()
+            })
+            .expect("hold");
+        let barrier = Arc::new(Barrier::new(2));
+        let mut handles = Vec::new();
+        for who in ["qa-a", "qa-b"] {
+            let repo = Arc::clone(&repo);
+            let barrier = Arc::clone(&barrier);
+            let id = hold.id;
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                repo.release_hold(
+                    id,
+                    ReleaseQualityHold { released_by: who.into(), release_notes: None },
+                )
+            }));
+        }
+        let outcomes: Vec<_> = handles.into_iter().map(|h| h.join().expect("join")).collect();
+        let winners: Vec<_> = outcomes.iter().filter_map(|r| r.as_ref().ok()).collect();
+        assert_eq!(winners.len(), 1);
+        let stored = repo.get_hold(hold.id).expect("get").expect("hold");
+        assert_eq!(stored.released_by, winners[0].released_by);
+        assert_eq!(stored.released_at, winners[0].released_at);
     }
 
     #[test]

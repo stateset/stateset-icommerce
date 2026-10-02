@@ -17,14 +17,21 @@
 
 #![cfg(feature = "postgres")]
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, TimeZone, Utc};
 use rust_decimal_macros::dec;
 use stateset_core::{
-    BillingCycleStatus, BillingInterval, CommerceError, CreateBillingCycle, CreateCustomer,
-    CreateSubscription, CreateSubscriptionPlan, Subscription,
+    BillingCycleStatus, BillingInterval, CancelSubscription, CommerceError, CreateBillingCycle,
+    CreateCustomer, CreateSubscription, CreateSubscriptionPlan, Subscription, SubscriptionId,
 };
 use stateset_embedded::AsyncCommerce;
 use uuid::Uuid;
+
+/// The claim API has no tenant filter and the database is shared, so the two
+/// tests in this binary run one at a time: each subscribes with a back-dated
+/// start date, which is due the instant it exists, so a sibling's
+/// `claim_due_for_billing(50, ..)` would otherwise sweep it up before its own
+/// claim reaches it. (Mirrors `postgres_billing_claim.rs`.)
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn postgres_url() -> Option<String> {
     std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
@@ -74,6 +81,49 @@ async fn subscribe(commerce: &AsyncCommerce, start: DateTime<Utc>) -> Subscripti
     .expect("create subscription")
 }
 
+/// An ancient start date, so the subscription under test sorts FIRST in the
+/// shared database's due set: `claim_due_for_billing` takes the oldest
+/// `limit` rows, and a backlog of other due subscriptions would otherwise
+/// crowd this one out of the batch. (Mirrors `postgres_billing_claim.rs`.)
+fn epoch() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2001, 6, 1, 12, 0, 0).single().expect("epoch")
+}
+
+/// Claim at `at`, hand back every row that is not `mine` — the claim API has
+/// no tenant filter, so a batch can contain other tests' subscriptions and
+/// must not leave them leased — and return what was claimed of ours.
+async fn claim_mine(
+    commerce: &AsyncCommerce,
+    worker: &str,
+    lease_secs: i64,
+    at: DateTime<Utc>,
+    mine: SubscriptionId,
+) -> Vec<Subscription> {
+    let subs = commerce.subscriptions();
+    let claimed = subs.claim_due_for_billing(50, worker, lease_secs, at).await.expect("claim");
+    let mut kept = Vec::new();
+    for sub in claimed {
+        if sub.id == mine {
+            kept.push(sub);
+        } else {
+            let _ = subs.release_billing_claim(sub.id.into_uuid(), worker).await;
+        }
+    }
+    kept
+}
+
+/// Expire the subscription under test, so this binary leaves nothing in the
+/// shared database's due set for the next test (or the next run) to trip on.
+async fn expire(commerce: &AsyncCommerce, id: SubscriptionId) {
+    let _ = commerce
+        .subscriptions()
+        .cancel_subscription(
+            id.into_uuid(),
+            CancelSubscription { immediate: Some(true), ..Default::default() },
+        )
+        .await;
+}
+
 async fn reload(commerce: &AsyncCommerce, id: stateset_core::SubscriptionId) -> Subscription {
     commerce
         .subscriptions()
@@ -87,15 +137,15 @@ async fn reload(commerce: &AsyncCommerce, id: stateset_core::SubscriptionId) -> 
 /// subscription that had finished billing for the rest of the lease.
 #[tokio::test]
 async fn postgres_paying_a_cycle_releases_the_lease_immediately() {
+    let _serial = SERIAL.lock().await;
     let Some(commerce) = connect().await else { return };
     let now = Utc::now();
-    let sub = subscribe(&commerce, now - Duration::days(40)).await;
+    let sub = subscribe(&commerce, epoch()).await;
     let subs = commerce.subscriptions();
     let worker = format!("w1-{}", Uuid::new_v4());
 
     // A day-long lease, so nothing below can be explained by expiry.
-    let claimed = subs.claim_due_for_billing(50, &worker, 86_400, now).await.expect("claim");
-    let claimed: Vec<_> = claimed.into_iter().filter(|s| s.id == sub.id).collect();
+    let claimed = claim_mine(&commerce, &worker, 86_400, now, sub.id).await;
     assert_eq!(claimed.len(), 1, "our subscription must be claimed");
     assert_eq!(claimed[0].billing_lease_owner.as_deref(), Some(worker.as_str()));
 
@@ -136,10 +186,11 @@ async fn postgres_paying_a_cycle_releases_the_lease_immediately() {
     // rather than waiting the old lease out.
     let next_due = after.next_billing_date.expect("clock advanced") + Duration::seconds(1);
     let other = format!("w2-{}", Uuid::new_v4());
-    let reclaimed = subs.claim_due_for_billing(50, &other, 60, next_due).await.expect("claim");
-    let mine: Vec<_> = reclaimed.into_iter().filter(|s| s.id == sub.id).collect();
+    let mine = claim_mine(&commerce, &other, 60, next_due, sub.id).await;
     assert_eq!(mine.len(), 1, "immediately re-claimable");
     assert_eq!(mine[0].billing_lease_owner.as_deref(), Some(other.as_str()));
+
+    expire(&commerce, sub.id).await;
 }
 
 /// `release_billing_claim` is owner-scoped: a worker that does not hold the
@@ -147,14 +198,15 @@ async fn postgres_paying_a_cycle_releases_the_lease_immediately() {
 /// never hand another's in-flight subscription back to the pool.
 #[tokio::test]
 async fn postgres_release_billing_claim_by_a_non_holder_is_refused() {
+    let _serial = SERIAL.lock().await;
     let Some(commerce) = connect().await else { return };
     let now = Utc::now();
-    let sub = subscribe(&commerce, now - Duration::days(40)).await;
+    let sub = subscribe(&commerce, epoch()).await;
     let subs = commerce.subscriptions();
     let holder = format!("holder-{}", Uuid::new_v4());
 
-    let claimed = subs.claim_due_for_billing(50, &holder, 300, now).await.expect("claim");
-    assert!(claimed.iter().any(|s| s.id == sub.id));
+    let claimed = claim_mine(&commerce, &holder, 300, now, sub.id).await;
+    assert_eq!(claimed.len(), 1, "our subscription must be claimed");
 
     assert!(
         !subs
@@ -192,4 +244,6 @@ async fn postgres_release_billing_claim_by_a_non_holder_is_refused() {
     })
     .await
     .expect("unleased subscription is billable");
+
+    expire(&commerce, sub.id).await;
 }

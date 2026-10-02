@@ -19,7 +19,7 @@ use uuid::Uuid;
 use super::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
     parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row,
-    with_immediate_transaction,
+    resolve_currency_in_tx, with_immediate_transaction,
 };
 
 #[derive(Debug)]
@@ -88,6 +88,7 @@ impl SqliteSubscriptionRepository {
         // plan with a partial item set — silently mispriced for every
         // subscriber.
         with_immediate_transaction(&self.pool, |tx| {
+            let currency = resolve_currency_in_tx(input.currency, tx)?;
             tx.execute(
                 "INSERT INTO subscription_plans (
                     id, code, name, description, status,
@@ -114,7 +115,7 @@ impl SqliteSubscriptionRepository {
                     input.custom_interval_days,
                     input.price.to_string(),
                     input.setup_fee.map(|d| d.to_string()),
-                    input.currency.unwrap_or_default(),
+                    currency,
                     input.trial_days.unwrap_or(0),
                     i32::from(input.trial_requires_payment_method.unwrap_or(true)),
                     input.min_cycles,
@@ -626,6 +627,35 @@ impl SqliteSubscriptionRepository {
                 )?;
             }
 
+            // Seed the initial billing cycle (cycle 1) for the subscription's
+            // current period, in THIS transaction, on the row this
+            // transaction just inserted.
+            //
+            // Seeding it afterwards, through the public billing path, made
+            // creating a subscription defeasible: a back-dated subscription
+            // is due the instant it commits, so a concurrent
+            // `claim_due_for_billing` could lease it in the gap and the seed
+            // — an unclaimed caller — was refused by the billing-lease
+            // guard. The create then failed with `Conflict` and left a
+            // committed subscription with no billing cycle behind. Nothing
+            // can hold a lease on a row that has never been visible, so the
+            // guard has nothing to say here; it stays on
+            // [`Self::create_billing_cycle`], the billing mutation it was
+            // written to protect. (Mirrors the Postgres backend.)
+            let seeded = self
+                .get_subscription_with_conn(&tx, id)?
+                .ok_or(stateset_core::CommerceError::NotFound)?;
+            Self::insert_billing_cycle_with_conn(
+                &tx,
+                Uuid::new_v4(),
+                &seeded,
+                1,
+                now,
+                current_period_end,
+                Utc::now(),
+            )
+            .map_err(map_db_error)?;
+
             tx.commit().map_err(|e| {
                 stateset_core::CommerceError::DatabaseError(format!("Commit error: {e}"))
             })?;
@@ -637,15 +667,6 @@ impl SqliteSubscriptionRepository {
             stateset_core::CommerceError::Conflict(
                 "unable to allocate unique subscription number after retries".to_string(),
             )
-        })?;
-
-        // Create the initial billing cycle for the subscription
-        self.create_billing_cycle(CreateBillingCycle {
-            subscription_id: id,
-            cycle_number: 1,
-            period_start: now,
-            period_end: current_period_end,
-            claimed_by: None,
         })?;
 
         self.get_subscription(id)?.ok_or_else(|| {
@@ -1221,6 +1242,21 @@ impl SqliteSubscriptionRepository {
         self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
+    /// Skip the subscription's next billing cycle.
+    ///
+    /// The cycle that was due — the `scheduled` cycle whose `period_end` is
+    /// the current `next_billing_date`, i.e. the one seeded for the current
+    /// period on subscribe or by the last paid cycle — is settled as
+    /// `skipped`, and the subscription's clock moves on exactly as it does
+    /// after a paid cycle: the current period becomes the next interval and
+    /// a fresh `scheduled` cycle is seeded for it, so the one-scheduled-
+    /// cycle-per-current-period invariant that [`Self::create_subscription`]
+    /// establishes still holds. `billing_cycle_count` is untouched: nothing
+    /// settled a charge. Mirrors the Postgres backend.
+    ///
+    /// Before this, only the dates moved and the skipped period's cycle
+    /// stayed `scheduled`, so a billing worker charged it anyway — one
+    /// interval late.
     pub fn skip_billing_cycle(
         &self,
         id: SubscriptionId,
@@ -1243,14 +1279,15 @@ impl SqliteSubscriptionRepository {
                 )));
             }
 
-            // Skip exactly one interval with the same calendar arithmetic the
-            // paid path uses (`advance`), so a monthly subscription skipped in
-            // February stays on its day of month instead of drifting by the
-            // 30-day approximation of `days()`.
-            let new_billing_date = sub.billing_interval.advance(
-                sub.next_billing_date.unwrap_or(sub.current_period_end),
-                sub.custom_interval_days,
-            );
+            // The skipped period ends where the next charge was due; the new
+            // period runs from there for exactly one interval, with the same
+            // calendar arithmetic the paid path uses (`advance`), so a
+            // monthly subscription skipped in February stays on its day of
+            // month instead of drifting by the 30-day approximation of
+            // `days()`.
+            let skipped_period_end = sub.next_billing_date.unwrap_or(sub.current_period_end);
+            let new_billing_date =
+                sub.billing_interval.advance(skipped_period_end, sub.custom_interval_days);
 
             let now = Utc::now();
 
@@ -1260,12 +1297,13 @@ impl SqliteSubscriptionRepository {
             let updated = tx.execute(
                 "UPDATE subscriptions SET
                     next_billing_date = ?1,
-                    current_period_end = ?2,
+                    current_period_start = ?2,
+                    current_period_end = ?1,
                     updated_at = ?3
                  WHERE id = ?4 AND next_billing_date IS ?5",
                 rusqlite::params![
                     new_billing_date.to_rfc3339(),
-                    new_billing_date.to_rfc3339(),
+                    skipped_period_end.to_rfc3339(),
                     now.to_rfc3339(),
                     id.to_string(),
                     sub.next_billing_date.as_ref().map(chrono::DateTime::to_rfc3339),
@@ -1277,6 +1315,52 @@ impl SqliteSubscriptionRepository {
                     "Subscription billing schedule changed concurrently; retry the skip".into(),
                 )));
             }
+
+            // Settle the cycle that was due as `skipped`. Only a `scheduled`
+            // cycle can be skipped (`BillingCycleStatus::can_transition_to`);
+            // a cycle already paid / failed / voided for that period is left
+            // alone. Dates are compared as parsed instants, not as the
+            // strings a caller happened to store them in.
+            let due_cycles: Vec<(String, String)> = tx
+                .prepare(
+                    "SELECT id, period_end FROM billing_cycles
+                     WHERE subscription_id = ?1 AND status = 'scheduled'",
+                )?
+                .query_map(rusqlite::params![id.to_string()], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            for (cycle_id, period_end_raw) in due_cycles {
+                let period_end =
+                    parse_datetime_row(&period_end_raw, "billing_cycle", "period_end")?;
+                if period_end != skipped_period_end {
+                    continue;
+                }
+                tx.execute(
+                    "UPDATE billing_cycles SET
+                        status = 'skipped',
+                        failure_reason = ?1,
+                        updated_at = ?2
+                     WHERE id = ?3 AND status = 'scheduled'",
+                    rusqlite::params![reason, now.to_rfc3339(), cycle_id],
+                )?;
+            }
+
+            // Seed the scheduled cycle for the new current period, the way
+            // `create_subscription` seeds cycle 1 for the first one.
+            let next_cycle_number: i32 = tx.query_row(
+                "SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM billing_cycles
+                 WHERE subscription_id = ?1",
+                rusqlite::params![id.to_string()],
+                |row| row.get(0),
+            )?;
+            Self::insert_billing_cycle_with_conn(
+                tx,
+                Uuid::new_v4(),
+                &sub,
+                next_cycle_number,
+                skipped_period_end,
+                new_billing_date,
+                now,
+            )?;
 
             self.record_event_with_conn(
                 tx,
@@ -1462,35 +1546,15 @@ impl SqliteSubscriptionRepository {
                 .ok_or_else(|| Self::tx_err(stateset_core::CommerceError::NotFound))?;
             Self::refuse_foreign_billing_lease(&sub, claimed_by.as_deref(), now)
                 .map_err(Self::tx_err)?;
-            let (subtotal, discount, total) = sub.billing_cycle_amounts();
-            let currency = sub.currency;
 
-            tx.execute(
-                "INSERT INTO billing_cycles (
-                    id, subscription_id, cycle_number, status,
-                    period_start, period_end,
-                    subtotal, discount, tax, total, currency,
-                    cycle_key, created_at, updated_at
-                ) VALUES (
-                    ?1, ?2, ?3, 'scheduled',
-                    ?4, ?5,
-                    ?6, ?7, '0', ?8, ?9,
-                    ?10, ?11, ?12
-                )",
-                rusqlite::params![
-                    id.to_string(),
-                    subscription_id.to_string(),
-                    cycle_number,
-                    period_start.to_rfc3339(),
-                    period_end.to_rfc3339(),
-                    subtotal.to_string(),
-                    discount.to_string(),
-                    total.to_string(),
-                    currency,
-                    Self::cycle_key(subscription_id, cycle_number),
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                ],
+            Self::insert_billing_cycle_with_conn(
+                tx,
+                id,
+                &sub,
+                cycle_number,
+                period_start,
+                period_end,
+                now,
             )?;
 
             self.activate_if_trial_elapsed_with_tx(tx, subscription_id, period_start, now)
@@ -1509,6 +1573,76 @@ impl SqliteSubscriptionRepository {
                 "Failed to retrieve created billing cycle".into(),
             )
         })
+    }
+
+    /// Insert one `scheduled` billing cycle for `sub` on `tx`, priced off the
+    /// subscription row the caller already holds under the write lock.
+    ///
+    /// The billing-lease guard is deliberately NOT here: it belongs to
+    /// [`Self::create_billing_cycle`], the billing mutation, and must not
+    /// reach the create path's own seed of cycle 1 (see
+    /// [`Self::create_subscription`]).
+    fn insert_billing_cycle_with_conn(
+        tx: &rusqlite::Transaction<'_>,
+        id: Uuid,
+        sub: &Subscription,
+        cycle_number: i32,
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> rusqlite::Result<()> {
+        let (subtotal, discount, total) = sub.billing_cycle_amounts();
+
+        tx.execute(
+            "INSERT INTO billing_cycles (
+                id, subscription_id, cycle_number, status,
+                period_start, period_end,
+                subtotal, discount, tax, total, currency,
+                cycle_key, created_at, updated_at
+            ) VALUES (
+                ?1, ?2, ?3, 'scheduled',
+                ?4, ?5,
+                ?6, ?7, '0', ?8, ?9,
+                ?10, ?11, ?12
+            )",
+            rusqlite::params![
+                id.to_string(),
+                sub.id.to_string(),
+                cycle_number,
+                period_start.to_rfc3339(),
+                period_end.to_rfc3339(),
+                subtotal.to_string(),
+                discount.to_string(),
+                total.to_string(),
+                sub.currency,
+                Self::cycle_key(sub.id, cycle_number),
+                now.to_rfc3339(),
+                now.to_rfc3339(),
+            ],
+        )?;
+
+        // A scheduled cycle is what a billing worker, a dunning process or a
+        // peer's forecast acts on, so it is a fact in its own right rather
+        // than an internal detail of whoever seeded it.
+        super::kernel_outbox::record_outbox_fact(
+            tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "billing_cycle.scheduled",
+                aggregate_type: "billing_cycle",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({
+                    "id": id,
+                    "subscription_id": sub.id,
+                    "cycle_number": cycle_number,
+                    "period_start": period_start,
+                    "period_end": period_end,
+                    "total": total.to_string(),
+                    "currency": sub.currency,
+                }),
+            },
+        )?;
+
+        Ok(())
     }
 
     /// Refuse to bill a subscription whose LIVE billing lease is held by a
@@ -1738,6 +1872,29 @@ impl SqliteSubscriptionRepository {
         )
         .map_err(map_db_error)?;
 
+        // Every settlement outcome is a fact, not just the paid one:
+        // `advances_subscription()` only covers `Paid`, so without this a
+        // failed, skipped, refunded or voided cycle changed state with
+        // nothing in the log for a peer to act on.
+        super::kernel_outbox::record_outbox_fact(
+            tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "billing_cycle.status_changed",
+                aggregate_type: "billing_cycle",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({
+                    "id": id,
+                    "subscription_id": &subscription_id_raw,
+                    "cycle_number": cycle_number,
+                    "from": current_status.to_string(),
+                    "to": status.to_string(),
+                    "payment_id": payment_id,
+                    "failure_reason": failure_reason,
+                }),
+            },
+        )
+        .map_err(map_db_error)?;
+
         if status.advances_subscription() {
             let subscription_id = SubscriptionId::from(
                 parse_uuid_row(&subscription_id_raw, "billing_cycle", "subscription_id")
@@ -1876,23 +2033,36 @@ impl SqliteSubscriptionRepository {
         data: Option<serde_json::Value>,
         triggered_by: Option<&str>,
     ) -> Result<SubscriptionEvent> {
-        let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
-        })?;
-
-        self.record_event_with_conn(
-            &conn,
-            subscription_id,
-            event_type,
-            description,
-            data,
-            triggered_by,
-        )
+        // The journal row and its replicated fact are written together, so
+        // this standalone path needs the same transaction every in-flight
+        // caller already holds.
+        with_immediate_transaction(&self.pool, |tx| {
+            self.record_event_with_conn(
+                tx,
+                subscription_id,
+                event_type,
+                description,
+                data.clone(),
+                triggered_by,
+            )
+            .map_err(Self::tx_err)
+        })
     }
 
+    /// Append one subscription lifecycle event, and the replicated fact that
+    /// mirrors it, in the caller's transaction.
+    ///
+    /// This is the single funnel for every subscription state change
+    /// (created, trial started, activated, paused, resumed, skipped,
+    /// cancelled, renewed), so emitting here covers the whole lifecycle with
+    /// one call rather than one per mutation — and the fact can never
+    /// disagree with the journal row, because they commit together.
+    ///
+    /// The parameter is a `Transaction`, not a `Connection`, so that
+    /// atomicity is enforced by the type rather than by convention.
     fn record_event_with_conn(
         &self,
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         subscription_id: SubscriptionId,
         event_type: SubscriptionEventType,
         description: &str,
@@ -1915,6 +2085,23 @@ impl SqliteSubscriptionRepository {
                 now.to_rfc3339(),
             ],
         ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}")))?;
+
+        super::kernel_outbox::record_outbox_fact(
+            conn,
+            crate::kernel_outbox::RecordedFact {
+                event_type: &format!("subscription.{event_type}"),
+                aggregate_type: "subscription",
+                aggregate_id: &subscription_id.to_string(),
+                payload: serde_json::json!({
+                    "subscription_id": subscription_id,
+                    "event_id": id,
+                    "event_type": event_type.to_string(),
+                    "description": description,
+                    "data": data,
+                }),
+            },
+        )
+        .map_err(map_db_error)?;
 
         Ok(SubscriptionEvent {
             id,
@@ -2374,7 +2561,7 @@ mod tests {
     use rust_decimal_macros::dec;
     use stateset_core::{
         BillingCycleFilter, BillingInterval, CommerceError, CreateBillingCycle, CreateSubscription,
-        CreateSubscriptionPlan, CustomerId,
+        CreateSubscriptionPlan, CustomerId, UpdateSubscription,
     };
 
     fn create_subscription_input(
@@ -2426,6 +2613,71 @@ mod tests {
             .expect("list cycles");
         assert_eq!(cycles.len(), 1, "a new subscription must have an initial billing cycle");
         assert_eq!(cycles[0].cycle_number, 1);
+    }
+
+    #[test]
+    fn billing_cycle_snapshots_price_and_discount_at_insert() {
+        let repo = SqliteDatabase::in_memory().expect("in-memory").subscriptions();
+        let customer = CustomerId::new();
+        seed_customer(&repo, customer);
+        let plan = repo.create_plan(plan_input()).expect("create plan");
+        repo.activate_plan(plan.id).expect("activate plan");
+        let sub = repo
+            .create_subscription(create_subscription_input(customer, plan.id))
+            .expect("create subscription");
+        let old = match repo.list_billing_cycles(BillingCycleFilter {
+            subscription_id: Some(sub.id),
+            ..Default::default()
+        }) {
+            Ok(cycles) => match cycles.into_iter().next() {
+                Some(cycle) => cycle,
+                None => panic!("initial billing cycle missing"),
+            },
+            Err(_) => panic!("initial billing cycle lookup failed"),
+        };
+        assert_eq!(old.subtotal, dec!(10));
+
+        repo.update_subscription(
+            sub.id,
+            UpdateSubscription {
+                price: Some(dec!(19.99)),
+                discount_percent: Some(dec!(0.15)),
+                ..Default::default()
+            },
+        )
+        .expect("change subscription price");
+        let next = repo
+            .create_billing_cycle(CreateBillingCycle {
+                subscription_id: sub.id,
+                cycle_number: 2,
+                period_start: sub.current_period_end,
+                period_end: sub.current_period_end + chrono::Duration::days(30),
+                claimed_by: None,
+            })
+            .expect("new cycle");
+        assert_eq!(next.subtotal, dec!(19.99));
+        assert_eq!(next.discount, dec!(3.00));
+        assert_eq!(next.total, dec!(16.99));
+        let unchanged = repo.get_billing_cycle(old.id).expect("old cycle").unwrap();
+        assert_eq!(unchanged.subtotal, dec!(10));
+        assert_eq!(unchanged.total, old.total);
+
+        repo.update_subscription(
+            sub.id,
+            UpdateSubscription { discount_amount: Some(dec!(50)), ..Default::default() },
+        )
+        .expect("increase discount");
+        let capped = repo
+            .create_billing_cycle(CreateBillingCycle {
+                subscription_id: sub.id,
+                cycle_number: 3,
+                period_start: sub.current_period_end + chrono::Duration::days(30),
+                period_end: sub.current_period_end + chrono::Duration::days(60),
+                claimed_by: None,
+            })
+            .expect("capped cycle");
+        assert_eq!(capped.discount, capped.subtotal);
+        assert_eq!(capped.total, dec!(0));
     }
 
     #[test]
@@ -2694,6 +2946,63 @@ mod tests {
         .expect("create subscription")
     }
 
+    /// Skipping a billing cycle settles the cycle that was due (the one
+    /// seeded for the current period on subscribe) as `skipped` and seeds the
+    /// next scheduled cycle for the new period — the same invariant
+    /// `create_subscription` establishes: one scheduled cycle whose period is
+    /// the subscription's current period. Before this, the skipped period's
+    /// cycle stayed `scheduled` and a billing worker charged it anyway, one
+    /// interval late.
+    #[test]
+    fn skip_billing_cycle_marks_the_due_cycle_skipped_and_seeds_the_next_period() {
+        use stateset_core::{BillingCycleStatus, SkipBillingCycle};
+
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        let repo = db.subscriptions();
+        let plan = active_plan(&repo, Some(0));
+        let start = Utc::now() - Duration::days(20);
+        let sub = subscribe_started_at(&repo, plan, start);
+        let due_at = sub.next_billing_date.expect("active subscription has a billing date");
+        assert_eq!(due_at, sub.current_period_end);
+
+        let skipped = repo
+            .skip_billing_cycle(sub.id, SkipBillingCycle { reason: Some("Traveling".into()) })
+            .expect("skip");
+        let new_due_at = skipped.next_billing_date.expect("still scheduled");
+        assert!(new_due_at > due_at);
+        assert_eq!(skipped.current_period_end, new_due_at);
+        assert_eq!(
+            skipped.current_period_start, due_at,
+            "the current period moves on exactly as it does after a paid cycle"
+        );
+        assert_eq!(skipped.billing_cycle_count, 0, "a skipped cycle did not settle a charge");
+
+        let mut cycles = repo
+            .list_billing_cycles(BillingCycleFilter {
+                subscription_id: Some(sub.id),
+                ..Default::default()
+            })
+            .expect("list cycles");
+        cycles.sort_by_key(|c| c.cycle_number);
+        assert_eq!(cycles.len(), 2, "expected skipped and scheduled billing cycles");
+
+        assert_eq!(cycles[0].cycle_number, 1);
+        assert_eq!(cycles[0].status, BillingCycleStatus::Skipped);
+        assert_eq!(cycles[0].period_end, due_at);
+        assert_eq!(cycles[0].failure_reason.as_deref(), Some("Traveling"));
+
+        assert_eq!(cycles[1].cycle_number, 2);
+        assert_eq!(cycles[1].status, BillingCycleStatus::Scheduled);
+        assert_eq!(cycles[1].period_start, due_at);
+        assert_eq!(cycles[1].period_end, new_due_at);
+
+        // A skipped cycle cannot be resurrected into a charge.
+        let err = repo
+            .update_billing_cycle_status(cycles[0].id, BillingCycleStatus::Paid, None, None)
+            .expect_err("paying a skipped cycle must be refused");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "{err:?}");
+    }
+
     #[test]
     fn claim_due_for_billing_hands_disjoint_batches_to_concurrent_workers() {
         use std::sync::{Arc, Barrier};
@@ -2810,8 +3119,15 @@ mod tests {
         // ...the lease holder bills.
         let created = repo.create_billing_cycle(cycle(Some("w1"))).expect("lease holder bills");
         assert_eq!(created.cycle_number, 2);
+        // Replaying the same cycle number cannot insert a second row, even
+        // when the caller still owns the lease.
+        assert!(matches!(
+            repo.create_billing_cycle(cycle(Some("w1"))),
+            Err(CommerceError::Conflict(_))
+        ));
         // Once released, anyone may create a (new) cycle again.
         assert!(repo.release_billing_claim(sub.id, "w1").expect("release"));
+        assert!(matches!(repo.create_billing_cycle(cycle(None)), Err(CommerceError::Conflict(_))));
         let mut next = cycle(None);
         next.cycle_number = 3;
         repo.create_billing_cycle(next).expect("unleased subscription bills");
@@ -2898,5 +3214,33 @@ mod tests {
         let _second = subscribe_started_at(&repo, plan, now - Duration::days(50));
         assert_eq!(repo.get_due_for_billing(now, Some(1)).expect("due").len(), 1);
         assert_eq!(repo.get_due_for_billing(now, None).expect("due").len(), 2);
+    }
+
+    #[test]
+    fn settling_an_existing_cycle_after_cancel_does_not_restore_billing() {
+        use stateset_core::BillingCycleStatus;
+
+        let repo = SqliteDatabase::in_memory().expect("in-memory").subscriptions();
+        let plan = active_plan(&repo, Some(0));
+        let sub = subscribe_started_at(&repo, plan, Utc::now() - Duration::days(40));
+        let cycle = repo
+            .list_billing_cycles(BillingCycleFilter {
+                subscription_id: Some(sub.id),
+                ..Default::default()
+            })
+            .expect("cycles")
+            .into_iter()
+            .find(|cycle| cycle.status == BillingCycleStatus::Scheduled)
+            .expect("scheduled cycle");
+
+        repo.cancel_subscription(sub.id, stateset_core::CancelSubscription::default())
+            .expect("cancel");
+        repo.update_billing_cycle_status(cycle.id, BillingCycleStatus::Paid, None, None)
+            .expect("settle existing cycle");
+        let after = repo.get_subscription(sub.id).expect("get").expect("subscription");
+        assert_eq!(after.status, SubscriptionStatus::Cancelled);
+        assert_eq!(after.next_billing_date, None);
+        assert_eq!(after.billing_cycle_count, sub.billing_cycle_count + 1);
+        assert!(repo.get_due_for_billing(Utc::now(), None).expect("due").is_empty());
     }
 }

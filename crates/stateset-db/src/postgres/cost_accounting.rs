@@ -1,5 +1,6 @@
 //! PostgreSQL implementation of cost accounting repository
 
+use super::resolve_currency_with_executor;
 use super::{block_on, map_db_error};
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use rust_decimal::Decimal;
@@ -412,6 +413,41 @@ impl PgCostAccountingRepository {
         row.map(Self::row_to_item_cost).transpose()
     }
 
+    /// Reject a blank SKU (a record keyed on "" is reachable by no real item)
+    /// and any negative cost component: a negative standard cost seeds
+    /// average/last cost, so inventory valuation would go negative. Zero is a
+    /// legitimate cost. Mirrors the SQLite backend.
+    fn validate_item_cost_input(input: &SetItemCost) -> Result<()> {
+        Self::validate_sku(&input.sku)?;
+        for (field, value) in [
+            ("standard_cost", input.standard_cost),
+            ("material_cost", input.material_cost),
+            ("labor_cost", input.labor_cost),
+            ("overhead_cost", input.overhead_cost),
+        ] {
+            if let Some(cost) = value {
+                Self::validate_cost(field, cost)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_sku(sku: &str) -> Result<()> {
+        if sku.trim().is_empty() {
+            return Err(CommerceError::ValidationError("Item cost sku cannot be blank".into()));
+        }
+        Ok(())
+    }
+
+    fn validate_cost(field: &str, cost: Decimal) -> Result<()> {
+        if cost < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(format!(
+                "Item cost {field} cannot be negative (got {cost})"
+            )));
+        }
+        Ok(())
+    }
+
     /// Insert-or-update an item cost on the caller's transaction, locking the
     /// row so the existence check and the write cannot interleave.
     ///
@@ -422,6 +458,7 @@ impl PgCostAccountingRepository {
         input: SetItemCost,
         now: DateTime<Utc>,
     ) -> Result<()> {
+        Self::validate_item_cost_input(&input)?;
         let existing: Option<Uuid> =
             sqlx::query_scalar("SELECT id FROM item_costs WHERE sku = $1 FOR UPDATE")
                 .bind(&input.sku)
@@ -461,7 +498,11 @@ impl PgCostAccountingRepository {
             let material_cost = input.material_cost.unwrap_or_default();
             let labor_cost = input.labor_cost.unwrap_or_default();
             let overhead_cost = input.overhead_cost.unwrap_or_default();
-            let currency = input.currency.unwrap_or(CurrencyCode::USD);
+            // The UPDATE branch above passes the caller's `Option` straight
+            // through: `COALESCE` means "leave the stored currency alone". A
+            // fresh row has nothing to keep, so an omitted currency takes the
+            // store's configured base currency.
+            let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
 
             sqlx::query(
                 "INSERT INTO item_costs (id, sku, cost_method, standard_cost, average_cost, last_cost,
@@ -538,6 +579,8 @@ impl PgCostAccountingRepository {
         quantity: Decimal,
         unit_cost: Decimal,
     ) -> Result<ItemCost> {
+        Self::validate_sku(sku)?;
+        Self::validate_cost("unit_cost", unit_cost)?;
         let now = Utc::now();
 
         if self.get_item_cost_async(sku).await?.is_none() {
@@ -599,6 +642,7 @@ impl PgCostAccountingRepository {
     }
 
     pub async fn update_last_cost_async(&self, sku: &str, unit_cost: Decimal) -> Result<ItemCost> {
+        Self::validate_cost("unit_cost", unit_cost)?;
         let now = Utc::now();
         sqlx::query("UPDATE item_costs SET last_cost = $1, updated_at = $2 WHERE sku = $3")
             .bind(unit_cost)
@@ -698,6 +742,9 @@ impl PgCostAccountingRepository {
     }
 
     pub async fn issue_fifo_async(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError("issue quantity must be positive".into()));
+        }
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut remaining = input.quantity;
         let mut transactions = Vec::new();
@@ -758,6 +805,9 @@ impl PgCostAccountingRepository {
     }
 
     pub async fn issue_lifo_async(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError("issue quantity must be positive".into()));
+        }
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut remaining = input.quantity;
         let mut transactions = Vec::new();
@@ -1035,6 +1085,11 @@ impl PgCostAccountingRepository {
         &self,
         input: CreateCostAdjustment,
     ) -> Result<CostAdjustment> {
+        // Refused here rather than only at apply time: an adjustment carrying a
+        // negative cost is not a pending decision anyone can approve, and it
+        // would sit in the queue looking actionable.
+        Self::validate_sku(&input.sku)?;
+        Self::validate_cost("new cost", input.new_cost)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let adjustment_number = generate_cost_adjustment_number();

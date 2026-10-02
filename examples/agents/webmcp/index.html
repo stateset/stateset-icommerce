@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <title>StateSet WebMCP catalog</title>
+  <style>
+    body {
+      max-width: 760px;
+      margin: 48px auto;
+      padding: 0 20px;
+      font: 16px system-ui;
+    }
+    button {
+      padding: 10px 16px;
+      cursor: pointer;
+    }
+    pre {
+      background: #f3f4f6;
+      padding: 20px;
+      overflow: auto;
+    }
+  </style>
+  <h1>StateSet WebMCP catalog</h1>
+  <p id="status">Connecting commerce tools…</p>
+  <button id="catalog">List products</button>
+  <pre id="output" aria-live="polite"></pre>
+  <script type="module">
+    import { registerWebMCPTools } from '/webmcp.mjs';
+    const output = document.querySelector('#output');
+    async function executeTool(name, params, { signal } = {}) {
+      const response = await fetch('/api/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, params }),
+        signal,
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error);
+      output.textContent = JSON.stringify(result, null, 2);
+      return result;
+    }
+    try {
+      const response = await fetch('/api/tools');
+      if (!response.ok) throw new Error('Could not load commerce tools');
+      const descriptors = await response.json();
+      const registration = await registerWebMCPTools(descriptors, { executeTool });
+      document.querySelector('#status').textContent = registration.supported
+        ? `Registered: ${registration.toolNames.join(', ')}`
+        : 'WebMCP is unavailable in this browser. You can still browse the catalog below.';
+      // On a real SPA, call dispose when this view unmounts or the user signs out.
+      document.querySelector('#catalog').onclick = () =>
+        executeTool('products.list', {}).catch((error) => {
+          output.textContent = error.message;
+        });
+    } catch (error) {
+      document.querySelector('#status').textContent = error.message;
+    }
+  </script>
+</html>

@@ -9,6 +9,7 @@
 
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { z } from 'zod';
 
 import { shipmentTools } from '../../src/tools/shipments.js';
 import {
@@ -191,7 +192,47 @@ describe('get_shipment', () => {
 
 describe('create_shipment', () => {
   const tool = findTool('create_shipment');
-  const params = { orderId: 'ord_001', carrier: 'FedEx', service: 'Ground' };
+  const params = {
+    orderId: 'ord_001',
+    recipientName: 'Ada Lovelace',
+    shippingAddress: '1 Main St, Austin, TX 78701, US',
+    carrier: 'FedEx',
+    service: 'Ground',
+  };
+
+  it('requires recipientName and shippingAddress (the binding has no default for them)', () => {
+    const schema = z.object(tool.inputSchema);
+    assert.strictEqual(schema.safeParse({ orderId: 'ord_001' }).success, false);
+    assert.strictEqual(schema.safeParse(params).success, true);
+  });
+
+  it('sends the binding CreateShipmentInput: service -> shippingMethod, no nulls', async () => {
+    const calls = [];
+    const commerce = {
+      shipments: {
+        create: async (input) => {
+          calls.push(input);
+          return { id: 'ship_new', ...input };
+        },
+      },
+    };
+    await tool.handler({ commerce, params, allowApply: true });
+    await tool.handler({
+      commerce,
+      params: { orderId: 'ord_002', recipientName: 'B', shippingAddress: 'Somewhere' },
+      allowApply: true,
+    });
+    assert.deepStrictEqual(calls, [
+      {
+        orderId: 'ord_001',
+        recipientName: 'Ada Lovelace',
+        shippingAddress: '1 Main St, Austin, TX 78701, US',
+        carrier: 'FedEx',
+        shippingMethod: 'Ground',
+      },
+      { orderId: 'ord_002', recipientName: 'B', shippingAddress: 'Somewhere' },
+    ]);
+  });
 
   it('has write permission', () => {
     assert.strictEqual(tool.permission, 'write');
@@ -355,14 +396,18 @@ describe('provider-backed shipping tools', () => {
     assert.ok(created.label.id);
     assert.equal(created.label.status, 'label_created');
 
-    const tracked = await trackLabelTool.handler({
-      params: {
-        labelId: created.label.id,
-        advanceStatus: true,
-      },
-    });
+    for (const allowApply of [false, true]) {
+      await assert.rejects(
+        trackLabelTool.handler({
+          params: { labelId: created.label.id, advanceStatus: true },
+          allowApply,
+        }),
+        /read-only/,
+      );
+    }
+    const tracked = await trackLabelTool.handler({ params: { labelId: created.label.id } });
     assert.strictEqual(tracked.success, true);
-    assert.ok(['in_transit', 'out_for_delivery', 'delivered'].includes(tracked.label.status));
+    assert.deepEqual(tracked.label, created.label);
 
     const voided = await voidLabelTool.handler({
       params: {
@@ -537,14 +582,23 @@ describe('handle_fulfillment_exception', () => {
     assert.strictEqual(result.artifacts.paymentCompensation.intent.status, 'canceled');
   });
 
-  it('executes partial_shipment workflow by creating follow-up shipment', async () => {
+  it('blocks automatic partial_shipment creation and returns authoritative reconciliation quantities', async () => {
     let calledWith = null;
     const commerce = makeCommerce({
+      get: async (id) => makeShipment({ id, orderId: 'ord_partial_1' }),
       create: async (data) => {
         calledWith = data;
         return makeShipment({ id: 'ship_follow_up', ...data });
       },
     });
+    commerce.orders = {
+      get: async () => ({
+        id: 'ord_partial_1',
+        status: 'partially_shipped',
+        version: 3,
+        items: [{ id: 'line-1', sku: 'SKU-1', quantity: 3, shippedQuantity: 2 }],
+      }),
+    };
 
     const result = await tool.handler({
       commerce,
@@ -562,9 +616,12 @@ describe('handle_fulfillment_exception', () => {
       allowApply: true,
     });
 
-    assert.strictEqual(result.success, true);
-    assert.ok(result.artifacts.followUpShipment);
-    assert.strictEqual(calledWith.orderId, 'ord_partial_1');
-    assert.strictEqual(calledWith.reason, 'partial_shipment_compensation');
+    assert.strictEqual(result.success, false);
+    assert.equal(result.execution[0].status, 'blocked');
+    assert.equal(result.artifacts.recoveryPlan.items[0].quantity, 1);
+    assert.equal(result.artifacts.recoveryPlan.orderVersion, 3);
+    assert.equal(result.artifacts.recoveryPlan.executable, false);
+    assert.equal(result.artifacts.followUpShipment, undefined);
+    assert.equal(calledWith, null);
   });
 });

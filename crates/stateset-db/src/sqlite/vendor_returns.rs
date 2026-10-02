@@ -2,7 +2,7 @@
 
 use super::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row, parse_enum_row,
-    parse_uuid_opt_row, parse_uuid_row, with_immediate_transaction,
+    parse_uuid_opt_row, parse_uuid_row, resolve_currency_in_tx, with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -174,9 +174,8 @@ impl stateset_core::VendorReturnRepository for SqliteVendorReturnRepository {
         let id_str = id.to_string();
         let now_str = Utc::now().to_rfc3339();
         let number = format!("VR-{}", &id_str[..8]);
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
-
         with_immediate_transaction(&self.pool, |tx| {
+            let currency = resolve_currency_in_tx(input.currency, tx)?;
             tx.execute(
                 "INSERT INTO vendor_returns (id, number, supplier_id, purchase_order_id, status, currency, credit_generated, notes, created_at, updated_at)
                  VALUES (?, ?, ?, ?, 'draft', ?, 0, ?, ?, ?)",
@@ -376,6 +375,48 @@ mod tests {
         let r = new_return(&repo);
         repo.process(r.id, false).expect("process");
         assert!(repo.cancel(r.id).is_err());
+    }
+
+    #[test]
+    fn processing_and_cancellation_choose_one_terminal_result() {
+        use std::sync::{Arc, Barrier};
+
+        let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory"));
+        let repo = db.vendor_returns();
+        let r = new_return(&repo);
+        repo.submit(r.id).expect("submit");
+        let id = r.id;
+        let barrier = Arc::new(Barrier::new(2));
+        let process = {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                db.vendor_returns().process(id, true)
+            })
+        };
+        let cancel = {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                db.vendor_returns().cancel(id)
+            })
+        };
+        let processed = process.join().expect("process thread");
+        let cancelled = cancel.join().expect("cancel thread");
+        assert!(processed.is_ok() ^ cancelled.is_ok(), "{processed:?} {cancelled:?}");
+        let after = repo.get(r.id).expect("get").expect("return");
+        assert_eq!(after.total_credit(), dec!(30));
+        assert_eq!(
+            after.status,
+            if processed.is_ok() {
+                VendorReturnStatus::Processed
+            } else {
+                VendorReturnStatus::Cancelled
+            }
+        );
+        assert_eq!(after.credit_generated, processed.is_ok());
     }
 
     #[test]

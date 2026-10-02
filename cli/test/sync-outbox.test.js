@@ -287,9 +287,10 @@ describe('computePayloadHash (deprecated)', () => {
 describe('append (plaintext)', () => {
   let outbox;
   let keyManager;
+  let db;
 
   beforeEach(() => {
-    ({ outbox, keyManager } = makeOutbox());
+    ({ outbox, keyManager, db } = makeOutbox());
   });
 
   it('returns a positive integer sequence number', async () => {
@@ -330,6 +331,28 @@ describe('append (plaintext)', () => {
     assert.equal(evt.syncedAt, null);
     assert.equal(evt.rejectionReason, null);
     assert.equal(evt.payloadEncrypted, null);
+  });
+
+  it('honours a caller-supplied createdAt so replays are byte-identical', async () => {
+    const fixed = '2026-09-12T00:00:00.000Z';
+    const event = makeEvent({ createdAt: fixed });
+    await outbox.append(event);
+    const [row] = outbox.getPending();
+    assert.equal(row.createdAt.toISOString(), fixed);
+
+    // Verify the value was stored verbatim in the raw column, not
+    // re-parsed/re-serialized into a different ISO representation.
+    const raw = db.prepare('SELECT created_at FROM _ves_outbox LIMIT 1').get();
+    assert.equal(raw.created_at, fixed);
+  });
+
+  it('defaults createdAt to the wall clock when not supplied', async () => {
+    const before = Date.now();
+    await outbox.append(makeEvent());
+    const after = Date.now();
+    const [row] = outbox.getPending();
+    const ts = row.createdAt.getTime();
+    assert.ok(ts >= before - 1000 && ts <= after + 1000);
   });
 
   it('uses provided eventId when supplied', async () => {
@@ -819,9 +842,10 @@ describe('append (hybrid profile)', () => {
 
 describe('appendBatch', () => {
   let outbox;
+  let db;
 
   beforeEach(() => {
-    ({ outbox } = makeOutbox());
+    ({ outbox, db } = makeOutbox());
   });
 
   it('returns an array of sequence numbers (one per event)', async () => {
@@ -855,6 +879,20 @@ describe('appendBatch', () => {
     const seqs = await outbox.appendBatch(events);
     assert.ok(seqs[0] < seqs[1]);
     assert.ok(seqs[1] < seqs[2]);
+  });
+
+  it('honours a caller-supplied createdAt per event in appendBatch', async () => {
+    const fixed = '2026-09-12T00:00:00.000Z';
+    const events = [makeEvent({ entityId: 'e1', createdAt: fixed }), makeEvent({ entityId: 'e2' })];
+    await outbox.appendBatch(events);
+    const rows = outbox.getPending(10).sort((a, b) => (a.entityId < b.entityId ? -1 : 1));
+    const withFixed = rows.find((r) => r.entityId === 'e1');
+    const withoutFixed = rows.find((r) => r.entityId === 'e2');
+    assert.equal(withFixed.createdAt.toISOString(), fixed);
+    assert.notEqual(withoutFixed.createdAt.toISOString(), fixed);
+
+    const raw = db.prepare('SELECT created_at FROM _ves_outbox WHERE entity_id = ?').get('e1');
+    assert.equal(raw.created_at, fixed);
   });
 
   it('supports events from multiple agents in one batch', async () => {

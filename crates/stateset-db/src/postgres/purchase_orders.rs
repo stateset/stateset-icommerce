@@ -1,6 +1,6 @@
 //! PostgreSQL implementation of purchase order repository
 
-use super::map_db_error;
+use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -337,6 +337,8 @@ impl PgPurchaseOrderRepository {
         let now = Utc::now();
         let code = input.supplier_code.unwrap_or_else(generate_supplier_code);
 
+        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
+
         sqlx::query(
             "INSERT INTO suppliers (id, supplier_code, name, contact_name, email, phone, website,
              address, city, state, postal_code, country, tax_id, payment_terms, currency,
@@ -357,7 +359,7 @@ impl PgPurchaseOrderRepository {
         .bind(&input.country)
         .bind(&input.tax_id)
         .bind(input.payment_terms.unwrap_or_default().to_string())
-        .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
+        .bind(currency.as_str())
         .bind(input.lead_time_days)
         .bind(input.minimum_order)
         .bind(true)

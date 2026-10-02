@@ -377,17 +377,29 @@ async fn postgres_expire_reservations_sweeps_idle_skus_and_keeps_invariant() {
     }
     assert_allocation_invariant(&db, &[id1, id2]).await;
 
-    // Other tests may have stale rows of their own in the shared database,
-    // so count only what lands on our items.
-    let mut total = 0;
+    // Sweep the shared table in small batches until this test's own holds have
+    // expired. A short batch (or zero rows) does not mean the table is drained:
+    // another suite can lock rows while this sweeper uses SKIP LOCKED.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
-        let n = inv.expire_reservations_async(Utc::now(), 2).await.unwrap();
-        total += n;
-        if n < 2 {
+        let mut pending = Vec::new();
+        for id in &stale {
+            if inv.get_reservation_async(*id).await.unwrap().unwrap().status
+                != ReservationStatus::Expired
+            {
+                pending.push(*id);
+            }
+        }
+        if pending.is_empty() {
             break;
         }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "stale reservations not expired: {pending:?}"
+        );
+        inv.expire_reservations_async(Utc::now(), 2).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    assert!(total >= 3, "swept at least our three stale holds (got {total})");
     assert_eq!(inv.expire_reservations_async(Utc::now(), 0).await.unwrap(), 0);
 
     assert_eq!(balance(&inv, &sku1).await, (dec!(20), dec!(1), dec!(19)));

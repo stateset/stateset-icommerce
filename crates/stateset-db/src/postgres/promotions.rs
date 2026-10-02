@@ -1,6 +1,6 @@
 //! PostgreSQL repository for promotions and coupons
 
-use super::map_db_error;
+use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -8,11 +8,11 @@ use sqlx::postgres::PgPool;
 use stateset_core::{
     AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult, Cart, CartId, CommerceError,
     ConditionOperator, ConditionType, CouponCode, CouponFilter, CouponStatus, CreateCouponCode,
-    CreatePromotion, CurrencyCode, CustomerId, CustomerUsageCounts, OrderId, Promotion,
-    PromotionCondition, PromotionFilter, PromotionId, PromotionRepository, PromotionStatus,
-    PromotionTarget, PromotionTrigger, PromotionType, PromotionUsage, RejectedPromotion,
-    RejectionReason, Result, StackingBehavior, UpdatePromotion, evaluate_promotions,
-    generate_promotion_code, validate_coupon_redemption,
+    CreatePromotion, CreatePromotionCondition, CurrencyCode, CustomerId, CustomerUsageCounts,
+    OrderId, Promotion, PromotionCondition, PromotionFilter, PromotionId, PromotionRepository,
+    PromotionStatus, PromotionTarget, PromotionTrigger, PromotionType, PromotionUsage,
+    PromotionUsageFilter, RejectedPromotion, RejectionReason, Result, StackingBehavior,
+    UpdatePromotion, evaluate_promotions, generate_promotion_code, validate_coupon_redemption,
 };
 use uuid::Uuid;
 
@@ -395,6 +395,57 @@ impl PgPromotionRepository {
         Ok(conditions)
     }
 
+    /// Attach a validated condition to an existing promotion. Postgres twin
+    /// of the SQLite `add_condition`: the insert is guarded on the promotion
+    /// existing in the same statement.
+    pub async fn add_condition_async(
+        &self,
+        promotion_id: PromotionId,
+        input: CreatePromotionCondition,
+    ) -> Result<Promotion> {
+        input.validate()?;
+        let condition = input.into_condition(promotion_id);
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let inserted = sqlx::query(
+            "INSERT INTO promotion_conditions
+                (id, promotion_id, condition_type, operator, value, is_required)
+             SELECT $1, $2, $3, $4, $5, $6
+             WHERE EXISTS (SELECT 1 FROM promotions WHERE id = $2)",
+        )
+        .bind(condition.id)
+        .bind(promotion_id.into_uuid())
+        .bind(condition.condition_type.to_string())
+        .bind(condition.operator.to_string())
+        .bind(&condition.value)
+        .bind(condition.is_required)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if inserted == 0 {
+            return Err(CommerceError::NotFound);
+        }
+        super::kernel_outbox::record_outbox_fact(
+            &mut tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "promotion.condition_added",
+                aggregate_type: "promotion",
+                aggregate_id: &promotion_id.to_string(),
+                payload: serde_json::json!({
+                    "promotion_id": promotion_id,
+                    "condition_id": condition.id,
+                    "condition_type": condition.condition_type.to_string(),
+                    "operator": condition.operator.to_string(),
+                    "value": condition.value,
+                    "is_required": condition.is_required,
+                }),
+            },
+        )
+        .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        self.get_async(promotion_id).await?.ok_or(CommerceError::NotFound)
+    }
+
     /// Load promotions (with their conditions) from `rows` on `conn`.
     async fn attach_conditions_on(
         conn: &mut sqlx::PgConnection,
@@ -552,6 +603,7 @@ impl PgPromotionRepository {
         let mut request = ApplyPromotionsRequest::from_cart(cart, "");
         request.coupon_codes = cart.coupon_code.iter().map(|c| c.to_uppercase()).collect();
         request.customer_id = customer_id.or(cart.customer_id);
+        Self::settle_first_order_on(conn, &mut request, None).await?;
 
         let candidates =
             Self::candidate_promotions_on(conn, &request, Utc::now(), &mut Vec::new()).await?;
@@ -659,6 +711,7 @@ impl PgPromotionRepository {
         let code = input.code.unwrap_or_else(generate_promotion_code);
         let now = Utc::now();
         let starts_at = input.starts_at.unwrap_or(now);
+        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
 
         sqlx::query(
             r#"
@@ -744,7 +797,7 @@ impl PgPromotionRepository {
             serde_json::to_value(input.eligible_customer_groups.unwrap_or_default())
                 .unwrap_or_default(),
         )
-        .bind(input.currency.unwrap_or(CurrencyCode::USD))
+        .bind(currency)
         .bind(input.priority.unwrap_or(0))
         .bind(input.metadata.as_ref().map(serde_json::to_value).transpose().unwrap_or_default())
         .bind(now)
@@ -966,7 +1019,19 @@ impl PgPromotionRepository {
         .await
     }
 
+    /// Create a coupon code for an existing promotion.
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::NotFound`] when the promotion does not exist and
+    /// [`CommerceError::Conflict`] when the (case-insensitive) code is already
+    /// taken — the raw foreign-key / unique violations never leak out as
+    /// `DatabaseError`. Mirrors the SQLite backend.
     pub async fn create_coupon_async(&self, input: CreateCouponCode) -> Result<CouponCode> {
+        if self.get_async(input.promotion_id).await?.is_none() {
+            return Err(CommerceError::NotFound);
+        }
+
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -1071,9 +1136,40 @@ impl PgPromotionRepository {
         Ok(coupons)
     }
 
+    /// Decide `request.is_first_order` from the customer's order history.
+    /// Postgres twin of the SQLite `settle_first_order_with_conn`.
+    ///
+    /// An identified customer is on their first order when no OTHER order is
+    /// on record for them, whatever its status: a cancelled order still
+    /// counts, so placing and cancelling cannot mint a fresh welcome discount.
+    /// `placing` names the order checkout has already inserted in this
+    /// transaction, which must not count as history. The caller's own value
+    /// is overruled — a returning customer cannot claim to be new — and kept
+    /// only for an anonymous request, which has no history to consult and is
+    /// re-decided at checkout, where the customer is always known.
+    async fn settle_first_order_on(
+        conn: &mut sqlx::PgConnection,
+        request: &mut ApplyPromotionsRequest,
+        placing: Option<OrderId>,
+    ) -> Result<()> {
+        let Some(customer_id) = request.customer_id else {
+            return Ok(());
+        };
+        let has_other_orders: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM orders WHERE customer_id = $1 AND id IS DISTINCT FROM $2)",
+        )
+        .bind(customer_id.into_uuid())
+        .bind(placing.map(OrderId::into_uuid))
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(map_db_error)?;
+        request.is_first_order = !has_other_orders;
+        Ok(())
+    }
+
     pub async fn apply_promotions_async(
         &self,
-        request: ApplyPromotionsRequest,
+        mut request: ApplyPromotionsRequest,
     ) -> Result<ApplyPromotionsResult> {
         let mut result = ApplyPromotionsResult {
             original_subtotal: request.subtotal,
@@ -1084,6 +1180,7 @@ impl PgPromotionRepository {
         // One connection for the whole read, so candidates and usage counts
         // come from the same snapshot.
         let mut conn = self.pool.acquire().await.map_err(map_db_error)?;
+        Self::settle_first_order_on(&mut conn, &mut request, None).await?;
         let candidates = Self::candidate_promotions_on(
             &mut conn,
             &request,
@@ -1126,6 +1223,7 @@ impl PgPromotionRepository {
         let mut request = ApplyPromotionsRequest::from_cart(cart, "");
         request.coupon_codes = cart.coupon_code.iter().map(|c| c.to_uppercase()).collect();
         request.customer_id = customer_id.or(cart.customer_id);
+        Self::settle_first_order_on(tx.as_mut(), &mut request, Some(order_id)).await?;
 
         // The SAME candidate selection pricing used (`apply_promotions_async`),
         // so stacking at checkout equals stacking at pricing: a coupon that is
@@ -1469,7 +1567,8 @@ impl PgPromotionRepository {
         .map_err(map_db_error)?;
         promotion.conditions = Self::parse_conditions(cond_rows)?;
 
-        let request = ApplyPromotionsRequest::from_cart(cart, coupon_code);
+        let mut request = ApplyPromotionsRequest::from_cart(cart, coupon_code);
+        Self::settle_first_order_on(conn, &mut request, None).await?;
         validate_coupon_redemption(&coupon, &promotion, &request, now)?;
 
         if let Some(customer_id) = cart.customer_id {
@@ -1531,15 +1630,44 @@ impl PgPromotionRepository {
 
     /// Usage ledger rows recorded against a cart.
     pub async fn usage_for_cart_async(&self, cart_id: CartId) -> Result<Vec<PromotionUsage>> {
-        let rows: Vec<PromotionUsageRow> = sqlx::query_as(
+        self.list_usage_async(PromotionUsageFilter { cart_id: Some(cart_id), ..Default::default() })
+            .await
+    }
+
+    /// Usage ledger rows matching `filter`, oldest first (`used_at`, `id`).
+    pub async fn list_usage_async(
+        &self,
+        filter: PromotionUsageFilter,
+    ) -> Result<Vec<PromotionUsage>> {
+        let mut sql =
             "SELECT id, promotion_id, coupon_id, customer_id, order_id, cart_id, discount_amount,
                     currency, used_at
-             FROM promotion_usage WHERE cart_id = $1 ORDER BY used_at",
-        )
-        .bind(cart_id.into_uuid())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+             FROM promotion_usage WHERE 1=1"
+                .to_string();
+        let clauses: [(&str, Option<Uuid>); 5] = [
+            ("promotion_id", filter.promotion_id.map(PromotionId::into_uuid)),
+            ("coupon_id", filter.coupon_id),
+            ("customer_id", filter.customer_id.map(CustomerId::into_uuid)),
+            ("order_id", filter.order_id.map(OrderId::into_uuid)),
+            ("cart_id", filter.cart_id.map(CartId::into_uuid)),
+        ];
+        let mut binds: Vec<Uuid> = Vec::new();
+        for (column, value) in clauses {
+            if let Some(value) = value {
+                binds.push(value);
+                sql.push_str(&format!(" AND {column} = ${}", binds.len()));
+            }
+        }
+        sql.push_str(" ORDER BY used_at, id");
+        sql.push_str(&format!(" LIMIT {}", super::effective_limit(filter.limit)));
+        if let Some(offset) = filter.offset {
+            sql.push_str(&format!(" OFFSET {offset}"));
+        }
+        let mut query = sqlx::query_as::<_, PromotionUsageRow>(&sql);
+        for value in binds {
+            query = query.bind(value);
+        }
+        let rows = query.fetch_all(&self.pool).await.map_err(map_db_error)?;
         Ok(rows.into_iter().map(PromotionUsage::from).collect())
     }
 
@@ -1554,6 +1682,12 @@ impl PgPromotionRepository {
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {
+        // Validate the currency up front: an unparsable code is a
+        // `ValidationError`, never silently recorded as the default (USD).
+        // Mirrors SQLite.
+        let currency = currency.parse::<CurrencyCode>().map_err(|e| {
+            CommerceError::ValidationError(format!("Invalid currency code '{currency}': {e}"))
+        })?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -1572,7 +1706,7 @@ impl PgPromotionRepository {
             order_id,
             cart_id,
             discount_amount,
-            currency,
+            currency.as_str(),
         )
         .await?;
         tx.commit().await.map_err(map_db_error)?;
@@ -1585,13 +1719,17 @@ impl PgPromotionRepository {
             order_id,
             cart_id,
             discount_amount,
-            currency: currency.parse().unwrap_or(CurrencyCode::USD),
+            currency,
             used_at: now,
         })
     }
 }
 
 impl PromotionRepository for PgPromotionRepository {
+    fn list_usage(&self, filter: PromotionUsageFilter) -> Result<Vec<PromotionUsage>> {
+        super::block_on(self.list_usage_async(filter))
+    }
+
     fn create(&self, input: CreatePromotion) -> Result<Promotion> {
         super::block_on(self.create_async(input))
     }
@@ -1622,6 +1760,14 @@ impl PromotionRepository for PgPromotionRepository {
 
     fn deactivate(&self, id: PromotionId) -> Result<Promotion> {
         super::block_on(self.deactivate_async(id.into_uuid()))
+    }
+
+    fn add_condition(
+        &self,
+        promotion_id: PromotionId,
+        condition: CreatePromotionCondition,
+    ) -> Result<Promotion> {
+        super::block_on(self.add_condition_async(promotion_id, condition))
     }
 
     fn create_coupon(&self, input: CreateCouponCode) -> Result<CouponCode> {

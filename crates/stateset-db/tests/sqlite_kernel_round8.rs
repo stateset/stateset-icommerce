@@ -456,6 +456,96 @@ fn shipment_accepts_a_declaration_that_matches_the_units_it_moves() {
     assert_eq!(receipt.result.expect("order").items[0].shipped_quantity, 30);
 }
 
+/// A kernel `orders.ship` that ships the whole order carries the order's open
+/// shipment records to `shipped` (adopting the command's tracking number when
+/// a shipment has none), leaves held/cancelled/labelled ones as the
+/// repository path does, and attributes each shipment fact to the command.
+/// A partial kernel shipment moves nothing. Same rule as
+/// `OrderRepository::ship`; mirrored in `postgres_kernel_round8.rs`.
+#[test]
+fn full_kernel_shipment_carries_open_shipment_records() {
+    use stateset_core::{CreateShipment, ShipmentLineInput, ShipmentRepository, ShipmentStatus};
+    let db = SqliteDatabase::in_memory().expect("create database");
+    let order = processing_order(&db, "R8-SHIP-FOLLOW", 30);
+    let shipment = |name: &str, tracking: Option<&str>| {
+        db.shipments()
+            .create(CreateShipment {
+                order_id: order.id,
+                recipient_name: name.into(),
+                shipping_address: "1 Main St".into(),
+                tracking_number: tracking.map(str::to_string),
+                ..Default::default()
+            })
+            .expect("create shipment")
+    };
+    let open = shipment("Open", None);
+    let labelled = shipment("Labelled", Some("OWN-LABEL"));
+    let held = shipment("Held", None);
+    db.shipments().hold(held.id).expect("hold");
+    let cancelled = shipment("Cancelled", None);
+    db.shipments().cancel(cancelled.id).expect("cancel");
+    let executor = db.kernel_executor(quantity_policy());
+
+    let mut partial = command(
+        "orders.ship",
+        "r8-ship-follow-partial",
+        ShipOrderCommand {
+            order_id: order.id,
+            tracking_number: Some("TRK-PARTIAL".into()),
+            lines: Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 10 }]),
+        },
+    );
+    partial.commitment = declaring("10");
+    let receipt = executor.execute_ship_order(&partial).expect("partial ship");
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
+    assert_eq!(receipt.result.expect("order").status, OrderStatus::PartiallyShipped);
+    assert_eq!(db.shipments().get(open.id).unwrap().unwrap().status, ShipmentStatus::Pending);
+
+    let mut ship = command(
+        "orders.ship",
+        "r8-ship-follow",
+        ShipOrderCommand {
+            order_id: order.id,
+            tracking_number: Some("TRK-KERNEL".into()),
+            lines: None,
+        },
+    );
+    ship.commitment = declaring("20");
+    let receipt = executor.execute_ship_order(&ship).expect("ship order");
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
+
+    let moved = db.shipments().get(open.id).expect("load").expect("shipment");
+    assert_eq!(moved.status, ShipmentStatus::Shipped);
+    assert_eq!(moved.tracking_number.as_deref(), Some("TRK-KERNEL"));
+    assert!(moved.shipped_at.is_some());
+    let labelled = db.shipments().get(labelled.id).expect("load").expect("shipment");
+    assert_eq!(labelled.status, ShipmentStatus::Shipped);
+    assert_eq!(labelled.tracking_number.as_deref(), Some("OWN-LABEL"));
+    assert_eq!(db.shipments().get(held.id).unwrap().unwrap().status, ShipmentStatus::OnHold);
+    assert_eq!(
+        db.shipments().get(cancelled.id).unwrap().unwrap().status,
+        ShipmentStatus::Cancelled
+    );
+
+    // Both shipment facts belong to the command's receipt and carry its id.
+    let conn = db.conn().expect("conn");
+    let facts: Vec<(String, Option<String>)> = conn
+        .prepare(
+            "SELECT id, command_id FROM kernel_outbox
+             WHERE event_type = 'shipment.status_changed' ORDER BY rowid",
+        )
+        .expect("prepare")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("query")
+        .collect::<rusqlite::Result<_>>()
+        .expect("collect");
+    assert_eq!(facts.len(), 2, "{facts:?}");
+    for (event_id, command_id) in facts {
+        assert!(receipt.event_ids.contains(&event_id.parse().expect("uuid")));
+        assert_eq!(command_id, Some(ship.command_id.to_string()));
+    }
+}
+
 /// The SQLite half of the round-8 provisioning fix: both backends store a
 /// budget definition at microsecond precision, so re-provisioning the
 /// identical struct is idempotent on either one. Mirrors

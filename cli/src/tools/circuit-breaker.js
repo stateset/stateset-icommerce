@@ -4,26 +4,26 @@
  * 8 tools for managing agent circuit breakers — spending limits, failure
  * detection, manual trip/reset, and global kill switch.
  *
- * Uses a lazy singleton pattern: the circuit breaker service is created once
- * per process and reuses the same A2A database.
+ * The circuit breaker service is created once per database (the server's
+ * `--db` store) and reused across calls and servers on that database.
  */
 
 import { z } from 'zod';
 
+import { scopedService } from './scoped-store.js';
+
 // ---------------------------------------------------------------------------
-// Lazy singleton — creates the circuit breaker on first use
+// Scoped service — one circuit breaker per server database
 // ---------------------------------------------------------------------------
 
-let _cbSingleton = null;
-
-async function getCB() {
-  if (_cbSingleton) return _cbSingleton;
-  const { A2AStore } = await import('../a2a/store.js');
-  const { createCircuitBreaker } = await import('../a2a/circuit-breaker.js');
-  const store = new A2AStore();
-  store.init();
-  _cbSingleton = createCircuitBreaker(store);
-  return _cbSingleton;
+/**
+ * @param {object} ctx - tool handler context
+ */
+async function getCB(ctx) {
+  return scopedService(ctx, 'circuit-breaker', async (store) => {
+    const { createCircuitBreaker } = await import('../a2a/circuit-breaker.js');
+    return createCircuitBreaker(store);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -42,9 +42,9 @@ export const circuitBreakerTools = [
       agentName: z.string().min(1).describe('Agent name'),
     },
     permission: 'read',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const cb = await getCB();
+        const cb = await getCB(ctx);
         const state = cb.getState(params.agentName);
         return { success: true, ...state };
       } catch (err) {
@@ -61,9 +61,9 @@ export const circuitBreakerTools = [
       agentName: z.string().min(1).describe('Agent name'),
     },
     permission: 'read',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const cb = await getCB();
+        const cb = await getCB(ctx);
         const summary = cb.getSpendingSummary(params.agentName);
         return { success: true, agentName: params.agentName, ...summary };
       } catch (err) {
@@ -77,9 +77,9 @@ export const circuitBreakerTools = [
     description: 'Get the circuit breaker states for all known agents.',
     inputSchema: {},
     permission: 'read',
-    handler: async () => {
+    handler: async (ctx) => {
       try {
-        const cb = await getCB();
+        const cb = await getCB(ctx);
         const states = cb.getAllStates();
         return { success: true, agents: states, count: states.length };
       } catch (err) {
@@ -100,9 +100,9 @@ export const circuitBreakerTools = [
       reason: z.string().min(1).max(500).describe('Reason for tripping the circuit breaker'),
     },
     permission: 'admin',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const cb = await getCB();
+        const cb = await getCB(ctx);
         cb.trip(params.agentName, params.reason);
         const state = cb.getState(params.agentName);
         return {
@@ -123,9 +123,9 @@ export const circuitBreakerTools = [
       reason: z.string().min(1).max(500).describe('Reason for global kill switch activation'),
     },
     permission: 'admin',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const cb = await getCB();
+        const cb = await getCB(ctx);
         cb.tripAll(params.reason);
         const states = cb.getAllStates();
         return {
@@ -147,9 +147,9 @@ export const circuitBreakerTools = [
       agentName: z.string().min(1).describe('Agent name'),
     },
     permission: 'admin',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const cb = await getCB();
+        const cb = await getCB(ctx);
         cb.reset(params.agentName);
         const state = cb.getState(params.agentName);
         return {
@@ -168,9 +168,9 @@ export const circuitBreakerTools = [
     description: 'Reset ALL circuit breakers and deactivate the global kill switch.',
     inputSchema: {},
     permission: 'admin',
-    handler: async () => {
+    handler: async (ctx) => {
       try {
-        const cb = await getCB();
+        const cb = await getCB(ctx);
         cb.resetAll();
         const states = cb.getAllStates();
         return {
@@ -203,9 +203,9 @@ export const circuitBreakerTools = [
         .describe('Maximum monthly spend across all transactions'),
     },
     permission: 'admin',
-    handler: async ({ params }) => {
+    handler: async ({ params, ...ctx }) => {
       try {
-        const cb = await getCB();
+        const cb = await getCB(ctx);
         const overrides = {};
         if (params.maxSpendPerTx !== undefined) overrides.maxSpendPerTx = params.maxSpendPerTx;
         if (params.dailySpendLimit !== undefined)
@@ -233,12 +233,5 @@ export const circuitBreakerTools = [
     },
   },
 ];
-
-/**
- * Reset the singleton (for testing).
- */
-export function _resetCBSingleton() {
-  _cbSingleton = null;
-}
 
 export default circuitBreakerTools;

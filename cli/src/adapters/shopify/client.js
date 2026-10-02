@@ -83,6 +83,12 @@ export class ShopifyClient {
         `Invalid Shopify domain: "${shopDomain}". Must match *.myshopify.com pattern.`,
       );
     }
+    if (!/^\d{4}-(01|04|07|10)$/.test(apiVersion)) {
+      throw new Error('apiVersion must be a pinned Shopify quarterly version (YYYY-MM)');
+    }
+    if (!Number.isFinite(requestsPerSecond) || requestsPerSecond <= 0) {
+      throw new Error('requestsPerSecond must be a positive finite number');
+    }
 
     this.baseUrl = `https://${shopDomain}/admin/api/${apiVersion}`;
     this.headers = {
@@ -90,6 +96,22 @@ export class ShopifyClient {
       'Content-Type': 'application/json',
     };
     this.rateLimiter = new RateLimiter(requestsPerSecond);
+  }
+
+  /** A pagination link never gains permission to receive the operator token. */
+  requestUrl(url) {
+    const base = new URL(this.baseUrl);
+    const target = new URL(url.startsWith('http') ? url : `${this.baseUrl}${url}`);
+    if (
+      target.origin !== base.origin ||
+      !target.pathname.startsWith(`${base.pathname}/`) ||
+      target.username ||
+      target.password ||
+      target.hash
+    ) {
+      throw new Error('Shopify request URL must remain within the configured shop and API version');
+    }
+    return target;
   }
 
   /**
@@ -101,8 +123,7 @@ export class ShopifyClient {
   async get(url, params = {}) {
     await this.rateLimiter.wait();
 
-    const fullUrl = url.startsWith('http') ? url : `${this.baseUrl}${url}`;
-    const urlObj = new URL(fullUrl);
+    const urlObj = this.requestUrl(url);
     for (const [key, value] of Object.entries(params)) {
       if (value !== null && value !== undefined) urlObj.searchParams.set(key, String(value));
     }
@@ -110,6 +131,8 @@ export class ShopifyClient {
     const response = await fetch(urlObj.toString(), {
       method: 'GET',
       headers: this.headers,
+      redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!response.ok) {
@@ -135,10 +158,14 @@ export class ShopifyClient {
 
     let nextUrl = null;
     let isFirstPage = true;
+    const seen = new Set();
 
     while (true) {
       const url = nextUrl || resource;
       const requestParams = isFirstPage ? queryParams : {};
+      const pageUrl = this.requestUrl(url).toString();
+      if (seen.has(pageUrl)) throw new Error('Shopify pagination cursor repeated');
+      seen.add(pageUrl);
 
       const { data, headers } = await this.get(url, requestParams);
       const records = data[rootKey] || [];
@@ -230,11 +257,13 @@ export class ShopifyClient {
   async post(url, body) {
     await this.rateLimiter.wait();
 
-    const fullUrl = `${this.baseUrl}${url}`;
+    const fullUrl = this.requestUrl(url).toString();
     const response = await fetch(fullUrl, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify(body),
+      redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!response.ok) {
@@ -255,11 +284,13 @@ export class ShopifyClient {
   async put(url, body) {
     await this.rateLimiter.wait();
 
-    const fullUrl = `${this.baseUrl}${url}`;
+    const fullUrl = this.requestUrl(url).toString();
     const response = await fetch(fullUrl, {
       method: 'PUT',
       headers: this.headers,
       body: JSON.stringify(body),
+      redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!response.ok) {

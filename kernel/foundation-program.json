@@ -1,0 +1,343 @@
+{
+  "schemaVersion": 1,
+  "objective": "Ubiquitous Foundation of Global Agentic Commerce",
+  "status": "in_progress",
+  "completionRule": "All workstreams require reviewed implementation and acceptance evidence. Simulation, local test doubles and StateSet-owned adapters do not establish live-provider or independent-adoption completion.",
+  "workstreams": [
+    {
+      "id": "governed-lifecycle",
+      "title": "Complete portable economic lifecycles",
+      "status": "pending",
+      "acceptance": [
+        "Purchase, payment, fulfillment, return, refund, subscription and dispute commands share kernel authority and receipts",
+        "Every enabled mutation binds store, principal, budget and durable idempotency",
+        "Publish lifecycle coverage rather than inferring readiness from tool count"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "exact-money",
+      "title": "Exact money across every boundary",
+      "status": "in_progress",
+      "acceptance": [
+        "Audit binding, import, adapter, quote and receipt conversions",
+        "Define explicit asset identity, scale and rounding contracts",
+        "Run shared conformance vectors through actual supported runtimes and adapters"
+      ],
+      "evidence": [
+        {
+          "scope": "CLI sandbox/shadow provider arithmetic and payment replay only",
+          "implementation": [
+            "cli/src/tools/providers/money.js",
+            "cli/src/tools/providers/payments.js",
+            "cli/src/tools/providers/tax.js",
+            "cli/src/tools/providers/shipping.js"
+          ],
+          "validation": "node --test cli/test/unit/provider-money.test.js cli/test/unit/payments-tools.test.js cli/test/unit/tax-tools.test.js cli/test/unit/shipments-tools.test.js",
+          "result": "110 tests passed locally under Node 22.18.0",
+          "limitations": [
+            "Legacy safe numeric inputs still accepted",
+            "Provider maps remain in memory",
+            "Real adapters and other language boundaries require separate verification"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "durable-real-transactions",
+      "title": "Recoverable real transaction lifecycle",
+      "status": "in_progress",
+      "acceptance": [
+        "Wire native orders, payment, fulfillment, partial refund and accounting reconciliation together",
+        "Kill workers at each external commit boundary and reconcile authoritative outcomes",
+        "Persist delivery jobs, retries, dead letters and recovery actions"
+      ],
+      "evidence": [
+        {
+          "scope": "Native shipment creation and field/lifecycle updates, cancellation and atomic batches on SQLite and PostgreSQL",
+          "implementation": [
+            "crates/stateset-db/src/shipment_updates.rs",
+            "crates/stateset-db/src/sqlite/shipments.rs",
+            "crates/stateset-db/src/postgres/shipments.rs",
+            "crates/stateset-db/migrations/100_shipment_version.sql",
+            "bindings/node/src/domains/shipments.rs"
+          ],
+          "validation": [
+            {
+              "command": "cargo test -p stateset-db --test sqlite_shipment_lifecycle",
+              "result": "8 passed; migration, concurrent patches/version conflicts, lifecycle guards, batch and outbox rollback"
+            },
+            {
+              "command": "POSTGRES_URL=<isolated-local-database> CARGO_INCREMENTAL=0 cargo test -p stateset-db --no-default-features --features postgres --test postgres_shipment_lifecycle",
+              "result": "5 passed on PostgreSQL 12.22; actual connections and migrations, no skipped tests"
+            },
+            {
+              "command": "node --test cli/test/integration/shopify-native-sync.test.js bindings/node/test/native-toolkit.js",
+              "result": "18 passed against rebuilt native binding under Node 22.18.0; includes rejected out-of-order webhook and stale expectedVersion"
+            },
+            {
+              "command": "cargo test -p stateset-embedded --test e2e_commerce_workflow_test --test new_modules_test; cargo test -p stateset-embedded --lib commerce::tests::",
+              "result": "30 workflow tests and 21 commerce unit tests passed"
+            }
+          ],
+          "limitations": [
+            "Tracking-event mutations still require separate audit and concurrency work; item mutation guards are verified in the later evidence below",
+            "Other language binding parity and typed governed shipment commands remain incomplete; REST and MCP/toolkit local evidence follows.",
+            "Native outbox facts do not establish governed command receipts or live-provider delivery/reconciliation",
+            "Local PostgreSQL 12.22 verification does not replace the CI version matrix"
+          ]
+        },
+        {
+          "scope": "REST and CLI/MCP shipment lifecycle access, optimistic concurrency, cancellation authorization, and read-only provider tracking",
+          "implementation": [
+            "crates/stateset-http/src/dto.rs",
+            "crates/stateset-http/src/routes/shipments.rs",
+            "crates/stateset-http/src/openapi.rs",
+            "cli/src/tools/shipments.js",
+            "cli/src/permissions.js",
+            "kernel/mutation-boundary.json"
+          ],
+          "validation": [
+            {
+              "command": "CARGO_INCREMENTAL=0 cargo test -p stateset-http --test shipment_lifecycle",
+              "result": "4 passed: native transitions, exact/over-precision decimals, stale versions, cancellation permission and tenant-bound token isolation"
+            },
+            {
+              "command": "CARGO_INCREMENTAL=0 cargo test -p stateset-http --test openapi_validation",
+              "result": "52 passed against the final HTTP implementation"
+            },
+            {
+              "command": "node --test cli/test/integration/shipment-public-tools.test.js cli/test/unit/shipments-tools.test.js cli/test/unit/kernel-boundary.test.js cli/test/unit/tool-docs-up-to-date.test.js cli/test/unit/permissions.test.js",
+              "result": "92 passed under Node 22.18.0; native toolkit lifecycle, preview and separate cancellation capability; label tracking no longer advances simulation state"
+            },
+            {
+              "command": "node --test cli/test/unit/mcp-tool-profiles.test.js cli/test/unit/mcp-tool-dispatch.test.js cli/test/unit/mcp-tool-catalog.test.js",
+              "result": "22 passed under Node 22.18.0"
+            }
+          ],
+          "limitations": [
+            "Strict kernel mode continues to block ungoverned shipment writes",
+            "Provider webhook tool remains a sandbox/shadow integration, not proof of authoritative carrier reconciliation",
+            "Other language bindings still need lifecycle parity",
+            "Clearing optional fields is not supported; null/omission preserves existing values"
+          ]
+        },
+        {
+          "scope": "Partial-shipment recovery visibility and read-only reconciliation planning; automatic execution remains incomplete",
+          "implementation": [
+            "bindings/node/src/domains/orders.rs",
+            "bindings/node/src/domains/shipments.rs",
+            "cli/src/tools/fulfillment-recovery.js",
+            "cli/src/tools/shipments.js",
+            "cli/src/agent-definitions.js"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/fulfillment-recovery.test.js cli/test/unit/shipments-tools.test.js",
+              "result": "53 passed; per-line remaining quantities, excess and duplicate requests, SKU ambiguity, invalid snapshots and blocked automatic creation"
+            },
+            {
+              "command": "node --test cli/test/integration/fulfillment-recovery.test.js cli/test/integration/shipment-public-tools.test.js cli/test/integration/shopify-native-sync.test.js bindings/node/test/native-toolkit.js bindings/node/test/types-g1.js",
+              "result": "34 passed against rebuilt native binding, no skips; persisted imported item snapshot, actual full-order shipment quantities, read-only toolkit planning and blocked retries leave commerce state/outbox unchanged"
+            },
+            {
+              "command": "node --test cli/test/unit/kernel-boundary.test.js cli/test/unit/tool-docs-up-to-date.test.js cli/test/unit/permissions.test.js cli/test/unit/mcp-tool-profiles.test.js cli/test/unit/mcp-tool-dispatch.test.js cli/test/unit/mcp-tool-catalog.test.js",
+              "result": "79 passed"
+            },
+            {
+              "command": "node --test cli/test/unit/agent-definitions.test.js cli/test/unit/tool-discovery.test.js cli/test/unit/tool-discovery-new.test.js",
+              "result": "116 passed"
+            }
+          ],
+          "limitations": [
+            "The native partial snapshot test seeds persisted order-line and shipment-item data directly; it does not prove partial fulfillment execution",
+            "Plans observe order fulfillment quantities, not shipment assignment or reservations; they are non-executable snapshots",
+            "Atomic follow-up creation, durable idempotency, parent linkage and governed recovery commands remain open"
+          ]
+        },
+        {
+          "scope": "Native shipment item creation validation, lifecycle guards, parent versioning and atomic item audit facts on SQLite and PostgreSQL",
+          "implementation": [
+            "crates/stateset-db/src/shipment_updates.rs",
+            "crates/stateset-db/src/sqlite/shipments.rs",
+            "crates/stateset-db/src/postgres/shipments.rs",
+            "crates/stateset-core/src/traits/fulfillment.rs"
+          ],
+          "validation": [
+            {
+              "command": "CARGO_INCREMENTAL=0 cargo test -p stateset-db --test sqlite_shipment_lifecycle",
+              "result": "14 passed; six new item scenarios cover frozen states, quantity/identity validation, initial item facts, outbox rollback, version overflow, concurrent additions/removals and a versioned packing transition race"
+            },
+            {
+              "command": "POSTGRES_URL=<isolated-local-database> CARGO_INCREMENTAL=0 cargo test -p stateset-db --no-default-features --features postgres --test postgres_shipment_lifecycle",
+              "result": "11 passed against actual PostgreSQL 12.22, no skipped tests; equivalent item invariants and concurrent database operations verified"
+            },
+            {
+              "command": "CARGO_INCREMENTAL=0 cargo clippy -p stateset-db --features postgres --test sqlite_shipment_lifecycle --test postgres_shipment_lifecycle -- -D warnings",
+              "result": "Passed with both database backends enabled and both shipment lifecycle test targets; final test ownership cleanups compile without warnings"
+            }
+          ],
+          "limitations": [
+            "Item writes remain tracking operations, not inventory reservations or order fulfillment",
+            "Order-line membership, cross-shipment quantity limits, parent linkage and durable request-bound idempotency remain open for automatic recovery",
+            "Tracking-event mutations still require audit and concurrency guards",
+            "The existing PostgreSQL 16 CI lane auto-discovers these tests but was not run locally for this increment"
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "priority": "high",
+          "requirement": "Enforce shipment transitions, optimistic concurrency, timestamps and durable outbox records consistently across update, ship, deliver, cancel and batch paths on SQLite and PostgreSQL",
+          "evidence": [
+            "crates/stateset-db/src/shipment_updates.rs: shared transition, version and timestamp rules",
+            "crates/stateset-db/migrations/100_shipment_version.sql: backfills SQLite shipment versions",
+            "crates/stateset-db/tests/sqlite_shipment_lifecycle.rs: 8 tests passed",
+            "crates/stateset-db/tests/postgres_shipment_lifecycle.rs: 5 tests passed against isolated PostgreSQL 12.22"
+          ],
+          "status": "complete"
+        },
+        {
+          "priority": "high",
+          "requirement": "Expose validated intermediate shipment transitions in each public API before a platform-wide fulfillment release",
+          "evidence": [
+            "crates/stateset-http/src/routes/shipments.rs: PATCH updates and separately authorized POST cancellation now use native lifecycle/version guards",
+            "cli/src/tools/shipments.js: update_shipment exposes intermediate stages; create passes required recipient data; convenience transitions accept expectedVersion",
+            "crates/stateset-http/tests/shipment_lifecycle.rs: 4 tests passed through bearer auth and authorization, including tenant isolation",
+            "cli/test/integration/shipment-public-tools.test.js: 2 native-backed toolkit scenarios passed",
+            "Other language bindings and typed governed shipment commands remain to be completed"
+          ],
+          "status": "in_progress"
+        },
+        {
+          "priority": "high",
+          "requirement": "Complete native shipment item support before claiming automatic partial-shipment compensation",
+          "evidence": [
+            "cli/src/tools/fulfillment-recovery.js: read-only plans validate persisted order-line shipped quantities, aggregate requests and reject excess quantities, ambiguous SKUs and cross-order shipment references",
+            "cli/src/tools/shipments.js: unsupported automatic partial-shipment creation is removed; requests return an explicit blocked action with a reconciliation plan",
+            "bindings/node/src/domains/orders.rs and shipments.rs: rebuilt native binding exposes shippedQuantity, persisted shipment items and recipient context; native integration tests passed",
+            "Node shipment creation still lacks item assignment and parent linkage; shipment tracking and order fulfillment remain separate aggregates",
+            "SQLite and PostgreSQL item writes now lock the parent, enforce packing-state guards, advance versions, and commit item audit facts atomically; 25 backend lifecycle tests passed locally"
+          ],
+          "status": "in_progress",
+          "remaining": [
+            "Implement atomic follow-up shipment creation with authoritative order-line membership and quantity limits, recipient inheritance, parent linkage and durable request-bound idempotency",
+            "Reconcile already assigned shipment quantities with order fulfillment and inventory reservations under concurrency",
+            "Expose and verify typed governed recovery commands with restart, replay, concurrent-conflict and rollback tests"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "interoperability",
+      "title": "Versioned protocol adapters and independent interoperability",
+      "status": "pending",
+      "acceptance": [
+        "Map versioned UCP and AP2 capabilities to governed kernel commands",
+        "Complete ICP stateful flows, revocation, recovery and concurrent-conflict conformance",
+        "Run at least two independent out-of-tree implementations in their own CI"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "authority",
+      "title": "Cross-organization delegation and spending controls",
+      "status": "pending",
+      "acceptance": [
+        "Issue, attenuate, rotate and revoke scoped delegations",
+        "Bind store, tenant, counterparty, asset, amount, purpose and expiry",
+        "Share spending reservations across autonomous entrypoints",
+        "Revocation blocks new effects while preserving read-only reconciliation of signed or settled work"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "integrations",
+      "title": "Certified provider contracts and operator reconciliation",
+      "status": "in_progress",
+      "acceptance": [
+        "Shopify update webhooks mutate native business records and preserve exact prices",
+        "Modernize supported Shopify public app integration to GraphQL",
+        "Certify actual provider effects, durable idempotency, webhook recovery and reconciliation",
+        "Replace simulated operator reconciliation with evidence from real records"
+      ],
+      "evidence": [
+        {
+          "scope": "Shopify native update handlers, exact money mapping and authenticated HTTP boundaries",
+          "implementation": [
+            "bindings/node/src/domains/orders.rs",
+            "bindings/node/src/domains/shipments.rs",
+            "cli/src/adapters/shopify/webhooks.js",
+            "cli/src/adapters/shopify/mapper.js",
+            "cli/src/adapters/shopify/client.js"
+          ],
+          "validation": [
+            "node --test cli/test/integration/shopify-native-sync.test.js cli/test/unit/shopify-client.test.js cli/test/adapters/shopify-writeback.test.js cli/test/unit/shopify-mapper.test.js cli/test/unit/shopify-webhooks.test.js cli/test/unit/import-parity.test.js cli/test/unit/shopify-csv-parser.test.js cli/test/unit/import-tools.test.js",
+            "node --test bindings/node/test/native-toolkit.js"
+          ],
+          "result": "188 Shopify/import tests and 10 native toolkit tests passed locally under Node 22.18.0 against the rebuilt native binding",
+          "limitations": [
+            "No live Shopify account verification or GraphQL migration yet",
+            "Native writes and ID-map snapshot updates are not one durable transaction",
+            "Variant deletion, guest order and fulfillment creation, nullable field clears, order economics edits and absolute inventory/location sync require further work",
+            "Native shipment transition/version/outbox guards are locally verified; full provider fulfillment creation, item quantities and economic reconciliation remain release gates."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "portability",
+      "title": "Runtime parity and economic-state portability",
+      "status": "pending",
+      "acceptance": [
+        "Publish tested runtime and backend capability matrix",
+        "Migrate SQLite to PostgreSQL preserving identities, audit, idempotency, outstanding obligations and nonces",
+        "Reconcile full economic state before enabling target writes",
+        "Measure deployment capacity, recovery and restoration envelopes"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "adoption-evidence",
+      "title": "Adoption, operating evidence and independent assurance",
+      "status": "in_progress",
+      "acceptance": [
+        "Ship two independently configured agents with receipts, restart and exception recovery",
+        "Expose pending approvals, payments, deliveries and safe recovery to operators",
+        "Evaluate task success, refusal, injection, stale quotes, duplicates and interrupted settlement",
+        "Link reproducible CI, workload and recovery evidence to releases",
+        "Obtain independent security review and remediate findings",
+        "Keep kernel and contracts open; define managed operations, certified integration and support offerings"
+      ],
+      "evidence": [
+        {
+          "scope": "SQLite migration schema snapshot correctness",
+          "implementation": [
+            "crates/stateset-db/tests/snapshot_migrations.rs",
+            "crates/stateset-db/tests/snapshots/snapshot_migrations__snapshot_database_schema.snap"
+          ],
+          "validation": "cargo test -p stateset-db --test sqlite_migrations --test snapshot_migrations",
+          "result": "11 passed; full-schema snapshot now captures 229 user tables instead of an empty array"
+        }
+      ],
+      "findings": [
+        {
+          "priority": "medium",
+          "requirement": "Make the full-schema snapshot test inspect actual user tables",
+          "evidence": [
+            "Before correction, snapshot_migrations.rs used a wildcard exclusion that selected no tables",
+            "The regenerated snapshot now contains 229 user tables and the test requires the shipment table to be present"
+          ],
+          "status": "complete",
+          "resolution": "Use literal GLOB exclusions, assert the shipment table is present, and regenerate the snapshot from 229 user tables."
+        }
+      ]
+    }
+  ],
+  "externalEvidenceRequired": [
+    "Operator-configured real payment and fulfillment provider sandbox accounts",
+    "Independent out-of-tree implementers and their CI results",
+    "Independent security review and remediation verification",
+    "Representative deployment workload and recovery measurements"
+  ]
+}

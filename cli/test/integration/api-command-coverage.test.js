@@ -24,7 +24,13 @@ function listModules(dirPath, exclude = []) {
 
 describe('api command coverage', () => {
   it('should cover every top-level tool module with a registered command module', () => {
-    const toolModules = listModules(toolsDir, ['index.js', 'domain-registry.js']);
+    const toolModules = listModules(toolsDir, [
+      'index.js',
+      'domain-registry.js',
+      'tool-tiers.js',
+      'scoped-store.js',
+      'fulfillment-recovery.js',
+    ]);
     const commandModules = Object.keys(commands).sort();
     assert.deepStrictEqual(commandModules, toolModules);
   });

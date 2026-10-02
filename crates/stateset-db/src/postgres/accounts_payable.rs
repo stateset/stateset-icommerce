@@ -1,6 +1,6 @@
 //! PostgreSQL implementation for Accounts Payable
 
-use super::{block_on, map_db_error};
+use super::{block_on, map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
@@ -345,6 +345,7 @@ impl PgAccountsPayableRepository {
         // (previously each item was added in its own transaction, so a 5-line
         // bill could persist with 3 lines and an understated total).
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
         sqlx::query(
             r#"
             INSERT INTO ap_bills (id, bill_number, supplier_id, purchase_order_id, status, bill_date, due_date,
@@ -360,7 +361,7 @@ impl PgAccountsPayableRepository {
         .bind(bill_date)
         .bind(due_date)
         .bind(&input.payment_terms)
-        .bind(input.currency.unwrap_or(CurrencyCode::USD))
+        .bind(currency)
         .bind(&input.reference_number)
         .bind(&input.memo)
         .bind(now)
@@ -868,6 +869,7 @@ impl PgAccountsPayableRepository {
             }
         }
 
+        let currency = resolve_currency_with_executor(currency, tx.as_mut()).await?;
         sqlx::query(
             r#"
             INSERT INTO ap_payments (
@@ -882,7 +884,7 @@ impl PgAccountsPayableRepository {
         .bind(payment_date)
         .bind(payment_method.to_string())
         .bind(amount)
-        .bind(currency.unwrap_or(CurrencyCode::USD))
+        .bind(currency)
         .bind(&reference_number)
         .bind(&bank_account)
         .bind(&check_number)

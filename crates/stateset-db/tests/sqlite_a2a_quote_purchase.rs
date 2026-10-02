@@ -11,12 +11,35 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::{
-    A2ACommerceRepository, A2APurchaseFilter, CommerceError, CreateA2APurchase, CreateA2AQuote,
-    ItemAvailability, QuoteStatus, QuotedItem,
+    A2ACommerceRepository, A2APurchaseFilter, A2ASkill, AgentCardRepository, CommerceError,
+    CreateA2APurchase, CreateA2AQuote, CreateAgentCard, ItemAvailability, QuoteStatus, QuotedItem,
 };
 use stateset_db::SqliteDatabase;
 use std::sync::{Arc, Barrier};
 use uuid::Uuid;
+
+/// Register an agent card that may buy (A2A quotes/purchases require one).
+fn buyer(db: &SqliteDatabase) -> Uuid {
+    agent(db, A2ASkill::Buy)
+}
+
+/// Register an agent card that may sell.
+fn seller(db: &SqliteDatabase) -> Uuid {
+    agent(db, A2ASkill::Sell)
+}
+
+fn agent(db: &SqliteDatabase, skill: A2ASkill) -> Uuid {
+    db.agent_cards()
+        .create(CreateAgentCard {
+            name: format!("{skill} agent"),
+            wallet_address: format!("0xagent-{}", Uuid::new_v4().as_simple()),
+            public_key: "test-public-key".into(),
+            a2a_skills: Some(vec![skill]),
+            ..Default::default()
+        })
+        .expect("register agent card")
+        .id
+}
 
 fn item() -> QuotedItem {
     QuotedItem {
@@ -62,7 +85,7 @@ fn purchase_input(quote_id: Uuid, buyer: Uuid, seller: Uuid) -> CreateA2APurchas
 #[test]
 fn sqlite_a2a_second_purchase_of_consumed_quote_is_refused() {
     let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
-    let (buyer, seller) = (Uuid::new_v4(), Uuid::new_v4());
+    let (buyer, seller) = (buyer(&db), seller(&db));
     let quote_id = quoted_quote(&db, buyer, seller);
     let repo = db.a2a_purchases();
 
@@ -86,7 +109,7 @@ fn sqlite_a2a_second_purchase_of_consumed_quote_is_refused() {
 fn sqlite_a2a_concurrent_purchases_consume_quote_exactly_once() {
     let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory sqlite"));
     for round in 0..20 {
-        let (buyer, seller) = (Uuid::new_v4(), Uuid::new_v4());
+        let (buyer, seller) = (buyer(&db), seller(&db));
         let quote_id = quoted_quote(&db, buyer, seller);
 
         let contenders = 4;

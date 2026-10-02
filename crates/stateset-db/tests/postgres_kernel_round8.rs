@@ -538,3 +538,86 @@ async fn postgres_shipment_accepts_a_declaration_that_matches_the_units_it_moves
     assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
     assert_eq!(receipt.result.expect("order").items[0].shipped_quantity, 30);
 }
+
+/// PostgreSQL twin of `full_kernel_shipment_carries_open_shipment_records`.
+#[tokio::test]
+async fn postgres_full_kernel_shipment_carries_open_shipment_records() {
+    use stateset_core::{CreateShipment, ShipmentLineInput, ShipmentStatus};
+    let db = require_db!();
+    let suffix = Uuid::new_v4();
+    let sku = format!("R8-PG-SHIP-FOLLOW-{suffix}");
+    let order = processing_order(&db, &sku, 30).await;
+    let shipments = db.shipments();
+    let create = |name: &'static str, tracking: Option<&'static str>| {
+        shipments.create_async(CreateShipment {
+            order_id: order.id,
+            recipient_name: name.into(),
+            shipping_address: "1 Main St".into(),
+            tracking_number: tracking.map(str::to_string),
+            ..Default::default()
+        })
+    };
+    let open = create("Open", None).await.expect("open").id.into_uuid();
+    let labelled = create("Labelled", Some("OWN-LABEL")).await.expect("labelled").id.into_uuid();
+    let held = create("Held", None).await.expect("held").id.into_uuid();
+    shipments.hold_async(held).await.expect("hold");
+    let cancelled = create("Cancelled", None).await.expect("cancelled").id.into_uuid();
+    shipments.cancel_async(cancelled).await.expect("cancel");
+    let status = |id: Uuid| {
+        let shipments = db.shipments();
+        async move { shipments.get_async(id).await.expect("load").expect("shipment") }
+    };
+    let executor = db.kernel_executor(quantity_policy());
+
+    let mut partial = command(
+        "orders.ship",
+        format!("r8-pg-ship-follow-partial-{suffix}"),
+        ShipOrderCommand {
+            order_id: order.id,
+            tracking_number: Some("TRK-PG-PARTIAL".into()),
+            lines: Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 10 }]),
+        },
+    );
+    partial.commitment = declaring("10");
+    let receipt = executor.execute_ship_order_async(&partial).await.expect("partial ship");
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
+    assert_eq!(receipt.result.expect("order").status, OrderStatus::PartiallyShipped);
+    assert_eq!(status(open).await.status, ShipmentStatus::Pending);
+
+    let mut ship = command(
+        "orders.ship",
+        format!("r8-pg-ship-follow-{suffix}"),
+        ShipOrderCommand {
+            order_id: order.id,
+            tracking_number: Some("TRK-PG-KERNEL".into()),
+            lines: None,
+        },
+    );
+    ship.commitment = declaring("20");
+    let receipt = executor.execute_ship_order_async(&ship).await.expect("ship order");
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
+
+    let moved = status(open).await;
+    assert_eq!(moved.status, ShipmentStatus::Shipped);
+    assert_eq!(moved.tracking_number.as_deref(), Some("TRK-PG-KERNEL"));
+    assert!(moved.shipped_at.is_some());
+    let own = status(labelled).await;
+    assert_eq!(own.status, ShipmentStatus::Shipped);
+    assert_eq!(own.tracking_number.as_deref(), Some("OWN-LABEL"));
+    assert_eq!(status(held).await.status, ShipmentStatus::OnHold);
+    assert_eq!(status(cancelled).await.status, ShipmentStatus::Cancelled);
+
+    let facts: Vec<(Uuid, Option<Uuid>)> = sqlx::query_as(
+        "SELECT id, command_id FROM kernel_outbox
+         WHERE event_type = 'shipment.status_changed' AND aggregate_id = ANY($1)",
+    )
+    .bind(vec![open.to_string(), labelled.to_string(), held.to_string(), cancelled.to_string()])
+    .fetch_all(db.pool())
+    .await
+    .expect("shipment facts");
+    assert_eq!(facts.len(), 2, "{facts:?}");
+    for (event_id, command_id) in facts {
+        assert!(receipt.event_ids.contains(&event_id));
+        assert_eq!(command_id, Some(ship.command_id));
+    }
+}

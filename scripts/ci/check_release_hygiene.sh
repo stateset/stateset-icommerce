@@ -20,8 +20,8 @@ Validates repo-wide version sync plus release metadata hygiene.
 
 Arguments:
   VERSION_OR_TAG   Optional semantic version or tag name such as:
-                   1.34.0, v1.34.0, cli-v1.34.0, py-v1.34.0, java-v1.34.0,
-                   php-v1.34.0, ruby-v1.34.0
+                   1.36.0, v1.36.0, cli-v1.36.0, py-v1.36.0, java-v1.36.0,
+                   php-v1.36.0, ruby-v1.36.0
 
 Options:
   --github-output PATH   Write version=<normalized-version> to the given file.
@@ -143,17 +143,39 @@ if grep -RIn '520\+' "${CURRENT_DOC_PATHS[@]}" --exclude='mcp-tool-inventory.md'
 fi
 rm -f "$legacy_tool_count_file"
 
-node ./scripts/ci/generate_mcp_inventory.mjs --check >/dev/null
-node ./scripts/ci/generate_agent_inventory.mjs --check >/dev/null
-node ./scripts/ci/generate_api_command_coverage.mjs --check >/dev/null
-node ./scripts/ci/generate_binding_api_inventory.mjs --check >/dev/null
-node ./scripts/ci/generate_http_gateway_inventory.mjs --check >/dev/null
-node ./scripts/ci/generate_mcp_api_coverage.mjs --check >/dev/null
-node ./scripts/ci/generate_workspace_inventory.mjs --check >/dev/null
-node ./scripts/ci/generate_rust_openapi_inventory.mjs --check >/dev/null
-node ./scripts/ci/check_kernel_coverage.mjs >/dev/null
-node ./scripts/ci/check_doc_tool_refs.mjs >/dev/null
-node ./scripts/ci/check_workflow_job_refs.mjs >/dev/null
+# Generated-artifact freshness and cross-reference checks. Every check runs
+# even after an earlier one fails, so a single run lists everything that is
+# stale; the script still exits non-zero (below) when any of them failed.
+# `npm run regen` rewrites every generated artifact these checks verify.
+generated_checks=(
+  "node ./scripts/ci/generate_mcp_inventory.mjs --check"
+  "node ./scripts/ci/generate_agent_inventory.mjs --check"
+  "node ./scripts/ci/generate_api_command_coverage.mjs --check"
+  "node ./scripts/ci/generate_binding_api_inventory.mjs --check"
+  "node ./scripts/ci/generate_binding_parity.mjs --check"
+  "node ./scripts/ci/generate_http_gateway_inventory.mjs --check"
+  "node ./scripts/ci/generate_mcp_api_coverage.mjs --check"
+  "node ./scripts/ci/generate_workspace_inventory.mjs --check"
+  "node ./scripts/ci/generate_rust_openapi_inventory.mjs --check"
+  "node ./scripts/ci/check_kernel_coverage.mjs"
+  "node ./scripts/ci/check_doc_tool_refs.mjs"
+  "node ./scripts/ci/check_workflow_job_refs.mjs"
+)
+failed_generated_checks=()
+for check in "${generated_checks[@]}"; do
+  # shellcheck disable=SC2086 # each entry is a command line split on spaces
+  if ! $check >/dev/null; then
+    failed_generated_checks+=("$check")
+  fi
+done
+if (( ${#failed_generated_checks[@]} > 0 )); then
+  echo "::error::${#failed_generated_checks[@]} generated-artifact check(s) failed:" >&2
+  for check in "${failed_generated_checks[@]}"; do
+    echo "  - ${check}" >&2
+  done
+  echo "Run 'npm run regen' at the repository root to rewrite every generated artifact, then commit the result." >&2
+  exit 1
+fi
 
 required_release_surface_snippets=(
   "bindings/python/pyproject.toml|\"Development Status :: 5 - Production/Stable\""

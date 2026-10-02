@@ -20,6 +20,8 @@ process.env.ORDER_ESCROW = '0x' + '11'.repeat(20);
 process.env.SSUSD_TOKEN = '0x' + '22'.repeat(20);
 
 const { agentReceiptTools, resolveSigningKey } = await import('../../src/tools/agent-receipt.js');
+const { agentRuntimeTools } = await import('../../src/tools/agent-runtime.js');
+const { validateToolInput } = await import('../../src/tool-schema.js');
 
 const ORDER_ID_HASH = '0x' + 'ab'.repeat(32);
 const KEY_ENV_VARS = ['SEQUENCER_KEY', 'BUYER_KEY', 'SELLER_KEY', 'STATESET_ALLOW_DEMO_KEYS'];
@@ -139,8 +141,7 @@ describe('agent-receipt — handler refuses synchronously before any RPC', () =>
   it('agent_receipt_dispute returns the key-gating error, not a network error', async () => {
     const dispute = findTool('agent_receipt_dispute');
     const result = await dispute.handler({
-      order_id_hash: ORDER_ID_HASH,
-      reason: 'item never arrived',
+      params: { order_id_hash: ORDER_ID_HASH, reason: 'item never arrived' },
     });
     assert.strictEqual(result.success, false);
     assert.match(result.error, /No signing key configured for role "buyer"/);
@@ -149,8 +150,7 @@ describe('agent-receipt — handler refuses synchronously before any RPC', () =>
   it('agent_receipt_resolve refuses for the operator role without a key', async () => {
     const resolve = findTool('agent_receipt_resolve');
     const result = await resolve.handler({
-      order_id_hash: ORDER_ID_HASH,
-      in_favor_of_seller: true,
+      params: { order_id_hash: ORDER_ID_HASH, in_favor_of_seller: true },
     });
     assert.strictEqual(result.success, false);
     assert.match(result.error, /No signing key configured for role "operator"/);
@@ -164,5 +164,55 @@ describe('agent-receipt — tool surface', () => {
     assert.strictEqual(findTool('agent_receipt_release').permission, 'write');
     assert.strictEqual(findTool('agent_receipt_refund').permission, 'write');
     assert.strictEqual(findTool('agent_receipt_request_payout').permission, 'write');
+  });
+});
+
+describe('agent-receipt / agent-runtime — MCP input schema contract', () => {
+  // The MCP layer wraps inputSchema with z.object(inputSchema), so it must be a
+  // plain shape of Zod types. A z.object(...) or a JSON-Schema literal there
+  // crashes every call with "keyValidator._parse is not a function".
+  const settlementTools = agentRuntimeTools.filter((t) =>
+    ['agent_enable_settlement', 'agent_get_chain_balance'].includes(t.name),
+  );
+
+  it('every tool declares a plain shape whose values are Zod schemas', () => {
+    for (const tool of [...agentReceiptTools, ...settlementTools]) {
+      assert.equal(typeof tool.inputSchema, 'object', tool.name);
+      assert.equal(tool.inputSchema._def, undefined, `${tool.name}: inputSchema is a ZodObject`);
+      for (const [key, value] of Object.entries(tool.inputSchema)) {
+        assert.equal(
+          typeof value?.safeParse,
+          'function',
+          `${tool.name}.${key} is not a Zod schema`,
+        );
+      }
+    }
+    assert.equal(settlementTools.length, 2);
+  });
+
+  it('validates through the MCP validator without throwing', () => {
+    const cases = [
+      ['agent_receipt_status', { order_id_hash: ORDER_ID_HASH }],
+      ['agent_receipt_fx_quote', { pair: 'EUR/ssUSD' }],
+      ['agent_receipt_purchase', { sku: 'SKU-1', qty: 1, unit_price_usd: 5 }],
+    ];
+    for (const [name, params] of cases) {
+      const result = validateToolInput(findTool(name).inputSchema, params);
+      assert.equal(result.success, true, name);
+    }
+    const fx = validateToolInput(findTool('agent_receipt_fx_quote').inputSchema, {
+      pair: 'EUR/ssUSD',
+    });
+    assert.equal(fx.data.amount_base, 1, 'defaults are applied by the MCP validator');
+    const bad = validateToolInput(findTool('agent_receipt_status').inputSchema, {
+      order_id_hash: 'nope',
+    });
+    assert.equal(bad.success, false);
+
+    const enable = settlementTools.find((t) => t.name === 'agent_enable_settlement');
+    const parsed = validateToolInput(enable.inputSchema, { name: 'bot' });
+    assert.equal(parsed.success, true);
+    assert.deepStrictEqual(parsed.data, { name: 'bot', chainId: 'base', simulate: true });
+    assert.equal(validateToolInput(enable.inputSchema, {}).success, false);
   });
 });

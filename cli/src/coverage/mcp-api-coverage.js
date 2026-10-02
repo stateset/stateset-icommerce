@@ -36,6 +36,7 @@ const {
   credit: creditTools,
   backorders: backorderTools,
   'general-ledger': generalLedgerTools,
+  explain: explainTools,
 } = DOMAIN_TOOL_ARRAYS;
 export const COMMERCE_BINDING_INDEX_DTS = new URL(
   '../../../bindings/node/index.d.ts',
@@ -74,6 +75,8 @@ export const COMMERCE_GETTER_TO_MODULE = Object.freeze({
   costAccounting: 'cost-accounting',
   credit: 'credit',
   backorder: 'backorders',
+  // Plural alias of `backorder` on the binding; same tool module.
+  backorders: 'backorders',
   generalLedger: 'general-ledger',
   cycleCounts: 'cycle-counts',
   fixedAssets: 'fixed-assets',
@@ -132,13 +135,17 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
     },
   },
   Orders: {
-    tools: orderTools,
+    tools: [...orderTools, ...explainTools],
     methodToTools: {
       create: ['create_order'],
       createExact: ['create_order'],
-      get: ['get_order'],
-      list: ['list_orders'],
+      get: ['get_order', 'explain_order'],
+      getByNumber: ['get_order'],
+      list: ['list_orders', 'explain_order'],
       updateStatus: ['update_order_status'],
+      // The native update surface is intentionally governed through the
+      // status tool; arbitrary order edits remain subject to native guards.
+      update: ['update_order_status'],
       ship: ['ship_order'],
       cancel: ['cancel_order'],
       count: ['list_orders'],
@@ -194,7 +201,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
     },
   },
   Returns: {
-    tools: returnTools,
+    tools: [...returnTools, ...explainTools],
     methodToTools: {
       create: ['create_return'],
       get: ['get_return'],
@@ -202,7 +209,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       reject: ['reject_return'],
       list: ['list_returns'],
       count: ['list_returns'],
-      listForOrder: ['list_returns_for_order'],
+      listForOrder: ['list_returns_for_order', 'explain_order'],
       listForCustomer: ['list_returns_for_customer'],
       listPending: ['list_pending_returns'],
       markReceived: ['mark_return_received'],
@@ -269,6 +276,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       createBill: ['create_bill'],
       getBill: ['get_bill'],
       getBillByNumber: ['get_bill'],
+      getBillItems: ['get_bill'],
       listBills: ['list_bills'],
       approveBill: ['approve_bill'],
       cancelBill: ['cancel_bill'],
@@ -294,29 +302,34 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
     },
   },
   Payments: {
-    tools: paymentTools,
+    tools: [...paymentTools, ...explainTools],
     methodToTools: {
       create: ['create_payment'],
       createExact: ['create_payment'],
       get: ['get_payment'],
-      list: ['list_payments'],
+      list: ['list_payments', 'explain_order'],
       markCompleted: ['complete_payment'],
       markFailed: ['mark_failed_payment'],
       cancel: ['cancel_payment'],
       createRefund: ['create_refund'],
       createRefundExact: ['create_refund'],
+      getRefund: ['get_payment'],
+      getRefunds: ['get_payment'],
+      completeRefund: ['create_refund'],
+      failRefund: ['create_refund'],
       count: ['list_payments'],
     },
   },
   Shipments: {
-    tools: shipmentTools,
+    tools: [...shipmentTools, ...explainTools],
     methodToTools: {
       create: ['create_shipment'],
       get: ['get_shipment'],
-      list: ['list_shipments'],
+      list: ['list_shipments', 'explain_order'],
       ship: ['ship_shipment'],
       deliver: ['deliver_shipment'],
       cancel: ['cancel_shipment'],
+      update: ['update_shipment'],
       count: ['list_shipments'],
     },
   },
@@ -416,6 +429,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       getBaseCurrency: ['get_currency_settings'],
       getEnabledCurrencies: ['get_currency_settings'],
       format: ['format_currency'],
+      decimalPlaces: ['get_currency_decimal_places'],
     },
   },
   Subscriptions: {
@@ -443,7 +457,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
     },
   },
   Promotions: {
-    tools: promotionTools,
+    tools: [...promotionTools, ...explainTools],
     methodToTools: {
       create: ['create_promotion'],
       get: ['get_promotion'],
@@ -453,6 +467,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       delete: ['delete_promotion'],
       activate: ['activate_promotion'],
       deactivate: ['deactivate_promotion'],
+      addCondition: ['add_promotion_condition'],
       getActive: ['get_active_promotions'],
       isValid: ['check_promotion_validity'],
       createCoupon: ['create_coupon'],
@@ -460,14 +475,16 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       getCouponByCode: ['get_coupon'],
       listCoupons: ['list_coupons'],
       validateCoupon: ['validate_coupon'],
-      apply: ['apply_cart_promotions'],
+      apply: ['quote_promotions', 'explain_cart_pricing'],
+      applyToCart: ['apply_cart_promotions'],
       recordUsage: ['record_promotion_usage'],
+      listUsage: ['record_promotion_usage'],
     },
   },
   Tax: {
-    tools: taxTools,
+    tools: [...taxTools, ...explainTools],
     methodToTools: {
-      calculate: ['calculate_tax'],
+      calculate: ['calculate_tax', 'explain_order', 'explain_cart_pricing'],
       calculateForItem: ['calculate_item_tax'],
       getEffectiveRate: ['get_tax_rate'],
       getJurisdiction: ['get_tax_jurisdiction'],
@@ -524,6 +541,17 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       getOverdueBackorders: ['list_overdue_backorders'],
       getSummary: ['get_backorder_summary'],
       countPending: ['count_pending_backorders'],
+      autoAllocateInventory: ['auto_allocate_inventory'],
+      allocateBackorder: ['allocate_backorder'],
+      getAllocations: ['get_backorder_allocations'],
+      confirmAllocation: ['confirm_backorder_allocation'],
+      releaseAllocation: ['release_backorder_allocation'],
+      expireAllocations: ['expire_backorder_allocations'],
+      fulfillBackorder: ['fulfill_backorder'],
+      getFulfillmentHistory: ['get_backorder_fulfillment_history'],
+      getBackordersForCustomer: ['list_backorders_for_customer'],
+      getSkuSummary: ['get_sku_backorder_summary'],
+      updateBackorder: ['update_backorder'],
     },
   },
   Quality: {
@@ -531,6 +559,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
     methodToTools: {
       createInspection: ['create_inspection'],
       getInspection: ['get_inspection'],
+      getInspectionItems: ['get_inspection'],
       listInspections: ['list_inspections'],
       startInspection: ['start_inspection'],
       completeInspection: ['complete_inspection'],
@@ -538,6 +567,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       getNcr: ['get_ncr'],
       listNcrs: ['list_ncrs'],
       closeNcr: ['close_ncr'],
+      updateNcr: ['close_ncr'],
       createHold: ['create_quality_hold'],
       getHold: ['get_quality_hold'],
       listHolds: ['list_quality_holds'],
@@ -598,6 +628,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       createReceipt: ['create_receipt'],
       getReceipt: ['get_receipt'],
       getReceiptByNumber: ['get_receipt'],
+      getReceiptItems: ['get_receipt'],
       listReceipts: ['list_receipts'],
       startReceiving: ['start_receiving'],
       completeReceiving: ['complete_receiving'],
@@ -626,20 +657,20 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
     },
   },
   Carts: {
-    tools: cartTools,
+    tools: [...cartTools, ...explainTools],
     methodToTools: {
       create: ['create_cart'],
-      get: ['get_cart'],
+      get: ['get_cart', 'explain_cart_pricing'],
       getByNumber: ['get_cart'],
       update: ['update_cart'],
       list: ['list_carts'],
-      forCustomer: ['list_customer_carts'],
+      forCustomer: ['list_customer_carts', 'explain_order'],
       delete: ['delete_cart'],
       addItem: ['add_cart_item'],
       addItemExact: ['add_cart_item'],
       updateItem: ['update_cart_item'],
       removeItem: ['remove_cart_item'],
-      getItems: ['list_cart_items'],
+      getItems: ['list_cart_items', 'explain_order', 'explain_cart_pricing'],
       clearItems: ['clear_cart_items'],
       setShippingAddress: ['set_cart_shipping_address'],
       setShipping: ['set_cart_shipping'],
@@ -690,6 +721,8 @@ export function buildMcpApiCoverage() {
 
   getterNames.delete('customStates');
   getterNames.delete('events');
+  // A value getter (whether `close()` has run), not a sub-API.
+  getterNames.delete('isClosed');
 
   const getters = [...getterNames].sort().map((getter) => {
     const moduleName = COMMERCE_GETTER_TO_MODULE[getter] ?? null;

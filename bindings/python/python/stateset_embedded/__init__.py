@@ -35,7 +35,20 @@ from stateset_embedded.stateset_embedded import (
     Orders,
     Order,
     OrderItem,
+    CreateInvoiceItemInput,
+    PromotionLineItemInput,
+    PromotionCondition,
+    PromotionConditionInput,
     CreateOrderItemInput,
+    CanadianTaxInfo,
+    CreatePurchaseOrderItemInput,
+    TaxApi,
+    TaxCalculationResult,
+    TaxExemption,
+    TaxJurisdiction,
+    TaxRate,
+    TaxSettings,
+    UsStateTaxInfo,
     Products,
     Product,
     ProductVariant,
@@ -269,7 +282,7 @@ from stateset_embedded.openai import (
     execute_openai_tool_calls,
 )
 
-__version__ = "1.34.0"
+__version__ = "1.36.0"
 
 __all__ = [
     # Main entry point
@@ -293,7 +306,20 @@ __all__ = [
     "Orders",
     "Order",
     "OrderItem",
+    "CreateInvoiceItemInput",
+    "PromotionLineItemInput",
+    "PromotionCondition",
+    "PromotionConditionInput",
     "CreateOrderItemInput",
+    "CanadianTaxInfo",
+    "CreatePurchaseOrderItemInput",
+    "TaxApi",
+    "TaxCalculationResult",
+    "TaxExemption",
+    "TaxJurisdiction",
+    "TaxRate",
+    "TaxSettings",
+    "UsStateTaxInfo",
     # Products
     "Products",
     "Product",

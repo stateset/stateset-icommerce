@@ -2,7 +2,8 @@
 
 use super::{
     map_db_error, parse_date_row, parse_datetime_row, parse_decimal_row, parse_enum_row,
-    parse_json_row, parse_uuid_opt_row, parse_uuid_row, with_immediate_transaction,
+    parse_json_row, parse_uuid_opt_row, parse_uuid_row, resolve_currency_in_tx,
+    with_immediate_transaction,
 };
 use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
@@ -110,8 +111,8 @@ impl PaymentObligationRepository for SqlitePaymentObligationRepository {
         let id_str = id.to_string();
         let now_str = Utc::now().to_rfc3339();
         let number = format!("OBL-{}", &id_str[..8]);
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
         with_immediate_transaction(&self.pool, |tx| {
+            let currency = resolve_currency_in_tx(input.currency, tx)?;
             tx.execute(
                 "INSERT INTO payment_obligations (id, number, supplier_id, purchase_order_id, amount, amount_paid, currency, due_date, status, linked_bill_ids, notes, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, '0', ?, ?, 'pending', '[]', ?, ?, ?)",
@@ -218,6 +219,15 @@ impl PaymentObligationRepository for SqlitePaymentObligationRepository {
         let id_str = id.to_string();
         let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
+            let current = Self::fetch(tx, &id_str)?;
+            if !current.status.allows_manual_transition(status) {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict(format!(
+                        "cannot set payment obligation status from {} to {}",
+                        current.status, status
+                    )),
+                )));
+            }
             tx.execute(
                 "UPDATE payment_obligations SET status = ?, updated_at = ? WHERE id = ?",
                 rusqlite::params![status.to_string(), &now, &id_str],
@@ -370,5 +380,22 @@ mod tests {
         let o = new_obl(&repo, dec!(100), day(2026, 7, 1));
         repo.set_status(o.id, PaymentObligationStatus::Cancelled).expect("cancel");
         assert!(repo.record_payment(o.id, dec!(10)).is_err());
+    }
+
+    #[test]
+    fn manual_status_cannot_forge_payment_or_reopen_terminal_obligation() {
+        let repo = test_repo();
+        let o = new_obl(&repo, dec!(100), day(2026, 7, 1));
+        assert!(repo.set_status(o.id, PaymentObligationStatus::Paid).is_err());
+        assert!(repo.set_status(o.id, PaymentObligationStatus::PartiallyPaid).is_err());
+        repo.set_status(o.id, PaymentObligationStatus::Scheduled).expect("schedule");
+        repo.record_payment(o.id, dec!(40)).expect("partial payment");
+        assert!(repo.set_status(o.id, PaymentObligationStatus::Pending).is_err());
+        repo.set_status(o.id, PaymentObligationStatus::Cancelled).expect("cancel remainder");
+        assert!(repo.set_status(o.id, PaymentObligationStatus::Scheduled).is_err());
+        assert!(repo.record_payment(o.id, dec!(60)).is_err());
+        let after = repo.get(o.id).expect("get").expect("obligation");
+        assert_eq!(after.status, PaymentObligationStatus::Cancelled);
+        assert_eq!(after.amount_paid, dec!(40));
     }
 }

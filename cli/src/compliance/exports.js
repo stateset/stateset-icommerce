@@ -14,6 +14,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 
+import { CB_SCHEMA } from '../a2a/circuit-breaker.js';
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -86,6 +88,9 @@ function hashValue(value) {
   return createHash('sha256').update(String(value)).digest('hex');
 }
 
+/** Tables that can hold agent cards: the A2A runtime's, then the native engine's. */
+const AGENT_CARD_TABLES = Object.freeze(['a2a_runtime_agent_cards', 'agent_cards']);
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -97,6 +102,9 @@ function hashValue(value) {
  * @param {Object} store  - Object with a `.db` (better-sqlite3 Database)
  * @param {Object} [options] - Additional options
  * @param {string} [options.commerceDbPath] - Path to the main commerce SQLite database
+ * @param {Object} [options.commerceDb] - An open handle on the commerce database (not closed by
+ *   this service). The MCP server passes its store's own connection: its A2A tables live in the
+ *   commerce database.
  * @returns {Object} Compliance service methods
  */
 export function createComplianceService(store, options = {}) {
@@ -106,9 +114,16 @@ export function createComplianceService(store, options = {}) {
 
   const { db } = store;
 
+  // The audit trail, summary and SOC2 evidence read the circuit breaker's
+  // tables, which only the breaker service creates. On a fresh store they are
+  // missing until something trips a breaker, so create them (idempotently)
+  // rather than fail with "no such table".
+  db.exec(CB_SCHEMA);
+
   // Lazy-initialized commerce database handle (better-sqlite3)
-  let _commerceDb = options._commerceDbOverride || null;
-  const _commerceDbOwned = !options._commerceDbOverride;
+  const _commerceDbGiven = options.commerceDb || options._commerceDbOverride || null;
+  let _commerceDb = _commerceDbGiven;
+  const _commerceDbOwned = !_commerceDbGiven;
 
   /**
    * Get the commerce database handle, opening it lazily on first access.
@@ -143,6 +158,19 @@ export function createComplianceService(store, options = {}) {
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
       .get(tableName);
     return !!row;
+  }
+
+  /**
+   * The agent-card tables present in the store. The A2A runtime keeps its
+   * cards in `a2a_runtime_agent_cards` (renamed from `agent_cards` so it no
+   * longer collides with the native engine's table of that name); the native
+   * `agent_cards` exists only once the commerce schema is in the same
+   * database. Either may be absent, so never query a fixed name.
+   *
+   * @returns {string[]}
+   */
+  function agentCardTables() {
+    return AGENT_CARD_TABLES.filter((table) => tableExists(db, table));
   }
 
   // -------------------------------------------------------------------------
@@ -308,13 +336,15 @@ export function createComplianceService(store, options = {}) {
       throw new Error('customerId is required for GDPR export');
     }
 
-    // Personal data from agent_cards
-    const personalData = db
-      .prepare(
-        `SELECT id, name, wallet_address, description, trust_level, active, created_at, updated_at
-         FROM agent_cards WHERE wallet_address = ? OR id = ? OR name = ?`,
-      )
-      .all(customerId, customerId, customerId);
+    // Personal data from agent cards (runtime and native)
+    const personalData = agentCardTables().flatMap((table) =>
+      db
+        .prepare(
+          `SELECT id, name, wallet_address, description, trust_level, active, created_at, updated_at
+           FROM ${table} WHERE wallet_address = ? OR id = ? OR name = ?`,
+        )
+        .all(customerId, customerId, customerId),
+    );
 
     // Payments (as sender or recipient)
     const payments = db
@@ -335,8 +365,8 @@ export function createComplianceService(store, options = {}) {
     // Orders/disputes filed by or against
     const disputes = db
       .prepare(
-        `SELECT id, status, escrow_id, filed_by, filed_against, reason, category, amount_decimal, created_at
-         FROM a2a_disputes WHERE filed_by = ? OR filed_against = ?`,
+        `SELECT id, status, escrow_id, claimant_address, respondent_address, reason, category, amount_decimal, created_at
+         FROM a2a_disputes WHERE claimant_address = ? OR respondent_address = ?`,
       )
       .all(customerId, customerId);
 
@@ -488,18 +518,12 @@ export function createComplianceService(store, options = {}) {
     const anonymized = hashValue(customerId).slice(0, 16);
     const anonAddress = `anon_${anonymized}`;
 
-    // Agent cards — always delete personal data
-    const agentCards = db
-      .prepare(`SELECT id FROM agent_cards WHERE wallet_address = ? OR id = ? OR name = ?`)
-      .all(customerId, customerId, customerId);
-
-    if (agentCards.length > 0) {
-      db.prepare(`DELETE FROM agent_cards WHERE wallet_address = ? OR id = ? OR name = ?`).run(
-        customerId,
-        customerId,
-        customerId,
-      );
-      deleted.push({ table: 'agent_cards', count: agentCards.length });
+    // Agent cards — always delete personal data (runtime and native tables)
+    for (const table of agentCardTables()) {
+      const { changes } = db
+        .prepare(`DELETE FROM ${table} WHERE wallet_address = ? OR id = ? OR name = ?`)
+        .run(customerId, customerId, customerId);
+      if (changes > 0) deleted.push({ table, count: changes });
     }
 
     // Notification log — delete all
@@ -550,13 +574,13 @@ export function createComplianceService(store, options = {}) {
 
     // Disputes — anonymize addresses if keeping, delete otherwise
     if (keepTransactions) {
-      const filedBy = db
-        .prepare(`UPDATE a2a_disputes SET filed_by = ? WHERE filed_by = ?`)
+      const claimant = db
+        .prepare(`UPDATE a2a_disputes SET claimant_address = ? WHERE claimant_address = ?`)
         .run(anonAddress, customerId);
-      const filedAgainst = db
-        .prepare(`UPDATE a2a_disputes SET filed_against = ? WHERE filed_against = ?`)
+      const respondent = db
+        .prepare(`UPDATE a2a_disputes SET respondent_address = ? WHERE respondent_address = ?`)
         .run(anonAddress, customerId);
-      const totalDisputeAnon = (filedBy.changes || 0) + (filedAgainst.changes || 0);
+      const totalDisputeAnon = (claimant.changes || 0) + (respondent.changes || 0);
       if (totalDisputeAnon > 0) {
         retained.push({
           table: 'a2a_disputes',
@@ -567,13 +591,12 @@ export function createComplianceService(store, options = {}) {
       }
     } else {
       const disputes = db
-        .prepare(`SELECT id FROM a2a_disputes WHERE filed_by = ? OR filed_against = ?`)
+        .prepare(`SELECT id FROM a2a_disputes WHERE claimant_address = ? OR respondent_address = ?`)
         .all(customerId, customerId);
       if (disputes.length > 0) {
-        db.prepare(`DELETE FROM a2a_disputes WHERE filed_by = ? OR filed_against = ?`).run(
-          customerId,
-          customerId,
-        );
+        db.prepare(
+          `DELETE FROM a2a_disputes WHERE claimant_address = ? OR respondent_address = ?`,
+        ).run(customerId, customerId);
         deleted.push({ table: 'a2a_disputes', count: disputes.length });
       }
     }
@@ -863,7 +886,7 @@ export function createComplianceService(store, options = {}) {
     let disputeSql = `SELECT COUNT(*) AS cnt FROM a2a_disputes WHERE created_at >= ? AND created_at <= ?`;
     const disputeParams = [range.from, range.to];
     if (agentName) {
-      disputeSql += ' AND (filed_by = ? OR filed_against = ?)';
+      disputeSql += ' AND (claimant_address = ? OR respondent_address = ?)';
       disputeParams.push(agentName, agentName);
     }
     const disputeStats = db.prepare(disputeSql).get(...disputeParams);
@@ -952,12 +975,17 @@ export function createComplianceService(store, options = {}) {
       switch (control) {
         case 'access_control': {
           // Agent registrations and trust level changes
-          const agentCards = db
-            .prepare(
-              `SELECT id, name, wallet_address, trust_level, active, created_at, updated_at
-               FROM agent_cards ORDER BY created_at DESC LIMIT 100`,
+          const agentCards = agentCardTables()
+            .flatMap((table) =>
+              db
+                .prepare(
+                  `SELECT id, name, wallet_address, trust_level, active, created_at, updated_at
+                   FROM ${table} ORDER BY created_at DESC LIMIT 100`,
+                )
+                .all(),
             )
-            .all();
+            .sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))
+            .slice(0, 100);
           evidence.push({
             control,
             status: 'gathered',
@@ -1017,7 +1045,7 @@ export function createComplianceService(store, options = {}) {
             .all();
           const slaViolations = db
             .prepare(
-              `SELECT id, sla_id, service_id, metric, severity, created_at
+              `SELECT id, sla_id, service_id, violation_type, severity, created_at
                FROM a2a_sla_violations ORDER BY created_at DESC LIMIT 50`,
             )
             .all();
@@ -1036,7 +1064,7 @@ export function createComplianceService(store, options = {}) {
           // Disputes as incident records + circuit breaker trips
           const disputes = db
             .prepare(
-              `SELECT id, status, filed_by, filed_against, reason, category, amount_decimal, created_at, resolved_at
+              `SELECT id, status, claimant_address, respondent_address, reason, category, amount_decimal, created_at, resolved_at
                FROM a2a_disputes ORDER BY created_at DESC LIMIT 50`,
             )
             .all();

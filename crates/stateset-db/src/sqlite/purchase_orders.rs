@@ -14,6 +14,7 @@ use super::{
     parse_uuid,
     parse_uuid_opt_row,
     parse_uuid_row,
+    resolve_currency_with_conn,
     sum_decimal_query,
     uuid_params,
     with_immediate_transaction,
@@ -452,6 +453,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
         let supplier_code = input.supplier_code.unwrap_or_else(generate_supplier_code);
+        let currency = resolve_currency_with_conn(input.currency, &conn)?;
 
         conn.execute(
             "INSERT INTO suppliers (id, supplier_code, name, contact_name, email, phone, website,
@@ -473,7 +475,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
                 input.country,
                 input.tax_id,
                 input.payment_terms.unwrap_or_default().to_string(),
-                input.currency.unwrap_or_default(),
+                currency,
                 input.lead_time_days,
                 input.minimum_order.map(|d| d.to_string()),
                 1,
@@ -1690,6 +1692,22 @@ mod tests {
             .expect("create");
         let cancelled = repo.cancel(po.id).expect("cancel");
         assert_eq!(cancelled.status, PurchaseOrderStatus::Cancelled);
+        let err = repo
+            .receive(
+                po.id,
+                ReceivePurchaseOrderItems {
+                    items: vec![ReceivePurchaseOrderItem {
+                        item_id: po.items[0].id,
+                        quantity_received: dec!(1),
+                        notes: None,
+                    }],
+                    notes: None,
+                },
+            )
+            .expect_err("cancelled purchase order cannot receive goods");
+        assert!(matches!(err, CommerceError::Conflict(_)), "{err:?}");
+        let after = repo.get(po.id).expect("get").expect("purchase order");
+        assert_eq!(after.items[0].quantity_received, dec!(0));
     }
 
     /// A non-draft delete is a state conflict, not a malformed request. The

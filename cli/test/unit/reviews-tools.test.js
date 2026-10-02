@@ -34,17 +34,18 @@ const mockReview = {
   body: 'Really enjoyed using this widget. Highly recommend.',
   status: 'approved',
   verifiedPurchase: true,
-  flagged: false,
+  helpfulCount: 2,
+  reportedCount: 0,
   createdAt: '2026-01-10T00:00:00Z',
   updatedAt: '2026-01-11T00:00:00Z',
 };
 
+// Shape of the binding's ReviewSummaryOutput (index 0 = 1-star count).
 const mockSummary = {
+  productId: 'prod_001',
   totalReviews: 42,
   averageRating: 4.2,
-  ratingDistribution: { 1: 2, 2: 3, 3: 5, 4: 15, 5: 17 },
-  verifiedPurchaseCount: 35,
-  recommendedPercentage: 88,
+  ratingDistribution: [2, 3, 5, 15, 17],
 };
 
 function makeReviewCommerce(overrides = {}) {
@@ -52,12 +53,11 @@ function makeReviewCommerce(overrides = {}) {
     reviews: {
       create: async (data) => ({ ...mockReview, ...data }),
       get: async (_id) => mockReview,
+      // Only methods the real Reviews binding class has.
       list: async (_filters) => [mockReview],
-      count: async (_filters) => 1,
-      approve: async (_id) => ({ ...mockReview, status: 'approved' }),
-      reject: async (_id, _reason) => ({ ...mockReview, status: 'rejected' }),
+      update: async (id, input) => ({ ...mockReview, id, ...input }),
       getSummary: async (_productId) => mockSummary,
-      flag: async (_id, _opts) => ({ ...mockReview, flagged: true }),
+      markReported: async (_id) => undefined,
       ...overrides,
     },
   };
@@ -295,7 +295,9 @@ describe('reviewTools -- get_review handler', () => {
     assert.equal(result.review.title, 'Great product');
     assert.equal(result.review.status, 'approved');
     assert.equal(result.review.verifiedPurchase, true);
-    assert.equal(result.review.flagged, false);
+    assert.equal(result.review.reportedCount, 0);
+    assert.equal(result.review.helpfulCount, 2);
+    assert.ok(!('flagged' in result.review), 'flagged is not a ReviewOutput field');
     assert.ok(result.review.createdAt);
     assert.ok(result.review.updatedAt);
   });
@@ -340,26 +342,83 @@ describe('reviewTools -- list_reviews handler', () => {
       'title',
       'status',
       'verifiedPurchase',
-      'flagged',
+      'helpfulCount',
+      'reportedCount',
       'createdAt',
     ];
     for (const key of expectedKeys) {
       assert.ok(key in r, `missing key: ${key}`);
     }
   });
+
+  it('passes engine filters with an explicit page limit and applies maxRating locally', async () => {
+    const tool = findTool('list_reviews');
+    const calls = [];
+    const reviews = [1, 2, 3, 4, 5].map((rating) => ({ ...mockReview, id: `r${rating}`, rating }));
+    const result = await tool.handler({
+      commerce: makeReviewCommerce({
+        list: async (filter) => {
+          calls.push(filter);
+          // The engine applies minRating itself.
+          return reviews.filter((r) => r.rating >= filter.minRating);
+        },
+      }),
+      params: { productId: 'prod_001', status: 'approved', minRating: 2, maxRating: 4, limit: 2 },
+    });
+    assert.deepStrictEqual(calls, [
+      {
+        productId: 'prod_001',
+        customerId: undefined,
+        status: 'approved',
+        minRating: 2,
+        limit: 1000,
+        offset: 0,
+      },
+    ]);
+    assert.ok(!('maxRating' in calls[0]), 'ReviewFilterInput has no maxRating');
+    assert.equal(result.totalCount, 3);
+    assert.equal(result.returned, 2);
+  });
+
+  it('pages past the engine page cap so totalCount is exact', async () => {
+    const tool = findTool('list_reviews');
+    const offsets = [];
+    const result = await tool.handler({
+      commerce: makeReviewCommerce({
+        list: async (filter) => {
+          offsets.push(filter.offset);
+          const n = filter.offset === 0 ? 1000 : 7;
+          return Array.from({ length: n }, (_, i) => ({
+            ...mockReview,
+            id: `r${filter.offset + i}`,
+          }));
+        },
+      }),
+      params: { limit: 50 },
+    });
+    assert.deepStrictEqual(offsets, [0, 1000]);
+    assert.equal(result.totalCount, 1007);
+    assert.equal(result.returned, 50);
+  });
 });
 
 describe('reviewTools -- approve_review handler', () => {
   it('approves review when allowApply is true', async () => {
     const tool = findTool('approve_review');
+    let call;
     const result = await tool.handler({
-      commerce: makeReviewCommerce(),
+      commerce: makeReviewCommerce({
+        update: async (id, input) => {
+          call = { id, input };
+          return { ...mockReview, id, ...input };
+        },
+      }),
       params: { reviewId: 'rev_001' },
       allowApply: true,
     });
     assert.equal(result.success, true);
     assert.equal(result.message, 'Review approved');
-    assert.ok(result.review);
+    assert.deepStrictEqual(call, { id: 'rev_001', input: { status: 'approved' } });
     assert.equal(result.review.status, 'approved');
   });
 });
@@ -367,15 +426,24 @@ describe('reviewTools -- approve_review handler', () => {
 describe('reviewTools -- reject_review handler', () => {
   it('rejects review when allowApply is true', async () => {
     const tool = findTool('reject_review');
+    let call;
     const result = await tool.handler({
-      commerce: makeReviewCommerce(),
+      commerce: makeReviewCommerce({
+        update: async (id, input) => {
+          call = { id, input };
+          return { ...mockReview, id, ...input };
+        },
+      }),
       params: { reviewId: 'rev_001', reason: 'Contains spam links' },
       allowApply: true,
     });
     assert.equal(result.success, true);
     assert.equal(result.message, 'Review rejected');
-    assert.ok(result.review);
+    assert.deepStrictEqual(call, { id: 'rev_001', input: { status: 'rejected' } });
     assert.equal(result.review.status, 'rejected');
+    // The engine has nowhere to store the reason; the tool must say so.
+    assert.equal(result.reason, 'Contains spam links');
+    assert.equal(result.reasonPersisted, false);
   });
 });
 
@@ -391,34 +459,60 @@ describe('reviewTools -- get_review_summary handler', () => {
     assert.ok(result.summary);
     assert.equal(result.summary.totalReviews, 42);
     assert.equal(result.summary.averageRating, 4.2);
-    assert.deepStrictEqual(result.summary.ratingDistribution, { 1: 2, 2: 3, 3: 5, 4: 15, 5: 17 });
-    assert.equal(result.summary.verifiedPurchaseCount, 35);
-    assert.equal(result.summary.recommendedPercentage, 88);
+    assert.deepStrictEqual(result.summary.ratingDistribution, [2, 3, 5, 15, 17]);
+    assert.deepStrictEqual(Object.keys(result.summary).sort(), [
+      'averageRating',
+      'ratingDistribution',
+      'totalReviews',
+    ]);
   });
 
-  it('returns not found when summary is null', async () => {
+  it('returns not found when the product has no approved reviews', async () => {
     const tool = findTool('get_review_summary');
     const result = await tool.handler({
-      commerce: makeReviewCommerce({ getSummary: async () => null }),
+      commerce: makeReviewCommerce({
+        getSummary: async (productId) => ({
+          productId,
+          totalReviews: 0,
+          averageRating: 0,
+          ratingDistribution: [0, 0, 0, 0, 0],
+        }),
+      }),
       params: { productId: 'prod_missing' },
     });
     assert.equal(result.success, false);
-    assert.equal(result.error, 'No reviews found for this product');
+    assert.equal(result.error, 'No approved reviews found for this product');
   });
 });
 
 describe('reviewTools -- flag_review handler', () => {
   it('flags review when allowApply is true', async () => {
     const tool = findTool('flag_review');
+    const calls = [];
     const result = await tool.handler({
-      commerce: makeReviewCommerce(),
+      commerce: makeReviewCommerce({
+        markReported: async (id) => {
+          calls.push(['markReported', id]);
+        },
+        update: async (id, input) => {
+          calls.push(['update', id, input]);
+          return { ...mockReview, id, ...input, reportedCount: 1 };
+        },
+      }),
       params: { reviewId: 'rev_001', reason: 'spam', details: 'Contains affiliate links' },
       allowApply: true,
     });
     assert.equal(result.success, true);
     assert.equal(result.message, 'Review flagged for moderation');
-    assert.ok(result.review);
-    assert.equal(result.review.flagged, true);
+    assert.deepStrictEqual(calls, [
+      ['markReported', 'rev_001'],
+      ['update', 'rev_001', { status: 'flagged' }],
+    ]);
+    assert.equal(result.review.status, 'flagged');
+    assert.equal(result.review.reportedCount, 1);
+    assert.equal(result.reason, 'spam');
+    assert.equal(result.details, 'Contains affiliate links');
+    assert.equal(result.reasonPersisted, false);
   });
 });
 
@@ -456,7 +550,7 @@ describe('reviewTools -- error paths', () => {
     );
   });
 
-  it('approve_review throws when commerce.reviews.approve is missing', async () => {
+  it('approve_review throws when commerce.reviews.update is missing', async () => {
     const tool = findTool('approve_review');
     await assert.rejects(
       () =>
@@ -469,7 +563,7 @@ describe('reviewTools -- error paths', () => {
     );
   });
 
-  it('reject_review throws when commerce.reviews.reject is missing', async () => {
+  it('reject_review throws when commerce.reviews.update is missing', async () => {
     const tool = findTool('reject_review');
     await assert.rejects(
       () =>
@@ -494,7 +588,7 @@ describe('reviewTools -- error paths', () => {
     );
   });
 
-  it('flag_review throws when commerce.reviews.flag is missing', async () => {
+  it('flag_review throws when commerce.reviews.markReported is missing', async () => {
     const tool = findTool('flag_review');
     await assert.rejects(
       () =>

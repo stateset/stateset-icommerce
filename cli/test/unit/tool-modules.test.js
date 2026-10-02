@@ -17,7 +17,14 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const TOOLS_DIR = join(__dirname, '..', '..', 'src', 'tools');
 
 // Files to skip: registry modules aggregate tool arrays, but are not tool modules.
-const SKIP_FILES = new Set(['index.js', 'domain-registry.js']);
+// tool-tiers.js (the tier table) and scoped-store.js (a helper) are not tool modules.
+const SKIP_FILES = new Set([
+  'index.js',
+  'domain-registry.js',
+  'tool-tiers.js',
+  'scoped-store.js',
+  'fulfillment-recovery.js',
+]);
 
 /** @type {Map<string, Array<Object>>} filename -> tool array */
 const toolModules = new Map();

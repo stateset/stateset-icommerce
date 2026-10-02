@@ -2,7 +2,7 @@
 
 use super::{
     map_db_error, parse_datetime_row, parse_decimal_opt_row, parse_enum_row, parse_uuid_row,
-    with_immediate_transaction,
+    resolve_currency_in_tx, with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -79,8 +79,8 @@ impl SupplierSkuRepository for SqliteSupplierSkuRepository {
         let id = SupplierSkuId::new();
         let id_str = id.to_string();
         let now_str = Utc::now().to_rfc3339();
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
         with_immediate_transaction(&self.pool, |tx| {
+            let currency = resolve_currency_in_tx(input.currency, tx)?;
             tx.execute(
                 "INSERT INTO supplier_skus (id, product_id, supplier_id, sku, unit_cost, currency, min_order_qty, lead_time_days, is_preferred, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",

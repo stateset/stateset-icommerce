@@ -447,6 +447,46 @@ fn test_canadian_tax_info() {
     assert_eq!(bc.province_code, "BC");
     assert_eq!(bc.gst_rate, dec!(0.05)); // 5% GST
     assert!(bc.pst_rate.is_some());
+
+    // Quebec: QST is 9.975%, so the fraction is 0.09975 and the total with the
+    // 5% federal GST is 0.14975. This was written at scale 4 (0.9975 / 1.4975),
+    // which would have taxed a Quebec sale at 149.75%.
+    let qc = get_canadian_tax_info("QC").expect("QC is a province");
+    assert_eq!(qc.qst_rate, Some(dec!(0.09975)));
+    assert_eq!(qc.total_rate, dec!(0.14975));
+}
+
+/// Every rate in the Canadian table is a fraction of 1, never a percentage,
+/// and the components add up to the stated total. Quebec violated both.
+#[test]
+fn canadian_tax_rates_are_fractions_that_add_up() {
+    use rust_decimal::Decimal;
+    use stateset_embedded::get_canadian_tax_info;
+
+    for code in ["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"] {
+        // The table currently covers 8 of Canada's 13 jurisdictions; NL, PE, NT,
+        // NU and YT are absent, so skip what is missing rather than assert a
+        // rate this test has no business inventing. Anything present must hold
+        // the invariant, and a province added later is covered automatically.
+        let Some(info) = get_canadian_tax_info(code) else {
+            continue;
+        };
+        let parts = [Some(info.gst_rate), info.pst_rate, info.hst_rate, info.qst_rate];
+        for rate in parts.into_iter().flatten() {
+            assert!(
+                rate >= Decimal::ZERO && rate < Decimal::ONE,
+                "{code}: {rate} is not a fraction -- a rate at percentage scale taxes \
+                 an order by 100x",
+            );
+        }
+        let summed: Decimal = parts.into_iter().flatten().sum();
+        assert_eq!(summed, info.total_rate, "{code}: components do not sum to total_rate");
+        assert!(
+            info.total_rate < Decimal::ONE,
+            "{code}: total_rate {} is not a fraction",
+            info.total_rate,
+        );
+    }
 }
 
 #[test]

@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.34.0",
+    "version": "1.36.0",
     "memberCount": 30,
     "defaultMemberCount": 19,
     "rustCrateCount": 22,
@@ -553,25 +553,25 @@
     }
   ],
   "cli": {
-    "binaryCount": 53,
-    "dependencyCount": 13,
-    "optionalDependencyCount": 15,
+    "binaryCount": 56,
+    "dependencyCount": 15,
+    "optionalDependencyCount": 12,
     "topLevelSourceCounts": [
       {
         "name": "tools",
-        "count": 93
+        "count": 98
       },
       {
         "name": "commands",
-        "count": 88
+        "count": 89
       },
       {
         "name": "a2a",
-        "count": 61
+        "count": 62
       },
       {
         "name": "mcp",
-        "count": 31
+        "count": 33
       },
       {
         "name": "channels",
@@ -583,23 +583,23 @@
       },
       {
         "name": "sync",
-        "count": 18
+        "count": 20
       },
       {
         "name": "utils",
-        "count": 15
+        "count": 16
       },
       {
         "name": "harness",
         "count": 14
       },
       {
-        "name": "x402",
+        "name": "chains",
         "count": 10
       },
       {
-        "name": "chains",
-        "count": 9
+        "name": "x402",
+        "count": 10
       },
       {
         "name": "knowledge",
@@ -616,6 +616,10 @@
       {
         "name": "treasury",
         "count": 5
+      },
+      {
+        "name": "connectors",
+        "count": 4
       },
       {
         "name": "providers",
@@ -659,6 +663,10 @@
       },
       {
         "name": "marketplace",
+        "count": 2
+      },
+      {
+        "name": "teams",
         "count": 2
       },
       {
@@ -706,6 +714,10 @@
         "count": 1
       },
       {
+        "name": "business-profile.js",
+        "count": 1
+      },
+      {
         "name": "catalog",
         "count": 1
       },
@@ -743,10 +755,6 @@
       },
       {
         "name": "config.js",
-        "count": 1
-      },
-      {
-        "name": "connectors",
         "count": 1
       },
       {
@@ -950,10 +958,6 @@
         "count": 1
       },
       {
-        "name": "teams",
-        "count": 1
-      },
-      {
         "name": "telegram",
         "count": 1
       },
@@ -986,8 +990,8 @@
         "count": 1
       }
     ],
-    "toolModuleCount": 93,
-    "a2aModuleCount": 61
+    "toolModuleCount": 98,
+    "a2aModuleCount": 62
   },
   "admin": {
     "dependencyCount": 26,

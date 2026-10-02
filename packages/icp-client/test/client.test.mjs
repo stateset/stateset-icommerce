@@ -7,7 +7,18 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
-import { ICPClient, ICPError, generateIdentity, canonicalJson, signEd25519 } from '../src/index.mjs';
+import { readFileSync } from 'node:fs';
+import {
+  ICPClient,
+  ICPError,
+  generateIdentity,
+  generatePrincipalIdentity,
+  principalIdentityFromSeed,
+  signPrincipalBinding,
+  canonicalJson,
+  signEd25519,
+  verifyEd25519,
+} from '../src/index.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HANDLER = resolve(__dirname, '..', '..', '..', 'icp-handler', 'src', 'server.mjs');
@@ -267,4 +278,219 @@ test('fetchChannelEvents on unknown channel throws typed channel.not_found', asy
     client.fetchChannelEvents('icp_ch_does_not_exist', 0),
     (err) => err instanceof ICPError && err.code === 'channel.not_found',
   );
+});
+
+// ===========================================================================
+// PrincipalBinding signing (§4.4)
+//
+// The binding the client puts on an Intent is what the handler's
+// `checkDelegation` verifies against the principal key an operator registered
+// through ICP_PRINCIPAL_KEYS_JSON. These tests pin the shape and the canonical
+// bytes: binding minus `signature`, canonical JSON, Ed25519, hex in
+// `signature.sig`. Drift here silently un-authorizes every agent in the field.
+// ===========================================================================
+
+const BINDING_FIELDS = ['agent', 'authority', 'expiry', 'principal', 'revocation', 'signature'];
+
+test('signPrincipalBinding produces the shape the handler verifies', () => {
+  const principalIdentity = generatePrincipalIdentity();
+  const agent = generateIdentity();
+  const expiresAt = new Date(Date.now() + 3600_000);
+  const binding = signPrincipalBinding(
+    {
+      principal: 'did:web:binding-test.example',
+      agent: agent.aid,
+      expiresAt,
+      verbs: ['purchase.create'],
+      maxPerIntent: { amount: '500', currency: 'USDC' },
+      revocation: 'https://binding-test.example/revoke',
+    },
+    principalIdentity,
+  );
+
+  assert.deepEqual(Object.keys(binding).sort(), BINDING_FIELDS);
+  assert.equal(binding.principal, 'did:web:binding-test.example');
+  assert.equal(binding.agent, agent.aid);
+  assert.deepEqual(binding.authority, {
+    max_per_intent: { amount: '500', currency: 'USDC' },
+    verbs: ['purchase.create'],
+  });
+  assert.equal(binding.expiry, expiresAt.toISOString());
+  assert.equal(binding.revocation, 'https://binding-test.example/revoke');
+  assert.equal(binding.signature.alg, 'ed25519');
+  // The principal signs, so the key id names the principal — never 'self'.
+  assert.equal(binding.signature.kid, 'did:web:binding-test.example');
+  assert.match(binding.signature.sig, /^[0-9a-f]{128}$/);
+});
+
+test('the binding signature covers canonicalJson(binding minus signature)', () => {
+  const principalIdentity = generatePrincipalIdentity();
+  const binding = signPrincipalBinding(
+    { principal: 'did:web:canon.example', agent: 'aid:v1:zAgent', verbs: ['purchase.create'] },
+    principalIdentity,
+  );
+  const { signature, ...unsigned } = binding;
+  assert.equal(
+    verifyEd25519(canonicalJson(unsigned), signature.sig, principalIdentity.ed25519_pubkey),
+    true,
+  );
+  // Tampering with any signed field breaks it — this is the whole point.
+  for (const mutate of [
+    (b) => (b.agent = 'aid:v1:zOtherAgent'),
+    (b) => (b.authority.verbs = ['payout.request']),
+    (b) => (b.expiry = new Date(Date.now() + 86_400_000 * 30).toISOString()),
+  ]) {
+    const tampered = structuredClone(unsigned);
+    mutate(tampered);
+    assert.equal(
+      verifyEd25519(canonicalJson(tampered), signature.sig, principalIdentity.ed25519_pubkey),
+      false,
+    );
+  }
+});
+
+test('a principal identity round-trips through its 32-byte seed', () => {
+  const generated = generatePrincipalIdentity();
+  const restored = principalIdentityFromSeed(generated.ed25519_seed);
+  assert.deepEqual(restored.ed25519_pubkey, generated.ed25519_pubkey);
+  const params = { principal: 'did:web:seed.example', agent: 'aid:v1:zAgent', expiresAt: 1_800_000_000_000 };
+  assert.equal(
+    signPrincipalBinding(params, restored).signature.sig,
+    signPrincipalBinding(params, generated).signature.sig,
+  );
+});
+
+test('signPrincipalBinding rejects an unusable binding rather than signing it', () => {
+  const principalIdentity = generatePrincipalIdentity();
+  const ok = { principal: 'did:web:x.example', agent: 'aid:v1:zAgent' };
+  for (const bad of [
+    { ...ok, principal: '' },
+    { ...ok, agent: undefined },
+    { ...ok, verbs: [] },
+    { ...ok, expiresAt: 'not-a-date' },
+  ]) {
+    assert.throws(() => signPrincipalBinding(bad, principalIdentity), ICPError);
+  }
+  assert.throws(() => signPrincipalBinding(ok, { ed25519_seed: Buffer.alloc(8) }), ICPError);
+});
+
+test('a client with a principal identity signs the binding it sends', async () => {
+  const principalIdentity = generatePrincipalIdentity();
+  const bound = await ICPClient.create({
+    handlerUrl: baseUrl,
+    principal: 'did:web:bound.example',
+    principalIdentity,
+    verbs: ['purchase.create'],
+  });
+  const intent = bound._baseIntent('purchase.create', {
+    merchant: 'aid:v1:zMerchant',
+    settler: 'settler:stateset.usdc.base-sepolia',
+  });
+  const binding = intent.principal_binding;
+  assert.equal(binding.principal, 'did:web:bound.example');
+  assert.equal(binding.agent, bound.aid);
+  assert.equal(binding.signature.kid, 'did:web:bound.example');
+  assert.notEqual(binding.signature.sig, 'deadbeef');
+  const { signature, ...unsigned } = binding;
+  assert.equal(
+    verifyEd25519(canonicalJson(unsigned), signature.sig, principalIdentity.ed25519_pubkey),
+    true,
+  );
+});
+
+test('a client with no principal identity omits principal_binding entirely', async () => {
+  const unbound = await ICPClient.create({
+    handlerUrl: baseUrl,
+    principal: 'did:web:unbound.example',
+  });
+  const intent = unbound._baseIntent('purchase.create', {
+    merchant: 'aid:v1:zMerchant',
+    settler: 'settler:stateset.usdc.base-sepolia',
+  });
+  // Not `undefined` — the key must be ABSENT, or canonicalJson emits the
+  // literal `undefined` and the Intent signature covers invalid JSON.
+  assert.equal(Object.hasOwn(intent, 'principal_binding'), false);
+  assert.deepEqual(JSON.parse(canonicalJson(intent)), JSON.parse(JSON.stringify(intent)));
+});
+
+test('a pre-signed binding is sent verbatim and checked against this agent', async () => {
+  const principalIdentity = generatePrincipalIdentity();
+  const identity = generateIdentity();
+  const principalBinding = signPrincipalBinding(
+    {
+      principal: 'did:web:offline.example',
+      agent: identity.aid,
+      verbs: ['purchase.create'],
+      revocation: 'https://offline.example/revoke',
+    },
+    principalIdentity,
+  );
+  const offline = await ICPClient.create({
+    handlerUrl: baseUrl,
+    principal: 'did:web:offline.example',
+    identity,
+    principalBinding,
+  });
+  const intent = offline._baseIntent('purchase.create', {
+    merchant: 'aid:v1:zMerchant',
+    settler: 'settler:stateset.usdc.base-sepolia',
+  });
+  assert.deepEqual(intent.principal_binding, principalBinding);
+
+  // A binding delegated to somebody else is a configuration error, not a
+  // request to send: the handler would answer delegation.scope_mismatch.
+  await assert.rejects(
+    ICPClient.create({
+      handlerUrl: baseUrl,
+      principal: 'did:web:offline.example',
+      principalBinding,
+    }),
+    (error) => error instanceof ICPError && error.code === 'format.bad_field',
+  );
+});
+
+test('the default binding authorizes every verb this client can emit', async () => {
+  // A default delegation that omits a verb the SDK sends hands the caller
+  // delegation.scope_mismatch from the client's own method; one that includes
+  // a verb the SDK cannot send is over-delegation. Both are drift, so read the
+  // verbs out of the source rather than trusting a hand-kept list.
+  const source = readFileSync(new URL('../src/index.mjs', import.meta.url), 'utf8');
+  const emitted = new Set(
+    [...source.matchAll(/_baseIntent\('([a-z.]+)'/g)].map((match) => match[1]),
+  );
+  assert.ok(emitted.size >= 7, `expected to find the verb methods, found ${emitted.size}`);
+  const client = await ICPClient.create({ handlerUrl: baseUrl, principal: 'did:web:verbs.example' });
+  assert.deepEqual([...client.verbs].sort(), [...emitted].sort());
+});
+
+test('the committed cross-language vector reproduces byte for byte', () => {
+  // The same fixture is asserted by the Python SDK. It is what makes the
+  // "byte-identical across SDKs" claim in both READMEs checkable rather than
+  // aspirational: same params + same seed → same canonical bytes → same
+  // signature, including the expiry normalisation (JS `toISOString()` form).
+  const vector = JSON.parse(
+    readFileSync(new URL('./fixtures/principal-binding-vector.json', import.meta.url), 'utf8'),
+  );
+  const principalIdentity = principalIdentityFromSeed(
+    Buffer.from(vector.principal_seed_hex, 'hex'),
+  );
+  assert.equal(
+    principalIdentity.ed25519_pubkey.toString('hex'),
+    vector.expected_principal_pubkey_hex,
+  );
+  const binding = signPrincipalBinding(
+    {
+      principal: vector.params.principal,
+      agent: vector.params.agent,
+      expiresAt: vector.params.expires_at,
+      verbs: vector.params.verbs,
+      maxPerIntent: vector.params.max_per_intent,
+      revocation: vector.params.revocation,
+    },
+    principalIdentity,
+  );
+  assert.deepEqual(binding, vector.expected_binding);
+  const { signature, ...unsigned } = binding;
+  assert.equal(canonicalJson(unsigned), vector.expected_canonical);
+  assert.equal(signature.sig, vector.expected_signature_hex);
 });

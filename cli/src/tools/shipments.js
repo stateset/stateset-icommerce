@@ -18,6 +18,43 @@ import {
 } from './providers/shipping.js';
 import { cancelPaymentIntent, refundPaymentIntent } from './providers/payments.js';
 import { deterministicId } from './providers/runtime.js';
+import { partialShipmentPlanSchema, planPartialShipment } from './fulfillment-recovery.js';
+
+const shipmentPatchSchema = z
+  .object({
+    shipmentId: z.string().min(1).describe('Shipment ID'),
+    expectedVersion: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe('Reject a stale shipment version'),
+    status: z
+      .enum([
+        'pending',
+        'processing',
+        'ready_to_ship',
+        'shipped',
+        'in_transit',
+        'out_for_delivery',
+        'delivered',
+        'failed',
+        'returned',
+        'on_hold',
+      ])
+      .optional()
+      .describe(
+        'Observed lifecycle status. Use cancel_shipment for cancellation; do not invent missing stages.',
+      ),
+    carrier: z.string().optional(),
+    trackingNumber: z.string().optional(),
+    recipientName: z.string().optional(),
+    recipientEmail: z.string().optional(),
+    recipientPhone: z.string().optional(),
+    shippingAddress: z.string().optional(),
+    notes: z.string().optional(),
+  })
+  .strict();
 
 const addressSchema = z.object({
   name: z.string().max(255).optional().describe('Recipient or sender name'),
@@ -64,9 +101,9 @@ function buildExceptionPlan(params) {
       'Create replacement shipping label and notify customer.',
     ],
     partial_shipment: [
-      'Identify remaining unfulfilled items.',
-      'Create follow-up shipment for remaining quantities.',
-      'Send customer partial shipment notification and ETA.',
+      'Read persisted order-line fulfillment quantities.',
+      'Reconcile existing shipment contents and inventory reservations.',
+      'Route the follow-up shipment to an operator; automatic creation is unavailable.',
     ],
     split_tender_failure: [
       'Inspect payment intent settlement status.',
@@ -92,6 +129,17 @@ function buildExceptionPlan(params) {
  * Shipment tool definitions
  */
 export const shipmentTools = [
+  {
+    name: 'plan_partial_shipment',
+    description:
+      'Read remaining order-line quantities and validate a partial-shipment recovery plan. Does not reserve stock or create a shipment; operator reconciliation is required.',
+    inputSchema: partialShipmentPlanSchema.shape,
+    permission: 'read',
+    handler: async ({ commerce, params }) => ({
+      success: true,
+      plan: await planPartialShipment(commerce, params),
+    }),
+  },
   {
     name: 'list_shipments',
     description: 'List all shipments.',
@@ -126,7 +174,16 @@ export const shipmentTools = [
     inputSchema: {
       orderId: z.string().min(1).describe('Order ID'),
       carrier: z.string().optional().describe('Carrier: USPS, UPS, FedEx, DHL'),
-      service: z.string().optional().describe('Service level'),
+      recipientName: z.string().min(1).describe('Recipient name'),
+      shippingAddress: z.string().min(1).describe('Full shipping address'),
+      recipientEmail: z.string().optional().describe('Recipient email'),
+      recipientPhone: z.string().optional().describe('Recipient phone'),
+      trackingNumber: z.string().optional().describe('Carrier tracking number'),
+      shippingMethod: z
+        .string()
+        .optional()
+        .describe('Native shipping method, e.g. ground or express'),
+      service: z.string().optional().describe('Legacy alias for shippingMethod'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -134,20 +191,51 @@ export const shipmentTools = [
         return applyRequired('Create shipment', params);
       }
 
-      const shipment = await commerce.shipments.create({
-        orderId: params.orderId,
-        carrier: params.carrier,
-        service: params.service,
-      });
+      // Binding CreateShipmentInput: recipientName + shippingAddress are
+      // required; the service level travels as shippingMethod; absent
+      // optionals are omitted (never null).
+      const input = Object.fromEntries(
+        Object.entries({
+          orderId: params.orderId,
+          recipientName: params.recipientName,
+          shippingAddress: params.shippingAddress,
+          carrier: params.carrier,
+          shippingMethod: params.shippingMethod || params.service,
+          trackingNumber: params.trackingNumber,
+          recipientEmail: params.recipientEmail,
+          recipientPhone: params.recipientPhone,
+        }).filter(([, value]) => value !== undefined && value !== null),
+      );
+      const shipment = await commerce.shipments.create(input);
       return { success: true, message: 'Shipment created', shipment };
     },
   },
 
   {
+    name: 'update_shipment',
+    description:
+      'Update shipment fields or move through the native lifecycle. Preserves omitted fields and rejects invalid transitions or stale expectedVersion. Cancellation requires cancel_shipment.',
+    inputSchema: shipmentPatchSchema.shape,
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) return applyRequired('Update shipment', params);
+      const { shipmentId, ...patch } = shipmentPatchSchema.parse(params);
+      const shipment = await commerce.shipments.update(shipmentId, patch);
+      return { success: true, message: 'Shipment updated', shipment };
+    },
+  },
+
+  {
     name: 'ship_shipment',
-    description: 'Mark a shipment as shipped with an optional tracking number.',
+    description: 'Mark a ready_to_ship shipment as shipped with an optional tracking number.',
     inputSchema: {
       shipmentId: z.string().min(1).describe('Shipment ID'),
+      expectedVersion: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Reject a stale shipment version'),
       trackingNumber: z.string().optional().describe('Carrier tracking number'),
     },
     permission: 'write',
@@ -156,16 +244,29 @@ export const shipmentTools = [
         return applyRequired('Ship shipment', params);
       }
 
-      const shipment = await commerce.shipments.ship(params.shipmentId, params.trackingNumber);
+      const shipment =
+        params.expectedVersion === undefined
+          ? await commerce.shipments.ship(params.shipmentId, params.trackingNumber)
+          : await commerce.shipments.update(params.shipmentId, {
+              status: 'shipped',
+              expectedVersion: params.expectedVersion,
+              trackingNumber: params.trackingNumber,
+            });
       return { success: true, message: 'Shipment marked as shipped', shipment };
     },
   },
 
   {
     name: 'deliver_shipment',
-    description: 'Mark a shipment as delivered.',
+    description: 'Mark an out_for_delivery shipment as delivered.',
     inputSchema: {
       shipmentId: z.string().min(1).describe('Shipment ID'),
+      expectedVersion: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Reject a stale shipment version'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -174,16 +275,28 @@ export const shipmentTools = [
         return applyRequired('Deliver shipment', params);
       }
 
-      const shipment = await commerce.shipments.deliver(shipmentId);
+      const shipment =
+        params.expectedVersion === undefined
+          ? await commerce.shipments.deliver(shipmentId)
+          : await commerce.shipments.update(params.shipmentId, {
+              status: 'delivered',
+              expectedVersion: params.expectedVersion,
+            });
       return { success: true, message: 'Shipment delivered', shipment };
     },
   },
 
   {
     name: 'cancel_shipment',
-    description: 'Cancel a shipment before delivery is completed.',
+    description: 'Cancel a shipment before carrier handoff. Retains shipment history.',
     inputSchema: {
       shipmentId: z.string().min(1).describe('Shipment ID'),
+      expectedVersion: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Reject a stale shipment version'),
     },
     permission: 'delete',
     handler: async ({ commerce, params, allowApply }) => {
@@ -191,7 +304,13 @@ export const shipmentTools = [
         return applyRequired('Cancel shipment', params);
       }
 
-      const shipment = await commerce.shipments.cancel(params.shipmentId);
+      const shipment =
+        params.expectedVersion === undefined
+          ? await commerce.shipments.cancel(params.shipmentId)
+          : await commerce.shipments.update(params.shipmentId, {
+              status: 'cancelled',
+              expectedVersion: params.expectedVersion,
+            });
       return { success: true, message: 'Shipment cancelled', shipment };
     },
   },
@@ -352,13 +471,14 @@ export const shipmentTools = [
     inputSchema: {
       labelId: z.string().optional().describe('Shipping label ID'),
       trackingNumber: z.string().optional().describe('Carrier tracking number'),
-      advanceStatus: z
-        .boolean()
-        .optional()
-        .describe('Advance simulated tracking status for deterministic replay testing'),
     },
     permission: 'read',
     handler: async ({ params }) => {
+      if (params.advanceStatus) {
+        throw new Error(
+          'Tracking is read-only; use the write-gated provider webhook tool for status updates',
+        );
+      }
       if (!params.labelId && !params.trackingNumber) {
         throw new Error('Provide either labelId or trackingNumber');
       }
@@ -366,7 +486,6 @@ export const shipmentTools = [
       const tracking = trackShippingLabel({
         labelId: params.labelId,
         trackingNumber: params.trackingNumber,
-        advanceStatus: Boolean(params.advanceStatus),
       });
 
       return {
@@ -452,7 +571,7 @@ export const shipmentTools = [
   {
     name: 'handle_fulfillment_exception',
     description:
-      'Execute governed fulfillment exception workflows for carrier failure, partial shipment, split tender, and returns arbitration.',
+      'Plan or execute fulfillment exception workflows. Partial shipment returns a read-only reconciliation plan; automatic follow-up shipment creation is unavailable.',
     inputSchema: {
       exceptionType: z
         .enum([
@@ -538,28 +657,17 @@ export const shipmentTools = [
       }
 
       if (params.exceptionType === 'partial_shipment') {
-        if (autoExecute && commerce?.shipments?.create) {
-          const followUpShipment = await commerce.shipments.create({
-            orderId: params.orderId,
-            carrier: details.carrier,
-            service: details.service,
-            parentShipmentId: params.shipmentId,
-            items: details.remainingItems || [],
-            reason: 'partial_shipment_compensation',
-          });
-          artifacts.followUpShipment = followUpShipment;
-          execution.push({
-            action: 'create_follow_up_shipment',
-            status: 'completed',
-            shipmentId: followUpShipment.id || null,
-          });
-        } else {
-          execution.push({
-            action: 'create_follow_up_shipment',
-            status: 'skipped',
-            reason: 'autoExecuteCompensation disabled or shipments.create unavailable',
-          });
-        }
+        const recoveryPlan = await planPartialShipment(commerce, {
+          orderId: params.orderId,
+          shipmentId: params.shipmentId,
+          remainingItems: details.remainingItems,
+        });
+        artifacts.recoveryPlan = recoveryPlan;
+        execution.push({
+          action: 'create_follow_up_shipment',
+          status: autoExecute ? 'blocked' : 'skipped',
+          reason: recoveryPlan.reason,
+        });
       }
 
       if (params.exceptionType === 'split_tender_failure') {
@@ -630,8 +738,14 @@ export const shipmentTools = [
       });
 
       return {
-        success: true,
-        message: 'Fulfillment exception workflow executed',
+        success: !(params.exceptionType === 'partial_shipment' && autoExecute),
+        ...(params.exceptionType === 'partial_shipment' && autoExecute
+          ? { error: 'Automatic partial-shipment recovery requires operator reconciliation' }
+          : {}),
+        message:
+          params.exceptionType === 'partial_shipment'
+            ? 'Partial-shipment reconciliation plan prepared; no shipment created'
+            : 'Fulfillment exception workflow executed',
         caseId,
         workflowPlan,
         autoExecuteCompensation: autoExecute,

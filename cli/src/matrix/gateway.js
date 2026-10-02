@@ -65,7 +65,7 @@ async function matrixFetch(homeserver, accessToken, method, path, { body, query,
  *
  * @param {Object} config
  * @param {string}   [config.dbPath='./store.db']
- * @param {boolean}  [config.allowApply=true]
+ * @param {boolean}  [config.allowApply=false]
  * @param {string}   [config.model]
  * @param {number}   [config.maxTurns=10]
  * @param {boolean}  [config.verbose=false]
@@ -80,7 +80,7 @@ async function matrixFetch(homeserver, accessToken, method, path, { body, query,
  */
 export async function startMatrixGateway({
   dbPath = './store.db',
-  allowApply = true,
+  allowApply = false,
   model,
   maxTurns = 10,
   verbose = false,

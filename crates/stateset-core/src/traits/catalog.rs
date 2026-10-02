@@ -95,6 +95,12 @@ pub trait PromotionRepository: Send + Sync {
     fn activate(&self, id: PromotionId) -> Result<Promotion>;
     /// Deactivate a promotion
     fn deactivate(&self, id: PromotionId) -> Result<Promotion>;
+    /// Attach a condition to an existing promotion, after validating it.
+    fn add_condition(
+        &self,
+        promotion_id: PromotionId,
+        condition: crate::models::CreatePromotionCondition,
+    ) -> Result<Promotion>;
 
     /// Create a coupon code
     fn create_coupon(&self, input: CreateCouponCode) -> Result<CouponCode>;
@@ -119,6 +125,9 @@ pub trait PromotionRepository: Send + Sync {
         discount_amount: rust_decimal::Decimal,
         currency: &str,
     ) -> Result<PromotionUsage>;
+    /// Read the promotion usage ledger (who redeemed what, on which order or
+    /// cart, for how much), oldest first.
+    fn list_usage(&self, filter: PromotionUsageFilter) -> Result<Vec<PromotionUsage>>;
 }
 
 /// Price level (B2B pricing tier) repository trait.
@@ -253,6 +262,10 @@ pub trait ChannelRepository: Send + Sync {
     fn set_lock(&self, id: ChannelId, locked: bool) -> Result<Channel>;
 
     /// Bulk upsert/delete channel SKU mappings. Returns the affected count.
+    ///
+    /// Refused with `Conflict` while the channel is API-locked
+    /// ([`Channel::is_mutation_blocked`](crate::Channel::is_mutation_blocked)),
+    /// and with `NotFound` for an unknown channel.
     fn sync_products(&self, id: ChannelId, items: Vec<ChannelProductSyncItem>) -> Result<u64>;
 
     /// List a channel's SKU mappings.

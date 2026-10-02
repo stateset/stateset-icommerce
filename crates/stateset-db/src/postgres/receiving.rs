@@ -1148,6 +1148,16 @@ impl PgReceivingRepository {
         po_id: Uuid,
         warehouse_id: i32,
     ) -> Result<Receipt> {
+        // The PO must exist: an unknown id is `NotFound`, not an empty receipt.
+        let supplier_id: Option<Uuid> =
+            sqlx::query_as("SELECT supplier_id FROM purchase_orders WHERE id = $1")
+                .bind(po_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?
+                .map(|row: (Option<Uuid>,)| row.0)
+                .ok_or(CommerceError::NotFound)?;
+
         let rows = sqlx::query_as::<_, (String, Option<String>, Decimal, Decimal)>(
             "SELECT sku, name, quantity_ordered, unit_cost FROM purchase_order_items WHERE purchase_order_id = $1",
         )
@@ -1169,14 +1179,6 @@ impl PgReceivingRepository {
                 notes: None,
             });
         }
-
-        let supplier_id: Option<Uuid> =
-            sqlx::query_as("SELECT supplier_id FROM purchase_orders WHERE id = $1")
-                .bind(po_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(map_db_error)?
-                .map(|row: (Uuid,)| row.0);
 
         self.create_receipt_async(CreateReceipt {
             receipt_number: None,

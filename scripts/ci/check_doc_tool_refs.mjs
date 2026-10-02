@@ -38,6 +38,18 @@ const DOC_PATHS = [
 const TABLE_TOOL_HEADINGS = new Set(['MCP Tools']);
 const INLINE_TOOL_LIST_HEADINGS = new Set(['Read Tools', 'Write Tools', 'Admin Tools', 'Quick Reference']);
 const TOOL_NAME_SET = new Set(getAllStaticMcpToolDefinitions().map((tool) => tool.name));
+
+// The Node binding ships its own tool catalog (`@stateset/embedded/native-toolkit`,
+// generated into bindings/node/tool-descriptors.json). Its names are
+// `<getter>.<method>` on the canonical side and `<getter>__<method>` on the
+// wire, and its README documents both, so accept both spellings.
+const nativeDescriptors = JSON.parse(
+  await readFile(path.join(rootDir, 'bindings/node/tool-descriptors.json'), 'utf8'),
+);
+for (const tool of nativeDescriptors.tools ?? []) {
+  TOOL_NAME_SET.add(tool.name);
+  TOOL_NAME_SET.add(tool.name.replace('.', '__'));
+}
 const NUMBERED_TOOL_STEP_REGEX = /^\d+\.\s+`([^`]+)`/;
 
 const LINE_PATTERNS = [

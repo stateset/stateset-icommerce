@@ -2,7 +2,7 @@
 
 use super::{
     map_db_error, parse_datetime_row, parse_decimal_row, parse_enum_row, parse_json_row,
-    parse_uuid_row, with_immediate_transaction,
+    parse_uuid_row, resolve_currency_in_tx, with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -158,13 +158,13 @@ impl CompanyRepository for SqliteCompanyRepository {
         let id = CompanyId::new();
         let id_str = id.to_string();
         let now_str = Utc::now().to_rfc3339();
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
         let tags_json = serde_json::to_string(&input.tags)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let metadata_json = serde_json::to_string(&input.metadata)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         with_immediate_transaction(&self.pool, |tx| {
+            let currency = resolve_currency_in_tx(input.currency, tx)?;
             tx.execute(
                 "INSERT INTO companies (id, name, reference, email, phone, currency, payment_terms_days, status, tags, metadata, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)",

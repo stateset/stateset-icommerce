@@ -31,6 +31,7 @@ import { getMemoryStore } from './memory/store.js';
 import { loadAgentSettings } from './settings.js';
 import { ensureHarnessPluginsLoaded, getHarnessHookRunner } from './harness-hooks.js';
 import { redactSensitive } from './privacy.js';
+import { businessProfilePromptAppend } from './business-profile.js';
 import { buildClaudeEnv, emitEvent } from './harness-utils.js';
 
 // Extracted modules
@@ -605,7 +606,10 @@ export async function runAgentLoop({
 
   // Build options
   const thinkTokens = THINK_LEVELS[effectiveThinkLevel] || 0;
-  const systemPrompt = systemPromptOverride || agentConfig.systemPrompt;
+  const profilePrompt = businessProfilePromptAppend(process.cwd());
+  const systemPrompt = [systemPromptOverride || agentConfig.systemPrompt, profilePrompt]
+    .filter(Boolean)
+    .join('\n\n');
   const promptReport = buildPromptReport({
     request: effectiveRequest,
     history: workingHistory,

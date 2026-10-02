@@ -7,9 +7,9 @@
 //!
 //! let commerce = Commerce::new(":memory:")?;
 //!
-//! // Create a shipment for an order
+//! // Assumes `order` was created with SKU-001 and a quantity of at least two.
 //! let shipment = commerce.shipments().create(CreateShipment {
-//!     order_id: OrderId::new(),
+//!     order_id: order.id,
 //!     recipient_name: "Alice Smith".into(),
 //!     shipping_address: "123 Main St, City, ST 12345".into(),
 //!     items: Some(vec![CreateShipmentItem {
@@ -21,10 +21,14 @@
 //!     ..Default::default()
 //! })?;
 //!
+//! commerce.shipments().mark_processing(shipment.id)?;
+//! commerce.shipments().mark_ready(shipment.id)?;
 //! // Ship the order with tracking number
 //! let shipment = commerce.shipments().ship(shipment.id, Some("1Z999AA10123456784".into()))?;
 //!
 //! // Mark as delivered
+//! commerce.shipments().mark_in_transit(shipment.id)?;
+//! commerce.shipments().mark_out_for_delivery(shipment.id)?;
 //! let shipment = commerce.shipments().mark_delivered(shipment.id)?;
 //! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
@@ -61,11 +65,13 @@ impl Shipments {
     ///
     /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateShipment, CreateShipmentItem, OrderId, ShippingCarrier};
+    /// # fn example(order_id: OrderId) -> Result<(), stateset_embedded::CommerceError> {
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
+    /// // Supply an existing order with a PROD-001 line containing at least one unit.
     /// let shipment = commerce.shipments().create(CreateShipment {
-    ///     order_id: OrderId::new(),
+    ///     order_id,
     ///     carrier: Some(ShippingCarrier::Ups),
     ///     recipient_name: "John Doe".into(),
     ///     recipient_email: Some("john@example.com".into()),
@@ -79,6 +85,7 @@ impl Shipments {
     ///     ..Default::default()
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
+    /// # }
     /// ```
     pub fn create(&self, input: CreateShipment) -> Result<Shipment> {
         let shipment = self.db.shipments().create(input)?;
@@ -101,7 +108,8 @@ impl Shipments {
         self.db.shipments().get_by_tracking(tracking_number)
     }
 
-    /// Update a shipment
+    /// Update a shipment, enforcing lifecycle transitions and an optional expected version.
+    /// Changed fields and the outbox fact commit together; identical retries are no-ops.
     pub fn update(&self, id: ShipmentId, input: stateset_core::UpdateShipment) -> Result<Shipment> {
         self.db.shipments().update(id, input)
     }
@@ -129,6 +137,7 @@ impl Shipments {
     }
 
     /// Ship the order (hand off to carrier)
+    /// The shipment must be ready to ship, or already shipped for a retry.
     ///
     /// # Example
     ///
@@ -162,7 +171,8 @@ impl Shipments {
 
     /// Mark shipment as delivered
     ///
-    /// This records the delivery timestamp and marks the shipment complete.
+    /// Requires out-for-delivery status, or delivered status for a retry.
+    /// Records the first delivery timestamp without resetting it on retries.
     pub fn mark_delivered(&self, id: ShipmentId) -> Result<Shipment> {
         let shipment = self.db.shipments().mark_delivered(id)?;
         self.metrics.record_shipment_delivered(&shipment.id.to_string());

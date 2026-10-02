@@ -2,7 +2,7 @@
 
 use super::{
     map_db_error, parse_datetime_row, parse_decimal_row, parse_enum_row, parse_uuid_row,
-    with_immediate_transaction,
+    resolve_currency_in_tx, with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -138,8 +138,8 @@ impl PrepaymentRepository for SqlitePrepaymentRepository {
         let id_str = id.to_string();
         let now_str = Utc::now().to_rfc3339();
         let number = format!("PRE-{}", &id_str[..8]);
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
         with_immediate_transaction(&self.pool, |tx| {
+            let currency = resolve_currency_in_tx(input.currency, tx)?;
             tx.execute(
                 "INSERT INTO prepayments (id, number, supplier_id, amount, remaining, currency, status, method, reference, memo, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)",
@@ -307,6 +307,7 @@ mod tests {
     use crate::DatabaseConfig;
     use crate::sqlite::SqliteDatabase;
     use rust_decimal_macros::dec;
+    use std::sync::{Arc, Barrier};
     use uuid::Uuid;
 
     fn test_repo() -> SqlitePrepaymentRepository {
@@ -368,6 +369,31 @@ mod tests {
         let repo = test_repo();
         let p = new_prepayment(&repo, dec!(50));
         assert!(repo.apply(p.id, apply(dec!(60))).is_err());
+    }
+
+    #[test]
+    fn competing_applications_cannot_exceed_prepayment() {
+        let repo = Arc::new(test_repo());
+        let p = new_prepayment(&repo, dec!(3));
+        let id = p.id;
+        let barrier = Arc::new(Barrier::new(2));
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let repo = Arc::clone(&repo);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                repo.apply(id, apply(dec!(2)))
+            }));
+        }
+        let outcomes: Vec<_> = handles.into_iter().map(|h| h.join().expect("join")).collect();
+        let successes = outcomes.iter().filter(|r| r.is_ok()).count();
+        assert!(successes <= 1);
+        let stored = repo.get(p.id).expect("get").expect("prepayment");
+        let apps = repo.list_applications(p.id).expect("applications");
+        assert_eq!(apps.len(), successes);
+        assert_eq!(stored.remaining, dec!(3) - dec!(2) * Decimal::from(successes));
+        assert!(stored.remaining >= Decimal::ZERO);
     }
 
     #[test]

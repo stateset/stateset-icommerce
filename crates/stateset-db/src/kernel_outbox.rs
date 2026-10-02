@@ -29,6 +29,19 @@ pub struct KernelOutboxEvent {
     pub lease_expires_at: Option<DateTime<Utc>>,
     pub next_attempt_at: Option<DateTime<Utc>>,
     pub dead_lettered_at: Option<DateTime<Utc>>,
+    /// Which tier produced this fact: `governed` (a kernel command, with
+    /// policy, budget and a sealed receipt) or `recorded` (an ordinary
+    /// mutation, fact only).
+    pub tier: String,
+}
+
+/// A fact emitted by an ordinary mutation, carrying no governance metadata.
+#[derive(Debug, Clone)]
+pub struct RecordedFact<'a> {
+    pub event_type: &'a str,
+    pub aggregate_type: &'a str,
+    pub aggregate_id: &'a str,
+    pub payload: Value,
 }
 
 /// Durable idempotency record containing a serialized execution receipt.
@@ -215,6 +228,7 @@ impl KernelOutboxEvent {
             lease_expires_at: None,
             next_attempt_at: None,
             dead_lettered_at: None,
+            tier: "governed".to_string(),
         }
     }
 }

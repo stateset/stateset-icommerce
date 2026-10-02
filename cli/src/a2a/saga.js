@@ -573,7 +573,14 @@ export const PURCHASE_SAGA = {
         const escrowResult = ctx.create_escrow;
         if (!escrowResult?.escrow?.id) throw new Error('No escrow ID');
         const conditions = await ctx.services.a2a.checkPaymentConditions(escrowResult.escrow.id);
-        return { conditions, fulfilled: conditions.allMet };
+        // Unmet conditions FAIL the step, so the saga compensates (the escrow is
+        // refunded) instead of moving on to release. Returning
+        // { fulfilled: false } let release_escrow pay the seller for an order
+        // that was never fulfilled.
+        if (!conditions?.allMet) {
+          throw new Error('Fulfillment conditions are not met; the escrow will not be released');
+        }
+        return { conditions, fulfilled: true };
       },
       compensate: async () => {
         // Nothing to undo -- fulfillment is a check
@@ -586,6 +593,10 @@ export const PURCHASE_SAGA = {
       execute: async (ctx) => {
         const escrowResult = ctx.create_escrow;
         if (!escrowResult?.escrow?.id) throw new Error('No escrow ID');
+        // The point of no return: release only on proven fulfillment.
+        if (ctx.await_fulfillment?.fulfilled !== true) {
+          throw new Error('Refusing to release escrow without proven fulfillment');
+        }
         return ctx.services.a2a.settleConditionalPayment(escrowResult.escrow.id);
       },
       compensate: async () => {

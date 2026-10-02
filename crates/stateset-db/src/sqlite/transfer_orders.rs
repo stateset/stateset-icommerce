@@ -267,6 +267,20 @@ impl stateset_core::TransferOrderRepository for SqliteTransferOrderRepository {
         let id_str = id.to_string();
         let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
+            let status: String = tx.query_row(
+                "SELECT status FROM transfer_orders WHERE id = ?",
+                [&id_str],
+                |row| row.get(0),
+            )?;
+            if status != TransferOrderStatus::Draft.to_string()
+                && status != TransferOrderStatus::Pending.to_string()
+            {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict(format!(
+                        "Cannot ship a transfer order in status {status}"
+                    )),
+                )));
+            }
             // Shipping sets quantity_shipped = quantity on each line.
             tx.execute(
                 "UPDATE transfer_order_items SET quantity_shipped = quantity WHERE transfer_order_id = ?",
@@ -301,30 +315,44 @@ impl stateset_core::TransferOrderRepository for SqliteTransferOrderRepository {
                 [&id_str],
                 |row| row.get(0),
             )?;
-            if status == TransferOrderStatus::Cancelled.to_string() {
+            if status != TransferOrderStatus::InTransit.to_string()
+                && status != TransferOrderStatus::PartiallyReceived.to_string()
+            {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                    CommerceError::ValidationError(
-                        "Cannot receive against a cancelled transfer order".into(),
-                    ),
+                    CommerceError::ValidationError(format!(
+                        "Cannot receive against a transfer order in status {status}"
+                    )),
                 )));
             }
-            let row: Option<(String, String)> = tx
+            let row: Option<(String, String, String)> = tx
                 .query_row(
-                    "SELECT quantity, quantity_received FROM transfer_order_items WHERE id = ? AND transfer_order_id = ?",
+                    "SELECT quantity, quantity_shipped, quantity_received FROM transfer_order_items WHERE id = ? AND transfer_order_id = ?",
                     rusqlite::params![&item_str, &id_str],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )
                 .optional()?;
-            let Some((expected, current)) = row else {
+            let Some((expected, shipped, current)) = row else {
                 return Err(rusqlite::Error::QueryReturnedNoRows);
             };
-            let expected: Decimal = expected.parse().unwrap_or(Decimal::ZERO);
-            let current: Decimal = current.parse().unwrap_or(Decimal::ZERO);
-            let new_received = current + quantity;
+            let expected = parse_decimal_row(&expected, "transfer_order_item", "quantity")?;
+            let shipped = parse_decimal_row(&shipped, "transfer_order_item", "quantity_shipped")?;
+            let current = parse_decimal_row(&current, "transfer_order_item", "quantity_received")?;
+            let new_received = current.checked_add(quantity).ok_or_else(|| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::ValidationError(
+                    "Transfer receipt quantity exceeds decimal range".into(),
+                )))
+            })?;
             if new_received > expected {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                     CommerceError::ValidationError(format!(
                         "receiving {quantity} would exceed the {expected} expected on this line ({current} already received)"
+                    )),
+                )));
+            }
+            if new_received > shipped {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ValidationError(format!(
+                        "receiving {quantity} would exceed the {shipped} shipped on this line ({current} already received)"
                     )),
                 )));
             }
@@ -480,6 +508,37 @@ mod tests {
         assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
         let stored = repo.get(o.id).expect("get").expect("found");
         assert_eq!(stored.total_received(), dec!(0));
+    }
+
+    #[test]
+    fn receipt_requires_shipment_and_shipping_cannot_resurrect_terminal_order() {
+        let repo = test_repo();
+        let draft = new_order(&repo);
+        let item_id = draft.items[0].id;
+        let err = repo.receive_line(draft.id, item_id, dec!(1)).expect_err("unshipped receipt");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        assert_eq!(repo.get(draft.id).expect("get").expect("order").total_received(), dec!(0));
+
+        let shipped = repo.ship(draft.id).expect("ship");
+        assert_eq!(shipped.items[0].quantity_shipped, dec!(10));
+        let err = repo.ship(draft.id).expect_err("second shipment");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        repo.receive_line(draft.id, item_id, dec!(10)).expect("receive all");
+        let err = repo.ship(draft.id).expect_err("ship after receipt");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        assert_eq!(
+            repo.get(draft.id).expect("get").expect("order").status,
+            TransferOrderStatus::Received
+        );
+
+        let cancelled = new_order(&repo);
+        repo.cancel(cancelled.id).expect("cancel");
+        let err = repo.ship(cancelled.id).expect_err("ship after cancel");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        assert_eq!(
+            repo.get(cancelled.id).expect("get").expect("order").status,
+            TransferOrderStatus::Cancelled
+        );
     }
 
     #[test]

@@ -566,7 +566,17 @@ impl PgWorkOrderRepository {
         .map_err(map_db_error)?
         .ok_or(CommerceError::NotFound)?;
 
-        let new_quantity_completed = existing.0 + quantity_completed;
+        let new_quantity_completed =
+            existing.0.checked_add(quantity_completed).ok_or_else(|| {
+                CommerceError::ValidationError(
+                    "Completed quantity exceeds decimal range".to_string(),
+                )
+            })?;
+        if new_quantity_completed > existing.1 {
+            return Err(CommerceError::ValidationError(
+                "Completed quantity would exceed quantity to build".to_string(),
+            ));
+        }
         let is_complete = new_quantity_completed >= existing.1;
         let new_status = if is_complete { "completed" } else { "partially_completed" };
         let new_actual_end = if is_complete { Some(now) } else { existing.2 };
@@ -755,6 +765,11 @@ impl PgWorkOrderRepository {
         work_order_id: Uuid,
         material: AddWorkOrderMaterial,
     ) -> Result<WorkOrderMaterial> {
+        if material.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Reserved material quantity must be positive".into(),
+            ));
+        }
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -796,17 +811,30 @@ impl PgWorkOrderRepository {
         material_id: Uuid,
         quantity: Decimal,
     ) -> Result<WorkOrderMaterial> {
-        let existing = self.get_material_by_id(material_id).await?;
-        let now = Utc::now();
-        let new_consumed = existing.consumed_quantity + quantity;
-
-        sqlx::query("UPDATE manufacturing_work_order_materials SET consumed_quantity = $1, updated_at = $2 WHERE id = $3")
-            .bind(new_consumed)
-            .bind(now)
-            .bind(material_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        if quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Consumed material quantity must be positive".into(),
+            ));
+        }
+        // The arithmetic and cap live in one UPDATE, so concurrent consumers
+        // serialize on the row and cannot both spend the same reservation.
+        let updated = sqlx::query(
+            "UPDATE manufacturing_work_order_materials
+             SET consumed_quantity = consumed_quantity + $1, updated_at = $2
+             WHERE id = $3 AND consumed_quantity + $1 <= reserved_quantity",
+        )
+        .bind(quantity)
+        .bind(Utc::now())
+        .bind(material_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            self.get_material_by_id(material_id).await?;
+            return Err(CommerceError::ValidationError(
+                "Cannot consume more material than reserved".into(),
+            ));
+        }
 
         self.get_material_by_id(material_id).await
     }

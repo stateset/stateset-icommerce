@@ -1020,6 +1020,18 @@ impl PgAccountsReceivableRepository {
             ));
         }
 
+        // `ar_credit_memos.customer_id` carries no FK, so an unknown customer
+        // would otherwise yield an Open memo for nobody.
+        let customer_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM customers WHERE id = $1)")
+                .bind(input.customer_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_db_error)?;
+        if !customer_exists {
+            return Err(CommerceError::NotFound);
+        }
+
         let id = Uuid::new_v4();
         let now = Utc::now();
         let credit_memo_number = generate_credit_memo_number();
@@ -1116,11 +1128,14 @@ impl PgAccountsReceivableRepository {
         if let Some(reason) = filter.reason {
             builder.push(" AND reason = ").push_bind(reason.to_string());
         }
+        // A voided memo keeps its `unapplied_amount` as the audit record of
+        // what was never applied (as a cancelled vendor credit keeps
+        // `remaining`), so "unapplied" also gates on status.
         if let Some(has_unapplied) = filter.has_unapplied {
             if has_unapplied {
-                builder.push(" AND unapplied_amount > 0");
+                builder.push(" AND unapplied_amount > 0 AND status <> 'voided'");
             } else {
-                builder.push(" AND unapplied_amount <= 0");
+                builder.push(" AND (unapplied_amount <= 0 OR status = 'voided')");
             }
         }
         if let Some(from_date) = filter.from_date {

@@ -34,16 +34,16 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 
 | Language | Ecosystem | Package | Version | Coverage | Summary |
 | --- | --- | --- | --- | --- | --- |
-| .NET | NuGet | `StateSet.Embedded` | `1.34.0` | `detailed` | 245 API methods |
+| .NET | NuGet | `StateSet.Embedded` | `1.36.0` | `detailed` | 245 API methods |
 | Go | Go modules | `github.com/stateset/stateset-icommerce/bindings/go/stateset` | — | `detailed` | 81 API methods |
-| Java | Maven | `com.stateset:embedded` | `1.34.0` | `package-manifest` | manifest coverage |
-| Kotlin | Maven | `com.stateset:embedded-kotlin` | `1.34.0` | `package-manifest` | manifest coverage |
-| Node.js | npm | `@stateset/embedded` | `1.34.0` | `detailed` | 8 export entrypoints |
-| PHP | Composer | `stateset/embedded` | `1.34.0` | `package-manifest` | manifest coverage |
-| Python | PyPI | `stateset-embedded` | `1.34.0` | `detailed` | 244 public symbols |
-| Ruby | RubyGems | `stateset_embedded` | `1.34.0` | `package-manifest` | manifest coverage |
+| Java | Maven | `com.stateset:embedded` | `1.36.0` | `package-manifest` | manifest coverage |
+| Kotlin | Maven | `com.stateset:embedded-kotlin` | `1.36.0` | `package-manifest` | manifest coverage |
+| Node.js | npm | `@stateset/embedded` | `1.36.0` | `detailed` | 10 export entrypoints |
+| PHP | Composer | `stateset/embedded` | `1.36.0` | `package-manifest` | manifest coverage |
+| Python | PyPI | `stateset-embedded` | `1.36.0` | `detailed` | 257 public symbols |
+| Ruby | RubyGems | `stateset_embedded` | `1.36.0` | `package-manifest` | manifest coverage |
 | Swift | SwiftPM | `StateSet` | — | `detailed` | 71 API methods |
-| WASM | npm | `@stateset/embedded-wasm` | `1.34.0` | `package-manifest` | manifest coverage |
+| WASM | npm | `@stateset/embedded-wasm` | `1.36.0` | `package-manifest` | manifest coverage |
 
 ## Node.js Exports
 
@@ -54,9 +54,11 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `./canonical-json` | `./canonical-json.mjs` | `./canonical-json.d.ts` |
 | `./generic` | `./generic.mjs` | `./generic.d.ts` |
 | `./langchain` | `./langchain.mjs` | `./langchain.d.ts` |
+| `./native-toolkit` | `./native-toolkit.mjs` | `./native-toolkit.d.ts` |
 | `./openai` | `./openai.mjs` | `./openai.d.ts` |
 | `./purchase-runtime` | `./purchase-runtime.mjs` | `./purchase-runtime.d.ts` |
 | `./vercel-ai` | `./vercel-ai.mjs` | `./vercel-ai.d.ts` |
+| `./webmcp` | `./webmcp.mjs` | `./webmcp.d.ts` |
 
 ## Go Surface Summary
 
@@ -697,6 +699,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `BomComponent` |
 | `BoostRule` |
 | `BoostRuleInput` |
+| `CanadianTaxInfo` |
 | `CaptureStockLineInput` |
 | `Cart` |
 | `CartAddress` |
@@ -724,8 +727,10 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `create_openai_tools` |
 | `create_tool_descriptors` |
 | `CreateIntegrationMappingInput` |
+| `CreateInvoiceItemInput` |
 | `CreateOrderItemInput` |
 | `CreateProductVariantInput` |
+| `CreatePurchaseOrderItemInput` |
 | `CreateReturnItemInput` |
 | `CurrencyOperations` |
 | `Customer` |
@@ -825,6 +830,9 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `Products` |
 | `ProductSearchResult` |
 | `ProductVariant` |
+| `PromotionCondition` |
+| `PromotionConditionInput` |
+| `PromotionLineItemInput` |
 | `PurchaseOrder` |
 | `PurchaseOrders` |
 | `Purgatory` |
@@ -891,6 +899,12 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `SyncStatus` |
 | `SynonymGroup` |
 | `SynonymGroupInput` |
+| `TaxApi` |
+| `TaxCalculationResult` |
+| `TaxExemption` |
+| `TaxJurisdiction` |
+| `TaxRate` |
+| `TaxSettings` |
 | `ThreeWayMatchLine` |
 | `ThreeWayMatchResult` |
 | `TopCustomer` |
@@ -905,6 +919,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | `UnitConversionRule` |
 | `UnitOfMeasure` |
 | `UnitsOfMeasure` |
+| `UsStateTaxInfo` |
 | `ValidationSummary` |
 | `VectorSearch` |
 | `VendorCredit` |

@@ -1,5 +1,6 @@
 //! PostgreSQL implementation of credit repository
 
+use super::resolve_currency_with_executor;
 use super::{block_on, map_db_error};
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use rust_decimal::Decimal;
@@ -371,6 +372,18 @@ impl PgCreditRepository {
         Ok(())
     }
 
+    /// A credit line is a non-negative ceiling: a negative limit opens an
+    /// account with negative available credit that is "over limit" with nothing
+    /// ever charged. Zero (a fully restricted line) is legitimate. Mirrors the SQLite backend.
+    fn validate_credit_limit(limit: Decimal) -> Result<()> {
+        if limit < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(format!(
+                "Credit limit cannot be negative (got {limit})"
+            )));
+        }
+        Ok(())
+    }
+
     /// Insert a credit account inside the caller's transaction.
     async fn create_credit_account_tx(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -378,6 +391,7 @@ impl PgCreditRepository {
         input: &CreateCreditAccount,
         now: DateTime<Utc>,
     ) -> Result<()> {
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
         sqlx::query(
             "INSERT INTO credit_accounts (id, customer_id, credit_limit, available_credit, current_balance,
                 hold_amount, currency, status, payment_terms, risk_rating, notes, created_at, updated_at)
@@ -389,7 +403,7 @@ impl PgCreditRepository {
         .bind(input.credit_limit)
         .bind(Decimal::ZERO)
         .bind(Decimal::ZERO)
-        .bind(input.currency.unwrap_or(CurrencyCode::USD))
+        .bind(currency)
         .bind(CreditAccountStatus::Active.to_string())
         .bind(input.payment_terms.clone())
         .bind(input.risk_rating.map(|r| r.to_string()))
@@ -487,6 +501,7 @@ impl PgCreditRepository {
         &self,
         input: CreateCreditAccount,
     ) -> Result<CreditAccount> {
+        Self::validate_credit_limit(input.credit_limit)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -540,6 +555,9 @@ impl PgCreditRepository {
         // committing one without the other leaves `check_credit` approving
         // orders against a stale line.
         let now = Utc::now();
+        if let Some(limit) = input.credit_limit {
+            Self::validate_credit_limit(limit)?;
+        }
         let account = self.get_credit_account_async(id).await?.ok_or(CommerceError::NotFound)?;
         let customer_id = account.customer_id.into_uuid();
 
@@ -637,6 +655,7 @@ impl PgCreditRepository {
         // The limit write, its `limit_change` ledger row and the available-credit
         // recompute are ONE transaction: a limit that moved without an audit row
         // (or vice versa) is unreconcilable.
+        Self::validate_credit_limit(new_limit)?;
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         Self::adjust_credit_limit_tx(&mut tx, customer_id, new_limit, reason, now).await?;

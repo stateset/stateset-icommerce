@@ -14,13 +14,13 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 
 | Metric | Value |
 | --- | --- |
-| Domain tool modules | 87 |
-| Domain tools | 923 |
-| Commerce getters | 67 |
-| Mapped getters | 67 |
+| Domain tool modules | 88 |
+| Domain tools | 940 |
+| Commerce getters | 68 |
+| Mapped getters | 68 |
 | Audited classes | 32 |
-| Audited methods | 390 |
-| Mapped audited methods | 390 |
+| Audited methods | 416 |
+| Mapped audited methods | 416 |
 | Fully covered | yes |
 
 ## Commerce Getter Coverage
@@ -31,14 +31,15 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `accountsReceivable` | `accounts-receivable` | 8 |
 | `activityLogs` | `activity-logs` | 5 |
 | `analytics` | `analytics` | 14 |
-| `backorder` | `backorders` | 9 |
+| `backorder` | `backorders` | 20 |
+| `backorders` | `backorders` | 20 |
 | `bom` | `manufacturing` | 11 |
 | `carts` | `carts` | 30 |
 | `channels` | `channels` | 8 |
 | `companies` | `companies` | 9 |
 | `costAccounting` | `cost-accounting` | 5 |
 | `credit` | `credit` | 8 |
-| `currency` | `currency` | 12 |
+| `currency` | `currency` | 13 |
 | `customObjects` | `custom-objects` | 12 |
 | `customers` | `customers` | 11 |
 | `cycleCounts` | `cycle-counts` | 7 |
@@ -66,7 +67,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `printStations` | `print-stations` | 8 |
 | `productionBatches` | `production-batches` | 8 |
 | `products` | `products` | 14 |
-| `promotions` | `promotions` | 15 |
+| `promotions` | `promotions` | 17 |
 | `purchaseOrders` | `suppliers` | 10 |
 | `purgatory` | `purgatory` | 6 |
 | `quality` | `quality` | 15 |
@@ -75,9 +76,9 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `revenueRecognition` | `revenue-recognition` | 6 |
 | `reviews` | `reviews` | 7 |
 | `searchConfig` | `search-config` | 7 |
-| `segments` | `segments` | 6 |
+| `segments` | `segments` | 5 |
 | `serials` | `serials` | 8 |
-| `shipments` | `shipments` | 14 |
+| `shipments` | `shipments` | 16 |
 | `shippingZones` | `shipping-zones` | 7 |
 | `stockSnapshots` | `stock-snapshots` | 5 |
 | `storeCredits` | `store-credits` | 5 |
@@ -99,15 +100,15 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 
 | Class | Methods | Mapped | Uncovered | Stale mappings | Invalid tool refs |
 | --- | --- | --- | --- | --- | --- |
-| `AccountsPayable` | 12 | 12 | 0 | 0 | 0 |
+| `AccountsPayable` | 13 | 13 | 0 | 0 | 0 |
 | `AccountsReceivable` | 8 | 8 | 0 | 0 | 0 |
 | `Analytics` | 14 | 14 | 0 | 0 | 0 |
-| `Backorders` | 10 | 10 | 0 | 0 | 0 |
+| `Backorders` | 21 | 21 | 0 | 0 | 0 |
 | `Bom` | 7 | 7 | 0 | 0 | 0 |
 | `Carts` | 33 | 33 | 0 | 0 | 0 |
 | `CostAccounting` | 5 | 5 | 0 | 0 | 0 |
 | `Credit` | 9 | 9 | 0 | 0 | 0 |
-| `CurrencyOperations` | 15 | 15 | 0 | 0 | 0 |
+| `CurrencyOperations` | 16 | 16 | 0 | 0 | 0 |
 | `Customers` | 13 | 13 | 0 | 0 | 0 |
 | `CustomObjects` | 12 | 12 | 0 | 0 | 0 |
 | `Fulfillment` | 14 | 14 | 0 | 0 | 0 |
@@ -115,16 +116,16 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `Inventory` | 6 | 6 | 0 | 0 | 0 |
 | `Invoices` | 8 | 8 | 0 | 0 | 0 |
 | `Lots` | 12 | 12 | 0 | 0 | 0 |
-| `Orders` | 8 | 8 | 0 | 0 | 0 |
-| `Payments` | 10 | 10 | 0 | 0 | 0 |
+| `Orders` | 10 | 10 | 0 | 0 | 0 |
+| `Payments` | 14 | 14 | 0 | 0 | 0 |
 | `Products` | 16 | 16 | 0 | 0 | 0 |
-| `Promotions` | 17 | 17 | 0 | 0 | 0 |
+| `Promotions` | 20 | 20 | 0 | 0 | 0 |
 | `PurchaseOrders` | 11 | 11 | 0 | 0 | 0 |
-| `Quality` | 15 | 15 | 0 | 0 | 0 |
-| `Receiving` | 9 | 9 | 0 | 0 | 0 |
+| `Quality` | 17 | 17 | 0 | 0 | 0 |
+| `Receiving` | 10 | 10 | 0 | 0 | 0 |
 | `Returns` | 13 | 13 | 0 | 0 | 0 |
 | `Serials` | 9 | 9 | 0 | 0 | 0 |
-| `Shipments` | 7 | 7 | 0 | 0 | 0 |
+| `Shipments` | 8 | 8 | 0 | 0 | 0 |
 | `Subscriptions` | 19 | 19 | 0 | 0 | 0 |
 | `Tax` | 18 | 18 | 0 | 0 | 0 |
 | `Warehouse` | 10 | 10 | 0 | 0 | 0 |

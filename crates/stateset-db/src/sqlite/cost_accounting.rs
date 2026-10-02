@@ -16,8 +16,8 @@ use uuid::Uuid;
 
 use super::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row,
-    parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, sum_decimal_query,
-    with_immediate_transaction,
+    parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
+    resolve_currency_in_tx, sum_decimal_query, with_immediate_transaction,
 };
 
 /// Explain why a cost-adjustment transition was refused: report the status the
@@ -43,6 +43,41 @@ pub struct SqliteCostAccountingRepository {
 }
 
 impl SqliteCostAccountingRepository {
+    /// Reject a blank SKU (a record keyed on "" is reachable by no real item)
+    /// and any negative cost component: a negative standard cost seeds
+    /// average/last cost, so inventory valuation would go negative. Zero is a
+    /// legitimate cost.
+    fn validate_item_cost_input(input: &SetItemCost) -> Result<()> {
+        Self::validate_sku(&input.sku)?;
+        for (field, value) in [
+            ("standard_cost", input.standard_cost),
+            ("material_cost", input.material_cost),
+            ("labor_cost", input.labor_cost),
+            ("overhead_cost", input.overhead_cost),
+        ] {
+            if let Some(cost) = value {
+                Self::validate_cost(field, cost)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_sku(sku: &str) -> Result<()> {
+        if sku.trim().is_empty() {
+            return Err(CommerceError::ValidationError("Item cost sku cannot be blank".into()));
+        }
+        Ok(())
+    }
+
+    fn validate_cost(field: &str, cost: Decimal) -> Result<()> {
+        if cost < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(format!(
+                "Item cost {field} cannot be negative (got {cost})"
+            )));
+        }
+        Ok(())
+    }
+
     /// Insert-or-update an item cost on the caller's connection/transaction.
     ///
     /// Shared by `set_item_cost` (which wraps it in an IMMEDIATE transaction)
@@ -53,6 +88,8 @@ impl SqliteCostAccountingRepository {
         input: SetItemCost,
         now: DateTime<Utc>,
     ) -> rusqlite::Result<()> {
+        Self::validate_item_cost_input(&input)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let SetItemCost {
             sku,
             cost_method,
@@ -103,7 +140,11 @@ impl SqliteCostAccountingRepository {
             let material_cost = material_cost.unwrap_or_default();
             let labor_cost = labor_cost.unwrap_or_default();
             let overhead_cost = overhead_cost.unwrap_or_default();
-            let currency = currency.unwrap_or_default();
+            // The UPDATE branch above leaves `currency` as the caller's
+            // `Option`: `COALESCE` means "leave the stored currency alone".
+            // A fresh row has nothing to keep, so an omitted currency takes
+            // the store's configured base currency.
+            let currency = resolve_currency_in_tx(currency, conn)?;
 
             conn.execute(
                 "INSERT INTO item_costs (id, sku, cost_method, standard_cost, average_cost, last_cost,
@@ -500,6 +541,8 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         quantity: Decimal,
         unit_cost: Decimal,
     ) -> Result<ItemCost> {
+        Self::validate_sku(sku)?;
+        Self::validate_cost("unit_cost", unit_cost)?;
         let now = Utc::now();
 
         // Ensure item cost exists
@@ -565,6 +608,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn update_last_cost(&self, sku: &str, unit_cost: Decimal) -> Result<ItemCost> {
+        Self::validate_cost("unit_cost", unit_cost)?;
         let now = Utc::now();
 
         {
@@ -680,6 +724,9 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn issue_fifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError("issue quantity must be positive".into()));
+        }
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut remaining = input.quantity;
@@ -753,6 +800,9 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn issue_lifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError("issue quantity must be positive".into()));
+        }
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut remaining = input.quantity;
@@ -1017,6 +1067,11 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn create_adjustment(&self, input: CreateCostAdjustment) -> Result<CostAdjustment> {
+        // Refused here rather than only at apply time: an adjustment carrying a
+        // negative cost is not a pending decision anyone can approve, and it
+        // would sit in the queue looking actionable.
+        Self::validate_sku(&input.sku)?;
+        Self::validate_cost("new cost", input.new_cost)?;
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -1762,6 +1817,94 @@ mod tests {
     }
 
     #[test]
+    fn set_item_cost_rejects_negative_costs_and_blank_sku() {
+        // A negative standard cost was stored and seeded average/last cost, so
+        // inventory valuation could go negative; an empty SKU created a record
+        // keyed on "". Zero remains a legitimate cost.
+        let repo = fresh_repo();
+        for input in [
+            SetItemCost {
+                sku: "NEG-STD".into(),
+                standard_cost: Some(dec!(-1)),
+                ..Default::default()
+            },
+            SetItemCost {
+                sku: "NEG-MAT".into(),
+                material_cost: Some(dec!(-0.01)),
+                ..Default::default()
+            },
+            SetItemCost { sku: "NEG-LAB".into(), labor_cost: Some(dec!(-5)), ..Default::default() },
+            SetItemCost {
+                sku: "NEG-OVH".into(),
+                overhead_cost: Some(dec!(-5)),
+                ..Default::default()
+            },
+            SetItemCost { sku: String::new(), standard_cost: Some(dec!(1)), ..Default::default() },
+            SetItemCost { sku: "   ".into(), standard_cost: Some(dec!(1)), ..Default::default() },
+        ] {
+            let sku = input.sku.clone();
+            let err = repo.set_item_cost(input).expect_err("must be rejected");
+            assert!(matches!(err, CommerceError::ValidationError(_)), "sku {sku:?}: got {err:?}");
+            assert!(
+                repo.get_item_cost(&sku).expect("ok").is_none(),
+                "sku {sku:?}: nothing written"
+            );
+        }
+        assert!(repo.list_item_costs(ItemCostFilter::default()).expect("list").is_empty());
+
+        // A negative on an EXISTING sku must not clobber a good cost either.
+        repo.set_item_cost(SetItemCost {
+            sku: "GOOD".into(),
+            standard_cost: Some(dec!(10)),
+            ..Default::default()
+        })
+        .expect("good");
+        let err = repo
+            .set_item_cost(SetItemCost {
+                sku: "GOOD".into(),
+                standard_cost: Some(dec!(-10)),
+                ..Default::default()
+            })
+            .expect_err("rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        assert_eq!(repo.get_item_cost("GOOD").expect("ok").expect("found").standard_cost, dec!(10));
+
+        let free = repo
+            .set_item_cost(SetItemCost {
+                sku: "FREE".into(),
+                standard_cost: Some(Decimal::ZERO),
+                ..Default::default()
+            })
+            .expect("zero is a legitimate cost");
+        assert_eq!(free.standard_cost, Decimal::ZERO);
+    }
+
+    #[test]
+    fn update_average_cost_rejects_negative_unit_cost() {
+        let repo = fresh_repo();
+        // Unknown sku: the seed path must not create a record from a negative cost.
+        let err = repo.update_average_cost("AVG-NEW", dec!(10), dec!(-2)).expect_err("rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        assert!(repo.get_item_cost("AVG-NEW").expect("ok").is_none(), "nothing written");
+
+        // Existing sku: average and last cost must stay put.
+        repo.set_item_cost(SetItemCost {
+            sku: "AVG-1".into(),
+            standard_cost: Some(dec!(4)),
+            ..Default::default()
+        })
+        .expect("seed");
+        let err = repo.update_average_cost("AVG-1", dec!(10), dec!(-2)).expect_err("rejected");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+        let cost = repo.get_item_cost("AVG-1").expect("ok").expect("found");
+        assert_eq!(cost.average_cost, dec!(4));
+        assert_eq!(cost.last_cost, dec!(4));
+
+        let err = repo.update_average_cost("  ", dec!(10), dec!(2)).expect_err("blank sku");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
+    }
+
+    #[test]
     fn set_item_cost_upserts_on_existing_sku() {
         let repo = fresh_repo();
         repo.set_item_cost(SetItemCost {
@@ -1871,6 +2014,36 @@ mod tests {
     }
 
     #[test]
+    fn cost_layer_issue_requires_positive_quantity() {
+        let repo = fresh_repo();
+        make_layer(&repo, "ISSUE-POSITIVE", dec!(4), dec!(2));
+        let request = |quantity| IssueCostLayers {
+            sku: "ISSUE-POSITIVE".into(),
+            quantity,
+            reference_type: None,
+            reference_id: None,
+            notes: None,
+        };
+        assert!(matches!(
+            repo.issue_fifo(request(dec!(0))),
+            Err(CommerceError::ValidationError(_))
+        ));
+        assert!(matches!(
+            repo.issue_lifo(request(dec!(-1))),
+            Err(CommerceError::ValidationError(_))
+        ));
+        let layer = repo
+            .list_cost_layers(CostLayerFilter {
+                sku: Some("ISSUE-POSITIVE".into()),
+                ..Default::default()
+            })
+            .expect("layers")
+            .pop()
+            .expect("layer");
+        assert_eq!(layer.remaining_quantity, dec!(4));
+    }
+
+    #[test]
     fn issue_lifo_consumes_newest_layer_first() {
         let repo = fresh_repo();
         let _oldest = make_layer(&repo, "LIFO-1", dec!(10), dec!(5));
@@ -1912,6 +2085,29 @@ mod tests {
         let summary = repo.get_variance_summary(from, to).expect("ok");
         // (12-10) * 5 = 10 unfavourable
         assert_eq!(summary, dec!(10));
+    }
+
+    #[test]
+    fn create_adjustment_rejects_a_negative_cost_and_a_blank_sku() {
+        let repo = fresh_repo();
+        let bad = |sku: &str, new_cost| CreateCostAdjustment {
+            sku: sku.into(),
+            adjustment_type: CostAdjustmentType::Revaluation,
+            new_cost,
+            reason: "bad".into(),
+            created_by: None,
+        };
+        for input in [bad("ADJ-NEG", dec!(-1)), bad("   ", dec!(5))] {
+            let err = repo.create_adjustment(input).expect_err("must be refused");
+            assert!(
+                matches!(err, CommerceError::ValidationError(_)),
+                "expected ValidationError, got {err:?}"
+            );
+        }
+        assert!(
+            repo.list_adjustments(CostAdjustmentFilter::default()).expect("list").is_empty(),
+            "a refused adjustment must not be written"
+        );
     }
 
     #[test]

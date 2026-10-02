@@ -462,6 +462,21 @@ impl PgFulfillmentRepository {
         let wave_number = generate_wave_number();
         let order_count = input.order_ids.len() as i32;
 
+        // Every order on the wave must exist; `wave_orders` has no FK to
+        // `orders`, so an unknown id would otherwise be accepted and counted.
+        // Checked before the header write so nothing lands (the early return
+        // drops the transaction, which rolls it back).
+        for order_id in &input.order_ids {
+            let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM orders WHERE id = $1")
+                .bind(order_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            if exists.is_none() {
+                return Err(CommerceError::OrderNotFound(order_id.into_uuid()));
+            }
+        }
+
         sqlx::query(
             r#"
             INSERT INTO waves (id, wave_number, warehouse_id, status, order_count, priority, notes, created_by, created_at, updated_at)
@@ -929,11 +944,15 @@ impl PgFulfillmentRepository {
                 "Cannot complete a cancelled pick task".into(),
             ));
         }
-        // Over-pick guard: cannot pick more than was requested.
-        if input.quantity_picked > requested {
+        // Picked and short quantities are disjoint claims against the request.
+        if input.quantity_picked < Decimal::ZERO
+            || short_qty < Decimal::ZERO
+            || input.quantity_picked > requested
+            || short_qty > requested - input.quantity_picked
+        {
             return Err(CommerceError::ValidationError(format!(
-                "Cannot pick {} of pick task {}: only {} were requested",
-                input.quantity_picked, input.pick_id, requested
+                "Picked and short quantities must be nonnegative and total at most {} for pick task {}",
+                requested, input.pick_id
             )));
         }
 
@@ -1009,6 +1028,36 @@ impl PgFulfillmentRepository {
     ) -> Result<PickTask> {
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let (status, requested, picked): (String, Decimal, Decimal) = sqlx::query_as(
+            "SELECT status, quantity_requested, quantity_picked FROM pick_tasks WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        if !matches!(status.as_str(), "pending" | "assigned" | "in_progress") {
+            return Self::finish_transition(
+                tx,
+                0,
+                "pick_tasks",
+                "pick task",
+                id,
+                "report a shortage on",
+                Self::row_to_pick,
+            )
+            .await;
+        }
+        if short_qty < Decimal::ZERO
+            || picked < Decimal::ZERO
+            || picked > requested
+            || short_qty > requested - picked
+        {
+            return Err(CommerceError::ValidationError(
+                "Short quantity must be nonnegative and fit the unpicked request".into(),
+            ));
+        }
 
         let changed = sqlx::query(
             "UPDATE pick_tasks SET status = $1, quantity_short = $2, notes = $3, completed_at = $4

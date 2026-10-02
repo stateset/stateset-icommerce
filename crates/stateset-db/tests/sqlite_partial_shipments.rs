@@ -479,3 +479,129 @@ fn migration_backfills_shipped_quantity_for_shipped_orders() {
         .expect("collect");
     assert_eq!(shipped, vec![("i1".to_string(), 4), ("i2".to_string(), 2), ("i3".to_string(), 0)]);
 }
+
+// ---------------------------------------------------------------------------
+// A fully shipped order carries its open shipment records to `shipped`.
+// ---------------------------------------------------------------------------
+
+fn open_shipment(db: &SqliteDatabase, order_id: OrderId, name: &str) -> stateset_core::Shipment {
+    use stateset_core::{CreateShipment, ShipmentRepository};
+    db.shipments()
+        .create(CreateShipment {
+            order_id,
+            recipient_name: name.to_string(),
+            shipping_address: "1 Main St".to_string(),
+            carrier: Some(stateset_core::ShippingCarrier::Ups),
+            ..Default::default()
+        })
+        .expect("create shipment")
+}
+
+fn load_shipment(db: &SqliteDatabase, id: stateset_core::ShipmentId) -> stateset_core::Shipment {
+    use stateset_core::ShipmentRepository;
+    db.shipments().get(id).expect("load").expect("shipment")
+}
+
+fn shipment_facts(db: &SqliteDatabase, shipment_id: stateset_core::ShipmentId) -> Vec<String> {
+    let conn = db.conn().expect("conn");
+    let mut stmt = conn
+        .prepare(
+            "SELECT json_extract(payload, '$.status') FROM kernel_outbox
+             WHERE event_type = 'shipment.status_changed' AND aggregate_id = ? ORDER BY rowid",
+        )
+        .expect("prepare");
+    stmt.query_map([shipment_id.to_string()], |row| row.get(0))
+        .expect("query")
+        .collect::<rusqlite::Result<Vec<String>>>()
+        .expect("collect")
+}
+
+#[test]
+fn full_order_ship_carries_open_shipments_but_partial_does_not() {
+    use stateset_core::{ShipmentRepository, ShipmentStatus};
+    let db = SqliteDatabase::in_memory().expect("db");
+    let order = processing_order(&db, "follow@example.com");
+    let pending = open_shipment(&db, order.id, "Pending");
+    let processing = open_shipment(&db, order.id, "Processing");
+    db.shipments().mark_processing(processing.id).expect("processing");
+    let ready = open_shipment(&db, order.id, "Ready");
+    db.shipments().mark_processing(ready.id).expect("processing");
+    db.shipments().mark_ready(ready.id).expect("ready");
+    let held = open_shipment(&db, order.id, "Held");
+    db.shipments().hold(held.id).expect("hold");
+    let cancelled = open_shipment(&db, order.id, "Cancelled");
+    db.shipments().cancel(cancelled.id).expect("cancel");
+    let prelabelled = db
+        .shipments()
+        .update(
+            open_shipment(&db, order.id, "Labelled").id,
+            stateset_core::UpdateShipment {
+                tracking_number: Some("OWN-LABEL".into()),
+                ..Default::default()
+            },
+        )
+        .expect("label");
+
+    // A partial shipment cannot say which package moved: nothing follows.
+    let a = line(&order, "PS-SKU-A");
+    let partial = db
+        .orders()
+        .ship(
+            order.id,
+            ShipOrder {
+                tracking_number: Some("1Z-PARTIAL".into()),
+                lines: Some(vec![ShipmentLineInput { order_item_id: a.id, quantity: 1 }]),
+            },
+        )
+        .expect("partial ship");
+    assert_eq!(partial.status, OrderStatus::PartiallyShipped);
+    for id in [pending.id, processing.id, ready.id, prelabelled.id] {
+        let shipment = load_shipment(&db, id);
+        assert_ne!(
+            shipment.status,
+            ShipmentStatus::Shipped,
+            "a partial ship moved an open shipment"
+        );
+        assert!(shipment_facts(&db, id).is_empty());
+    }
+    assert_eq!(load_shipment(&db, pending.id).tracking_number, None);
+
+    // Shipping the remainder completes the order: open shipments follow.
+    let shipped = db
+        .orders()
+        .ship(order.id, ShipOrder { tracking_number: Some("1Z-FOLLOW".into()), lines: None })
+        .expect("ship remainder");
+    assert_eq!(shipped.status, OrderStatus::Shipped);
+
+    for id in [pending.id, processing.id, ready.id] {
+        let moved = load_shipment(&db, id);
+        assert_eq!(moved.status, ShipmentStatus::Shipped, "{id} should follow the order");
+        assert_eq!(moved.tracking_number.as_deref(), Some("1Z-FOLLOW"));
+        assert!(moved.tracking_url.as_deref().is_some_and(|u| u.contains("1Z-FOLLOW")));
+        assert!(moved.shipped_at.is_some());
+        assert_eq!(shipment_facts(&db, id), vec!["shipped".to_string()]);
+    }
+    // A hold is an explicit decision; the order ship does not override it.
+    assert_eq!(load_shipment(&db, held.id).status, ShipmentStatus::OnHold);
+    assert!(shipment_facts(&db, held.id).is_empty());
+    assert_eq!(load_shipment(&db, cancelled.id).status, ShipmentStatus::Cancelled);
+    assert!(shipment_facts(&db, cancelled.id).is_empty());
+    // A shipment with its own label keeps it.
+    let labelled = load_shipment(&db, prelabelled.id);
+    assert_eq!(labelled.status, ShipmentStatus::Shipped);
+    assert_eq!(labelled.tracking_number.as_deref(), Some("OWN-LABEL"));
+}
+
+#[test]
+fn status_update_to_shipped_carries_open_shipments() {
+    use stateset_core::ShipmentStatus;
+    let db = SqliteDatabase::in_memory().expect("db");
+    let order = processing_order(&db, "follow-update@example.com");
+    let pending = open_shipment(&db, order.id, "Pending");
+    db.orders()
+        .update(order.id, UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() })
+        .expect("ship via status update");
+    let moved = load_shipment(&db, pending.id);
+    assert_eq!(moved.status, ShipmentStatus::Shipped);
+    assert!(moved.shipped_at.is_some());
+}

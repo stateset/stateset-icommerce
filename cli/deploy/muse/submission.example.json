@@ -1,0 +1,34 @@
+{
+  "note": "Internal preparation draft, not a Meta-defined submission schema. Replace null fields before review. No submission has been sent.",
+  "connectorName": "StateSet iCommerce",
+  "publisher": "StateSet",
+  "productWebsite": "https://stateset.com",
+  "description": "Let merchants inspect their product catalog, inventory, orders, and sales through Muse, preview proposed changes, and execute approved commerce operations under store-owned policy.",
+  "integration": {
+    "type": "HTTP API with OpenAPI 3.1",
+    "publicOrigin": null,
+    "openApiPath": "/openapi.json",
+    "authentication": "Bearer API key",
+    "credentialDelivery": "Use the platform's supported secure credential workflow; do not include credentials in this draft.",
+    "scope": "One merchant store and operator-owned kernel principal per service; optional named API-key accounts with separate tool allowlists and write permissions",
+    "oauthImplemented": false,
+    "writes": "Preview-only by default; apply mode requires operator-owned kernel policy and delegated principal"
+  },
+  "examplePrompts": [
+    "Show my store's product catalog.",
+    "Check the stock for SKU COFFEE-001.",
+    "Summarize my sales for the last week.",
+    "Preview a new product named Muse Coffee with a variant priced at the exact decimal amount 19.99."
+  ],
+  "reviewerAccessInstructions": null,
+  "supportUrl": null,
+  "privacyPolicyUrl": null,
+  "termsUrl": null,
+  "status": {
+    "implementation": "Locally tested against the embedded engine",
+    "hostedEndpoint": "Not configured",
+    "testedInsideMuse": false,
+    "submittedToMeta": false,
+    "approvedForMuseDirectory": false
+  }
+}

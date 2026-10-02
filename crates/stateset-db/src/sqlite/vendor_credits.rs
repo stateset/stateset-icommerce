@@ -2,7 +2,7 @@
 
 use super::{
     map_db_error, parse_datetime_row, parse_decimal_row, parse_enum_row, parse_uuid_opt_row,
-    parse_uuid_row, with_immediate_transaction,
+    parse_uuid_row, resolve_currency_in_tx, with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -144,8 +144,8 @@ impl VendorCreditRepository for SqliteVendorCreditRepository {
         let id_str = id.to_string();
         let now_str = Utc::now().to_rfc3339();
         let number = format!("VC-{}", &id_str[..8]);
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
         with_immediate_transaction(&self.pool, |tx| {
+            let currency = resolve_currency_in_tx(input.currency, tx)?;
             tx.execute(
                 "INSERT INTO vendor_credits (id, number, supplier_id, vendor_return_id, amount, remaining, currency, status, memo, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)",
@@ -399,5 +399,36 @@ mod tests {
         repo.reverse_application(c.id, apps[0].id).expect("reverse");
         let cancelled = repo.cancel(c.id).expect("cancel");
         assert_eq!(cancelled.status, VendorCreditStatus::Cancelled);
+    }
+
+    #[test]
+    fn competing_applications_cannot_exceed_vendor_credit() {
+        let repo = std::sync::Arc::new(test_repo());
+        let credit = new_credit(&repo, dec!(3));
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let repo = std::sync::Arc::clone(&repo);
+            let barrier = std::sync::Arc::clone(&barrier);
+            let id = credit.id;
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                repo.apply(id, apply(VendorCreditTargetType::Bill, dec!(2)))
+            }));
+        }
+        let mut successes = 0;
+        for handle in handles {
+            if handle.join().expect("join application").is_ok() {
+                successes += 1;
+            }
+        }
+        assert_eq!(successes, 1);
+        let stored = repo.get(credit.id).expect("get").expect("credit");
+        assert_eq!(stored.remaining, dec!(1));
+        let apps = repo
+            .list_applications(credit.id)
+            .unwrap_or_else(|_| panic!("application lookup failed"));
+        assert_eq!(apps.len(), 1);
+        assert_eq!(stored.remaining + apps[0].amount, credit.amount);
     }
 }

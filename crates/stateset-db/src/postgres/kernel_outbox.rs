@@ -31,6 +31,7 @@ struct KernelOutboxRow {
     lease_expires_at: Option<DateTime<Utc>>,
     next_attempt_at: Option<DateTime<Utc>>,
     dead_lettered_at: Option<DateTime<Utc>>,
+    tier: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -113,7 +114,7 @@ impl PgKernelOutboxRepository {
             "SELECT id, event_type, aggregate_type, aggregate_id, payload, command_id,
                     idempotency_key, principal_type, principal_id, correlation_id,
                     causation_id, created_at, published_at, attempts, last_error,
-                    lease_owner, lease_expires_at, next_attempt_at, dead_lettered_at
+                    lease_owner, lease_expires_at, next_attempt_at, dead_lettered_at, tier
              FROM kernel_outbox WHERE published_at IS NULL AND dead_lettered_at IS NULL
                AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
                AND (lease_expires_at IS NULL OR lease_expires_at <= NOW())
@@ -149,6 +150,7 @@ impl PgKernelOutboxRepository {
                     lease_expires_at: row.lease_expires_at,
                     next_attempt_at: row.next_attempt_at,
                     dead_lettered_at: row.dead_lettered_at,
+                    tier: row.tier,
                 })
             })
             .collect()
@@ -183,7 +185,7 @@ impl PgKernelOutboxRepository {
                  o.command_id, o.idempotency_key, o.principal_type, o.principal_id,
                  o.correlation_id, o.causation_id, o.created_at, o.published_at,
                  o.attempts, o.last_error, o.lease_owner, o.lease_expires_at,
-                 o.next_attempt_at, o.dead_lettered_at",
+                 o.next_attempt_at, o.dead_lettered_at, o.tier",
         )
         .bind(i64::from(limit))
         .bind(worker_id)
@@ -253,7 +255,7 @@ impl PgKernelOutboxRepository {
             "SELECT id, event_type, aggregate_type, aggregate_id, payload, command_id,
                     idempotency_key, principal_type, principal_id, correlation_id,
                     causation_id, created_at, published_at, attempts, last_error,
-                    lease_owner, lease_expires_at, next_attempt_at, dead_lettered_at
+                    lease_owner, lease_expires_at, next_attempt_at, dead_lettered_at, tier
              FROM kernel_outbox WHERE dead_lettered_at IS NOT NULL
              ORDER BY dead_lettered_at, id LIMIT $1",
         )
@@ -478,6 +480,7 @@ fn row_to_event(row: KernelOutboxRow) -> Result<KernelOutboxEvent> {
         lease_expires_at: row.lease_expires_at,
         next_attempt_at: row.next_attempt_at,
         dead_lettered_at: row.dead_lettered_at,
+        tier: row.tier,
     })
 }
 
@@ -492,8 +495,8 @@ pub(crate) async fn append_kernel_event_tx(
         "INSERT INTO kernel_outbox (
             id, event_type, aggregate_type, aggregate_id, payload, command_id,
             idempotency_key, principal_type, principal_id, correlation_id,
-            causation_id, created_at, published_at, attempts, last_error
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+            causation_id, created_at, published_at, attempts, last_error, tier
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
     )
     .bind(event.id)
     .bind(&event.event_type)
@@ -510,10 +513,46 @@ pub(crate) async fn append_kernel_event_tx(
     .bind(event.published_at)
     .bind(attempts)
     .bind(&event.last_error)
+    .bind(&event.tier)
     .execute(tx)
     .await
     .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
     Ok(())
+}
+
+/// Record an ordinary mutation's fact inside the caller's transaction.
+///
+/// This is the whole guarantee Phase B buys: the fact commits with the
+/// mutation or not at all. Callers must already hold an active transaction.
+#[allow(dead_code)]
+pub(crate) async fn record_outbox_fact(
+    tx: &mut sqlx::PgConnection,
+    fact: crate::kernel_outbox::RecordedFact<'_>,
+) -> Result<Uuid> {
+    let event = KernelOutboxEvent {
+        id: Uuid::new_v4(),
+        event_type: fact.event_type.to_string(),
+        aggregate_type: fact.aggregate_type.to_string(),
+        aggregate_id: fact.aggregate_id.to_string(),
+        payload: fact.payload,
+        command_id: None,
+        idempotency_key: None,
+        principal_type: None,
+        principal_id: None,
+        correlation_id: None,
+        causation_id: None,
+        created_at: Utc::now(),
+        published_at: None,
+        attempts: 0,
+        last_error: None,
+        lease_owner: None,
+        lease_expires_at: None,
+        next_attempt_at: None,
+        dead_lettered_at: None,
+        tier: "recorded".to_string(),
+    };
+    append_kernel_event_tx(tx, &event).await?;
+    Ok(event.id)
 }
 
 pub(crate) async fn append_kernel_receipt_tx(

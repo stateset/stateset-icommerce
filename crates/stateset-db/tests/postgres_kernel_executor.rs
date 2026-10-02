@@ -72,6 +72,23 @@ fn policy() -> KernelPolicy {
         .allow("returns.transition", KernelCommandPolicy::requiring(["returns.transition"]))
         .allow("ledger.post", KernelCommandPolicy::requiring(["ledger.post"]))
         .allow("x402.settle", KernelCommandPolicy::requiring(["x402.settle"]))
+        .allow("customers.create", KernelCommandPolicy::requiring(["customers.create"]))
+        .allow("carts.create", KernelCommandPolicy::requiring(["carts.create"]))
+        .allow("carts.item.add", KernelCommandPolicy::requiring(["carts.item.add"]))
+        .allow(
+            "carts.shipping_address.set",
+            KernelCommandPolicy::requiring(["carts.shipping_address.set"]),
+        )
+        .allow(
+            "carts.payment_method.set",
+            KernelCommandPolicy::requiring(["carts.payment_method.set"]),
+        )
+        .allow("carts.coupon.apply", KernelCommandPolicy::requiring(["carts.coupon.apply"]))
+        .allow("carts.tax.calculate", KernelCommandPolicy::requiring(["carts.tax.calculate"]))
+        .allow("payments.complete", KernelCommandPolicy::requiring(["payments.complete"]))
+        .allow("shipments.create", KernelCommandPolicy::requiring(["shipments.create"]))
+        .allow("returns.create", KernelCommandPolicy::requiring(["returns.create"]))
+        .allow("returns.tracking.add", KernelCommandPolicy::requiring(["returns.tracking.add"]))
 }
 
 #[tokio::test]
@@ -1530,8 +1547,14 @@ async fn postgres_kernel_ledger_and_x402_commands_preserve_exact_fact_parity() {
     let db = PostgresDatabase::connect(&url).await.expect("connect and migrate");
     let suffix = Uuid::new_v4();
     let bytes = suffix.as_bytes();
-    let fiscal_year = 2200 + i32::from(bytes[0]);
-    let period_number = 1 + i32::from(bytes[1] % 12);
+    // `(fiscal_year, period_number)` is unique, and this database is shared
+    // with every other Postgres suite in the job. The key used to be drawn from
+    // 256 years x 12 periods -- 3,072 combinations -- which collided often
+    // enough to fail CI intermittently with the code unchanged. 3000-8999 is a
+    // range no other test uses, and two bytes of the UUID give 6,000 years x 12
+    // periods = 72,000 combinations.
+    let fiscal_year = 3000 + i32::from(u16::from_be_bytes([bytes[0], bytes[1]]) % 6000);
+    let period_number = 1 + i32::from(bytes[2] % 12);
     let gl = db.general_ledger();
     let period = gl
         .create_period_async(CreateGlPeriod {
@@ -1639,5 +1662,465 @@ async fn postgres_kernel_ledger_and_x402_commands_preserve_exact_fact_parity() {
     assert_eq!(settled.status, ExecutionStatus::Succeeded);
     assert_eq!(settled.result.as_ref().expect("intent").status, X402IntentStatus::Settled);
     assert_eq!(settled.result.as_ref().expect("intent").block_number, Some(4242));
+    assert!(db.kernel_outbox().verify_audit_chain_async().await.expect("verify chain").valid);
+}
+
+fn pg_applied<C: Clone>(command: &CommandEnvelope<C>) -> CommandEnvelope<C> {
+    let mut apply = command.clone();
+    apply.command_id = Uuid::new_v4();
+    apply.mode = ExecutionMode::Apply;
+    apply
+}
+
+fn pg_assert_sealed_success<T>(receipt: &stateset_core::ExecutionReceipt<T>, what: &str) {
+    assert_eq!(
+        receipt.status,
+        ExecutionStatus::Succeeded,
+        "{what}: {:?} {:?}",
+        receipt.error_code,
+        receipt.error_message
+    );
+    assert_eq!(receipt.event_ids.len(), 1, "{what} commits exactly one command fact");
+    assert!(receipt.audit_hash.is_some(), "{what} receipt is sealed into the audit chain");
+    assert!(receipt.policy.as_ref().is_some_and(|policy| policy.allowed), "{what} policy");
+}
+
+/// Twin of the SQLite `kernel_storefront_commands_run_a_complete_checkout_on_the_governed_surface`:
+/// the same journey, the same receipts and the same rejection codes on PostgreSQL.
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn postgres_kernel_storefront_commands_run_a_complete_checkout_on_the_governed_surface() {
+    use stateset_core::{
+        AddCartItemCommand, AddReturnTracking, ApplyCartCoupon, CalculateCartTax, CompletePayment,
+        CreateCouponCode, CreatePromotion, PromotionTrigger, PromotionType, SetCartPaymentMethod,
+        SetCartShippingAddress,
+    };
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping storefront proof");
+        return;
+    };
+    let db = Arc::new(PostgresDatabase::connect(&url).await.expect("connect and migrate"));
+    let kernel = db.kernel_executor(policy());
+    let suffix = Uuid::new_v4().simple().to_string();
+    let key = |step: &str| format!("pg-storefront-{step}-{suffix}");
+    let email = format!("pg-storefront-{suffix}@example.com");
+    let coupon_code = format!("WELCOME{}", &suffix[..10]).to_uppercase();
+
+    // customers.create — preview writes nothing, apply commits, replay is stable.
+    let create_customer = kernel_command(
+        "customers.create",
+        key("customer"),
+        "customers.create",
+        CreateCustomer {
+            email: email.clone(),
+            first_name: "Ada".into(),
+            last_name: "Lovelace".into(),
+            ..Default::default()
+        },
+    );
+    let preview =
+        kernel.execute_create_customer_async(&create_customer).await.expect("preview customer");
+    assert_eq!(preview.status, ExecutionStatus::Previewed);
+    assert!(db.customers().get_by_email_async(&email).await.expect("lookup").is_none());
+    let customer = kernel
+        .execute_create_customer_async(&pg_applied(&create_customer))
+        .await
+        .expect("customer");
+    pg_assert_sealed_success(&customer, "customers.create");
+    let replayed =
+        kernel.execute_create_customer_async(&pg_applied(&create_customer)).await.expect("replay");
+    assert_eq!(replayed.receipt_id, customer.receipt_id);
+    let customer = customer.result.expect("customer result");
+    let mut duplicate = pg_applied(&create_customer);
+    duplicate.idempotency_key = key("customer-duplicate");
+    let duplicate = kernel.execute_create_customer_async(&duplicate).await.expect("duplicate");
+    assert_eq!(duplicate.status, ExecutionStatus::Rejected);
+    assert_eq!(duplicate.error_code.as_deref(), Some("commerce.customer.email_conflict"));
+
+    // The operator provisions the welcome coupon; agents only redeem it.
+    let promotion = db
+        .promotions()
+        .create_async(CreatePromotion {
+            name: format!("Welcome 10% {suffix}"),
+            promotion_type: PromotionType::PercentageOff,
+            trigger: PromotionTrigger::CouponCode,
+            percentage_off: Some(dec!(0.10)),
+            ..Default::default()
+        })
+        .await
+        .expect("create promotion");
+    db.promotions().activate_async(promotion.id.into_uuid()).await.expect("activate promotion");
+    db.promotions()
+        .create_coupon_async(CreateCouponCode {
+            promotion_id: promotion.id,
+            code: coupon_code.clone(),
+            usage_limit: None,
+            per_customer_limit: None,
+            starts_at: None,
+            ends_at: None,
+            metadata: None,
+        })
+        .await
+        .expect("create coupon");
+
+    // carts.create + carts.item.add
+    let cart = kernel
+        .execute_create_cart_async(&pg_applied(&kernel_command(
+            "carts.create",
+            key("cart"),
+            "carts.create",
+            CreateCart {
+                customer_id: Some(customer.id),
+                currency: Some(CurrencyCode::USD),
+                ..Default::default()
+            },
+        )))
+        .await
+        .expect("create cart");
+    pg_assert_sealed_success(&cart, "carts.create");
+    let cart_id = cart.result.expect("cart").id;
+    let add_item = kernel_command(
+        "carts.item.add",
+        key("item"),
+        "carts.item.add",
+        AddCartItemCommand {
+            cart_id,
+            item: AddCartItem {
+                sku: format!("PG-W-{suffix}"),
+                name: "Widget".into(),
+                quantity: 2,
+                unit_price: dec!(50.00),
+                ..Default::default()
+            },
+        },
+    );
+    let previewed = kernel.execute_add_cart_item_async(&add_item).await.expect("preview item");
+    assert_eq!(previewed.status, ExecutionStatus::Previewed);
+    assert!(
+        db.carts()
+            .get_async(cart_id.into_uuid())
+            .await
+            .expect("cart")
+            .expect("cart")
+            .items
+            .is_empty()
+    );
+    let with_item =
+        kernel.execute_add_cart_item_async(&pg_applied(&add_item)).await.expect("add item");
+    pg_assert_sealed_success(&with_item, "carts.item.add");
+    assert_eq!(with_item.result.as_ref().expect("cart").subtotal, dec!(100.00));
+    let mut missing_cart = pg_applied(&add_item);
+    missing_cart.idempotency_key = key("item-missing");
+    missing_cart.payload.cart_id = stateset_core::CartId::new();
+    let missing_cart =
+        kernel.execute_add_cart_item_async(&missing_cart).await.expect("missing cart");
+    assert_eq!(missing_cart.status, ExecutionStatus::Rejected);
+    assert_eq!(missing_cart.error_code.as_deref(), Some("commerce.cart_not_found"));
+    assert!(missing_cart.audit_hash.is_some(), "rejections are sealed too");
+
+    // carts.shipping_address.set + carts.tax.calculate
+    let shipping = kernel
+        .execute_set_cart_shipping_address_async(&pg_applied(&kernel_command(
+            "carts.shipping_address.set",
+            key("shipping"),
+            "carts.shipping_address.set",
+            SetCartShippingAddress {
+                cart_id,
+                address: CartAddress {
+                    first_name: "Ada".into(),
+                    last_name: "Lovelace".into(),
+                    company: None,
+                    line1: "1 Main St".into(),
+                    line2: None,
+                    city: "Los Angeles".into(),
+                    state: Some("CA".into()),
+                    postal_code: "90001".into(),
+                    country: "US".into(),
+                    phone: None,
+                    email: None,
+                },
+            },
+        )))
+        .await
+        .expect("set shipping address");
+    pg_assert_sealed_success(&shipping, "carts.shipping_address.set");
+    let taxed = kernel
+        .execute_calculate_cart_tax_async(&pg_applied(&kernel_command(
+            "carts.tax.calculate",
+            key("tax"),
+            "carts.tax.calculate",
+            CalculateCartTax { cart_id },
+        )))
+        .await
+        .expect("calculate tax");
+    pg_assert_sealed_success(&taxed, "carts.tax.calculate");
+    let taxed = taxed.result.expect("tax result");
+    assert_eq!(taxed.cart.tax_amount, taxed.calculation.total_tax);
+    let untaxable = kernel
+        .execute_create_cart_async(&pg_applied(&kernel_command(
+            "carts.create",
+            key("untaxable-cart"),
+            "carts.create",
+            CreateCart { customer_id: Some(customer.id), ..Default::default() },
+        )))
+        .await
+        .expect("second cart")
+        .result
+        .expect("second cart");
+    let no_address = kernel
+        .execute_calculate_cart_tax_async(&pg_applied(&kernel_command(
+            "carts.tax.calculate",
+            key("tax-no-address"),
+            "carts.tax.calculate",
+            CalculateCartTax { cart_id: untaxable.id },
+        )))
+        .await
+        .expect("tax without address");
+    assert_eq!(no_address.status, ExecutionStatus::Rejected);
+    assert_eq!(no_address.error_code.as_deref(), Some("commerce.validation_failed"));
+
+    // carts.coupon.apply — an unknown code is a sealed refusal, the real one discounts.
+    let bogus = kernel
+        .execute_apply_cart_coupon_async(&pg_applied(&kernel_command(
+            "carts.coupon.apply",
+            key("coupon-bogus"),
+            "carts.coupon.apply",
+            ApplyCartCoupon { cart_id, coupon_code: format!("NOPE{suffix}") },
+        )))
+        .await
+        .expect("bogus coupon");
+    assert_eq!(bogus.status, ExecutionStatus::Rejected);
+    assert_eq!(bogus.error_code.as_deref(), Some("commerce.validation_failed"));
+    let coupon = kernel_command(
+        "carts.coupon.apply",
+        key("coupon"),
+        "carts.coupon.apply",
+        ApplyCartCoupon { cart_id, coupon_code: coupon_code.to_lowercase() },
+    );
+    assert_eq!(
+        kernel.execute_apply_cart_coupon_async(&coupon).await.expect("preview coupon").status,
+        ExecutionStatus::Previewed
+    );
+    assert_eq!(
+        db.carts().get_async(cart_id.into_uuid()).await.expect("cart").expect("cart").coupon_code,
+        None
+    );
+    let discounted =
+        kernel.execute_apply_cart_coupon_async(&pg_applied(&coupon)).await.expect("coupon");
+    pg_assert_sealed_success(&discounted, "carts.coupon.apply");
+    let discounted = discounted.result.expect("discounted cart");
+    assert_eq!(discounted.coupon_code.as_deref(), Some(coupon_code.as_str()));
+    assert_eq!(discounted.discount_amount, dec!(10.00));
+
+    // carts.payment_method.set — the token is stored but never sealed.
+    let paid = kernel
+        .execute_set_cart_payment_method_async(&pg_applied(&kernel_command(
+            "carts.payment_method.set",
+            key("payment-method"),
+            "carts.payment_method.set",
+            SetCartPaymentMethod {
+                cart_id,
+                payment: SetCartPayment {
+                    payment_method: "credit_card".into(),
+                    payment_token: Some("tok_pg_storefront_secret".into()),
+                    billing_address: None,
+                },
+            },
+        )))
+        .await
+        .expect("set payment method");
+    pg_assert_sealed_success(&paid, "carts.payment_method.set");
+    assert!(
+        !serde_json::to_string(&paid).expect("receipt json").contains("tok_pg_storefront_secret")
+    );
+    assert_eq!(
+        db.carts()
+            .get_async(cart_id.into_uuid())
+            .await
+            .expect("cart")
+            .expect("cart")
+            .payment_token
+            .as_deref(),
+        Some("tok_pg_storefront_secret")
+    );
+
+    // checkout.commit, payments.create, payments.complete
+    let checkout = kernel
+        .execute_commit_checkout_async(&pg_applied(&kernel_command(
+            "checkout.commit",
+            key("checkout"),
+            "checkout.commit",
+            CommitCheckout::new(cart_id),
+        )))
+        .await
+        .expect("checkout");
+    assert_eq!(checkout.status, ExecutionStatus::Succeeded, "{:?}", checkout.error_message);
+    let checkout = checkout.result.expect("checkout result");
+    assert_eq!(checkout.total_charged, discounted.grand_total);
+    let order_id = checkout.order_id;
+    let payment = kernel
+        .execute_create_payment_async(&pg_applied(&kernel_command(
+            "payments.create",
+            key("payment"),
+            "payments.create",
+            CreatePayment {
+                order_id: Some(order_id),
+                payment_method: PaymentMethodType::CreditCard,
+                amount: checkout.total_charged,
+                currency: Some(CurrencyCode::USD),
+                ..Default::default()
+            },
+        )))
+        .await
+        .expect("payment");
+    assert_eq!(payment.status, ExecutionStatus::Succeeded, "{:?}", payment.error_message);
+    let payment_id = payment.result.expect("payment").id;
+    let complete = kernel_command(
+        "payments.complete",
+        key("capture"),
+        "payments.complete",
+        CompletePayment { payment_id },
+    );
+    assert_eq!(
+        kernel.execute_complete_payment_async(&complete).await.expect("preview capture").status,
+        ExecutionStatus::Previewed
+    );
+    assert_eq!(
+        db.payments()
+            .get_async(payment_id.into_uuid())
+            .await
+            .expect("payment")
+            .expect("payment")
+            .status,
+        stateset_core::PaymentTransactionStatus::Pending
+    );
+    let captured =
+        kernel.execute_complete_payment_async(&pg_applied(&complete)).await.expect("capture");
+    pg_assert_sealed_success(&captured, "payments.complete");
+    assert_eq!(
+        captured.result.as_ref().expect("payment").status,
+        stateset_core::PaymentTransactionStatus::Completed
+    );
+    let replayed =
+        kernel.execute_complete_payment_async(&pg_applied(&complete)).await.expect("replay");
+    assert_eq!(replayed.receipt_id, captured.receipt_id);
+    let mut again = pg_applied(&complete);
+    again.idempotency_key = key("capture-again");
+    let again = kernel.execute_complete_payment_async(&again).await.expect("second capture");
+    assert_eq!(again.status, ExecutionStatus::Rejected);
+    assert_eq!(again.error_code.as_deref(), Some("commerce.payment.rejected"));
+
+    // orders.transition, shipments.create, orders.ship
+    let processing = kernel
+        .execute_transition_order_async(&pg_applied(&kernel_command(
+            "orders.transition",
+            key("processing"),
+            "orders.transition",
+            TransitionOrder {
+                order_id,
+                status: OrderStatus::Processing,
+                payment_status: None,
+                void_payments: false,
+            },
+        )))
+        .await
+        .expect("processing");
+    assert_eq!(processing.status, ExecutionStatus::Succeeded, "{:?}", processing.error_message);
+    let shipment_input = |order_id| stateset_core::CreateShipment {
+        order_id,
+        recipient_name: "Ada Lovelace".into(),
+        shipping_address: "1 Main St, Los Angeles, CA 90001, US".into(),
+        carrier: Some(stateset_core::ShippingCarrier::Ups),
+        ..Default::default()
+    };
+    let orphan = kernel
+        .execute_create_shipment_async(&pg_applied(&kernel_command(
+            "shipments.create",
+            key("shipment-orphan"),
+            "shipments.create",
+            shipment_input(stateset_core::OrderId::new()),
+        )))
+        .await
+        .expect("orphan shipment");
+    assert_eq!(orphan.status, ExecutionStatus::Rejected);
+    assert_eq!(orphan.error_code.as_deref(), Some("commerce.order_not_found"));
+    let shipment = kernel
+        .execute_create_shipment_async(&pg_applied(&kernel_command(
+            "shipments.create",
+            key("shipment"),
+            "shipments.create",
+            shipment_input(order_id),
+        )))
+        .await
+        .expect("shipment");
+    pg_assert_sealed_success(&shipment, "shipments.create");
+    let shipped = kernel
+        .execute_ship_order_async(&pg_applied(&kernel_command(
+            "orders.ship",
+            key("ship"),
+            "orders.ship",
+            ShipOrderCommand { order_id, tracking_number: Some("1Z999".into()), lines: None },
+        )))
+        .await
+        .expect("ship");
+    assert_eq!(shipped.status, ExecutionStatus::Succeeded, "{:?}", shipped.error_message);
+
+    // returns.create, returns.transition, returns.tracking.add
+    let order = db.orders().get_async(order_id.into_uuid()).await.expect("order").expect("order");
+    let return_input = |quantity| CreateReturn {
+        order_id,
+        reason: stateset_core::ReturnReason::Defective,
+        items: vec![CreateReturnItem {
+            order_item_id: order.items[0].id,
+            quantity,
+            condition: None,
+        }],
+        ..Default::default()
+    };
+    let too_many = kernel
+        .execute_create_return_async(&pg_applied(&kernel_command(
+            "returns.create",
+            key("return-too-many"),
+            "returns.create",
+            return_input(5),
+        )))
+        .await
+        .expect("over-return");
+    assert_eq!(too_many.status, ExecutionStatus::Rejected);
+    assert_eq!(too_many.error_code.as_deref(), Some("commerce.return.exceeds_shipped"));
+    let create_return =
+        kernel_command("returns.create", key("return"), "returns.create", return_input(1));
+    assert_eq!(
+        kernel.execute_create_return_async(&create_return).await.expect("preview return").status,
+        ExecutionStatus::Previewed
+    );
+    let returned =
+        kernel.execute_create_return_async(&pg_applied(&create_return)).await.expect("return");
+    pg_assert_sealed_success(&returned, "returns.create");
+    let return_id = returned.result.expect("return").id;
+    let approved = kernel
+        .execute_transition_return_async(&pg_applied(&kernel_command(
+            "returns.transition",
+            key("return-approve"),
+            "returns.transition",
+            TransitionReturn { return_id, status: ReturnStatus::Approved },
+        )))
+        .await
+        .expect("approve");
+    assert_eq!(approved.status, ExecutionStatus::Succeeded, "{:?}", approved.error_message);
+    let tracked = kernel
+        .execute_add_return_tracking_async(&pg_applied(&kernel_command(
+            "returns.tracking.add",
+            key("return-tracking"),
+            "returns.tracking.add",
+            AddReturnTracking { return_id, tracking_number: "RET-1Z".into() },
+        )))
+        .await
+        .expect("tracking");
+    pg_assert_sealed_success(&tracked, "returns.tracking.add");
+    let tracked = tracked.result.expect("tracked return");
+    assert_eq!(tracked.status, ReturnStatus::InTransit);
+    assert_eq!(tracked.tracking_number.as_deref(), Some("RET-1Z"));
+
     assert!(db.kernel_outbox().verify_audit_chain_async().await.expect("verify chain").valid);
 }

@@ -152,6 +152,14 @@ describe('get_payment', () => {
     assert.equal(result.payment.amount, '99.99');
   });
 
+  it('includes the payment refunds when the binding exposes getRefunds', async () => {
+    const refunds = [{ id: 'ref_001', status: 'pending', amountExact: '5.00' }];
+    const commerce = makePaymentCommerce({ getRefunds: async () => refunds });
+    const result = await tool.handler({ commerce, params: { paymentId: 'pay_001' } });
+    assert.equal(result.success, true);
+    assert.deepEqual(result.refunds, refunds);
+  });
+
   it('returns error when get throws', async () => {
     const commerce = makePaymentCommerce({
       get: async () => {

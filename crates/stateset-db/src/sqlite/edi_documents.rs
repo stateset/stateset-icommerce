@@ -137,10 +137,23 @@ impl EdiDocumentRepository for SqliteEdiDocumentRepository {
         let id_str = id.to_string();
         let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
-            tx.execute(
-                "UPDATE edi_documents SET status = ?, error_message = ?, updated_at = ? WHERE id = ?",
+            let changed = tx.execute(
+                "UPDATE edi_documents SET status = ?, error_message = ?, updated_at = ?
+                 WHERE id = ? AND status NOT IN ('processed', 'acknowledged')",
                 rusqlite::params![status.to_string(), &error_message, &now, &id_str],
             )?;
+            if changed == 0 {
+                let current: String = tx.query_row(
+                    "SELECT status FROM edi_documents WHERE id = ?",
+                    [&id_str],
+                    |row| row.get(0),
+                )?;
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::Conflict(format!(
+                        "Cannot update an EDI document in terminal status {current}"
+                    )),
+                )));
+            }
             tx.query_row("SELECT * FROM edi_documents WHERE id = ?", [&id_str], Self::row_to_doc)
         })
     }
@@ -215,6 +228,20 @@ mod tests {
             repo.set_status(d.id, EdiStatus::Error, Some("malformed segment".into())).expect("set");
         assert_eq!(errored.status, EdiStatus::Error);
         assert_eq!(errored.error_message.as_deref(), Some("malformed segment"));
+    }
+
+    #[test]
+    fn terminal_status_cannot_be_replaced() {
+        let repo = test_repo();
+        let d = create(&repo, "850", EdiDirection::Inbound);
+        repo.set_status(d.id, EdiStatus::Processed, None).expect("process");
+        let err = repo
+            .set_status(d.id, EdiStatus::Error, Some("late failure".into()))
+            .expect_err("terminal state is immutable");
+        assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
+        let stored = repo.get(d.id).expect("get").expect("document");
+        assert_eq!(stored.status, EdiStatus::Processed);
+        assert!(stored.error_message.is_none());
     }
 
     #[test]

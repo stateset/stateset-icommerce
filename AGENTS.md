@@ -21,19 +21,34 @@ end-to-end; every mutation is auditable.
 }
 ```
 
-The `core` profile keeps the model-facing catalog focused; use `--profile all`
-for the complete surface (923 tools across 87 domains at the time of writing —
-see [`cli/docs/TOOLS.md`](cli/docs/TOOLS.md), which is generated and
-authoritative), or `finance`, `operations`, and `agents` for curated
-workloads. Add individual modules with `--domains a,b`. **Writes are
-preview-only by default** — tools describe what they would do; add `--apply`
-to the args to enable mutations. The generated tool catalog is
-[`cli/docs/TOOLS.md`](cli/docs/TOOLS.md).
+Every tool carries a **stability tier** (`cli/src/tools/tool-tiers.js`):
+
+| Tier | Tools | What it means |
+|---|---:|---|
+| `core` | 196 | The default surface. Catalog, customers, carts/checkout, orders, payments and refunds, returns, shipments, inventory, promotions, tax, gift cards and store credit, analytics, plus the agentic planning/replay tools. Smoke-gated: every core tool works or refuses cleanly on a fresh store, with no known-defect backlog. |
+| `extended` | 479 | Real but specialised domains: finance suite, manufacturing, WMS, B2B, subscriptions/reviews/loyalty, integrations. |
+| `experimental` | 276 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete: A2A, agent receipts, sync, vector search, on-chain treasury. |
+
+With no `--profile`, the MCP servers expose exactly the `core` tier. Use
+`--profile all` for everything (951 tools: 936 across 87 domains plus 15
+agentic runtime tools), or `finance`, `operations`, and `agents` for curated
+workloads (these expose every tool in their domains, whatever its tier). Add
+individual domains with `--domains a,b`. **Writes are preview-only by
+default** — tools describe what they would do; add `--apply` to the args to
+enable mutations. The generated tool catalog, with each tool's tier and each
+profile's size, is [`cli/docs/TOOLS.md`](cli/docs/TOOLS.md) (authoritative).
 
 For an autonomous production endpoint, also provide operator-owned kernel
 policy and principal files. This enables strict mode: only typed governed write
 commands are exposed, while read tools remain available. Identity and policy
-never come from model arguments.
+never come from model arguments. The governed catalog covers a complete
+checkout — customers, carts (items, shipping address, payment method, coupon,
+tax), checkout, payment create/capture, order transitions, shipments, returns
+(create, tracking, transitions) and refunds — so grant those capabilities
+(see [`kernel/examples/strict-policy.json`](kernel/examples/strict-policy.json))
+and a strict agent can sell end to end. Promotions and coupons are operator
+configuration: strict agents redeem them (`apply_cart_discount`) but cannot
+create them; provision them outside the agent endpoint.
 
 ```json
 {

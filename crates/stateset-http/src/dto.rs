@@ -638,7 +638,40 @@ pub struct CreateShipmentRequest {
     pub tracking_number: Option<String>,
     pub shipping_method: Option<String>,
     pub recipient_name: Option<String>,
+    pub recipient_email: Option<String>,
+    pub recipient_phone: Option<String>,
+    pub shipping_address: Option<String>,
     pub notes: Option<String>,
+}
+
+/// A partial shipment update. Omitted or null fields retain their stored values.
+/// Cancellation uses the separately authorized `/shipments/{id}/cancel` endpoint.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateShipmentRequest {
+    pub expected_version: Option<i32>,
+    /// Native lifecycle status; `cancelled` is not accepted by this endpoint.
+    pub status: Option<String>,
+    pub carrier: Option<String>,
+    pub tracking_number: Option<String>,
+    pub recipient_name: Option<String>,
+    pub recipient_email: Option<String>,
+    pub recipient_phone: Option<String>,
+    pub shipping_address: Option<String>,
+    /// Exact decimal string, in kilograms.
+    pub weight_kg: Option<String>,
+    pub dimensions: Option<String>,
+    /// Exact decimal string in the order's currency.
+    pub shipping_cost: Option<String>,
+    pub estimated_delivery: Option<DateTime<Utc>>,
+    pub notes: Option<String>,
+}
+
+/// Version precondition for shipment cancellation.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CancelShipmentRequest {
+    pub expected_version: Option<i32>,
 }
 
 /// Response body for a single shipment.
@@ -655,6 +688,14 @@ pub struct ShipmentResponse {
     pub tracking_number: Option<String>,
     pub tracking_url: Option<String>,
     pub recipient_name: String,
+    pub recipient_email: Option<String>,
+    pub recipient_phone: Option<String>,
+    pub shipping_address: String,
+    pub notes: Option<String>,
+    pub version: i32,
+    #[schema(value_type = Option<String>)]
+    pub weight_kg: Option<Decimal>,
+    pub dimensions: Option<String>,
     #[schema(value_type = Option<String>)]
     pub shipping_cost: Option<Decimal>,
     pub shipped_at: Option<DateTime<Utc>>,
@@ -1136,6 +1177,13 @@ impl From<stateset_core::Shipment> for ShipmentResponse {
             tracking_number: s.tracking_number,
             tracking_url: s.tracking_url,
             recipient_name: s.recipient_name,
+            recipient_email: s.recipient_email,
+            recipient_phone: s.recipient_phone,
+            shipping_address: s.shipping_address,
+            notes: s.notes,
+            version: s.version,
+            weight_kg: s.weight_kg,
+            dimensions: s.dimensions,
             shipping_cost: s.shipping_cost,
             shipped_at: s.shipped_at,
             estimated_delivery: s.estimated_delivery,

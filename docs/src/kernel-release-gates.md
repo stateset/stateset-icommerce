@@ -6,14 +6,19 @@ A high tool count or passing unit suite does not establish safe autonomous
 commerce. Release readiness requires evidence for the full economic lifecycle.
 These gates track the source tree, including unreleased changes.
 
-The [Set integration review](set-integration-gates.md) identifies a blocking
-intent-identity/signing-order mismatch between the sequencer and Set. Local
-signature verification now uses real cryptography, but does not resolve that
-cross-service protocol mismatch or establish production readiness.
+The [Set integration review](set-integration-gates.md) tracks the coordinated
+intent-identity handshake and the remaining admission, gateway and real settlement
+verification. Local cryptography and the opt-in handshake do not establish
+cross-service production readiness.
+
+The machine-readable implementation backlog is
+[`kernel/foundation-program.json`](../../kernel/foundation-program.json). An item
+requires its acceptance evidence before it can be marked complete; local test
+success does not substitute for provider or independent implementation evidence.
 
 | Gate                      | Current evidence                                                                                                                                 | Required before claiming production completeness                                                                           |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| Exact money               | Rust decimal primitives; reference quote, subscription, return and payout arithmetic uses integers; malformed input and conservation regressions | Audit every provider conversion and enforce asset precision at payment boundaries                                          |
+| Exact money               | Rust decimal primitives; integer reference arithmetic; CLI provider decimal capture/refund, tax, shipping and reconciliation regressions | Audit remaining binding/import/provider conversions and share asset conformance vectors across runtimes |
 | Inventory consistency     | Duplicate-SKU reservations are checked together; reference snapshots use current balances; kernel reservation receipt tests                      | Concurrent buyers against durable merchant storage; recovery across acceptance, expiration, fulfillment and release        |
 | Durable purchases         | Persisted dispatch, shared asset holds, authoritative lookup, fenced workers, scoped recovery and cancellation tests                             | Kill processes at each external commit boundary; prove no duplicate effects with actual providers                          |
 | End-to-end authority      | Operator-owned identity/policy, signed acceptance, governed command adapters                                                                     | Cover purchase, fulfillment, return, refund and dispute workflows; enforce budgets across all enabled entrypoints          |
@@ -49,6 +54,41 @@ cross-service protocol mismatch or establish production readiness.
 4. Unify spending controls across the enabled paths and run multi-worker crash
    and concurrency tests. Count economic effects, not merely successful requests.
 5. Publish reproducible workload results and obtain independent security review.
+
+## CLI sandbox and shadow provider money contract
+
+Payment, tax and shipping providers under `cli/src/tools/providers/` calculate
+with isolated decimal arithmetic and return decimal strings. The explicit fiat
+currency allowlist in `money.js` defines zero, two or three fractional digits.
+Unknown currencies and token symbols are rejected: a token symbol alone does
+not specify chain, contract and scale. Provider-specific denomination exceptions
+belong in a real adapter, not a guessed global default.
+
+Payment instructions reject negative, zero, malformed and excess-precision
+amounts instead of rounding a charge. Computed tax lines and shipping charges
+round half away from zero at the currency boundary. Safe legacy numeric tool
+inputs remain accepted for compatibility; exact decimal strings are preferred.
+Conversion cannot recover precision already lost by a caller. New integrations
+must send strings. Normalized shadow webhook `amount` fields use major units;
+`amount_received`, `amount_captured`, `amount_refunded` and `amount_minor` (and
+their camelCase aliases) use integer currency minor units. Raw Stripe payloads
+must be mapped by an adapter before using this envelope.
+
+Settlement batches and reconciliation expose per-currency totals. Legacy scalar
+totals are `null` for mixed-currency results; callers must use `totalsByCurrency`.
+Payment create/capture/refund idempotency keys bind normalized requests and reject
+conflicts. Terminal-state retries return the original operation. These maps are
+still in memory and do not provide durable provider idempotency.
+
+Regression command (from the repository root):
+
+```sh
+node --test cli/test/unit/provider-money.test.js cli/test/unit/payments-tools.test.js cli/test/unit/tax-tools.test.js cli/test/unit/shipments-tools.test.js
+```
+
+This proves local arithmetic, validation and replay behavior. It does not certify
+live tax rates, currency conversion, real settlement, webhook ordering or recovery
+across provider/database commits.
 
 ## Reference money contract
 

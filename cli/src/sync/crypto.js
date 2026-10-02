@@ -358,6 +358,7 @@ export const DOMAIN = {
   PAD_LEAF: Buffer.from('VES_PAD_LEAF_V1'),
   STREAM: Buffer.from('VES_STREAM_V1'),
   RECEIPT: Buffer.from('VES_RECEIPT_V1'),
+  KEYDIR: Buffer.from('VES_KEYDIR_V1'),
 };
 
 /**

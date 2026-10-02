@@ -5,6 +5,7 @@
 //!   quantities, and serializes concurrent put-aways with `FOR UPDATE`;
 //! - W2 `waves.pick_count` is maintained on pick insert/cancel and
 //!   `complete_wave` refuses while picks are still open;
+//! - W2b picked plus short quantities cannot exceed the requested quantity;
 //! - W3 a line with `expected_quantity = 0` is a blind receipt;
 //! - W4 `delete_location` refuses reserved stock and movement history with a
 //!   `ValidationError`, and reports a missing id as `NotFound`.
@@ -16,10 +17,11 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::{
-    AdjustLocationInventory, CommerceError, CompletePick, CompletePutAway, CreateLocation,
-    CreatePickTask, CreatePutAway, CreateReceipt, CreateReceiptItem, CreateWarehouse, CreateWave,
-    FulfillmentId, LocationType, OrderId, OrderItemId, ReceiptItemStatus, ReceiveItemLine,
-    ReceiveItems, UpdateLocation, WarehouseType, WaveStatus,
+    AdjustLocationInventory, CommerceError, CompletePick, CompletePutAway, CreateCustomer,
+    CreateLocation, CreateOrder, CreateOrderItem, CreatePickTask, CreatePutAway, CreateReceipt,
+    CreateReceiptItem, CreateWarehouse, CreateWave, FulfillmentId, LocationType, OrderId,
+    OrderItemId, ProductId, ReceiptItemStatus, ReceiveItemLine, ReceiveItems, UpdateLocation,
+    WarehouseType, WaveStatus,
 };
 use stateset_db::PostgresDatabase;
 use std::sync::Arc;
@@ -38,6 +40,37 @@ async fn connect() -> Option<PostgresDatabase> {
 }
 
 /// A fresh warehouse with one receivable/pickable location: `(wh_id, loc_id)`.
+/// A real order row (with its customer): waves refuse order ids that do not
+/// exist.
+async fn seed_order(db: &PostgresDatabase) -> OrderId {
+    let customer = db
+        .customers()
+        .create_async(CreateCustomer {
+            email: format!("wms-{}@example.com", Uuid::new_v4().simple()),
+            first_name: "Wms".into(),
+            last_name: "Order".into(),
+            ..Default::default()
+        })
+        .await
+        .expect("create customer");
+    db.orders()
+        .create_async(CreateOrder {
+            customer_id: customer.id,
+            items: vec![CreateOrderItem {
+                product_id: ProductId::new(),
+                sku: format!("SKU-WMS-{}", Uuid::new_v4().simple()),
+                name: "Widget".into(),
+                quantity: 1,
+                unit_price: dec!(10.00),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .await
+        .expect("create order")
+        .id
+}
+
 async fn seed_warehouse(db: &PostgresDatabase) -> (i32, i32) {
     let tag = Uuid::new_v4().simple().to_string();
     let wh = db
@@ -146,6 +179,44 @@ fn pick(
         priority: None,
         notes: None,
     }
+}
+
+#[tokio::test]
+async fn postgres_pick_quantity_claims_cannot_exceed_or_reverse_the_request() {
+    let Some(db) = connect().await else { return };
+    let (wh, loc) = seed_warehouse(&db).await;
+    let order = seed_order(&db).await;
+    let task = db
+        .fulfillment()
+        .create_pick_async(pick(None, order, wh, loc, "SKU-QUANTITY"))
+        .await
+        .expect("pick");
+
+    for (picked, short) in
+        [(dec!(-1), dec!(0)), (dec!(0), dec!(-1)), (dec!(6), dec!(0)), (dec!(3), dec!(3))]
+    {
+        assert!(
+            db.fulfillment()
+                .complete_pick_async(CompletePick {
+                    pick_id: task.id,
+                    quantity_picked: picked,
+                    quantity_short: Some(short),
+                    short_reason: None,
+                    lot_id: None,
+                    serial_number: None,
+                    completed_by: None,
+                })
+                .await
+                .is_err(),
+            "picked={picked}, short={short} must be rejected"
+        );
+    }
+    for short in [dec!(-1), dec!(6)] {
+        assert!(db.fulfillment().report_short_async(task.id, short, "invalid").await.is_err());
+    }
+    let unchanged = db.fulfillment().get_pick_async(task.id).await.expect("read").unwrap();
+    assert_eq!(unchanged.status, task.status);
+    db.fulfillment().report_short_async(task.id, dec!(5), "unavailable").await.expect("valid");
 }
 
 // ---------------------------------------------------------------- W1
@@ -359,7 +430,7 @@ async fn seed_stock(
 async fn postgres_wave_pick_count_and_completion_gate() {
     let Some(db) = connect().await else { return };
     let (wh, loc) = seed_warehouse(&db).await;
-    let order = OrderId::new();
+    let order = seed_order(&db).await;
     let wave = db
         .fulfillment()
         .create_wave_async(CreateWave {

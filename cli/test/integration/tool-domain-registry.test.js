@@ -20,7 +20,17 @@ const toolsDir = path.resolve(__dirname, '../../src/tools');
 function listToolModulesOnDisk() {
   return fs
     .readdirSync(toolsDir)
-    .filter((entry) => entry.endsWith('.js') && !['index.js', 'domain-registry.js'].includes(entry))
+    .filter(
+      (entry) =>
+        entry.endsWith('.js') &&
+        ![
+          'index.js',
+          'domain-registry.js',
+          'tool-tiers.js',
+          'scoped-store.js',
+          'fulfillment-recovery.js',
+        ].includes(entry),
+    )
     .map((entry) => entry.replace(/\.js$/, ''))
     .sort();
 }

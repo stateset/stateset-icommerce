@@ -9,6 +9,78 @@ import {
   RateLimiter,
 } from '../../src/adapters/shopify/client.js';
 
+describe('authenticated request boundaries', () => {
+  const config = {
+    shopDomain: 'store.myshopify.com',
+    accessToken: 'operator-token',
+    requestsPerSecond: 10000,
+  };
+
+  it('rejects other shops, origins, versions and credentials before sending a token', async (t) => {
+    let calls = 0;
+    t.mock.method(globalThis, 'fetch', async () => {
+      calls++;
+      throw new Error('unexpected network request');
+    });
+    const client = new ShopifyClient(config);
+    for (const url of [
+      'https://attacker.example/admin/api/2024-01/customers.json',
+      'https://other.myshopify.com/admin/api/2024-01/customers.json',
+      'http://store.myshopify.com/admin/api/2024-01/customers.json',
+      'https://store.myshopify.com/admin/api/2025-01/customers.json',
+      'https://user:pass@store.myshopify.com/admin/api/2024-01/customers.json',
+      '/../../customers.json',
+    ])
+      await assert.rejects(client.get(url), /configured shop/);
+    assert.equal(calls, 0);
+  });
+
+  it('blocks foreign pagination links after receiving the first page', async (t) => {
+    const calls = [];
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
+      calls.push({ url, options });
+      return new Response(JSON.stringify({ customers: [{ id: '1' }] }), {
+        headers: { link: '<https://attacker.example/steal>; rel="next"' },
+      });
+    });
+    const client = new ShopifyClient(config);
+    const pages = client.getCustomers();
+    assert.deepEqual((await pages.next()).value, [{ id: '1' }]);
+    await assert.rejects(pages.next(), /configured shop/);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].options.redirect, 'error');
+    assert.ok(calls[0].options.signal instanceof AbortSignal);
+  });
+
+  it('stops a repeated cursor instead of looping forever', async (t) => {
+    let calls = 0;
+    t.mock.method(globalThis, 'fetch', async () => {
+      calls++;
+      return new Response(JSON.stringify({ customers: [{ id: String(calls) }] }), {
+        headers: {
+          link: '<https://store.myshopify.com/admin/api/2024-01/customers.json?page_info=repeated>; rel="next"',
+        },
+      });
+    });
+    const client = new ShopifyClient(config);
+    await assert.rejects(async () => {
+      for await (const _page of client.getCustomers()) {
+        /* consume */
+      }
+    }, /cursor repeated/);
+    assert.equal(calls, 2);
+  });
+
+  it('refuses configuration that changes the API path or cannot rate limit', () => {
+    assert.throws(() => new ShopifyClient({ ...config, apiVersion: '../other' }), /apiVersion/);
+    for (const rate of [0, -1, Infinity, NaN])
+      assert.throws(
+        () => new ShopifyClient({ ...config, requestsPerSecond: rate }),
+        /requestsPerSecond/,
+      );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // isValidShopifyDomain
 // ---------------------------------------------------------------------------

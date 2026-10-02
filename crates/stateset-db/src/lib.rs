@@ -39,10 +39,15 @@
 //! debugging and error categorization. Use the error helper functions
 //! in the `error_helpers` module for converting backend-specific errors.
 
+pub(crate) mod a2a_participants;
 pub mod error_helpers;
 pub mod http_idempotency;
 pub mod kernel;
 pub mod kernel_outbox;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
+mod shipment_allocations;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
+mod shipment_updates;
 pub(crate) mod x402_claim;
 pub use http_idempotency::{HttpIdempotencyRecord, HttpIdempotencyRepository};
 pub use kernel_outbox::{KernelOutboxEvent, KernelReceiptRecord};

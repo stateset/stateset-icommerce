@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCommerce } from '@/lib/commerce';
 import { verifyWalletRequest } from '@/lib/wallet-auth';
+import { walletMatches } from '@/lib/customer-metadata';
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -17,7 +18,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (!subscription)
       return NextResponse.json({ error: 'Subscription not found' }, { status: 404 });
     const customer = await commerce.customers.get(subscription.customerId);
-    if (customer?.metadata?.walletAddress?.toLowerCase() !== walletAddress.toLowerCase()) {
+    if (!walletMatches(customer?.metadata, walletAddress)) {
       return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
     }
 

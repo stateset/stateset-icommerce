@@ -6,6 +6,7 @@
 - [Getting Started](getting-started.md)
 - [CLI Quickstart](standalone-quickstart.md)
 - [AI Agent Quickstart](ai-agents.md)
+- [Meta Muse Connector](guides/meta-muse-connector.md)
 - [Product Tiers](tiers.md)
 - [Trust Foundation](trust-foundation.md)
 
@@ -140,6 +141,7 @@
 - [Overview](api/index.md)
   - [Rust](api/rust.md)
   - [Node.js](api/node.md)
+    - [Node.js API Reference (generated)](api/node-reference.md)
   - [Python](api/python.md)
   - [Ruby](api/ruby.md)
   - [PHP](api/php.md)
@@ -156,6 +158,7 @@
 - [Agent Inventory](appendix/agent-inventory.md)
 - [API Command Coverage](appendix/api-command-coverage.md)
 - [Binding API Inventory](appendix/binding-api-inventory.md)
+- [Binding Parity](appendix/binding-parity.md)
 - [MCP API Coverage](appendix/mcp-api-coverage.md)
 - [MCP Tool Inventory](appendix/mcp-tool-inventory.md)
 - [HTTP Gateway Inventory](appendix/http-gateway-inventory.md)

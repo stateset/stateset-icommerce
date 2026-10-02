@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:e1013b1f01b7dd24eaf7cfd4342da85f4af4ca268cc6e48dbd66743da4a5ae70",
+  "digest": "sha256:bfdd86f273b0415553bf431d0159ccd204adcedc861fce705c476de9ce4e1532",
   "counts": {
-    "total": 938,
-    "readOnly": 464,
-    "mutations": 474,
-    "governed": 25,
+    "total": 955,
+    "readOnly": 471,
+    "mutations": 484,
+    "governed": 36,
     "governedComposite": 1,
-    "blocked": 448
+    "blocked": 447
   },
   "entries": [
     {
@@ -1022,8 +1022,8 @@
       "name": "add_cart_item",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "carts.item.add"
     },
     {
       "name": "add_customer_address",
@@ -1047,11 +1047,18 @@
       "commandType": null
     },
     {
-      "name": "add_return_tracking",
+      "name": "add_promotion_condition",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
+    },
+    {
+      "name": "add_return_tracking",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "returns.tracking.add"
     },
     {
       "name": "add_to_wishlist",
@@ -1551,11 +1558,18 @@
       "commandType": null
     },
     {
-      "name": "apply_cart_discount",
+      "name": "allocate_backorder",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
+    },
+    {
+      "name": "apply_cart_discount",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "carts.coupon.apply"
     },
     {
       "name": "apply_cart_promotions",
@@ -1636,9 +1650,9 @@
     },
     {
       "name": "assess_order_fraud",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {
@@ -1681,6 +1695,13 @@
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "auto_allocate_inventory",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {
@@ -1727,10 +1748,10 @@
     },
     {
       "name": "calculate_cart_tax",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
-      "commandType": null
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "carts.tax.calculate"
     },
     {
       "name": "calculate_item_tax",
@@ -2142,8 +2163,8 @@
       "name": "complete_payment",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "payments.complete"
     },
     {
       "name": "complete_print_job",
@@ -2196,6 +2217,13 @@
     },
     {
       "name": "configure_woocommerce_webhooks",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "confirm_backorder_allocation",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
@@ -2303,8 +2331,8 @@
       "name": "create_cart",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "carts.create"
     },
     {
       "name": "create_channel",
@@ -2366,8 +2394,8 @@
       "name": "create_customer",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "customers.create"
     },
     {
       "name": "create_cycle_count",
@@ -2618,8 +2646,8 @@
       "name": "create_return",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "returns.create"
     },
     {
       "name": "create_revenue_contract",
@@ -2667,8 +2695,8 @@
       "name": "create_shipment",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "shipments.create"
     },
     {
       "name": "create_shipping_label",
@@ -3161,10 +3189,31 @@
       "commandType": null
     },
     {
+      "name": "expire_backorder_allocations",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "expire_cart",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "explain_cart_pricing",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "explain_order",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
       "commandType": null
     },
     {
@@ -3242,6 +3291,13 @@
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "fulfill_backorder",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {
@@ -3364,6 +3420,20 @@
       "commandType": null
     },
     {
+      "name": "get_backorder_allocations",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_backorder_fulfillment_history",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
       "name": "get_backorder_summary",
       "permission": "read",
       "mutation": false,
@@ -3435,6 +3505,13 @@
     },
     {
       "name": "get_credit_memo",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_currency_decimal_places",
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",
@@ -4008,6 +4085,13 @@
       "commandType": null
     },
     {
+      "name": "get_sku_backorder_summary",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
       "name": "get_stock",
       "permission": "read",
       "mutation": false,
@@ -4373,6 +4457,13 @@
     },
     {
       "name": "list_backorders",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_backorders_for_customer",
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",
@@ -5303,6 +5394,13 @@
       "commandType": null
     },
     {
+      "name": "plan_partial_shipment",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
       "name": "post_depreciation",
       "permission": "write",
       "mutation": true,
@@ -5366,6 +5464,13 @@
       "commandType": null
     },
     {
+      "name": "quote_promotions",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
       "name": "quote_shipping_rates",
       "permission": "read",
       "mutation": false,
@@ -5374,13 +5479,6 @@
     },
     {
       "name": "reactivate_credit_account",
-      "permission": "write",
-      "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
-    },
-    {
-      "name": "rebuild_dynamic_segment",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
@@ -5507,6 +5605,13 @@
     },
     {
       "name": "reject_review",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "release_backorder_allocation",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
@@ -5719,8 +5824,8 @@
       "name": "set_cart_payment",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "carts.payment_method.set"
     },
     {
       "name": "set_cart_shipping",
@@ -5733,8 +5838,8 @@
       "name": "set_cart_shipping_address",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
-      "commandType": null
+      "disposition": "governed",
+      "commandType": "carts.shipping_address.set"
     },
     {
       "name": "set_cart_tax",
@@ -6087,6 +6192,13 @@
       "commandType": null
     },
     {
+      "name": "update_backorder",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "update_cart",
       "permission": "write",
       "mutation": true,
@@ -6228,6 +6340,13 @@
     },
     {
       "name": "update_segment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_shipment",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",

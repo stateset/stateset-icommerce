@@ -3,8 +3,8 @@
 use rust_decimal::prelude::ToPrimitive;
 use stateset_core::{
     CancelOrder, CartId, CreateOrder, CreateOrderItem, CustomerId, Order, OrderFilter, OrderId,
-    OrderItem, OrderItemId, OrderStatus, PaymentStatus, RemoveOrderItem, Result, ShipOrder,
-    ShipmentLineInput, UpdateOrder,
+    OrderItem, OrderItemId, OrderStatus, RemoveOrderItem, Result, ShipOrder, ShipmentLineInput,
+    UpdateOrder,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;
@@ -232,11 +232,16 @@ impl Orders {
     }
 
     /// Update order status.
+    ///
+    /// Moves the order status only. The payment status is never set here: it
+    /// is derived from the order's payments and refunds, so `Refunded` marks
+    /// the order refunded while its `payment_status` keeps saying what the
+    /// ledger holds (`refunded` / `partially_refunded` once the refunds have
+    /// been recorded with `create_refund` + `complete_refund`).
     #[tracing::instrument(skip(self), fields(order_id = %id, status = ?status))]
     pub fn update_status(&self, id: OrderId, status: OrderStatus) -> Result<Order> {
         tracing::info!("updating order status");
         let mut tracking_number = None;
-        let mut payment_status = None;
         if status == OrderStatus::Shipped {
             if let Some(order) = self.get(id)? {
                 if order.tracking_number.is_none() {
@@ -244,18 +249,7 @@ impl Orders {
                 }
             }
         }
-        if status == OrderStatus::Refunded {
-            payment_status = Some(PaymentStatus::Refunded);
-        }
-        self.update(
-            id,
-            UpdateOrder {
-                status: Some(status),
-                payment_status,
-                tracking_number,
-                ..Default::default()
-            },
-        )
+        self.update(id, UpdateOrder { status: Some(status), tracking_number, ..Default::default() })
     }
 
     /// List orders with optional filtering.

@@ -1,6 +1,6 @@
 //! PostgreSQL fixed asset repository implementation
 
-use super::map_db_error;
+use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -167,7 +167,7 @@ impl PgFixedAssetRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
         let asset_number = input.asset_number.clone().unwrap_or_else(generate_asset_number);
-        let currency = input.currency.unwrap_or_default();
+        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
         let status = if input.in_service_date.is_some() {
             FixedAssetStatus::InService
         } else {

@@ -2,14 +2,14 @@
 
 AI-powered command-line interface for autonomous commerce operations.
 
-**Version:** 1.34.0
+**Version:** 1.36.0
 
 [![npm version](https://img.shields.io/npm/v/@stateset/cli.svg)](https://www.npmjs.com/package/@stateset/cli)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 
 ## Highlights
 
-- **802 MCP Tools / 73 Domains** - Full commerce engine surface, generated catalog in [docs/TOOLS.md](docs/TOOLS.md)
+- **Generated MCP Tool Catalog** - Full commerce engine surface, with current counts in [docs/TOOLS.md](docs/TOOLS.md)
 - **Finance Suite** - General ledger, month-end close (with dry run), AP with 3-way match, AR aging, fixed assets, revenue recognition
 - **Warehouse (WMS)** - Warehouses/locations, fulfillment waves, pick tasks, receiving, cycle counts, lots/serials, quality holds
 - **Supply Chain & EDI** - Transfer orders, inbound shipments, supplier SKUs, price schedules/levels, EDI document tracking
@@ -18,15 +18,17 @@ AI-powered command-line interface for autonomous commerce operations.
 - **Autonomous Business Engine** - Scheduled jobs, workflows, policies, approvals (`stateset-autonomous`)
 - **Multi-Chain Stablecoin Payments** - Native crypto payments on Solana, Base, Ethereum, SET Chain, Zcash, and Bitcoin (`stateset-pay`)
 - **x402 Payments** - Config + MCP server for paid API calls (`stateset-x402`, `stateset-x402-mcp`)
+- **Meta Muse Connector** - Authenticated HTTP/OpenAPI commerce tools with write previews (`stateset-muse`); see the [setup guide](../docs/src/guides/meta-muse-connector.md)
 
 ## Philosophy
 
-The StateSet CLI is built on the premise that commerce infrastructure should be designed for AI agents, not just humans. Think of it as **"The SQLite of Commerce"** — an embedded, zero-dependency commerce engine that:
+The StateSet CLI is built on the premise that commerce infrastructure should be designed for AI agents, not just humans. Think of it as **"The SQLite of Commerce"** — an embedded commerce engine with no required external services that:
 
 - **Runs locally** without cloud dependencies
 - **Deterministic operations** for agent reliability
 - **Protocol-neutral checkout primitives** for adapter and agent integrations
 - **Safety-first architecture** — read-only by default, explicit `--apply` for writes
+- **Forkable business profiles** — keep your terminology, defaults, policies, and workflows in `.stateset/business.yaml`
 
 ## Features
 
@@ -76,6 +78,31 @@ npm link
 ## Quick Start
 
 Tip: `ss` is a shorthand alias for `stateset`.
+
+### Make the operating model yours
+
+Business profiles are portable, reviewable YAML declarations around the stable
+commerce kernel. They are data-only and safe to keep in the same repository as
+your application:
+
+```bash
+stateset-profile init
+stateset-profile doctor
+stateset-profile context
+stateset-profile show
+stateset-profile diff --against ./profiles/wholesale.yaml
+stateset-profile export --output ./profiles/acme.json
+stateset-profile pack install --file ./profiles/wholesale.yaml
+```
+
+`stateset-profile apply --file FILE` previews the profile changes without
+writing. Add `--apply` to install the file. Profile installation does not
+mutate commerce records; governed writes still require the explicit operator
+policy and principal used by the MCP and CLI write paths.
+
+Packs are reviewable local profile bundles. Use `pack list`, `pack inspect`, and
+`pack install`; installation is preview-only until `--apply` is explicitly
+provided and records the selected pack in `.stateset/packs/`.
 
 ### Run the Tutorial
 
@@ -831,7 +858,7 @@ The exact current tool count, policy-domain breakdown, and permission summary ar
 generated from the live MCP server export in `cli/src/mcp-server.js`. See the generated
 [MCP Tool Inventory](../docs/src/appendix/mcp-tool-inventory.md).
 
-The registry currently exposes **802 tools across 73 domains**. Highlights by area
+Highlights by area
 (see [docs/TOOLS.md](docs/TOOLS.md) for the complete per-tool catalog):
 
 | Area | Domains | Examples |
@@ -842,6 +869,21 @@ The registry currently exposes **802 tools across 73 domains**. Highlights by ar
 | **Supply chain** | suppliers, supplier-skus, inbound-shipments, transfer-orders, production-batches, price-schedules, price-levels, edi-documents | `create_transfer_order`, `receive_inbound_shipment_line`, `resolve_scheduled_price`, `get_edi_summary` |
 | **Growth** | analytics, promotions, subscriptions, loyalty, gift-cards, store-credits, segments, reviews, wishlists | `get_revenue_forecast`, `create_promotion`, `create_subscription` |
 | **Payments & agent commerce** | payments, stablecoin, treasury, x402, erc8004, a2a, agent-cards, policies, audit, proofs | `create_refund`, `create_stablecoin_payment`, `x402_create_payment_intent` |
+
+### Partial-shipment recovery
+
+`plan_partial_shipment` is a read-only tool available without `--apply`. Provide
+`orderId`, optionally `shipmentId`, and optionally `remainingItems` containing
+`orderItemId` (or an unambiguous `sku`) and a positive integer `quantity`.
+It reads persisted order-line `shippedQuantity`, rejects requests above the
+remaining quantity, and returns the observed order version. Omitting
+`remainingItems` selects all remaining lines.
+
+The result is a snapshot, not a stock reservation. Shipment tracking and order
+fulfillment are separate records and require reconciliation before a follow-up
+shipment. `handle_fulfillment_exception` returns this plan for `partial_shipment`;
+requesting automatic compensation returns a blocked action and creates no shipment.
+Atomic recovery with durable idempotency remains under development.
 
 ## Configuration
 

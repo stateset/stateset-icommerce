@@ -7,16 +7,16 @@ use axum::{Json, Router, routing::get};
 use utoipa::OpenApi;
 
 use crate::dto::{
-    AddressDto, CreateCustomerRequest, CreateInvoiceRequest, CreateOrderItemRequest,
-    CreateOrderRequest, CreatePaymentRequest, CreateProductRequest, CreateRefundRequest,
-    CreateReturnItemRequest, CreateReturnRequest, CreateShipmentRequest, CustomerListResponse,
-    CustomerResponse, HealthResponse, InventoryAdjustRequest, InventoryItemResponse,
-    InventoryListResponse, InventoryResponse, InvoiceListResponse, InvoiceResponse,
-    OrderItemResponse, OrderListResponse, OrderResponse, PaymentListResponse, PaymentResponse,
-    ProductListResponse, ProductResponse, ReadyResponse, RecordInvoicePaymentRequest,
-    ReturnListResponse, ReturnResponse, ShipOrderLineRequest, ShipOrderRequest,
-    ShipmentListResponse, ShipmentResponse, StockPolicyDto, TenantCacheResponse,
-    UpdateCustomerRequest, UpdateProductRequest, VersionResponse,
+    AddressDto, CancelShipmentRequest, CreateCustomerRequest, CreateInvoiceRequest,
+    CreateOrderItemRequest, CreateOrderRequest, CreatePaymentRequest, CreateProductRequest,
+    CreateRefundRequest, CreateReturnItemRequest, CreateReturnRequest, CreateShipmentRequest,
+    CustomerListResponse, CustomerResponse, HealthResponse, InventoryAdjustRequest,
+    InventoryItemResponse, InventoryListResponse, InventoryResponse, InvoiceListResponse,
+    InvoiceResponse, OrderItemResponse, OrderListResponse, OrderResponse, PaymentListResponse,
+    PaymentResponse, ProductListResponse, ProductResponse, ReadyResponse,
+    RecordInvoicePaymentRequest, ReturnListResponse, ReturnResponse, ShipOrderLineRequest,
+    ShipOrderRequest, ShipmentListResponse, ShipmentResponse, StockPolicyDto, TenantCacheResponse,
+    UpdateCustomerRequest, UpdateProductRequest, UpdateShipmentRequest, VersionResponse,
 };
 use crate::error::ErrorBody;
 use crate::routes::a2a_credit::{
@@ -114,6 +114,8 @@ use crate::state::AppState;
         crate::routes::shipments::create_shipment,
         crate::routes::shipments::list_shipments,
         crate::routes::shipments::get_shipment,
+        crate::routes::shipments::update_shipment,
+        crate::routes::shipments::cancel_shipment,
         crate::routes::shipments::deliver_shipment,
         // Payments
         crate::routes::payments::create_payment,
@@ -624,6 +626,8 @@ use crate::state::AppState;
         UpdateCustomerRequest,
         UpdateProductRequest,
         CreateShipmentRequest,
+        UpdateShipmentRequest,
+        CancelShipmentRequest,
         CreatePaymentRequest,
         CreateRefundRequest,
         CreateInvoiceRequest,

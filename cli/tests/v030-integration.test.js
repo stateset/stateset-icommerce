@@ -200,11 +200,9 @@ describe('v0.3.0 — Package version', () => {
       '@solana/web3.js',
       '@whiskeysockets/baileys',
       'better-sqlite3',
-      'botbuilder',
       'discord.js',
       'googleapis',
       'grammy',
-      'matrix-js-sdk',
       'ws',
     ];
 

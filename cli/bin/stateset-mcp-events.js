@@ -14,6 +14,7 @@ import { createServer } from 'node:http';
 import { parseArgs } from 'node:util';
 import { runMain } from '../src/graceful-shutdown.js';
 import { CLI_VERSION } from '../src/config.js';
+import { DEFAULT_MCP_TOOL_PROFILE } from '../src/mcp/default-tool-profile.js';
 
 const HELP = `
 StateSet MCP Event Stream Gateway
@@ -41,6 +42,7 @@ OPTIONS:
   --stream-name <name>    Event stream name (default: stateset-mcp)
   --structured-tool-results  Include machine-readable _agentic metadata in MCP tool results
   --profile <name>           Tool profile: core, operations, finance, agents, all
+                             (default: core -- the stable tier; all = every tier)
   --domains <a,b,...>        Add specific tool domains to the selected profile
   --strict-protocol          Serve ONLY 2026-07-28; reject 2025-era clients
   --help, -h              Show this help message
@@ -184,7 +186,7 @@ async function main() {
       'history-limit': { type: 'string', default: '500' },
       'stream-name': { type: 'string', default: 'stateset-mcp' },
       'structured-tool-results': { type: 'boolean', short: 's', default: false },
-      profile: { type: 'string', default: 'all' },
+      profile: { type: 'string', default: DEFAULT_MCP_TOOL_PROFILE },
       domains: { type: 'string' },
       'strict-protocol': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },

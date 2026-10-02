@@ -267,12 +267,36 @@ impl Commerce {
     /// # Example
     ///
     /// ```rust
-    /// use stateset_embedded::{Commerce, CreateShipment, CreateShipmentItem, OrderId, ShippingCarrier};
+    /// use stateset_embedded::{Commerce, CreateShipment, CreateShipmentItem, ShippingCarrier};
+    /// # use stateset_embedded::{CreateCustomer, CreateOrder, CreateOrderItem, CreateProduct};
+    /// # use rust_decimal_macros::dec;
     ///
     /// let commerce = Commerce::new(":memory:")?;
+    /// # let customer = commerce.customers().create(CreateCustomer {
+    /// #     email: "alice@example.com".into(),
+    /// #     first_name: "Alice".into(),
+    /// #     last_name: "Smith".into(),
+    /// #     ..Default::default()
+    /// # })?;
+    /// # let product = commerce.products().create(CreateProduct {
+    /// #     name: "Widget".into(),
+    /// #     ..Default::default()
+    /// # })?;
+    /// # let order = commerce.orders().create(CreateOrder {
+    /// #     customer_id: customer.id,
+    /// #     items: vec![CreateOrderItem {
+    /// #         product_id: product.id,
+    /// #         sku: "SKU-001".into(),
+    /// #         name: "Widget".into(),
+    /// #         quantity: 2,
+    /// #         unit_price: dec!(29.99),
+    /// #         ..Default::default()
+    /// #     }],
+    /// #     ..Default::default()
+    /// # })?;
     ///
     /// let shipment = commerce.shipments().create(CreateShipment {
-    ///     order_id: OrderId::new(),
+    ///     order_id: order.id, // Existing order with at least two SKU-001 units.
     ///     carrier: Some(ShippingCarrier::Ups),
     ///     recipient_name: "Alice Smith".into(),
     ///     shipping_address: "123 Main St, City, ST 12345".into(),
@@ -286,9 +310,13 @@ impl Commerce {
     /// })?;
     ///
     /// // Ship with tracking number
+    /// commerce.shipments().mark_processing(shipment.id)?;
+    /// commerce.shipments().mark_ready(shipment.id)?;
     /// let shipment = commerce.shipments().ship(shipment.id, Some("1Z999AA10123456784".into()))?;
     ///
     /// // Mark as delivered
+    /// commerce.shipments().mark_in_transit(shipment.id)?;
+    /// commerce.shipments().mark_out_for_delivery(shipment.id)?;
     /// let shipment = commerce.shipments().mark_delivered(shipment.id)?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
@@ -1621,7 +1649,8 @@ impl Commerce {
             currency: cart.currency,
             coupon_codes,
             line_items,
-            is_first_order: false, // Could check customer order history
+            // Settled from the customer's order history by the repository.
+            is_first_order: false,
         };
 
         // Apply promotions

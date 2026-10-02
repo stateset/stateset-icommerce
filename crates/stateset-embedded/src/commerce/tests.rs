@@ -158,6 +158,11 @@ fn test_metrics_record_key_engine_operations() {
             ..Default::default()
         })
         .unwrap();
+    commerce.shipments().mark_processing(shipment.id).unwrap();
+    commerce.shipments().mark_ready(shipment.id).unwrap();
+    commerce.shipments().ship(shipment.id, None).unwrap();
+    commerce.shipments().mark_in_transit(shipment.id).unwrap();
+    commerce.shipments().mark_out_for_delivery(shipment.id).unwrap();
     commerce.shipments().mark_delivered(shipment.id).unwrap();
 
     let plan = commerce
@@ -290,7 +295,31 @@ fn test_shipment_operations() {
     use stateset_core::{CreateShipment, CreateShipmentItem, ShipmentStatus, ShippingCarrier};
 
     let commerce = Commerce::new(":memory:").unwrap();
-    let order_id: crate::OrderId = uuid::Uuid::new_v4().into();
+    let customer = commerce
+        .customers()
+        .create(stateset_core::CreateCustomer {
+            email: "shipment@example.com".into(),
+            first_name: "Alice".into(),
+            last_name: "Smith".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let order_id = commerce
+        .orders()
+        .create(stateset_core::CreateOrder {
+            customer_id: customer.id,
+            items: vec![stateset_core::CreateOrderItem {
+                product_id: stateset_core::ProductId::new(),
+                sku: "SKU-001".into(),
+                name: "Widget".into(),
+                quantity: 2,
+                unit_price: rust_decimal::Decimal::ONE,
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap()
+        .id;
 
     // Create shipment
     let shipment = commerce
@@ -323,6 +352,8 @@ fn test_shipment_operations() {
     let shipment = commerce.shipments().mark_processing(shipment.id).unwrap();
     assert_eq!(shipment.status, ShipmentStatus::Processing);
 
+    commerce.shipments().mark_ready(shipment.id).unwrap();
+
     // Ship with tracking number
     let shipment =
         commerce.shipments().ship(shipment.id, Some("1Z999AA10123456784".into())).unwrap();
@@ -333,6 +364,8 @@ fn test_shipment_operations() {
     // Mark in transit
     let shipment = commerce.shipments().mark_in_transit(shipment.id).unwrap();
     assert_eq!(shipment.status, ShipmentStatus::InTransit);
+
+    commerce.shipments().mark_out_for_delivery(shipment.id).unwrap();
 
     // Mark delivered
     let shipment = commerce.shipments().mark_delivered(shipment.id).unwrap();
@@ -682,6 +715,126 @@ fn test_promotions_coupon_codes() {
     // Invalid coupon
     let invalid = commerce.promotions().validate_coupon("INVALID").unwrap();
     assert!(invalid.is_none());
+}
+
+/// `validate_coupon` must agree with `apply`: a coupon whose promotion is not
+/// redeemable (draft / paused / outside its window) validates as `None`,
+/// because `apply` would never discount it. Before this, the coupon row alone
+/// was checked, so a storefront could accept a code at entry that then
+/// silently produced no discount at checkout.
+#[test]
+#[cfg(feature = "sqlite")]
+fn validate_coupon_mirrors_apply_promotion_eligibility() {
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        ApplyPromotionsRequest, CreateCouponCode, CreatePromotion, PromotionLineItem,
+        PromotionTarget, PromotionTrigger, PromotionType, StackingBehavior, UpdatePromotion,
+    };
+
+    let (commerce, _db_file) = commerce_with_temp_db();
+
+    let promo = commerce
+        .promotions()
+        .create(CreatePromotion {
+            code: None,
+            name: "Gated".into(),
+            description: None,
+            internal_notes: None,
+            promotion_type: PromotionType::PercentageOff,
+            trigger: PromotionTrigger::CouponCode,
+            target: PromotionTarget::Order,
+            stacking: StackingBehavior::Stackable,
+            percentage_off: Some(dec!(0.10)),
+            fixed_amount_off: None,
+            max_discount_amount: None,
+            buy_quantity: None,
+            get_quantity: None,
+            get_discount_percent: None,
+            tiers: None,
+            bundle_product_ids: None,
+            bundle_discount: None,
+            starts_at: None,
+            ends_at: None,
+            total_usage_limit: None,
+            per_customer_limit: None,
+            priority: Some(1),
+            conditions: None,
+            applicable_product_ids: None,
+            applicable_category_ids: None,
+            applicable_skus: None,
+            excluded_product_ids: None,
+            excluded_category_ids: None,
+            eligible_customer_ids: None,
+            eligible_customer_groups: None,
+            currency: None,
+            metadata: None,
+        })
+        .unwrap();
+    commerce
+        .promotions()
+        .create_coupon(CreateCouponCode {
+            promotion_id: promo.id,
+            code: "GATED10".into(),
+            usage_limit: None,
+            per_customer_limit: None,
+            starts_at: None,
+            ends_at: None,
+            metadata: None,
+        })
+        .unwrap();
+
+    let apply_discounts = || {
+        commerce
+            .promotions()
+            .apply(ApplyPromotionsRequest {
+                subtotal: dec!(100.00),
+                coupon_codes: vec!["GATED10".into()],
+                line_items: vec![PromotionLineItem {
+                    id: "item-1".into(),
+                    product_id: None,
+                    variant_id: None,
+                    sku: None,
+                    category_ids: vec![],
+                    quantity: 1,
+                    unit_price: dec!(100.00),
+                    line_total: dec!(100.00),
+                }],
+                ..Default::default()
+            })
+            .unwrap()
+            .total_discount
+            > dec!(0)
+    };
+    let validates = || commerce.promotions().validate_coupon("GATED10").unwrap().is_some();
+
+    // Draft promotion: apply grants nothing, so validate must say no.
+    assert!(!apply_discounts(), "a draft promotion must not discount");
+    assert!(!validates(), "a coupon on a draft promotion must not validate");
+
+    // Active: both agree it is redeemable.
+    commerce.promotions().activate(promo.id).unwrap();
+    assert!(apply_discounts());
+    assert!(validates());
+
+    // Paused: both agree it is not.
+    commerce.promotions().deactivate(promo.id).unwrap();
+    assert!(!apply_discounts());
+    assert!(!validates(), "a coupon on a paused promotion must not validate");
+
+    // Active but expired: both agree it is not.
+    commerce.promotions().activate(promo.id).unwrap();
+    commerce
+        .promotions()
+        .update(
+            promo.id,
+            UpdatePromotion {
+                ends_at: Some(chrono::Utc::now() - chrono::Duration::days(1)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(!apply_discounts());
+    assert!(!validates(), "a coupon on an expired promotion must not validate");
 }
 
 #[test]

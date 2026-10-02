@@ -26,7 +26,15 @@ Usage:
 """
 
 from .client import ICPClient, ICPError, Identity, generate_identity, identity_from_seeds
-from .codec import canonical_json, sign_ed25519, verify_ed25519
+from .codec import (
+    PrincipalIdentity,
+    canonical_json,
+    generate_principal_identity,
+    principal_identity_from_seed,
+    sign_ed25519,
+    sign_principal_binding,
+    verify_ed25519,
+)
 from .settlement import verify_settlement_receipt
 from .webhook import verify_webhook
 
@@ -35,8 +43,12 @@ __all__ = [
     "ICPClient",
     "ICPError",
     "Identity",
+    "PrincipalIdentity",
     "generate_identity",
     "identity_from_seeds",
+    "generate_principal_identity",
+    "principal_identity_from_seed",
+    "sign_principal_binding",
     "canonical_json",
     "sign_ed25519",
     "verify_ed25519",

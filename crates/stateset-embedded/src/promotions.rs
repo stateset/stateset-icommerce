@@ -38,7 +38,7 @@ use rust_decimal::Decimal;
 use stateset_core::{
     ApplyPromotionsRequest, ApplyPromotionsResult, CartId, CouponCode, CouponFilter,
     CreateCouponCode, CreatePromotion, CreatePromotionCondition, CustomerId, OrderId, Promotion,
-    PromotionFilter, PromotionId, PromotionUsage, Result, UpdatePromotion,
+    PromotionFilter, PromotionId, PromotionUsage, PromotionUsageFilter, Result, UpdatePromotion,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -194,6 +194,18 @@ impl Promotions {
 
     /// Validate a coupon code (check if it's valid and can be used).
     ///
+    /// Returns `None` unless BOTH the coupon and the promotion it activates
+    /// are redeemable right now — the coupon active, inside its window and
+    /// under its usage limit, and the promotion `Active`, inside its window
+    /// and under its total usage limit. These are exactly the checks
+    /// [`Self::apply`] makes when it resolves a coupon code
+    /// ([`CouponCode::redeemability_at`] and
+    /// [`Promotion::redeemability_at`]), so a code this accepts is one
+    /// `apply` will discount; a coupon on a draft, paused or expired
+    /// promotion is not valid.
+    ///
+    /// Per-customer limits need a customer and are enforced by `apply`.
+    ///
     /// # Example
     ///
     /// ```rust
@@ -208,38 +220,25 @@ impl Promotions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn validate_coupon(&self, code: &str) -> Result<Option<CouponCode>> {
-        let coupon = self.db.promotions().get_coupon_by_code(code)?;
+        let Some(coupon) = self.db.promotions().get_coupon_by_code(code)? else {
+            return Ok(None);
+        };
 
-        if let Some(c) = coupon {
-            // Check if coupon is active
-            if c.status != stateset_core::CouponStatus::Active {
-                return Ok(None);
-            }
-
-            // Check usage limits
-            if let Some(limit) = c.usage_limit {
-                if c.usage_count >= limit {
-                    return Ok(None);
-                }
-            }
-
-            // Check dates
-            let now = chrono::Utc::now();
-            if let Some(starts) = c.starts_at {
-                if now < starts {
-                    return Ok(None);
-                }
-            }
-            if let Some(ends) = c.ends_at {
-                if now > ends {
-                    return Ok(None);
-                }
-            }
-
-            Ok(Some(c))
-        } else {
-            Ok(None)
+        let now = chrono::Utc::now();
+        if coupon.redeemability_at(now).is_err() {
+            return Ok(None);
         }
+
+        // The coupon only ever discounts through its promotion; a coupon on a
+        // draft / paused / expired / exhausted promotion is not redeemable.
+        let Some(promotion) = self.db.promotions().get(coupon.promotion_id)? else {
+            return Ok(None);
+        };
+        if promotion.redeemability_at(now).is_err() {
+            return Ok(None);
+        }
+
+        Ok(Some(coupon))
     }
 
     // ========================================================================
@@ -313,6 +312,15 @@ impl Promotions {
         )
     }
 
+    /// Read the promotion usage ledger, oldest first.
+    ///
+    /// Filter by promotion, coupon, customer, order and/or cart; every set
+    /// field narrows the result. This is how to answer "which promotions did
+    /// order X redeem, and for how much?".
+    pub fn list_usage(&self, filter: PromotionUsageFilter) -> Result<Vec<PromotionUsage>> {
+        self.db.promotions().list_usage(filter)
+    }
+
     // ========================================================================
     // Convenience Methods
     // ========================================================================
@@ -328,27 +336,22 @@ impl Promotions {
     }
 
     /// Add a condition to an existing promotion.
+    ///
+    /// The condition is validated first — its value must parse for its type
+    /// and its operator must apply to it — and then stored, so it takes part
+    /// in every later evaluation.
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::ValidationError`](stateset_core::CommerceError::ValidationError)
+    /// for a malformed condition, and
+    /// [`CommerceError::NotFound`](stateset_core::CommerceError::NotFound)
+    /// when the promotion does not exist.
     pub fn add_condition(
         &self,
         promotion_id: PromotionId,
         condition: CreatePromotionCondition,
     ) -> Result<Promotion> {
-        // Get current promotion
-        let promo = self.get(promotion_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
-
-        // Re-create with new condition
-        // Note: In a production system, you'd want a separate conditions API
-        // For now, this is a simplified approach
-        let mut conditions = promo.conditions.clone();
-        conditions.push(stateset_core::PromotionCondition {
-            id: Uuid::new_v4(),
-            promotion_id,
-            condition_type: condition.condition_type,
-            operator: condition.operator,
-            value: condition.value,
-            is_required: condition.is_required,
-        });
-
-        Ok(promo)
+        self.db.promotions().add_condition(promotion_id, condition)
     }
 }

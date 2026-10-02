@@ -42,6 +42,7 @@ export const orderTools = [
           customerId: o.customerId,
           status: o.status,
           totalAmount: o.totalAmount,
+          totalAmountExact: o.totalAmountExact,
           currency: o.currency,
           paymentStatus: o.paymentStatus,
           fulfillmentStatus: o.fulfillmentStatus,
@@ -62,7 +63,14 @@ export const orderTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { identifier } = params;
-      const order = await commerce.orders.get(identifier);
+      // The binding's `get` takes a UUID; anything else is an order number.
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        identifier,
+      );
+      const order =
+        !isUuid && typeof commerce.orders.getByNumber === 'function'
+          ? await commerce.orders.getByNumber(identifier)
+          : await commerce.orders.get(identifier);
 
       if (!order) {
         return { success: false, error: 'Order not found' };
@@ -76,6 +84,7 @@ export const orderTools = [
           customerId: order.customerId,
           status: order.status,
           totalAmount: order.totalAmount,
+          totalAmountExact: order.totalAmountExact,
           currency: order.currency,
           paymentStatus: order.paymentStatus,
           fulfillmentStatus: order.fulfillmentStatus,
@@ -86,7 +95,9 @@ export const orderTools = [
             name: i.name,
             quantity: i.quantity,
             unitPrice: i.unitPrice,
+            unitPriceExact: i.unitPriceExact,
             total: i.total,
+            totalExact: i.totalExact,
           })),
           createdAt: order.createdAt,
           updatedAt: order.updatedAt,
@@ -141,6 +152,7 @@ export const orderTools = [
           orderNumber: order.orderNumber,
           status: order.status,
           totalAmount: order.totalAmount,
+          totalAmountExact: order.totalAmountExact,
         },
       };
     },

@@ -9,6 +9,22 @@ import { applyRequired } from '../utils/apply-guard.js';
 
 const withPolicyDomain = (policyDomain, tools) => tools.map((tool) => ({ policyDomain, ...tool }));
 
+/** The engine's NCR dispositions (`stateset_core::Disposition`, snake_case). */
+export const NCR_DISPOSITIONS = [
+  'use_as_is',
+  'rework',
+  'repair',
+  'scrap',
+  'return_to_vendor',
+  'downgrade',
+  'sort_and_screen',
+];
+
+/** Exact decimal quantity, as a string (never a float). */
+const decimalString = z
+  .string()
+  .regex(/^\d+(\.\d+)?$/, 'Must be a non-negative decimal string, e.g. "5" or "2.5"');
+
 export const qualityTools = withPolicyDomain('quality', [
   {
     name: 'list_inspections',
@@ -222,16 +238,38 @@ export const qualityTools = withPolicyDomain('quality', [
   },
   {
     name: 'close_ncr',
-    description: 'Close a non-conformance report.',
+    description:
+      'Close a non-conformance report. Closing requires a disposition (what was done with the ' +
+      'non-conforming material): pass `disposition` (and optionally `dispositionQuantity`) to ' +
+      'record it and close in one step. An NCR with no disposition recorded is refused.',
     inputSchema: {
       ncrId: z.string().min(1).describe('NCR ID'),
+      disposition: z
+        .enum(NCR_DISPOSITIONS)
+        .optional()
+        .describe('Disposition to record before closing. Required unless the NCR already has one.'),
+      dispositionQuantity: decimalString
+        .optional()
+        .describe('Exact quantity the disposition covers, as a decimal string'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
+      if (params.dispositionQuantity !== undefined && params.disposition === undefined) {
+        return {
+          success: false,
+          error: 'dispositionQuantity requires disposition',
+        };
+      }
       if (!allowApply) {
         return applyRequired('Close NCR', params);
       }
 
+      if (params.disposition !== undefined) {
+        await commerce.quality.updateNcr(params.ncrId, {
+          disposition: params.disposition,
+          dispositionQuantityExact: params.dispositionQuantity,
+        });
+      }
       const ncr = await commerce.quality.closeNcr(params.ncrId);
       return { success: true, message: 'NCR closed', ncr };
     },

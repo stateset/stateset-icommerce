@@ -29,22 +29,6 @@ export function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-export function moneyToNumber(value) {
-  const numeric = Number.parseFloat(String(value));
-  if (!Number.isFinite(numeric)) {
-    throw new Error(`Invalid monetary value: ${value}`);
-  }
-  return numeric;
-}
-
-export function normalizeMoney(value) {
-  return moneyToNumber(value).toFixed(2);
-}
-
-export function roundMoney(value) {
-  return Math.round(moneyToNumber(value) * 100) / 100;
-}
-
 export function nowIso() {
   return new Date().toISOString();
 }

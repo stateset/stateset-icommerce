@@ -1064,6 +1064,12 @@ impl SqliteLotRepository {
 
 impl LotRepository for SqliteLotRepository {
     fn create(&self, input: CreateLot) -> Result<Lot> {
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(format!(
+                "Lot quantity must be greater than zero, got {}",
+                input.quantity
+            )));
+        }
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
@@ -2769,6 +2775,23 @@ mod tests {
         let fetched = repo.get(lot.id).expect("get").expect("found");
         assert_eq!(fetched.quantity_reserved, dec!(0));
         assert_eq!(fetched.quantity_remaining, dec!(0.7), "remaining drifted");
+    }
+
+    #[test]
+    fn binding_create_rejects_non_positive_quantity() {
+        // Regression: a zero or negative `quantity` produced an Active lot
+        // with a non-positive available quantity.
+        let repo = fresh_repo();
+        for qty in [dec!(0), dec!(-1)] {
+            let err = repo
+                .create(CreateLot { sku: "SKU-NEG".into(), quantity: qty, ..Default::default() })
+                .expect_err("quantity must be refused");
+            assert!(matches!(err, CommerceError::ValidationError(_)), "qty {qty}: got {err:?}");
+        }
+        assert!(
+            repo.list(LotFilter::default()).expect("list").is_empty(),
+            "a refused lot must not be written"
+        );
     }
 
     #[test]

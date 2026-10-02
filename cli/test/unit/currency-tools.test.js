@@ -91,7 +91,7 @@ function makeCurrencyCommerce(overrides = {}) {
 describe('currencyTools — module exports', () => {
   it('exports an array of 12 tools', () => {
     assert.ok(Array.isArray(currencyTools));
-    assert.equal(currencyTools.length, 12);
+    assert.equal(currencyTools.length, 13);
   });
 
   it('exports expected tool names', () => {
@@ -108,6 +108,7 @@ describe('currencyTools — module exports', () => {
       'set_base_currency',
       'enable_currencies',
       'check_currency_enabled',
+      'get_currency_decimal_places',
       'format_currency',
     ]);
   });
@@ -147,6 +148,7 @@ describe('currencyTools — permission assignments', () => {
       'convert_currency',
       'get_currency_settings',
       'format_currency',
+      'get_currency_decimal_places',
     ];
     for (const name of readToolNames) {
       const tool = findTool(name);
@@ -471,6 +473,39 @@ describe('currencyTools — update_currency_settings handler', () => {
     });
     assert.equal(result.success, true);
     assert.deepStrictEqual(result.settings.enabledCurrencies, ['USD', 'EUR']);
+  });
+
+  it('merges a partial update onto current settings so the binding gets its required fields', async () => {
+    const tool = findTool('update_currency_settings');
+    const calls = [];
+    const commerce = {
+      currency: {
+        getSettings: async () => ({
+          baseCurrency: 'USD',
+          enabledCurrencies: ['USD', 'EUR'],
+          autoConvert: true,
+          roundingMode: 'half_up',
+        }),
+        updateSettings: async (input) => {
+          calls.push(input);
+          return input;
+        },
+      },
+    };
+    const result = await tool.handler({
+      commerce,
+      params: { roundingMode: 'half_even', enabledCurrencies: ['usd', 'gbp'] },
+      allowApply: true,
+    });
+    assert.equal(result.success, true);
+    assert.deepStrictEqual(calls, [
+      {
+        baseCurrency: 'USD',
+        enabledCurrencies: ['USD', 'GBP'],
+        autoConvert: true,
+        roundingMode: 'half_even',
+      },
+    ]);
   });
 });
 

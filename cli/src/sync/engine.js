@@ -6,10 +6,11 @@
  */
 
 import { EventEmitter } from 'events';
-import { createOutbox } from './outbox.js';
+import { createOutbox, isQuarantineReasonDowngrade } from './outbox.js';
 import { createUnifiedClient } from './unified-client.js';
 import { SyncConfig, loadSyncConfig } from './config.js';
 import { createConflictResolver } from './conflict.js';
+import { createPeerKeyDirectory } from './key-directory.js';
 import {
   computePayloadAad,
   decryptPayload,
@@ -56,11 +57,27 @@ function collectRecipientKeyIds(payloadEncrypted) {
 /**
  * @typedef {Object} PullResult
  * @property {boolean} success
- * @property {number} pulled - Events pulled
- * @property {number} applied - Events applied locally
- * @property {number} conflicts - Conflicts detected
- * @property {number[]} [sequenceNumbers] - Pulled sequence numbers stored locally
+ * @property {number} pulled - Events returned by the sequencer
+ * @property {number} verified - Events whose author signature verified
+ * @property {number} quarantined - Events actually written to the quarantine table
+ * @property {number} stored - Events actually written to the local pulled-event store
+ * @property {number|null} conflicts - Conflicts outstanding between local pending
+ *   events and locally stored remote events. `null` means NOT COMPUTED on this
+ *   branch — an empty pull, a dry run, or a failed pull. It is deliberately not
+ *   0 there: 0 is a claim that there are no conflicts, and these branches make
+ *   no such claim. Computing it costs a read and JSON.parse of up to 1,000
+ *   pending plus 1,000 pulled rows, which is not worth paying on every idle
+ *   poll of the background sync loop.
+ * @property {number[]} [sequenceNumbers] - Sequence numbers of the events stored locally
  * @property {string} [error] - Error message
+ *
+ * There is deliberately no `applied` field: pulled events are stored and made
+ * available for reads, but nothing is applied to local entity state yet.
+ *
+ * `stored <= verified` and `quarantined <= pulled - verified`. The local schema
+ * can refuse a record whose attacker-controlled envelope violates a NOT NULL
+ * column; those events are named individually in `receive-store-failed` /
+ * `receive-quarantine-failed` events rather than silently inflating a count.
  */
 
 /**
@@ -107,9 +124,11 @@ export class SyncEngine extends EventEmitter {
     this.resolver = createConflictResolver(this.outbox, {
       defaultStrategy: options.defaultStrategy || 'remote-wins',
     });
+    this.keyDirectory = createPeerKeyDirectory(this.outbox, this.client, this.config);
     this._backgroundInterval = null;
     this._initialized = false;
     this._streamingEnabled = false;
+    this._streamStoreRefusalWarned = false;
     this._eventBuffer = [];
     this._eventBufferSize = 1000;
   }
@@ -183,7 +202,30 @@ export class SyncEngine extends EventEmitter {
   }
 
   /**
-   * Handle an event received from the stream
+   * Handle an event received from the stream.
+   *
+   * The stream is a NOTIFICATION channel only: it never writes to
+   * `_ves_pulled_events` and never advances `lastPulledSequence`. It used to do
+   * both, with no key resolution and no signature check, which made a hostile
+   * or compromised sequencer stream a second, unverified writer into the exact
+   * table peer verification exists to protect.
+   *
+   * It fails closed rather than verifying inline because the streamed record
+   * cannot be verified as it stands: the gRPC event is flat (no `envelope`),
+   * carries no `payloadCipherHash` (this code fabricated a zero hash), and
+   * defaults `agentSignature` to the empty string — so the signing preimage
+   * cannot be reconstructed. Verifying it would reject legitimate events;
+   * skipping verification would reopen the hole.
+   *
+   * There is no "the next pull() picks these up" mitigation, and an earlier
+   * version of this comment claiming one was wrong. Streaming exists only on
+   * gRPC, and the gRPC receive path stores nothing at all: `pull()` refuses to
+   * run on that transport (see `pull()`), the gRPC envelope mapping cannot
+   * satisfy `verifyEventSignature`, and the gRPC key directory is never
+   * cryptographically attested. A gRPC deployment that needs the receive path
+   * must move to an https:// sequencer URL. Repairing the gRPC envelope
+   * mapping is separate, tracked work.
+   *
    * @private
    */
   _handleStreamedEvent(event) {
@@ -198,51 +240,23 @@ export class SyncEngine extends EventEmitter {
     // Emit the event for real-time consumers
     this.emit('event', event);
 
-    // Store the event locally
-    try {
-      // Convert payloadHash buffer to hex string if needed
-      const payloadHashHex = event.payloadHash
-        ? Buffer.isBuffer(event.payloadHash)
-          ? event.payloadHash.toString('hex')
-          : event.payloadHash
-        : '0'.repeat(64);
+    const error = new Error(
+      'Refusing to store a streamed event: streamed events carry no verifiable signature, ' +
+        'so they are not written to local state. Streaming is gRPC-only and the gRPC receive ' +
+        'path is unsupported — point the agent at an https:// sequencer URL and use pull().',
+    );
+    this.emit('stream-store-refused', {
+      reason: 'stream_unverified',
+      sequenceNumber: event.sequenceNumber,
+      eventId: event.eventId,
+      error,
+    });
 
-      this.outbox.storePulledEvents([
-        {
-          sequenceNumber: event.sequenceNumber,
-          eventId: event.eventId,
-          commandId: event.commandId,
-          tenantId: event.tenantId,
-          storeId: event.storeId,
-          entityType: event.entityType,
-          entityId: event.entityId,
-          eventType: event.eventType,
-          payload: event.payload,
-          vesVersion: event.vesVersion || 1,
-          payloadKind: event.payloadKind || 0,
-          payloadEncrypted: event.payloadEncrypted || null,
-          payloadPlainHash: payloadHashHex,
-          payloadCipherHash: '0'.repeat(64), // Zero hash for plaintext
-          agentKeyId: event.agentKeyId || 0,
-          agentSignature: event.agentSignature || '',
-          agentSignatureScheme: event.agentSignatureScheme || 0,
-          agentSignatureBundle: event.agentSignatureBundle || null,
-          baseVersion: event.baseVersion,
-          createdAt:
-            event.createdAt instanceof Date ? event.createdAt.toISOString() : event.createdAt,
-          sequencedAt:
-            event.sequencedAt instanceof Date ? event.sequencedAt.toISOString() : event.sequencedAt,
-          sourceAgent: event.sourceAgent,
-        },
-      ]);
-
-      // Update sync state
-      this.outbox.updateSyncState({
-        lastPulledSequence: event.sequenceNumber,
-        lastSyncAt: new Date(),
-      });
-    } catch (err) {
-      this.emit('error', err);
+    // Say it once per streaming session so an operator sees it, without
+    // emitting a line per event on a busy stream.
+    if (!this._streamStoreRefusalWarned) {
+      this._streamStoreRefusalWarned = true;
+      console.warn(`[sync-engine] ${error.message}`);
     }
   }
 
@@ -372,6 +386,34 @@ export class SyncEngine extends EventEmitter {
   }
 
   /**
+   * Why this transport cannot be used to receive, or null if it can.
+   *
+   * The gRPC receive path stores nothing, and says so rather than quietly
+   * pulling zero events forever. It is not a repairable-in-passing gap:
+   * streamed events are refused (they carry no verifiable signature), the gRPC
+   * `pull()` mapping throws on `envelope.eventId`, and the gRPC key directory
+   * carries no `algorithm` and no directory signature, so it can neither be
+   * cached nor trusted. Mapping those fields without the attestation guard in
+   * `PeerKeyDirectory.refresh()` would make unattested keys the verification
+   * anchor, which is worse than failing. Fixing the gRPC receive path is
+   * separate, tracked work; until then REST is the supported receive path.
+   *
+   * Push over gRPC is unaffected.
+   *
+   * @private
+   * @returns {string|null}
+   */
+  _unsupportedReceiveTransport() {
+    if (this.getTransport() !== 'grpc') return null;
+    return (
+      'The gRPC receive path is unsupported: streamed events carry no verifiable signature, ' +
+      'the gRPC envelope mapping omits fields the signing hash binds, and the gRPC key ' +
+      'directory is never cryptographically attested. Use an https:// sequencer URL to pull. ' +
+      'Push over gRPC is unaffected.'
+    );
+  }
+
+  /**
    * Pull events from sequencer
    * @param {Object} [options]
    * @param {number} [options.fromSequence] - Start sequence
@@ -380,6 +422,20 @@ export class SyncEngine extends EventEmitter {
    * @returns {Promise<PullResult>}
    */
   async pull(options = {}) {
+    const unsupported = this._unsupportedReceiveTransport();
+    if (unsupported) {
+      console.error(`[sync-engine] ${unsupported}`);
+      return {
+        success: false,
+        pulled: 0,
+        verified: 0,
+        quarantined: 0,
+        stored: 0,
+        conflicts: null,
+        error: unsupported,
+      };
+    }
+
     try {
       const state = this.outbox.getSyncState();
       const fromSequence = options.fromSequence ?? state.lastPulledSequence;
@@ -392,8 +448,11 @@ export class SyncEngine extends EventEmitter {
         return {
           success: true,
           pulled: 0,
-          applied: 0,
-          conflicts: 0,
+          verified: 0,
+          quarantined: 0,
+          stored: 0,
+          // Not computed on this branch: null, never a made-up 0. See PullResult.
+          conflicts: null,
           sequenceNumbers: options.includeEvents ? [] : undefined,
         };
       }
@@ -402,37 +461,12 @@ export class SyncEngine extends EventEmitter {
         return {
           success: true,
           pulled: result.events.length,
-          applied: 0,
-          conflicts: 0,
+          verified: 0,
+          quarantined: 0,
+          stored: 0,
+          conflicts: null,
         };
       }
-
-      // Store pulled events (VES v1.0 format)
-      const eventsToStore = result.events.map((e) => ({
-        sequenceNumber: e.sequenceNumber,
-        eventId: e.envelope.eventId,
-        commandId: e.envelope.commandId,
-        tenantId: e.envelope.tenantId,
-        storeId: e.envelope.storeId,
-        entityType: e.envelope.entityType,
-        entityId: e.envelope.entityId,
-        eventType: e.envelope.eventType,
-        payload: e.envelope.payload,
-        // VES v1.0 fields
-        vesVersion: e.envelope.vesVersion || 1,
-        payloadKind: e.envelope.payloadKind || 0,
-        payloadEncrypted: e.envelope.payloadEncrypted,
-        payloadPlainHash: e.envelope.payloadPlainHash,
-        payloadCipherHash: e.envelope.payloadCipherHash,
-        agentKeyId: e.envelope.agentKeyId,
-        agentSignature: e.envelope.agentSignature,
-        agentSignatureScheme: e.envelope.agentSignatureScheme || 0,
-        agentSignatureBundle: e.envelope.agentSignatureBundle || null,
-        baseVersion: e.envelope.baseVersion,
-        createdAt: e.envelope.createdAt,
-        sequencedAt: e.sequencedAt,
-        sourceAgent: e.envelope.sourceAgent,
-      }));
 
       // Verify receipt signatures when sequencer public key is configured
       const sequencerPublicKey =
@@ -464,28 +498,165 @@ export class SyncEngine extends EventEmitter {
         }
       }
 
-      this.outbox.storePulledEvents(eventsToStore);
+      // Verify every event against its author's signing key before it can be
+      // read. Self-authored echoes are verified too: it costs nothing and keeps
+      // a continuous check on our own signing path.
+      const verifiedRecords = [];
+      const quarantinedRecords = [];
 
-      // Update sync state
+      for (const event of result.events) {
+        const envelope = event.envelope;
+        const record = {
+          sequenceNumber: event.sequenceNumber,
+          eventId: envelope.eventId,
+          commandId: envelope.commandId,
+          tenantId: envelope.tenantId,
+          storeId: envelope.storeId,
+          entityType: envelope.entityType,
+          entityId: envelope.entityId,
+          eventType: envelope.eventType,
+          payload: envelope.payload,
+          // VES v1.0 fields
+          vesVersion: envelope.vesVersion || 1,
+          payloadKind: envelope.payloadKind || 0,
+          payloadEncrypted: envelope.payloadEncrypted,
+          payloadPlainHash: envelope.payloadPlainHash,
+          payloadCipherHash: envelope.payloadCipherHash,
+          agentKeyId: envelope.agentKeyId,
+          agentSignature: envelope.agentSignature,
+          agentSignatureScheme: envelope.agentSignatureScheme || 0,
+          agentSignatureBundle: envelope.agentSignatureBundle || null,
+          baseVersion: envelope.baseVersion,
+          createdAt: envelope.createdAt,
+          sequencedAt: event.sequencedAt,
+          sourceAgent: envelope.sourceAgent,
+        };
+
+        // A throw out of key resolution would escape to pull()'s catch before
+        // the cursor is updated, so it is caught here and fails closed.
+        let resolution;
+        try {
+          resolution = await this.keyDirectory.resolve(
+            envelope.sourceAgent,
+            envelope.agentKeyId,
+            envelope.createdAt,
+          );
+        } catch (error) {
+          resolution = { error: 'key_unresolved', detail: error?.message };
+        }
+
+        if (resolution.error) {
+          quarantinedRecords.push({
+            record,
+            reason: resolution.error,
+            detail: resolution.detail,
+          });
+          continue;
+        }
+
+        // NOTE (deliberate, tracked): the receive path does NOT call
+        // `assertEventMatchesSecurityProfile`, which the push path does call
+        // (client.js `push`, grpc-client.js `pushEvents`). An event declaring
+        // `agentSignatureScheme: 0` is therefore accepted by an agent
+        // configured `hybrid` or `pqc-strict`, and `verifyEventSignature`
+        // below falls back to the classical Ed25519 component. Enforcing the
+        // profile here would quarantine every legacy peer on upgrade, so the
+        // asymmetry stands until peers have migrated. No forgery becomes
+        // possible in the meantime: the attacker still needs the peer's
+        // Ed25519 private key. See docs/src/guides/sync.md.
+
+        // Anything thrown here (malformed hex, a bad key bundle) is a failure
+        // to verify, not a reason to accept the event.
+        let valid = false;
+        try {
+          valid = this.client.verifyEventSignature(
+            envelope,
+            resolution.publicKeyBundle ?? resolution.publicKey,
+          );
+        } catch {
+          valid = false;
+        }
+
+        if (valid) {
+          verifiedRecords.push(record);
+        } else {
+          quarantinedRecords.push({ record, reason: 'signature_invalid' });
+        }
+      }
+
+      const storedRecords = this._persistVerified(verifiedRecords);
+
+      // A verified event the local schema refuses is dropped permanently: it
+      // is not quarantined (it verified) and the cursor moves past it. The
+      // per-record `receive-store-failed` events name the offenders, but they
+      // need a listener; this does not.
+      if (storedRecords.length !== verifiedRecords.length) {
+        const dropped = verifiedRecords.length - storedRecords.length;
+        this.emit('receive-store-dropped', {
+          dropped,
+          verified: verifiedRecords.length,
+          stored: storedRecords.length,
+        });
+        console.warn(
+          `[sync-engine] ${dropped} verified event(s) could not be stored and were DROPPED, ` +
+            'not quarantined; the pull cursor has moved past them. ' +
+            'Listen for "receive-store-failed" for the individual event ids.',
+        );
+      }
+
+      // storeQuarantinedEvents takes one reason per call, so group first.
+      // Re-quarantining an event_id updates the previous reason on purpose:
+      // the stored reason is the current diagnosis, and the newest one is
+      // usually the one an operator must act on (a key_unresolved that later
+      // becomes signature_invalid is a forgery, not a directory outage). Only
+      // usually: `_persistQuarantined` refuses the reverse, because a
+      // directory outage resolves EVERY event as key_unresolved and would
+      // otherwise erase every finding on the background sync timer.
+      let quarantinedCount = 0;
+      const reasons = new Set(quarantinedRecords.map((entry) => entry.reason));
+      for (const reason of reasons) {
+        const forReason = quarantinedRecords.filter((entry) => entry.reason === reason);
+        const detail = forReason.find((entry) => entry.detail)?.detail;
+        quarantinedCount += this._persistQuarantined(
+          forReason.map((entry) => entry.record),
+          reason,
+        );
+        this.emit('receive-verification-failed', { reason, count: forReason.length, detail });
+
+        // A local misconfiguration and an untrustworthy directory are not
+        // routine quarantine traffic: the first halts the entire receive path
+        // on a stock deployment, the second is a live attack signal. Neither
+        // may depend on someone having attached an event listener.
+        if (reason === 'sequencer_key_not_configured' || reason === 'directory_untrusted') {
+          console.warn(
+            `[sync-engine] ${forReason.length} pulled event(s) quarantined as ${reason}: ${detail}`,
+          );
+        }
+      }
+
+      // The cursor advances regardless of what quarantined: one bad event from
+      // one peer must not wedge this agent's sync forever.
       this.outbox.updateSyncState({
         lastPulledSequence: result.nextSequence,
         headSequence: result.headSequence,
         lastSyncAt: new Date(),
       });
 
-      this.emit('pull', {
+      const conflicts = (await this.detectConflicts()).length;
+      const summary = {
         pulled: result.events.length,
-        applied: result.events.length,
-        conflicts: 0,
-      });
+        verified: verifiedRecords.length,
+        quarantined: quarantinedCount,
+        stored: storedRecords.length,
+        conflicts,
+      };
+      this.emit('pull', summary);
 
       return {
         success: true,
-        pulled: result.events.length,
-        applied: result.events.length,
-        conflicts: 0,
+        ...summary,
         sequenceNumbers: options.includeEvents
-          ? eventsToStore.map((event) => event.sequenceNumber)
+          ? storedRecords.map((event) => event.sequenceNumber)
           : undefined,
       };
     } catch (error) {
@@ -493,10 +664,152 @@ export class SyncEngine extends EventEmitter {
       return {
         success: false,
         pulled: 0,
-        applied: 0,
-        conflicts: 0,
+        verified: 0,
+        quarantined: 0,
+        stored: 0,
+        conflicts: null,
         error: error.message,
       };
+    }
+  }
+
+  /**
+   * Write verified records to the pulled-event store and clear any stale
+   * quarantine row for the same event.
+   *
+   * Every envelope field here is attacker-controlled, and the pulled-event
+   * table has NOT NULL columns, so a peer can sign an envelope the local schema
+   * refuses. `storePulledEvents` runs one transaction, so a single such record
+   * would otherwise roll back the whole batch AND throw past `updateSyncState`,
+   * wedging the cursor on that sequence forever — the precise failure the
+   * "one bad event must not wedge sync" property forbids. So: try the batch,
+   * and on failure fall back to per-record writes so only the offender is lost.
+   *
+   * @private
+   * @param {Array<Object>} records
+   * @returns {Array<Object>} the records actually written
+   */
+  _persistVerified(records) {
+    if (!records.length) return [];
+
+    let stored;
+    try {
+      this.outbox.storePulledEvents(records);
+      stored = records;
+    } catch {
+      stored = [];
+      for (const record of records) {
+        try {
+          this.outbox.storePulledEvents([record]);
+          stored.push(record);
+        } catch (error) {
+          this.emit('receive-store-failed', {
+            eventId: record.eventId,
+            sequenceNumber: record.sequenceNumber,
+            error: error.message,
+          });
+        }
+      }
+    }
+
+    // An event that now verifies supersedes any earlier quarantine row for the
+    // same event_id — otherwise a re-pull leaves it readable AND quarantined,
+    // and `sync doctor` reports a failure that has already been resolved.
+    for (const record of stored) {
+      try {
+        this.outbox.deleteQuarantinedEvent(record.eventId);
+      } catch (error) {
+        this.emit('receive-store-failed', {
+          eventId: record.eventId,
+          sequenceNumber: record.sequenceNumber,
+          error: error.message,
+        });
+      }
+    }
+
+    return stored;
+  }
+
+  /**
+   * Write failed records to the quarantine table, with per-record isolation:
+   * the quarantine table has the same NOT NULL columns as the pulled-event
+   * table, so a malformed envelope must not take the batch, or the cursor,
+   * down with it.
+   *
+   * `reason` is what we just diagnosed, not necessarily what gets stored. A
+   * record already carrying a finding about the event keeps it rather than
+   * being overwritten by a key-acquisition failure — see
+   * {@link isQuarantineReasonDowngrade}, the same rule `sync doctor --promote`
+   * applies, shared so the two paths cannot drift. Without it a directory
+   * outage, which resolves every event as `key_unresolved`, erased every
+   * `signature_invalid` / `directory_untrusted` / `peer_key_conflict` /
+   * `key_revoked` on the background sync timer.
+   *
+   * @private
+   * @param {Array<Object>} records
+   * @param {string} reason
+   * @returns {number} how many records were actually written
+   */
+  _persistQuarantined(records, reason) {
+    if (!records.length) return 0;
+
+    // Group by the reason that will actually be stored; storeQuarantinedEvents
+    // takes one reason per call.
+    const byStoredReason = new Map();
+    for (const record of records) {
+      const stored = this._storedQuarantineReason(record, reason);
+      if (!byStoredReason.has(stored)) byStoredReason.set(stored, []);
+      byStoredReason.get(stored).push(record);
+    }
+
+    let written = 0;
+    for (const [stored, group] of byStoredReason) {
+      written += this._writeQuarantined(group, stored);
+    }
+    return written;
+  }
+
+  /**
+   * The reason `record` should be stored under, given the one just diagnosed.
+   * @private
+   */
+  _storedQuarantineReason(record, reason) {
+    let existing = null;
+    try {
+      existing = this.outbox.getQuarantineReason(record.eventId);
+    } catch {
+      // Never seen, or unreadable: nothing to preserve.
+      return reason;
+    }
+    return isQuarantineReasonDowngrade(existing, reason) ? existing : reason;
+  }
+
+  /**
+   * Write one group of records under one reason, batch first and per record on
+   * failure so a single malformed envelope loses only itself.
+   * @private
+   * @returns {number} how many records were actually written
+   */
+  _writeQuarantined(records, reason) {
+    try {
+      this.outbox.storeQuarantinedEvents(records, reason);
+      return records.length;
+    } catch {
+      let written = 0;
+      for (const record of records) {
+        try {
+          this.outbox.storeQuarantinedEvents([record], reason);
+          written += 1;
+        } catch (error) {
+          this.emit('receive-quarantine-failed', {
+            eventId: record.eventId,
+            sequenceNumber: record.sequenceNumber,
+            reason,
+            error: error.message,
+          });
+        }
+      }
+      return written;
     }
   }
 
@@ -1039,7 +1352,12 @@ export class SyncEngine extends EventEmitter {
   }
 
   /**
-   * Get recent events from the buffer
+   * Get recent events from the in-memory stream buffer.
+   *
+   * These are UNVERIFIED notifications straight off the wire — no signature has
+   * been checked. They are not store state; read store state through
+   * `getPulledEvents()`, which only ever returns verified events.
+   *
    * @param {number} [limit=100]
    * @returns {Array}
    */

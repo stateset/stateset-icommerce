@@ -21,13 +21,14 @@ use std::net::SocketAddr;
 # #[tokio::main]
 # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 let commerce = Commerce::new(":memory:")?;
-let addr: SocketAddr = "0.0.0.0:3000".parse()?;
+let addr: SocketAddr = "127.0.0.1:3000".parse()?;
 
 ServerBuilder::new_from_env(commerce)?
     .bind(addr)
     .with_cors()
     .with_request_id()
     .with_bearer_auth("replace-me-with-a-secret")
+    .with_ignore_tenant_header() // Explicit single-store deployment.
     .serve()
     .await?;
 # Ok(())
@@ -58,15 +59,67 @@ ServerBuilder::new_from_env(commerce)?
 - **Server-Sent Events** for live order and inventory changes
 - **Cursor pagination** with consistent envelope shapes
 - **Structured errors** — typed JSON bodies, not bare status codes
-- **Bearer auth**, CORS, and request-ID propagation as opt-in layers
+- **Bearer auth** by default, with CORS and request-ID propagation as opt-in layers
 - **OpenAPI** description generated from the route table
 
 ## Security Defaults
 
-`with_bearer_auth` is opt-in, not implied — an unconfigured server is unauthenticated,
-so bind it to localhost or put it behind a gateway during development. See the
-[deployment guide](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/advanced/deployment.md)
-before exposing it publicly.
+The builder creates a random bearer token by default. Call
+`bearer_auth_token()` before `serve()` if you need that token for a local
+development client; startup logs do not reveal the full value. A non-loopback
+bind requires an explicit operator-owned token set with `with_bearer_auth`
+or an actor/tenant-bound variant. Public startup also requires fail-closed
+API authorization via `with_authz_engine` and rate limiting via
+`with_rate_limit`. If a trusted gateway supplies both controls instead, call
+`with_trusted_gateway_controls()` explicitly; the gateway must authenticate
+actors, enforce permissions, strip client-supplied actor/forwarding headers,
+and throttle traffic before forwarding it. Public binds cannot trust
+`x-actor-id` or forwarded client IP headers without that declaration.
+`/metrics` has a separate bearer token: `with_bearer_auth` only replaces the
+API token. Configure `with_metrics_bearer_auth` with an operator-owned scrape
+token before serving; keep that credential separate from the write-capable API
+token. Without it, `/metrics` retains its generated default token. See the
+[deployment guide](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/advanced/deployment.md).
+
+For shared hosting, configure `with_tenant_db_dir` and bind tokens to tenants
+and actors. API requests include `x-tenant-id`; in tenant-bound deployments it
+must match the operator-owned token binding. The single-store example explicitly
+disables tenant-header routing while retaining the required request header.
+
+## Shipment lifecycle
+
+Create shipments with `POST /api/v1/shipments`, including the recipient name,
+shipping address and shipping method. The response includes `version` for
+optimistic concurrency. Use `PATCH /api/v1/shipments/{id}` to apply a partial
+update, for example:
+
+```json
+{ "status": "processing", "expected_version": 1 }
+```
+
+The normal sequence is `pending → processing → ready_to_ship → shipped →
+in_transit → out_for_delivery → delivered`. Invalid transitions return 422;
+stale versions return 409. Omitted or null fields retain their stored values.
+An unchanged patch with a satisfied version precondition preserves timestamps
+and version. Monetary patch fields such as `shipping_cost` require decimal
+strings. Native updates and their outbox facts commit together.
+
+Cancellation uses `POST /api/v1/shipments/{id}/cancel` with `{}` or an
+`expected_version` precondition. It requires delete permission when authorization
+is enabled. The general update route rejects cancellation, including spelling
+aliases. Cancellation retains the shipment and its history and is permitted
+only before carrier handoff.
+
+Agents using the CLI/MCP catalog can perform the same transitions with
+`update_shipment`, using camelCase input names such as `expectedVersion`.
+`create_shipment` requires `recipientName` and `shippingAddress`; `service`
+remains an alias for `shippingMethod`. `ship_shipment`, `deliver_shipment` and
+`cancel_shipment` also accept `expectedVersion`. All these tools require
+`--apply` to mutate. Strict kernel mode excludes ungoverned shipment mutations;
+typed governed fulfillment commands remain a separate release requirement.
+Provider-label tracking reads preserve state. Apply observed provider events
+through the write-gated `ingest_shipping_provider_webhook` tool; the former
+`advanceStatus` option is no longer exposed by `track_shipping_label`.
 
 ## Part of StateSet iCommerce
 

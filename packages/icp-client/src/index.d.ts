@@ -88,6 +88,74 @@ export function verifyEd25519(
 ): boolean;
 
 // ---------------------------------------------------------------------------
+// PrincipalBinding (§4.4)
+// ---------------------------------------------------------------------------
+
+/**
+ * A principal's Ed25519 signing key. A principal is an organization
+ * (`did:web:…`), not an Agent: no AID, no X25519 half. The public key is what
+ * an operator registers with the handler (`ICP_PRINCIPAL_KEYS_JSON`).
+ */
+export interface PrincipalIdentity {
+  /** 32-byte Ed25519 seed (raw private key material). */
+  ed25519_seed: Buffer;
+  /** 32-byte Ed25519 public key — hand this to the merchant. */
+  ed25519_pubkey: Buffer;
+}
+
+/** What the principal authorized this Agent to do. */
+export interface PrincipalAuthority {
+  max_per_intent: Money;
+  verbs: string[];
+  [extension: string]: unknown;
+}
+
+/**
+ * The delegation an Agent carries on every Intent. The signing input is
+ * `canonicalJson(binding)` with `signature` removed.
+ */
+export interface PrincipalBinding {
+  principal: string;
+  agent: AID;
+  authority: PrincipalAuthority;
+  /** RFC 3339. The handler rejects a binding whose expiry has passed. */
+  expiry: string;
+  revocation: string;
+  signature: Signature;
+  [extension: string]: unknown;
+}
+
+export interface SignPrincipalBindingParams {
+  principal: string;
+  agent: AID;
+  /** Default: 24h from now. */
+  expiresAt?: Date | number | string;
+  /** Default: the 4 core commerce verbs. */
+  verbs?: string[];
+  /** Default: $10,000 USDC. */
+  maxPerIntent?: Money;
+  /** Default: `https://example.com/icp-revocation/<agent>`. */
+  revocation?: string;
+  /** Any further field is included in the binding and covered by the signature. */
+  [extension: string]: unknown;
+}
+
+/** Generate a fresh principal signing key. Persist `ed25519_seed` in a KMS. */
+export function generatePrincipalIdentity(): PrincipalIdentity;
+
+/** Restore a principal signing key from its 32-byte Ed25519 seed. */
+export function principalIdentityFromSeed(edSeed: Buffer): PrincipalIdentity;
+
+/**
+ * Sign a PrincipalBinding with the principal's key. Throws `ICPError` rather
+ * than signing a binding a handler could not use.
+ */
+export function signPrincipalBinding(
+  params: SignPrincipalBindingParams,
+  principalIdentity: PrincipalIdentity | Identity,
+): PrincipalBinding;
+
+// ---------------------------------------------------------------------------
 // SettlementReceipt verification
 // ---------------------------------------------------------------------------
 
@@ -216,12 +284,29 @@ export interface ICPClientCreateOptions {
   handlerUrl: string;
   principal: string;
   identity?: Identity;
-  /** Default $500 USDC; per-Intent spend ceiling. */
+  /** Default $10,000 USDC; per-Intent spend ceiling. */
   maxPerIntent?: Money;
-  /** Verbs the Agent is authorized for. Defaults to all 7 commerce verbs. */
+  /**
+   * Verbs the Agent is authorized for. Default: every verb this client can
+   * emit (the 7 `channel.register`, `inventory.query`, `purchase.create`,
+   * `purchase.return`, `quote.request`, `subscription.cancel`,
+   * `subscription.create`) — and nothing wider.
+   */
   verbs?: string[];
   /** Revocation URL the merchant uses to validate the binding. */
   revocationUrl?: string;
+  /**
+   * The principal's Ed25519 key. When present the client signs a real
+   * PrincipalBinding for every Intent. Mutually exclusive with
+   * `principalBinding`.
+   */
+  principalIdentity?: PrincipalIdentity | Identity;
+  /**
+   * A PrincipalBinding signed elsewhere (offline / KMS) — the production
+   * shape, since the Agent never needs the principal's key. Must delegate
+   * this client's `identity.aid`.
+   */
+  principalBinding?: PrincipalBinding;
 }
 
 export interface SignedResponse<T = unknown> {
@@ -326,6 +411,9 @@ export class ICPClient {
   readonly identity: Identity;
   readonly handlerUrl: string;
   readonly principal: string;
+  /** `null` when this Agent carries no delegation — Intents then omit `principal_binding`. */
+  readonly principalIdentity: PrincipalIdentity | Identity | null;
+  readonly principalBinding: PrincipalBinding | null;
 
   /** Fetch `.well-known/icp`. Caches the merchant pubkey internally. */
   capabilities(): Promise<Record<string, unknown>>;

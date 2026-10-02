@@ -17,6 +17,11 @@ if (!process.argv.includes('--apply') || !process.argv.includes('--demo')) {
     'Trust is enforced: set ICP_PRINCIPAL_KEYS_JSON (principal DID → Ed25519 public key hex) ' +
       'and ICP_AGENT_KEYS_JSON (agent AID → key hex). ICP_TRUST_MODE=demo opts out, unsafely.',
   );
+  console.log(
+    'The matching PrincipalBinding comes from @stateset/icp-client: pass `principalIdentity` ' +
+      'to ICPClient.create(), or sign one offline with signPrincipalBinding() and pass ' +
+      '`principalBinding`. Register principalIdentity.ed25519_pubkey (hex) above.',
+  );
 } else {
   const index = process.argv.indexOf('--db');
   const path = index >= 0 ? process.argv[index + 1] : null;

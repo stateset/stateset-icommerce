@@ -1,0 +1,27 @@
+schemaVersion: 1
+business:
+  name: Retail and consumer goods
+  currency: USD
+  timezone: UTC
+terminology:
+  customer: shopper
+  order: order
+modules:
+  orders: true
+  inventory: true
+  payments: true
+  returns: true
+policies:
+  - name: loyalty-reward-eligibility
+    kind: policy
+    resource: customer
+  - name: return-window
+    kind: policy
+    resource: return
+workflows:
+  - name: retail-order
+    resource: order
+    states: [cart, placed, picking, shipped, delivered, returned]
+views: []
+automations: []
+integrations: []

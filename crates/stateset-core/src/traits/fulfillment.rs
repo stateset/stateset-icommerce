@@ -58,10 +58,12 @@ pub trait ShipmentRepository: Send + Sync {
     fn cancel(&self, id: ShipmentId) -> Result<Shipment>;
 
     // Item operations
-    /// Add item to shipment
+    /// Add an item while pending, processing or on hold. Advances the shipment version
+    /// and records an outbox fact atomically. This does not fulfill an order or reserve stock.
     fn add_item(&self, shipment_id: ShipmentId, item: CreateShipmentItem) -> Result<ShipmentItem>;
 
-    /// Remove item from shipment
+    /// Remove an item while pending, processing or on hold. Missing items return `NotFound`.
+    /// Advances the shipment version and records an outbox fact atomically.
     fn remove_item(&self, item_id: Uuid) -> Result<()>;
 
     /// Get items in shipment

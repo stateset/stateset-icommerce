@@ -231,7 +231,10 @@ export const currencyTools = [
       baseCurrency: z.string().optional().describe('Store base currency'),
       enabledCurrencies: z.array(z.string().min(1)).optional().describe('Enabled currency codes'),
       autoConvert: z.boolean().optional().describe('Enable automatic conversion'),
-      roundingMode: z.string().optional().describe('Rounding mode'),
+      roundingMode: z
+        .enum(['half_up', 'half_down', 'up', 'down', 'half_even'])
+        .optional()
+        .describe('Rounding mode'),
     },
     permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
@@ -243,11 +246,22 @@ export const currencyTools = [
         };
       }
 
-      const settings = await commerce.currency.updateSettings({
-        ...params,
-        baseCurrency: params.baseCurrency?.toUpperCase(),
-        enabledCurrencies: params.enabledCurrencies?.map((currency) => currency.toUpperCase()),
-      });
+      // The binding's updateSettings replaces the whole settings record and
+      // requires baseCurrency + enabledCurrencies, so merge the partial update
+      // onto the current settings; absent optionals are omitted, never null.
+      const current = await commerce.currency.getSettings();
+      /** @type {Record<string, unknown>} */
+      const input = {
+        baseCurrency: (params.baseCurrency ?? current.baseCurrency).toUpperCase(),
+        enabledCurrencies: (params.enabledCurrencies ?? current.enabledCurrencies).map((currency) =>
+          currency.toUpperCase(),
+        ),
+        autoConvert: params.autoConvert ?? current.autoConvert,
+        roundingMode: params.roundingMode ?? current.roundingMode,
+      };
+      for (const key of Object.keys(input))
+        if (input[key] === undefined || input[key] === null) delete input[key];
+      const settings = await commerce.currency.updateSettings(input);
       return { success: true, message: 'Currency settings updated', settings };
     },
   },
@@ -320,6 +334,22 @@ export const currencyTools = [
       const currency = params.currency.toUpperCase();
       const enabled = await commerce.currency.isEnabled(currency);
       return { success: true, currency, enabled };
+    },
+  },
+  {
+    name: 'get_currency_decimal_places',
+    description:
+      'How many decimal places a currency permits. The engine refuses an amount with more ' +
+      'places than this, so check it before formatting or validating money rather than ' +
+      'assuming two: JPY, KRW and VND have none, BTC and ETH have eight.',
+    inputSchema: {
+      currency: z.string().min(1).describe('Currency code (e.g., USD, JPY, BTC)'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const currency = params.currency.toUpperCase();
+      const decimalPlaces = commerce.currency.decimalPlaces(currency);
+      return { success: true, currency, decimalPlaces };
     },
   },
   {

@@ -1,5 +1,6 @@
 //! PostgreSQL implementation of cart/checkout repository
 
+use super::resolve_currency_with_executor;
 use super::{PgOrderRepository, PgPromotionRepository, map_db_error};
 use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
@@ -546,74 +547,10 @@ impl PgCartRepository {
 
     // Async implementations
     pub async fn create_async(&self, input: CreateCart) -> Result<Cart> {
-        let id = Uuid::new_v4();
-        let cart_number = Self::generate_cart_number();
-        let now = Utc::now();
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
-        let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
-
-        let shipping_address_json =
-            input.shipping_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
-        let billing_address_json =
-            input.billing_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
-        let metadata_json = input.metadata.clone();
-
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-
-        sqlx::query(
-            r#"INSERT INTO carts (
-                id, cart_number, customer_id, status, currency,
-                subtotal, tax_amount, shipping_amount, discount_amount, grand_total,
-                customer_email, customer_name, shipping_address, billing_address,
-                notes, metadata, expires_at, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)"#,
-        )
-        .bind(id)
-        .bind(&cart_number)
-        .bind(input.customer_id)
-        .bind("active")
-        .bind(currency)
-        .bind(Decimal::ZERO)
-        .bind(Decimal::ZERO)
-        .bind(Decimal::ZERO)
-        .bind(Decimal::ZERO)
-        .bind(Decimal::ZERO)
-        .bind(&input.customer_email)
-        .bind(&input.customer_name)
-        .bind(&shipping_address_json)
-        .bind(&billing_address_json)
-        .bind(&input.notes)
-        .bind(&metadata_json)
-        .bind(expires_at)
-        .bind(now)
-        .bind(now)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        // Add initial items if provided, then price the cart through the
-        // same totals path every later mutation uses (parity with SQLite).
-        if let Some(input_items) = &input.items {
-            for item_input in input_items {
-                validate_add_item_money(currency, item_input)?;
-                // Same line guard as `add_item_async`: `create` used to reach
-                // `add_item_internal` directly, so a withdrawn catalogue SKU
-                // (and a client-chosen price) entered the cart unchecked.
-                guard_cart_line_with_conn_pg(
-                    tx.as_mut(),
-                    item_input.variant_id,
-                    &item_input.sku,
-                    item_input.unit_price,
-                )
-                .await?;
-                self.add_item_internal(&mut tx, id, item_input.clone()).await?;
-            }
-            self.update_cart_totals_in_tx(&mut tx, id).await?;
-        }
-
+        let cart = self.create_in_tx(&mut tx, input).await?;
         tx.commit().await.map_err(map_db_error)?;
-
-        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
+        Ok(cart)
     }
 
     async fn add_item_internal(
@@ -873,15 +810,8 @@ impl PgCartRepository {
 
     pub async fn add_item_async(&self, cart_id: Uuid, item: AddCartItem) -> Result<CartItem> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        // Serialize with other mutations of this cart before touching its lines.
-        let row = Self::lock_cart_in_tx(&mut tx, cart_id).await?;
-        validate_add_item_money(row.currency, &item)?;
-        guard_cart_line_with_conn_pg(tx.as_mut(), item.variant_id, &item.sku, item.unit_price)
-            .await?;
-        let result = self.add_item_internal(&mut tx, cart_id, item).await?;
-        self.update_cart_totals_in_tx(&mut tx, cart_id).await?;
+        let result = self.add_item_in_tx(&mut tx, cart_id, item).await?;
         tx.commit().await.map_err(map_db_error)?;
-
         Ok(result)
     }
 
@@ -1055,17 +985,10 @@ impl PgCartRepository {
     }
 
     pub async fn set_shipping_address_async(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
-        let address_json = serde_json::to_value(&address).unwrap_or_default();
-
-        sqlx::query("UPDATE carts SET shipping_address = $1, updated_at = $2 WHERE id = $3")
-            .bind(&address_json)
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let cart = Self::set_shipping_address_in_tx(&mut tx, id, &address).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(cart)
     }
 
     pub async fn set_billing_address_async(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
@@ -1158,41 +1081,10 @@ impl PgCartRepository {
     }
 
     pub async fn set_payment_async(&self, id: Uuid, payment: SetCartPayment) -> Result<Cart> {
-        let billing_json =
-            payment.billing_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
-
-        if let Some(billing) = billing_json {
-            sqlx::query(
-                r#"UPDATE carts SET
-                    payment_method = $1, payment_token = $2, payment_status = 'method_selected',
-                    billing_address = $3, updated_at = $4
-                WHERE id = $5"#,
-            )
-            .bind(&payment.payment_method)
-            .bind(&payment.payment_token)
-            .bind(&billing)
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-        } else {
-            sqlx::query(
-                r#"UPDATE carts SET
-                    payment_method = $1, payment_token = $2, payment_status = 'method_selected',
-                    updated_at = $3
-                WHERE id = $4"#,
-            )
-            .bind(&payment.payment_method)
-            .bind(&payment.payment_token)
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-        }
-
-        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let cart = Self::set_payment_in_tx(&mut tx, id, &payment).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(cart)
     }
 
     pub async fn set_x402_payment_async(
@@ -1332,42 +1224,12 @@ impl PgCartRepository {
         }))
     }
 
+    /// Redeem `coupon_code` on the cart; see `Self::apply_discount_in_tx`.
     pub async fn apply_discount_async(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
-        // Get the cart first to calculate the discount off its subtotal.
-        let mut cart = self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)?;
-
-        // Resolve the coupon and its promotion, and refuse anything that is
-        // not redeemable right now (inactive/expired/exhausted coupon,
-        // draft/paused/expired/exhausted promotion, unmet conditions such as
-        // a minimum subtotal, per-customer limit reached). Mirrors the SQLite
-        // backend; the checks live in `stateset-core` + the promotions repo.
-        let promo_repo = PgPromotionRepository::new(self.pool.clone());
-        let (_coupon, promotion) =
-            promo_repo.validate_coupon_for_cart_async(&cart, coupon_code, Utc::now()).await?;
-
-        cart.coupon_code = Some(coupon_code.to_uppercase());
-        let discount_amount = coupon_discount_amount(&promotion, &cart);
-
-        let discount_description = promotion.name;
-
-        // Update the cart with the coupon + computed discount.
-        sqlx::query(
-            "UPDATE carts SET coupon_code = $1, discount_amount = $2, discount_description = $3,
-             updated_at = $4 WHERE id = $5",
-        )
-        // Persist the canonical (uppercased) code: checkout consumes the coupon
-        // by this value and codes are stored uppercased.
-        .bind(coupon_code.to_uppercase())
-        .bind(discount_amount)
-        .bind(&discount_description)
-        .bind(Utc::now())
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        // Recalculate totals (grand_total reflects the new discount) and return.
-        self.recalculate_async(id).await
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let cart = self.apply_discount_in_tx(&mut tx, id, coupon_code).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(cart)
     }
 
     pub async fn remove_discount_async(&self, id: Uuid) -> Result<Cart> {
@@ -1433,13 +1295,37 @@ impl PgCartRepository {
     }
 
     pub async fn begin_checkout_async(&self, id: Uuid) -> Result<Cart> {
-        sqlx::query("UPDATE carts SET status = 'payment_pending', updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let row = Self::lock_cart_in_tx(&mut tx, id).await?;
+        let cart = row.into_cart(vec![])?;
+        if cart.status == CartStatus::PaymentPending {
+            tx.commit().await.map_err(map_db_error)?;
+            return self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound);
+        }
+        if !cart.is_checkoutable_status() {
+            return Err(CommerceError::Conflict(format!(
+                "Cart cannot begin checkout in status: {}",
+                cart.status
+            )));
+        }
+        if cart.is_expired() {
+            return Err(CommerceError::ValidationError("Cart is expired".to_string()));
+        }
+        let updated = sqlx::query(
+            "UPDATE carts SET status = 'payment_pending', updated_at = $1
+             WHERE id = $2 AND status IN ('active', 'ready_for_payment', 'payment_pending')",
+        )
+        .bind(Utc::now())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Cart is no longer in a state that can begin checkout".to_string(),
+            ));
+        }
+        tx.commit().await.map_err(map_db_error)?;
         self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -1775,35 +1661,104 @@ impl PgCartRepository {
     }
 
     pub async fn cancel_async(&self, id: Uuid) -> Result<Cart> {
-        sqlx::query("UPDATE carts SET status = 'cancelled', updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let row = Self::lock_cart_in_tx(&mut tx, id).await?;
+        let cart = row.into_cart(vec![])?;
+        if cart.status == CartStatus::Cancelled {
+            tx.commit().await.map_err(map_db_error)?;
+            return self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound);
+        }
+        if !cart.can_cancel() {
+            return Err(CommerceError::Conflict(format!(
+                "Cart cannot be cancelled in status: {}",
+                cart.status
+            )));
+        }
+        let updated = sqlx::query(
+            "UPDATE carts SET status = 'cancelled', updated_at = $1
+             WHERE id = $2 AND status IN ('active', 'ready_for_payment', 'payment_pending')",
+        )
+        .bind(Utc::now())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Cart is no longer in a state that can be cancelled".to_string(),
+            ));
+        }
+        tx.commit().await.map_err(map_db_error)?;
         self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn abandon_async(&self, id: Uuid) -> Result<Cart> {
-        sqlx::query("UPDATE carts SET status = 'abandoned', updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let row = Self::lock_cart_in_tx(&mut tx, id).await?;
+        let cart = row.into_cart(vec![])?;
+        if cart.status == CartStatus::Abandoned {
+            tx.commit().await.map_err(map_db_error)?;
+            return self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound);
+        }
+        if !matches!(
+            cart.status,
+            CartStatus::Active | CartStatus::ReadyForPayment | CartStatus::PaymentPending
+        ) {
+            return Err(CommerceError::Conflict(format!(
+                "Cart cannot be abandoned in status: {}",
+                cart.status
+            )));
+        }
+        let updated = sqlx::query(
+            "UPDATE carts SET status = 'abandoned', updated_at = $1
+             WHERE id = $2 AND status IN ('active', 'ready_for_payment', 'payment_pending')",
+        )
+        .bind(Utc::now())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Cart is no longer in a state that can be abandoned".to_string(),
+            ));
+        }
+        tx.commit().await.map_err(map_db_error)?;
         self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn expire_async(&self, id: Uuid) -> Result<Cart> {
-        sqlx::query("UPDATE carts SET status = 'expired', updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let row = Self::lock_cart_in_tx(&mut tx, id).await?;
+        let cart = row.into_cart(vec![])?;
+        if cart.status == CartStatus::Expired {
+            tx.commit().await.map_err(map_db_error)?;
+            return self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound);
+        }
+        if !matches!(
+            cart.status,
+            CartStatus::Active | CartStatus::ReadyForPayment | CartStatus::PaymentPending
+        ) {
+            return Err(CommerceError::Conflict(format!(
+                "Cart cannot be expired in status: {}",
+                cart.status
+            )));
+        }
+        let updated = sqlx::query(
+            "UPDATE carts SET status = 'expired', updated_at = $1
+             WHERE id = $2 AND status IN ('active', 'ready_for_payment', 'payment_pending')",
+        )
+        .bind(Utc::now())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::Conflict(
+                "Cart is no longer in a state that can be expired".to_string(),
+            ));
+        }
+        tx.commit().await.map_err(map_db_error)?;
         self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -1852,20 +1807,9 @@ impl PgCartRepository {
     /// cart could still be re-taxed) and the two statements ran unsynchronized.
     pub async fn set_tax_async(&self, id: Uuid, tax_amount: Decimal) -> Result<Cart> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let row = Self::lock_cart_in_tx(&mut tx, id).await?;
-        row.into_cart(Vec::new())?.ensure_money_settable("tax", tax_amount)?;
-        sqlx::query("UPDATE carts SET tax_amount = $1, updated_at = $2 WHERE id = $3")
-            .bind(tax_amount)
-            .bind(Utc::now())
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-        // Reprice inside the same transaction, under the same lock.
-        self.update_cart_totals_in_tx(&mut tx, id).await?;
+        let cart = self.set_tax_in_tx(&mut tx, id, tax_amount).await?;
         tx.commit().await.map_err(map_db_error)?;
-
-        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
+        Ok(cart)
     }
 
     pub async fn get_abandoned_async(&self) -> Result<Vec<Cart>> {
@@ -1943,7 +1887,7 @@ impl PgCartRepository {
             let id = Uuid::new_v4();
             let cart_number = Self::generate_cart_number();
             let now = Utc::now();
-            let currency = input.currency.unwrap_or(CurrencyCode::USD);
+            let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
             let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 
             let shipping_address_json = input
@@ -2456,6 +2400,262 @@ impl CartRepository for PgCartRepository {
     fn get_batch(&self, ids: Vec<CartId>) -> Result<Vec<Cart>> {
         let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
         super::block_on(self.get_batch_async(raw_ids))
+    }
+}
+
+// Cart mutations on a caller's transaction. The public async methods and the
+// governed kernel commands (`carts.*`) share these bodies, so a governed
+// mutation applies exactly the business rules an ungoverned one does, inside
+// the kernel's receipt transaction.
+impl PgCartRepository {
+    /// Load cart `id` (with its lines) on `tx`.
+    pub(crate) async fn load_cart_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+    ) -> Result<Cart> {
+        let row: CartRow = sqlx::query_as("SELECT * FROM carts WHERE id = $1")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        let items: Vec<CartItemRow> =
+            sqlx::query_as("SELECT * FROM cart_items WHERE cart_id = $1 ORDER BY created_at")
+                .bind(id)
+                .fetch_all(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        row.into_cart(items.into_iter().map(Into::into).collect())
+    }
+
+    /// Create a cart (and any initial lines) on `tx`.
+    pub(crate) async fn create_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        input: CreateCart,
+    ) -> Result<Cart> {
+        let id = Uuid::new_v4();
+        let cart_number = Self::generate_cart_number();
+        let now = Utc::now();
+        let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
+
+        let shipping_address_json =
+            input.shipping_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
+        let billing_address_json =
+            input.billing_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
+        let metadata_json = input.metadata.clone();
+
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
+
+        sqlx::query(
+            r#"INSERT INTO carts (
+                id, cart_number, customer_id, status, currency,
+                subtotal, tax_amount, shipping_amount, discount_amount, grand_total,
+                customer_email, customer_name, shipping_address, billing_address,
+                notes, metadata, expires_at, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)"#,
+        )
+        .bind(id)
+        .bind(&cart_number)
+        .bind(input.customer_id)
+        .bind("active")
+        .bind(currency)
+        .bind(Decimal::ZERO)
+        .bind(Decimal::ZERO)
+        .bind(Decimal::ZERO)
+        .bind(Decimal::ZERO)
+        .bind(Decimal::ZERO)
+        .bind(&input.customer_email)
+        .bind(&input.customer_name)
+        .bind(&shipping_address_json)
+        .bind(&billing_address_json)
+        .bind(&input.notes)
+        .bind(&metadata_json)
+        .bind(expires_at)
+        .bind(now)
+        .bind(now)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        // Add initial items if provided, then price the cart through the
+        // same totals path every later mutation uses (parity with SQLite).
+        if let Some(input_items) = &input.items {
+            for item_input in input_items {
+                validate_add_item_money(currency, item_input)?;
+                // Same line guard as `add_item_async`: `create` used to reach
+                // `add_item_internal` directly, so a withdrawn catalogue SKU
+                // (and a client-chosen price) entered the cart unchecked.
+                guard_cart_line_with_conn_pg(
+                    tx.as_mut(),
+                    item_input.variant_id,
+                    &item_input.sku,
+                    item_input.unit_price,
+                )
+                .await?;
+                self.add_item_internal(tx, id, item_input.clone()).await?;
+            }
+            self.update_cart_totals_in_tx(tx, id).await?;
+        }
+
+        Self::load_cart_in_tx(tx, id).await
+    }
+
+    /// Add one line to cart `cart_id` on `tx` and reprice the cart.
+    pub(crate) async fn add_item_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        cart_id: Uuid,
+        item: AddCartItem,
+    ) -> Result<CartItem> {
+        // Serialize with other mutations of this cart before touching its lines.
+        let row = Self::lock_cart_in_tx(tx, cart_id).await?;
+        validate_add_item_money(row.currency, &item)?;
+        guard_cart_line_with_conn_pg(tx.as_mut(), item.variant_id, &item.sku, item.unit_price)
+            .await?;
+        let result = self.add_item_internal(tx, cart_id, item).await?;
+        self.update_cart_totals_in_tx(tx, cart_id).await?;
+        Ok(result)
+    }
+
+    /// Set the shipping address of cart `id` on `tx`.
+    pub(crate) async fn set_shipping_address_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+        address: &CartAddress,
+    ) -> Result<Cart> {
+        let address_json = serde_json::to_value(address).unwrap_or_default();
+        let rows =
+            sqlx::query("UPDATE carts SET shipping_address = $1, updated_at = $2 WHERE id = $3")
+                .bind(&address_json)
+                .bind(Utc::now())
+                .bind(id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .rows_affected();
+        if rows == 0 {
+            return Err(CommerceError::NotFound);
+        }
+        Self::load_cart_in_tx(tx, id).await
+    }
+
+    /// Record the payment method (and optional billing address) of cart `id` on `tx`.
+    pub(crate) async fn set_payment_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+        payment: &SetCartPayment,
+    ) -> Result<Cart> {
+        let billing_json =
+            payment.billing_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
+
+        let rows = if let Some(billing) = billing_json {
+            sqlx::query(
+                r#"UPDATE carts SET
+                    payment_method = $1, payment_token = $2, payment_status = 'method_selected',
+                    billing_address = $3, updated_at = $4
+                WHERE id = $5"#,
+            )
+            .bind(&payment.payment_method)
+            .bind(&payment.payment_token)
+            .bind(&billing)
+            .bind(Utc::now())
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .rows_affected()
+        } else {
+            sqlx::query(
+                r#"UPDATE carts SET
+                    payment_method = $1, payment_token = $2, payment_status = 'method_selected',
+                    updated_at = $3
+                WHERE id = $4"#,
+            )
+            .bind(&payment.payment_method)
+            .bind(&payment.payment_token)
+            .bind(Utc::now())
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .rows_affected()
+        };
+        if rows == 0 {
+            return Err(CommerceError::NotFound);
+        }
+
+        Self::load_cart_in_tx(tx, id).await
+    }
+
+    /// Redeem `coupon_code` on cart `id` on `tx` and reprice the cart.
+    ///
+    /// The cart row is held (`FOR NO KEY UPDATE`) while the coupon and its
+    /// promotion are resolved and every redeemability rule is checked
+    /// (inactive/expired/exhausted coupon, draft/paused/expired/exhausted
+    /// promotion, unmet conditions such as a minimum subtotal or first order,
+    /// per-customer limit reached), then the discount is written and the cart
+    /// repriced under the same lock. Mirrors the SQLite backend.
+    pub(crate) async fn apply_discount_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+        coupon_code: &str,
+    ) -> Result<Cart> {
+        Self::lock_cart_in_tx(tx, id).await?;
+        let mut cart = Self::load_cart_in_tx(tx, id).await?;
+        let promo_repo = PgPromotionRepository::new(self.pool.clone());
+        let (_coupon, promotion) = promo_repo
+            .validate_coupon_for_cart_in_tx(tx.as_mut(), &cart, coupon_code, Utc::now())
+            .await?;
+
+        cart.coupon_code = Some(coupon_code.to_uppercase());
+        let discount_amount = coupon_discount_amount(&promotion, &cart);
+        let discount_description = promotion.name;
+
+        sqlx::query(
+            "UPDATE carts SET coupon_code = $1, discount_amount = $2, discount_description = $3,
+             updated_at = $4 WHERE id = $5",
+        )
+        // Persist the canonical (uppercased) code: checkout consumes the coupon
+        // by this value and codes are stored uppercased.
+        .bind(coupon_code.to_uppercase())
+        .bind(discount_amount)
+        .bind(&discount_description)
+        .bind(Utc::now())
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        // Reprice (grand_total reflects the new discount) under the same lock.
+        self.update_cart_totals_in_tx(tx, id).await?;
+        Self::load_cart_in_tx(tx, id).await
+    }
+
+    /// Set the tax amount of cart `id` on `tx` and reprice the cart.
+    ///
+    /// Guarded by [`Cart::ensure_money_settable`] — non-negative, expressible
+    /// in the cart's currency, and only while the cart is still active — and
+    /// written with the repricing under the cart's row lock.
+    pub(crate) async fn set_tax_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+        tax_amount: Decimal,
+    ) -> Result<Cart> {
+        let row = Self::lock_cart_in_tx(tx, id).await?;
+        row.into_cart(Vec::new())?.ensure_money_settable("tax", tax_amount)?;
+        sqlx::query("UPDATE carts SET tax_amount = $1, updated_at = $2 WHERE id = $3")
+            .bind(tax_amount)
+            .bind(Utc::now())
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        // Reprice inside the same transaction, under the same lock.
+        self.update_cart_totals_in_tx(tx, id).await?;
+        Self::load_cart_in_tx(tx, id).await
     }
 }
 

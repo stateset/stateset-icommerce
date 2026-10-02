@@ -272,6 +272,8 @@ if (( fail != 0 )); then
   exit 1
 fi
 
+node ./scripts/ci/check_node_binding_lock.mjs
+
 if ! node --input-type=module -e "await import('./cli/src/standalone.js'); await import('./cli/src/agent-toolkit.js');"; then
   echo "::error file=cli/src/standalone.js::Standalone or agent-toolkit import smoke test failed"
   exit 1

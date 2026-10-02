@@ -161,6 +161,7 @@ export const TOOL_PERMISSIONS = {
   enable_currencies: 'admin',
   check_currency_enabled: 'read',
   format_currency: 'read',
+  get_currency_decimal_places: 'read',
 
   // Tax tools
   calculate_tax: 'read',
@@ -178,7 +179,7 @@ export const TOOL_PERMISSIONS = {
   get_tax_exemption: 'read',
   create_tax_exemption: 'write',
   check_customer_tax_exempt: 'read',
-  calculate_cart_tax: 'read',
+  calculate_cart_tax: 'write',
   update_tax_settings: 'write',
   set_tax_enabled: 'write',
   check_tax_enabled: 'read',
@@ -201,6 +202,7 @@ export const TOOL_PERMISSIONS = {
   create_promotion: 'write',
   activate_promotion: 'write',
   deactivate_promotion: 'write',
+  add_promotion_condition: 'write',
   delete_promotion: 'delete',
   create_coupon: 'write',
   get_coupon: 'read',
@@ -208,6 +210,7 @@ export const TOOL_PERMISSIONS = {
   list_coupons: 'read',
   check_promotion_validity: 'read',
   apply_cart_promotions: 'write',
+  quote_promotions: 'read',
   record_promotion_usage: 'write',
 
   // Subscriptions
@@ -266,7 +269,9 @@ export const TOOL_PERMISSIONS = {
   // Shipments
   list_shipments: 'read',
   get_shipment: 'read',
+  plan_partial_shipment: 'read',
   create_shipment: 'write',
+  update_shipment: 'write',
   ship_shipment: 'write',
   deliver_shipment: 'write',
   cancel_shipment: 'delete',
@@ -434,6 +439,17 @@ export const TOOL_PERMISSIONS = {
   list_backorders_for_sku: 'read',
   list_overdue_backorders: 'read',
   get_backorder_summary: 'read',
+  auto_allocate_inventory: 'write',
+  allocate_backorder: 'write',
+  get_backorder_allocations: 'read',
+  confirm_backorder_allocation: 'write',
+  release_backorder_allocation: 'write',
+  expire_backorder_allocations: 'write',
+  fulfill_backorder: 'write',
+  get_backorder_fulfillment_history: 'read',
+  list_backorders_for_customer: 'read',
+  get_sku_backorder_summary: 'read',
+  update_backorder: 'write',
   count_pending_backorders: 'read',
 
   // General Ledger
@@ -850,7 +866,6 @@ export const TOOL_PERMISSIONS = {
   list_segments: 'read',
   update_segment: 'write',
   evaluate_segment_membership: 'read',
-  rebuild_dynamic_segment: 'write',
 
   // Shipping Zones & Methods
   create_shipping_zone: 'write',
@@ -889,12 +904,16 @@ export const TOOL_PERMISSIONS = {
   create_reward: 'admin',
 
   // Fraud Detection
-  assess_order_fraud: 'read',
+  assess_order_fraud: 'write',
   get_fraud_assessment: 'read',
   list_fraud_signals: 'read',
   create_fraud_rule: 'admin',
   update_fraud_rule: 'admin',
   review_flagged_order: 'write',
+
+  // Explainability (read-only narratives assembled from other domains)
+  explain_order: 'read',
+  explain_cart_pricing: 'read',
 
   // Agentic Runtime
   discover_tools: 'read',

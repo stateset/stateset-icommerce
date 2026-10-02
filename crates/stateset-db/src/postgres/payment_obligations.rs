@@ -1,6 +1,6 @@
 //! PostgreSQL payment obligation repository implementation
 
-use super::map_db_error;
+use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -113,7 +113,7 @@ impl PgPaymentObligationRepository {
         let id_str = id.to_string();
         let number = format!("OBL-{}", &id_str[..8]);
         let now = Utc::now();
-        let currency = input.currency.unwrap_or(CurrencyCode::USD);
+        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
 
         sqlx::query(
             "INSERT INTO payment_obligations (id, number, supplier_id, purchase_order_id, amount, amount_paid, currency, due_date, status, linked_bill_ids, notes, created_at, updated_at)
@@ -225,14 +225,23 @@ impl PgPaymentObligationRepository {
         id: PaymentObligationId,
         status: PaymentObligationStatus,
     ) -> Result<PaymentObligation> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let current = Self::fetch_in_tx(&mut tx, id.into()).await?;
+        if !current.status.allows_manual_transition(status) {
+            return Err(CommerceError::Conflict(format!(
+                "cannot set payment obligation status from {} to {}",
+                current.status, status
+            )));
+        }
         let now = Utc::now();
         sqlx::query("UPDATE payment_obligations SET status = $1, updated_at = $2 WHERE id = $3")
             .bind(status.to_string())
             .bind(now)
             .bind(Uuid::from(id))
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
         self.fetch_async(id.into()).await?.ok_or(CommerceError::NotFound)
     }
 

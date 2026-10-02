@@ -1038,6 +1038,12 @@ impl PgLotRepository {
     }
 
     pub async fn create_async(&self, input: CreateLot) -> Result<Lot> {
+        if input.quantity <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(format!(
+                "Lot quantity must be greater than zero, got {}",
+                input.quantity
+            )));
+        }
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         let id = Uuid::new_v4();

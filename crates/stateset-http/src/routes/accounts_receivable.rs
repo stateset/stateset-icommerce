@@ -855,8 +855,19 @@ mod tests {
 
     #[tokio::test]
     async fn create_and_list_credit_memos() {
-        let app = app();
-        let customer_id = uuid::Uuid::new_v4().to_string();
+        // A credit memo needs a real customer: the engine refuses an unknown one.
+        let commerce = Commerce::new(":memory:").expect("in-memory Commerce");
+        let customer = commerce
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "memo@example.com".into(),
+                first_name: "Memo".into(),
+                last_name: "Holder".into(),
+                ..Default::default()
+            })
+            .expect("customer created");
+        let app = router().with_state(AppState::new(commerce));
+        let customer_id = customer.id.to_string();
         let body = serde_json::json!({
             "customer_id": customer_id,
             "reason": "goodwill_adjustment",

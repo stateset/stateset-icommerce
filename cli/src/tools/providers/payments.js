@@ -1,13 +1,18 @@
 import {
   clone,
   deterministicId,
+  deterministicHash,
   ensureProvider,
   filterProvidersByCapability,
-  moneyToNumber,
-  normalizeMoney,
   nowIso,
-  roundMoney,
 } from './runtime.js';
+import {
+  decimal,
+  formatMoney as normalizeMoney,
+  paymentAmount,
+  fromMinorUnits,
+  currencyCode,
+} from './money.js';
 
 const DEFAULT_PAYMENT_PROVIDER = 'deterministic-mock';
 
@@ -54,6 +59,15 @@ const capturesById = new Map();
 const refundsById = new Map();
 const providerSequences = new Map();
 const intentIdempotencyKeys = new Map();
+const idempotencyRequests = new Map();
+
+function checkIdempotency(key, request) {
+  const fingerprint = deterministicHash(request);
+  const previous = idempotencyRequests.get(key);
+  if (previous && previous !== fingerprint)
+    throw new Error('Idempotency key conflicts with a different request');
+  return fingerprint;
+}
 const captureIdempotencyKeys = new Map();
 const refundIdempotencyKeys = new Map();
 const providerIntentIdIndex = new Map();
@@ -86,31 +100,30 @@ function getIntentOrThrow(intentId) {
 }
 
 function remainingCaptureAmount(intent) {
-  return moneyToNumber(intent.amount) - moneyToNumber(intent.capturedAmount);
+  return decimal(intent.amount).minus(intent.capturedAmount);
 }
 
 function remainingRefundableAmount(intent) {
-  return moneyToNumber(intent.capturedAmount) - moneyToNumber(intent.refundedAmount);
+  return decimal(intent.capturedAmount).minus(intent.refundedAmount);
 }
 
 function settledAmountForIntent(intentId) {
   const settlementIds = settlementsByIntentId.get(intentId) || [];
-  let settled = 0;
+  let settled = decimal('0');
   for (const settlementId of settlementIds) {
     const settlement = settlementsById.get(settlementId);
     if (!settlement) continue;
     if (['paid', 'settled', 'posted'].includes(settlement.status)) {
-      settled = roundMoney(settled + moneyToNumber(settlement.amount));
+      settled = settled.plus(settlement.amount);
     }
   }
   return settled;
 }
 
 function remainingSettleableAmount(intent) {
-  const netCaptured = roundMoney(
-    moneyToNumber(intent.capturedAmount) - moneyToNumber(intent.refundedAmount),
-  );
-  return roundMoney(netCaptured - settledAmountForIntent(intent.id));
+  return decimal(intent.capturedAmount)
+    .minus(intent.refundedAmount)
+    .minus(settledAmountForIntent(intent.id));
 }
 
 function appendIntentOperation(intent, operation) {
@@ -243,34 +256,26 @@ function deriveWebhookEventId(providerId, eventType, eventId, payload = {}) {
   return deterministicId('pwevt', { providerId, eventType, payload });
 }
 
-function parseWebhookAmount(payload = {}) {
-  const candidates = [
-    ['amount', payload.amount],
-    ['amount_received', payload.amount_received],
-    ['amountReceived', payload.amountReceived],
-    ['amount_captured', payload.amount_captured],
-    ['amountCaptured', payload.amountCaptured],
-    ['amount_refunded', payload.amount_refunded],
-    ['amountRefunded', payload.amountRefunded],
-    ['amount_minor', payload.amount_minor],
-    ['amountMinor', payload.amountMinor],
+function parseWebhookAmount(payload = {}, currency) {
+  const fields = [
+    'amount',
+    'amount_received',
+    'amountReceived',
+    'amount_captured',
+    'amountCaptured',
+    'amount_refunded',
+    'amountRefunded',
+    'amount_minor',
+    'amountMinor',
   ];
-
-  for (const [field, raw] of candidates) {
+  for (const field of fields) {
+    const raw = payload[field];
     if (raw === null || raw === undefined) continue;
-    const numeric = Number(raw);
-    if (!Number.isFinite(numeric) || numeric <= 0) continue;
-    if (
-      field.includes('minor') ||
-      field.includes('received') ||
-      field.includes('captured') ||
-      field.includes('refunded')
-    ) {
-      return numeric / 100;
-    }
-    return numeric;
+    // This normalized shadow-provider envelope defines `amount` in major units;
+    // the other fields are integer minor units. Raw provider events need adapters.
+    const amount = field === 'amount' ? raw : fromMinorUnits(raw, currency);
+    return decimal(paymentAmount(amount, currency));
   }
-
   return null;
 }
 
@@ -283,13 +288,14 @@ function findIntentByProviderIntentId(providerId, providerIntentId) {
 }
 
 function buildCaptureObject(intent, amount, idempotencyKey) {
+  amount = paymentAmount(amount, intent.currency);
   const sequence = intent.captures.length + 1;
   const createdAt = nowIso();
   const capture = {
     id: deterministicId('cap', { intentId: intent.id, sequence, amount, idempotencyKey }),
     intentId: intent.id,
     providerId: intent.providerId,
-    amount: normalizeMoney(amount),
+    amount: normalizeMoney(amount, intent.currency),
     status: 'succeeded',
     createdAt,
   };
@@ -297,6 +303,7 @@ function buildCaptureObject(intent, amount, idempotencyKey) {
 }
 
 function buildRefundObject(intent, amount, reason, idempotencyKey) {
+  amount = paymentAmount(amount, intent.currency);
   const sequence = intent.refunds.length + 1;
   const createdAt = nowIso();
   return {
@@ -309,7 +316,7 @@ function buildRefundObject(intent, amount, reason, idempotencyKey) {
     }),
     intentId: intent.id,
     providerId: intent.providerId,
-    amount: normalizeMoney(amount),
+    amount: normalizeMoney(amount, intent.currency),
     reason: reason || null,
     status: 'succeeded',
     createdAt,
@@ -414,14 +421,14 @@ function summarizeBatchByCurrency(settlements) {
   const byCurrency = new Map();
   for (const settlement of settlements) {
     if (!byCurrency.has(settlement.currency)) {
-      byCurrency.set(settlement.currency, { currency: settlement.currency, amount: 0 });
+      byCurrency.set(settlement.currency, { currency: settlement.currency, amount: decimal('0') });
     }
     const current = byCurrency.get(settlement.currency);
-    current.amount = roundMoney(current.amount + moneyToNumber(settlement.amount));
+    current.amount = current.amount.plus(settlement.amount);
   }
   return Array.from(byCurrency.values()).map((entry) => ({
     currency: entry.currency,
-    amount: normalizeMoney(entry.amount),
+    amount: normalizeMoney(entry.amount, entry.currency),
   }));
 }
 
@@ -476,8 +483,8 @@ export function createPaymentSettlementBatch({
   const settleable = [];
   for (const intent of eligibleIntents) {
     const remaining = remainingSettleableAmount(intent);
-    if (remaining > 0 || includeZeroBalances) {
-      settleable.push({ intent, amount: Math.max(remaining, 0) });
+    if (remaining.gt(0) || includeZeroBalances) {
+      settleable.push({ intent, amount: remaining.gt(0) ? remaining : decimal('0') });
     }
   }
 
@@ -527,7 +534,7 @@ export function createPaymentSettlementBatch({
       id: deterministicId('stl', {
         batchId,
         intentId: intent.id,
-        amount: normalizeMoney(amount),
+        amount: normalizeMoney(amount, intent.currency),
         sequence: index + 1,
       }),
       batchId,
@@ -539,7 +546,7 @@ export function createPaymentSettlementBatch({
       orderId: intent.orderId,
       customerId: intent.customerId,
       currency: intent.currency,
-      amount: normalizeMoney(amount),
+      amount: normalizeMoney(amount, intent.currency),
       status: 'paid',
       createdAt: normalizedSettledAt,
       settledAt: normalizedSettledAt,
@@ -562,10 +569,8 @@ export function createPaymentSettlementBatch({
     return settlement;
   });
 
-  const totalSettledAmount = settlements.reduce(
-    (sum, settlement) => roundMoney(sum + moneyToNumber(settlement.amount)),
-    0,
-  );
+  const totalsByCurrency = summarizeBatchByCurrency(settlements);
+  const singleCurrency = totalsByCurrency.length === 1 ? totalsByCurrency[0] : null;
   const batch = {
     id: batchId,
     providerId: provider.id,
@@ -575,8 +580,9 @@ export function createPaymentSettlementBatch({
     createdAt: normalizedSettledAt,
     settledAt: normalizedSettledAt,
     settlementIds: settlements.map((settlement) => settlement.id),
-    totalsByCurrency: summarizeBatchByCurrency(settlements),
-    totalSettledAmount: normalizeMoney(totalSettledAmount),
+    totalsByCurrency,
+    currency: singleCurrency?.currency || null,
+    totalSettledAmount: singleCurrency?.amount ?? null,
     settlementCount: settlements.length,
     idempotencyKey: idempotencyKey || null,
   };
@@ -623,38 +629,43 @@ export function reconcilePaymentProvider({
     intents = intents.filter((intent) => intent.id === intentId);
   }
 
-  const summary = {
-    authorizedAmount: 0,
-    capturedAmount: 0,
-    refundedAmount: 0,
-    settledAmount: 0,
-    outstandingAmount: 0,
-    balancedCount: 0,
-    pendingCount: 0,
-    overSettledCount: 0,
-  };
+  const fields = [
+    'authorizedAmount',
+    'capturedAmount',
+    'refundedAmount',
+    'settledAmount',
+    'outstandingAmount',
+  ];
+  const summary = { balancedCount: 0, pendingCount: 0, overSettledCount: 0 };
+  const totals = new Map();
 
   const reconciliation = intents
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
     .slice(0, boundedLimit)
     .map((intent) => {
-      const authorized = moneyToNumber(intent.amount);
-      const captured = moneyToNumber(intent.capturedAmount);
-      const refunded = moneyToNumber(intent.refundedAmount);
+      const authorized = decimal(intent.amount);
+      const captured = decimal(intent.capturedAmount);
+      const refunded = decimal(intent.refundedAmount);
       const settled = settledAmountForIntent(intent.id);
-      const outstanding = roundMoney(captured - refunded - settled);
+      const outstanding = captured.minus(refunded).minus(settled);
       let reconciliationStatus = 'balanced';
-      if (outstanding > 0) {
+      if (outstanding.gt(0)) {
         reconciliationStatus = 'pending_settlement';
-      } else if (outstanding < 0) {
+      } else if (outstanding.lt(0)) {
         reconciliationStatus = 'over_settled';
       }
 
-      summary.authorizedAmount = roundMoney(summary.authorizedAmount + authorized);
-      summary.capturedAmount = roundMoney(summary.capturedAmount + captured);
-      summary.refundedAmount = roundMoney(summary.refundedAmount + refunded);
-      summary.settledAmount = roundMoney(summary.settledAmount + settled);
-      summary.outstandingAmount = roundMoney(summary.outstandingAmount + outstanding);
+      if (!totals.has(intent.currency)) {
+        totals.set(
+          intent.currency,
+          Object.fromEntries(fields.map((field) => [field, decimal('0')])),
+        );
+      }
+      const currencyTotals = totals.get(intent.currency);
+      const amounts = [authorized, captured, refunded, settled, outstanding];
+      fields.forEach((field, index) => {
+        currencyTotals[field] = currencyTotals[field].plus(amounts[index]);
+      });
       if (reconciliationStatus === 'balanced') {
         summary.balancedCount += 1;
       } else if (reconciliationStatus === 'pending_settlement') {
@@ -671,11 +682,11 @@ export function reconcilePaymentProvider({
         customerId: intent.customerId,
         currency: intent.currency,
         intentStatus: intent.status,
-        authorizedAmount: normalizeMoney(authorized),
-        capturedAmount: normalizeMoney(captured),
-        refundedAmount: normalizeMoney(refunded),
-        settledAmount: normalizeMoney(settled),
-        outstandingAmount: normalizeMoney(outstanding),
+        authorizedAmount: normalizeMoney(authorized, intent.currency),
+        capturedAmount: normalizeMoney(captured, intent.currency),
+        refundedAmount: normalizeMoney(refunded, intent.currency),
+        settledAmount: normalizeMoney(settled, intent.currency),
+        outstandingAmount: normalizeMoney(outstanding, intent.currency),
         settlementCount: (settlementsByIntentId.get(intent.id) || []).length,
         reconciliationStatus,
         lastUpdatedAt: intent.updatedAt,
@@ -683,20 +694,26 @@ export function reconcilePaymentProvider({
     })
     .filter((entry) => includeBalanced || entry.reconciliationStatus !== 'balanced');
 
+  const totalsByCurrency = Array.from(totals, ([currency, amounts]) => ({
+    currency,
+    ...Object.fromEntries(fields.map((field) => [field, normalizeMoney(amounts[field], currency)])),
+  }));
+  const singleCurrency = totalsByCurrency.length === 1 ? totalsByCurrency[0] : null;
   return {
     generatedAt: nowIso(),
     providerId: providerId || null,
     includeBalanced: Boolean(includeBalanced),
     count: reconciliation.length,
     summary: {
-      authorizedAmount: normalizeMoney(summary.authorizedAmount),
-      capturedAmount: normalizeMoney(summary.capturedAmount),
-      refundedAmount: normalizeMoney(summary.refundedAmount),
-      settledAmount: normalizeMoney(summary.settledAmount),
-      outstandingAmount: normalizeMoney(summary.outstandingAmount),
-      balancedCount: summary.balancedCount,
-      pendingCount: summary.pendingCount,
-      overSettledCount: summary.overSettledCount,
+      ...Object.fromEntries(
+        fields.map((field) => [
+          field,
+          singleCurrency?.[field] ?? (totalsByCurrency.length === 0 ? '0.00' : null),
+        ]),
+      ),
+      currency: singleCurrency?.currency || null,
+      totalsByCurrency,
+      ...summary,
     },
     reconciliation,
   };
@@ -723,8 +740,20 @@ export function createPaymentIntent({
   }
 
   const provider = ensureProvider(PAYMENT_PROVIDERS, providerId, DEFAULT_PAYMENT_PROVIDER);
-  const amountValue = normalizeMoney(amount);
-  const normalizedCurrency = currency.toUpperCase();
+  const normalizedCurrency = currencyCode(currency);
+  const amountValue = paymentAmount(amount, normalizedCurrency);
+  const requestKey = idempotencyKey ? `create:${provider.id}:${idempotencyKey}` : null;
+  const requestFingerprint =
+    requestKey &&
+    checkIdempotency(requestKey, {
+      amount: amountValue,
+      currency: normalizedCurrency,
+      captureMethod,
+      customerId: customerId || null,
+      orderId: orderId || null,
+      paymentMethodId: paymentMethodId || null,
+      metadata: metadata || {},
+    });
 
   if (idempotencyKey) {
     const idemKey = `${provider.id}:${idempotencyKey}`;
@@ -752,7 +781,8 @@ export function createPaymentIntent({
   });
   const providerIntentId = deterministicId('extpi', { providerId: provider.id, intentId });
   const status = captureMethod === 'automatic' ? 'succeeded' : 'requires_capture';
-  const capturedAmount = captureMethod === 'automatic' ? amountValue : '0.00';
+  const capturedAmount =
+    captureMethod === 'automatic' ? amountValue : normalizeMoney('0', normalizedCurrency);
 
   const intent = {
     id: intentId,
@@ -762,13 +792,13 @@ export function createPaymentIntent({
     status,
     amount: amountValue,
     capturedAmount,
-    refundedAmount: '0.00',
+    refundedAmount: normalizeMoney('0', normalizedCurrency),
     currency: normalizedCurrency,
     captureMethod,
     customerId: customerId || null,
     orderId: orderId || null,
     paymentMethodId: paymentMethodId || null,
-    metadata: metadata || {},
+    metadata: clone(metadata || {}),
     idempotencyKey: idempotencyKey || null,
     createdAt,
     updatedAt: createdAt,
@@ -802,6 +832,7 @@ export function createPaymentIntent({
 
   if (idempotencyKey) {
     intentIdempotencyKeys.set(`${provider.id}:${idempotencyKey}`, intentId);
+    idempotencyRequests.set(requestKey, requestFingerprint);
   }
 
   return {
@@ -873,12 +904,14 @@ export function ingestPaymentProviderWebhook({
     }
 
     const remaining = remainingCaptureAmount(intent);
-    if (remaining > 0) {
-      const requestedAmount = parseWebhookAmount(payload);
+    if (remaining.gt(0)) {
+      const requestedAmount = parseWebhookAmount(payload, intent.currency);
       const captureAmount =
         requestedAmount === null || requestedAmount === undefined
           ? remaining
-          : Math.min(remaining, requestedAmount);
+          : remaining.lt(requestedAmount)
+            ? remaining
+            : requestedAmount;
       const captureResult = capturePaymentIntent({
         intentId: intent.id,
         amount: captureAmount,
@@ -938,7 +971,7 @@ export function ingestPaymentProviderWebhook({
       return missingIntentResult;
     }
 
-    if (moneyToNumber(intent.capturedAmount) > 0) {
+    if (decimal(intent.capturedAmount).gt(0)) {
       action = 'ignored';
       reason = 'cannot_cancel_after_capture';
     } else {
@@ -970,15 +1003,17 @@ export function ingestPaymentProviderWebhook({
     }
 
     const refundable = remainingRefundableAmount(intent);
-    if (refundable <= 0) {
+    if (refundable.lte(0)) {
       action = 'already_refunded';
       reason = 'intent_has_no_refundable_balance';
     } else {
-      const requestedAmount = parseWebhookAmount(payload);
+      const requestedAmount = parseWebhookAmount(payload, intent.currency);
       const refundAmount =
         requestedAmount === null || requestedAmount === undefined
           ? refundable
-          : Math.min(refundable, requestedAmount);
+          : refundable.lt(requestedAmount)
+            ? refundable
+            : requestedAmount;
       const refundResult = refundPaymentIntent({
         intentId: intent.id,
         amount: refundAmount,
@@ -1103,14 +1138,11 @@ export function ingestPaymentProviderWebhook({
 
 export function capturePaymentIntent({ intentId, amount, idempotencyKey } = {}) {
   const intent = getIntentOrThrow(intentId);
-
-  if (intent.status === 'canceled') {
-    throw new Error(`Payment intent "${intentId}" was canceled and cannot be captured`);
-  }
-
-  if (intent.status === 'refunded') {
-    throw new Error(`Payment intent "${intentId}" was fully refunded and cannot be captured`);
-  }
+  const normalizedAmount =
+    amount === null || amount === undefined ? null : paymentAmount(amount, intent.currency);
+  const requestKey = idempotencyKey ? `capture:${intentId}:${idempotencyKey}` : null;
+  const requestFingerprint =
+    requestKey && checkIdempotency(requestKey, { amount: normalizedAmount });
 
   if (idempotencyKey) {
     const existingCaptureId = captureIdempotencyKeys.get(`${intentId}:${idempotencyKey}`);
@@ -1124,17 +1156,27 @@ export function capturePaymentIntent({ intentId, amount, idempotencyKey } = {}) 
     }
   }
 
+  if (intent.status === 'canceled') {
+    throw new Error(`Payment intent "${intentId}" was canceled and cannot be captured`);
+  }
+
+  if (intent.status === 'refunded') {
+    throw new Error(`Payment intent "${intentId}" was fully refunded and cannot be captured`);
+  }
+
   const remaining = remainingCaptureAmount(intent);
-  if (remaining <= 0) {
+  if (remaining.lte(0)) {
     return { intent: clone(intent), capture: null, idempotent: true };
   }
 
   const requestedAmount =
-    amount === null || amount === undefined ? remaining : moneyToNumber(amount);
-  if (requestedAmount <= 0) {
+    amount === null || amount === undefined
+      ? remaining
+      : decimal(paymentAmount(amount, intent.currency));
+  if (requestedAmount.lte(0)) {
     throw new Error('Capture amount must be positive');
   }
-  if (requestedAmount > remaining) {
+  if (requestedAmount.gt(remaining)) {
     throw new Error(`Capture amount ${requestedAmount} exceeds remaining capturable ${remaining}`);
   }
 
@@ -1142,9 +1184,9 @@ export function capturePaymentIntent({ intentId, amount, idempotencyKey } = {}) 
   capturesById.set(capture.id, capture);
   intent.captures.push(capture);
 
-  const newCaptured = moneyToNumber(intent.capturedAmount) + requestedAmount;
-  intent.capturedAmount = normalizeMoney(newCaptured);
-  intent.status = newCaptured >= moneyToNumber(intent.amount) ? 'succeeded' : 'partially_captured';
+  const newCaptured = decimal(intent.capturedAmount).plus(requestedAmount);
+  intent.capturedAmount = normalizeMoney(newCaptured, intent.currency);
+  intent.status = newCaptured.gte(intent.amount) ? 'succeeded' : 'partially_captured';
 
   appendIntentOperation(intent, {
     id: deterministicId('op', {
@@ -1160,6 +1202,7 @@ export function capturePaymentIntent({ intentId, amount, idempotencyKey } = {}) 
 
   if (idempotencyKey) {
     captureIdempotencyKeys.set(`${intentId}:${idempotencyKey}`, capture.id);
+    idempotencyRequests.set(requestKey, requestFingerprint);
   }
 
   return {
@@ -1176,7 +1219,7 @@ export function cancelPaymentIntent({ intentId, reason } = {}) {
     return { intent: clone(intent), idempotent: true };
   }
 
-  if (moneyToNumber(intent.capturedAmount) > 0) {
+  if (decimal(intent.capturedAmount).gt(0)) {
     throw new Error(`Payment intent "${intentId}" has captured funds and cannot be canceled`);
   }
 
@@ -1202,11 +1245,12 @@ export function cancelPaymentIntent({ intentId, reason } = {}) {
 
 export function refundPaymentIntent({ intentId, amount, reason, idempotencyKey } = {}) {
   const intent = getIntentOrThrow(intentId);
-  const refundable = remainingRefundableAmount(intent);
-
-  if (refundable <= 0) {
-    throw new Error(`Payment intent "${intentId}" has no refundable balance`);
-  }
+  const normalizedAmount =
+    amount === null || amount === undefined ? null : paymentAmount(amount, intent.currency);
+  const requestKey = idempotencyKey ? `refund:${intentId}:${idempotencyKey}` : null;
+  const requestFingerprint =
+    requestKey &&
+    checkIdempotency(requestKey, { amount: normalizedAmount, reason: reason || null });
 
   if (idempotencyKey) {
     const existingRefundId = refundIdempotencyKeys.get(`${intentId}:${idempotencyKey}`);
@@ -1219,12 +1263,20 @@ export function refundPaymentIntent({ intentId, amount, reason, idempotencyKey }
     }
   }
 
+  const refundable = remainingRefundableAmount(intent);
+
+  if (refundable.lte(0)) {
+    throw new Error(`Payment intent "${intentId}" has no refundable balance`);
+  }
+
   const requestedAmount =
-    amount === null || amount === undefined ? refundable : moneyToNumber(amount);
-  if (requestedAmount <= 0) {
+    amount === null || amount === undefined
+      ? refundable
+      : decimal(paymentAmount(amount, intent.currency));
+  if (requestedAmount.lte(0)) {
     throw new Error('Refund amount must be positive');
   }
-  if (requestedAmount > refundable) {
+  if (requestedAmount.gt(refundable)) {
     throw new Error(`Refund amount ${requestedAmount} exceeds remaining refundable ${refundable}`);
   }
 
@@ -1232,11 +1284,11 @@ export function refundPaymentIntent({ intentId, amount, reason, idempotencyKey }
   refundsById.set(refund.id, refund);
   intent.refunds.push(refund);
 
-  const newRefunded = moneyToNumber(intent.refundedAmount) + requestedAmount;
-  intent.refundedAmount = normalizeMoney(newRefunded);
+  const newRefunded = decimal(intent.refundedAmount).plus(requestedAmount);
+  intent.refundedAmount = normalizeMoney(newRefunded, intent.currency);
 
-  const capturedAmount = moneyToNumber(intent.capturedAmount);
-  intent.status = newRefunded >= capturedAmount ? 'refunded' : 'partially_refunded';
+  const capturedAmount = decimal(intent.capturedAmount);
+  intent.status = newRefunded.gte(capturedAmount) ? 'refunded' : 'partially_refunded';
 
   appendIntentOperation(intent, {
     id: deterministicId('op', {
@@ -1253,6 +1305,7 @@ export function refundPaymentIntent({ intentId, amount, reason, idempotencyKey }
 
   if (idempotencyKey) {
     refundIdempotencyKeys.set(`${intentId}:${idempotencyKey}`, refund.id);
+    idempotencyRequests.set(requestKey, requestFingerprint);
   }
 
   return {
@@ -1268,6 +1321,7 @@ export function __resetPaymentProviderState() {
   refundsById.clear();
   providerSequences.clear();
   intentIdempotencyKeys.clear();
+  idempotencyRequests.clear();
   captureIdempotencyKeys.clear();
   refundIdempotencyKeys.clear();
   providerIntentIdIndex.clear();

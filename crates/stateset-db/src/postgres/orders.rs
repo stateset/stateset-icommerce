@@ -1,12 +1,14 @@
 //! PostgreSQL order repository implementation
 
 use super::kernel_outbox::append_kernel_event_tx;
+use super::resolve_currency_with_executor;
 use super::{
     backorder::PgBackorderRepository,
     inventory::{PgInventoryRepository, ReservationConfirmOutcome},
     map_db_error,
     payments::{
-        open_captures_for_order_pg, order_has_payments_pg, void_in_flight_payments_for_order_pg,
+        derive_order_payment_status_pg, open_captures_for_order_pg, order_has_payments_pg,
+        void_in_flight_payments_for_order_pg,
     },
 };
 use crate::KernelOutboxEvent;
@@ -599,6 +601,7 @@ impl PgOrderRepository {
 
         // Insert the order row first. When creating from a cart, we ensure at most one order per
         // cart by using `orders.cart_id` and a unique index.
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
         let (order_id, order_number, inserted) = if idempotent_by_cart_id {
             let cart_id = cart_id.ok_or_else(|| {
                 CommerceError::ValidationError("cart_id is required for cart checkout".into())
@@ -626,7 +629,7 @@ impl PgOrderRepository {
             .bind(tax_amount)
             .bind(shipping_amount)
             .bind(discount_amount)
-            .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
+            .bind(currency.as_str())
             .bind("pending")
             .bind("unfulfilled")
             .bind(&input.payment_method)
@@ -660,7 +663,7 @@ impl PgOrderRepository {
             .bind(tax_amount)
             .bind(shipping_amount)
             .bind(discount_amount)
-            .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
+            .bind(currency.as_str())
             .bind("pending")
             .bind("unfulfilled")
             .bind(&input.payment_method)
@@ -774,7 +777,7 @@ impl PgOrderRepository {
             tax_amount,
             shipping_amount,
             discount_amount,
-            currency: input.currency.unwrap_or(CurrencyCode::USD),
+            currency,
             payment_status: PaymentStatus::Pending,
             fulfillment_status: FulfillmentStatus::Unfulfilled,
             payment_method: input.payment_method,
@@ -1084,6 +1087,17 @@ impl PgOrderRepository {
             order_has_payments_pg(tx.as_mut(), id).await?,
         )?;
 
+        let has_shipments: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM shipments WHERE order_id = $1) OR EXISTS(SELECT 1 FROM shipment_items si JOIN order_items oi ON oi.id = si.order_item_id WHERE oi.order_id = $1)")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if has_shipments {
+            return Err(CommerceError::ValidationError(
+                "Cannot delete an order with shipment history".into(),
+            ));
+        }
         self.release_order_stock_in_tx(tx, id).await?;
         sqlx::query("DELETE FROM order_items WHERE order_id = $1")
             .bind(id)
@@ -1326,6 +1340,9 @@ impl PgOrderRepository {
         input: &UpdateOrder,
         ship: ShipMode<'_>,
     ) -> Result<UpdateOutcome> {
+        // The payment status is derived from the payment ledger, never
+        // declared (see `UpdateOrder::payment_status`).
+        input.ensure_payment_status_not_declared()?;
         if let Some(address) = &input.shipping_address {
             Self::validate_address_input(address, "order.shipping_address")?;
         }
@@ -1409,8 +1426,13 @@ impl PgOrderRepository {
         } else {
             (input.status.unwrap_or(current_status), Vec::new())
         };
-        let new_payment_status = input.payment_status.unwrap_or(current_payment_status);
-        let new_fulfillment_status = input.fulfillment_status.unwrap_or(current_fulfillment_status);
+        // Shipping/delivery moves the fulfillment status with the order status
+        // (itself derived from per-line shipped quantities); an explicit value
+        // in the input still wins.
+        let new_fulfillment_status = input
+            .fulfillment_status
+            .or_else(|| input.status.and(FulfillmentStatus::for_order_status(new_status)))
+            .unwrap_or(current_fulfillment_status);
         let now = Utc::now();
 
         if !current_status.can_transition_to(new_status) {
@@ -1424,16 +1446,18 @@ impl PgOrderRepository {
             });
         }
 
+        // Refundability is judged on the payment status the order already
+        // has, never on one the same update declares.
         if new_status == OrderStatus::Refunded
             && !matches!(
-                new_payment_status,
+                current_payment_status,
                 PaymentStatus::Paid
                     | PaymentStatus::PartiallyPaid
                     | PaymentStatus::Refunded
                     | PaymentStatus::PartiallyRefunded
             )
         {
-            return Err(CommerceError::OrderCannotBeRefunded(new_payment_status.to_string()));
+            return Err(CommerceError::OrderCannotBeRefunded(current_payment_status.to_string()));
         }
 
         if is_ship {
@@ -1531,6 +1555,46 @@ impl PgOrderRepository {
             }
         }
 
+        // Money rule for cancel (see `UpdateOrder::void_payments`): an order
+        // whose payments still hold money cannot be cancelled unless the
+        // caller explicitly voids; even then only in-flight payments are
+        // voided here — settled money leaves via a refund.
+        let mut cancel_money = CancelMoney::default();
+        if matches!(input.status, Some(OrderStatus::Cancelled)) {
+            let open = open_captures_for_order_pg(tx.as_mut(), id).await?;
+            if !open.is_empty() && !input.void_payments {
+                let outstanding: Decimal = open.iter().map(|p| p.amount - p.amount_refunded).sum();
+                let currency = open[0].currency;
+                return Err(CommerceError::ValidationError(format!(
+                    "order {id} cannot be cancelled: {} payment(s) still hold {outstanding} {currency}; \
+                     refund them first, or cancel with void_payments = true to void in-flight \
+                     payments and leave settled ones for refund",
+                    open.len()
+                )));
+            }
+            if input.void_payments {
+                cancel_money.voided_payment_ids =
+                    void_in_flight_payments_for_order_pg(tx.as_mut(), id, now).await?;
+                let voided = &cancel_money.voided_payment_ids;
+                let outstanding: Vec<_> =
+                    open.iter().filter(|p| !voided.contains(&p.id.into_uuid())).collect();
+                cancel_money.outstanding_captured =
+                    outstanding.iter().map(|p| p.amount - p.amount_refunded).sum();
+                cancel_money.outstanding_payment_ids =
+                    outstanding.iter().map(|p| p.id.into_uuid()).collect();
+            }
+        }
+        // Voiding in-flight payments changed the payment ledger, so the money
+        // status is re-derived from it (`PaymentStatus::derive`) and written in
+        // the UPDATE below. A payment status never comes from the input
+        // (refused above).
+        let new_payment_status = if cancel_money.voided_payment_ids.is_empty() {
+            current_payment_status
+        } else {
+            derive_order_payment_status_pg(tx.as_mut(), id, total_amount, current_payment_status)
+                .await?
+        };
+
         let new_tracking = input.tracking_number.clone().or(tracking_number);
         let new_notes = input.notes.clone().or(notes);
         let new_shipping = shipping_address_json.or(shipping_address);
@@ -1567,35 +1631,19 @@ impl PgOrderRepository {
             });
         }
 
-        // Money rule for cancel (see `UpdateOrder::void_payments`): an order
-        // whose payments still hold money cannot be cancelled unless the
-        // caller explicitly voids; even then only in-flight payments are
-        // voided here — settled money leaves via a refund.
-        let mut cancel_money = CancelMoney::default();
-        if matches!(input.status, Some(OrderStatus::Cancelled)) {
-            let open = open_captures_for_order_pg(tx.as_mut(), id).await?;
-            if !open.is_empty() && !input.void_payments {
-                let outstanding: Decimal = open.iter().map(|p| p.amount - p.amount_refunded).sum();
-                let currency = open[0].currency;
-                return Err(CommerceError::ValidationError(format!(
-                    "order {id} cannot be cancelled: {} payment(s) still hold {outstanding} {currency}; \
-                     refund them first, or cancel with void_payments = true to void in-flight \
-                     payments and leave settled ones for refund",
-                    open.len()
-                )));
-            }
-            if input.void_payments {
-                cancel_money.voided_payment_ids =
-                    void_in_flight_payments_for_order_pg(tx.as_mut(), id, now).await?;
-                let voided = &cancel_money.voided_payment_ids;
-                let outstanding: Vec<_> =
-                    open.iter().filter(|p| !voided.contains(&p.id.into_uuid())).collect();
-                cancel_money.outstanding_captured =
-                    outstanding.iter().map(|p| p.amount - p.amount_refunded).sum();
-                cancel_money.outstanding_payment_ids =
-                    outstanding.iter().map(|p| p.id.into_uuid()).collect();
-            }
+        // The order just became fully shipped: its open shipment records
+        // follow it (a partial shipment cannot say which package moved).
+        if new_status == OrderStatus::Shipped && current_status != OrderStatus::Shipped {
+            super::shipments::ship_open_shipments_for_order_in_tx(
+                tx.as_mut(),
+                id,
+                new_tracking.as_deref(),
+                now,
+            )
+            .await?;
+        }
 
+        if matches!(input.status, Some(OrderStatus::Cancelled)) {
             let reservation_ids = inventory_repo
                 .list_reservation_ids_by_reference_in_tx(tx, "order", &id.to_string())
                 .await?;
@@ -1834,6 +1882,14 @@ impl PgOrderRepository {
             )));
         };
         let removed = Self::row_to_item(line);
+
+        let assigned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM shipment_items si JOIN shipments s ON s.id = si.shipment_id WHERE si.order_item_id = $1 OR (si.order_item_id IS NULL AND s.order_id = $2 AND si.sku = $3))")
+            .bind(item_id).bind(order_id).bind(&removed.sku).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+        if assigned {
+            return Err(CommerceError::ValidationError(
+                "Cannot remove an order item referenced by shipment history".into(),
+            ));
+        }
 
         self.release_line_reservations_in_tx(
             &mut tx,

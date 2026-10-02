@@ -4,7 +4,8 @@ use super::parse_helpers::parse_decimal as parse_decimal_with_context;
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
     parse_decimal_opt_row, parse_decimal_row, parse_enum, parse_enum_row, parse_uuid_opt_row,
-    parse_uuid_row, sum_decimal_query, uuid_params, with_immediate_transaction,
+    parse_uuid_row, resolve_currency_with_conn, sum_decimal_query, uuid_params,
+    with_immediate_transaction,
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -442,6 +443,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         let due_date = input.due_date.unwrap_or_else(|| {
             invoice_date + chrono::Duration::days(i64::from(input.days_until_due.unwrap_or(30)))
         });
+        let currency = resolve_currency_with_conn(input.currency, &tx)?;
 
         tx.execute(
             "INSERT INTO invoices (id, invoice_number, customer_id, order_id, status, invoice_type,
@@ -460,7 +462,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                 invoice_date.to_rfc3339(),
                 due_date.to_rfc3339(),
                 input.payment_terms,
-                input.currency.unwrap_or_default(),
+                currency,
                 input.billing_name,
                 input.billing_email,
                 input.billing_address,
@@ -1084,6 +1086,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             let due_date = input.due_date.unwrap_or_else(|| {
                 invoice_date + chrono::Duration::days(i64::from(input.days_until_due.unwrap_or(30)))
             });
+            let currency = resolve_currency_with_conn(input.currency, &tx)?;
 
             tx.execute(
                 "INSERT INTO invoices (id, invoice_number, customer_id, order_id, status, invoice_type,
@@ -1102,7 +1105,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                     invoice_date.to_rfc3339(),
                     due_date.to_rfc3339(),
                     input.payment_terms.clone(),
-                    input.currency.unwrap_or_default(),
+                    currency,
                     input.billing_name.clone(),
                     input.billing_email.clone(),
                     input.billing_address.clone(),
@@ -1207,7 +1210,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                 invoice_date,
                 due_date,
                 payment_terms: input.payment_terms,
-                currency: input.currency.unwrap_or_default(),
+                currency,
                 billing_name: input.billing_name,
                 billing_email: input.billing_email,
                 billing_address: input.billing_address,

@@ -298,9 +298,135 @@ class Commerce:
         """Get the currency API."""
         ...
 
+    @property
+    def quality(self) -> QualityApi:
+        """Get the quality-control API (inspections, NCRs, quality holds)."""
+        ...
+
     def vector(self, openai_api_key: str) -> VectorSearch:
         """Get the vector search API for semantic search operations."""
         ...
+
+# ============================================================================
+# Quality Control
+# ============================================================================
+
+class Inspection:
+    id: str
+    inspection_number: str
+    inspection_type: str
+    status: str
+    reference_type: str
+    reference_id: str
+    inspector_id: Optional[str]
+    notes: Optional[str]
+    created_at: str
+
+class NonConformance:
+    """A non-conformance report (NCR)."""
+    id: str
+    ncr_number: str
+    sku: str
+    description: str
+    status: str
+    source: str
+    severity: str
+    quantity_affected: float
+    disposition: Optional[str]
+    """What was decided for the material (e.g. ``"Scrap"``). Closing requires one."""
+    disposition_quantity: Optional[float]
+    disposition_quantity_exact: Optional[str]
+    """Exact base-10 twin of ``disposition_quantity``."""
+    root_cause: Optional[str]
+    corrective_action: Optional[str]
+    preventive_action: Optional[str]
+    assigned_to: Optional[str]
+    closed_at: Optional[str]
+
+class QualityHold:
+    id: str
+    sku: str
+    reason: str
+    quantity_held: float
+    hold_type: str
+    placed_by: str
+
+class QualityApi:
+    """Inspections, non-conformance reports and quality holds."""
+
+    def create_inspection(
+        self,
+        reference_type: str,
+        reference_id: str,
+        inspection_type: str,
+        inspector_id: Optional[str] = None,
+    ) -> Inspection: ...
+    def get_inspection(self, id: str) -> Optional[Inspection]: ...
+    def list_inspections(
+        self,
+        inspection_type: Optional[str] = None,
+        status: Optional[str] = None,
+        reference_type: Optional[str] = None,
+        reference_id: Optional[str] = None,
+        inspector_id: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Inspection]: ...
+    def complete_inspection(self, id: str) -> Inspection: ...
+    def create_ncr(
+        self,
+        sku: str,
+        description: str,
+        quantity_affected: float,
+        source: str,
+        severity: str,
+    ) -> NonConformance: ...
+    def list_ncrs(
+        self,
+        source: Optional[str] = None,
+        severity: Optional[str] = None,
+        status: Optional[str] = None,
+        sku: Optional[str] = None,
+        lot_number: Optional[str] = None,
+        assigned_to: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[NonConformance]: ...
+    def update_ncr(
+        self,
+        id: str,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+        root_cause: Optional[str] = None,
+        corrective_action: Optional[str] = None,
+        preventive_action: Optional[str] = None,
+        disposition: Optional[str] = None,
+        disposition_quantity: Optional[float] = None,
+        disposition_quantity_exact: Optional[str] = None,
+        assigned_to: Optional[str] = None,
+    ) -> NonConformance:
+        """Update an open NCR; omitted arguments are unchanged.
+
+        ``status="closed"`` requires a disposition, already recorded or set in
+        the same call; otherwise raises ``ValueError``. ``disposition`` accepts
+        ``use_as_is``, ``rework``, ``repair``, ``scrap``, ``return_to_vendor``,
+        ``downgrade`` or ``sort_and_screen`` (case-insensitive).
+        """
+        ...
+    def close_ncr(self, id: str) -> NonConformance:
+        """Close an NCR. Raises ``ValueError`` if it has no disposition.
+
+        Re-closing a closed NCR is a no-op.
+        """
+        ...
+    def create_hold(self, sku: str, reason: str, quantity: float) -> QualityHold: ...
+    def release_hold(
+        self, id: str, released_by: str, release_notes: Optional[str] = None
+    ) -> QualityHold: ...
 
 # ============================================================================
 # Agent Toolkit
@@ -863,6 +989,12 @@ class Order:
     status: str
     total_amount: float
     total_amount_exact: str
+    tax_amount: float
+    tax_amount_exact: str
+    shipping_amount: float
+    shipping_amount_exact: str
+    discount_amount: float
+    discount_amount_exact: str
     currency: str
     payment_status: str
     fulfillment_status: str
@@ -908,6 +1040,8 @@ class Orders:
     ) -> Order:
         """Create a new order."""
         ...
+
+    def get_by_number(self, order_number: str) -> Optional[Order]: ...
 
     def get(self, id: str) -> Optional[Order]:
         """Get an order by ID."""
@@ -1162,8 +1296,11 @@ class StockLevel:
     sku: str
     name: str
     total_on_hand: float
+    total_on_hand_exact: str
     total_allocated: float
+    total_allocated_exact: str
     total_available: float
+    total_available_exact: str
 
 class Reservation:
     """Inventory reservation."""
@@ -1871,6 +2008,8 @@ class Payment:
     idempotency_key: Optional[str]
     amount: float
     amount_exact: str
+    amount_refunded: float
+    amount_refunded_exact: str
     currency: str
     status: str
     payment_method: str
@@ -1885,9 +2024,14 @@ class Refund:
     idempotency_key: Optional[str]
     amount: float
     amount_exact: str
+    refund_number: str
+    currency: str
     status: str
     reason: Optional[str]
+    failure_reason: Optional[str]
+    refunded_at: Optional[str]
     created_at: str
+    updated_at: str
 
 class Payments:
     """Payment processing operations."""
@@ -1935,6 +2079,14 @@ class Payments:
         reason: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> Refund: ...
+
+    def get_refund(self, id: str) -> Optional[Refund]: ...
+
+    def get_refunds(self, payment_id: str) -> List[Refund]: ...
+
+    def complete_refund(self, id: str) -> Refund: ...
+
+    def fail_refund(self, id: str, reason: str) -> Refund: ...
 
     def count(self) -> int: ...
 
@@ -2060,6 +2212,7 @@ class PurchaseOrder:
     supplier_id: str
     status: str
     total_amount: float
+    total_amount_exact: str
     currency: str
     created_at: str
     updated_at: str
@@ -2110,6 +2263,14 @@ class Invoice:
     invoice_number: str
     status: str
     total_amount: float
+    subtotal: float
+    subtotal_exact: str
+    tax_amount: float
+    tax_amount_exact: str
+    total: float
+    total_exact: str
+    amount_paid: float
+    amount_paid_exact: str
     balance_due: float
     currency: str
     created_at: str
@@ -2296,6 +2457,7 @@ class ShippingRate:
     service: str
     description: Optional[str]
     price: float
+    price_exact: str
     currency: str
     estimated_days: Optional[int]
 
@@ -2406,14 +2568,17 @@ class Carts:
 
 class SalesSummary:
     total_revenue: float
+    total_revenue_exact: str
     order_count: int
     average_order_value: float
+    average_order_value_exact: str
     items_sold: int
     unique_customers: int
 
 class RevenueByPeriod:
     period: str
     revenue: float
+    revenue_exact: str
     order_count: int
     period_start: str
 
@@ -2423,6 +2588,7 @@ class TopProduct:
     name: str
     units_sold: int
     revenue: float
+    revenue_exact: str
     order_count: int
 
 class ProductPerformance:
@@ -2431,16 +2597,21 @@ class ProductPerformance:
     name: str
     units_sold: int
     revenue: float
+    revenue_exact: str
     previous_units_sold: int
     previous_revenue: float
+    previous_revenue_exact: str
     units_growth_percent: float
+    units_growth_percent_exact: str
     revenue_growth_percent: float
+    revenue_growth_percent_exact: str
 
 class CustomerMetrics:
     total_customers: int
     new_customers: int
     returning_customers: int
     average_lifetime_value: float
+    average_lifetime_value_exact: str
     average_orders_per_customer: float
 
 class TopCustomer:
@@ -2449,7 +2620,9 @@ class TopCustomer:
     email: str
     order_count: int
     total_spent: float
+    total_spent_exact: str
     average_order_value: float
+    average_order_value_exact: str
 
 class InventoryHealth:
     total_skus: int
@@ -2457,6 +2630,7 @@ class InventoryHealth:
     low_stock_skus: int
     out_of_stock_skus: int
     total_value: float
+    total_value_exact: str
 
 class LowStockItem:
     sku: str
@@ -2490,14 +2664,18 @@ class FulfillmentMetrics:
     avg_time_to_ship_hours: Optional[float]
     avg_time_to_deliver_hours: Optional[float]
     on_time_shipping_percent: Optional[float]
+    on_time_shipping_percent_exact: Optional[str]
     on_time_delivery_percent: Optional[float]
+    on_time_delivery_percent_exact: Optional[str]
     shipped_today: int
     awaiting_shipment: int
 
 class ReturnMetrics:
     total_returns: int
     return_rate_percent: float
+    return_rate_percent_exact: str
     total_refunded: float
+    total_refunded_exact: str
 
 class DemandForecast:
     sku: str
@@ -2513,6 +2691,7 @@ class DemandForecast:
 class RevenueForecast:
     period: str
     forecasted_revenue: float
+    forecasted_revenue_exact: str
     lower_bound: float
     upper_bound: float
     confidence_level: float
@@ -2556,6 +2735,7 @@ class ExchangeRate:
     base_currency: str
     quote_currency: str
     rate: float
+    rate_exact: str
     source: str
     rate_at: str
     created_at: str
@@ -2563,11 +2743,15 @@ class ExchangeRate:
 
 class ConversionResult:
     original_amount: float
+    original_amount_exact: str
     original_currency: str
     converted_amount: float
+    converted_amount_exact: str
     target_currency: str
     rate: float
+    rate_exact: str
     inverse_rate: float
+    inverse_rate_exact: str
     rate_at: str
 
 class StoreCurrencySettings:
@@ -2676,8 +2860,11 @@ class Bill:
     bill_number: str
     supplier_id: str
     total_amount: float
+    total_amount_exact: str
     amount_paid: float
+    amount_paid_exact: str
     amount_due: float
+    amount_due_exact: str
     status: str
     due_date: str
 
@@ -2688,6 +2875,7 @@ class ApAgingSummary:
     days_61_90: float
     days_over_90: float
     total: float
+    total_exact: str
 
 class ThreeWayMatchLine:
     """One line of a three-way match. Quantities/costs are decimal strings."""
@@ -2750,6 +2938,7 @@ class GlAccount:
     name: str
     account_type: str
     current_balance: float
+    current_balance_exact: str
     status: str
 
 class JournalEntry:
@@ -2761,7 +2950,9 @@ class JournalEntry:
 
 class TrialBalance:
     total_debits: float
+    total_debits_exact: str
     total_credits: float
+    total_credits_exact: str
     is_balanced: bool
 
 class GlPeriod:

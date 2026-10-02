@@ -35,10 +35,7 @@ describe('MCP tool coverage', () => {
 
   describe('total tool count', () => {
     it('TOOL_NAMES contains at least 180 tools', () => {
-      assert.ok(
-        TOOL_NAMES.length >= 180,
-        `Expected >= 180 tools, got ${TOOL_NAMES.length}`,
-      );
+      assert.ok(TOOL_NAMES.length >= 180, `Expected >= 180 tools, got ${TOOL_NAMES.length}`);
     });
 
     it('domain tool arrays contain at least 140 tools', () => {
@@ -68,6 +65,8 @@ describe('MCP tool coverage', () => {
       // Skip aliases or non-MCP runtime surfaces that are intentionally handled elsewhere.
       getterNames.delete('customStates');
       getterNames.delete('events');
+      // A value getter (whether `close()` has run), not a sub-API.
+      getterNames.delete('isClosed');
 
       for (const getterName of getterNames) {
         assert.ok(
@@ -79,7 +78,8 @@ describe('MCP tool coverage', () => {
       for (const [getterName, moduleName] of Object.entries(COMMERCE_GETTER_TO_MODULE)) {
         assert.ok(getterNames.has(getterName), `Stale Commerce getter mapping "${getterName}"`);
         assert.ok(
-          Array.isArray(DOMAIN_TOOL_ARRAYS[moduleName]) && DOMAIN_TOOL_ARRAYS[moduleName].length > 0,
+          Array.isArray(DOMAIN_TOOL_ARRAYS[moduleName]) &&
+            DOMAIN_TOOL_ARRAYS[moduleName].length > 0,
           `Mapped module "${moduleName}" for getter "${getterName}" has no tools`,
         );
       }
@@ -233,9 +233,7 @@ describe('MCP tool coverage', () => {
         }
 
         // Verify all field values are valid Zod types
-        const isPlainSchemaObject =
-          typeof schema === 'object' &&
-          !schema._def; // not itself a ZodType
+        const isPlainSchemaObject = typeof schema === 'object' && !schema._def; // not itself a ZodType
 
         if (isPlainSchemaObject) {
           for (const [key, value] of Object.entries(schema)) {
@@ -285,18 +283,12 @@ describe('MCP tool coverage', () => {
   describe('permission distribution', () => {
     it('has at least 30 read-only tools', () => {
       const readTools = ALL_DOMAIN_TOOLS.filter((t) => t.permission === 'read');
-      assert.ok(
-        readTools.length >= 30,
-        `Expected >= 30 read tools, got ${readTools.length}`,
-      );
+      assert.ok(readTools.length >= 30, `Expected >= 30 read tools, got ${readTools.length}`);
     });
 
     it('has at least 30 write tools', () => {
       const writeTools = ALL_DOMAIN_TOOLS.filter((t) => t.permission === 'write');
-      assert.ok(
-        writeTools.length >= 30,
-        `Expected >= 30 write tools, got ${writeTools.length}`,
-      );
+      assert.ok(writeTools.length >= 30, `Expected >= 30 write tools, got ${writeTools.length}`);
     });
 
     it('has some delete tools', () => {
@@ -324,11 +316,31 @@ describe('MCP tool coverage', () => {
   describe('naming conventions', () => {
     it('read tools typically start with list_ or get_', () => {
       const readTools = ALL_DOMAIN_TOOLS.filter((t) => t.permission === 'read');
-      const readPrefixes = ['list_', 'get_', 'search_', 'validate_', 'check_', 'calculate_',
-        'convert_', 'format_', 'count_', 'discover_', 'query_', 'sync_',
-        'forecast_', 'analyze_', 'export_', 'estimate_', 'quote_',
-        'reconcile_', 'verify_', 'preview_', 'compute_', 'evaluate_',
-        'suggest_'];
+      const readPrefixes = [
+        'list_',
+        'get_',
+        'search_',
+        'validate_',
+        'check_',
+        'calculate_',
+        'convert_',
+        'format_',
+        'count_',
+        'discover_',
+        'query_',
+        'sync_',
+        'forecast_',
+        'analyze_',
+        'export_',
+        'estimate_',
+        'quote_',
+        'reconcile_',
+        'verify_',
+        'preview_',
+        'compute_',
+        'evaluate_',
+        'suggest_',
+      ];
       for (const tool of readTools) {
         const hasPrefix = readPrefixes.some((p) => tool.name.startsWith(p));
         // Not all read tools have these prefixes (e.g. agentic tools), but most should
@@ -337,9 +349,7 @@ describe('MCP tool coverage', () => {
         }
       }
       // At least 60% should follow conventions
-      const withPrefix = readTools.filter((t) =>
-        readPrefixes.some((p) => t.name.startsWith(p)),
-      );
+      const withPrefix = readTools.filter((t) => readPrefixes.some((p) => t.name.startsWith(p)));
       const ratio = withPrefix.length / readTools.length;
       assert.ok(
         ratio >= 0.5,
@@ -349,19 +359,56 @@ describe('MCP tool coverage', () => {
 
     it('write tools typically start with create_, update_, set_, add_, or activate_', () => {
       const writeTools = ALL_DOMAIN_TOOLS.filter((t) => t.permission === 'write');
-      const writePrefixes = ['create_', 'update_', 'set_', 'add_', 'activate_',
-        'deactivate_', 'approve_', 'reject_', 'complete_', 'start_',
-        'send_', 'record_', 'apply_', 'ship_', 'deliver_', 'adjust_',
-        'reserve_', 'confirm_', 'release_', 'pause_', 'resume_',
-        'cancel_', 'skip_', 'remove_', 'abandon_', 'import_',
-        'register_', 'submit_', 'trigger_', 'enable_', 'ingest_',
-        'capture_', 'refund_', 'issue_', 'redeem_', 'extend_',
-        'assign_', 'transfer_', 'claim_', 'link_', 'mark_',
-        'generate_', 'archive_', 'configure_', 'schedule_',
-        'bulk_', 'seed_'];
-      const withPrefix = writeTools.filter((t) =>
-        writePrefixes.some((p) => t.name.startsWith(p)),
-      );
+      const writePrefixes = [
+        'create_',
+        'update_',
+        'set_',
+        'add_',
+        'activate_',
+        'deactivate_',
+        'approve_',
+        'reject_',
+        'complete_',
+        'start_',
+        'send_',
+        'record_',
+        'apply_',
+        'ship_',
+        'deliver_',
+        'adjust_',
+        'reserve_',
+        'confirm_',
+        'release_',
+        'pause_',
+        'resume_',
+        'cancel_',
+        'skip_',
+        'remove_',
+        'abandon_',
+        'import_',
+        'register_',
+        'submit_',
+        'trigger_',
+        'enable_',
+        'ingest_',
+        'capture_',
+        'refund_',
+        'issue_',
+        'redeem_',
+        'extend_',
+        'assign_',
+        'transfer_',
+        'claim_',
+        'link_',
+        'mark_',
+        'generate_',
+        'archive_',
+        'configure_',
+        'schedule_',
+        'bulk_',
+        'seed_',
+      ];
+      const withPrefix = writeTools.filter((t) => writePrefixes.some((p) => t.name.startsWith(p)));
       const ratio = writeTools.length > 0 ? withPrefix.length / writeTools.length : 1;
       assert.ok(
         ratio >= 0.4,

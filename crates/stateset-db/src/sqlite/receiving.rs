@@ -10,7 +10,7 @@ use crate::sqlite::{
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
@@ -1166,6 +1166,18 @@ impl ReceivingRepository for SqliteReceivingRepository {
     fn create_receipt_from_po(&self, po_id: Uuid, warehouse_id: i32) -> Result<Receipt> {
         let conn = self.conn()?;
 
+        // The PO must exist: an unknown id is `NotFound`, not an empty receipt.
+        let supplier_id_raw: Option<String> = conn
+            .query_row(
+                "SELECT supplier_id FROM purchase_orders WHERE id = ?1",
+                params![po_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        let supplier_id = parse_uuid_opt(supplier_id_raw, "purchase_order", "supplier_id")?;
+
         // Get PO items
         let mut stmt = conn
             .prepare("SELECT sku, name, quantity_ordered, unit_cost FROM purchase_order_items WHERE purchase_order_id = ?1")
@@ -1195,16 +1207,6 @@ impl ReceivingRepository for SqliteReceivingRepository {
                 notes: None,
             });
         }
-
-        // Get supplier ID from PO
-        let supplier_id_raw: Option<String> = conn
-            .query_row(
-                "SELECT supplier_id FROM purchase_orders WHERE id = ?1",
-                params![po_id.to_string()],
-                |row| row.get(0),
-            )
-            .ok();
-        let supplier_id = parse_uuid_opt(supplier_id_raw, "purchase_order", "supplier_id")?;
 
         self.create_receipt(CreateReceipt {
             receipt_number: None,
@@ -1455,6 +1457,23 @@ mod tests {
     }
 
     #[test]
+    fn binding_create_receipt_from_po_rejects_unknown_po() {
+        // Regression: the supplier lookup's `.ok()` swallowed the miss, so an
+        // unknown PO id produced an empty Expected receipt.
+        use stateset_core::ReceiptFilter;
+        let (db, _) = fresh_db_with_location();
+        let err = db
+            .receiving()
+            .create_receipt_from_po(Uuid::new_v4(), 1)
+            .expect_err("unknown PO must be refused");
+        assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
+        assert!(
+            db.receiving().list_receipts(ReceiptFilter::default()).expect("list").is_empty(),
+            "no receipt may be written for an unknown PO"
+        );
+    }
+
+    #[test]
     fn two_partial_receipts_keep_received_quantity_exact() {
         // Regression: received_quantity is a TEXT column and was accumulated via
         // 'CAST(received_quantity AS REAL) + ?', so 0.1 + 0.2 stored as
@@ -1550,6 +1569,39 @@ mod tests {
         complete(&repo, second.id);
         let receipt = repo.get_receipt(rid).expect("get").expect("exists");
         assert_eq!(receipt.put_away_quantity, dec!(10));
+    }
+
+    #[test]
+    fn competing_put_away_completions_record_one_receipt() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let (db, loc) = fresh_db_with_location();
+        let db = Arc::new(db);
+        let repo = db.receiving();
+        let (rid, iid) = receipt_with_one_item(&repo, dec!(2));
+        receive(&repo, rid, iid, dec!(2));
+        let task = put_away(&repo, rid, iid, loc, dec!(2)).expect("plan");
+        let gate = Arc::new(Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let db = Arc::clone(&db);
+                let gate = Arc::clone(&gate);
+                thread::spawn(move || {
+                    gate.wait();
+                    db.receiving().complete_put_away(CompletePutAway {
+                        put_away_id: task.id,
+                        actual_location_id: None,
+                        notes: None,
+                        completed_by: None,
+                    })
+                })
+            })
+            .collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+        assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1, "{results:?}");
+        let receipt = db.receiving().get_receipt(rid).expect("get").expect("receipt");
+        assert_eq!(receipt.put_away_quantity, dec!(2));
     }
 
     #[test]

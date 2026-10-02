@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g., 1.34.0)"
+        description: "Version to release (e.g., 1.36.0)"
         required: true
       skip_guards:
         description: "Skip the release guards (EMERGENCY ONLY - publishes an unverified commit)"
@@ -107,7 +107,7 @@ jobs:
           cache-dependency-path: bindings/python/pyproject.toml
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         with:
           toolchain: stable
 
@@ -132,7 +132,7 @@ jobs:
           maturin build --release --compatibility pypi -o dist --target x86_64-apple-darwin
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.os }}-py${{ matrix.python-version }}
           path: bindings/python/dist/*.whl
@@ -156,7 +156,7 @@ jobs:
           cache-dependency-path: bindings/python/pyproject.toml
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         with:
           toolchain: stable
 
@@ -172,7 +172,7 @@ jobs:
         run: maturin sdist -o dist
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: bindings/python/dist/*.tar.gz
@@ -220,7 +220,7 @@ jobs:
             dist/release-checksums.txt
 
       - name: Publish checksums
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: python-release-checksums
           path: dist/release-checksums.txt
