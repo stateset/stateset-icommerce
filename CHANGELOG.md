@@ -6,6 +6,24 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- `stateset-embedded` doc examples compile and run again: ~170 previously
+  `ignore`d examples are now executed by `cargo test`, using current typed IDs
+  and field names, in-memory stores, and real prerequisite records. Examples
+  that touch files or external services are `no_run`.
+- Backorder summaries no longer fail on an empty table (`COALESCE` on the
+  aggregate counts, SQLite and PostgreSQL).
+- PostgreSQL x402 integration tests no longer race the global expiry sweeper
+  across test binaries; sweeper calls take a PostgreSQL advisory lock.
+
+### Changed
+
+- CLI channel/integration SDKs (Slack, Discord, WhatsApp, Telegram, Google,
+  Solana, `better-sqlite3`, `ws`, …) are optional peer dependencies instead of
+  `optionalDependencies`, so `npm i -g @stateset/cli` no longer installs them.
+  Install the SDK for the channel you use; missing SDKs report how to install.
+
 ## [1.36.0] - 2026-09-29
 
 ### Added

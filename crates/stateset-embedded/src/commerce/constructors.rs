@@ -23,7 +23,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::Commerce;
     ///
     /// // File-based database
@@ -69,7 +69,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::Commerce;
     ///
     /// let commerce = Commerce::sqlite("./store.db")?;
@@ -107,7 +107,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use stateset_embedded::Commerce;
     ///
     /// // Create with larger connection pool for high concurrency
