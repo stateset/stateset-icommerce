@@ -7,7 +7,7 @@
 //! use rust_decimal_macros::dec;
 //! use uuid::Uuid;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create an invoice
 //! let invoice = commerce.invoices().create(CreateInvoice {
@@ -71,7 +71,7 @@ impl Invoices {
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let invoice = commerce.invoices().create(CreateInvoice {
     ///     customer_id: Uuid::new_v4().into(),
@@ -191,7 +191,7 @@ impl Invoices {
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// // Record full payment
     /// let invoice = commerce.invoices().record_payment(Uuid::new_v4(), RecordInvoicePayment {

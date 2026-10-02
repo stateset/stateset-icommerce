@@ -5,7 +5,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{AsyncCommerce, CreateOrder, CreateOrderItem, CreateX402PaymentIntent, X402Asset, X402Network};
 //! use rust_decimal_macros::dec;
 //!
@@ -515,7 +515,7 @@ macro_rules! impl_opaque_debug {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust
 /// use stateset_embedded::AsyncCommerce;
 ///
 /// #[tokio::main]

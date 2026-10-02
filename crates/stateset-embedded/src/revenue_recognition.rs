@@ -5,7 +5,7 @@
 //! ```ignore
 //! use stateset_embedded::Commerce;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //! let contract = commerce.revenue_recognition().create_contract(input)?;
 //! let schedule = commerce.revenue_recognition().generate_schedule(obligation_id)?;
 //! let schedule = commerce.revenue_recognition().recognize_period(obligation_id, through)?;

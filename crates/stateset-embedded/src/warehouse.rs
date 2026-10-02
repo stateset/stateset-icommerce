@@ -11,7 +11,7 @@
 //! ```ignore
 //! use stateset_embedded::{Commerce, CreateWarehouse, CreateLocation, WarehouseType, LocationType};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create a warehouse
 //! let warehouse = commerce.warehouse().create_warehouse(CreateWarehouse {

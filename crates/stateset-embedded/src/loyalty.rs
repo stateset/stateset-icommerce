@@ -5,15 +5,16 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{Commerce, CreateLoyaltyProgram};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! let program = commerce.loyalty().create_program(CreateLoyaltyProgram {
 //!     name: "Gold Rewards".into(),
-//!     points_per_dollar: Some(10),
-//!     ..Default::default()
+//!     description: None,
+//!     points_per_dollar: 10,
+//!     tiers: vec![],
 //! })?;
 //!
 //! println!("Program created: {}", program.name);
@@ -67,15 +68,16 @@ impl Loyalty {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateLoyaltyProgram};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let program = commerce.loyalty().create_program(CreateLoyaltyProgram {
     ///     name: "Platinum Plus".into(),
-    ///     points_per_dollar: Some(15),
-    ///     ..Default::default()
+    ///     description: None,
+    ///     points_per_dollar: 15,
+    ///     tiers: vec![],
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```

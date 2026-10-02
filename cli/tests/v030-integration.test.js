@@ -188,19 +188,36 @@ describe('v0.3.0 — Package version', () => {
     assert.equal(config.CLI_VERSION, pkg.version);
   });
 
-  it('package.json should have botbuilder in optionalDependencies', () => {
+  // npm installs `optionalDependencies` by default, so channel SDKs declared
+  // there landed in every install — hundreds of megabytes and their advisories
+  // — for users who never touch a channel. Optional peers are not installed
+  // unless asked for.
+  it('channel SDKs are optional peers, never dependencies', () => {
     const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
-    assert.ok(pkg.optionalDependencies.botbuilder);
-  });
+    const channelSdks = [
+      '@google-cloud/pubsub',
+      '@slack/bolt',
+      '@solana/web3.js',
+      '@whiskeysockets/baileys',
+      'better-sqlite3',
+      'botbuilder',
+      'discord.js',
+      'googleapis',
+      'grammy',
+      'matrix-js-sdk',
+      'ws',
+    ];
 
-  it('package.json should have matrix-js-sdk in optionalDependencies', () => {
-    const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
-    assert.ok(pkg.optionalDependencies['matrix-js-sdk']);
-  });
-
-  it('package.json should have ws in optionalDependencies', () => {
-    const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
-    assert.ok(pkg.optionalDependencies.ws);
+    assert.ok(!pkg.optionalDependencies, 'optionalDependencies must stay empty');
+    for (const sdk of channelSdks) {
+      assert.ok(pkg.peerDependencies?.[sdk], `${sdk} must be a peer dependency`);
+      assert.equal(
+        pkg.peerDependenciesMeta?.[sdk]?.optional,
+        true,
+        `${sdk} must be marked optional`,
+      );
+      assert.ok(!pkg.dependencies?.[sdk], `${sdk} must not be a hard dependency`);
+    }
   });
 });
 

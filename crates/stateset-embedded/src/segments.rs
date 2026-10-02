@@ -2,15 +2,16 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{Commerce, CreateSegment, SegmentType};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! let segment = commerce.segments().create(CreateSegment {
 //!     name: "VIP Customers".into(),
+//!     description: None,
 //!     segment_type: SegmentType::Static,
-//!     ..Default::default()
+//!     rules: vec![],
 //! })?;
 //!
 //! println!("Segment created: {}", segment.name);
@@ -54,16 +55,16 @@ impl Segments {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateSegment, SegmentType};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let segment = commerce.segments().create(CreateSegment {
     ///     name: "High Spenders".into(),
-    ///     segment_type: SegmentType::Dynamic,
     ///     description: Some("Customers who have spent over $1000".into()),
-    ///     ..Default::default()
+    ///     segment_type: SegmentType::Dynamic,
+    ///     rules: vec![],
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```

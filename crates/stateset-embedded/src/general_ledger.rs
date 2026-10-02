@@ -9,10 +9,10 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{Commerce, CreateGlAccount, AccountType};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Initialize standard chart of accounts
 //! commerce.general_ledger().initialize_chart_of_accounts()?;
@@ -86,7 +86,7 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateGlAccount, AccountType, AccountSubType, CurrencyCode};
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -144,7 +144,7 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -165,7 +165,7 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateGlPeriod};
     /// use chrono::NaiveDate;
     ///
@@ -232,7 +232,7 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateJournalEntry, CreateJournalEntryLine};
     /// use rust_decimal_macros::dec;
     /// use chrono::NaiveDate;
@@ -313,7 +313,7 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateAutoPostingConfig};
     /// use uuid::Uuid;
     ///
@@ -381,7 +381,7 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     /// use chrono::NaiveDate;
     ///
@@ -405,7 +405,7 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     /// use chrono::NaiveDate;
     ///
@@ -429,7 +429,7 @@ impl GeneralLedger {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     /// use chrono::NaiveDate;
     ///

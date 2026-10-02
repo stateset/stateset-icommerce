@@ -8,11 +8,11 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{Commerce, CreateInspection, InspectionType};
 //! use uuid::Uuid;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create an inspection for received goods
 //! let inspection = commerce.quality().create_inspection(CreateInspection {
@@ -60,7 +60,7 @@ impl Quality {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateInspection, InspectionType};
     /// use uuid::Uuid;
     ///
@@ -139,7 +139,7 @@ impl Quality {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateNonConformance, NonConformanceSource, Severity};
     /// use rust_decimal_macros::dec;
     ///
@@ -210,7 +210,7 @@ impl Quality {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateQualityHold, HoldType};
     /// use rust_decimal_macros::dec;
     ///
@@ -247,7 +247,7 @@ impl Quality {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, ReleaseQualityHold};
     /// use uuid::Uuid;
     ///

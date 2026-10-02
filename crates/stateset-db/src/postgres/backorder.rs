@@ -1158,9 +1158,9 @@ impl PgBackorderRepository {
             "SELECT
                 COUNT(*),
                 COALESCE(SUM(quantity_remaining), 0),
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN status = 'allocated' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN priority = 'critical' THEN 1 ELSE 0 END)
+                COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'allocated' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN priority = 'critical' THEN 1 ELSE 0 END), 0)
              FROM backorders WHERE status NOT IN ('fulfilled', 'cancelled')",
         )
         .fetch_one(&self.pool)

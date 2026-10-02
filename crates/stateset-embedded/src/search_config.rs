@@ -2,14 +2,18 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{Commerce, CreateSearchConfig};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! let config = commerce.search_config().create(CreateSearchConfig {
 //!     name: "Default Search".into(),
-//!     ..Default::default()
+//!     description: None,
+//!     searchable_fields: vec![],
+//!     facets: vec![],
+//!     synonyms: vec![],
+//!     boost_rules: vec![],
 //! })?;
 //!
 //! // Set it as the active configuration
@@ -55,14 +59,18 @@ impl SearchConfigs {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateSearchConfig};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let config = commerce.search_config().create(CreateSearchConfig {
     ///     name: "Product Search v2".into(),
-    ///     ..Default::default()
+    ///     description: None,
+    ///     searchable_fields: vec![],
+    ///     facets: vec![],
+    ///     synonyms: vec![],
+    ///     boost_rules: vec![],
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```

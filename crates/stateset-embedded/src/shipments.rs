@@ -5,7 +5,7 @@
 //! ```ignore
 //! use stateset_embedded::{Commerce, CreateShipment, CreateShipmentItem, OrderId};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create a shipment for an order
 //! let shipment = commerce.shipments().create(CreateShipment {
@@ -62,7 +62,7 @@ impl Shipments {
     /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateShipment, CreateShipmentItem, OrderId, ShippingCarrier};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let shipment = commerce.shipments().create(CreateShipment {
     ///     order_id: OrderId::new(),
@@ -135,7 +135,7 @@ impl Shipments {
     /// ```rust,no_run
     /// use stateset_embedded::{Commerce, ShipmentId};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// // Ship with a tracking number
     /// let shipment = commerce.shipments().ship(
@@ -210,7 +210,7 @@ impl Shipments {
     /// ```rust,no_run
     /// use stateset_embedded::{Commerce, AddShipmentEvent, ShipmentId};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// commerce.shipments().add_event(ShipmentId::new(), AddShipmentEvent {
     ///     event_type: "departed_facility".into(),

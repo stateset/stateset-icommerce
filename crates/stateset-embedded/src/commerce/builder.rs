@@ -101,7 +101,7 @@ impl CommerceBuilder {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, EventConfig};
     ///
     /// let commerce = Commerce::builder()
@@ -127,7 +127,7 @@ impl CommerceBuilder {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     ///
     /// let commerce = Commerce::builder().build_with_defaults()?;

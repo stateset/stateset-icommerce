@@ -8,12 +8,12 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{Commerce, CreateLot};
 //! use chrono::{Utc, Duration};
 //! use rust_decimal_macros::dec;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create a lot for received materials
 //! let lot = commerce.lots().create(CreateLot {
@@ -62,7 +62,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateLot};
     /// use chrono::{Utc, Duration};
     /// use rust_decimal_macros::dec;
@@ -97,7 +97,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, LotFilter, LotStatus};
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -132,7 +132,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     /// use uuid::Uuid;
     ///
@@ -158,7 +158,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, AdjustLot};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -183,7 +183,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, ConsumeLot};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -229,7 +229,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, SplitLot};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -263,7 +263,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, AddLotCertificate, CertificateType};
     /// use uuid::Uuid;
     ///
@@ -337,7 +337,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     /// use uuid::Uuid;
     ///
@@ -365,7 +365,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     /// use uuid::Uuid;
     ///

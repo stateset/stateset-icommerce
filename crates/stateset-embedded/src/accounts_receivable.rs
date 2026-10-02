@@ -10,10 +10,10 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::Commerce;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Get AR aging summary
 //! let aging = commerce.accounts_receivable().get_aging_summary()?;
@@ -59,7 +59,7 @@ impl AccountsReceivable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -95,7 +95,7 @@ impl AccountsReceivable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateCollectionActivity, CollectionActivityType};
     /// use uuid::Uuid;
     ///
@@ -151,7 +151,7 @@ impl AccountsReceivable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, DunningLetterType};
     /// use uuid::Uuid;
     ///
@@ -181,7 +181,7 @@ impl AccountsReceivable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateWriteOff, WriteOffReason};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -224,7 +224,7 @@ impl AccountsReceivable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateCreditMemo, CreditMemoReason};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -282,7 +282,7 @@ impl AccountsReceivable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, ApplyPaymentToInvoices, InvoicePaymentApplication};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -336,7 +336,7 @@ impl AccountsReceivable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, GenerateStatementRequest};
     /// use chrono::Utc;
     /// use uuid::Uuid;

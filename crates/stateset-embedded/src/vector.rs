@@ -6,10 +6,10 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::Commerce;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Initialize vector search with OpenAI API key
 //! let vector = commerce.vector(std::env::var("OPENAI_API_KEY")?);

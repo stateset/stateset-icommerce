@@ -86,10 +86,10 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     /// let api_key = std::env::var("OPENAI_API_KEY")?;
     ///
     /// let vector = commerce.vector(api_key)?;

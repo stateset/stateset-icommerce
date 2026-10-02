@@ -24,11 +24,11 @@ use uuid::Uuid;
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust
 /// use stateset_embedded::{Commerce, TaxAddress, TaxCalculationRequest, TaxLineItem, ProductTaxCategory};
 /// use rust_decimal_macros::dec;
 ///
-/// let commerce = Commerce::new("./store.db")?;
+/// let commerce = Commerce::new(":memory:")?;
 ///
 /// // Calculate tax for a transaction
 /// let result = commerce.tax().calculate(TaxCalculationRequest {
@@ -79,7 +79,7 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// use rust_decimal_macros::dec;
     ///
@@ -114,7 +114,7 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// use rust_decimal_macros::dec;
     ///
@@ -162,7 +162,7 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
     /// let rate = commerce.tax().get_effective_rate(
@@ -210,7 +210,7 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
     /// if let Some(jurisdiction) = commerce.tax().get_jurisdiction_by_code("US-CA")? {
@@ -226,7 +226,7 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
     /// // List all US state jurisdictions
@@ -253,7 +253,7 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
     /// let jurisdiction = commerce.tax().create_jurisdiction(CreateTaxJurisdiction {
@@ -284,9 +284,16 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
+    /// # let jurisdiction_id = commerce.tax().create_jurisdiction(CreateTaxJurisdiction {
+    /// #     name: "California".into(),
+    /// #     code: "US-CA".into(),
+    /// #     level: JurisdictionLevel::State,
+    /// #     country_code: "US".into(),
+    /// #     ..Default::default()
+    /// # })?.id;
     /// // Get all active rates for a jurisdiction
     /// let rates = commerce.tax().list_rates(TaxRateFilter {
     ///     jurisdiction_id: Some(jurisdiction_id),
@@ -307,11 +314,18 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// use rust_decimal_macros::dec;
     ///
     /// # let commerce = Commerce::new(":memory:")?;
+    /// # let jurisdiction_id = commerce.tax().create_jurisdiction(CreateTaxJurisdiction {
+    /// #     name: "Los Angeles".into(),
+    /// #     code: "US-CA-LA".into(),
+    /// #     level: JurisdictionLevel::City,
+    /// #     country_code: "US".into(),
+    /// #     ..Default::default()
+    /// # })?.id;
     /// let rate = commerce.tax().create_rate(CreateTaxRate {
     ///     jurisdiction_id,
     ///     tax_type: TaxType::SalesTax,
@@ -352,9 +366,10 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
+    /// # let customer_id = uuid::Uuid::new_v4();
     /// let exemptions = commerce.tax().get_customer_exemptions(customer_id)?;
     ///
     /// for exemption in exemptions {
@@ -373,9 +388,10 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
+    /// # let customer_id = uuid::Uuid::new_v4();
     /// let exemption = commerce.tax().create_exemption(CreateTaxExemption {
     ///     customer_id,
     ///     exemption_type: ExemptionType::Resale,
@@ -405,9 +421,15 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
+    /// # let input = CreateTaxExemption {
+    /// #     customer_id: uuid::Uuid::new_v4(),
+    /// #     exemption_type: ExemptionType::Resale,
+    /// #     effective_from: chrono::Utc::now().date_naive(),
+    /// #     ..Default::default()
+    /// # };
     /// let exemption = commerce.tax().create_exemption(input)?;
     /// assert!(!exemption.verified);
     /// let verified = commerce.tax().verify_exemption(exemption.id, true)?;
@@ -428,9 +450,10 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
+    /// # let customer_id = uuid::Uuid::new_v4();
     /// if commerce.tax().customer_is_exempt(customer_id)? {
     ///     println!("Customer has a tax exemption in force");
     /// }
@@ -455,7 +478,7 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
     /// let settings = commerce.tax().get_settings()?;
@@ -473,7 +496,7 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
     /// let mut settings = commerce.tax().get_settings()?;
@@ -510,7 +533,7 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// if let Some(info) = stateset_core::get_us_state_tax_info("CA") {
     ///     println!("California state rate: {}%", info.state_rate * rust_decimal_macros::dec!(100));
@@ -529,7 +552,7 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// if let Some(info) = stateset_core::get_eu_vat_info("DE") {
     ///     println!("Germany standard VAT: {}%", info.standard_rate * rust_decimal_macros::dec!(100));
@@ -549,7 +572,7 @@ impl Tax {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// # use stateset_embedded::*;
     /// if let Some(info) = stateset_core::get_canadian_tax_info("ON") {
     ///     println!("Ontario total rate: {}%", info.total_rate * rust_decimal_macros::dec!(100));

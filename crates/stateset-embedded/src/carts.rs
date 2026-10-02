@@ -9,7 +9,7 @@
 //! use rust_decimal_macros::dec;
 //! use uuid::Uuid;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create a cart
 //! let cart = commerce.carts().create(CreateCart {
@@ -81,7 +81,7 @@ impl Carts {
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// // Guest checkout
     /// let cart = commerce.carts().create(CreateCart {
@@ -230,7 +230,7 @@ impl Carts {
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// commerce.carts().add_item(Uuid::new_v4().into(), AddCartItem {
     ///     product_id: Some(ProductId::new()),
@@ -291,7 +291,7 @@ impl Carts {
     /// use stateset_embedded::{Commerce, CartAddress};
     /// use uuid::Uuid;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let cart = commerce.carts().set_shipping_address(Uuid::new_v4().into(), CartAddress {
     ///     first_name: "Alice".into(),
@@ -341,7 +341,7 @@ impl Carts {
     /// use stateset_embedded::{Commerce, SetCartPayment};
     /// use uuid::Uuid;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let cart = commerce.carts().set_payment(Uuid::new_v4().into(), SetCartPayment {
     ///     payment_method: "credit_card".into(),
@@ -393,7 +393,7 @@ impl Carts {
     /// use stateset_embedded::Commerce;
     /// use uuid::Uuid;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let result = commerce.carts().complete(Uuid::new_v4().into())?;
     /// println!("Order ID: {}", result.order_id);

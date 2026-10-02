@@ -5,15 +5,17 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{Commerce, CreateShippingZone};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! let zone = commerce.shipping_zones().create(CreateShippingZone {
 //!     name: "US Domestic".into(),
 //!     countries: vec!["US".into()],
-//!     ..Default::default()
+//!     regions: vec![],
+//!     postal_codes: vec![],
+//!     priority: None,
 //! })?;
 //!
 //! println!("Zone created: {}", zone.name);
@@ -67,15 +69,17 @@ impl ShippingZones {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateShippingZone};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let zone = commerce.shipping_zones().create(CreateShippingZone {
     ///     name: "Europe".into(),
     ///     countries: vec!["DE".into(), "FR".into(), "IT".into()],
-    ///     ..Default::default()
+    ///     regions: vec![],
+    ///     postal_codes: vec![],
+    ///     priority: None,
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```

@@ -12,7 +12,7 @@
 //! use stateset_embedded::{Commerce, CreateReceipt, CreateReceiptItem, ReceiptType};
 //! use rust_decimal_macros::dec;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create a receipt from an ASN
 //! let receipt = commerce.receiving().create_receipt(CreateReceipt {

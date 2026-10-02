@@ -11,7 +11,7 @@
 //! ```ignore
 //! use stateset_embedded::{Commerce, CreateWave, OrderId, PickTaskFilter, PickStatus};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create a wave from orders
 //! let wave = commerce.fulfillment().create_wave(CreateWave {

@@ -10,13 +10,13 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     /// use futures::StreamExt;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     let commerce = Commerce::new("./store.db")?;
+    ///     let commerce = Commerce::new(":memory:")?;
     ///
     ///     // Subscribe to all events
     ///     let mut subscription = commerce.events().subscribe();
@@ -44,13 +44,16 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// The consumer loop runs until the producer is dropped, so this example is
+    /// compiled but not executed.
+    ///
+    /// ```rust,no_run
     /// use stateset_embedded::Commerce;
     /// use futures::StreamExt;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     let commerce = Commerce::new("./store.db")?;
+    ///     let commerce = Commerce::new(":memory:")?;
     ///
     ///     let mut subscription = commerce.subscribe_events();
     ///
@@ -76,10 +79,10 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, Webhook};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let webhook = Webhook::new(
     ///     "My Webhook",

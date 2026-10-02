@@ -2,17 +2,22 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use stateset_embedded::{Commerce, CreateStoreCredit, CustomerId, StoreCreditReason};
+//! ```rust
+//! use stateset_embedded::{
+//!     Commerce, CreateStoreCredit, CurrencyCode, CustomerId, StoreCreditReason,
+//! };
 //! use rust_decimal_macros::dec;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! let credit = commerce.store_credits().create(CreateStoreCredit {
 //!     customer_id: CustomerId::new(),
-//!     initial_balance: dec!(25.00),
+//!     amount: dec!(25.00),
+//!     currency: CurrencyCode::USD,
 //!     reason: StoreCreditReason::ReturnRefund,
-//!     ..Default::default()
+//!     reference_id: None,
+//!     note: None,
+//!     expires_at: None,
 //! })?;
 //!
 //! println!("Store credit balance: ${}", credit.current_balance);
@@ -57,17 +62,22 @@ impl StoreCredits {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, CreateStoreCredit, CustomerId, StoreCreditReason};
+    /// ```rust
+    /// use stateset_embedded::{
+    ///     Commerce, CreateStoreCredit, CurrencyCode, CustomerId, StoreCreditReason,
+    /// };
     /// use rust_decimal_macros::dec;
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let credit = commerce.store_credits().create(CreateStoreCredit {
     ///     customer_id: CustomerId::new(),
-    ///     initial_balance: dec!(50.00),
+    ///     amount: dec!(50.00),
+    ///     currency: CurrencyCode::USD,
     ///     reason: StoreCreditReason::GoodwillCredit,
-    ///     ..Default::default()
+    ///     reference_id: None,
+    ///     note: None,
+    ///     expires_at: None,
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```

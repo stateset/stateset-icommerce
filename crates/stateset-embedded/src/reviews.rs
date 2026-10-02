@@ -2,10 +2,10 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{Commerce, CreateReview, ProductId, CustomerId};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! let review = commerce.reviews().create(CreateReview {
 //!     product_id: ProductId::new(),
@@ -13,7 +13,7 @@
 //!     rating: 5,
 //!     title: Some("Excellent product!".into()),
 //!     body: Some("Works exactly as described.".into()),
-//!     ..Default::default()
+//!     verified_purchase: true,
 //! })?;
 //!
 //! println!("Review created with rating: {}", review.rating);
@@ -56,10 +56,10 @@ impl Reviews {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateReview, ProductId, CustomerId};
     ///
-    /// let commerce = Commerce::new("./store.db")?;
+    /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let review = commerce.reviews().create(CreateReview {
     ///     product_id: ProductId::new(),
@@ -67,7 +67,7 @@ impl Reviews {
     ///     rating: 4,
     ///     title: Some("Good value".into()),
     ///     body: Some("Decent quality for the price.".into()),
-    ///     ..Default::default()
+    ///     verified_purchase: true,
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```

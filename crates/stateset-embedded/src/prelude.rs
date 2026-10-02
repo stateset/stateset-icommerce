@@ -27,7 +27,7 @@
 //! use stateset_embedded::prelude::*;
 //! use rust_decimal_macros::dec;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! let customer = commerce.customers().create(CreateCustomer {
 //!     email: "alice@example.com".into(),

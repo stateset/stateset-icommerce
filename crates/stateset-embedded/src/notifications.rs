@@ -14,7 +14,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::notifications::{NotificationConfig, NotificationService, WebhookEmailBackend};
 //!
 //! let backend = WebhookEmailBackend::new("https://relay.example.com/email", Some("hmac-secret"))

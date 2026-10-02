@@ -23,7 +23,7 @@ use uuid::Uuid;
 /// use stateset_embedded::{Commerce, Currency, ConvertCurrency};
 /// use rust_decimal_macros::dec;
 ///
-/// let commerce = Commerce::new("./store.db")?;
+/// let commerce = Commerce::new(":memory:")?;
 ///
 /// // Get exchange rate
 /// if let Some(rate) = commerce.currency().get_rate(Currency::USD, Currency::EUR)? {

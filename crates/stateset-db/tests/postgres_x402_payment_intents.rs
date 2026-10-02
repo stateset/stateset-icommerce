@@ -12,6 +12,8 @@ use std::env;
 #[cfg(feature = "postgres")]
 use uuid::Uuid;
 
+mod common;
+
 #[cfg(feature = "postgres")]
 fn postgres_url() -> Option<String> {
     env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
@@ -220,6 +222,7 @@ async fn postgres_x402_settle_after_valid_until_is_refused_and_swept() {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
         return;
     };
+    let _guard = common::sweeper_exclusive(&url).await;
     let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
     let repo = db.x402_payment_intents();
     let intent = repo.create_async(fresh_input()).await.expect("create");
@@ -239,10 +242,10 @@ async fn postgres_x402_settle_after_valid_until_is_refused_and_swept() {
     assert_eq!(stored.status, X402IntentStatus::Sequenced);
     assert!(stored.tx_hash.is_none());
 
-    // The sweeper is global; invoke it and verify the effect on this intent.
-    // Races in CI across neighboring tests can make the affected-row count flaky;
-    // assert on the final stored status instead of the count.
-    let _ = repo.expire_stale_intents_async().await.expect("sweep");
+    // Earlier tests leave their own expired intents behind in the shared
+    // database, so the sweep count is a lower bound rather than exactly one.
+    let swept = repo.expire_stale_intents_async().await.expect("sweep");
+    assert!(swept >= 1, "sweeper must have expired at least this intent, swept {swept}");
     let stored = repo.get_async(intent.id).await.expect("get").expect("exists");
     assert_eq!(stored.status, X402IntentStatus::Expired);
 }
@@ -254,6 +257,7 @@ async fn postgres_x402_sequence_after_valid_until_is_refused() {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
         return;
     };
+    let _guard = common::sweeper_shared(&url).await;
     let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
     let repo = db.x402_payment_intents();
     let intent = repo.create_async(fresh_input()).await.expect("create");
@@ -274,6 +278,7 @@ async fn postgres_x402_sweeper_leaves_batched_intents_alone() {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
         return;
     };
+    let _guard = common::sweeper_exclusive(&url).await;
     let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
     let repo = db.x402_payment_intents();
     let intent = repo.create_async(fresh_input()).await.expect("create");

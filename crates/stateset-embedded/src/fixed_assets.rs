@@ -5,7 +5,7 @@
 //! ```ignore
 //! use stateset_embedded::{Commerce, CreateFixedAsset};
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //! let asset = commerce.fixed_assets().create(input)?;
 //! let asset = commerce.fixed_assets().place_in_service(asset.id, date)?;
 //! let schedule = commerce.fixed_assets().generate_schedule(asset.id)?;

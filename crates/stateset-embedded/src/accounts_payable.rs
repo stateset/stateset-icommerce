@@ -8,13 +8,13 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use stateset_embedded::{Commerce, CreateBill, CreateBillItem, PaymentMethodAP};
 //! use rust_decimal_macros::dec;
 //! use chrono::{Utc, Duration};
 //! use uuid::Uuid;
 //!
-//! let commerce = Commerce::new("./store.db")?;
+//! let commerce = Commerce::new(":memory:")?;
 //!
 //! // Create a bill from a supplier
 //! let bill = commerce.accounts_payable().create_bill(CreateBill {
@@ -87,7 +87,7 @@ impl AccountsPayable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateBill, CreateBillItem};
     /// use rust_decimal_macros::dec;
     /// use chrono::{Utc, Duration};
@@ -143,7 +143,7 @@ impl AccountsPayable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, BillFilter, BillStatus};
     /// use uuid::Uuid;
     ///
@@ -230,7 +230,7 @@ impl AccountsPayable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -265,7 +265,7 @@ impl AccountsPayable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -332,7 +332,7 @@ impl AccountsPayable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreateBillPayment, PaymentMethodAP, PaymentAllocationInput};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -410,7 +410,7 @@ impl AccountsPayable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, PayBill, PaymentMethodAP};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -508,7 +508,7 @@ impl AccountsPayable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::{Commerce, CreatePaymentRun, PaymentMethodAP};
     /// use chrono::{Utc, Duration};
     /// use uuid::Uuid;
@@ -604,7 +604,7 @@ impl AccountsPayable {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use stateset_embedded::Commerce;
     ///
     /// let commerce = Commerce::new(":memory:")?;
