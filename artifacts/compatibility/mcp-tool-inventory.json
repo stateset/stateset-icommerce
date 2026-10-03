@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 973,
+  "totalTools": 975,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 955
+      "count": 957
     },
     {
       "name": "stateset-scaffold",
@@ -83,7 +83,7 @@
     },
     {
       "name": "carts",
-      "count": 30
+      "count": 32
     },
     {
       "name": "catalog",
@@ -393,18 +393,18 @@
     },
     {
       "name": "read",
-      "count": 480
+      "count": 481
     },
     {
       "name": "write",
-      "count": 425
+      "count": 426
     }
   ],
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
-    "read": 480,
-    "write": 425
+    "read": 481,
+    "write": 426
   },
   "tools": [
     {
@@ -4872,6 +4872,15 @@
       "permission": "read"
     },
     {
+      "name": "get_checkout",
+      "description": "Read the unified checkout state for a cart: items, exact-decimal totals, shipping, payment, coupon, and a readiness checklist for completion.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_checkout",
+      "policyDomain": "carts",
+      "permission": "read"
+    },
+    {
       "name": "get_company",
       "description": "Get a company by ID.",
       "serverName": "stateset-commerce",
@@ -8388,6 +8397,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__update_channel",
       "policyDomain": "channels",
+      "permission": "write"
+    },
+    {
+      "name": "update_checkout",
+      "description": "Apply checkout details in one validated call: shipping address, payment method, and coupon code, then recalculate tax. In strict kernel mode each step runs as its own governed command (carts.shipping_address.set, carts.payment_method.set, carts.coupon.apply, carts.tax.calculate), so the operator policy governs every mutation; shipping method selection stays on set_cart_shipping outside strict mode.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_checkout",
+      "policyDomain": "carts",
       "permission": "write"
     },
     {

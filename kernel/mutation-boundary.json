@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:bfdd86f273b0415553bf431d0159ccd204adcedc861fce705c476de9ce4e1532",
+  "digest": "sha256:c3586970b20968114339d2eca46957ea1d174bc764cc76053170090537a3c529",
   "counts": {
-    "total": 955,
-    "readOnly": 471,
-    "mutations": 484,
+    "total": 957,
+    "readOnly": 472,
+    "mutations": 485,
     "governed": 36,
-    "governedComposite": 1,
+    "governedComposite": 2,
     "blocked": 447
   },
   "entries": [
@@ -3483,6 +3483,13 @@
       "commandType": null
     },
     {
+      "name": "get_checkout",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
       "name": "get_company",
       "permission": "read",
       "mutation": false,
@@ -6217,6 +6224,13 @@
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_checkout",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed_composite",
       "commandType": null
     },
     {

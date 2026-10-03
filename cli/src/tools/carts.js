@@ -36,6 +36,60 @@ function buildCartAddress(params) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Checkout trio: one read and one validated write around the cart, so an
+// agent drives checkout in three calls (get / update / complete) instead of
+// orchestrating the fine-grained cart tools itself.
+// ---------------------------------------------------------------------------
+
+/** Unified checkout summary with exact-decimal money. */
+function summarizeCheckout(cart, items) {
+  return {
+    cartId: cart.id,
+    cartNumber: cart.cartNumber,
+    status: cart.status,
+    currency: cart.currency,
+    customerEmail: cart.customerEmail,
+    itemCount: cart.itemCount,
+    items: (items || []).map((item) => ({
+      id: item.id,
+      sku: item.sku,
+      name: item.name,
+      quantity: item.quantity,
+      unitPriceExact: item.unitPriceExact,
+      totalExact: item.totalExact,
+    })),
+    subtotalExact: cart.subtotalExact,
+    discountExact: cart.discountAmountExact,
+    taxExact: cart.taxAmountExact,
+    shippingExact: cart.shippingAmountExact,
+    grandTotalExact: cart.grandTotalExact,
+    shippingAddress: cart.shippingAddress || null,
+    shippingMethod: cart.shippingMethod || null,
+    shippingCarrier: cart.shippingCarrier || null,
+    paymentMethod: cart.paymentMethod || null,
+    paymentStatus: cart.paymentStatus || null,
+    couponCode: cart.couponCode || null,
+  };
+}
+
+/**
+ * Pre-flight checklist for `complete_checkout`. Mirrors the kernel's commit
+ * validation: the kernel remains the final arbiter and rejects with typed
+ * codes, but the agent gets the missing pieces up front instead of a deep
+ * engine error.
+ */
+function checkoutReadiness(cart, items) {
+  const missing = [];
+  if (cart.status !== 'active' && cart.status !== 'payment_pending') {
+    missing.push('cart_not_active');
+  }
+  if (!items || items.length === 0) missing.push('items');
+  if (!cart.shippingAddress) missing.push('shipping_address');
+  if (!cart.paymentMethod) missing.push('payment_method');
+  return { ready: missing.length === 0, missing };
+}
+
 export const cartTools = [
   {
     name: 'list_carts',
@@ -641,6 +695,176 @@ export const cartTools = [
   },
 
   {
+    name: 'get_checkout',
+    description:
+      'Read the unified checkout state for a cart: items, exact-decimal totals, shipping, payment, coupon, and a readiness checklist for completion.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const cart = await commerce.carts.get(params.cartId);
+      if (!cart) return { success: false, error: 'Cart not found' };
+      const items = await commerce.carts.getItems(params.cartId);
+      return {
+        success: true,
+        checkout: { ...summarizeCheckout(cart, items), readiness: checkoutReadiness(cart, items) },
+      };
+    },
+  },
+
+  {
+    name: 'update_checkout',
+    description:
+      'Apply checkout details in one validated call: shipping address, payment method, and coupon code, then recalculate tax. In strict kernel mode each step runs as its own governed command (carts.shipping_address.set, carts.payment_method.set, carts.coupon.apply, carts.tax.calculate), so the operator policy governs every mutation; shipping method selection stays on set_cart_shipping outside strict mode.',
+    inputSchema: {
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+      shippingAddress: z
+        .object(cartAddressInputSchema)
+        .optional()
+        .describe('Shipping address for the order'),
+      paymentMethod: z.string().min(1).optional().describe('Payment method (e.g., credit_card)'),
+      paymentToken: z.string().optional().describe('Payment token from payment provider'),
+      couponCode: z.string().min(1).optional().describe('Coupon or discount code'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply, executeGovernedTool, kernelStrict }) => {
+      const { cartId, shippingAddress, paymentMethod, paymentToken, couponCode } = params;
+      const steps = [];
+      if (shippingAddress) steps.push('shipping_address');
+      if (paymentMethod) steps.push('payment_method');
+      if (couponCode) steps.push('coupon');
+      if (steps.length === 0) {
+        return {
+          success: false,
+          error: 'Nothing to update: provide shippingAddress, paymentMethod, or couponCode.',
+        };
+      }
+      if (!allowApply) {
+        return {
+          success: false,
+          error: 'Update checkout operation not allowed. The --apply flag must be set.',
+          hint: 'Run with --apply to enable write operations.',
+          wouldUpdate: { cartId, steps },
+        };
+      }
+
+      const failStep = (step, detail) => ({
+        success: false,
+        error: `update_checkout stopped at step '${step}': ${detail}`,
+        step,
+        detail,
+      });
+
+      if (kernelStrict && typeof executeGovernedTool === 'function') {
+        // Strict kernel mode: every nested write traverses the governed
+        // executor, so each step is policy-checked, receipted, and fail-closed
+        // on its own. A denied or failed step aborts the sequence.
+        const governed = { requireGoverned: true };
+        if (shippingAddress) {
+          const result = await executeGovernedTool(
+            'set_cart_shipping_address',
+            { cartId, ...shippingAddress },
+            governed,
+          );
+          if (!result?.success) {
+            return failStep(
+              'set_cart_shipping_address',
+              result?.receipt?.rejection?.message || result?.error || 'governed command failed',
+            );
+          }
+        }
+        if (paymentMethod) {
+          const result = await executeGovernedTool(
+            'set_cart_payment',
+            { cartId, paymentMethod, paymentToken },
+            governed,
+          );
+          if (!result?.success) {
+            return failStep(
+              'set_cart_payment',
+              result?.receipt?.rejection?.message || result?.error || 'governed command failed',
+            );
+          }
+        }
+        if (couponCode) {
+          const result = await executeGovernedTool(
+            'apply_cart_discount',
+            { cartId, couponCode },
+            governed,
+          );
+          if (!result?.success) {
+            return failStep(
+              'apply_cart_discount',
+              result?.receipt?.rejection?.message || result?.error || 'governed command failed',
+            );
+          }
+        }
+        const tax = await executeGovernedTool('calculate_cart_tax', { cartId }, governed);
+        if (!tax?.success) {
+          return failStep(
+            'calculate_cart_tax',
+            tax?.receipt?.rejection?.message || tax?.error || 'governed command failed',
+          );
+        }
+      } else {
+        // Legacy path: direct engine calls, no kernel. Mirrors the governed
+        // sequence above, including the tax-engine recalculation.
+        if (shippingAddress) await commerce.carts.setShippingAddress(cartId, shippingAddress);
+        if (paymentMethod) {
+          await commerce.carts.setPayment(cartId, { paymentMethod, paymentToken });
+        }
+        if (couponCode) await commerce.carts.applyDiscount(cartId, couponCode);
+        const cart = await commerce.carts.get(cartId);
+        if (!cart) return { success: false, error: 'Cart not found' };
+        const address = cart.shippingAddress;
+        if (!address) {
+          return {
+            success: false,
+            error: 'Shipping address required to calculate tax',
+            hint: 'update_checkout sets it from shippingAddress first.',
+          };
+        }
+        const items = await commerce.carts.getItems(cartId);
+        const tax = await commerce.tax.calculate({
+          lineItems: items.map((item) => ({
+            id: item.id,
+            sku: item.sku,
+            productId: item.productId,
+            quantity: item.quantity,
+            unitPrice: Number(item.unitPriceExact),
+            discountAmount: Number(item.discountAmountExact),
+            taxCategory: 'standard',
+            description: item.name,
+          })),
+          shippingAddress: {
+            line1: address.line1,
+            line2: address.line2,
+            city: address.city,
+            state: address.state,
+            postalCode: address.postalCode,
+            country: address.country,
+          },
+          customerId: cart.customerId,
+          currency: cart.currency,
+          shippingAmount: Number(cart.shippingAmountExact),
+        });
+        await commerce.carts.setTax(cartId, undefined, tax.totalTaxExact);
+      }
+
+      const cart = await commerce.carts.get(cartId);
+      if (!cart) return { success: false, error: 'Cart not found' };
+      const items = await commerce.carts.getItems(cartId);
+      return {
+        success: true,
+        message: 'Checkout updated',
+        appliedSteps: steps,
+        checkout: { ...summarizeCheckout(cart, items), readiness: checkoutReadiness(cart, items) },
+      };
+    },
+  },
+
+  {
     name: 'complete_checkout',
     description:
       'Complete the checkout process and convert the cart to an order. This is the final step in the checkout flow.',
@@ -675,6 +899,20 @@ export const cartTools = [
             currency: cart.currency,
             paymentMethod: cart.paymentMethod,
           },
+        };
+      }
+      // Same pre-flight as get_checkout's readiness checklist: refuse cleanly
+      // with the missing pieces instead of a deep engine error. (Strict mode
+      // never reaches this handler; the kernel validates the commit itself.)
+      const cart = await commerce.carts.get(cartId);
+      if (!cart) return { success: false, error: 'Cart not found' };
+      const readiness = checkoutReadiness(cart, await commerce.carts.getItems(cartId));
+      if (!readiness.ready) {
+        return {
+          success: false,
+          error: 'Checkout is not ready to complete.',
+          missing: readiness.missing,
+          hint: 'Use get_checkout to review the checkout state, or update_checkout to fill the gaps.',
         };
       }
       const result = await commerce.carts.complete(cartId);

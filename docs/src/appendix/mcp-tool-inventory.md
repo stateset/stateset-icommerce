@@ -13,11 +13,11 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 973 |
+| Total tools | 975 |
 | MCP servers | 3 |
 | Policy domains | 90 |
-| Read tools | 480 |
-| Write tools | 425 |
+| Read tools | 481 |
+| Write tools | 426 |
 | Delete tools | 21 |
 | Admin tools | 47 |
 | Unknown permission | 0 |
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 955 | `cli/src/mcp-server.js` |
+| stateset-commerce | 957 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -49,7 +49,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | analytics | 14 |
 | audit | 4 |
 | backorders | 20 |
-| carts | 30 |
+| carts | 32 |
 | catalog | 6 |
 | channels | 8 |
 | checkout | 8 |
@@ -131,8 +131,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | --- | --- |
 | admin | 47 |
 | delete | 21 |
-| read | 480 |
-| write | 425 |
+| read | 481 |
+| write | 426 |
 
 ## Tool Registry
 
@@ -634,6 +634,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `get_bom` | `stateset-commerce` | `manufacturing` | `read` |
 | `get_cart` | `stateset-commerce` | `carts` | `read` |
 | `get_channel` | `stateset-commerce` | `channels` | `read` |
+| `get_checkout` | `stateset-commerce` | `carts` | `read` |
 | `get_company` | `stateset-commerce` | `companies` | `read` |
 | `get_coupon` | `stateset-commerce` | `promotions` | `read` |
 | `get_credit_account` | `stateset-commerce` | `credit` | `read` |
@@ -1025,6 +1026,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `update_cart` | `stateset-commerce` | `carts` | `write` |
 | `update_cart_item` | `stateset-commerce` | `carts` | `write` |
 | `update_channel` | `stateset-commerce` | `channels` | `write` |
+| `update_checkout` | `stateset-commerce` | `carts` | `write` |
 | `update_company` | `stateset-commerce` | `companies` | `write` |
 | `update_currency_settings` | `stateset-commerce` | `currency` | `admin` |
 | `update_custom_object` | `stateset-commerce` | `custom_objects` | `write` |

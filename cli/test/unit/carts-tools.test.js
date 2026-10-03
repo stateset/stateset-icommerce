@@ -134,9 +134,9 @@ function makeCommerce(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe('Cart Tools — structure', () => {
-  it('exports an array of 30 tools', () => {
+  it('exports an array of 32 tools', () => {
     assert.ok(Array.isArray(cartTools));
-    assert.strictEqual(cartTools.length, 30);
+    assert.strictEqual(cartTools.length, 32);
   });
 
   it('every tool has name, handler, permission, and inputSchema', () => {
@@ -503,11 +503,30 @@ describe('complete_checkout', () => {
   });
 
   it('completes checkout when allowApply is true', async () => {
-    const result = await tool.handler({ commerce: makeCommerce(), params, allowApply: true });
+    const commerce = makeCommerce();
+    // complete_checkout refuses unready carts; the happy path needs an
+    // address and a payment method on the cart.
+    const ready = makeCart({
+      id: 'cart_001',
+      shippingAddress: { line1: '1 Main St', city: 'Novato' },
+      paymentMethod: 'credit_card',
+    });
+    commerce.carts.get = async (id) => (id === 'nonexistent' ? null : ready);
+    const result = await tool.handler({ commerce, params, allowApply: true });
     assert.strictEqual(result.success, true);
     assert.ok(result.result);
     assert.strictEqual(result.result.orderId, 'ord_001');
     assert.strictEqual(result.result.orderNumber, 'ORD-100001');
+  });
+
+  it('refuses an unready cart with the missing pieces', async () => {
+    const result = await tool.handler({
+      commerce: makeCommerce(),
+      params,
+      allowApply: true,
+    });
+    assert.strictEqual(result.success, false);
+    assert.deepStrictEqual(result.missing, ['shipping_address', 'payment_method']);
   });
 });
 

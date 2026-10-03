@@ -1,5 +1,23 @@
 import { randomUUID } from 'node:crypto';
 
+// Tools that may orchestrate mutations but never perform one directly. In
+// strict mode every nested write still traverses executeGovernedTool and fails
+// closed unless it has a typed kernel command mapping — so the executor below
+// returns null for these (letting the handler run its governed steps) instead
+// of throwing "outside the governed kernel catalog". Keep this allow-list
+// deliberately small and explicit so an orchestration surface cannot masquerade
+// as a read merely to remain discoverable.
+//
+// `update_checkout` is the checkout trio's write leg: one validated call whose
+// steps map to `carts.shipping_address.set`, `carts.payment_method.set`,
+// `carts.coupon.apply` and `carts.tax.calculate`, so granting those
+// capabilities is what grants `update_checkout`.
+export const KERNEL_GOVERNED_COMPOSITE_TOOLS = Object.freeze([
+  'agentic_execute_plan',
+  'update_checkout',
+]);
+const KERNEL_GOVERNED_COMPOSITE_TOOL_SET = new Set(KERNEL_GOVERNED_COMPOSITE_TOOLS);
+
 export const KERNEL_CAPABILITY_BY_TOOL = Object.freeze({
   a2a_create_escrow: 'a2a.escrow.create',
   a2a_dispute_escrow: 'a2a.escrow.dispute',
@@ -442,7 +460,8 @@ export function createKernelToolExecutor({ commerce, kernel, allowApply, agentCo
         kernelConfig &&
         kernelConfig.strict !== false &&
         allowApply &&
-        executionOptions.requireGoverned
+        executionOptions.requireGoverned &&
+        !KERNEL_GOVERNED_COMPOSITE_TOOL_SET.has(toolName)
       ) {
         throw new Error(
           `Tool '${toolName}' is a write mutation outside the governed kernel catalog. ` +

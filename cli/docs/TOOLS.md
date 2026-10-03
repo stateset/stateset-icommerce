@@ -5,13 +5,13 @@
 
 Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/tool-tiers.js` (tiers).
 
-**940 tools** across **88 domains**, plus 15 agentic runtime tools.
+**942 tools** across **88 domains**, plus 15 agentic runtime tools.
 
 ## Stability tiers
 
 | Tier | Tools | Meaning |
 | --- | ---: | --- |
-| core | 200 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
+| core | 202 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
 | extended | 491 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
 | experimental | 264 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
 
@@ -19,8 +19,8 @@ Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/t
 
 | Profile | Tools | Domains |
 | --- | ---: | --- |
-| all | 955 | every domain |
-| core (default) | 200 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain |
+| all | 957 | every domain |
+| core (default) | 202 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain |
 | operations | 193 | inventory, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
 | finance | 134 | payments, invoices, treasury, accounts-payable, accounts-receivable, cost-accounting, credit, general-ledger, fixed-assets, revenue-recognition, prepayments, vendor-credits, payment-obligations |
 | agents | 251 | agent-runtime, agent-cards, agent-receipt, a2a, a2a-platform, a2a-automation, a2a-observability, a2a-intelligence, x402, stablecoin, erc8004, treasury, payment-obligations, proofs, audit, policies |
@@ -38,7 +38,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [inventory](#inventory) | core | 6 |
 | [custom-objects](#custom-objects) | extended | 12 |
 | [returns](#returns) | core | 12 |
-| [carts](#carts) | core | 30 |
+| [carts](#carts) | core | 32 |
 | [analytics](#analytics) | core | 14 |
 | [currency](#currency) | extended | 13 |
 | [tax](#tax) | core | 29 |
@@ -250,6 +250,8 @@ Tier: **core**
 | `get_shipping_rates` | core | read | Get available shipping rates for a cart based on contents and address. |
 | `mark_cart_ready_for_payment` | core | write | Mark a cart as ready for payment processing. |
 | `begin_cart_checkout` | core | write | Begin the checkout process for a cart. |
+| `get_checkout` | core | read | Read the unified checkout state for a cart: items, exact-decimal totals, shipping, payment, coupon, and a readiness checklist for completion. |
+| `update_checkout` | core | write | Apply checkout details in one validated call: shipping address, payment method, and coupon code, then recalculate tax. In strict kernel mode each step runs as its own governed command (carts.shipping_address.set, carts.payment_method.set, carts.coupon.apply, carts.tax.calculate), so the operator policy governs every mutation; shipping method selection stays on set_cart_shipping outside strict mode. |
 | `complete_checkout` | core | write | Complete the checkout process and convert the cart to an order. This is the final step in the checkout flow. |
 | `cancel_cart` | core | delete | Cancel a shopping cart. |
 | `abandon_cart` | core | write | Mark a cart as abandoned (for recovery campaigns). |

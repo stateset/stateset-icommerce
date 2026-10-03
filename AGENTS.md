@@ -48,7 +48,12 @@ tax), checkout, payment create/capture, order transitions, shipments, returns
 (see [`kernel/examples/strict-policy.json`](kernel/examples/strict-policy.json))
 and a strict agent can sell end to end. Promotions and coupons are operator
 configuration: strict agents redeem them (`apply_cart_discount`) but cannot
-create them; provision them outside the agent endpoint.
+create them; provision them outside the agent endpoint. The checkout trio
+compresses the journey to three calls: `get_checkout` (unified state plus a
+readiness checklist), `update_checkout` (a governed composite — one validated
+call whose shipping-address, payment, coupon, and tax steps each run as their
+own policy-checked kernel command), and `complete_checkout`
+(`checkout.commit`).
 
 ```json
 {
