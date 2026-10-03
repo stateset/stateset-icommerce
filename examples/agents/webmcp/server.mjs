@@ -1,4 +1,9 @@
-// Local read-only demo. Run: node examples/agents/webmcp/server.mjs
+// Local checkout demo. Run: node examples/agents/webmcp/server.mjs
+//
+// The demo exposes a curated checkout surface: browse the catalog, build a
+// cart, then complete the order. Cart writes apply because this is a trusted
+// loopback demo; completing the order additionally requires buyer
+// confirmation, which the page models with `onConfirm` (see index.html).
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { Commerce } from '../../../bindings/node/index.js';
@@ -9,9 +14,22 @@ await commerce.products.create({
   name: 'StateSet Demo Coffee',
   description: 'A browser-accessible catalog product.',
 });
+const CHECKOUT_TOOLS = [
+  'products.list',
+  'products.get',
+  'carts.create',
+  'carts.addItem',
+  'carts.get',
+  'carts.getItems',
+  'carts.setShipping',
+  'carts.setPayment',
+  'carts.recalculate',
+  'carts.beginCheckout',
+  'carts.complete',
+];
 const toolkit = createNativeToolkit(commerce, {
-  allowApply: false,
-  filter: ['products.list', 'products.get'],
+  allowApply: true,
+  filter: CHECKOUT_TOOLS,
 });
 const descriptors = toolkit.createToolDescriptors();
 const allowed = new Set(descriptors.map(({ name }) => name));
@@ -24,7 +42,10 @@ const json = (res, status, data) => {
 
 const server = http.createServer(async (req, res) => {
   try {
-    // This demo is deliberately restricted to its loopback origin and public catalog.
+    // This demo is deliberately restricted to its loopback origin. Only the
+    // curated checkout tools above are exposed; writes apply because the
+    // loopback host is trusted, and order completion additionally requires
+    // buyer confirmation in the page.
     if (
       req.headers.host !== `127.0.0.1:${port}` ||
       (req.headers.origin && req.headers.origin !== origin)

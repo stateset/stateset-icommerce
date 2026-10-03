@@ -7,8 +7,24 @@ node examples/agents/webmcp/server.mjs
 ```
 
 Open `http://127.0.0.1:8091`. The demo seeds a fresh in-memory product catalog
-and exposes only `products.list` and `products.get`. The catalog button works
-without WebMCP. Set `PORT` to change the demo port.
+and exposes a curated checkout surface: `products.list`/`products.get` for
+browsing, plus the cart tools needed to build a cart (`carts.create`,
+`carts.addItem`, `carts.setShipping`, `carts.setPayment`, `carts.recalculate`)
+and complete the order (`carts.beginCheckout`, `carts.complete`). Set `PORT`
+to change the demo port.
+
+The buttons walk the whole flow without WebMCP. **Build demo cart** assembles
+a cart with shipping and payment; **Review cart** shows it; **Checkout** calls
+`carts.complete` through the WebMCP wrapper, which pauses for buyer
+confirmation first: the page fetches the order summary and asks the buyer to
+approve. Only an explicit approval lets the order complete; declining leaves
+the cart untouched. The same `requireConfirmation: ['carts.complete']` gate
+is registered on the browser's `modelContext`, so a real agent driving these
+tools hits the same approval step.
+
+Cart writes apply because this is a trusted loopback demo (`allowApply: true`
+on the server toolkit). Nothing here charges money; completing the order only
+records it in the demo's in-memory store.
 
 For local native WebMCP testing, enable
 `chrome://flags/#enable-webmcp-testing` and relaunch Chrome. See
@@ -57,15 +73,15 @@ EXPECT_WEBMCP=0 BROWSER_URL=http://127.0.0.1:9228 \
   node examples/agents/webmcp/browser-smoke.mjs
 ```
 
-This checks that the page reports WebMCP as unavailable and its catalog button
-still retrieves products from the engine.
+This checks that the page reports WebMCP as unavailable and its buttons still
+drive the engine directly.
 
 These checks passed against Chromium 153.0.8010.47. They invoke native WebMCP
 programmatically; natural-language tool selection by a browser agent is a
 separate integration check. For that check, Chrome documents its Model
 Context Tool Inspector extension in the setup guide.
 
-The demo is a local public-catalog example. A production application should
+The demo is a local checkout example. A production application should
 use its authenticated commerce routes and enforce permissions, argument
 validation, record scope, and write policy on the backend. See the
 [connector guide](../../../docs/src/ai-agents.md#webmcp-browser-connector).

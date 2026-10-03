@@ -259,3 +259,226 @@ test('malformed catalogs fail clearly and execution cancellation rejects a late 
   finish({ value: 'late' });
   await assert.rejects(pending, { name: 'AbortError' });
 });
+
+test('confirmation gate approves, denies strictly, and fails closed without onConfirm', async () => {
+  const { createWebMCPTools } = await import('../webmcp.mjs');
+  const descriptor = (permission = 'write') => ({
+    name: 'carts.complete',
+    permission,
+    description: 'Complete checkout and create order',
+    inputSchema: { type: 'object', properties: {} },
+  });
+
+  let executions = 0;
+  const approved = (options) =>
+    createWebMCPTools([descriptor()], {
+      ...options,
+      allowApply: true,
+      executeTool: async () => {
+        executions++;
+        return { orderId: 'order-1' };
+      },
+    })[0];
+
+  const ok = await approved({
+    requireConfirmation: ['carts.complete'],
+    onConfirm: async () => true,
+  }).execute({ id: 'cart-1' });
+  assert.deepEqual(ok, { orderId: 'order-1' });
+  assert.equal(executions, 1);
+
+  const denied = await approved({
+    requireConfirmation: ['carts.complete'],
+    onConfirm: async () => false,
+  }).execute({ id: 'cart-1' });
+  assert.equal(denied.confirmed, false);
+  assert.equal(denied.tool, 'carts.complete');
+  assert.equal(executions, 1);
+
+  // Only exactly `true` approves: truthy-but-not-true denies.
+  const truthy = await approved({
+    requireConfirmation: ['carts.complete'],
+    onConfirm: async () => 'yes',
+  }).execute({ id: 'cart-1' });
+  assert.equal(truthy.confirmed, false);
+  assert.equal(executions, 1);
+
+  // No onConfirm: fail closed with a confirmationRequired preview, no execution.
+  const closed = await approved({ requireConfirmation: ['carts.complete'] }).execute({
+    id: 'cart-1',
+  });
+  assert.equal(closed.preview, true);
+  assert.equal(closed.confirmationRequired, true);
+  assert.equal(executions, 1);
+
+  // A throwing onConfirm rejects and never executes.
+  await assert.rejects(
+    approved({
+      requireConfirmation: ['carts.complete'],
+      onConfirm: async () => {
+        throw new Error('dialog crashed');
+      },
+    }).execute({ id: 'cart-1' }),
+    /dialog crashed/,
+  );
+  assert.equal(executions, 1);
+
+  // Reads can be gated too; they need no allowApply to run once confirmed.
+  let readExecutions = 0;
+  const [read] = createWebMCPTools([descriptor('read')], {
+    requireConfirmation: ['carts.complete'],
+    onConfirm: async () => true,
+    executeTool: async () => {
+      readExecutions++;
+      return { subtotal: '39.98' };
+    },
+  });
+  assert.deepEqual(await read.execute({}), { subtotal: '39.98' });
+  assert.equal(readExecutions, 1);
+});
+
+test('requireConfirmation accepts wire names and param-dependent predicates', async () => {
+  const { createWebMCPTools } = await import('../webmcp.mjs');
+  const make = (name) => ({
+    name,
+    permission: 'write',
+    description: `Run ${name}`,
+    inputSchema: { type: 'object', properties: {} },
+  });
+
+  // Wire `__` names normalize like filter entries.
+  const [wire] = createWebMCPTools([make('carts.complete')], {
+    requireConfirmation: ['carts__complete'],
+    onConfirm: async () => true,
+    allowApply: true,
+    executeTool: async () => 'applied',
+  });
+  assert.equal(wire.annotations.consequentialHint, true);
+  assert.equal(await wire.execute({}), 'applied');
+
+  // A param-dependent predicate gates at execution time. The static hint
+  // evaluates the predicate with empty params, so with allowApply off the hint
+  // stays false for param-conditional predicates.
+  let gated = 0;
+  const [conditional] = createWebMCPTools([make('carts.complete')], {
+    requireConfirmation: (toolName, params) =>
+      toolName === 'carts.complete' && params.id === 'big-cart',
+    onConfirm: async () => true,
+    allowApply: true,
+    executeTool: async () => {
+      gated++;
+      return 'applied';
+    },
+  });
+  assert.equal(await conditional.execute({ id: 'small-cart' }), 'applied');
+  assert.equal(await conditional.execute({ id: 'big-cart' }), 'applied');
+  assert.equal(gated, 2);
+
+  const [conditionalHint] = createWebMCPTools([make('carts.complete')], {
+    requireConfirmation: (toolName, params) =>
+      toolName === 'carts.complete' && params.id === 'big-cart',
+    executeTool: async () => 'applied',
+  });
+  assert.equal(conditionalHint.annotations.consequentialHint, false);
+
+  // A name-only predicate marks the tool consequential even without allowApply.
+  const [hinted] = createWebMCPTools([make('carts.complete')], {
+    requireConfirmation: (toolName) => toolName === 'carts.complete',
+    onConfirm: async () => true,
+    executeTool: async () => 'applied',
+  });
+  assert.equal(hinted.annotations.consequentialHint, true);
+  assert.equal(hinted.annotations.readOnlyHint, false);
+
+  // A throwing predicate fails the call without executing.
+  let throwingExecutions = 0;
+  const [throwing] = createWebMCPTools([make('carts.complete')], {
+    requireConfirmation: () => {
+      throw new Error('predicate bug');
+    },
+    onConfirm: async () => true,
+    executeTool: async () => {
+      throwingExecutions++;
+      return 'applied';
+    },
+  });
+  assert.equal(throwing.annotations.consequentialHint, false);
+  await assert.rejects(throwing.execute({}), /predicate bug/);
+  assert.equal(throwingExecutions, 0);
+});
+
+test('confirmation composes with the allowApply preview gate', async () => {
+  const { createWebMCPTools } = await import('../webmcp.mjs');
+  let executions = 0;
+  const [tool] = createWebMCPTools(
+    [
+      {
+        name: 'carts.complete',
+        permission: 'write',
+        description: 'Complete checkout and create order',
+        inputSchema: { type: 'object', properties: {} },
+      },
+    ],
+    {
+      requireConfirmation: ['carts.complete'],
+      onConfirm: async () => true,
+      // allowApply defaults to false: a confirmed write still previews.
+      executeTool: async () => {
+        executions++;
+        return 'applied';
+      },
+    },
+  );
+  const preview = await tool.execute({ id: 'cart-1' });
+  assert.equal(preview.preview, true);
+  assert.equal(preview.confirmationRequired, undefined);
+  assert.equal(executions, 0);
+});
+
+test('abort during buyer confirmation rejects without executing', async () => {
+  const { createWebMCPTools } = await import('../webmcp.mjs');
+  let executions = 0;
+  const controller = new AbortController();
+  const [tool] = createWebMCPTools(
+    [
+      {
+        name: 'carts.complete',
+        permission: 'write',
+        description: 'Complete checkout and create order',
+        inputSchema: { type: 'object', properties: {} },
+      },
+    ],
+    {
+      requireConfirmation: ['carts.complete'],
+      onConfirm: () => new Promise((resolve) => setTimeout(() => resolve(true), 50)),
+      allowApply: true,
+      executeTool: async () => {
+        executions++;
+        return 'applied';
+      },
+    },
+  );
+  const pending = tool.execute({ id: 'cart-1' }, { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(executions, 0);
+});
+
+test('invalid confirmation options fail fast', async () => {
+  const { createWebMCPTools } = await import('../webmcp.mjs');
+  const descriptor = {
+    name: 'carts.complete',
+    permission: 'write',
+    description: 'Complete checkout and create order',
+    inputSchema: { type: 'object', properties: {} },
+    execute: async () => ({}),
+  };
+  assert.throws(
+    () => createWebMCPTools([descriptor], { requireConfirmation: 'carts.complete' }),
+    TypeError,
+  );
+  assert.throws(() => createWebMCPTools([descriptor], { requireConfirmation: [42] }), TypeError);
+  assert.throws(() => createWebMCPTools([descriptor], { onConfirm: true }), TypeError);
+  // Empty allowlist gates nothing and stays valid.
+  assert.equal(createWebMCPTools([descriptor], { requireConfirmation: [] }).length, 1);
+});

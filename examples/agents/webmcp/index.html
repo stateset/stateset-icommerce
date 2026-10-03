@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
   <meta charset="utf-8" />
-  <title>StateSet WebMCP catalog</title>
+  <title>StateSet WebMCP checkout</title>
   <style>
     body {
       max-width: 760px;
@@ -12,6 +12,12 @@
     button {
       padding: 10px 16px;
       cursor: pointer;
+      margin-right: 8px;
+      margin-bottom: 8px;
+    }
+    button:disabled {
+      cursor: default;
+      opacity: 0.5;
     }
     pre {
       background: #f3f4f6;
@@ -19,14 +25,22 @@
       overflow: auto;
     }
   </style>
-  <h1>StateSet WebMCP catalog</h1>
+  <h1>StateSet WebMCP checkout</h1>
   <p id="status">Connecting commerce tools…</p>
-  <button id="catalog">List products</button>
+  <div>
+    <button id="catalog">List products</button>
+    <button id="build">Build demo cart</button>
+    <button id="review" disabled>Review cart</button>
+    <button id="checkout" disabled>Checkout</button>
+  </div>
   <pre id="output" aria-live="polite"></pre>
   <script type="module">
-    import { registerWebMCPTools } from '/webmcp.mjs';
+    import { createWebMCPTools, registerWebMCPTools } from '/webmcp.mjs';
     const output = document.querySelector('#output');
-    async function executeTool(name, params, { signal } = {}) {
+    const show = (value) => {
+      output.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    };
+    async function post(name, params, signal) {
       const response = await fetch('/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -35,22 +49,134 @@
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
-      output.textContent = JSON.stringify(result, null, 2);
       return result;
     }
+    const fail = (error) => show(error?.message || String(error));
+
+    let cartId = null;
+    let toolsByName = new Map();
+    const tool = (name) => toolsByName.get(name);
+    const call = async (name, params) => {
+      const result = await tool(name).execute(params);
+      if (result && typeof result === 'object' && result.error) {
+        throw new Error(`${result.error.code}: ${result.error.message}`);
+      }
+      return result;
+    };
+
+    // Buyer confirmation for the money move. The adapter calls this before
+    // `carts.complete` may run; only an exact `true` approves.
+    async function confirmCheckout({ tool: toolName, params }) {
+      const cart = await post('carts.get', { id: params.id });
+      if (cart?.error) return false;
+      const address = cart.shippingAddress || {};
+      return confirm(
+        [
+          'Complete this order?',
+          '',
+          `Items (${cart.itemCount}): ${cart.subtotalExact || cart.subtotal}`,
+          `Shipping: ${cart.shippingAmountExact || cart.shippingAmount || '0'}`,
+          `Tax: ${cart.taxAmountExact || cart.taxAmount || '0'}`,
+          `Total: ${cart.grandTotalExact || cart.grandTotal}`,
+          `Ship to: ${address.line1}, ${address.city} ${address.state} ${address.postalCode}`,
+          '',
+          'The demo charges nothing; this only records the order.',
+        ].join('\n'),
+      );
+    }
+
+    const DEMO_ADDRESS = {
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      line1: '1 Main St',
+      city: 'Novato',
+      state: 'CA',
+      postalCode: '94945',
+      country: 'US',
+    };
+
+    document.querySelector('#catalog').onclick = () =>
+      post('products.list', {}).then(show).catch(fail);
+
+    document.querySelector('#build').onclick = async () => {
+      try {
+        const products = await call('products.list', {});
+        const product = products[0];
+        if (!product) throw new Error('The demo catalog is empty.');
+        const cart = await call('carts.create', { input: { customerEmail: 'buyer@example.com' } });
+        cartId = cart.id;
+        await call('carts.addItem', {
+          cartId,
+          item: {
+            productId: product.id,
+            sku: 'DEMO-COFFEE',
+            name: product.name,
+            quantity: 1,
+            unitPriceExact: '19.99',
+          },
+        });
+        await call('carts.setShipping', {
+          id: cartId,
+          input: {
+            shippingAddress: DEMO_ADDRESS,
+            shippingMethod: 'standard',
+            shippingCarrier: 'demo',
+            shippingAmountExact: '5.00',
+          },
+        });
+        await call('carts.setPayment', { id: cartId, input: { paymentMethod: 'card' } });
+        show(await call('carts.recalculate', { id: cartId }));
+        document.querySelector('#review').disabled = false;
+        document.querySelector('#checkout').disabled = false;
+      } catch (error) {
+        fail(error);
+      }
+    };
+
+    document.querySelector('#review').onclick = async () => {
+      try {
+        const cart = await call('carts.get', { id: cartId });
+        const items = await call('carts.getItems', { cartId });
+        show({ ...cart, items });
+      } catch (error) {
+        fail(error);
+      }
+    };
+
+    document.querySelector('#checkout').onclick = async () => {
+      try {
+        // Goes through the WebMCP wrapper, so `confirmCheckout` runs first.
+        const result = await tool('carts.complete').execute({ id: cartId });
+        if (result && result.confirmed === false) {
+          show('Checkout cancelled by the buyer. The cart is unchanged.');
+          return;
+        }
+        show(result);
+        document.querySelector('#checkout').disabled = true;
+      } catch (error) {
+        fail(error);
+      }
+    };
+
     try {
       const response = await fetch('/api/tools');
       if (!response.ok) throw new Error('Could not load commerce tools');
       const descriptors = await response.json();
-      const registration = await registerWebMCPTools(descriptors, { executeTool });
+      const options = {
+        executeTool: (name, params, { signal } = {}) => post(name, params, signal),
+        // Completing an order needs explicit buyer approval, even though this
+        // trusted demo host enables allowApply for the cart-building writes.
+        requireConfirmation: ['carts.complete'],
+        onConfirm: confirmCheckout,
+      };
+      // Wrappers for the demo buttons; registration below exposes the same
+      // gated tools to the browser's modelContext for real agents.
+      toolsByName = new Map(createWebMCPTools(descriptors, options).map((t) => [t.name, t]));
+      const registration = await registerWebMCPTools(descriptors, options);
       document.querySelector('#status').textContent = registration.supported
         ? `Registered: ${registration.toolNames.join(', ')}`
-        : 'WebMCP is unavailable in this browser. You can still browse the catalog below.';
+        : 'WebMCP is unavailable in this browser. The buttons above still work.';
       // On a real SPA, call dispose when this view unmounts or the user signs out.
-      document.querySelector('#catalog').onclick = () =>
-        executeTool('products.list', {}).catch((error) => {
-          output.textContent = error.message;
-        });
     } catch (error) {
       document.querySelector('#status').textContent = error.message;
     }

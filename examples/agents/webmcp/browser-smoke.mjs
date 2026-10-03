@@ -84,7 +84,19 @@ try {
         }
       }),
     );
-    assert.deepEqual(result.names.sort(), ['products.get', 'products.list']);
+    assert.deepEqual(result.names.sort(), [
+      'carts.addItem',
+      'carts.beginCheckout',
+      'carts.complete',
+      'carts.create',
+      'carts.get',
+      'carts.getItems',
+      'carts.recalculate',
+      'carts.setPayment',
+      'carts.setShipping',
+      'products.get',
+      'products.list',
+    ]);
     assert.equal(result.productName, 'StateSet Demo Coffee');
     assert.equal(result.preview, true);
     assert.equal(result.executions, 0);
@@ -96,7 +108,19 @@ try {
     const afterCleanup = await page.evaluate(async () =>
       (await document.modelContext.getTools()).map((tool) => tool.name),
     );
-    assert.deepEqual(afterCleanup.sort(), ['products.get', 'products.list']);
+    assert.deepEqual(afterCleanup.sort(), [
+      'carts.addItem',
+      'carts.beginCheckout',
+      'carts.complete',
+      'carts.create',
+      'carts.get',
+      'carts.getItems',
+      'carts.recalculate',
+      'carts.setPayment',
+      'carts.setShipping',
+      'products.get',
+      'products.list',
+    ]);
     console.log(
       `Native WebMCP checks passed (${await browser.version()}): discovery, list/get, visible result, write preview, rollback, cleanup.`,
     );
