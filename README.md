@@ -94,6 +94,13 @@ transport boundary, or `--strict-protocol` to refuse pre-2026-07-28 clients.
 | **PyPI** | `pip install stateset-embedded==1.36.0` |
 | **CLI + MCP servers** | `npm install -g @stateset/cli@1.36.0` |
 
+After installing the Node package, verify it with
+`npm exec -- stateset-embedded-check --json`. The credential-free check runs an
+exact-decimal payment/refund lifecycle in a disposable in-memory engine and
+returns a nonzero exit code with install guidance on failure. It verifies local
+bookkeeping, not external payment settlement. See the
+[embedded installation check](bindings/node/README.md#verify-the-installation-without-credentials).
+
 The Ruby and WASM bindings have published packages that are not kept current:
 RubyGems `stateset_embedded` is at 0.1.9 and npm `@stateset/embedded-wasm` at
 0.7.22, both far behind 1.36.0. PHP, Java, Kotlin, Swift, .NET, and Go have no

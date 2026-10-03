@@ -24,6 +24,8 @@ const REQUIRED_PACKED_FILES = [
   'index.d.ts',
   'native-binding.js',
   'errors.js',
+  'self-test.mjs',
+  'bin/stateset-embedded-check.mjs',
   'canonical-json.mjs',
   'canonical-json.d.ts',
   'agent-toolkit.mjs',
@@ -143,6 +145,20 @@ function stageHostNativeBinding(packageDir) {
 }
 
 async function verifyPackedImports(packageDir) {
+  // Exercise the shipped command with only the platform binary available: no
+  // CLI peer, provider credentials, or access to the repository's node_modules.
+  const check = spawnSync(process.execPath, [
+    path.join(packageDir, 'bin/stateset-embedded-check.mjs'), '--json',
+  ], { cwd: packageDir, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(check.status, 0, `Packed offline check failed.\n${check.stderr || check.stdout}`);
+  const report = JSON.parse(check.stdout);
+  assert.equal(report.schemaVersion, 1);
+  assert.equal(report.ok, true);
+  assert.equal(report.scope, 'local-engine-only');
+  assert.equal(report.externalSettlementVerified, false);
+  assert.ok(report.checks.some(({ id, status }) => id === 'refund_completion' && status === 'passed'));
+  assert.ok(report.checks.some(({ id, status }) => id === 'cleanup' && status === 'passed'));
+
   const purchase = await import(pathToFileURL(path.join(packageDir, 'purchase-runtime.mjs')).href);
   assert.equal(typeof purchase.PurchaseRuntime, 'function');
   assert.equal(typeof purchase.SqlitePurchaseStore, 'function');
@@ -287,6 +303,7 @@ async function main() {
 
   const [pkg] = packOutput;
   const packedFiles = new Set((pkg.files || []).map((file) => file.path));
+  assert.equal(packageJson.bin?.['stateset-embedded-check'], 'bin/stateset-embedded-check.mjs');
 
   for (const requiredFile of REQUIRED_PACKED_FILES) {
     assert.ok(packedFiles.has(requiredFile), `Packed Node binding is missing ${requiredFile}.`);

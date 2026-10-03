@@ -6,6 +6,20 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- `@stateset/embedded` now ships `stateset-embedded-check`, a credential-free,
+  offline installation check for native loading and an in-memory exact-decimal
+  order/payment/refund lifecycle. It verifies idempotent payment retries, reports
+  structured JSON and nonzero failure exits, and is exercised from the packed
+  package in CI. The check validates local bookkeeping, not external settlement.
+
+### Fixed
+
+- Refreshed the Node binding lockfile's eight platform-package integrity hashes
+  from the published 1.36.0 npm metadata. Stale hashes made `npm ci` silently drop
+  the optional native binary, leaving the embedded engine unable to load.
+
 ## [1.36.0] - 2026-09-29
 
 ### Added

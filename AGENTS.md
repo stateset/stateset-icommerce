@@ -86,6 +86,13 @@ npm install @stateset/embedded             # Node.js (prebuilt per-platform bina
 pip install stateset-embedded              # Python (wheels for 5 platforms)
 ```
 
+After the Node install, run `npm exec -- stateset-embedded-check --json`.
+Require exit code 0 and `ok: true`. This offline check verifies native loading,
+an in-memory order/payment/refund lifecycle, exact amounts, and payment retry
+safety without API keys or persistent files. It checks local bookkeeping only;
+`externalSettlementVerified` is always `false`. Provider rails need separate
+sandbox validation. See [the check contract](bindings/node/README.md#verify-the-installation-without-credentials).
+
 Minimal working program (same shape in all three languages):
 
 ```javascript

@@ -1811,7 +1811,7 @@
       "version": "1.36.0",
       "runtime": "napi-rs",
       "entrypointCount": 10,
-      "packedFilePatternCount": 9,
+      "packedFilePatternCount": 10,
       "peerDependencies": [
         "@stateset/cli"
       ],
