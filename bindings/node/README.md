@@ -30,6 +30,50 @@ macOS x64/arm64 (11+), Windows x64/arm64. On older glibc (e.g. Ubuntu
 (`pip install stateset-embedded`), whose manylinux wheels and source
 fallback reach further back.
 
+### Verify the installation without credentials
+
+After installing, run the check shipped with the embedded package:
+
+```bash
+npm exec -- stateset-embedded-check --json
+```
+
+For a clean temporary install without a project:
+
+```bash
+npm exec --yes --package=@stateset/embedded -- stateset-embedded-check --json
+```
+
+The package download needs network access; the check itself is offline. It opens
+a fresh `:memory:` engine, creates an order, records an exact-decimal payment,
+checks safe payment retries (including conflicting amounts), records a refund,
+verifies the order's payment status, and closes the engine. It writes no database
+files and requires no API keys, wallets, provider accounts, or `@stateset/cli`.
+The writes are confined to the disposable in-memory fixture; this does not enable
+mutations in an agent toolkit or change its preview-first defaults.
+
+**This verifies local engine bookkeeping only.** `markCompleted` and
+`completeRefund` record local state; they do not charge a card or settle a payment.
+A passing check does not verify Stripe, x402, on-chain rails, or provider
+configuration. Test those separately in the provider's sandbox before live use.
+
+Omit `--json` for readable output. JSON stdout is one object with `schemaVersion: 1`,
+`ok`, package/version/runtime information, `scope: "local-engine-only"`,
+`externalSettlementVerified: false`, and ordered `checks`. Each check has an `id`
+and `status` (`passed` or `failed`); failures also include `code`, `message`, and
+`hint`. A failed step stops the lifecycle, but cleanup is still attempted and
+reported. No `--db` or provider options are accepted.
+
+Exit codes are **0** (all checks passed), **1** (engine/install check failed), and
+**2** (invalid arguments). `--help` works even when the native binary cannot load.
+Agents and CI should require both exit code 0 and `ok: true`.
+
+If the native binding is missing, check the npm install warnings and reinstall
+the same package version with `npm install --include=optional @stateset/embedded@<version>`.
+Do not omit optional dependencies: that is how npm installs your platform binary.
+For native load/ABI errors, check the platform and libc requirements above.
+Do not disable integrity verification to work around an install failure.
+
 ## Development
 
 Repo development uses the workspace-standard Node toolchain: Node `20.20.0+`

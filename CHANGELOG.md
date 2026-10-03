@@ -6,6 +6,14 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- `@stateset/embedded` now ships `stateset-embedded-check`, a credential-free,
+  offline installation check for native loading and an in-memory exact-decimal
+  order/payment/refund lifecycle. It verifies idempotent payment retries, reports
+  structured JSON and nonzero failure exits, and is exercised from the packed
+  package in CI. The check validates local bookkeeping, not external settlement.
+
 ## [1.36.0] - 2026-09-29
 
 ### Added
