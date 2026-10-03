@@ -1003,10 +1003,7 @@ mod tests {
             .expect("economic receipt")
             .with_settlement(EconomicSettlement {
                 rail: "x402".into(),
-                amount: AuthorityAmount::Asset(AssetAmountWire::new(
-                    Decimal::new(1250, 2),
-                    "USDC",
-                )),
+                amount: AuthorityAmount::Asset(AssetAmountWire::new(Decimal::new(1250, 2), "USDC")),
                 transaction_id: "0xdeadbeef".into(),
                 status: "settled".into(),
             });

@@ -225,12 +225,9 @@ impl Commerce {
             //
             // Settlement is recorded explicitly via domain commands (e.g. x402.settle) and
             // never inferred from a receipt alone.
-            "pay" => {
-                return Err(CommerceError::ValidationError(
-                    "payments.capture_unsupported: no capture provider is configured in-engine"
-                        .into(),
-                ));
-            }
+            "pay" => Err(CommerceError::ValidationError(
+                "payments.capture_unsupported: no capture provider is configured in-engine".into(),
+            )),
             "payments.create" => execute!(CreatePayment, execute_create_payment),
             "payments.create_refund" => execute!(CreateRefund, execute_create_refund),
             "inventory.reserve" => execute!(ReserveInventory, execute_reserve_inventory),
