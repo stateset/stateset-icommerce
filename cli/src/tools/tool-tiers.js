@@ -49,7 +49,7 @@ export const EXPERIMENTAL_REASONS = Object.freeze({
   erc8004: 'on-chain identity registry; needs a registry database and chain',
   treasury: 'on-chain stablecoin treasury; needs a configured chain and token',
   checkout:
-    'converting a payment link mints order, payment and escrow ids without creating any of them in the store; link totals are floats',
+    'payment links are new: conversion records buyer commitment, real orders link back via link_payment_link_order; contracts stabilized 2026-10',
   'circuit-breaker':
     'breaker state is held in process memory, not the store: a tripped breaker is closed again after a restart',
   // Tools
