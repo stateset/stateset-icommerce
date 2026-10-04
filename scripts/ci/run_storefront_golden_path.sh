@@ -47,7 +47,7 @@ run_audit_with_retries() {
       # Parsed success is final: do not retry further attempts.
       return 0
     fi
-    # Retry ONLY on registry/transport issues or unparseable responses.
+    # Retry ONLY on registry/transport issues or unparsable responses.
     if printf '%s' "${out}" | grep -qE 'did not return JSON|failed to invoke npm audit'; then
       echo "warning: npm audit gate could not obtain/parse a report (attempt ${attempt})" | tee -a "${LOG_PATH}"
       [[ ${attempt} -lt 3 ]] && sleep $((attempt * 5)) && continue
