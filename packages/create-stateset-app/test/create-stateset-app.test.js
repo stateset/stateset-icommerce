@@ -118,7 +118,8 @@ describe('scaffold', () => {
     );
 
     assert.equal(pkg.dependencies['@stateset/embedded'], `^${embeddedPkg.version}`);
-    assert.equal(pkg.dependencies.next, '16.3.3');
+    // Stay on the 16.3 patch line with the next/og RCE fix (GHSA-vcvr-r3jv-pc5j).
+    assert.equal(pkg.dependencies.next, '16.3.8');
     assert.equal(pkg.dependencies['better-sqlite3'], undefined);
     assert.equal(pkg.devDependencies['better-sqlite3'], undefined);
     assert.equal(pkg.scripts.lint, undefined);
