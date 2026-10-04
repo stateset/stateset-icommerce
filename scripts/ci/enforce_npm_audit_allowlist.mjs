@@ -82,12 +82,15 @@ function extractGhsaIdsFromUrl(url) {
   return m ? Array.from(new Set(m)) : [];
 }
 
-function collectGhsaIdsFromVuln(vuln, report, seenPkgs = new Set()) {
-  const ids = new Set();
-  if (!vuln) return ids;
-  // Some objects may carry a url directly (rare).
+function collectGhsaFindingsFromVuln(vuln, report, seenPkgs = new Set()) {
+  /** @type {{ id: string, fixAvailable: any }[]} */
+  const findings = [];
+  if (!vuln) return findings;
+  // If this vuln itself carries a URL with GHSA ids, pair them with this vuln's fixAvailable.
   if (vuln.url) {
-    for (const id of extractGhsaIdsFromUrl(vuln.url)) ids.add(id);
+    for (const id of extractGhsaIdsFromUrl(vuln.url)) {
+      findings.push({ id, fixAvailable: vuln.fixAvailable });
+    }
   }
   const via = Array.isArray(vuln.via) ? vuln.via : [];
   for (const entry of via) {
@@ -96,29 +99,31 @@ function collectGhsaIdsFromVuln(vuln, report, seenPkgs = new Set()) {
       const pkg = entry;
       if (!seenPkgs.has(pkg) && report.vulnerabilities && report.vulnerabilities[pkg]) {
         seenPkgs.add(pkg);
-        const nested = collectGhsaIdsFromVuln(report.vulnerabilities[pkg], report, seenPkgs);
-        for (const id of nested) ids.add(id);
+        const nested = collectGhsaFindingsFromVuln(report.vulnerabilities[pkg], report, seenPkgs);
+        findings.push(...nested);
       }
       continue;
     }
     if (entry && typeof entry === 'object') {
       if (entry.url) {
-        for (const id of extractGhsaIdsFromUrl(entry.url)) ids.add(id);
+        for (const id of extractGhsaIdsFromUrl(entry.url)) {
+          // Prefer entry.fixAvailable if present; otherwise inherit from this vuln.
+          findings.push({ id, fixAvailable: entry.fixAvailable ?? vuln.fixAvailable });
+        }
       }
       // Some entries may themselves have a nested `via` field.
       if (Array.isArray(entry.via)) {
-        for (const sub of collectGhsaIdsFromVuln(entry, report, seenPkgs)) {
-          ids.add(sub);
-        }
+        findings.push(...collectGhsaFindingsFromVuln(entry, report, seenPkgs));
       }
     }
   }
-  return ids;
+  return findings;
 }
 
 const violations = [];
 for (const [pkg, v] of relevant) {
-  const uniqueIds = Array.from(collectGhsaIdsFromVuln(v, report));
+  const findings = collectGhsaFindingsFromVuln(v, report);
+  const uniqueIds = [...new Set(findings.map((f) => f.id))];
   if (uniqueIds.length === 0) {
     violations.push({ pkg, reason: 'no GHSA id found in advisory URLs', ids: [] });
     continue;
@@ -127,21 +132,39 @@ for (const [pkg, v] of relevant) {
     if (!allowedIds.has(id)) {
       violations.push({ pkg, ids: [id], reason: 'id not on allowlist' });
     } else {
-      // Allowlisted: treat major-only fixes as allowed; fail on same-major fixes.
-      const fa = v.fixAvailable;
-      let isMajorOnly = false;
-      if (fa === true) {
-        // npm reports a generic fix without details; for allowlisted IDs that are
-        // known to have no patched release, treat this as major-only.
-        isMajorOnly = true;
-      } else if (fa && typeof fa === 'object') {
-        if (Array.isArray(fa)) {
-          isMajorOnly = fa.every((f) => f && typeof f === 'object' && f.isSemVerMajor === true);
+      // For this allowlisted id, aggregate all fixAvailable contexts observed along the via-chain.
+      const fas = findings.filter((f) => f.id === id).map((f) => f.fixAvailable);
+      // Rule:
+      // - Pass if EVERY observed context is either: no fixAvailable, or an object/array where all suggestions are isSemVerMajor === true.
+      // - Fail if ANY observed context indicates a same-major fix is available:
+      //     * boolean true (npm says a non-major fix exists)
+      //     * object/array suggestion where some has isSemVerMajor !== true
+      let failSameMajor = false;
+      for (const fa of fas) {
+        if (!fa) continue; // no fix reported -> allowed for allowlisted id
+        if (fa === true) {
+          failSameMajor = true;
+          break;
+        }
+        if (typeof fa === 'object') {
+          if (Array.isArray(fa)) {
+            if (fa.some((f) => !f || typeof f !== 'object' || f.isSemVerMajor !== true)) {
+              failSameMajor = true;
+              break;
+            }
+          } else {
+            if (fa.isSemVerMajor !== true) {
+              failSameMajor = true;
+              break;
+            }
+          }
         } else {
-          isMajorOnly = fa.isSemVerMajor === true;
+          // Unexpected type: be conservative and treat as same-major
+          failSameMajor = true;
+          break;
         }
       }
-      if (fa && !isMajorOnly) {
+      if (failSameMajor) {
         violations.push({ pkg, ids: [id], reason: 'same-major fix available for allowlisted advisory' });
       }
     }
