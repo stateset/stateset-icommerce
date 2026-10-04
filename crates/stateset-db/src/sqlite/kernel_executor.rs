@@ -4523,15 +4523,24 @@ impl SqliteKernelExecutor {
                 StorefrontAggregate::Payment,
                 target.clone(),
                 |tx| {
-                    let status: String = tx
+                    // A capture requires a configured capture provider. Today that is expressed
+                    // by the payment's `processor` field. When none is configured, remain
+                    // unsupported: do not record completion.
+                    let (status, processor): (String, Option<String>) = tx
                         .query_row(
-                            "SELECT status FROM payments WHERE id = ?",
+                            "SELECT status, processor FROM payments WHERE id = ?",
                             [input.payment_id.to_string()],
-                            |row| row.get(0),
+                            |row| Ok((row.get(0)?, row.get(1)?)),
                         )
                         .optional()
                         .map_err(map_db_error)?
                         .ok_or(CommerceError::NotFound)?;
+                    if processor.as_deref().is_none_or(str::is_empty) {
+                        return Err(CommerceError::ValidationError(
+                            "payments.capture_unsupported: no capture provider is configured in-engine"
+                                .into(),
+                        ));
+                    }
                     refuse_recapture(&status)?;
                     mark_completed_tx(tx, input.payment_id, Utc::now()).map_err(map_db_error)?;
                     let payment = tx

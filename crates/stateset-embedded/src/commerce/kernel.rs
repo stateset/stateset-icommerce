@@ -371,6 +371,95 @@ mod tests {
     }
 
     #[test]
+    fn payments_complete_is_unsupported_without_configured_processor() {
+        use stateset_core::{CreatePayment, PaymentMethodType};
+        let commerce = Commerce::in_memory().expect("in-memory commerce");
+        // Allow the completion command under policy; the provider guard is domain-level.
+        let policy = KernelPolicy::new("payments-complete-policy")
+            .allow("payments.complete", KernelCommandPolicy::requiring(["payments.complete"]));
+        // Create a pending payment with no processor configured.
+        let payment = commerce
+            .payments()
+            .create(CreatePayment {
+                amount: Decimal::new(1000, 2),
+                payment_method: PaymentMethodType::CreditCard,
+                ..Default::default()
+            })
+            .expect("create payment");
+        // Build the governed completion command.
+        let mut command = CommandEnvelope::preview(
+            "payments.complete",
+            "complete-no-provider",
+            KernelPrincipal {
+                id: "agent:test".into(),
+                kind: PrincipalKind::Agent,
+                tenant_id: Some("tenant:test".into()),
+                delegated_by: Some("user:test".into()),
+                capabilities: vec!["payments.complete".into()],
+            },
+            CompletePayment { payment_id: payment.id },
+        )
+        .into_apply();
+        command.store_id = Some("store:test".into());
+        let receipt = commerce
+            .kernel_executor(policy)
+            .expect("executor")
+            .execute_complete_payment(&command)
+            .expect("run");
+        assert_eq!(receipt.status, ExecutionStatus::Rejected);
+        // Surface remains a typed business rejection; message should include the unsupported marker.
+        assert!(
+            receipt
+                .error_message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("payments.capture_unsupported"),
+            "expected unsupported-capture message, got: {:?}",
+            receipt.error_message
+        );
+    }
+
+    #[test]
+    fn payments_complete_succeeds_with_test_double_processor() {
+        use stateset_core::{CreatePayment, PaymentMethodType};
+        let commerce = Commerce::in_memory().expect("in-memory commerce");
+        let policy = KernelPolicy::new("payments-complete-policy")
+            .allow("payments.complete", KernelCommandPolicy::requiring(["payments.complete"]));
+        // Configure a test-double processor on the payment.
+        let payment = commerce
+            .payments()
+            .create(CreatePayment {
+                amount: Decimal::new(2500, 2),
+                payment_method: PaymentMethodType::CreditCard,
+                processor: Some("test-double".into()),
+                ..Default::default()
+            })
+            .expect("create payment");
+        let mut command = CommandEnvelope::preview(
+            "payments.complete",
+            "complete-with-provider",
+            KernelPrincipal {
+                id: "agent:test".into(),
+                kind: PrincipalKind::Agent,
+                tenant_id: Some("tenant:test".into()),
+                delegated_by: Some("user:test".into()),
+                capabilities: vec!["payments.complete".into()],
+            },
+            CompletePayment { payment_id: payment.id },
+        )
+        .into_apply();
+        command.store_id = Some("store:test".into());
+        let receipt = commerce
+            .kernel_executor(policy)
+            .expect("executor")
+            .execute_complete_payment(&command)
+            .expect("run");
+        assert_eq!(receipt.status, ExecutionStatus::Succeeded);
+        let stored = commerce.payments().get(payment.id).expect("get").expect("found");
+        assert_eq!(stored.status, stateset_core::PaymentTransactionStatus::Completed);
+    }
+
+    #[test]
     fn bare_pay_command_surfaces_unsupported_capture() {
         // Build the minimal envelope shape needed for dispatch to read command_type.
         let commerce = Commerce::in_memory().expect("in-memory commerce");
