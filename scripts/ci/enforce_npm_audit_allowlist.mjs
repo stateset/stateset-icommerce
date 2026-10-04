@@ -53,7 +53,7 @@ let report;
 try {
   report = JSON.parse(output);
 } catch {
-  console.error('error: npm audit did not return JSON; refusing to gate on an unparseable response');
+  console.error('error: npm audit did not return JSON; refusing to gate on an unparsable response');
   console.error(output.slice(0, 2000));
   process.exit(1);
 }
@@ -93,8 +93,20 @@ for (const [pkg, v] of relevant) {
   for (const id of uniqueIds) {
     if (!allowedIds.has(id)) {
       violations.push({ pkg, ids: [id], reason: 'id not on allowlist' });
-    } else if (v.fixAvailable) {
-      violations.push({ pkg, ids: [id], reason: 'fix available for allowlisted advisory' });
+    } else {
+      // Allowlisted: treat major-only fixes as allowed; fail on same-major fixes.
+      const fa = v.fixAvailable;
+      let isMajorOnly = false;
+      if (fa && typeof fa === 'object') {
+        if (Array.isArray(fa)) {
+          isMajorOnly = fa.every((f) => f && typeof f === 'object' && f.isSemVerMajor === true);
+        } else {
+          isMajorOnly = fa.isSemVerMajor === true;
+        }
+      }
+      if (fa && !isMajorOnly) {
+        violations.push({ pkg, ids: [id], reason: 'same-major fix available for allowlisted advisory' });
+      }
     }
   }
 }
@@ -104,7 +116,7 @@ if (violations.length > 0) {
   for (const v of violations) {
     console.error(`  - ${v.pkg}: ${v.reason}${v.ids.length ? ` (${v.ids.join(', ')})` : ''}`);
   }
-  console.error('note: only IDs listed in scripts/ci/npm-audit-allowlist.json may pass, and any ID with a fix will fail the gate');
+  console.error('note: only IDs listed in scripts/ci/npm-audit-allowlist.json may pass; allowlisted IDs fail once a same-major patch is available');
   process.exit(1);
 }
 

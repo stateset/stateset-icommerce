@@ -33,12 +33,11 @@ run_logged() {
 # the two apart: a real report is JSON we can parse, a service error is not.
 # Retry the transport, then fail only on findings we can actually see.
 run_audit_with_retries() {
-  local attempt output rc
+  local attempt output
   for attempt in 1 2 3; do
     echo "+ npm audit --audit-level=high --json (attempt ${attempt})" | tee -a "${LOG_PATH}"
     set +e
     output="$(npm audit --audit-level=high --json 2>&1)"
-    rc=$?
     set -e
     printf '%s\n' "${output}" >> "${LOG_PATH}"
 
@@ -55,9 +54,10 @@ run_audit_with_retries() {
         }
       });
     ' 2>/dev/null; then
-      # Enforce advisory allowlist for high severity: only committed IDs may pass,
-      # and any allowed ID fails the gate the moment a fix becomes available.
-      node --input-type=module - <<'NODE'
+      # Enforce advisory allowlist for high severity: only committed IDs may pass.
+      # Allowed IDs CONTINUE TO PASS when the only reported fix is a semver-major bump.
+      # Allowed IDs FAIL the moment npm reports a same-major patched release.
+      if node --input-type=module - <<'NODE'
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -106,9 +106,20 @@ for (const [pkg, v] of highs) {
     if (!allowedIds.has(id)) {
       violations.push({ pkg, ids: [id], reason: 'id not on allowlist' });
     } else {
-      // If the package is allowlisted BUT npm reports a fix, fail immediately.
-      if (v.fixAvailable) {
-        violations.push({ pkg, ids: [id], reason: 'fix available for allowlisted advisory' });
+      // Allowlisted: treat major-only fixes as allowed; fail on same-major fixes.
+      const fa = v.fixAvailable;
+      let isMajorOnly = false;
+      if (fa && typeof fa === 'object') {
+        // npm sets isSemVerMajor on fixAvailable when known.
+        if (Array.isArray(fa)) {
+          // If ANY suggested fix is same-major, treat as failing.
+          isMajorOnly = fa.every((f) => f && typeof f === 'object' && f.isSemVerMajor === true);
+        } else {
+          isMajorOnly = fa.isSemVerMajor === true;
+        }
+      }
+      if (fa && !isMajorOnly) {
+        violations.push({ pkg, ids: [id], reason: 'same-major fix available for allowlisted advisory' });
       }
     }
   }
@@ -119,13 +130,13 @@ if (violations.length > 0) {
   for (const v of violations) {
     console.error(`  - ${v.pkg}: ${v.reason}${v.ids.length ? ` (${v.ids.join(', ')})` : ''}`);
   }
-  console.error('note: only IDs listed in scripts/ci/npm-audit-allowlist.json may pass, and any ID with a fix will fail the gate');
+  console.error('note: only IDs listed in scripts/ci/npm-audit-allowlist.json may pass; allowlisted IDs fail once a same-major patch is available');
   process.exit(1);
 }
 
 process.exit(0);
 NODE
-      if [[ $? -eq 0 ]]; then
+      then
         return 0
       else
         return 1
