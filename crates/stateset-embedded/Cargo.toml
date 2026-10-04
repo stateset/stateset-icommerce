@@ -88,3 +88,8 @@ required-features = ["sqlite"]
 name = "basic_usage"
 path = "../../examples/basic_usage.rs"
 required-features = ["sqlite"]
+
+[[example]]
+name = "ten_minute_embed"
+path = "../../examples/ten_minute_embed.rs"
+required-features = ["sqlite"]
