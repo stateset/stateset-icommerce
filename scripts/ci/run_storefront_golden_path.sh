@@ -37,13 +37,26 @@ run_audit_with_retries() {
   for attempt in 1 2 3; do
     echo "+ node ${REPO_ROOT}/scripts/ci/enforce_npm_audit_allowlist.mjs --level high --allowlist ${REPO_ROOT}/scripts/ci/npm-audit-allowlist.json (attempt ${attempt})" | tee -a "${LOG_PATH}"
     # Run the shared gate in the storefront directory; it invokes `npm audit` itself.
-    if node "${REPO_ROOT}/scripts/ci/enforce_npm_audit_allowlist.mjs" --level high --allowlist "${REPO_ROOT}/scripts/ci/npm-audit-allowlist.json" 2>&1 | tee -a "${LOG_PATH}"; then
+    local out rc
+    set +e
+    out="$(node "${REPO_ROOT}/scripts/ci/enforce_npm_audit_allowlist.mjs" --level high --allowlist "${REPO_ROOT}/scripts/ci/npm-audit-allowlist.json" 2>&1)"
+    rc=$?
+    set -e
+    printf '%s\n' "${out}" | tee -a "${LOG_PATH}"
+    if [[ ${rc} -eq 0 ]]; then
+      # Parsed success is final: do not retry further attempts.
       return 0
     fi
-    echo "warning: npm audit allowlist gate failed (attempt ${attempt})" | tee -a "${LOG_PATH}"
-    [[ ${attempt} -lt 3 ]] && sleep $((attempt * 5))
+    # Retry ONLY on registry/transport issues or unparseable responses.
+    if printf '%s' "${out}" | grep -qE 'did not return JSON|failed to invoke npm audit'; then
+      echo "warning: npm audit gate could not obtain/parse a report (attempt ${attempt})" | tee -a "${LOG_PATH}"
+      [[ ${attempt} -lt 3 ]] && sleep $((attempt * 5)) && continue
+    fi
+    # Parsed failure is final: do not retry.
+    echo "error: npm audit allowlist gate failed with a parsed report" | tee -a "${LOG_PATH}"
+    return 1
   done
-  echo "error: npm audit allowlist gate failed after 3 attempts" >&2
+  echo "error: npm audit allowlist gate failed after 3 attempts (no parseable report)" >&2
   return 1
 }
 
