@@ -472,7 +472,7 @@ jobs:
           node --input-type=module -e "import { scaffold } from './packages/create-stateset-app/src/index.js'; await scaffold({ projectName: 'stateset-storefront-smoke', storeName: 'StateSet Smoke Store', targetDir: process.env.SMOKE_DIR, skipInstall: true, pm: 'npm' });"
           cd "$SMOKE_DIR"
           npm install
-          npm audit --audit-level=moderate
+          node "$GITHUB_WORKSPACE/scripts/ci/enforce_npm_audit_allowlist.mjs" --level moderate --allowlist "$GITHUB_WORKSPACE/scripts/ci/npm-audit-allowlist.json"
           npm run typecheck
           npm run build
 

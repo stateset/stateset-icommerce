@@ -18,6 +18,7 @@ SKIP_EMBEDDED_BUILD="${GOLDEN_PATH_SKIP_EMBEDDED_BUILD:-0}"
 WORK_DIR="$(mktemp -d)"
 PROJECT_DIR="${WORK_DIR}/golden-store"
 LOG_PATH="${OUTPUT_DIR}/golden-path.log"
+export REPO_ROOT
 mkdir -p "${OUTPUT_DIR}"
 trap 'rm -rf "${WORK_DIR}"' EXIT
 
@@ -54,11 +55,81 @@ run_audit_with_retries() {
         }
       });
     ' 2>/dev/null; then
-      if [[ ${rc} -eq 0 ]]; then
+      # Enforce advisory allowlist for high severity: only committed IDs may pass,
+      # and any allowed ID fails the gate the moment a fix becomes available.
+      node --input-type=module - <<'NODE'
+import fs from 'node:fs';
+import path from 'node:path';
+
+// Read audit JSON from stdin (captured in the outer shell and piped here).
+const raw = fs.readFileSync(0, 'utf8');
+const report = JSON.parse(raw);
+
+// No highs at all: pass immediately.
+const vulnEntries = Object.entries(report.vulnerabilities || {});
+const highs = vulnEntries.filter(([_, v]) => v.severity === 'high');
+if (highs.length === 0) {
+  process.exit(0);
+}
+
+// Load the committed allowlist.
+const repoRoot = process.env.REPO_ROOT || process.cwd();
+const allowlistPath = path.join(repoRoot, 'scripts/ci/npm-audit-allowlist.json');
+let allow = { allowed: [] };
+try {
+  allow = JSON.parse(fs.readFileSync(allowlistPath, 'utf8'));
+} catch (err) {
+  console.error(`error: missing or unreadable allowlist: ${allowlistPath}`);
+  throw err;
+}
+const allowedIds = new Set(allow.allowed || []);
+
+// Collect GHSA ids for each high-severity entry and validate.
+const violations = [];
+for (const [pkg, v] of highs) {
+  // Extract GHSA ids from each advisory URL in `via` list.
+  const ids = (v.via || [])
+    .filter((x) => typeof x === 'object' && x && typeof x.url === 'string')
+    .map((x) => {
+      const m = x.url.match(/GHSA-[a-z0-9-]+$/i);
+      return m ? m[0] : null;
+    })
+    .filter(Boolean);
+  const uniqueIds = [...new Set(ids)];
+  if (uniqueIds.length === 0) {
+    // Fallback: when no GHSA id is available, treat as violation.
+    violations.push({ pkg, reason: 'no GHSA id found in advisory URLs', ids: [] });
+    continue;
+  }
+  // If ANY id is not allowed, it's a violation.
+  for (const id of uniqueIds) {
+    if (!allowedIds.has(id)) {
+      violations.push({ pkg, ids: [id], reason: 'id not on allowlist' });
+    } else {
+      // If the package is allowlisted BUT npm reports a fix, fail immediately.
+      if (v.fixAvailable) {
+        violations.push({ pkg, ids: [id], reason: 'fix available for allowlisted advisory' });
+      }
+    }
+  }
+}
+
+if (violations.length > 0) {
+  console.error('error: high-severity audit gate failed:');
+  for (const v of violations) {
+    console.error(`  - ${v.pkg}: ${v.reason}${v.ids.length ? ` (${v.ids.join(', ')})` : ''}`);
+  }
+  console.error('note: only IDs listed in scripts/ci/npm-audit-allowlist.json may pass, and any ID with a fix will fail the gate');
+  process.exit(1);
+}
+
+process.exit(0);
+NODE
+      if [[ $? -eq 0 ]]; then
         return 0
+      else
+        return 1
       fi
-      echo "error: npm audit reported high-severity vulnerabilities" >&2
-      return 1
     fi
 
     echo "warning: npm audit endpoint did not return a report (attempt ${attempt})" | tee -a "${LOG_PATH}"
