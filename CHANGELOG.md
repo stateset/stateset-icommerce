@@ -6,6 +6,13 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Security
+
+- Upgrade the generated storefront's Next.js pin from 16.3.3 to 16.3.8,
+  including the `next/og` ImageResponse fix for GHSA-vcvr-r3jv-pc5j. This
+  stays on the same minor release; the separate unpatched `braces` advisory
+  in Tailwind CSS 3's development dependencies still blocks the audit gate.
+
 ## [1.36.0] - 2026-09-29
 
 ### Added
