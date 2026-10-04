@@ -76,16 +76,49 @@ try {
 }
 const allowedIds = new Set(allow.allowed || []);
 
+function extractGhsaIdsFromUrl(url) {
+  if (typeof url !== 'string') return [];
+  const m = url.match(/GHSA-[a-z0-9-]+/gi);
+  return m ? Array.from(new Set(m)) : [];
+}
+
+function collectGhsaIdsFromVuln(vuln, report, seenPkgs = new Set()) {
+  const ids = new Set();
+  if (!vuln) return ids;
+  // Some objects may carry a url directly (rare).
+  if (vuln.url) {
+    for (const id of extractGhsaIdsFromUrl(vuln.url)) ids.add(id);
+  }
+  const via = Array.isArray(vuln.via) ? vuln.via : [];
+  for (const entry of via) {
+    if (typeof entry === 'string') {
+      // Reference to another package's vulnerability object
+      const pkg = entry;
+      if (!seenPkgs.has(pkg) && report.vulnerabilities && report.vulnerabilities[pkg]) {
+        seenPkgs.add(pkg);
+        const nested = collectGhsaIdsFromVuln(report.vulnerabilities[pkg], report, seenPkgs);
+        for (const id of nested) ids.add(id);
+      }
+      continue;
+    }
+    if (entry && typeof entry === 'object') {
+      if (entry.url) {
+        for (const id of extractGhsaIdsFromUrl(entry.url)) ids.add(id);
+      }
+      // Some entries may themselves have a nested `via` field.
+      if (Array.isArray(entry.via)) {
+        for (const sub of collectGhsaIdsFromVuln(entry, report, seenPkgs)) {
+          ids.add(sub);
+        }
+      }
+    }
+  }
+  return ids;
+}
+
 const violations = [];
 for (const [pkg, v] of relevant) {
-  const ids = (v.via || [])
-    .filter((x) => typeof x === 'object' && x && typeof x.url === 'string')
-    .map((x) => {
-      const m = x.url.match(/GHSA-[a-z0-9-]+$/i);
-      return m ? m[0] : null;
-    })
-    .filter(Boolean);
-  const uniqueIds = [...new Set(ids)];
+  const uniqueIds = Array.from(collectGhsaIdsFromVuln(v, report));
   if (uniqueIds.length === 0) {
     violations.push({ pkg, reason: 'no GHSA id found in advisory URLs', ids: [] });
     continue;
