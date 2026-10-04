@@ -251,7 +251,7 @@
       "module": "checkout",
       "toolModulePresent": true,
       "commandFilePresent": true,
-      "actionCount": 8,
+      "actionCount": 9,
       "aliasCount": 2,
       "coverageStyle": "custom",
       "toolBacked": false,

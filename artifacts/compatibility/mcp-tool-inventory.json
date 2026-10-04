@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 975,
+  "totalTools": 976,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 957
+      "count": 958
     },
     {
       "name": "stateset-scaffold",
@@ -95,7 +95,7 @@
     },
     {
       "name": "checkout",
-      "count": 8
+      "count": 9
     },
     {
       "name": "circuit_breaker",
@@ -397,14 +397,14 @@
     },
     {
       "name": "write",
-      "count": 426
+      "count": 427
     }
   ],
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
     "read": 481,
-    "write": 426
+    "write": 427
   },
   "tools": [
     {
@@ -2002,7 +2002,7 @@
     },
     {
       "name": "agent_instant_checkout",
-      "description": "Agent-to-agent instant checkout. Creates a payment link and converts it in one step. Returns order and escrow IDs for A2A settlement.",
+      "description": "Agent-to-agent instant checkout. Creates a payment link and records the buyer agent's commitment in one step. Does not create an order, payment, or escrow — settle via the A2A escrow tools and record the real order with link_payment_link_order.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__agent_instant_checkout",
@@ -4594,7 +4594,7 @@
     },
     {
       "name": "express_checkout",
-      "description": "One-call checkout from a payment link. Converts the link into an order and payment.",
+      "description": "One-call checkout from a payment link. Records the buyer's commitment to the link terms and returns the items/total. Does not create an order or payment — build the real order with the checkout trio (get_checkout, update_checkout, complete_checkout), then record it with link_payment_link_order.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__express_checkout",
@@ -6066,6 +6066,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__install_wasm_connector",
       "policyDomain": "connectors",
+      "permission": "write"
+    },
+    {
+      "name": "link_payment_link_order",
+      "description": "Record the real order (and payment) created from a converted payment link. Links the merchant order system back to the link; order/payment IDs are never minted by the link service.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__link_payment_link_order",
+      "policyDomain": "checkout",
       "permission": "write"
     },
     {

@@ -13,6 +13,8 @@
 
 import { randomUUID, randomBytes } from 'node:crypto';
 
+import { addDecimals, multiplyDecimals, roundDecimal } from '../utils/exact-decimal.js';
+
 // ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------
@@ -24,6 +26,7 @@ CREATE TABLE IF NOT EXISTS payment_links (
   items TEXT NOT NULL DEFAULT '[]',
   currency TEXT NOT NULL DEFAULT 'USD',
   total REAL NOT NULL,
+  total_exact TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   customer_id TEXT,
   metadata TEXT,
@@ -122,12 +125,20 @@ function validateItems(items) {
 
 /**
  * Calculate total from line items: sum(quantity * unitPrice), rounded to 2 decimals.
+ *
+ * Money is never floats: the total is computed with exact decimal arithmetic
+ * and returned as a decimal string (e.g. '39.98').
+ *
  * @param {Array} items
- * @returns {number}
+ * @returns {string} Exact decimal total, 2 decimal places
  */
 function calculateTotal(items) {
-  const raw = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
-  return Math.round(raw * 100) / 100;
+  const sum = items.reduce(
+    (acc, item) =>
+      addDecimals(acc, multiplyDecimals(String(item.quantity), String(item.unitPrice))),
+    '0',
+  );
+  return roundDecimal(sum, 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -146,15 +157,25 @@ export function createExpressCheckout(store) {
   // Ensure tables exist
   db.exec(CHECKOUT_SCHEMA);
 
+  // Migrate pre-existing databases: backfill the exact-decimal total.
+  // `total` was stored as a REAL float; total_exact is the source of truth.
+  const columns = db.prepare('PRAGMA table_info(payment_links)').all();
+  if (!columns.some((c) => c.name === 'total_exact')) {
+    db.exec('ALTER TABLE payment_links ADD COLUMN total_exact TEXT');
+    db.exec(
+      "UPDATE payment_links SET total_exact = printf('%.2f', total) WHERE total_exact IS NULL",
+    );
+  }
+
   // -------------------------------------------------------------------
   // Prepared statements (lazily cached)
   // -------------------------------------------------------------------
 
   const stmtInsert = db.prepare(`
     INSERT INTO payment_links
-      (id, short_code, items, currency, total, status, customer_id, metadata, views, conversions, expires_at, created_at, updated_at)
+      (id, short_code, items, currency, total, total_exact, status, customer_id, metadata, views, conversions, expires_at, created_at, updated_at)
     VALUES
-      (@id, @short_code, @items, @currency, @total, @status, @customer_id, @metadata, 0, 0, @expires_at, @created_at, @updated_at)
+      (@id, @short_code, @items, @currency, @total, @total_exact, @status, @customer_id, @metadata, 0, 0, @expires_at, @created_at, @updated_at)
   `);
 
   const stmtById = db.prepare('SELECT * FROM payment_links WHERE id = ?');
@@ -172,9 +193,15 @@ export function createExpressCheckout(store) {
     SET status = 'converted',
         conversions = conversions + 1,
         converted_at = @converted_at,
-        order_id = @order_id,
-        payment_id = @payment_id,
         customer_id = COALESCE(@customer_id, customer_id),
+        updated_at = @updated_at
+    WHERE id = @id
+  `);
+
+  const stmtLinkOrder = db.prepare(`
+    UPDATE payment_links
+    SET order_id = @order_id,
+        payment_id = @payment_id,
         updated_at = @updated_at
     WHERE id = @id
   `);
@@ -227,7 +254,7 @@ export function createExpressCheckout(store) {
    * @param {number|null} [params.expiresIn=86400] Seconds until expiry, null for no expiry
    * @param {object}  [params.metadata]
    * @param {string}  [params.customerId]
-   * @returns {{ linkId:string, shortCode:string, url:string, total:number, expiresAt:string|null, status:string }}
+   * @returns {{ linkId:string, shortCode:string, url:string, total:number, totalExact:string, expiresAt:string|null, status:string }}
    */
   function createPaymentLink({
     items,
@@ -243,7 +270,7 @@ export function createExpressCheckout(store) {
       throw new Error(`Unsupported currency: ${currency}`);
     }
 
-    const total = calculateTotal(items);
+    const totalExact = calculateTotal(items);
     const linkId = randomUUID();
     const shortCode = generateShortCode();
     const now = new Date().toISOString();
@@ -257,7 +284,8 @@ export function createExpressCheckout(store) {
       short_code: shortCode,
       items: JSON.stringify(items),
       currency: upperCurrency,
-      total,
+      total: Number(totalExact),
+      total_exact: totalExact,
       status: 'active',
       customer_id: customerId || null,
       metadata: metadata ? JSON.stringify(metadata) : null,
@@ -270,7 +298,8 @@ export function createExpressCheckout(store) {
       linkId,
       shortCode,
       url: `https://pay.stateset.com/l/${shortCode}`,
-      total,
+      total: Number(totalExact),
+      totalExact,
       expiresAt,
       status: 'active',
     };
@@ -297,6 +326,7 @@ export function createExpressCheckout(store) {
       link,
       items: link.items,
       total: link.total,
+      totalExact: link.total_exact,
       expired,
       status: expired && link.status === 'active' ? 'expired' : link.status,
     };
@@ -305,12 +335,18 @@ export function createExpressCheckout(store) {
   /**
    * One-call express checkout from a payment link.
    *
+   * Records the buyer's commitment to the link's terms. This does NOT create
+   * an order or payment — those live in the merchant's order system. After
+   * creating the real order (e.g. via the checkout trio: get_checkout,
+   * update_checkout, complete_checkout), record it with `linkOrder` so the
+   * payment link points at the real order.
+   *
    * @param {object} params
    * @param {string} params.linkId  Payment link ID or short code
    * @param {string} [params.customerId]
    * @param {string} [params.paymentMethod]
    * @param {string} [params.walletAddress]
-   * @returns {{ orderId:string, paymentId:string, shortCode:string }}
+   * @returns {{ linkId:string, shortCode:string, convertedAt:string, items:Array, currency:string, totalExact:string }}
    */
   function expressCheckout({
     linkId,
@@ -331,29 +367,62 @@ export function createExpressCheckout(store) {
       throw new Error('Payment link has expired');
     }
 
-    const orderId = randomUUID();
-    const paymentId = randomUUID();
     const now = new Date().toISOString();
 
     stmtConvert.run({
       id: row.id,
       converted_at: now,
-      order_id: orderId,
-      payment_id: paymentId,
       customer_id: customerId || null,
       updated_at: now,
     });
 
     return {
-      orderId,
-      paymentId,
+      linkId: row.id,
       shortCode: row.short_code,
+      convertedAt: now,
+      items: link.items,
+      currency: link.currency,
+      totalExact: link.total_exact,
     };
   }
 
   /**
+   * Record the real order (and payment) created from a converted payment link.
+   * Links the merchant's order system back to the link; `order_id`/`payment_id`
+   * stay NULL until this is called — they are never minted.
+   *
+   * @param {string} linkId  Payment link ID or short code
+   * @param {object} params
+   * @param {string} params.orderId  Real order ID from the order system
+   * @param {string} [params.paymentId]  Real payment ID, when known
+   * @returns {{ success:boolean, linkId:string, orderId:string, paymentId:string|null }}
+   */
+  function linkOrder(linkId, { orderId, paymentId } = {}) {
+    if (!linkId) throw new Error('linkId is required');
+    if (!orderId) throw new Error('orderId is required');
+
+    const row = _findLink(linkId);
+    if (!row) throw new Error(`Payment link not found: ${linkId}`);
+    if (row.status !== 'converted') {
+      throw new Error(`Payment link is not converted (status: ${row.status})`);
+    }
+
+    stmtLinkOrder.run({
+      id: row.id,
+      order_id: orderId,
+      payment_id: paymentId || null,
+      updated_at: new Date().toISOString(),
+    });
+
+    return { success: true, linkId: row.id, orderId, paymentId: paymentId || null };
+  }
+
+  /**
    * Agent-to-agent instant checkout.
-   * Creates a payment link and immediately converts it.
+   * Creates a payment link and immediately converts it. This records the
+   * buyer agent's commitment; it does NOT create an order, payment, or
+   * escrow. Settle via the A2A escrow tools and record the real order with
+   * `linkOrder`.
    *
    * @param {object} params
    * @param {string} params.buyerAgent
@@ -361,7 +430,7 @@ export function createExpressCheckout(store) {
    * @param {Array}  params.items
    * @param {string} [params.paymentMethod]
    * @param {string} [params.currency='USD']
-   * @returns {{ orderId:string, escrowId:string, linkId:string }}
+   * @returns {{ linkId:string, shortCode:string, convertedAt:string, items:Array, currency:string, totalExact:string }}
    */
   function agentCheckout({ buyerAgent, sellerAgent, items, paymentMethod, currency = 'USD' } = {}) {
     if (!buyerAgent) throw new Error('buyerAgent is required');
@@ -385,12 +454,13 @@ export function createExpressCheckout(store) {
       customerId: buyerAgent,
     });
 
-    const escrowId = randomUUID();
-
     return {
-      orderId: result.orderId,
-      escrowId,
-      linkId: link.linkId,
+      linkId: result.linkId,
+      shortCode: result.shortCode,
+      convertedAt: result.convertedAt,
+      items: result.items,
+      currency: result.currency,
+      totalExact: result.totalExact,
     };
   }
 
@@ -477,6 +547,7 @@ export function createExpressCheckout(store) {
     createPaymentLink,
     resolvePaymentLink,
     expressCheckout,
+    linkOrder,
     agentCheckout,
     getPaymentLinkStatus,
     listPaymentLinks,

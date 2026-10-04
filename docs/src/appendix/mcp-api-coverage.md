@@ -15,7 +15,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | Metric | Value |
 | --- | --- |
 | Domain tool modules | 88 |
-| Domain tools | 940 |
+| Domain tools | 943 |
 | Commerce getters | 68 |
 | Mapped getters | 68 |
 | Audited classes | 32 |
@@ -34,7 +34,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `backorder` | `backorders` | 20 |
 | `backorders` | `backorders` | 20 |
 | `bom` | `manufacturing` | 11 |
-| `carts` | `carts` | 30 |
+| `carts` | `carts` | 32 |
 | `channels` | `channels` | 8 |
 | `companies` | `companies` | 9 |
 | `costAccounting` | `cost-accounting` | 5 |

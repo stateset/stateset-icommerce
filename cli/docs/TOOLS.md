@@ -5,7 +5,7 @@
 
 Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/tool-tiers.js` (tiers).
 
-**942 tools** across **88 domains**, plus 15 agentic runtime tools.
+**943 tools** across **88 domains**, plus 15 agentic runtime tools.
 
 ## Stability tiers
 
@@ -13,13 +13,13 @@ Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/t
 | --- | ---: | --- |
 | core | 202 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
 | extended | 491 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
-| experimental | 264 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
+| experimental | 265 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
 
 ## Profiles
 
 | Profile | Tools | Domains |
 | --- | ---: | --- |
-| all | 957 | every domain |
+| all | 958 | every domain |
 | core (default) | 202 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain |
 | operations | 193 | inventory, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
 | finance | 134 | payments, invoices, treasury, accounts-payable, accounts-receivable, cost-accounting, credit, general-ledger, fixed-assets, revenue-recognition, prepayments, vendor-credits, payment-obligations |
@@ -82,7 +82,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [audit](#audit) | extended | 4 |
 | [proofs](#proofs) | extended | 7 |
 | [circuit-breaker](#circuit-breaker) | experimental | 8 |
-| [checkout](#checkout) | experimental | 8 |
+| [checkout](#checkout) | experimental | 9 |
 | [compliance](#compliance) | extended | 6 |
 | [catalog](#catalog) | extended | 6 |
 | [a2a-automation](#a2a-automation) | experimental | 32 |
@@ -1048,8 +1048,9 @@ Tier: **experimental** — converting a payment link mints order, payment and es
 | --- | --- | --- | --- |
 | `create_payment_link` | experimental | write | Create a shareable payment link for instant checkout. Returns a short URL that buyers or agents can use. |
 | `resolve_payment_link` | experimental | read | Resolve a payment link by ID or short code. Returns the link details, items, total, and expiry status. |
-| `express_checkout` | experimental | write | One-call checkout from a payment link. Converts the link into an order and payment. |
-| `agent_instant_checkout` | experimental | write | Agent-to-agent instant checkout. Creates a payment link and converts it in one step. Returns order and escrow IDs for A2A settlement. |
+| `express_checkout` | experimental | write | One-call checkout from a payment link. Records the buyer's commitment to the link terms and returns the items/total. Does not create an order or payment — build the real order with the checkout trio (get_checkout, update_checkout, complete_checkout), then record it with link_payment_link_order. |
+| `link_payment_link_order` | experimental | write | Record the real order (and payment) created from a converted payment link. Links the merchant order system back to the link; order/payment IDs are never minted by the link service. |
+| `agent_instant_checkout` | experimental | write | Agent-to-agent instant checkout. Creates a payment link and records the buyer agent's commitment in one step. Does not create an order, payment, or escrow — settle via the A2A escrow tools and record the real order with link_payment_link_order. |
 | `get_payment_link_status` | experimental | read | Get the status and metrics (views, conversions) for a payment link. |
 | `list_payment_links` | experimental | read | List payment links with optional filters by status and customer. |
 | `revoke_payment_link` | experimental | write | Revoke (cancel) an active payment link. Prevents further checkouts from it. |

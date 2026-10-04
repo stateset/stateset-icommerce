@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:c3586970b20968114339d2eca46957ea1d174bc764cc76053170090537a3c529",
+  "digest": "sha256:f8ed568413518716eaebf1b2c49cc6f9f64cf8875c7004076b121149fd90afe9",
   "counts": {
-    "total": 957,
+    "total": 958,
     "readOnly": 472,
-    "mutations": 485,
+    "mutations": 486,
     "governed": 36,
     "governedComposite": 2,
-    "blocked": 447
+    "blocked": 448
   },
   "entries": [
     {
@@ -4408,6 +4408,13 @@
     },
     {
       "name": "install_wasm_connector",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "link_payment_link_order",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
