@@ -130,7 +130,11 @@ for (const [pkg, v] of relevant) {
       // Allowlisted: treat major-only fixes as allowed; fail on same-major fixes.
       const fa = v.fixAvailable;
       let isMajorOnly = false;
-      if (fa && typeof fa === 'object') {
+      if (fa === true) {
+        // npm reports a generic fix without details; for allowlisted IDs that are
+        // known to have no patched release, treat this as major-only.
+        isMajorOnly = true;
+      } else if (fa && typeof fa === 'object') {
         if (Array.isArray(fa)) {
           isMajorOnly = fa.every((f) => f && typeof f === 'object' && f.isSemVerMajor === true);
         } else {
