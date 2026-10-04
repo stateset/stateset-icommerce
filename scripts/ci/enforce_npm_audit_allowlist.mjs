@@ -6,8 +6,8 @@
  * - Runs `npm audit --json --audit-level=<level>` in the current working dir.
  * - If there are no findings at that level, exits 0.
  * - Otherwise, every advisory GHSA id must be present in scripts/ci/npm-audit-allowlist.json.
- * - Even when allowlisted, if `fixAvailable` is true for that vulnerability entry,
- *   the gate fails (the moment npm reports a fix, the allowlist stops working).
+ * - Allowlisted IDs remain allowed when the only reported fix is a semver-major bump.
+ *   They fail the moment npm reports a same-major (patched) fix.
  *
  * Usage:
  *   node scripts/ci/enforce_npm_audit_allowlist.mjs --level high

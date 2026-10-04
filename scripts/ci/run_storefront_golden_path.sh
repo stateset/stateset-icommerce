@@ -33,121 +33,17 @@ run_logged() {
 # the two apart: a real report is JSON we can parse, a service error is not.
 # Retry the transport, then fail only on findings we can actually see.
 run_audit_with_retries() {
-  local attempt output
+  local attempt
   for attempt in 1 2 3; do
-    echo "+ npm audit --audit-level=high --json (attempt ${attempt})" | tee -a "${LOG_PATH}"
-    set +e
-    output="$(npm audit --audit-level=high --json 2>&1)"
-    set -e
-    printf '%s\n' "${output}" >> "${LOG_PATH}"
-
-    # A parseable report means the endpoint answered; rc then reflects findings.
-    if printf '%s' "${output}" | node -e '
-      let raw = "";
-      process.stdin.on("data", (c) => { raw += c; });
-      process.stdin.on("end", () => {
-        try {
-          const parsed = JSON.parse(raw);
-          process.exit(parsed && parsed.metadata ? 0 : 1);
-        } catch {
-          process.exit(1);
-        }
-      });
-    ' 2>/dev/null; then
-      # Enforce advisory allowlist for high severity: only committed IDs may pass.
-      # Allowed IDs CONTINUE TO PASS when the only reported fix is a semver-major bump.
-      # Allowed IDs FAIL the moment npm reports a same-major patched release.
-      if node --input-type=module - <<'NODE'
-import fs from 'node:fs';
-import path from 'node:path';
-
-// Read audit JSON from stdin (captured in the outer shell and piped here).
-const raw = fs.readFileSync(0, 'utf8');
-const report = JSON.parse(raw);
-
-// No highs at all: pass immediately.
-const vulnEntries = Object.entries(report.vulnerabilities || {});
-const highs = vulnEntries.filter(([_, v]) => v.severity === 'high');
-if (highs.length === 0) {
-  process.exit(0);
-}
-
-// Load the committed allowlist.
-const repoRoot = process.env.REPO_ROOT || process.cwd();
-const allowlistPath = path.join(repoRoot, 'scripts/ci/npm-audit-allowlist.json');
-let allow = { allowed: [] };
-try {
-  allow = JSON.parse(fs.readFileSync(allowlistPath, 'utf8'));
-} catch (err) {
-  console.error(`error: missing or unreadable allowlist: ${allowlistPath}`);
-  throw err;
-}
-const allowedIds = new Set(allow.allowed || []);
-
-// Collect GHSA ids for each high-severity entry and validate.
-const violations = [];
-for (const [pkg, v] of highs) {
-  // Extract GHSA ids from each advisory URL in `via` list.
-  const ids = (v.via || [])
-    .filter((x) => typeof x === 'object' && x && typeof x.url === 'string')
-    .map((x) => {
-      const m = x.url.match(/GHSA-[a-z0-9-]+$/i);
-      return m ? m[0] : null;
-    })
-    .filter(Boolean);
-  const uniqueIds = [...new Set(ids)];
-  if (uniqueIds.length === 0) {
-    // Fallback: when no GHSA id is available, treat as violation.
-    violations.push({ pkg, reason: 'no GHSA id found in advisory URLs', ids: [] });
-    continue;
-  }
-  // If ANY id is not allowed, it's a violation.
-  for (const id of uniqueIds) {
-    if (!allowedIds.has(id)) {
-      violations.push({ pkg, ids: [id], reason: 'id not on allowlist' });
-    } else {
-      // Allowlisted: treat major-only fixes as allowed; fail on same-major fixes.
-      const fa = v.fixAvailable;
-      let isMajorOnly = false;
-      if (fa && typeof fa === 'object') {
-        // npm sets isSemVerMajor on fixAvailable when known.
-        if (Array.isArray(fa)) {
-          // If ANY suggested fix is same-major, treat as failing.
-          isMajorOnly = fa.every((f) => f && typeof f === 'object' && f.isSemVerMajor === true);
-        } else {
-          isMajorOnly = fa.isSemVerMajor === true;
-        }
-      }
-      if (fa && !isMajorOnly) {
-        violations.push({ pkg, ids: [id], reason: 'same-major fix available for allowlisted advisory' });
-      }
-    }
-  }
-}
-
-if (violations.length > 0) {
-  console.error('error: high-severity audit gate failed:');
-  for (const v of violations) {
-    console.error(`  - ${v.pkg}: ${v.reason}${v.ids.length ? ` (${v.ids.join(', ')})` : ''}`);
-  }
-  console.error('note: only IDs listed in scripts/ci/npm-audit-allowlist.json may pass; allowlisted IDs fail once a same-major patch is available');
-  process.exit(1);
-}
-
-process.exit(0);
-NODE
-      then
-        return 0
-      else
-        return 1
-      fi
+    echo "+ node ${REPO_ROOT}/scripts/ci/enforce_npm_audit_allowlist.mjs --level high --allowlist ${REPO_ROOT}/scripts/ci/npm-audit-allowlist.json (attempt ${attempt})" | tee -a "${LOG_PATH}"
+    # Run the shared gate in the storefront directory; it invokes `npm audit` itself.
+    if node "${REPO_ROOT}/scripts/ci/enforce_npm_audit_allowlist.mjs" --level high --allowlist "${REPO_ROOT}/scripts/ci/npm-audit-allowlist.json" 2>&1 | tee -a "${LOG_PATH}"; then
+      return 0
     fi
-
-    echo "warning: npm audit endpoint did not return a report (attempt ${attempt})" | tee -a "${LOG_PATH}"
+    echo "warning: npm audit allowlist gate failed (attempt ${attempt})" | tee -a "${LOG_PATH}"
     [[ ${attempt} -lt 3 ]] && sleep $((attempt * 5))
   done
-
-  echo "error: npm audit endpoint unreachable after 3 attempts -- registry issue, not a finding" >&2
+  echo "error: npm audit allowlist gate failed after 3 attempts" >&2
   return 1
 }
 
