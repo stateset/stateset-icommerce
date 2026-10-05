@@ -58,18 +58,20 @@ run_db_postgres() {
 }
 
 run_db_postgres_saga() {
-  # postgres_migrations carries saga-gated migration coverage, so it runs in
-  # this lane too; every postgres_saga* test is discovered automatically.
-  local tests=(postgres_migrations)
-  mapfile -t saga_tests < <(find "${REPO_ROOT}/crates/stateset-db/tests" -maxdepth 1 -name 'postgres_saga*.rs' -exec basename {} .rs \; | sort)
+  # postgres_migrations carries saga-gated migration coverage (the
+  # `stateset-db/saga` feature registers the 035_sagas schema), so it runs in
+  # this lane too. The coordinator itself lives in the stateset-saga crate
+  # since 1.37.0; every postgres_saga* test there is discovered automatically.
+  run_cmd cargo test --locked -p stateset-db --no-default-features --features postgres,saga --test postgres_migrations
+
+  mapfile -t saga_tests < <(find "${REPO_ROOT}/crates/stateset-saga/tests" -maxdepth 1 -name 'postgres_saga*.rs' -exec basename {} .rs \; | sort)
   if [[ ${#saga_tests[@]} -eq 0 ]]; then
-    echo "error: no postgres_saga* tests found in crates/stateset-db/tests" >&2
+    echo "error: no postgres_saga* tests found in crates/stateset-saga/tests" >&2
     exit 1
   fi
-  tests+=("${saga_tests[@]}")
-
-  for test_name in "${tests[@]}"; do
-    run_cmd cargo test --locked -p stateset-db --no-default-features --features postgres,saga --test "${test_name}"
+  run_cmd cargo test --locked -p stateset-saga --lib
+  for test_name in "${saga_tests[@]}"; do
+    run_cmd cargo test --locked -p stateset-saga --test "${test_name}"
   done
 }
 

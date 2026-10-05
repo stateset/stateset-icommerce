@@ -1,13 +1,17 @@
 //! Persisted saga coordinator (PostgreSQL).
 //!
-//! This module is behind the `stateset-db/saga` feature. It is intended for
-//! long-lived, multi-step orchestrations where each step can be compensated
-//! (rolled back) if a later step fails.
+//! Intended for long-lived, multi-step orchestrations where each step can be
+//! compensated (rolled back) if a later step fails.
+//!
+//! The coordinator persists state through [`PostgresDatabase`](stateset_db::PostgresDatabase).
+//! Enabling this crate pulls in `stateset-db/saga`, which additionally
+//! registers the `035_sagas` schema migration, so no extra feature flags are
+//! needed to get both the tables and the coordinator.
 
-use crate::PostgresDatabase;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Error as SqlxError;
+use stateset_db::PostgresDatabase;
 use thiserror::Error;
 use uuid::Uuid;
 

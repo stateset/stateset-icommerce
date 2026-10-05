@@ -17,7 +17,8 @@
 //! - `sqlite` (default): SQLite database support via rusqlite
 //! - `postgres`: PostgreSQL database support via sqlx (async)
 //! - `vector`: Vector search support via sqlite-vec extension
-//! - `saga`: Experimental persisted saga coordinator (PostgreSQL-only)
+//! - `saga`: Registers the `035_sagas` schema migration; the coordinator itself
+//!   lives in the `stateset-saga` crate (which enables this feature).
 //!
 //! ## Usage
 //!
@@ -66,9 +67,6 @@ pub mod sqlite;
 
 #[cfg(feature = "postgres")]
 pub mod postgres;
-
-#[cfg(all(feature = "postgres", feature = "saga"))]
-pub mod saga;
 
 pub mod transactions;
 

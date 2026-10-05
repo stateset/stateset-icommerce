@@ -6,9 +6,9 @@
   },
   "workspace": {
     "version": "1.37.0",
-    "memberCount": 30,
+    "memberCount": 31,
     "defaultMemberCount": 19,
-    "rustCrateCount": 22,
+    "rustCrateCount": 23,
     "bindingCrateCount": 8,
     "members": [
       {
@@ -147,6 +147,11 @@
         "packageKind": "crate"
       },
       {
+        "name": "stateset-saga",
+        "manifestPath": "crates/stateset-saga/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
         "name": "stateset-sdk",
         "manifestPath": "crates/stateset-sdk/Cargo.toml",
         "packageKind": "crate"
@@ -250,6 +255,9 @@
         "stateset-primitives"
       ],
       "stateset-primitives": [],
+      "stateset-saga": [
+        "stateset-db"
+      ],
       "stateset-sdk": [
         "stateset-core",
         "stateset-crypto",
@@ -294,7 +302,8 @@
         "stateset-embedded-wasm"
       ],
       [
-        "stateset-embedded"
+        "stateset-embedded",
+        "stateset-saga"
       ],
       [
         "stateset-dotnet",
@@ -380,11 +389,12 @@
       },
       {
         "name": "stateset-db",
-        "dependentCount": 4,
+        "dependentCount": 5,
         "dependents": [
           "stateset-embedded",
           "stateset-embedded-node",
           "stateset-embedded-python",
+          "stateset-saga",
           "stateset-sdk"
         ]
       },

@@ -170,6 +170,7 @@ jobs:
           cargo clippy -p stateset-core --features metrics --all-targets -- -D warnings
           cargo clippy -p stateset-db --no-default-features --features postgres --lib -- -D warnings
           cargo clippy -p stateset-db --no-default-features --features "postgres,saga" --lib -- -D warnings
+          cargo clippy -p stateset-saga --all-targets -- -D warnings
           cargo clippy -p stateset-embedded --features postgres --all-targets -- -D warnings
 
   audit:

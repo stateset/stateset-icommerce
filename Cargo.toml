@@ -13,6 +13,7 @@ members = [
     "crates/stateset-a2a",
     "crates/stateset-sync",
     "crates/stateset-jobs",
+    "crates/stateset-saga",
     "crates/stateset-integration-tests",
     "crates/stateset-sdk",
     "crates/stateset-http",
@@ -56,6 +57,10 @@ default-members = [
     "crates/stateset-a2a",
     "crates/stateset-sync",
     "crates/stateset-jobs",
+    # stateset-saga is a member but not a default member: it enables
+    # stateset-db's `postgres` + `saga` features, and feature unification
+    # would otherwise switch them on for every default workspace build. CI
+    # builds and tests it explicitly (clippy-features, Postgres saga lane).
     "crates/stateset-sdk",
     "crates/stateset-http",
     "crates/stateset-ffi",
