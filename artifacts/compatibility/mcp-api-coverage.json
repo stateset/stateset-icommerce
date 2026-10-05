@@ -4,7 +4,7 @@
     "coverageModel": "cli/src/coverage/mcp-api-coverage.js"
   },
   "totalDomainModules": 88,
-  "totalDomainTools": 940,
+  "totalDomainTools": 942,
   "totalCommerceGetters": 68,
   "mappedCommerceGetters": 68,
   "uncoveredCommerceGetters": [],
@@ -268,7 +268,7 @@
     {
       "getter": "shipments",
       "module": "shipments",
-      "toolCount": 16
+      "toolCount": 18
     },
     {
       "getter": "shippingZones",
@@ -353,11 +353,8 @@
   ],
   "totalAuditedClasses": 32,
   "totalAuditedMethods": 418,
-  "mappedAuditedMethods": 416,
-  "uncoveredAuditedMethods": [
-    "Shipments.addItem",
-    "Shipments.removeItem"
-  ],
+  "mappedAuditedMethods": 418,
+  "uncoveredAuditedMethods": [],
   "staleAuditedMethodMappings": [],
   "invalidAuditedToolReferences": [],
   "auditedClasses": [
@@ -564,11 +561,8 @@
     {
       "className": "Shipments",
       "methodCount": 10,
-      "mappedMethodCount": 8,
-      "uncoveredMethods": [
-        "addItem",
-        "removeItem"
-      ],
+      "mappedMethodCount": 10,
+      "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
@@ -621,5 +615,5 @@
       "invalidToolReferences": []
     }
   ],
-  "fullyCovered": false
+  "fullyCovered": true
 }

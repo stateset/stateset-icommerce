@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 973,
+  "totalTools": 975,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 955
+      "count": 957
     },
     {
       "name": "stateset-scaffold",
@@ -299,7 +299,7 @@
     },
     {
       "name": "shipments",
-      "count": 16
+      "count": 18
     },
     {
       "name": "shipping_zones",
@@ -397,14 +397,14 @@
     },
     {
       "name": "write",
-      "count": 425
+      "count": 427
     }
   ],
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
     "read": 480,
-    "write": 425
+    "write": 427
   },
   "tools": [
     {
@@ -1755,6 +1755,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__add_return_tracking",
       "policyDomain": "returns",
+      "permission": "write"
+    },
+    {
+      "name": "add_shipment_item",
+      "description": "Add an order line to a shipment. Rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order not in a shippable status, and a stale expectedVersion.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__add_shipment_item",
+      "policyDomain": "shipments",
       "permission": "write"
     },
     {
@@ -7695,6 +7704,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__remove_production_batch_work_order",
       "policyDomain": "production_batches",
+      "permission": "write"
+    },
+    {
+      "name": "remove_shipment_item",
+      "description": "Remove an item from a shipment, releasing its order-line allocation. Rejects a stale expectedVersion.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__remove_shipment_item",
+      "policyDomain": "shipments",
       "permission": "write"
     },
     {

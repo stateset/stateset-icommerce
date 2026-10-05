@@ -244,6 +244,60 @@ export const shipmentTools = [
   },
 
   {
+    name: 'add_shipment_item',
+    description:
+      'Add an order line to a shipment. Rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order not in a shippable status, and a stale expectedVersion.',
+    inputSchema: {
+      shipmentId: z.string().min(1).describe('Shipment ID'),
+      orderItemId: z
+        .string()
+        .uuid()
+        .optional()
+        .describe('Order line ID; required for ambiguous SKUs'),
+      productId: z.string().uuid().optional().describe('Must match the selected order line'),
+      sku: z.string().min(1).describe('Item SKU'),
+      name: z.string().min(1).describe('Item name'),
+      quantity: z.number().int().positive().max(2147483647).describe('Units to add'),
+      expectedVersion: z
+        .number()
+        .int()
+        .positive()
+        .max(2147483647)
+        .optional()
+        .describe('Reject a stale shipment version'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) return applyRequired('Add shipment item', params);
+      const { shipmentId, expectedVersion, ...item } = params;
+      const added = await commerce.shipments.addItem(shipmentId, item, expectedVersion);
+      return { success: true, message: 'Shipment item added', item: added };
+    },
+  },
+
+  {
+    name: 'remove_shipment_item',
+    description:
+      'Remove an item from a shipment, releasing its order-line allocation. Rejects a stale expectedVersion.',
+    inputSchema: {
+      itemId: z.string().min(1).describe('Shipment item ID'),
+      expectedVersion: z
+        .number()
+        .int()
+        .positive()
+        .max(2147483647)
+        .optional()
+        .describe('Reject a stale shipment version'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) return applyRequired('Remove shipment item', params);
+      await commerce.shipments.removeItem(params.itemId, params.expectedVersion);
+      return { success: true, message: 'Shipment item removed', itemId: params.itemId };
+    },
+  },
+
+  {
     name: 'ship_shipment',
     description: 'Mark a ready_to_ship shipment as shipped with an optional tracking number.',
     inputSchema: {

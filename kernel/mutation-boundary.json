@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:bfdd86f273b0415553bf431d0159ccd204adcedc861fce705c476de9ce4e1532",
+  "digest": "sha256:3a032ac219c934becf2bc0a5ea0178dea1615d65b12ddbefa7aa63919c2bda65",
   "counts": {
-    "total": 955,
+    "total": 957,
     "readOnly": 471,
-    "mutations": 484,
+    "mutations": 486,
     "governed": 36,
     "governedComposite": 1,
-    "blocked": 447
+    "blocked": 449
   },
   "entries": [
     {
@@ -1059,6 +1059,13 @@
       "mutation": true,
       "disposition": "governed",
       "commandType": "returns.tracking.add"
+    },
+    {
+      "name": "add_shipment_item",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
     },
     {
       "name": "add_to_wishlist",
@@ -5675,6 +5682,13 @@
     },
     {
       "name": "remove_production_batch_work_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "remove_shipment_item",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
