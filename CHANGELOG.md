@@ -20,6 +20,28 @@ This project follows Keep a Changelog and Semantic Versioning.
 - Positive inventory receipts now automatically reserve available units for
   matching open backorders in priority order; allocation remains retryable and
   separate from physical fulfillment.
+- Strict month-end close: `CloseMonthOptions.fail_on_warnings` refuses to seal
+  a period with unresolved warnings before writing anything, surfaced as
+  HTTP 422 with a `failed_item_count`, and plumbed through the Node, Python,
+  and CLI surfaces.
+- New `stateset-saga` crate owning the persisted PostgreSQL saga coordinator
+  (moved out of `stateset-db`; `stateset-db/saga` now only registers the
+  `035_sagas` schema migration).
+- Live-Postgres behavior parity tests for month-end close (identical postings
+  to SQLite) and for the sync/async runtime pool fix.
+- Real payment and carrier rails in `stateset-embedded` (`events` feature):
+  `PaymentProvider` (Stripe PaymentIntents, manual capture) behind
+  `Payments::{authorize,capture,refund}_with_provider`, and
+  `ShipmentProvider` (EasyPost rates, labels, tracking) behind
+  `Shipments::buy_label_with_provider`, each with a deterministic mock.
+  Declines (including Stripe HTTP 402 card errors) are persisted as data,
+  refunds settle only when the processor reports `succeeded` (a `pending`
+  refund stays pending), every engine refund has its own idempotency key,
+  and amounts finer than the currency's minor unit (including three-decimal
+  currencies such as KWD) are rejected rather than rounded. Postage is only
+  bought for an existing, still-packable shipment with no tracking number,
+  so a retry never buys a second label. Partial capture is refused until the
+  payment row can record a captured amount.
 
 ### Changed
 
@@ -30,6 +52,20 @@ This project follows Keep a Changelog and Semantic Versioning.
   so an erased address can be reused safely.
 - Release and generated-artifact checks now cover the expanded recovery,
   synchronization, and shipment evidence surfaces.
+
+### Changed (breaking)
+
+- `stateset_db::saga` is removed. Depend on the `stateset-saga` crate for the
+  PostgreSQL saga coordinator; the `stateset-db/saga` feature now only
+  registers the `035_sagas` schema migration.
+
+### Fixed
+
+- Strict month-end close (`fail_on_warnings`) no longer leaves depreciation and
+  revenue-recognition postings behind when FX revaluation cannot run: the
+  dry-run evaluation now checks the same preconditions (an exchange rate for
+  every foreign account with a balance, and an FX gain/loss account) and
+  refuses before anything is written.
 
 ## [1.36.0] - 2026-09-29
 
