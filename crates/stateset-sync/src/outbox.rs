@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -64,7 +64,9 @@ impl Outbox {
 
     /// Create a durable outbox persisted to `path`.
     ///
-    /// If the snapshot already exists, it is loaded and reused.
+    /// If the snapshot already exists, every pending event is preserved, even
+    /// when the configured capacity has decreased. New appends are refused
+    /// until draining the backlog brings it below the new capacity.
     ///
     /// # Errors
     ///
@@ -81,11 +83,27 @@ impl Outbox {
             persistence_path: Some(path.clone()),
         };
 
-        if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .map_err(|e| SyncError::Storage(format!("read outbox snapshot failed: {e}")))?;
-            if !contents.trim().is_empty() {
+        match fs::read_to_string(&path) {
+            Ok(contents) => {
                 let snapshot: OutboxSnapshot = serde_json::from_str(&contents)?;
+                let mut ids = HashSet::new();
+                let mut last_sequence = 0;
+                for event in &snapshot.events {
+                    if !ids.insert(event.id) {
+                        return Err(SyncError::DuplicateEvent(event.id.to_string()));
+                    }
+                    let sequence = event.local_sequence().ok_or_else(|| {
+                        SyncError::InvalidEvent(
+                            "outbox snapshot contains a non-local or unsequenced event".into(),
+                        )
+                    })?;
+                    if sequence <= last_sequence {
+                        return Err(SyncError::InvalidEvent(
+                            "outbox snapshot sequence is not strictly increasing".into(),
+                        ));
+                    }
+                    last_sequence = sequence;
+                }
                 outbox.events = snapshot.events.into();
                 outbox.next_sequence = snapshot.next_sequence.max(
                     outbox
@@ -94,12 +112,11 @@ impl Outbox {
                         .and_then(SyncEvent::local_sequence)
                         .map_or(1, |seq| seq.saturating_add(1)),
                 );
-                while outbox.events.len() > outbox.max_capacity {
-                    let _ = outbox.events.pop_front();
-                }
             }
-        } else {
-            outbox.persist()?;
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => outbox.persist()?,
+            Err(error) => {
+                return Err(SyncError::Storage(format!("read outbox snapshot failed: {error}")));
+            }
         }
 
         Ok(outbox)
@@ -112,12 +129,16 @@ impl Outbox {
     /// # Errors
     ///
     /// Returns [`SyncError::OutboxFull`] if the outbox is at capacity or
-    /// [`SyncError::Storage`] if durable persistence fails.
+    /// [`SyncError::Storage`] if durable persistence fails. Duplicate pending
+    /// ids are refused with [`SyncError::DuplicateEvent`].
     pub fn append(&mut self, event: SyncEvent) -> Result<u64, SyncError> {
         if event.is_canonical_remote() {
             return Err(SyncError::InvalidEvent(
                 "canonical remote events cannot be appended to the local outbox".into(),
             ));
+        }
+        if self.contains_event_id(event.id) {
+            return Err(SyncError::DuplicateEvent(event.id.to_string()));
         }
 
         if self.events.len() >= self.max_capacity {
@@ -128,7 +149,10 @@ impl Outbox {
         }
 
         let seq = self.next_sequence;
-        self.next_sequence += 1;
+        self.next_sequence = self
+            .next_sequence
+            .checked_add(1)
+            .ok_or_else(|| SyncError::Storage("local outbox sequence exhausted".into()))?;
         let event = event.with_local_sequence(seq);
         self.events.push_back(event);
 
@@ -253,20 +277,11 @@ impl Outbox {
             next_sequence: self.next_sequence,
         };
 
-        let serialized = serde_json::to_string_pretty(&snapshot)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                SyncError::Storage(format!("create outbox snapshot directory failed: {e}"))
-            })?;
-        }
+        crate::snapshot::write(path, &snapshot)
+    }
 
-        let tmp_path = path.with_extension("tmp");
-        fs::write(&tmp_path, serialized)
-            .map_err(|e| SyncError::Storage(format!("write outbox snapshot failed: {e}")))?;
-        fs::rename(&tmp_path, path)
-            .map_err(|e| SyncError::Storage(format!("replace outbox snapshot failed: {e}")))?;
-
-        Ok(())
+    pub(crate) fn sync_persistence(&self) -> Result<(), SyncError> {
+        self.persistence_path.as_deref().map_or(Ok(()), crate::snapshot::sync_parent)
     }
 }
 
@@ -506,6 +521,30 @@ mod tests {
     }
 
     #[test]
+    fn reduced_capacity_preserves_backlog_across_restarts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("outbox.json");
+        let mut outbox = Outbox::with_persistence(3, &path).unwrap();
+        for id in ["first", "second", "third"] {
+            outbox
+                .append(SyncEvent::new("order.created", "order", id, serde_json::json!({})))
+                .unwrap();
+        }
+        drop(outbox);
+        let mut outbox = Outbox::with_persistence(1, &path).unwrap();
+        assert_eq!(outbox.count(), 3);
+        assert!(outbox.is_full());
+        assert_eq!(outbox.drain(1).unwrap()[0].entity_id, "first");
+        drop(outbox);
+        let mut outbox = Outbox::with_persistence(1, &path).unwrap();
+        assert_eq!(outbox.count(), 2);
+        assert_eq!(
+            outbox.drain(2).unwrap().iter().map(|e| e.entity_id.as_str()).collect::<Vec<_>>(),
+            vec!["second", "third"]
+        );
+    }
+
+    #[test]
     fn drain_restores_events_when_persist_fails() {
         let dir = tempdir().unwrap();
         let mut outbox = Outbox::new(10);
@@ -521,5 +560,48 @@ mod tests {
         assert_eq!(outbox.count(), 2);
         assert_eq!(outbox.peek(10)[0].event_type, "a");
         assert_eq!(outbox.peek(10)[1].event_type, "b");
+    }
+}
+
+#[cfg(test)]
+mod snapshot_regressions {
+    use super::*;
+
+    #[test]
+    fn duplicate_append_preserves_sequence_and_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("outbox.json");
+        let neighbor = dir.path().join("outbox.tmp");
+        fs::write(&neighbor, "unrelated data").unwrap();
+        let mut outbox = Outbox::with_persistence(10, &path).unwrap();
+        let event = SyncEvent::new("created", "order", "1", serde_json::json!({}));
+        outbox.append(event.clone()).unwrap();
+        let original = fs::read(&path).unwrap();
+        assert!(matches!(outbox.append(event), Err(SyncError::DuplicateEvent(_))));
+        assert_eq!(outbox.count(), 1);
+        assert_eq!(outbox.next_sequence(), 2);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(fs::read_to_string(neighbor).unwrap(), "unrelated data");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn invalid_snapshot_identity_and_sequence_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("outbox.json");
+        let event = SyncEvent::new("created", "order", "1", serde_json::json!({}));
+        let second = SyncEvent::new("created", "order", "2", serde_json::json!({}));
+        for events in [
+            vec![event.clone().with_local_sequence(1), event.clone().with_local_sequence(2)],
+            vec![event.clone().with_local_sequence(2), second.with_local_sequence(1)],
+            vec![event.clone()],
+            vec![event.with_remote_sequence(1)],
+        ] {
+            let original =
+                serde_json::to_vec(&OutboxSnapshot { events, next_sequence: 3 }).unwrap();
+            fs::write(&path, &original).unwrap();
+            assert!(Outbox::with_persistence(10, &path).is_err());
+            assert_eq!(fs::read(&path).unwrap(), original);
+        }
     }
 }

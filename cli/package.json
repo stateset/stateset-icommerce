@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "1.36.0",
+  "version": "1.37.0",
   "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
@@ -217,7 +217,7 @@
   },
   "optionalDependencies": {
     "@google-cloud/pubsub": "^6.0.1",
-    "@grpc/grpc-js": "^1.14.4",
+    "@grpc/grpc-js": "^1.14.5",
     "@grpc/proto-loader": "^0.8.1",
     "@slack/bolt": "^3.17.0",
     "@solana/web3.js": "^1.98.4",
@@ -229,12 +229,16 @@
     "qrcode-terminal": "^0.12.0",
     "ws": "^8.18.0"
   },
+  "devDependencies": {
+    "@grpc/grpc-js": "^1.14.5",
+    "@grpc/proto-loader": "^0.8.1"
+  },
   "overrides": {
     "@slack/socket-mode": {
       "ws": "7.5.11"
     },
     "brace-expansion": "2.1.7",
-    "axios": "1.18.0",
+    "axios": "1.20.0",
     "botframework-streaming": {
       "ws": "7.5.11"
     },

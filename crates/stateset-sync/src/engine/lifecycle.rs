@@ -67,6 +67,8 @@ impl SyncEngine {
             mut attestations,
             mut manifests,
             tofu_signer_pins,
+            pending_outbox_removals,
+            buffered_events,
         ) = if let Some(snapshot) = snapshot {
             (
                 snapshot.state,
@@ -76,6 +78,8 @@ impl SyncEngine {
                 snapshot.attestations,
                 snapshot.manifests,
                 snapshot.tofu_signer_pins,
+                snapshot.pending_outbox_removals,
+                snapshot.buffered_events,
             )
         } else {
             (
@@ -86,6 +90,8 @@ impl SyncEngine {
                 Vec::new(),
                 Vec::new(),
                 BTreeMap::new(),
+                Vec::new(),
+                Vec::new(),
             )
         };
         state.local_head = state.local_head.max(outbox.next_sequence().saturating_sub(1));
@@ -104,11 +110,11 @@ impl SyncEngine {
             manifests.drain(0..overflow);
         }
 
-        Ok(Self {
+        let mut engine = Self {
             config,
             state,
             outbox,
-            buffer: EventBuffer::new(buffer_capacity),
+            buffer: EventBuffer::from_snapshot(buffer_capacity, buffered_events),
             resolver: ConflictResolver::new(strategy),
             state_path,
             next_pull_cursor,
@@ -117,8 +123,11 @@ impl SyncEngine {
             attestations,
             manifests,
             tofu_signer_pins,
+            pending_outbox_removals,
             initialized: true,
-        })
+        };
+        engine.finish_outbox_cleanup()?;
+        Ok(engine)
     }
 
     /// Get the current sync status.
@@ -162,9 +171,53 @@ impl SyncEngine {
         self.buffer.snapshot()
     }
 
-    /// Drain all events from the pull buffer.
+    /// Compatibility helper to drain the pull buffer. On persistence failure,
+    /// returns no events and preserves the buffer. Prefer [`Self::try_drain_buffer`]
+    /// to observe failures, or acknowledge events only after applying them.
     pub fn drain_buffer(&mut self) -> Vec<SyncEvent> {
-        self.buffer.drain_all()
+        self.try_drain_buffer().unwrap_or_default()
+    }
+
+    /// Remove and return all buffered events, persisting the removal first.
+    /// This transfers responsibility to the caller; for crash-safe application
+    /// processing, read [`Self::buffered_events`] and then call
+    /// [`Self::acknowledge_buffered_events`] after committing application changes.
+    ///
+    /// # Errors
+    /// Returns a storage error without draining events if snapshot writing fails.
+    pub fn try_drain_buffer(&mut self) -> Result<Vec<SyncEvent>, SyncError> {
+        let previous = self.buffer.clone();
+        let events = self.buffer.drain_all();
+        if let Err(error) = self.persist_runtime_state() {
+            self.buffer = previous;
+            return Err(error);
+        }
+        Ok(events)
+    }
+
+    /// Acknowledge events only after their application changes have committed.
+    /// Removes matching ids durably and returns their count. Unknown or repeated
+    /// ids are harmless, making acknowledgement retries idempotent.
+    ///
+    /// # Errors
+    /// Returns a storage error if acknowledgement persistence fails. Applications
+    /// must deduplicate event ids: a crash between application commit and this
+    /// acknowledgement can replay an event.
+    pub fn acknowledge_buffered_events(&mut self, event_ids: &[Uuid]) -> Result<usize, SyncError> {
+        let ids: HashSet<_> = event_ids.iter().copied().collect();
+        let previous = self.buffer.clone();
+        let remaining =
+            self.buffer.snapshot().into_iter().filter(|event| !ids.contains(&event.id)).collect();
+        self.buffer = EventBuffer::from_snapshot(self.buffer.capacity(), remaining);
+        let removed = previous.len() - self.buffer.len();
+        if let Err(error) = self.persist_runtime_state() {
+            self.buffer = previous;
+            return Err(error);
+        }
+        if let Some(path) = &self.state_path {
+            crate::snapshot::sync_parent(path)?;
+        }
+        Ok(removed)
     }
 
     /// Return a reference to the current sync state.

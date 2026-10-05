@@ -1981,6 +1981,8 @@ export interface CloseMonthOptionsInput {
   skipFxRevaluation?: boolean
   /** Skip the final period close (closing entries + close period) */
   skipPeriodClose?: boolean
+  /** Refuse with an error when any step reports warnings (strict mode) */
+  failOnWarnings?: boolean
   /** Actor recorded as the closer; defaults to `system` */
   closedBy?: string
 }
@@ -1993,6 +1995,8 @@ export interface CloseMonthStepOutput {
   totalAmount: string
   /** Per-item failures that did not abort the close */
   warnings: Array<string>
+  /** Warnings that record a per-item failure (vs informational skip notes) */
+  failedItemCount: number
 }
 export interface CloseMonthReportOutput {
   periodId: string
@@ -4257,6 +4261,16 @@ export interface CreateShipmentInput {
   trackingNumber?: string
   recipientEmail?: string
   recipientPhone?: string
+  /** Order-linked manifest items, validated atomically with shipment creation. */
+  items?: Array<CreateShipmentItemInput>
+}
+export interface CreateShipmentItemInput {
+  orderItemId?: string
+  productId?: string
+  sku: string
+  name: string
+  /** Positive integer, at most 2147483647; fractional values are refused. */
+  quantity: number
 }
 export interface ShipmentItemOutput {
   id: string
@@ -4289,6 +4303,7 @@ export interface ShipmentOutput {
 }
 /** Patch supported shipment fields through the native repository. */
 export interface UpdateShipmentInput {
+  /** Positive integer, at most 2147483647; stale versions are refused atomically. */
   expectedVersion?: number
   status?: ShipmentStatus
   carrier?: ShippingCarrier
@@ -7176,6 +7191,16 @@ export declare class Serials {
 }
 export declare class Shipments {
   create(input: CreateShipmentInput): Promise<ShipmentOutput>
+  /**
+   * Add an order-linked manifest item while packing. Does not fulfill the order or reserve stock.
+   * Optional expectedVersion is a positive integer at most 2147483647, checked atomically.
+   */
+  addItem(shipmentId: string, input: CreateShipmentItemInput, expectedVersion?: number | undefined | null): Promise<ShipmentItemOutput>
+  /**
+   * Remove a manifest item while packing, advancing the shipment version atomically.
+   * Optional expectedVersion is a positive integer at most 2147483647, checked atomically.
+   */
+  removeItem(itemId: string, expectedVersion?: number | undefined | null): Promise<void>
   /** Update shipment metadata and status through the native repository. */
   update(id: string, input: UpdateShipmentInput): Promise<ShipmentOutput>
   get(id: string): Promise<ShipmentOutput | null>
@@ -7185,9 +7210,12 @@ export declare class Shipments {
    * Calling with no argument keeps the previous behaviour (every shipment).
    */
   list(filter?: ShipmentFilterInput | undefined | null): Promise<Array<ShipmentOutput>>
-  ship(id: string, trackingNumber?: string | undefined | null): Promise<ShipmentOutput>
-  deliver(id: string): Promise<ShipmentOutput>
-  cancel(id: string): Promise<ShipmentOutput>
+  /** Ship a shipment; optional expectedVersion must be an integer from 1 to 2147483647. */
+  ship(id: string, trackingNumber?: string | undefined | null, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>
+  /** Deliver a shipment; optional expectedVersion must be an integer from 1 to 2147483647. */
+  deliver(id: string, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>
+  /** Cancel a shipment; optional expectedVersion must be an integer from 1 to 2147483647. */
+  cancel(id: string, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>
   count(): Promise<number>
 }
 export declare class ShippingZones {
@@ -7725,7 +7753,7 @@ export type ShipmentStatus =
 /** Carrier as rendered on `ShipmentOutput.carrier` (the engine renders the underscored spelling of multi-word carriers). */
 export type ShippingCarrier = 'other' | 'ups' | 'fed_ex' | 'usps' | 'dhl' | 'on_trac' | 'laser_ship'
 
-/** Carriers `CreateShipmentInput.carrier` recognises; anything else is stored as `other`. */
+/** Carriers `CreateShipmentInput.carrier` recognises; anything else is refused with `VALIDATION`. */
 export type ShippingCarrierInput = 'ups' | 'fedex' | 'usps' | 'dhl' | 'other'
 
 /** Carrier spellings `ShipmentFilterInput.carrier` accepts. */

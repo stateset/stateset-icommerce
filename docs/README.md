@@ -9,6 +9,10 @@ Related planning docs:
 - [Default Infrastructure Playbook](./DEFAULT_INFRASTRUCTURE_PLAYBOOK.md)
 - [Outcomes Model](./OUTCOMES_MODEL.md)
 
+## Manuals
+
+- [iCommerce Operation and Maintenance Manual (ASD-STE100)](./ASD_STE100_ICOMMERCE_MANUAL.md) — operator procedures in Simplified Technical English.
+
 ## Build locally
 
 ```bash

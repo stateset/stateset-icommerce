@@ -61,6 +61,21 @@ const SAFE_EXCEPTIONS: &[(&str, &str, &str)] = &[
     ("kernel_outbox.rs", "*", "the outbox itself: emitting would recurse"),
     ("migrations.rs", "*", "schema changes are not domain events"),
     (
+        "http_idempotency.rs",
+        "complete",
+        "the HTTP response cache is infrastructure state replayed locally; it is not a commerce fact",
+    ),
+    (
+        "shipments.rs",
+        "add_item_with_version",
+        "the method emits the item fact through `record_item_change_tx` in the same transaction; the helper owns the shared emission for both versioned and unversioned entry points",
+    ),
+    (
+        "shipments.rs",
+        "remove_item_with_version",
+        "the method emits the item fact through `record_item_change_tx` in the same transaction; the helper owns the shared emission for both versioned and unversioned entry points",
+    ),
+    (
         "subscriptions.rs",
         "create_plan_item_with_conn",
         "a plan line is part of the plan's definition, not a fact of its own: \
@@ -593,7 +608,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("shipments.rs", "mark_delivered"),
     ("shipments.rs", "add_item"),
     ("shipments.rs", "remove_item"),
-    ("shipments.rs", "add_event"),
     ("shipments.rs", "update_batch_atomic"),
     ("shipments.rs", "delete_batch_atomic"),
     ("shipping_zones.rs", "create"),

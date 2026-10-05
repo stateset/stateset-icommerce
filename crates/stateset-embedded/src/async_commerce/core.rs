@@ -260,9 +260,15 @@ impl AsyncInventory {
     /// Adjust inventory quantity.
     pub async fn adjust_inventory(&self, input: AdjustInventory) -> Result<InventoryTransaction> {
         let sku = input.sku.clone();
+        let received = input.quantity > Decimal::ZERO;
         let delta = input.quantity.to_f64().unwrap_or(0.0);
         let transaction = self.db.inventory().adjust_async(input).await?;
         self.metrics.record_inventory_adjusted(&sku, delta);
+        if received {
+            if let Err(error) = self.db.backorder().auto_allocate_inventory_async(&sku).await {
+                tracing::warn!(%error, %sku, "automatic backorder allocation after receipt failed");
+            }
+        }
         Ok(transaction)
     }
 
@@ -782,6 +788,25 @@ impl AsyncShipments {
     /// Remove item from shipment.
     pub async fn remove_item(&self, item_id: Uuid) -> Result<()> {
         self.db.shipments().remove_item_async(item_id).await
+    }
+
+    /// Add an item with a transactionally checked parent version precondition.
+    pub async fn add_item_with_version(
+        &self,
+        shipment_id: Uuid,
+        item: CreateShipmentItem,
+        expected_version: Option<i32>,
+    ) -> Result<ShipmentItem> {
+        self.db.shipments().add_item_with_version_async(shipment_id, item, expected_version).await
+    }
+
+    /// Remove an item with a transactionally checked parent version precondition.
+    pub async fn remove_item_with_version(
+        &self,
+        item_id: Uuid,
+        expected_version: Option<i32>,
+    ) -> Result<()> {
+        self.db.shipments().remove_item_with_version_async(item_id, expected_version).await
     }
 
     /// Get items in shipment.

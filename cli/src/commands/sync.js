@@ -6,7 +6,9 @@ import { loadSyncConfig, SyncConfig, isSyncConfigured } from '../sync/config.js'
 import { createOutbox, isQuarantineReasonDowngrade } from '../sync/outbox.js';
 import { createSyncEngine } from '../sync/engine.js';
 import { createSequencerClient } from '../sync/client.js';
-import { getPayloadWrapScheme } from '../sync/pqc.js';
+import { getPayloadWrapScheme, assertEventMatchesSecurityProfile } from '../sync/pqc.js';
+import { resolveReceiveScope, matchesReceiveScope } from '../sync/receive-scope.js';
+import { readSyncStatus } from '../sync/status.js';
 
 function parseJsonArg(value, label) {
   try {
@@ -137,9 +139,7 @@ export async function execute(action, args, context) {
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
       const outbox = createConfiguredOutbox(requireSyncDb(context));
-      const stats = outbox.getStats();
-      const syncState = outbox.getSyncState();
-      let remoteHead = syncState.headSequence;
+      let remoteHead;
       let connected = false;
       let connectionError = null;
       try {
@@ -152,25 +152,17 @@ export async function execute(action, args, context) {
         connectionError = error.message;
       }
       const result = {
+        ...readSyncStatus(outbox, { connected, remoteHead }),
         configured: true,
-        connected,
         connectionError,
         sequencer: config.sequencerUrl,
         identity: { tenantId: config.tenantId, storeId: config.storeId, agentId: config.agentId },
-        localState: {
-          lastPushedSequence: syncState.lastPushedSequence,
-          lastPulledSequence: syncState.lastPulledSequence,
-          lastSyncAt: syncState.lastSyncAt,
-        },
-        remoteHead,
-        lag: remoteHead - syncState.lastPulledSequence,
-        outbox: stats,
       };
       return jsonOutput
         ? result
         : {
             result,
-            formatted: `Sync status: ${connected ? 'healthy' : 'offline'} (lag ${result.lag})`,
+            formatted: `Sync status: ${result.health} (sequence gap ${result.lag})${result.healthReasons.length ? `: ${result.healthReasons.join(', ')}` : ''}`,
           };
     }
 
@@ -779,6 +771,7 @@ export async function execute(action, args, context) {
  * @param {Object} params.keyDirectory
  * @param {boolean} [params.promote] - re-verify and promote what now passes
  * @param {number} [params.pageSize=500] - rows per promotion page
+ * @param {Object} [params.scope=params.client.config] - operator-owned tenant/store configuration; required for promotion
  * @returns {Promise<{quarantined: Array<{reason: string, count: number}>, total: number, pins: Array<Object>, promoted: number, rediagnosed: number}>}
  */
 export async function syncDoctor({
@@ -787,11 +780,13 @@ export async function syncDoctor({
   keyDirectory,
   promote = false,
   pageSize = 500,
+  scope = client.config,
 }) {
   let promoted = 0;
   let rediagnosed = 0;
 
   if (promote) {
+    const receiveScope = resolveReceiveScope(scope);
     // Promotion deletes the rows it promotes, so the remaining rows shift down
     // by exactly the number left behind. Skipping that many is therefore a
     // correct cursor, and the loop terminates because every row examined is
@@ -802,6 +797,19 @@ export async function syncDoctor({
       if (events.length === 0) break;
 
       for (const event of events) {
+        if (!matchesReceiveScope(event, receiveScope)) {
+          rediagnosed += rediagnose(outbox, event, 'scope_mismatch');
+          skipped += 1;
+          continue;
+        }
+        // Promotion must not bypass the same receive policy used by pull().
+        try {
+          assertEventMatchesSecurityProfile(event, outbox.securityProfile);
+        } catch {
+          rediagnosed += rediagnose(outbox, event, 'security_profile_mismatch');
+          skipped += 1;
+          continue;
+        }
         // A throw out of key resolution is a failure to resolve, not a reason
         // to promote - mirrors _persistVerified's fail-closed handling.
         let resolution;
@@ -843,10 +851,17 @@ export async function syncDoctor({
         }
 
         try {
-          outbox.storePulledEvents([event]);
-          outbox.deleteQuarantinedEvent(event.eventId);
+          outbox.db
+            .transaction(() => {
+              outbox.storePulledEvents([event]);
+              outbox.deleteQuarantinedEvent(event.eventId);
+              outbox.deleteReceiveFailure(event.sequenceNumber);
+            })
+            .immediate();
           promoted += 1;
-        } catch {
+        } catch (error) {
+          if (error.code === 'VES_EVENT_CONFLICT')
+            rediagnosed += rediagnose(outbox, event, 'event_identity_conflict');
           // Leave this event quarantined; other events still get a chance.
           skipped += 1;
         }
@@ -859,6 +874,7 @@ export async function syncDoctor({
   return {
     quarantined,
     total: quarantined.reduce((sum, entry) => sum + entry.count, 0),
+    receiveFailures: outbox.getReceiveFailureSummary(),
     pins: outbox.getPeerKeyPins(),
     promoted,
     rediagnosed,

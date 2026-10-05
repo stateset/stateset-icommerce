@@ -28,6 +28,8 @@ ba = "ba"
 consts = "consts"
 ANC = "ANC"
 JOD = "JOD"
+# 1/1000 subunit of KWD, BHD, JOD (three-decimal currencies)
+fils = "fils"
 ND = "ND"
 VND = "VND"
 aways = "aways"

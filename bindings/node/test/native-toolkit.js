@@ -422,3 +422,28 @@ test('adapter entrypoints run standalone on the native toolkit', async () => {
   const viaVercel = await vercelTools.customers__get.execute({ id: created.id })
   assert.equal(viaVercel.email, 'lin@example.com')
 })
+
+test('shipment tool schemas preserve the native integer bounds and optional version arguments', async () => {
+  const { loadToolDescriptors } = await import('../native-toolkit.mjs')
+  const { tools } = loadToolDescriptors()
+  function boundedInteger(schema) {
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type]
+    assert.ok(types.includes('integer'))
+    assert.ok(!types.includes('number'))
+    assert.equal(schema.minimum, 1)
+    assert.equal(schema.maximum, 2147483647)
+  }
+  for (const method of ['addItem', 'removeItem', 'ship', 'deliver', 'cancel']) {
+    const tool = tools.find((tool) => tool.name === `shipments.${method}`)
+    boundedInteger(tool.parameters.properties.expectedVersion)
+    assert.ok(!tool.parameters.required.includes('expectedVersion'))
+    assert.equal(tool.positional.at(-1), 'expectedVersion')
+    assert.equal(tool.readOnly, false)
+  }
+  const update = tools.find((tool) => tool.name === 'shipments.update')
+  boundedInteger(update.parameters.properties.input.properties.expectedVersion)
+  const add = tools.find((tool) => tool.name === 'shipments.addItem')
+  boundedInteger(add.parameters.properties.input.properties.quantity)
+  const create = tools.find((tool) => tool.name === 'shipments.create')
+  boundedInteger(create.parameters.properties.input.properties.items.items.properties.quantity)
+})

@@ -15,18 +15,18 @@ Machine-readable output lives at `artifacts/compatibility/agent-inventory.json`.
 | Metric | Value |
 | --- | --- |
 | Total agents | 20 |
-| Commerce MCP tools | 955 |
+| Commerce MCP tools | 957 |
 | Scaffold MCP tools | 13 |
 | x402 MCP tools | 5 |
 | Agents with full commerce access | 1 |
 | Agents with scoped tool sets | 19 |
-| Scoped tool references | 310 |
+| Scoped tool references | 312 |
 
 ## Supported MCP Servers
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 955 | `cli/src/mcp-server.js` |
+| stateset-commerce | 957 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -38,7 +38,7 @@ Machine-readable output lives at `artifacts/compatibility/agent-inventory.json`.
 | `analytics` | Analytics Agent | 14 named tools | `stateset-commerce` | Business intelligence and forecasting specialist |
 | `checkout` | Checkout Agent | 33 named tools | `stateset-commerce` | Shopping cart and protocol-neutral checkout flow specialist |
 | `currency` | Currency Agent | 12 named tools | `stateset-commerce` | Multi-currency support and exchange rate management specialist |
-| `customer-service` | Customer Service | All 955 commerce MCP tools | `stateset-commerce` | Full-service agent with access to all commerce tools |
+| `customer-service` | Customer Service | All 957 commerce MCP tools | `stateset-commerce` | Full-service agent with access to all commerce tools |
 | `inventory` | Inventory Agent | 6 named tools | `stateset-commerce` | Stock and inventory management specialist |
 | `invoices` | Invoices Agent | 9 named tools | `stateset-commerce` | B2B invoice management and accounts receivable specialist |
 | `manufacturing` | Manufacturing Agent | 13 named tools | `stateset-commerce` | Bill of Materials (BOM) and work order management specialist |
@@ -46,7 +46,7 @@ Machine-readable output lives at `artifacts/compatibility/agent-inventory.json`.
 | `payments` | Payments Agent | 22 named tools | `stateset-commerce` | Payment processing and refund management specialist |
 | `promotions` | Promotions Agent | 20 named tools | `stateset-commerce` | Promotions, discounts, and coupon code management specialist |
 | `returns` | Returns Agent | 8 named tools | `stateset-commerce` | Return request processing specialist |
-| `shipments` | Shipments Agent | 18 named tools | `stateset-commerce` | Shipment tracking and delivery management specialist |
+| `shipments` | Shipments Agent | 20 named tools | `stateset-commerce` | Shipment tracking and delivery management specialist |
 | `stablecoin` | Stablecoin Agent | 4 named tools | `stateset-commerce` | Native stablecoin wallet, balance, and payment specialist |
 | `storefront` | Storefront Agent | 13 scaffold tools | `stateset-scaffold` | Creates e-commerce storefront websites using StateSet iCommerce |
 | `subscriptions` | Subscriptions Agent | 19 named tools | `stateset-commerce` | Subscription plans, recurring billing, and customer subscription lifecycle management |

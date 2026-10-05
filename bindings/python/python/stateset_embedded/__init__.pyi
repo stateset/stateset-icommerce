@@ -2998,6 +2998,7 @@ class CloseMonthStep:
     entry_count: int
     total_amount: str
     warnings: List[str]
+    failed_item_count: int
 
 class CloseMonthReport:
     """Report from a month-end close run."""
@@ -3072,11 +3073,14 @@ class GeneralLedgerApi:
         skip_revenue_recognition: Optional[bool] = None,
         skip_fx_revaluation: Optional[bool] = None,
         skip_period_close: Optional[bool] = None,
+        fail_on_warnings: Optional[bool] = None,
         closed_by: Optional[str] = None,
     ) -> CloseMonthReport:
         """Close the month: depreciation, revenue recognition, FX
         revaluation, then the period close. `dry_run=True` computes
         per-step counts and amounts without writing anything.
+        `fail_on_warnings=True` refuses with an error when any step
+        reports warnings instead of collecting them on the report.
         """
         ...
 

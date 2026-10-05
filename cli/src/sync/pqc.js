@@ -38,12 +38,12 @@ function hasMaterial(value) {
     return false;
   }
   if (typeof value === 'string') {
-    return value.length > 0;
+    return value.trim().length > 0;
   }
   if (value instanceof Uint8Array) {
     return value.length > 0;
   }
-  return true;
+  return false;
 }
 
 function normalizeSignatureBundle(bundle) {
@@ -150,7 +150,10 @@ function assertStrictSignatureBundle(event) {
   if (!hasMaterial(bundle?.mlDsa65Signature)) {
     throw new Error('pqc-strict profile requires an ML-DSA-65 signature component');
   }
-  if (hasMaterial(bundle?.ed25519Signature) || hasMaterial(event.agentSignature)) {
+  if (
+    hasMaterial(bundle?.ed25519Signature) ||
+    hasMaterial(event.agentSignature ?? event.signature)
+  ) {
     throw new Error('pqc-strict profile rejects Ed25519 signature material');
   }
 }
@@ -161,7 +164,9 @@ function assertHybridEncryptedPayload(payloadEncrypted) {
     throw new Error('Hybrid profile requires X25519+ML-KEM-768 recipient wraps');
   }
 
-  for (const wrap of normalizeRecipientWraps(payloadEncrypted)) {
+  const wraps = normalizeRecipientWraps(payloadEncrypted);
+  if (wraps.length === 0) throw new Error('Hybrid profile requires at least one recipient wrap');
+  for (const wrap of wraps) {
     if (wrap.wrapScheme !== KEY_WRAP_SCHEME_X25519_ML_KEM_768) {
       throw new Error('Hybrid profile requires every recipient wrap to use X25519+ML-KEM-768');
     }
@@ -181,7 +186,10 @@ function assertStrictEncryptedPayload(payloadEncrypted) {
     throw new Error('pqc-strict profile requires ML-KEM-768 recipient wraps');
   }
 
-  for (const wrap of normalizeRecipientWraps(payloadEncrypted)) {
+  const wraps = normalizeRecipientWraps(payloadEncrypted);
+  if (wraps.length === 0)
+    throw new Error('pqc-strict profile requires at least one recipient wrap');
+  for (const wrap of wraps) {
     if (wrap.wrapScheme !== KEY_WRAP_SCHEME_ML_KEM_768) {
       throw new Error('pqc-strict profile requires every recipient wrap to use ML-KEM-768');
     }
@@ -310,18 +318,23 @@ export function assertEventMatchesSecurityProfile(event, profile) {
     assertStrictSignatureBundle(event);
   }
 
-  if (Number(event.payloadKind ?? 0) !== 1) {
+  const payloadKind = Number(event.payloadKind ?? event.payload_kind ?? 0);
+  if (payloadKind !== 0 && payloadKind !== 1) {
+    throw new Error('Unsupported event payload kind');
+  }
+  if (payloadKind !== 1) {
     return;
   }
 
-  if (!event.payloadEncrypted) {
+  const payloadEncrypted = event.payloadEncrypted ?? event.payload_encrypted;
+  if (!payloadEncrypted) {
     throw new Error(`${resolvedProfile} profile requires payloadEncrypted for encrypted events`);
   }
 
   if (resolvedProfile === SECURITY_PROFILE_HYBRID) {
-    assertHybridEncryptedPayload(event.payloadEncrypted);
+    assertHybridEncryptedPayload(payloadEncrypted);
   } else {
-    assertStrictEncryptedPayload(event.payloadEncrypted);
+    assertStrictEncryptedPayload(payloadEncrypted);
   }
 }
 

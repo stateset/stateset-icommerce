@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 973,
+  "totalTools": 975,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 955
+      "count": 957
     },
     {
       "name": "stateset-scaffold",
@@ -299,7 +299,7 @@
     },
     {
       "name": "shipments",
-      "count": 16
+      "count": 18
     },
     {
       "name": "shipping_zones",
@@ -397,14 +397,14 @@
     },
     {
       "name": "write",
-      "count": 425
+      "count": 427
     }
   ],
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
     "read": 480,
-    "write": 425
+    "write": 427
   },
   "tools": [
     {
@@ -1755,6 +1755,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__add_return_tracking",
       "policyDomain": "returns",
+      "permission": "write"
+    },
+    {
+      "name": "add_shipment_item",
+      "description": "Add an order line to a shipment. Rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order not in a shippable status, and a stale expectedVersion.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__add_shipment_item",
+      "policyDomain": "shipments",
       "permission": "write"
     },
     {
@@ -7698,6 +7707,15 @@
       "permission": "write"
     },
     {
+      "name": "remove_shipment_item",
+      "description": "Remove an item from a shipment, releasing its order-line allocation. Rejects a stale expectedVersion.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__remove_shipment_item",
+      "policyDomain": "shipments",
+      "permission": "write"
+    },
+    {
       "name": "reserve_cart_inventory",
       "description": "Reserve inventory for all cart items.",
       "serverName": "stateset-commerce",
@@ -8239,7 +8257,7 @@
     },
     {
       "name": "sync_status",
-      "description": "Get the current sync status between local database and remote sequencer. Shows pending events, sync lag, and connection status.",
+      "description": "Get sync connection, sequence gap, pending writes, verified receive counts, quarantine and retained failure diagnostics. Received events are not projected into commerce records.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__sync_status",

@@ -285,7 +285,7 @@
         "className": "X402"
       }
     ],
-    "toolCount": 764,
+    "toolCount": 766,
     "readOnlyCount": 385,
     "readOnlyPrefixes": [
       "calculate",
@@ -1294,6 +1294,10 @@
         "skipPeriodClose": {
           "type": "boolean",
           "description": "Skip the final period close (closing entries + close period)"
+        },
+        "failOnWarnings": {
+          "type": "boolean",
+          "description": "Refuse with an error when any step reports warnings (strict mode)"
         },
         "closedBy": {
           "type": "string",
@@ -4319,12 +4323,48 @@
         },
         "recipientPhone": {
           "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CreateShipmentItemInput"
+          },
+          "description": "Order-linked manifest items, validated atomically with shipment creation."
         }
       },
       "required": [
         "orderId",
         "recipientName",
         "shippingAddress"
+      ],
+      "additionalProperties": false
+    },
+    "CreateShipmentItemInput": {
+      "type": "object",
+      "properties": {
+        "orderItemId": {
+          "type": "string"
+        },
+        "productId": {
+          "type": "string"
+        },
+        "sku": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "description": "Positive integer, at most 2147483647; fractional values are refused."
+        }
+      },
+      "required": [
+        "sku",
+        "name",
+        "quantity"
       ],
       "additionalProperties": false
     },
@@ -9265,7 +9305,10 @@
       "type": "object",
       "properties": {
         "expectedVersion": {
-          "type": "number"
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "description": "Positive integer, at most 2147483647; stale versions are refused atomically."
         },
         "status": {
           "type": "string",
@@ -26787,23 +26830,72 @@
       }
     },
     {
+      "name": "shipments.addItem",
+      "module": "shipments",
+      "className": "Shipments",
+      "method": "addItem",
+      "description": "Add an order-linked manifest item while packing. Does not fulfill the order or reserve stock. Optional expectedVersion is a positive integer at most 2147483647, checked atomically.",
+      "signature": "addItem(shipmentId: string, input: CreateShipmentItemInput, expectedVersion?: number | undefined | null): Promise<ShipmentItemOutput>",
+      "returnType": "Promise<ShipmentItemOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "shipmentId",
+        "input",
+        "expectedVersion"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "shipmentId": {
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/definitions/CreateShipmentItemInput"
+          },
+          "expectedVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 2147483647
+          }
+        },
+        "required": [
+          "shipmentId",
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "shipments.cancel",
       "module": "shipments",
       "className": "Shipments",
       "method": "cancel",
-      "description": "Cancel (Shipments.cancel). Returns ShipmentOutput.",
-      "signature": "cancel(id: string): Promise<ShipmentOutput>",
+      "description": "Cancel a shipment; optional expectedVersion must be an integer from 1 to 2147483647.",
+      "signature": "cancel(id: string, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>",
       "returnType": "Promise<ShipmentOutput>",
       "readOnly": false,
       "permission": "write",
       "positional": [
-        "id"
+        "id",
+        "expectedVersion"
       ],
       "parameters": {
         "type": "object",
         "properties": {
           "id": {
             "type": "string"
+          },
+          "expectedVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 2147483647
           }
         },
         "required": [
@@ -26860,19 +26952,28 @@
       "module": "shipments",
       "className": "Shipments",
       "method": "deliver",
-      "description": "Deliver (Shipments.deliver). Returns ShipmentOutput.",
-      "signature": "deliver(id: string): Promise<ShipmentOutput>",
+      "description": "Deliver a shipment; optional expectedVersion must be an integer from 1 to 2147483647.",
+      "signature": "deliver(id: string, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>",
       "returnType": "Promise<ShipmentOutput>",
       "readOnly": false,
       "permission": "write",
       "positional": [
-        "id"
+        "id",
+        "expectedVersion"
       ],
       "parameters": {
         "type": "object",
         "properties": {
           "id": {
             "type": "string"
+          },
+          "expectedVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 2147483647
           }
         },
         "required": [
@@ -26938,18 +27039,54 @@
       }
     },
     {
+      "name": "shipments.removeItem",
+      "module": "shipments",
+      "className": "Shipments",
+      "method": "removeItem",
+      "description": "Remove a manifest item while packing, advancing the shipment version atomically. Optional expectedVersion is a positive integer at most 2147483647, checked atomically.",
+      "signature": "removeItem(itemId: string, expectedVersion?: number | undefined | null): Promise<void>",
+      "returnType": "Promise<void>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "itemId",
+        "expectedVersion"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "itemId": {
+            "type": "string"
+          },
+          "expectedVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 2147483647
+          }
+        },
+        "required": [
+          "itemId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "shipments.ship",
       "module": "shipments",
       "className": "Shipments",
       "method": "ship",
-      "description": "Ship (Shipments.ship). Returns ShipmentOutput.",
-      "signature": "ship(id: string, trackingNumber?: string | undefined | null): Promise<ShipmentOutput>",
+      "description": "Ship a shipment; optional expectedVersion must be an integer from 1 to 2147483647.",
+      "signature": "ship(id: string, trackingNumber?: string | undefined | null, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>",
       "returnType": "Promise<ShipmentOutput>",
       "readOnly": false,
       "permission": "write",
       "positional": [
         "id",
-        "trackingNumber"
+        "trackingNumber",
+        "expectedVersion"
       ],
       "parameters": {
         "type": "object",
@@ -26962,6 +27099,14 @@
               "string",
               "null"
             ]
+          },
+          "expectedVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 2147483647
           }
         },
         "required": [

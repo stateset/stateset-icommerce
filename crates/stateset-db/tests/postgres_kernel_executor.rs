@@ -420,7 +420,8 @@ async fn postgres_outbox_leases_retry_dead_letter_redrive_and_ack_are_durable() 
         .expect("first worker claims probe");
     assert_eq!(claimed.len(), 1);
     assert_eq!(claimed[0].id, event_id);
-    assert_eq!(claimed[0].lease_owner.as_deref(), Some(worker_a.as_str()));
+    let token_a = claimed[0].lease_owner.as_deref().unwrap();
+    assert!(token_a.starts_with(&format!("{worker_a}:")));
     assert!(
         !db.kernel_outbox()
             .mark_published_by_async(event_id, &worker_b)
@@ -440,7 +441,7 @@ async fn postgres_outbox_leases_retry_dead_letter_redrive_and_ack_are_durable() 
              WHERE id = $1 AND lease_owner = $2",
         )
         .bind(event.id)
-        .bind(&worker_b)
+        .bind(event.lease_owner.as_deref().unwrap())
         .execute(db.pool())
         .await
         .expect("release unrelated test lease");
@@ -448,7 +449,7 @@ async fn postgres_outbox_leases_retry_dead_letter_redrive_and_ack_are_durable() 
 
     assert!(
         db.kernel_outbox()
-            .record_failure_by_async(event_id, &worker_a, "transient", 3_600, 2)
+            .record_failure_by_async(event_id, token_a, "transient", 3_600, 2)
             .await
             .expect("schedule retry")
     );
@@ -476,7 +477,13 @@ async fn postgres_outbox_leases_retry_dead_letter_redrive_and_ack_are_durable() 
     assert_eq!(retried[0].id, event_id);
     assert!(
         db.kernel_outbox()
-            .record_failure_by_async(event_id, &worker_b, "permanent", 0, 2)
+            .record_failure_by_async(
+                event_id,
+                retried[0].lease_owner.as_deref().unwrap(),
+                "permanent",
+                0,
+                2
+            )
             .await
             .expect("dead letter exhausted event")
     );
@@ -505,7 +512,7 @@ async fn postgres_outbox_leases_retry_dead_letter_redrive_and_ack_are_durable() 
     assert_eq!(redriven[0].attempts, 0);
     assert!(
         db.kernel_outbox()
-            .mark_published_by_async(event_id, &worker_c)
+            .mark_published_by_async(event_id, redriven[0].lease_owner.as_deref().unwrap())
             .await
             .expect("owner acknowledges redriven event")
     );

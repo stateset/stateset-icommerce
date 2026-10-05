@@ -6,6 +6,9 @@
  *
  * Uses a factory function pattern — call `createComplianceService(store, options)`
  * where `store` is an object with a `.db` property (better-sqlite3 instance).
+ * This synchronous low-level service requires sole SQLite-library ownership:
+ * never give it a file also open through the native Commerce binding in this
+ * process. Use createIsolatedComplianceService for file-backed applications.
  * Queries existing A2A tables and optionally the main commerce database for
  * full GDPR coverage across customers, orders, carts, payments, invoices,
  * shipments, subscriptions, and warranties.
@@ -103,8 +106,8 @@ const AGENT_CARD_TABLES = Object.freeze(['a2a_runtime_agent_cards', 'agent_cards
  * @param {Object} [options] - Additional options
  * @param {string} [options.commerceDbPath] - Path to the main commerce SQLite database
  * @param {Object} [options.commerceDb] - An open handle on the commerce database (not closed by
- *   this service). The MCP server passes its store's own connection: its A2A tables live in the
- *   commerce database.
+ *   this service). The isolated worker passes its store connection when the
+ *   A2A and commerce tables share a database.
  * @returns {Object} Compliance service methods
  */
 export function createComplianceService(store, options = {}) {
@@ -631,41 +634,34 @@ export function createComplianceService(store, options = {}) {
 
       // --- Customer profile ---
       if (tableExists(cdb, 'customers')) {
-        if (keepTransactions) {
-          const res = cdb
-            .prepare(
-              `UPDATE customers SET
-                 email = ?, first_name = ?, last_name = ?,
-                 phone = NULL, metadata = NULL, status = 'deleted',
-                 updated_at = datetime('now')
-               WHERE id IN (${placeholders})`,
-            )
-            .run(ANON_EMAIL, REDACTED, REDACTED, ...customerIds);
-          if (res.changes > 0) {
-            retained.push({
-              table: 'customers',
-              count: res.changes,
-              action: 'anonymized',
-            });
-          }
-        } else {
-          // Soft-delete (set status) — hard delete could break FK constraints
-          const res = cdb
-            .prepare(
-              `UPDATE customers SET
-                 email = ?, first_name = ?, last_name = ?,
-                 phone = NULL, metadata = NULL, status = 'deleted',
-                 updated_at = datetime('now')
-               WHERE id IN (${placeholders})`,
-            )
-            .run(ANON_EMAIL, REDACTED, REDACTED, ...customerIds);
-          if (res.changes > 0) {
-            retained.push({
-              table: 'customers',
-              count: res.changes,
-              action: 'anonymized (soft-deleted)',
-            });
-          }
+        const columns = new Set(
+          cdb
+            .prepare('PRAGMA table_info(customers)')
+            .all()
+            .map((c) => c.name),
+        );
+        // Modern engines resolve e-mail through this unique key. Leaving it
+        // behind retains PII, resolves the deleted account, and blocks reuse.
+        const emailKey = columns.has('email_key') ? 'email_key = NULL,' : '';
+        const version = columns.has('version') ? 'version = version + 1,' : '';
+        const res = cdb
+          .prepare(
+            `UPDATE customers SET
+             email = ?, first_name = ?, last_name = ?,
+             phone = NULL, metadata = NULL, status = 'deleted',
+             tags = '[]', accepts_marketing = 0, email_verified = 0,
+             default_shipping_address_id = NULL, default_billing_address_id = NULL,
+             ${emailKey} ${version}
+             updated_at = datetime('now')
+           WHERE id IN (${placeholders})`,
+          )
+          .run(ANON_EMAIL, REDACTED, REDACTED, ...customerIds);
+        if (res.changes > 0) {
+          retained.push({
+            table: 'customers',
+            count: res.changes,
+            action: keepTransactions ? 'anonymized' : 'anonymized (soft-deleted)',
+          });
         }
       }
 

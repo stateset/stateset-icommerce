@@ -57,6 +57,73 @@ stateset-sync push
 
 Pushes all unsent events from the local outbox to the sequencer. Each event is signed with the agent's Ed25519 key before transmission. If a `SyncEvent` already carries VES envelope metadata such as `command_id`, `base_version`, `source_agent_id`, or `agent_key_id`, the Rust transport forwards it instead of reconstructing it. On success, the sequencer can acknowledge each event with its canonical remote sequence number, and the Rust engine retains that local-to-canonical mapping plus any receipt handle in a bounded durable confirmation log.
 
+The engine and REST client check every outgoing event against the configured
+tenant and store before sending the batch. Missing or mismatched identifiers
+refuse the entire batch without changing pending records. This also applies to
+engine previews and runs before the REST retry loop, so a configuration mismatch
+does not cause repeated requests. Changing the configured destination does not
+retarget previously signed events; use the correct store configuration or a
+separately reviewed migration process. The transport never rewrites their signed
+scope to make them fit.
+
+Push settlement validates the existing ordered, contiguous receipt format before
+changing local state. Accepted and rejected counts must account for the entire
+submitted batch; rejection IDs must be unique members of that batch; the accepted
+sequence range must match its count and fit under the reported head. Counts and
+sequences must be nonnegative safe integers (accepted sequences start at 1).
+Incomplete or inconsistent receipts leave the batch pending rather than guessing
+which events succeeded. Entirely rejected batches are marked rejected with their
+reasons; those rows are retained for inspection.
+
+Acknowledgements, rejection statuses, and sync cursors commit together. A local
+write failure leaves events available for retry, so the sequencer must deduplicate
+by event ID. A late rejection cannot undo an existing acknowledgement, and a
+conflicting remote sequence cannot replace the first acknowledged sequence.
+`lastPushedSequence` tracks this client's accepted events; `headSequence` tracks
+the highest reported remote head. This changes the earlier behavior that copied
+the global head into both fields. Receipt validation is not cryptographic proof
+of external execution. Noncontiguous acknowledgements require a future per-event
+receipt contract, and a duplicate rejection without an earlier local acceptance
+still needs operator reconciliation with the sequencer.
+
+### REST Request Deadlines and Retries
+
+REST requests default to a 30-second deadline covering connection, response
+headers and the complete success/error body. Set `sync.requestTimeoutMs` in
+`.stateset/sync.json` (or the programmatic `SyncConfig`) to an integer from 1 to
+2,147,483,647 milliseconds. Invalid values are refused when constructing the
+REST client. gRPC uses its separate transport settings.
+
+A deadline aborts the HTTP request and raises an error with code
+`SEQUENCER_TIMEOUT`. Each push retry gets a fresh deadline; the total duration
+can include all attempts and their backoff delays. `sync.retryPolicy.maxRetries`
+controls additional attempts, and an explicit `pushWithRetry(batch, 0)` disables
+them. Retry counts must be safe nonnegative integers; backoff delays must be
+integers from 0 to 2,147,483,647 milliseconds.
+
+A timed-out write may already have reached the sequencer. It does not prove
+remote rollback or cancellation. Without a valid receipt, the engine keeps the
+signed event pending and leaves its push cursor unchanged, including across
+restart. A later retry sends the same event identity and signature. The receiver
+must deduplicate it or provide a reconcilable prior acknowledgement; local
+timeouts do not establish exactly-once remote effects.
+
+REST `disconnect()` aborts active requests and retry backoff with
+`SEQUENCER_DISCONNECTED`. New requests are refused until `connect()` starts a
+new connection. Reconnecting does not revive an earlier retry loop or pull
+iterator, including events still buffered inside that iterator. Concurrent
+unified-client connection attempts share one handshake; disconnect invalidates
+an unfinished handshake and prevents it from publishing a late connection.
+
+Engine shutdown stops background scheduling and disconnects the client. An
+interrupted push keeps its unacknowledged signed records pending. Cancellation
+does not undo remote effects, and shutdown is not a general drain of application
+work: await outstanding operations before closing their database handle. These
+request/backoff cancellation guarantees apply to REST; gRPC retains its own
+connection and RPC cancellation behavior. The unified wrapper suppresses events
+from retired transports and closes a retired gRPC transport if its handshake
+finishes late.
+
 ### Pull — Receive Remote Events
 
 ```bash
@@ -68,6 +135,49 @@ signing key, and stores what verifies in the local pulled-event table. Nothing i
 applied to local entity state yet — pulled events are readable, not projected —
 and what fails verification is quarantined rather than stored. See
 [Receiving events](#receiving-events-verification-and-quarantine).
+
+The CLI REST cursor is the **next inclusive `from` value**, despite the persisted
+field name `lastPulledSequence`. A nonempty page advances it to one past the
+highest returned sequence; an empty page leaves it unchanged. Explicit
+`has_more` responses control continuation, including underfilled pages. Without
+that field, the client continues when a page reaches the requested limit.
+
+Pages with duplicate, stale, fractional or unsafe sequence numbers, too many
+events, or inconsistent head/cursor/continuation metadata are refused before
+verification or storage. An empty page cannot claim more results. Sequence
+numbers must leave room for an exactly representable next cursor in JavaScript;
+gaps are allowed because a scoped feed need not contain every global sequence.
+Saved pull progress and remote head never decrease when concurrent pulls finish
+out of order or an operator explicitly replays an earlier page. This validates
+page consistency; it does not prove that the server supplied every event.
+
+### Reading Sync Health
+
+The engine, `stateset-sync status`, direct sync command and `sync_status` tool
+share the same status calculation. `localHead` is the receive cursor minus one
+(with zero for a fresh store); `nextPullCursor` is the next inclusive request
+cursor. `lag` is a nonnegative **sequence distance**, not an event count. Scoped
+feeds can have gaps. A cursor includes quarantined and retained records, so zero
+lag alone does not mean every event is verified or usable.
+
+`receive` reports verified record count and highest verified sequence, quarantine
+counts by reason, and the count/earliest sequence of retained receive failures.
+These aggregates include all records, without returning payloads or journal
+error details. Counts survive restarts and do not stop at the event-list limit.
+
+Connected status is `degraded` when quarantine or retained failures exist, any
+outgoing record is failed/rejected, the sequence gap reaches 100, or pending
+writes reach 1,000. An invalid or regressed remote head also prevents healthy
+status. `healthReasons` identifies the conditions; offline reports preserve the
+local diagnostics and cached head. Missing or invalid REST head responses now
+fail instead of silently becoming zero.
+
+`lastSyncAt` is null until a sync timestamp has been recorded. `lastPullAt`
+(also exposed as the engine's `lastPull`) records a committed nonempty receive
+batch, including a batch needing quarantine or recovery. It commits with the
+receive records and cursor. Pushes and empty responses do not update it; older
+stores have null until their next committed receive batch. It is not evidence
+of entity projection or application readiness: received events remain unprojected.
 
 ### Full Sync
 
@@ -114,17 +224,87 @@ that is the rotation path, and it is why rotation must always allocate a fresh
 Events that cannot be verified go to `_ves_quarantined_events` and are never
 returned by application reads. The reason is the current diagnosis:
 
+The configured tenant and store are checked before key lookup or signature
+verification. Even a correctly signed event for another tenant or store is
+quarantined as `scope_mismatch`. Missing scope fields that cannot fit the
+quarantine schema remain in the receive-failure journal. These checks do not
+block valid events in the same batch. Scope comes only from operator
+configuration; an event cannot select its own receive destination.
+
+Verification checks the received content against the signed hashes before
+checking the author signature. Plaintext must match its canonical payload hash
+and carry a zero ciphertext hash. Encrypted events bind their nonce, ciphertext,
+tag, envelope-derived AAD, and canonical recipient list to the ciphertext hash.
+Recipient aliases must agree with that list, and encrypted events cannot carry
+an unauthenticated parallel cleartext payload. Malformed encodings, unsupported
+encryption headers, or content/hash mismatches fail verification. The salted
+plaintext hash of encrypted content is checked later during decryption, when a
+recipient has the private key; ciphertext integrity alone does not prove that
+decryption will succeed or that the business contents are valid.
+
 | Reason | What it means | What to do |
 |---|---|---|
 | `sequencer_key_not_configured` | `sequencerPublicKey` is unset locally, so no directory can be verified. | `stateset-sync config set sequencer-public-key <hex>`, then `stateset-sync doctor --promote`. |
 | `key_unresolved` | The key could not be obtained: the sequencer was unreachable past `peerKeyMaxStaleSeconds`, or the peer has no such `key_id` yet. | Usually benign — a peer that pushed before registering its key. Re-run `doctor --promote` once the key lands. |
 | `directory_untrusted` | A key-directory response was refused: unsigned, bad signature, issued for a different agent or tenant, too stale, or (gRPC) never cryptographically attested. | **Not benign.** Investigate the sequencer and the transport. |
-| `signature_invalid` | The author signature did not verify under the key the directory names. | A forgery or a corrupted envelope. Investigate the peer. |
+| `signature_invalid` | The received payload does not match its signed hashes, or the author signature did not verify under the directory key. | A forgery, malformed content, or a corrupted envelope. Investigate the peer. |
+| `security_profile_mismatch` | Signature or encryption material violates the configured security profile. | Upgrade the peer's signing/encryption configuration; replay or re-verify once compatible. Never silently downgrade policy to promote an event. |
+| `scope_mismatch` | The event's tenant or store does not exactly match the configured destination. | Investigate routing and configuration. Do not alter the signed event or promote it into another store. |
+| `event_identity_conflict` | Promotion would replace an existing verified event ID or sequence with different content or metadata. | Investigate the source and sequencer; promotion must not overwrite the verified record. |
 | `key_revoked` | The key was revoked at or before the event's `createdAt`. | Expected after a revocation; the peer must re-push under a current key. |
 | `key_outside_validity_window` | The key exists but was not valid when the event was created. | Check the peer's key validity windows and clock. |
 | `peer_key_conflict` | The directory presented a different public key for an already-pinned `(agent_id, key_id)`. | Treat as a compromised or lying sequencer until proven otherwise. |
 
 ### `stateset-sync doctor`
+
+Local storage failures are retained separately in `_ves_receive_failures`. A
+malformed signed record can violate the normal receive or quarantine schema;
+the failure journal keeps its normalized envelope, sequence, verification stage,
+diagnosis, and database error without those envelope constraints. These records
+are excluded from normal application reads. The receive batch and its pull
+cursor commit in one SQLite transaction. If even the journal or cursor cannot be
+written, the batch rolls back and the cursor stays unchanged.
+
+`doctor` reports the retained count and earliest sequence (also available as
+`receiveFailures` in JSON output). `--promote` does not promote these records.
+Promotion also checks tenant/store scope. The CLI uses its configured client;
+programmatic `syncDoctor` callers must provide a configured client or an explicit
+operator-owned `scope: { tenantId, storeId }`. Unconfigured read-only inspection
+remains available. This is an upgrade behavior change for callers that previously
+promoted events without a destination configuration. Previously stored events
+are not retroactively audited or removed by this change.
+Inspect them with `outbox.getReceiveFailures(limit)` or read-only SQL against
+`_ves_receive_failures`; the journal may contain sensitive commerce payloads.
+After repairing the storage cause, replay from an earlier cursor through the
+normal `SyncEngine.pull({ fromSequence })` path. Successful storage or quarantine
+clears the corresponding journal entry. Do not edit signed event contents to
+make them fit the schema. This mechanism preserves evidence and permits replay;
+it does not apply events to business records or guarantee upstream retention.
+
+Verified receive records are immutable through the outbox APIs. An identical
+replay leaves the first row and its `pulled_at` unchanged; JSON key ordering is
+ignored when comparing payloads and bundles. Changing an event's sequence,
+content, author, signatures, or stored metadata raises `VES_EVENT_CONFLICT`.
+The direct batch API rolls back the batch; the engine isolates the conflicting
+record in the failure journal and continues with records it can retain safely.
+Conflicts carry `event_identity_conflict` and are deliberately not cleared by a
+later successful replay or overwritten by a subsequent generic storage error.
+The journal retains the first such conflict per sequence for operator review;
+it is not an exhaustive history of all conflicting variants. Automatic repair
+does not choose which competing history is authoritative. Promotion commits
+the verified write, quarantine deletion, and ordinary recovery cleanup in one
+transaction, and leaves conflicts quarantined.
+
+This replaces the old receive API's `INSERT OR REPLACE` behavior. Applications
+must create a new event for a correction rather than overwrite an earlier one.
+Existing database rows are preserved; no migration or retrospective repair is
+performed by this change.
+
+The journal is created automatically on outbox initialization. Older clients do
+not provide this retention guarantee. The old `receive-store-dropped` diagnostic
+is replaced by `receive-store-retained`, emitted after a successful commit;
+per-event `receive-store-failed` and `receive-quarantine-failed` signals still
+describe failed write attempts, which may subsequently roll back.
 
 ```bash
 stateset-sync doctor              # counts by reason, current pins
@@ -153,13 +333,19 @@ erase evidence, it simply promotes nothing.
   fields the signing hash binds, and the gRPC key directory carries no
   directory signature, so it can be neither cached nor trusted. Use an
   `https://` sequencer URL to receive. Pushing over gRPC is unaffected.
-- **`securityProfile` is not enforced on receive.** The push path calls
-  `assertEventMatchesSecurityProfile`; the receive path deliberately does not,
-  so an agent configured `hybrid` or `pqc-strict` still accepts a peer event
-  declaring plain Ed25519 (`agentSignatureScheme: 0`). Enforcing it today would
-  quarantine every peer that has not migrated. No forgery becomes possible in
-  the meantime — the attacker still needs the peer's Ed25519 private key — and
-  this is tracked for a release in which peers have migrated.
+- **`securityProfile` is enforced on receive and promotion.** Hybrid agents
+  require hybrid signatures and, for encrypted events, hybrid recipient wraps;
+  strict agents require ML-DSA-only signatures and ML-KEM-only wraps. Incompatible
+  events are retained as `security_profile_mismatch` before key lookup. This is
+  an upgrade behavior change: legacy peers no longer enter a hybrid/strict
+  receive store automatically. Legacy interoperability requires an operator's
+  explicit `legacy` profile, subject to the existing profile downgrade controls.
+  Historical stored events are not retroactively reclassified by this change.
+  `doctor --promote` applies the same profile before verifying or promoting.
+  Verification follows the declared signature scheme: missing PQ keys,
+  malformed PQ signatures, unavailable native verification, and unknown schemes
+  cannot fall back to Ed25519. Profile validation and cryptographic verification
+  are separate checks; passing the first never implies passing the second.
 - Pulled events are **stored and readable, not applied.** Nothing is projected
   into local entity state yet.
 

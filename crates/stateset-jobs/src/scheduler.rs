@@ -5,7 +5,8 @@
 //! which returns a list of [`TickAction`]s. This design makes the scheduler
 //! fully testable without an async runtime.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
@@ -94,7 +95,7 @@ pub struct SchedulerStatus {
 /// returns [`TickAction`]s that the caller is responsible for executing.
 #[derive(Debug)]
 pub struct Scheduler {
-    definitions: HashMap<String, JobDefinition>,
+    definitions: HashMap<String, Arc<JobDefinition>>,
     queue: JobQueue,
     store: Box<dyn JobStore>,
     running: HashMap<Uuid, RunningJob>,
@@ -153,7 +154,7 @@ impl Scheduler {
                 running.timeout = definition.timeout;
             }
         }
-        self.definitions.insert(definition.name.clone(), definition);
+        self.definitions.insert(definition.name.clone(), Arc::new(definition));
         Ok(())
     }
 
@@ -163,7 +164,11 @@ impl Scheduler {
     /// named by [`TickAction::Execute`].
     #[must_use]
     pub fn definition(&self, name: &str) -> Option<&JobDefinition> {
-        self.definitions.get(name)
+        self.definitions.get(name).map(AsRef::as_ref)
+    }
+
+    pub(crate) fn shared_definition(&self, name: &str) -> Option<Arc<JobDefinition>> {
+        self.definitions.get(name).cloned()
     }
 
     /// Names of every registered definition, sorted for determinism.
@@ -190,6 +195,14 @@ impl Scheduler {
         if !self.definitions.contains_key(definition_name) {
             return Err(JobError::NotFound(Uuid::nil()));
         }
+        // Refused work must not survive in the store and execute on restart.
+        // Scheduling owns &mut self, so queue capacity cannot race this check.
+        if self.queue.size() >= self.queue.max_size() {
+            return Err(JobError::QueueFull {
+                capacity: self.queue.max_size(),
+                current: self.queue.size(),
+            });
+        }
 
         let instance = JobInstance::new_scheduled(definition_name, now);
         let id = instance.id;
@@ -206,18 +219,28 @@ impl Scheduler {
     /// 2. Checks for running jobs that have timed out.
     /// 3. Returns a list of [`TickAction`]s for the caller to execute.
     pub fn tick(&mut self, now: DateTime<Utc>) -> Vec<TickAction> {
+        self.tick_with_managed_jobs(now, &HashSet::new())
+    }
+
+    // Live async handlers have monotonic executor deadlines. Only recovered or
+    // externally driven jobs need the scheduler's wall-clock timeout recovery.
+    pub(crate) fn tick_with_managed_jobs(
+        &mut self,
+        now: DateTime<Utc>,
+        managed: &HashSet<Uuid>,
+    ) -> Vec<TickAction> {
         let mut actions = Vec::new();
 
         // --- Check for timeouts on running jobs ---
         let timed_out: Vec<(Uuid, RunningJob)> = self
             .running
             .iter()
-            .filter(|(_, rj)| {
+            .filter(|(id, rj)| {
                 let elapsed = now
                     .signed_duration_since(rj.started_at)
                     .to_std()
                     .unwrap_or(std::time::Duration::ZERO);
-                elapsed >= rj.timeout
+                !managed.contains(id) && elapsed >= rj.timeout
             })
             .map(|(id, rj)| (*id, rj.clone()))
             .collect();

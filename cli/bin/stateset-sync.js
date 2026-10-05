@@ -378,8 +378,7 @@ program
       await engine.initialize();
 
       const status = await engine.getStatus();
-      const outbox = createOutbox(db);
-      const stats = outbox.getStats();
+      const stats = status.outbox;
 
       if (jsonOutput) {
         writeJsonOutput(options, { status, stats });
@@ -402,7 +401,11 @@ program
         console.log(
           `    Outbox:       ${stats.pending} pending, ${stats.synced} synced, ${stats.failed} failed`,
         );
-        console.log(`    Local head:   ${status.localHead}`);
+        console.log(`    Received head: ${status.localHead}`);
+        console.log(`    Next cursor:   ${status.nextPullCursor}`);
+        console.log(`    Verified:      ${status.receive.verified} stored events`);
+        console.log(`    Quarantined:   ${status.receive.quarantined}`);
+        console.log(`    Retained failures: ${status.receive.failures.count}`);
         console.log();
 
         // Remote state
@@ -413,18 +416,16 @@ program
         // Sync gap
         const lagColor =
           status.lag > 100 ? chalk.red : status.lag > 10 ? chalk.yellow : chalk.green;
-        console.log(`  Sync Gap:       ${lagColor(status.lag + ' events')}`);
+        console.log(`  Sequence Gap:   ${lagColor(String(status.lag))}`);
         console.log();
 
         // Health indicator
-        if (status.lag > 100) {
-          console.log(chalk.yellow('  ⚠ Significant sync lag detected'));
-        } else if (status.pending > 100) {
-          console.log(chalk.yellow('  ⚠ Many pending events to push'));
-        } else if (!status.connected) {
-          console.log(chalk.yellow('  ⚠ Cannot reach sequencer'));
-        } else {
+        if (status.health === 'healthy') {
           console.log(chalk.green('  ✓ Sync healthy'));
+        } else {
+          console.log(
+            chalk.yellow(`  ⚠ Sync ${status.health}: ${status.healthReasons.join(', ')}`),
+          );
         }
 
         if (options.verbose) {
@@ -2138,6 +2139,14 @@ program
 
       console.log();
       console.log(chalk.bold(`Quarantined events (${report.total} total)`));
+      if (report.receiveFailures.count > 0) {
+        console.log(
+          chalk.yellow(
+            `  ${report.receiveFailures.count} receive storage failure(s) retained for recovery; ` +
+              `earliest sequence ${report.receiveFailures.oldestSequence}. Repair the storage cause and replay an earlier pull cursor.`,
+          ),
+        );
+      }
       if (report.quarantined.length === 0) {
         console.log(chalk.dim('  none'));
       } else {

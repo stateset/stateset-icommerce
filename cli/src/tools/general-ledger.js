@@ -219,6 +219,10 @@ export const generalLedgerTools = withPolicyDomain('general_ledger', [
       skipRevenueRecognition: z.boolean().optional().describe('Skip revenue recognition'),
       skipFxRevaluation: z.boolean().optional().describe('Skip FX revaluation'),
       skipPeriodClose: z.boolean().optional().describe('Skip closing entries and period close'),
+      failOnWarnings: z
+        .boolean()
+        .optional()
+        .describe('Refuse with an error when any step reports warnings (strict mode)'),
       closedBy: z.string().min(1).optional().describe('Actor recorded as the closer'),
     },
     permission: 'write',
@@ -234,6 +238,7 @@ export const generalLedgerTools = withPolicyDomain('general_ledger', [
         skipRevenueRecognition: params.skipRevenueRecognition,
         skipFxRevaluation: params.skipFxRevaluation,
         skipPeriodClose: params.skipPeriodClose,
+        failOnWarnings: params.failOnWarnings,
         closedBy: params.closedBy,
       });
       return {

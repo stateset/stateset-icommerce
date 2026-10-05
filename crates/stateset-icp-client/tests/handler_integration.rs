@@ -1,12 +1,10 @@
 //! Live integration test: spawn the JS icp-handler, drive it from the
 //! Rust SDK over the wire, assert every verb roundtrips.
 //!
-//! Proves byte-identical interop between the Rust SDK and the JS
-//! reference implementation. If this test passes, any Rust service
-//! can talk to any ICP-1.0 handler in any language.
-//!
-//! Skipped automatically (test marked ignored) if `node` is not on
-//! PATH or the handler's `package.json` is missing.
+//! Covers the exercised verbs against the JS reference implementation.
+//! External protocol conformance remains a separate gate. Requires Node.js
+//! and the workspace handler; missing prerequisites or startup failures fail
+//! loudly instead of silently reporting an unexecuted integration as passed.
 
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -16,12 +14,16 @@ use stateset_icp_client::{Client, Identity, LineItem, Money};
 struct Handler {
     child: Child,
     port: u16,
+    stderr_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Drop for Handler {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        if let Some(thread) = self.stderr_thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -31,75 +33,73 @@ fn workspace_root() -> std::path::PathBuf {
     manifest.parent().unwrap().parent().unwrap().to_path_buf()
 }
 
-fn maybe_spawn_handler() -> Option<Handler> {
-    let root = workspace_root();
-    let handler_dir = root.join("icp-handler");
-    if !handler_dir.join("package.json").exists() {
-        eprintln!("icp-handler/package.json not found — skipping");
-        return None;
-    }
-    if Command::new("node").arg("--version").stdout(Stdio::null()).status().ok()?.code() != Some(0)
+fn spawn_handler() -> Handler {
+    let handler_dir = workspace_root().join("icp-handler");
+    assert!(handler_dir.join("package.json").exists(), "workspace icp-handler is required");
+    assert!(
+        Command::new("node")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .status()
+            .expect("Node.js is required for the protocol integration test")
+            .success(),
+        "node --version failed"
+    );
+    let mut command = Command::new("node");
+    // The reference handler is a disposable demo fixture. Never inherit an
+    // operator's production identity or trust configuration into this test.
+    for (key, _) in std::env::vars_os().filter(|(key, _)| key.to_string_lossy().starts_with("ICP_"))
     {
-        eprintln!("node not available — skipping");
-        return None;
+        command.env_remove(key);
     }
-
-    // Spawn handler on an ephemeral port. PORT=0 lets the OS pick.
-    // We have to read stderr to discover the chosen port (handler logs it).
-    let mut cmd = Command::new("node");
-    cmd.arg("src/server.mjs")
+    command
+        .arg("src/server.mjs")
         .current_dir(&handler_dir)
         .env("PORT", "0")
-        .stdout(Stdio::piped())
+        .env("NODE_ENV", "test")
+        .env("ICP_TRUST_MODE", "demo")
+        .env_remove("NODE_OPTIONS")
+        .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    let mut child = cmd.spawn().ok()?;
-
-    // Read stderr until we see "listening on http://127.0.0.1:PORT", then
-    // hand the reader off to a drain thread so the handler's stderr pipe
-    // doesn't fill up and block subsequent verb requests.
-    use std::io::{BufRead, BufReader};
-    let stderr = child.stderr.take().expect("stderr piped");
-    let mut reader = BufReader::new(stderr);
-    let mut line = String::new();
-    let mut port: Option<u16> = None;
-    let start = std::time::Instant::now();
-    while start.elapsed() < Duration::from_secs(5) {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {
-                if let Some(idx) = line.find("127.0.0.1:") {
-                    let tail = &line[idx + "127.0.0.1:".len()..];
-                    let num: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
-                    if let Ok(p) = num.parse::<u16>() {
-                        port = Some(p);
-                        break;
+    let mut handler = Handler {
+        child: command.spawn().expect("spawn reference handler"),
+        port: 0,
+        stderr_thread: None,
+    };
+    let stderr = handler.child.stderr.take().expect("stderr piped");
+    let (sender, receiver) = std::sync::mpsc::channel();
+    // A blocking read_line on the test thread would defeat the startup timeout.
+    // Keep draining after readiness so subsequent requests cannot fill the pipe.
+    handler.stderr_thread = Some(std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader};
+        let mut reader = BufReader::new(stderr);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    eprint!("{line}");
+                    if let Some(port) = line
+                        .split_once("listening on http://127.0.0.1:")
+                        .and_then(|(_, value)| value.trim().parse::<u16>().ok())
+                    {
+                        let _ = sender.send(port);
                     }
                 }
             }
-            Err(_) => break,
         }
-    }
-
-    let p = port?;
-    // Drain remaining stderr in a daemon thread so the pipe buffer never fills.
-    std::thread::spawn(move || {
-        let mut buf = String::new();
-        while reader.read_line(&mut buf).map_or(0, |n| n) > 0 {
-            buf.clear();
-        }
-    });
-    // Brief warmup so the listener is fully accepting.
-    std::thread::sleep(Duration::from_millis(50));
-    Some(Handler { child, port: p })
+    }));
+    handler.port = receiver
+        .recv_timeout(Duration::from_secs(30))
+        .expect("reference handler did not become ready; see its stderr above");
+    assert_ne!(handler.port, 0);
+    handler
 }
 
 #[test]
 fn rust_sdk_roundtrips_against_js_handler() {
-    let Some(handler) = maybe_spawn_handler() else {
-        eprintln!("skipping: handler unavailable");
-        return;
-    };
+    let handler = spawn_handler();
 
     let id = Identity::generate();
     let url = format!("http://127.0.0.1:{}", handler.port);

@@ -7,15 +7,16 @@ let complianceSvcPromise = null;
 async function getComplianceSvc() {
   if (!complianceSvcPromise) {
     complianceSvcPromise = (async () => {
-      const { A2AStore } = await import('../a2a/store.js');
-      const { createComplianceService } = await import('../compliance/exports.js');
+      const { defaultA2ADbPath } = await import('../a2a/store.js');
+      const { createIsolatedComplianceService } = await import('../compliance/isolated.js');
+      const { existsSync } = await import('node:fs');
       const path = await import('node:path');
-      const store = new A2AStore();
-      store.init();
-      const commerceDbPath = store.dbPath
-        ? path.resolve(path.dirname(store.dbPath), 'store.db')
-        : './store.db';
-      return createComplianceService(store, { commerceDbPath });
+      const dbPath = defaultA2ADbPath();
+      const candidateCommercePath = path.resolve(path.dirname(dbPath), 'store.db');
+      // A2A-only installations may not have a commerce file yet. Keep those
+      // reports usable, while refusing to create an empty substitute file.
+      const commerceDbPath = existsSync(candidateCommercePath) ? candidateCommercePath : null;
+      return createIsolatedComplianceService(dbPath, { commerceDbPath });
     })();
   }
   return complianceSvcPromise;
@@ -35,7 +36,7 @@ export async function execute(action, args, { jsonOutput }) {
   switch (action) {
     case 'audit-trail': {
       const payload = args[0] ? parseJsonArg(args[0], 'payload') : {};
-      const result = svc.exportAuditTrail(payload);
+      const result = await svc.exportAuditTrail(payload);
       return jsonOutput
         ? result
         : {
@@ -52,7 +53,7 @@ export async function execute(action, args, { jsonOutput }) {
       const [yearRaw, agentAddress] = args;
       if (!yearRaw || !agentAddress)
         throw new Error('Usage: compliance 1099k <year> <agentAddress>');
-      const result = svc.generate1099K({
+      const result = await svc.generate1099K({
         year: Number.parseInt(yearRaw, 10),
         agentAddress,
       });
@@ -64,7 +65,7 @@ export async function execute(action, args, { jsonOutput }) {
     case 'export-gdpr': {
       const customerId = args[0];
       if (!customerId) throw new Error('Usage: compliance export-gdpr <customerId>');
-      const result = svc.generateGDPRExport(customerId);
+      const result = await svc.generateGDPRExport(customerId);
       return jsonOutput ? result : { result, formatted: `Exported GDPR data for ${customerId}` };
     }
 
@@ -72,7 +73,7 @@ export async function execute(action, args, { jsonOutput }) {
       const [customerId, keepTransactionsRaw] = args;
       if (!customerId)
         throw new Error('Usage: compliance delete-gdpr <customerId> [keepTransactions]');
-      const result = svc.deleteGDPRData(customerId, {
+      const result = await svc.deleteGDPRData(customerId, {
         keepTransactions: ['true', '1', 'yes', 'y'].includes(
           String(keepTransactionsRaw || '').toLowerCase(),
         ),
@@ -82,7 +83,7 @@ export async function execute(action, args, { jsonOutput }) {
 
     case 'summary': {
       const [period = 'month', agentName] = args;
-      const result = svc.generateComplianceSummary({
+      const result = await svc.generateComplianceSummary({
         period,
         agentName: agentName || undefined,
       });
@@ -94,7 +95,7 @@ export async function execute(action, args, { jsonOutput }) {
     case 'soc2': {
       const controlsJson = args[0];
       if (!controlsJson) throw new Error('Usage: compliance soc2 <controlsJson>');
-      const result = svc.generateSOC2Evidence({
+      const result = await svc.generateSOC2Evidence({
         controls: parseJsonArg(controlsJson, 'controls'),
       });
       return jsonOutput

@@ -37,6 +37,9 @@ option, not as the mandatory path through the binding layer.
 - **No panics across FFI** — every function catches errors and returns an
   `FfiErrorCode` rather than unwinding.
 
+Native builds must retain `panic = "unwind"` (the Cargo default) so the guards
+can catch panics. This crate rejects `panic = "abort"` builds at compile time.
+
 ## Usage (C)
 
 ```c

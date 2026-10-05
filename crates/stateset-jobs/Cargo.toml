@@ -12,6 +12,7 @@ keywords = ["commerce", "jobs", "scheduler", "background", "cron"]
 categories = ["asynchronous"]
 
 [dependencies]
+futures = "0.3"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 chrono = { workspace = true }
@@ -19,10 +20,10 @@ uuid = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "time"] }
 tracing = "0.1"
+tempfile = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "test-util"] }
-tempfile = { workspace = true }
 
 [lints]
 workspace = true

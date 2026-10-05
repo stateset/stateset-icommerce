@@ -7,14 +7,14 @@
   "openapiVersion": "3.1.0",
   "title": "StateSet Commerce API",
   "version": "1.0.4",
-  "totalPaths": 353,
-  "totalOperations": 473,
-  "totalSchemas": 457,
+  "totalPaths": 355,
+  "totalOperations": 475,
+  "totalSchemas": 459,
   "totalTags": 64,
   "methods": [
     {
       "name": "DELETE",
-      "count": 25
+      "count": 26
     },
     {
       "name": "GET",
@@ -26,7 +26,7 @@
     },
     {
       "name": "POST",
-      "count": 233
+      "count": 234
     },
     {
       "name": "PUT",
@@ -272,7 +272,7 @@
     {
       "name": "shipments",
       "description": "Shipment tracking and management",
-      "count": 6
+      "count": 8
     },
     {
       "name": "shipping",
@@ -521,6 +521,7 @@
     "CreateReviewRequest",
     "CreateSegmentRequest",
     "CreateSerialRequest",
+    "CreateShipmentItemRequest",
     "CreateShipmentRequest",
     "CreateShippingZoneRequest",
     "CreateStoreCreditRequest",
@@ -737,6 +738,7 @@
     "ShipSerialRequest",
     "ShipTaskListResponse",
     "ShipTaskResponse",
+    "ShipmentItemResponse",
     "ShipmentListResponse",
     "ShipmentResponse",
     "ShippingZoneListResponse",
@@ -4018,6 +4020,24 @@
         "shipments"
       ],
       "summary": "`POST /api/v1/shipments/:id/deliver`"
+    },
+    {
+      "path": "/api/v1/shipments/{id}/items",
+      "method": "POST",
+      "operationId": "add_shipment_item",
+      "tags": [
+        "shipments"
+      ],
+      "summary": "Add manifest contents while packing, using native order allocation guards."
+    },
+    {
+      "path": "/api/v1/shipments/{id}/items/{item_id}",
+      "method": "DELETE",
+      "operationId": "remove_shipment_item",
+      "tags": [
+        "shipments"
+      ],
+      "summary": "Remove a manifest item belonging to this shipment. Requires delete permission."
     },
     {
       "path": "/api/v1/shipping-zones",

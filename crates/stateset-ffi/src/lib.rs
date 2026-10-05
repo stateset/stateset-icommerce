@@ -55,6 +55,11 @@
 //! Call `stateset_abi_version` at load time and compare against the version
 //! your bindings were generated for. See [`version`] module for details.
 
+#[cfg(panic = "abort")]
+compile_error!(
+    "stateset-ffi requires panic = \"unwind\" so panics can be caught at the C boundary"
+);
+
 pub mod api;
 pub mod convert;
 pub mod error;

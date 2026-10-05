@@ -5,13 +5,13 @@
 
 Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/tool-tiers.js` (tiers).
 
-**940 tools** across **88 domains**, plus 15 agentic runtime tools.
+**942 tools** across **88 domains**, plus 15 agentic runtime tools.
 
 ## Stability tiers
 
 | Tier | Tools | Meaning |
 | --- | ---: | --- |
-| core | 200 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
+| core | 202 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
 | extended | 491 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
 | experimental | 264 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
 
@@ -19,9 +19,9 @@ Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/t
 
 | Profile | Tools | Domains |
 | --- | ---: | --- |
-| all | 955 | every domain |
-| core (default) | 200 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain |
-| operations | 193 | inventory, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
+| all | 957 | every domain |
+| core (default) | 202 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain |
+| operations | 195 | inventory, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
 | finance | 134 | payments, invoices, treasury, accounts-payable, accounts-receivable, cost-accounting, credit, general-ledger, fixed-assets, revenue-recognition, prepayments, vendor-credits, payment-obligations |
 | agents | 251 | agent-runtime, agent-cards, agent-receipt, a2a, a2a-platform, a2a-automation, a2a-observability, a2a-intelligence, x402, stablecoin, erc8004, treasury, payment-obligations, proofs, audit, policies |
 
@@ -54,7 +54,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [agent-cards](#agent-cards) | experimental | 5 |
 | [a2a](#a2a) | experimental | 59 |
 | [agent-runtime](#agent-runtime) | experimental | 29 |
-| [shipments](#shipments) | core | 16 |
+| [shipments](#shipments) | core | 18 |
 | [suppliers](#suppliers) | extended | 10 |
 | [invoices](#invoices) | extended | 7 |
 | [warranties](#warranties) | extended | 7 |
@@ -392,7 +392,7 @@ Tier: **experimental** — needs a configured sync endpoint and a database handl
 
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
-| `sync_status` | experimental | read | Get the current sync status between local database and remote sequencer. Shows pending events, sync lag, and connection status. |
+| `sync_status` | experimental | read | Get sync connection, sequence gap, pending writes, verified receive counts, quarantine and retained failure diagnostics. Received events are not projected into commerce records. |
 | `sync_push` | experimental | write | Push pending local events to the remote sequencer. Requires --apply flag for actual push. |
 | `sync_pull` | experimental | write | Pull events from the remote sequencer and store them locally. |
 | `sync_outbox` | experimental | read | List events in the local outbox. Shows pending, synced, failed, and rejected events. |
@@ -639,6 +639,8 @@ Tier: **core**
 | `get_shipment` | core | read | Get a shipment by ID. |
 | `create_shipment` | core | write | Create a shipment for an order. |
 | `update_shipment` | core | write | Update shipment fields or move through the native lifecycle. Preserves omitted fields and rejects invalid transitions or stale expectedVersion. Cancellation requires cancel_shipment. |
+| `add_shipment_item` | core | write | Add an order line to a shipment. Rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order not in a shippable status, and a stale expectedVersion. |
+| `remove_shipment_item` | core | write | Remove an item from a shipment, releasing its order-line allocation. Rejects a stale expectedVersion. |
 | `ship_shipment` | core | write | Mark a ready_to_ship shipment as shipped with an optional tracking number. |
 | `deliver_shipment` | core | write | Mark an out_for_delivery shipment as delivered. |
 | `cancel_shipment` | core | delete | Cancel a shipment before carrier handoff. Retains shipment history. |

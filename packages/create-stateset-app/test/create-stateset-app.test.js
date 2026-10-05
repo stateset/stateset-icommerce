@@ -118,7 +118,7 @@ describe('scaffold', () => {
     );
 
     assert.equal(pkg.dependencies['@stateset/embedded'], `^${embeddedPkg.version}`);
-    assert.equal(pkg.dependencies.next, '16.3.3');
+    assert.equal(pkg.dependencies.next, '16.3.8');
     assert.equal(pkg.dependencies['better-sqlite3'], undefined);
     assert.equal(pkg.devDependencies['better-sqlite3'], undefined);
     assert.equal(pkg.scripts.lint, undefined);

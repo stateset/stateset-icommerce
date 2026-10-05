@@ -2,7 +2,7 @@
 //!
 //! Provides the [`SqliteMigrator`] for running migrations against a SQLite
 //! database using transactions and recording applied migrations in a
-//! `_migrations` metadata table.
+//! `_stateset_custom_migrations` metadata table.
 
 use std::time::Instant;
 
@@ -16,12 +16,12 @@ use crate::status::MigrationStatus;
 use crate::version::SchemaVersion;
 
 /// Name of the migrations metadata table.
-const MIGRATIONS_TABLE: &str = "_migrations";
+const MIGRATIONS_TABLE: &str = "_stateset_custom_migrations";
 
 /// SQLite database migrator.
 ///
 /// Applies registered migrations to a SQLite database, recording each applied
-/// migration in a `_migrations` table for tracking and checksum validation.
+/// migration in a `_stateset_custom_migrations` table for tracking and checksum validation.
 ///
 /// # Examples
 ///
@@ -58,6 +58,15 @@ impl SqliteMigrator {
 
     /// Ensure the migrations metadata table exists.
     fn ensure_migrations_table(conn: &Connection) -> Result<()> {
+        let legacy_columns = conn
+            .prepare("PRAGMA table_info(_migrations)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let custom_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_stateset_custom_migrations')", [], |row| row.get(0))?;
+        if legacy_columns.iter().any(|c| c == "version") && !custom_exists {
+            conn.execute_batch("ALTER TABLE _migrations RENAME TO _stateset_custom_migrations")?;
+        }
         conn.execute_batch(&format!(
             "CREATE TABLE IF NOT EXISTS {MIGRATIONS_TABLE} (
                 version INTEGER PRIMARY KEY,
@@ -114,10 +123,58 @@ impl SqliteMigrator {
         match error {
             rusqlite::Error::SqliteFailure(code, msg) => {
                 code.code == rusqlite::ErrorCode::ConstraintViolation
-                    && msg.as_deref().is_some_and(|text| text.contains("_migrations.version"))
+                    && msg
+                        .as_deref()
+                        .is_some_and(|text| text.contains("_stateset_custom_migrations.version"))
             }
             _ => false,
         }
+    }
+
+    fn applied_records(&self, conn: &Connection) -> Result<Vec<MigrationRecord>> {
+        if !self.registry.engine_schema {
+            Self::ensure_migrations_table(conn)?;
+            return Self::load_applied(conn);
+        }
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_migrations')",
+            [], |row| row.get(0))?;
+        if !exists {
+            return Ok(Vec::new());
+        }
+        let rows = conn
+            .prepare("SELECT name, checksum, applied_at FROM _migrations ORDER BY name")?
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|(name, checksum, timestamp)| {
+                let migration =
+                    self.registry.list().into_iter().find(|m| m.name == name).ok_or_else(|| {
+                        MigrationError::InvalidMigration {
+                            reason: format!("unknown engine migration: {name}"),
+                        }
+                    })?;
+                let applied_at = parse_datetime(&timestamp)
+                    .or_else(|_| {
+                        chrono::NaiveDateTime::parse_from_str(&timestamp, "%Y-%m-%d %H:%M:%S")
+                            .map(|t| t.and_utc())
+                    })
+                    .map_err(|e| MigrationError::InvalidMigration { reason: e.to_string() })?;
+                Ok(MigrationRecord {
+                    version: migration.version,
+                    name,
+                    checksum: checksum.unwrap_or_default(),
+                    applied_at,
+                    execution_time_ms: 0,
+                })
+            })
+            .collect()
     }
 
     /// Run all pending migrations within transactions.
@@ -128,6 +185,27 @@ impl SqliteMigrator {
     /// all previously applied migrations in this call remain committed,
     /// and the error is returned.
     pub fn migrate(&self, conn: &Connection) -> Result<Vec<MigrationRecord>> {
+        if self.registry.engine_schema {
+            let exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_migrations')",
+                [], |row| row.get(0))?;
+            // Older engine ledgers did not have checksums. Let the engine
+            // upgrade that metadata before decoding full records.
+            let before = if exists {
+                conn.prepare("SELECT name FROM _migrations")?
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<std::result::Result<Vec<_>, _>>()?
+            } else {
+                Vec::new()
+            };
+            crate::engine::run_migrations(conn)
+                .map_err(|e| MigrationError::InvalidMigration { reason: e.to_string() })?;
+            return Ok(self
+                .applied_records(conn)?
+                .into_iter()
+                .filter(|record| !before.contains(&record.name))
+                .collect());
+        }
         Self::ensure_migrations_table(conn)?;
         let applied = Self::load_applied(conn)?;
 
@@ -213,6 +291,13 @@ impl SqliteMigrator {
     /// Runs the `down_sql` of each migration in reverse order. Returns the
     /// list of rolled-back migration records.
     pub fn rollback(&self, conn: &Connection, target_version: u32) -> Result<Vec<MigrationRecord>> {
+        if self.registry.engine_schema {
+            return Err(MigrationError::InvalidMigration {
+                reason:
+                    "engine migrations are forward-only; restore a verified backup to roll back"
+                        .into(),
+            });
+        }
         Self::ensure_migrations_table(conn)?;
         let applied = Self::load_applied(conn)?;
 
@@ -257,14 +342,18 @@ impl SqliteMigrator {
 
     /// Get the current migration status.
     pub fn status(&self, conn: &Connection) -> Result<MigrationStatus> {
-        Self::ensure_migrations_table(conn)?;
-        let applied = Self::load_applied(conn)?;
+        let applied = self.applied_records(conn)?;
 
         let current = applied.iter().map(|r| r.version).max().unwrap_or(0);
         let latest = self.registry.latest_version().unwrap_or(0);
         let pending_migrations = self.registry.pending(&applied);
-        let pending_names: Vec<String> =
-            pending_migrations.iter().map(|m| m.name.clone()).collect();
+        let pending_names: Vec<String> = pending_migrations
+            .iter()
+            .filter(|m| {
+                !self.registry.engine_schema || crate::engine::migration_enabled(conn, &m.name)
+            })
+            .map(|m| m.name.clone())
+            .collect();
         let pending_count = pending_names.len() as u32;
 
         let checksum_valid = self.registry.validate_checksums(&applied).is_ok();
@@ -279,8 +368,7 @@ impl SqliteMigrator {
 
     /// Validate that all applied migration checksums match the registry.
     pub fn validate(&self, conn: &Connection) -> Result<()> {
-        Self::ensure_migrations_table(conn)?;
-        let applied = Self::load_applied(conn)?;
+        let applied = self.applied_records(conn)?;
         self.registry.validate_checksums(&applied)
     }
 }

@@ -46,15 +46,21 @@ fn fts5_available(conn: &Connection) -> bool {
         == 1
 }
 
+fn is_vector_table(name: &str) -> bool {
+    matches!(
+        name,
+        "customer_embeddings"
+            | "embedding_metadata"
+            | "inventory_embeddings"
+            | "order_embeddings"
+            | "product_embeddings"
+    )
+}
+
 fn expected_applied_migration_names(conn: &Connection) -> Vec<String> {
-    let mut names = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))
-        .expect("Failed to list migrations directory")
-        .map(|entry| entry.expect("Failed to read migrations directory entry"))
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| name.ends_with(".sql"))
-        .map(|name| {
-            name.strip_suffix(".sql").expect("Migration file should end with .sql").to_string()
-        })
+    let mut names = stateset_db::migrations::known_migration_names()
+        .into_iter()
+        .map(str::to_owned)
         .collect::<Vec<_>>();
 
     names.sort();
@@ -69,8 +75,30 @@ fn snapshot_database_schema() {
 
     run_migrations(&mut conn).expect("Failed to run migrations");
 
-    let tables = get_all_tables(&conn).expect("Failed to get tables");
+    // Vector migrations are intentionally covered by their own snapshot below
+    // so this baseline remains identical in default and vector feature builds.
+    let tables = get_all_tables(&conn)
+        .expect("Failed to get tables")
+        .into_iter()
+        .filter(|(name, _)| !is_vector_table(name))
+        .collect::<Vec<_>>();
     assert!(tables.iter().any(|(name, _)| name == "shipments"));
+
+    assert_debug_snapshot!(tables);
+}
+
+#[cfg(feature = "vector")]
+#[test]
+fn snapshot_vector_embedding_schema() {
+    let mut conn = Connection::open_in_memory().expect("Failed to create in-memory database");
+
+    run_migrations(&mut conn).expect("Failed to run migrations");
+
+    let tables = get_all_tables(&conn)
+        .expect("Failed to get tables")
+        .into_iter()
+        .filter(|(name, _)| is_vector_table(name))
+        .collect::<Vec<_>>();
 
     assert_debug_snapshot!(tables);
 }

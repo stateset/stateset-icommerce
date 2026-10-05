@@ -12,6 +12,7 @@ keywords = ["commerce", "ecommerce", "database", "sqlite", "postgresql"]
 categories = ["database"]
 
 [dependencies]
+stateset-migrations = { workspace = true, optional = true }
 stateset-core = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
@@ -48,14 +49,18 @@ name = "db_benchmarks"
 harness = false
 required-features = ["sqlite"]
 
+[[example]]
+name = "recorded_outbox_fixture"
+required-features = ["sqlite"]
+
 [lints]
 workspace = true
 
 [features]
 default = ["sqlite"]
-sqlite = ["dep:rusqlite", "dep:r2d2", "dep:r2d2_sqlite", "dep:hex", "dep:tracing", "stateset-core/rusqlite"]
+sqlite = ["dep:stateset-migrations", "dep:rusqlite", "dep:r2d2", "dep:r2d2_sqlite", "dep:hex", "dep:tracing", "stateset-core/rusqlite"]
 postgres = ["dep:sqlx", "dep:tokio", "dep:tracing", "stateset-core/sqlx-postgres"]
-vector = ["sqlite", "stateset-core/embeddings"]
+vector = ["sqlite", "stateset-migrations/vector", "stateset-core/embeddings"]
 # Experimental: persisted saga coordinator for multi-step orchestration.
 # Kept behind an explicit feature to avoid forcing downstream users to provision
 # a database connection at compile time.

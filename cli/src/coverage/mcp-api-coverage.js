@@ -330,6 +330,8 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       deliver: ['deliver_shipment'],
       cancel: ['cancel_shipment'],
       update: ['update_shipment'],
+      addItem: ['add_shipment_item'],
+      removeItem: ['remove_shipment_item'],
       count: ['list_shipments'],
     },
   },

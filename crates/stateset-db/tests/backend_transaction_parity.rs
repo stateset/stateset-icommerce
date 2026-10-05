@@ -255,15 +255,18 @@ impl Finding {
 
 /// Backend-owned sources that live outside `src/<backend>/`.
 ///
-/// `saga.rs` is Postgres-only (it takes a `PostgresDatabase` and speaks sqlx)
-/// and holds 13 SQL statements across two transactions, including the
-/// `execute_step` check-then-act — so it belongs under the same rules as the
-/// files in `src/postgres/`. Note the lint only recognises `CommerceError`
-/// rejections and `ensure_*` helpers as state guards; `saga.rs` raises
-/// `SagaError`, so today it is scanned but produces no findings. It is listed
-/// here so that the moment a guard in it is written in the crate's normal
-/// vocabulary, the gate covers it.
-const EXTRA_SOURCES: &[(&str, &str)] = &[("postgres", "saga.rs")];
+/// The saga coordinator is Postgres-only (it takes a `PostgresDatabase` and
+/// speaks sqlx) and holds 13 SQL statements across two transactions,
+/// including the `execute_step` check-then-act — so it belongs under the same
+/// rules as the files in `src/postgres/`. It moved out of this crate into the
+/// `stateset-saga` crate (`crates/stateset-saga/src/lib.rs`, reached here via
+/// a manifest-relative path); the `stateset-db/saga` feature now only
+/// registers the `035_sagas` schema migration. Note the lint only recognises
+/// `CommerceError` rejections and `ensure_*` helpers as state guards; the
+/// coordinator raises `SagaError`, so today it is scanned but produces no
+/// findings. It is listed here so that the moment a guard in it is written in
+/// the crate's normal vocabulary, the gate covers it.
+const EXTRA_SOURCES: &[(&str, &str)] = &[("postgres", "../../stateset-saga/src/lib.rs")];
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
@@ -274,7 +277,7 @@ fn backend_dir(backend: Backend) -> PathBuf {
 }
 
 /// Where a scanned file lives: inside `src/<backend>/`, unless it is one of
-/// [`EXTRA_SOURCES`], which sit directly in `src/`.
+/// [`EXTRA_SOURCES`], which live elsewhere (a manifest-relative path).
 fn source_path(backend: Backend, file: &str) -> PathBuf {
     if EXTRA_SOURCES.iter().any(|(dir, name)| *dir == backend.dir() && *name == file) {
         src_dir().join(file)

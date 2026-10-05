@@ -16,6 +16,7 @@ categories = ["mathematics", "finance"]
 workspace = true
 
 [dependencies]
+stateset-primitives = { path = "../stateset-primitives", version = "1.37.0", default-features = false }
 rust_decimal = { workspace = true }
 rust_decimal_macros = { workspace = true }
 chrono = { workspace = true }

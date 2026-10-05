@@ -17,6 +17,8 @@ import {
 import { hasNativeHybridPqcSupport } from './crypto.js';
 import { auditProfileChanged, auditProfileDowngradeBlocked } from './pqc-audit.js';
 
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
+
 /**
  * @typedef {Object} SyncConfig
  * @property {SequencerConfig} sequencer - Sequencer connection settings
@@ -53,6 +55,7 @@ import { auditProfileChanged, auditProfileDowngradeBlocked } from './pqc-audit.j
  * @property {boolean} autoSync - Enable automatic background sync
  * @property {number} syncIntervalMs - Sync interval in milliseconds
  * @property {number} batchSize - Max events per push batch
+ * @property {number} requestTimeoutMs - REST request deadline including response body (milliseconds)
  * @property {'legacy' | 'hybrid' | 'pqc-strict'} securityProfile - PQ migration profile
  * @property {RetryPolicy} retryPolicy - Retry configuration
  */
@@ -113,6 +116,7 @@ const DEFAULT_CONFIG = {
     autoSync: false,
     syncIntervalMs: 30000,
     batchSize: 100,
+    requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
     securityProfile: SECURITY_PROFILE_HYBRID,
     retryPolicy: {
       maxRetries: 3,
@@ -349,6 +353,7 @@ export function createSyncConfig(options, cwd = process.cwd()) {
       autoSync: false,
       syncIntervalMs: 30000,
       batchSize: 100,
+      requestTimeoutMs: options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
       securityProfile,
       retryPolicy: {
         maxRetries: 3,
@@ -640,6 +645,10 @@ export class SyncConfig {
    */
   get retryPolicy() {
     return this.sync.retryPolicy;
+  }
+
+  get requestTimeoutMs() {
+    return this.sync.requestTimeoutMs;
   }
 
   /**

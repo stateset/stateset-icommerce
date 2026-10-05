@@ -56,6 +56,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![warn(missing_docs)]
 
+mod arithmetic;
 pub mod currency;
 pub mod error;
 pub mod line_item;

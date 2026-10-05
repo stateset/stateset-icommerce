@@ -12,6 +12,42 @@ fn postgres_url() -> Option<String> {
 }
 
 #[test]
+fn postgres_unresolved_reservation_survives_expiry_and_completes_once() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let db = runtime.block_on(PostgresDatabase::connect(&url)).expect("connect + migrate");
+    let repo = db.http_idempotency();
+    let key = Uuid::new_v4().to_string();
+    let mut record = HttpIdempotencyRecord {
+        tenant: "reservation-test".into(),
+        idempotency_key: key.clone(),
+        request_fingerprint: "fingerprint".into(),
+        response_status: 0,
+        content_type: None,
+        response_body: Vec::new(),
+        created_at: DateTime::<Utc>::from_timestamp(1_600_000_000, 0).unwrap(),
+    };
+    assert!(repo.put(&record).unwrap());
+    assert!(!repo.put(&record).unwrap());
+    // Use a cutoff before the other tests' rows so this sweep is isolated.
+    let cutoff = record.created_at + chrono::Duration::days(1);
+    repo.purge_expired(cutoff).unwrap();
+    assert_eq!(repo.get(&record.tenant, &key, cutoff).unwrap().unwrap(), record);
+    record.response_status = 201;
+    record.response_body = b"completed".to_vec();
+    record.created_at = Utc::now();
+    record.request_fingerprint = "mismatch".into();
+    assert!(!repo.complete(&record).unwrap());
+    record.request_fingerprint = "fingerprint".into();
+    assert!(repo.complete(&record).unwrap());
+    assert!(!repo.complete(&record).unwrap());
+    assert_eq!(repo.get(&record.tenant, &key, cutoff).unwrap().unwrap(), record);
+}
+
+#[test]
 fn postgres_purge_expired_includes_exact_cutoff_and_frees_key() {
     let Some(url) = postgres_url() else {
         eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");

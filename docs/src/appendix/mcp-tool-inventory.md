@@ -13,11 +13,11 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 973 |
+| Total tools | 975 |
 | MCP servers | 3 |
 | Policy domains | 90 |
 | Read tools | 480 |
-| Write tools | 425 |
+| Write tools | 427 |
 | Delete tools | 21 |
 | Admin tools | 47 |
 | Unknown permission | 0 |
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 955 | `cli/src/mcp-server.js` |
+| stateset-commerce | 957 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -103,7 +103,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | search-config | 7 |
 | segments | 5 |
 | serials | 8 |
-| shipments | 16 |
+| shipments | 18 |
 | shipping_zones | 7 |
 | stablecoin | 4 |
 | stock-snapshots | 5 |
@@ -132,7 +132,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | admin | 47 |
 | delete | 21 |
 | read | 480 |
-| write | 425 |
+| write | 427 |
 
 ## Tool Registry
 
@@ -288,6 +288,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `add_production_batch_work_orders` | `stateset-commerce` | `production_batches` | `write` |
 | `add_promotion_condition` | `stateset-commerce` | `promotions` | `write` |
 | `add_return_tracking` | `stateset-commerce` | `returns` | `write` |
+| `add_shipment_item` | `stateset-commerce` | `shipments` | `write` |
 | `add_to_wishlist` | `stateset-commerce` | `wishlists` | `write` |
 | `adjust_credit_limit` | `stateset-commerce` | `credit` | `write` |
 | `adjust_inventory` | `stateset-commerce` | `inventory` | `write` |
@@ -948,6 +949,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `remove_cart_item` | `stateset-commerce` | `carts` | `delete` |
 | `remove_from_wishlist` | `stateset-commerce` | `wishlists` | `write` |
 | `remove_production_batch_work_order` | `stateset-commerce` | `production_batches` | `write` |
+| `remove_shipment_item` | `stateset-commerce` | `shipments` | `write` |
 | `reserve_cart_inventory` | `stateset-commerce` | `carts` | `write` |
 | `reserve_inventory` | `stateset-commerce` | `inventory` | `write` |
 | `resolve_integration_mapping` | `stateset-commerce` | `integration-mappings` | `read` |

@@ -8,6 +8,9 @@ import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 
 import crypto from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { createOutbox } from '../../src/sync/outbox.js';
 import { SyncEngine } from '../../src/sync/engine.js';
@@ -59,10 +62,17 @@ function pulledEvent(overrides = {}) {
  */
 function buildEngine(
   db,
-  { verifies = true, resolves = true, events = [pulledEvent()], nextSequence = 2 } = {},
+  {
+    verifies = true,
+    resolves = true,
+    events = [pulledEvent()],
+    nextSequence = 2,
+    securityProfile = 'legacy',
+  } = {},
 ) {
   const config = new SyncConfig({
     sequencer: { url: 'https://sequencer.invalid' },
+    sync: { securityProfile },
     identity: { tenantId: TENANT, storeId: STORE, agentId: SELF },
   });
   const engine = new SyncEngine({ db, config });
@@ -73,8 +83,12 @@ function buildEngine(
 
   const verifyCalls = [];
   engine.client = {
-    async pull() {
-      return { events, nextSequence, headSequence: nextSequence - 1 };
+    async pull(fromSequence) {
+      return {
+        events,
+        nextSequence: events.length ? nextSequence : fromSequence,
+        headSequence: nextSequence - 1,
+      };
     },
     verifyEventSignature: (envelope, publicKey) => {
       verifyCalls.push({ envelope, publicKey });
@@ -91,6 +105,114 @@ function buildEngine(
   return { engine, outbox, verifyCalls };
 }
 
+describe('receive health reflects durable outcomes', () => {
+  let db;
+  beforeEach(() => {
+    db = new Database(':memory:');
+  });
+  afterEach(() => db.close());
+
+  function enableStatus(engine, head) {
+    engine.client.isConnected = () => true;
+    engine.client.getHead = async () => ({ headSequence: head });
+    engine.resolver.getConflictCount = () => 0;
+  }
+
+  it('reports the observed head separately from the next request cursor', async () => {
+    const { engine } = buildEngine(db);
+    enableStatus(engine, 1);
+    await engine.pull();
+    const status = await engine.getStatus();
+    assert.equal(status.localHead, 1);
+    assert.equal(status.nextPullCursor, 2);
+    assert.equal(status.lag, 0);
+    assert.equal(status.receive.verified, 1);
+    assert.equal(status.receive.verifiedHead, 1);
+    assert.ok(status.lastPull instanceof Date);
+    assert.equal(status.health, 'healthy');
+    assert.equal((await engine.getHealth()).healthy, true);
+  });
+
+  it('does not call a caught-up but quarantined receive healthy', async () => {
+    const { engine } = buildEngine(db, { verifies: false });
+    enableStatus(engine, 1);
+    await engine.pull();
+    const status = await engine.getStatus();
+    assert.equal(status.lag, 0);
+    assert.equal(status.receive.verified, 0);
+    assert.equal(status.receive.verifiedHead, null);
+    assert.equal(status.receive.quarantined, 1);
+    assert.deepEqual(status.receive.quarantineReasons, [{ reason: 'signature_invalid', count: 1 }]);
+    assert.equal(status.health, 'degraded');
+    assert.deepEqual(status.healthReasons, ['quarantined_events']);
+    assert.equal((await engine.getHealth()).healthy, false);
+  });
+
+  it('does not turn a general sync timestamp into evidence of a successful pull', async () => {
+    const { engine, outbox } = buildEngine(db);
+    enableStatus(engine, 0);
+    outbox.updateSyncState({ lastSyncAt: new Date() });
+    const status = await engine.getStatus();
+    assert.equal(status.lastPull, null);
+    assert.ok(status.localState.lastSyncAt instanceof Date);
+  });
+
+  it('reports retained schema failures without exposing their payloads', async () => {
+    const { engine } = buildEngine(db, {
+      events: [pulledEvent({ tenantId: null, payload: { secret: 'private-order-data' } })],
+    });
+    enableStatus(engine, 1);
+    await engine.pull();
+    const status = await engine.getStatus();
+    assert.equal(status.lag, 0);
+    assert.equal(status.receive.quarantined, 0);
+    assert.deepEqual(status.receive.failures, { count: 1, oldestSequence: 1 });
+    assert.deepEqual(status.healthReasons, ['retained_receive_failures']);
+    assert.equal((await engine.getHealth()).healthy, false);
+    assert.ok(!JSON.stringify(status).includes('private-order-data'));
+  });
+
+  it('reads local progress after the remote head request finishes', async () => {
+    const { engine, outbox } = buildEngine(db);
+    enableStatus(engine, 1);
+    engine.client.getHead = async () => {
+      await engine.pull();
+      return { headSequence: 1 };
+    };
+    const status = await engine.getStatus();
+    assert.equal(outbox.getSyncState().lastPulledSequence, 2);
+    assert.equal(status.localHead, 1);
+    assert.equal(status.receive.verified, 1);
+    assert.equal(status.lag, 0);
+  });
+
+  it('retains offline diagnostics and never reports negative lag for a stale head', async () => {
+    const { engine } = buildEngine(db, { verifies: false });
+    enableStatus(engine, 0);
+    await engine.pull();
+    const stale = await engine.getStatus();
+    assert.equal(stale.lag, 0);
+    assert.equal(stale.health, 'degraded');
+    assert.ok(stale.healthReasons.includes('remote_head_regressed'));
+    engine.client.isConnected = () => false;
+    const offline = await engine.getStatus();
+    assert.equal(offline.health, 'offline');
+    assert.equal(offline.remoteHead, 1);
+    assert.equal(offline.receive.quarantined, 1);
+    assert.ok(offline.healthReasons.includes('quarantined_events'));
+  });
+
+  for (const head of [-1, 1.5, '1', Number.MAX_SAFE_INTEGER + 1, undefined]) {
+    it(`refuses healthy status for an invalid remote head: ${String(head)}`, async () => {
+      const { engine } = buildEngine(db);
+      enableStatus(engine, head);
+      const status = await engine.getStatus();
+      assert.equal(status.health, 'degraded');
+      assert.ok(status.healthReasons.includes('invalid_remote_head'));
+    });
+  }
+});
+
 describe('pull verification', () => {
   let db;
 
@@ -99,6 +221,148 @@ describe('pull verification', () => {
   });
 
   afterEach(() => db.close());
+
+  for (const [name, override, options] of [
+    ['fractional sequence', { events: [{ ...pulledEvent(), sequenceNumber: 1.5 }] }],
+    ['string sequence', { events: [{ ...pulledEvent(), sequenceNumber: '1' }] }],
+    [
+      'unsafe next cursor',
+      { events: [{ ...pulledEvent(), sequenceNumber: Number.MAX_SAFE_INTEGER }] },
+    ],
+    ['duplicate sequence', { events: [pulledEvent(), pulledEvent()] }],
+    ['head below event', { headSequence: 0 }],
+    ['cursor skips beyond page', { nextSequence: 99 }],
+    ['cursor moves backwards', { nextSequence: 0 }],
+    ['empty page advances', { events: [], nextSequence: 2 }],
+    ['empty continuation', { events: [], nextSequence: 0, hasMore: true }],
+    ['stale page', {}, { fromSequence: 5 }],
+    [
+      'oversized page',
+      {
+        events: [pulledEvent(), { ...pulledEvent(), sequenceNumber: 2 }],
+        nextSequence: 3,
+        headSequence: 2,
+      },
+      { limit: 1 },
+    ],
+  ]) {
+    it(`refuses ${name} before verification or persistence`, async () => {
+      const { engine, outbox, verifyCalls } = buildEngine(db);
+      engine.on('error', () => {});
+      engine.client.pull = async () => ({
+        events: [pulledEvent()],
+        nextSequence: 2,
+        headSequence: 1,
+        ...override,
+      });
+      const result = await engine.pull(options);
+      assert.equal(result.success, false);
+      assert.match(result.error, /Invalid pull page/);
+      assert.equal(verifyCalls.length, 0);
+      assert.equal(outbox.getPulledEvents().length, 0);
+      assert.equal(outbox.getQuarantinedEvents().length, 0);
+      assert.equal(outbox.getSyncState().lastPulledSequence, 0);
+    });
+  }
+
+  for (const options of [
+    { fromSequence: -1 },
+    { fromSequence: 0.5 },
+    { limit: 0 },
+    { limit: -1 },
+    { limit: 1.5 },
+  ]) {
+    it(`rejects invalid pull request before contacting transport: ${JSON.stringify(options)}`, async () => {
+      const { engine } = buildEngine(db);
+      engine.on('error', () => {});
+      let calls = 0;
+      engine.client.pull = async () => {
+        calls++;
+        throw new Error('must not request');
+      };
+      const result = await engine.pull(options);
+      assert.equal(result.success, false);
+      assert.match(result.error, /Invalid pull request/);
+      assert.equal(calls, 0);
+    });
+  }
+
+  it('overlapping pulls and explicit replay never rewind committed cursor or head', async () => {
+    const { engine, outbox } = buildEngine(db);
+    const replies = [];
+    engine.client.pull = () => new Promise((resolve) => replies.push(resolve));
+    const first = engine.pull();
+    const second = engine.pull();
+    const one = pulledEvent();
+    const two = {
+      ...pulledEvent({ eventId: '88888888-1111-1111-1111-111111111111' }),
+      sequenceNumber: 2,
+    };
+    replies[1]({ events: [one, two], nextSequence: 3, headSequence: 9 });
+    assert.equal((await second).success, true);
+    replies[0]({ events: [one], nextSequence: 2, headSequence: 4 });
+    assert.equal((await first).success, true);
+    assert.equal(outbox.getSyncState().lastPulledSequence, 3);
+    assert.equal(outbox.getSyncState().headSequence, 9);
+    const replay = engine.pull({ fromSequence: 0 });
+    replies[2]({ events: [one], nextSequence: 2, headSequence: 1 });
+    assert.equal((await replay).success, true);
+    assert.equal(outbox.getSyncState().lastPulledSequence, 3);
+    assert.equal(outbox.getSyncState().headSequence, 9);
+    assert.equal(outbox.getPulledEvents().length, 2);
+  });
+
+  it('isolates a foreign-store event without blocking a valid event in the same batch', async () => {
+    const foreign = pulledEvent({
+      eventId: '88888888-1111-1111-1111-111111111111',
+      storeId: 'another-store',
+    });
+    foreign.sequenceNumber = 2;
+    const { engine, outbox, verifyCalls } = buildEngine(db, {
+      events: [foreign, pulledEvent()],
+      nextSequence: 3,
+    });
+    const result = await engine.pull();
+    assert.equal(result.success, true);
+    assert.equal(result.stored, 1);
+    assert.equal(result.quarantined, 1);
+    assert.equal(verifyCalls.length, 1);
+    assert.equal(outbox.getQuarantineReason(foreign.envelope.eventId), 'scope_mismatch');
+    assert.equal(outbox.getSyncState().lastPulledSequence, 3);
+  });
+
+  for (const field of ['tenantId', 'storeId']) {
+    it(`retains an event missing ${field} without exposing it to reads`, async () => {
+      const malformed = pulledEvent({ [field]: null });
+      const { engine, outbox, verifyCalls } = buildEngine(db, { events: [malformed] });
+      const result = await engine.pull();
+      assert.equal(result.success, true);
+      assert.equal(result.stored, 0);
+      assert.equal(verifyCalls.length, 0);
+      assert.equal(outbox.getReceiveFailures()[0].reason, 'scope_mismatch');
+      assert.equal(outbox.getPulledEvents().length, 0);
+    });
+  }
+
+  for (const securityProfile of ['hybrid', 'pqc-strict']) {
+    it(`${securityProfile} quarantines legacy signatures before key lookup`, async () => {
+      const { engine, outbox, verifyCalls } = buildEngine(db, {
+        securityProfile,
+        resolves: () => {
+          throw new Error('must not resolve a disallowed event');
+        },
+      });
+      const result = await engine.pull();
+      assert.equal(result.success, true);
+      assert.equal(result.stored, 0);
+      assert.equal(result.quarantined, 1);
+      assert.equal(verifyCalls.length, 0);
+      assert.equal(
+        outbox.getQuarantineReason(pulledEvent().envelope.eventId),
+        'security_profile_mismatch',
+      );
+    });
+  }
 
   it('stores an event whose signature verifies', async () => {
     const { engine, outbox } = buildEngine(db);
@@ -143,12 +407,12 @@ describe('pull verification', () => {
   describe('re-quarantine never erases a finding', () => {
     it('keeps signature_invalid when a later pull cannot resolve the key', async () => {
       const forged = buildEngine(db, { verifies: false });
-      await forged.engine.pull();
+      await forged.engine.pull({ fromSequence: 0 });
       assert.equal(forged.outbox.getQuarantinedEvents()[0].reason, 'signature_invalid');
 
       // Same event, pulled again while the sequencer is unreachable.
       const outage = buildEngine(db, { resolves: false });
-      const result = await outage.engine.pull();
+      const result = await outage.engine.pull({ fromSequence: 0 });
 
       assert.equal(result.quarantined, 1);
       assert.equal(
@@ -167,11 +431,11 @@ describe('pull verification', () => {
         'key_outside_validity_window',
       ]) {
         const seeded = buildEngine(db, { resolves: () => ({ error: finding }) });
-        await seeded.engine.pull();
+        await seeded.engine.pull({ fromSequence: 0 });
         assert.equal(seeded.outbox.getQuarantinedEvents()[0].reason, finding);
 
         const outage = buildEngine(db, { resolves: false });
-        await outage.engine.pull();
+        await outage.engine.pull({ fromSequence: 0 });
         assert.equal(
           outage.outbox.getQuarantinedEvents()[0].reason,
           finding,
@@ -184,13 +448,13 @@ describe('pull verification', () => {
 
     it('still sharpens one acquisition failure into another', async () => {
       const outage = buildEngine(db, { resolves: false });
-      await outage.engine.pull();
+      await outage.engine.pull({ fromSequence: 0 });
       assert.equal(outage.outbox.getQuarantinedEvents()[0].reason, 'key_unresolved');
 
       const misconfigured = buildEngine(db, {
         resolves: () => ({ error: 'sequencer_key_not_configured' }),
       });
-      await misconfigured.engine.pull();
+      await misconfigured.engine.pull({ fromSequence: 0 });
       assert.equal(
         misconfigured.outbox.getQuarantinedEvents()[0].reason,
         'sequencer_key_not_configured',
@@ -200,11 +464,11 @@ describe('pull verification', () => {
 
     it('still lets a finding replace an outage reason', async () => {
       const outage = buildEngine(db, { resolves: false });
-      await outage.engine.pull();
+      await outage.engine.pull({ fromSequence: 0 });
       assert.equal(outage.outbox.getQuarantinedEvents()[0].reason, 'key_unresolved');
 
       const forged = buildEngine(db, { verifies: false });
-      await forged.engine.pull();
+      await forged.engine.pull({ fromSequence: 0 });
       assert.equal(
         forged.outbox.getQuarantinedEvents()[0].reason,
         'signature_invalid',
@@ -448,6 +712,10 @@ describe('pull verification', () => {
     assert.equal(outbox.getPulledEvents().length, 1);
     assert.equal(storeFailures.length, 1);
     assert.equal(storeFailures[0].eventId, '88888888-1111-1111-1111-111111111111');
+    const [retained] = outbox.getReceiveFailures();
+    assert.equal(retained.stage, 'verified');
+    assert.equal(retained.record.entityId, null);
+    assert.equal(retained.record.agentSignature, malformed.envelope.agentSignature);
     assert.equal(
       outbox.getSyncState().lastPulledSequence,
       3,
@@ -475,7 +743,146 @@ describe('pull verification', () => {
     assert.equal(result.quarantined, 0, 'quarantined counts rows actually written');
     assert.equal(quarantineFailures.length, 1);
     assert.equal(quarantineFailures[0].reason, 'signature_invalid');
+    const [retained] = outbox.getReceiveFailures();
+    assert.equal(retained.stage, 'quarantine');
+    assert.equal(retained.reason, 'signature_invalid');
     assert.equal(outbox.getSyncState().lastPulledSequence, 2);
+  });
+});
+
+describe('durable receive failure recovery', () => {
+  it('preserves an existing record and conflict evidence across later good replays', async () => {
+    const db = new Database(':memory:');
+    try {
+      const first = buildEngine(db);
+      assert.equal((await first.engine.pull()).stored, 1);
+      const before = db.prepare('SELECT * FROM _ves_pulled_events').get();
+      const conflict = pulledEvent({ entityId: 'conflicting-order' });
+      const second = buildEngine(db, { events: [conflict] });
+      const result = await second.engine.pull({ fromSequence: 0 });
+      assert.equal(result.success, true);
+      assert.equal(result.stored, 0);
+      assert.deepEqual(db.prepare('SELECT * FROM _ves_pulled_events').get(), before);
+      const [retained] = second.outbox.getReceiveFailures();
+      assert.equal(retained.reason, 'event_identity_conflict');
+      assert.equal(retained.record.entityId, 'conflicting-order');
+      assert.equal((await first.engine.pull({ fromSequence: 0 })).stored, 1);
+      assert.deepEqual(
+        first.outbox.getReceiveFailures()[0],
+        retained,
+        'good replay must not erase conflicting evidence',
+      );
+      first.outbox.storeReceiveFailure(
+        { ...retained.record, entityId: null },
+        'verified',
+        null,
+        'later storage issue',
+      );
+      assert.deepEqual(
+        first.outbox.getReceiveFailures()[0],
+        retained,
+        'later generic failure must not erase conflict evidence',
+      );
+    } finally {
+      db.close();
+    }
+  });
+  it('retains refused records across restart and clears them after identical replay', async (t) => {
+    const dir = mkdtempSync(join(tmpdir(), 'stateset-receive-'));
+    let db;
+    t.after(() => {
+      if (db?.open) db.close();
+      rmSync(dir, { recursive: true, force: true });
+    });
+    const path = join(dir, 'store.db');
+    db = new Database(path);
+    const original = pulledEvent();
+    const first = buildEngine(db, { events: [original] });
+    db.exec(
+      "CREATE TRIGGER refuse_receive BEFORE INSERT ON _ves_pulled_events BEGIN SELECT RAISE(ABORT, 'temporary store failure'); END",
+    );
+    assert.equal((await first.engine.pull()).success, true);
+    db.close();
+    db = new Database(path);
+    const replay = buildEngine(db, { events: [original] });
+    const [retained] = replay.outbox.getReceiveFailures();
+    assert.equal(retained.record.eventId, original.envelope.eventId);
+    assert.deepEqual(retained.record.payload, original.envelope.payload);
+    assert.equal(retained.record.agentSignature, original.envelope.agentSignature);
+    assert.match(retained.error, /temporary store failure/);
+    assert.equal(replay.outbox.getSyncState().lastPulledSequence, 2);
+    db.exec('DROP TRIGGER refuse_receive');
+    assert.equal((await replay.engine.pull({ fromSequence: 0 })).stored, 1);
+    assert.equal(replay.outbox.getReceiveFailures().length, 0);
+    assert.equal(replay.outbox.getPulledEvents().length, 1);
+  });
+
+  for (const verifies of [true, false]) {
+    it(`rolls back all receive writes when the failure journal is unavailable (verifies=${verifies})`, async () => {
+      const db = new Database(':memory:');
+      try {
+        const malformed = pulledEvent({
+          entityId: null,
+          eventId: '88888888-1111-1111-1111-111111111111',
+        });
+        malformed.sequenceNumber = 2;
+        const { engine, outbox } = buildEngine(db, {
+          events: [pulledEvent(), malformed],
+          nextSequence: 3,
+          verifies,
+        });
+        engine.on('error', () => {});
+        db.exec(
+          "CREATE TRIGGER refuse_failure_journal BEFORE INSERT ON _ves_receive_failures BEGIN SELECT RAISE(ABORT, 'journal unavailable'); END",
+        );
+        const result = await engine.pull();
+        assert.equal(result.success, false);
+        assert.match(result.error, /journal unavailable/);
+        assert.equal(outbox.getSyncState().lastPulledSequence, 0);
+        assert.equal(outbox.getPulledEvents().length, 0);
+        assert.equal(outbox.getQuarantinedEvents().length, 0);
+        assert.equal(outbox.getReceiveFailures().length, 0);
+      } finally {
+        db.close();
+      }
+    });
+  }
+
+  it('commits cursor, stored events, quarantine, and receive failures atomically', async () => {
+    const db = new Database(':memory:');
+    try {
+      const bad = pulledEvent({ eventId: '88888888-1111-1111-1111-111111111111' });
+      bad.sequenceNumber = 2;
+      const malformed = pulledEvent({
+        eventId: '99999999-1111-1111-1111-111111111111',
+        entityId: null,
+      });
+      malformed.sequenceNumber = 3;
+      const { engine, outbox } = buildEngine(db, {
+        events: [pulledEvent(), bad, malformed],
+        nextSequence: 4,
+        verifies: (envelope) => envelope.eventId !== bad.envelope.eventId,
+      });
+      engine.on('error', () => {});
+      db.exec(
+        "CREATE TRIGGER refuse_cursor BEFORE UPDATE ON _ves_sync_state WHEN NEW.key = 'last_pulled_sequence' BEGIN SELECT RAISE(ABORT, 'cursor unavailable'); END",
+      );
+      assert.equal((await engine.pull()).success, false);
+      assert.equal(outbox.getSyncState().lastPulledSequence, 0);
+      assert.equal(outbox.getSyncState().lastPullAt, null);
+      assert.equal(outbox.getPulledEvents().length, 0);
+      assert.equal(outbox.getQuarantinedEvents().length, 0);
+      assert.equal(outbox.getReceiveFailures().length, 0);
+      db.exec('DROP TRIGGER refuse_cursor');
+      assert.equal((await engine.pull()).success, true);
+      assert.equal(outbox.getSyncState().lastPulledSequence, 4);
+      assert.ok(outbox.getSyncState().lastPullAt instanceof Date);
+      assert.equal(outbox.getPulledEvents().length, 1);
+      assert.equal(outbox.getQuarantinedEvents().length, 1);
+      assert.equal(outbox.getReceiveFailures().length, 1);
+    } finally {
+      db.close();
+    }
   });
 });
 
@@ -597,9 +1004,9 @@ describe('the gRPC receive path is refused, not silently empty', () => {
     let pullCalls = 0;
     engine.client = {
       transport: 'grpc',
-      async pull() {
+      async pull(fromSequence) {
         pullCalls += 1;
-        return { events: [], nextSequence: 1, headSequence: 0 };
+        return { events: [], nextSequence: fromSequence, headSequence: 0 };
       },
     };
     return { engine, pullCalls: () => pullCalls };
@@ -743,6 +1150,7 @@ describe('pull verification — end to end through the real client and directory
   /** Wire the engine's own client to a real SequencerClient over a stubbed _request. */
   function buildRealEngine({
     tamper = false,
+    tamperPayload = false,
     configureSequencerKey = true,
     directoryAgentId = AGENT,
     directoryTenantId = TENANT,
@@ -752,6 +1160,7 @@ describe('pull verification — end to end through the real client and directory
 
     const config = new SyncConfig({
       sequencer: { url: SEQ_URL },
+      sync: { securityProfile: 'legacy' },
       identity: { tenantId: TENANT, storeId: STORE, agentId: SELF },
       sequencerPublicKey: configureSequencerKey
         ? rawEd25519PublicKey(sequencerKey).toString('hex')
@@ -781,7 +1190,9 @@ describe('pull verification — end to end through the real client and directory
     rest._request = async (method, path) => {
       requests.push(`${method} ${path.split('?')[0]}`);
       if (path.startsWith('/api/v1/events')) {
-        return { events: [signedWireEvent(agentKey, { tamper })], head_sequence: 1 };
+        const event = signedWireEvent(agentKey, { tamper });
+        if (tamperPayload) event.envelope.payload = { total: '0.01' };
+        return { events: [event], head_sequence: 1 };
       }
       if (path.startsWith('/api/v1/agents/')) {
         return { ...directoryBody, directorySignature: `0x${directorySignature.toString('hex')}` };
@@ -829,6 +1240,16 @@ describe('pull verification — end to end through the real client and directory
     const result = await engine.pull();
 
     assert.equal(result.verified, 0);
+    assert.equal(result.quarantined, 1);
+    assert.equal(engine.outbox.getPulledEvents().length, 0);
+    assert.equal(engine.outbox.getQuarantinedEvents()[0].reason, 'signature_invalid');
+  });
+
+  it('quarantines altered payloads even when the signed hashes and signature are untouched', async () => {
+    const { engine } = buildRealEngine({ tamperPayload: true });
+    const result = await engine.pull();
+    assert.equal(result.success, true);
+    assert.equal(result.stored, 0);
     assert.equal(result.quarantined, 1);
     assert.equal(engine.outbox.getPulledEvents().length, 0);
     assert.equal(engine.outbox.getQuarantinedEvents()[0].reason, 'signature_invalid');

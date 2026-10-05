@@ -2,6 +2,7 @@
 //!
 //! All functions are pure — no side effects, fully deterministic.
 
+use crate::arithmetic::{add, mul, sum};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
@@ -163,7 +164,7 @@ pub fn try_calculate_tax(
     let mut cumulative_tax = Decimal::ZERO;
 
     for rule in rules {
-        let taxable_base = compute_taxable_base(rule, context);
+        let taxable_base = compute_taxable_base(rule, context)?;
 
         if taxable_base.is_zero() {
             continue;
@@ -171,12 +172,12 @@ pub fn try_calculate_tax(
 
         // For compound taxes, add previously computed taxes to the base
         let effective_base =
-            if rule.compound { taxable_base + cumulative_tax } else { taxable_base };
+            if rule.compound { add(taxable_base, cumulative_tax)? } else { taxable_base };
 
-        let tax_amount = round(effective_base * rule.rate, rounding);
+        let tax_amount = round(mul(effective_base, rule.rate)?, rounding);
 
         if !tax_amount.is_zero() {
-            cumulative_tax += tax_amount;
+            cumulative_tax = add(cumulative_tax, tax_amount)?;
             tax_lines.push(TaxLine {
                 jurisdiction: rule.jurisdiction.clone(),
                 rate: rule.rate,
@@ -186,24 +187,23 @@ pub fn try_calculate_tax(
         }
     }
 
-    let total_tax = tax_lines.iter().map(|tl| tl.tax_amount).sum();
+    let total_tax = cumulative_tax;
 
     Ok(TaxResult { tax_lines, total_tax })
 }
 
 /// Compute the taxable base amount for a given rule.
-fn compute_taxable_base(rule: &TaxRule, context: &TaxContext) -> Decimal {
+fn compute_taxable_base(rule: &TaxRule, context: &TaxContext) -> PricingResult<Decimal> {
     match &rule.applies_to {
         TaxAppliesTo::AllItems => {
-            context.items.iter().filter(|item| !item.exempt).map(|item| item.amount).sum()
+            sum(context.items.iter().filter(|item| !item.exempt).map(|item| item.amount))
         }
-        TaxAppliesTo::SpecificCategories(cats) => context
+        TaxAppliesTo::SpecificCategories(cats) => sum(context
             .items
             .iter()
             .filter(|item| !item.exempt && item.category.as_ref().is_some_and(|c| cats.contains(c)))
-            .map(|item| item.amount)
-            .sum(),
-        TaxAppliesTo::ShippingOnly => context.shipping,
+            .map(|item| item.amount)),
+        TaxAppliesTo::ShippingOnly => Ok(context.shipping),
     }
 }
 

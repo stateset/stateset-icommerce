@@ -3,6 +3,7 @@
 //! Aggregates line-item totals, applies order-level discounts, shipping,
 //! shipping tax, and fees into a single [`OrderTotal`].
 
+use crate::arithmetic::{add, div, mul, sub, sum};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
@@ -131,10 +132,10 @@ pub fn try_compute_order_total(input: &OrderTotalInput) -> PricingResult<OrderTo
     let mut line_taxable = Decimal::ZERO;
     let mut line_tax_raw = Decimal::ZERO;
     for item in &input.items {
-        subtotal_raw += item.try_subtotal()?;
-        line_discount_raw += item.try_discount_amount()?;
-        line_taxable += item.try_taxable_amount()?;
-        line_tax_raw += item.try_tax_amount()?;
+        subtotal_raw = add(subtotal_raw, item.try_subtotal()?)?;
+        line_discount_raw = add(line_discount_raw, item.try_discount_amount()?)?;
+        line_taxable = add(line_taxable, item.try_taxable_amount()?)?;
+        line_tax_raw = add(line_tax_raw, item.try_tax_amount()?)?;
     }
 
     let subtotal = round(subtotal_raw, r);
@@ -147,32 +148,32 @@ pub fn try_compute_order_total(input: &OrderTotalInput) -> PricingResult<OrderTo
         Some(discount) => {
             validate_base_discount(discount, line_taxable)?;
             match discount {
-                LineDiscount::Percentage(pct) => round(line_taxable * *pct, r),
+                LineDiscount::Percentage(pct) => round(mul(line_taxable, *pct)?, r),
                 LineDiscount::FixedAmount(amt) => round(*amt, r),
-                LineDiscount::FixedPrice(price) => round(line_taxable - *price, r),
+                LineDiscount::FixedPrice(price) => round(sub(line_taxable, *price)?, r),
             }
         }
     };
 
-    let total_discount = round(line_discount + order_discount_amount, r);
+    let total_discount = round(add(line_discount, order_discount_amount)?, r);
 
     // Recalculate tax if order discount changes the taxable base
-    let effective_taxable = round((line_taxable - order_discount_amount).max(Decimal::ZERO), r);
+    let effective_taxable = round(sub(line_taxable, order_discount_amount)?.max(Decimal::ZERO), r);
     let total_tax = if line_taxable.is_zero() {
         Decimal::ZERO
     } else {
-        round(line_tax * effective_taxable / line_taxable, r)
+        round(div(mul(line_tax, effective_taxable)?, line_taxable)?, r)
     };
 
     // Step 3: Shipping
     let shipping = round(input.shipping_cost, r);
-    let shipping_tax = round(shipping * input.shipping_tax_rate.unwrap_or(Decimal::ZERO), r);
+    let shipping_tax = round(mul(shipping, input.shipping_tax_rate.unwrap_or(Decimal::ZERO))?, r);
 
     // Step 4: Fees
-    let fees: Decimal = input.fees.iter().map(|f| f.amount).sum();
+    let fees: Decimal = sum(input.fees.iter().map(|f| f.amount))?;
     let fees = round(fees, r);
 
-    let grand_total = round(effective_taxable + total_tax + shipping + shipping_tax + fees, r);
+    let grand_total = round(sum([effective_taxable, total_tax, shipping, shipping_tax, fees])?, r);
 
     Ok(OrderTotal {
         subtotal,

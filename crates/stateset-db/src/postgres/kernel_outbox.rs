@@ -156,18 +156,24 @@ impl PgKernelOutboxRepository {
             .collect()
     }
 
-    /// Atomically lease deliverable events using `SKIP LOCKED` for competing workers.
+    /// Atomically lease deliverable events using `SKIP LOCKED`. Each batch returns
+    /// a fresh opaque `lease_owner` token; use it, not the worker label, to settle.
     pub async fn claim_pending_async(
         &self,
         worker_id: &str,
         limit: u32,
         lease_seconds: u32,
     ) -> Result<Vec<KernelOutboxEvent>> {
-        if worker_id.trim().is_empty() || lease_seconds == 0 {
+        if worker_id.trim().is_empty()
+            || worker_id.contains('\0')
+            || lease_seconds == 0
+            || lease_seconds > i32::MAX as u32
+        {
             return Err(CommerceError::ValidationError(
                 "worker_id and a positive lease duration are required".into(),
             ));
         }
+        let lease_token = format!("{worker_id}:{}", Uuid::new_v4());
         let rows = sqlx::query_as::<_, KernelOutboxRow>(
             "WITH claimable AS (
                 SELECT id FROM kernel_outbox
@@ -188,7 +194,7 @@ impl PgKernelOutboxRepository {
                  o.next_attempt_at, o.dead_lettered_at, o.tier",
         )
         .bind(i64::from(limit))
-        .bind(worker_id)
+        .bind(&lease_token)
         .bind(
             i32::try_from(lease_seconds)
                 .map_err(|e| CommerceError::ValidationError(e.to_string()))?,
@@ -199,15 +205,16 @@ impl PgKernelOutboxRepository {
         rows.into_iter().map(row_to_event).collect()
     }
 
-    /// Acknowledge a leased event only when owned by `worker_id`.
-    pub async fn mark_published_by_async(&self, id: Uuid, worker_id: &str) -> Result<bool> {
+    /// Acknowledge a leased event only with the returned, unexpired `lease_owner` token.
+    pub async fn mark_published_by_async(&self, id: Uuid, lease_token: &str) -> Result<bool> {
         let result = sqlx::query(
             "UPDATE kernel_outbox SET published_at = NOW(), last_error = NULL,
                     lease_owner = NULL, lease_expires_at = NULL
-             WHERE id = $1 AND lease_owner = $2 AND published_at IS NULL",
+             WHERE id = $1 AND lease_owner = $2 AND published_at IS NULL
+               AND dead_lettered_at IS NULL AND lease_expires_at > clock_timestamp()",
         )
         .bind(id)
-        .bind(worker_id)
+        .bind(lease_token)
         .execute(&self.pool)
         .await
         .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
@@ -218,7 +225,7 @@ impl PgKernelOutboxRepository {
     pub async fn record_failure_by_async(
         &self,
         id: Uuid,
-        worker_id: &str,
+        lease_token: &str,
         error: &str,
         retry_after_seconds: u32,
         max_attempts: u32,
@@ -236,13 +243,14 @@ impl PgKernelOutboxRepository {
                     next_attempt_at = CASE WHEN attempts + 1 >= $2 THEN NULL
                                            ELSE NOW() + make_interval(secs => $3) END,
                     dead_lettered_at = CASE WHEN attempts + 1 >= $2 THEN NOW() ELSE NULL END
-             WHERE id = $4 AND lease_owner = $5 AND published_at IS NULL",
+             WHERE id = $4 AND lease_owner = $5 AND published_at IS NULL
+               AND dead_lettered_at IS NULL AND lease_expires_at > clock_timestamp()",
         )
         .bind(error)
         .bind(max)
         .bind(retry)
         .bind(id)
-        .bind(worker_id)
+        .bind(lease_token)
         .execute(&self.pool)
         .await
         .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
@@ -308,28 +316,36 @@ impl PgKernelOutboxRepository {
         })
     }
 
-    /// Acknowledge successful delivery.
+    /// Acknowledge an unleased, never-scheduled event. Use the token API for claims.
     pub async fn mark_published_async(&self, id: Uuid) -> Result<()> {
-        sqlx::query(
-            "UPDATE kernel_outbox SET published_at = NOW(), last_error = NULL WHERE id = $1",
+        let result = sqlx::query(
+            "UPDATE kernel_outbox SET published_at = NOW(), last_error = NULL WHERE id = $1 AND published_at IS NULL AND lease_owner IS NULL
+             AND lease_expires_at IS NULL AND next_attempt_at IS NULL AND dead_lettered_at IS NULL",
         )
         .bind(id)
         .execute(&self.pool)
         .await
         .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+        if result.rows_affected() != 1 {
+            return Err(CommerceError::OptimisticLockFailure);
+        }
         Ok(())
     }
 
-    /// Record a failed delivery attempt without losing the event.
+    /// Record failure for an unleased, never-scheduled event. Use the token API for claims.
     pub async fn record_failure_async(&self, id: Uuid, error: &str) -> Result<()> {
-        sqlx::query(
-            "UPDATE kernel_outbox SET attempts = attempts + 1, last_error = $1 WHERE id = $2",
+        let result = sqlx::query(
+            "UPDATE kernel_outbox SET attempts = attempts + 1, last_error = $1 WHERE id = $2 AND published_at IS NULL AND lease_owner IS NULL
+             AND lease_expires_at IS NULL AND next_attempt_at IS NULL AND dead_lettered_at IS NULL",
         )
         .bind(error)
         .bind(id)
         .execute(&self.pool)
         .await
         .map_err(|db_error| CommerceError::DatabaseError(db_error.to_string()))?;
+        if result.rows_affected() != 1 {
+            return Err(CommerceError::OptimisticLockFailure);
+        }
         Ok(())
     }
 

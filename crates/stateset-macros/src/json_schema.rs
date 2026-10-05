@@ -102,7 +102,10 @@ fn type_to_schema(ty: &Type) -> TokenStream {
             | "u128" | "usize" => quote! {
                 ::serde_json::json!({ "type": "integer" })
             },
-            "f32" | "f64" | "Decimal" => quote! {
+            "Decimal" => quote! {
+                ::serde_json::json!({ "type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?$" })
+            },
+            "f32" | "f64" => quote! {
                 ::serde_json::json!({ "type": "number" })
             },
             "bool" => quote! {
@@ -393,7 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn decimal_maps_to_number() {
+    fn decimal_maps_to_string() {
         let input = quote! {
             pub struct Money {
                 pub amount: Decimal,
@@ -403,7 +406,8 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(output_str.contains("\"number\""), "Decimal should map to \"number\" type");
+        assert!(output_str.contains("\"string\""), "Decimal should map to a string type");
+        assert!(output_str.contains("\"pattern\""));
     }
 
     #[test]

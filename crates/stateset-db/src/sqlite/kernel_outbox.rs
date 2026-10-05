@@ -37,8 +37,8 @@ impl SqliteKernelOutboxRepository {
                         causation_id, created_at, published_at, attempts, last_error,
                         lease_owner, lease_expires_at, next_attempt_at, dead_lettered_at, tier
                  FROM kernel_outbox WHERE published_at IS NULL AND dead_lettered_at IS NULL
-                   AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
-                   AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+                   AND (next_attempt_at IS NULL OR julianday(next_attempt_at) <= julianday(?))
+                   AND (lease_expires_at IS NULL OR julianday(lease_expires_at) <= julianday(?))
                  ORDER BY created_at, id LIMIT ?",
             )
             .map_err(map_db_error)?;
@@ -111,32 +111,38 @@ impl SqliteKernelOutboxRepository {
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(map_db_error)
     }
 
-    /// Atomically lease deliverable events to one worker.
+    /// Atomically lease deliverable events. Each batch gets a fresh opaque token in
+    /// `lease_owner`; pass that returned token (not `worker_id`) when settling.
     pub fn claim_pending(
         &self,
         worker_id: &str,
         limit: u32,
         lease_seconds: u32,
     ) -> Result<Vec<KernelOutboxEvent>> {
-        if worker_id.trim().is_empty() || lease_seconds == 0 {
+        if worker_id.trim().is_empty()
+            || worker_id.contains('\0')
+            || lease_seconds == 0
+            || lease_seconds > i32::MAX as u32
+        {
             return Err(CommerceError::ValidationError(
                 "worker_id and a positive lease duration are required".into(),
             ));
         }
-        let now = chrono::Utc::now();
-        let lease_expires = now + chrono::Duration::seconds(i64::from(lease_seconds));
+        let lease_token = format!("{worker_id}:{}", Uuid::new_v4());
         with_immediate_transaction(&self.pool, |tx| {
+            let now = chrono::Utc::now();
+            let lease_expires = now + chrono::Duration::seconds(i64::from(lease_seconds));
             tx.execute(
                 "UPDATE kernel_outbox SET lease_owner = ?, lease_expires_at = ?
                  WHERE id IN (
                     SELECT id FROM kernel_outbox
                     WHERE published_at IS NULL AND dead_lettered_at IS NULL
-                      AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
-                      AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+                      AND (next_attempt_at IS NULL OR julianday(next_attempt_at) <= julianday(?))
+                      AND (lease_expires_at IS NULL OR julianday(lease_expires_at) <= julianday(?))
                     ORDER BY created_at, id LIMIT ?
                  )",
                 params![
-                    worker_id,
+                    lease_token,
                     lease_expires.to_rfc3339(),
                     now.to_rfc3339(),
                     now.to_rfc3339(),
@@ -152,20 +158,21 @@ impl SqliteKernelOutboxRepository {
                  ORDER BY created_at, id",
             )?;
             let rows = statement
-                .query_map(params![worker_id, lease_expires.to_rfc3339()], event_from_row)?;
+                .query_map(params![lease_token, lease_expires.to_rfc3339()], event_from_row)?;
             rows.collect()
         })
     }
 
-    /// Acknowledge a leased event only when owned by `worker_id`.
-    pub fn mark_published_by(&self, id: Uuid, worker_id: &str) -> Result<bool> {
+    /// Acknowledge a leased event only with the returned, unexpired `lease_owner` token.
+    pub fn mark_published_by(&self, id: Uuid, lease_token: &str) -> Result<bool> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let changed = conn
             .execute(
                 "UPDATE kernel_outbox SET published_at = ?, last_error = NULL,
                     lease_owner = NULL, lease_expires_at = NULL
-             WHERE id = ? AND lease_owner = ? AND published_at IS NULL",
-                params![chrono::Utc::now().to_rfc3339(), id.to_string(), worker_id],
+             WHERE id = ? AND lease_owner = ? AND published_at IS NULL
+               AND dead_lettered_at IS NULL AND julianday(lease_expires_at) > julianday('now')",
+                params![chrono::Utc::now().to_rfc3339(), id.to_string(), lease_token],
             )
             .map_err(map_db_error)?;
         Ok(changed == 1)
@@ -175,13 +182,18 @@ impl SqliteKernelOutboxRepository {
     pub fn record_failure_by(
         &self,
         id: Uuid,
-        worker_id: &str,
+        lease_token: &str,
         error: &str,
         retry_after_seconds: u32,
         max_attempts: u32,
     ) -> Result<bool> {
-        if max_attempts == 0 {
-            return Err(CommerceError::ValidationError("max_attempts must be positive".into()));
+        if max_attempts == 0
+            || max_attempts > i32::MAX as u32
+            || retry_after_seconds > i32::MAX as u32
+        {
+            return Err(CommerceError::ValidationError(
+                "max_attempts must be in 1..=i32::MAX and retry delay in 0..=i32::MAX".into(),
+            ));
         }
         let now = chrono::Utc::now();
         let next = now + chrono::Duration::seconds(i64::from(retry_after_seconds));
@@ -192,7 +204,8 @@ impl SqliteKernelOutboxRepository {
                     lease_owner = NULL, lease_expires_at = NULL,
                     next_attempt_at = CASE WHEN attempts + 1 >= ? THEN NULL ELSE ? END,
                     dead_lettered_at = CASE WHEN attempts + 1 >= ? THEN ? ELSE NULL END
-             WHERE id = ? AND lease_owner = ? AND published_at IS NULL",
+             WHERE id = ? AND lease_owner = ? AND published_at IS NULL
+               AND dead_lettered_at IS NULL AND julianday(lease_expires_at) > julianday('now')",
                 params![
                     error,
                     max_attempts,
@@ -200,7 +213,7 @@ impl SqliteKernelOutboxRepository {
                     max_attempts,
                     now.to_rfc3339(),
                     id.to_string(),
-                    worker_id
+                    lease_token
                 ],
             )
             .map_err(map_db_error)?;
@@ -245,10 +258,10 @@ impl SqliteKernelOutboxRepository {
         let counts: (i64, i64, i64, i64, i64) = conn.query_row(
             "SELECT
                 COALESCE(SUM(CASE WHEN published_at IS NULL AND dead_lettered_at IS NULL
-                     AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
-                     AND (lease_expires_at IS NULL OR lease_expires_at <= ?) THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN published_at IS NULL AND lease_expires_at > ? THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN published_at IS NULL AND dead_lettered_at IS NULL AND next_attempt_at > ? THEN 1 ELSE 0 END), 0),
+                     AND (next_attempt_at IS NULL OR julianday(next_attempt_at) <= julianday(?))
+                     AND (lease_expires_at IS NULL OR julianday(lease_expires_at) <= julianday(?)) THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN published_at IS NULL AND julianday(lease_expires_at) > julianday(?) THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN published_at IS NULL AND dead_lettered_at IS NULL AND julianday(next_attempt_at) > julianday(?) THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN dead_lettered_at IS NOT NULL THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN published_at IS NOT NULL THEN 1 ELSE 0 END), 0)
              FROM kernel_outbox",
@@ -264,29 +277,37 @@ impl SqliteKernelOutboxRepository {
         })
     }
 
-    /// Acknowledge successful delivery.
+    /// Acknowledge an unleased, never-scheduled event. Use the token API for claims.
     pub fn mark_published(&self, id: Uuid) -> Result<()> {
         let conn =
             self.pool.get().map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-        conn.execute(
-            "UPDATE kernel_outbox SET published_at = ?, last_error = NULL WHERE id = ?",
+        let changed = conn.execute(
+            "UPDATE kernel_outbox SET published_at = ?, last_error = NULL WHERE id = ? AND published_at IS NULL AND lease_owner IS NULL
+             AND lease_expires_at IS NULL AND next_attempt_at IS NULL AND dead_lettered_at IS NULL",
             params![chrono::Utc::now().to_rfc3339(), id.to_string()],
         )
         .map_err(map_db_error)?;
+        if changed != 1 {
+            return Err(CommerceError::OptimisticLockFailure);
+        }
         Ok(())
     }
 
-    /// Record a failed delivery attempt without losing the event.
+    /// Record failure for an unleased, never-scheduled event. Use the token API for claims.
     pub fn record_failure(&self, id: Uuid, error: &str) -> Result<()> {
         let conn = self
             .pool
             .get()
             .map_err(|pool_error| CommerceError::DatabaseError(pool_error.to_string()))?;
-        conn.execute(
-            "UPDATE kernel_outbox SET attempts = attempts + 1, last_error = ? WHERE id = ?",
+        let changed = conn.execute(
+            "UPDATE kernel_outbox SET attempts = attempts + 1, last_error = ? WHERE id = ? AND published_at IS NULL AND lease_owner IS NULL
+             AND lease_expires_at IS NULL AND next_attempt_at IS NULL AND dead_lettered_at IS NULL",
             params![error, id.to_string()],
         )
         .map_err(map_db_error)?;
+        if changed != 1 {
+            return Err(CommerceError::OptimisticLockFailure);
+        }
         Ok(())
     }
 

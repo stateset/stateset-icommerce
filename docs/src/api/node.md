@@ -238,6 +238,71 @@ const topProducts = commerce.analytics.topProducts(10);
 const topCustomers = commerce.analytics.topCustomers(10);
 ```
 
+## Shipment Manifests
+
+Create a shipment with order-linked contents, or add and remove contents while
+packing:
+
+```javascript
+const shipment = await commerce.shipments.create({
+    orderId: order.id,
+    recipientName: 'Ada Lovelace',
+    shippingAddress: '1 Main Street',
+    items: [{
+        orderItemId: order.items[0].id,
+        sku: order.items[0].sku,
+        name: order.items[0].name,
+        quantity: 1,
+    }],
+});
+
+// Remove by shipment-item ID, not order-line ID.
+await commerce.shipments.removeItem(shipment.items[0].id, shipment.version);
+const current = await commerce.shipments.get(shipment.id);
+await commerce.shipments.addItem(shipment.id, {
+    orderItemId: order.items[0].id,
+    sku: order.items[0].sku,
+    name: order.items[0].name,
+    quantity: 1,
+}, current.version);
+```
+
+Quantities must be positive integers no greater than 2,147,483,647. The native
+transaction checks order membership, SKU/product consistency and the cumulative
+quantity assigned to non-cancelled shipments. Omitting `orderItemId` is allowed
+only when the SKU identifies one order line. Invalid items roll back shipment
+creation; add/remove operations advance the shipment version and write durable
+outbox facts atomically. Contents can change only in `pending`, `processing` or
+`on_hold`, and freeze at `ready_to_ship`.
+
+The optional final `expectedVersion` argument is checked inside the native
+transaction. A stale value returns a `CONFLICT` error without changing the
+shipment or its outbox facts; re-read and reconcile before retrying. Versions
+must be integers from 1 through 2,147,483,647. Fractions, non-finite values and
+larger numbers return `VALIDATION` before they can be truncated or wrapped.
+Omitting the argument or passing `null` preserves unconditional edits.
+
+Lifecycle convenience methods accept the same precondition:
+
+```javascript
+await commerce.shipments.ship(id, trackingNumber, expectedVersion);
+await commerce.shipments.deliver(id, expectedVersion);
+await commerce.shipments.cancel(id, expectedVersion);
+```
+
+`shipments.update(id, { expectedVersion, ...patch })` applies the same numeric
+validation. Omit its `expectedVersion` field for an unconditional update; unlike
+the positional arguments, the object field does not accept `null`. Lifecycle
+rules still apply; a version match does not let an agent
+skip required stages. Generated native tools expose `expectedVersion` as an
+optional named argument, including on `shipments.addItem` and `shipments.removeItem`.
+
+The `create_shipment` agent tool accepts the same `items` array, including through
+the governed kernel command. Generated native `shipments.addItem` and
+`shipments.removeItem` tools require apply mode. These are manifest operations:
+they do not reserve inventory, change order fulfilled quantities, purchase a
+carrier label, or create a linked replacement shipment.
+
 ## Error Handling
 
 ```javascript

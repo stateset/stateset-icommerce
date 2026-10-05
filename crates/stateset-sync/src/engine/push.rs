@@ -5,12 +5,15 @@ use super::*;
 impl SyncEngine {
     /// Push pending events from the outbox to the remote via the given transport.
     ///
-    /// Drains up to `batch_size` events from the outbox.
+    /// Removes acknowledged or terminally rejected events only after journaling
+    /// their outcomes. Incomplete cleanup is recovered before contacting the
+    /// transport again, including after a process restart.
     ///
     /// # Errors
     ///
     /// Returns [`SyncError::Transport`] if the transport operation fails.
     pub async fn push(&mut self, transport: &dyn Transport) -> Result<PushResult, SyncError> {
+        self.finish_outbox_cleanup()?;
         let batch_size = self.config.resolved_batch_size();
         let events: Vec<SyncEvent> = self.outbox.peek(batch_size).into_iter().cloned().collect();
 
@@ -39,12 +42,9 @@ impl SyncEngine {
                 .collect()
         };
 
-        if !removable_ids.is_empty() {
-            if let Err(err) = self.outbox.try_retain(|event| !removable_ids.contains(&event.id)) {
-                self.state.pending_count = self.outbox.count();
-                return Err(err);
-            }
-        }
+        let previous_state = self.state.clone();
+        let previous_confirmations = self.confirmations.clone();
+        let previous_dead_letters = self.dead_letters.clone();
 
         if !result.acknowledgements.is_empty() {
             self.retain_push_confirmations(&events, &result.acknowledgements);
@@ -64,7 +64,18 @@ impl SyncEngine {
         }
         self.state.last_push = Some(Utc::now());
         self.state.pending_count = self.outbox.count();
-        self.persist_runtime_state()?;
+        self.pending_outbox_removals = removable_ids.into_iter().collect();
+        self.pending_outbox_removals.sort_unstable();
+        if let Err(error) = self.persist_runtime_state() {
+            // No outbox mutation has happened. Preserve the original pending
+            // events and in-memory metadata if the journal could not be saved.
+            self.state = previous_state;
+            self.confirmations = previous_confirmations;
+            self.dead_letters = previous_dead_letters;
+            self.pending_outbox_removals.clear();
+            return Err(error);
+        }
+        self.finish_outbox_cleanup()?;
 
         Ok(result)
     }
@@ -155,6 +166,7 @@ impl SyncEngine {
         let expected_ids: HashSet<_> = events.iter().map(|event| event.id).collect();
         let mut seen_ids =
             HashSet::with_capacity(result.acknowledgements.len() + result.rejections.len());
+        let mut seen_sequences = HashSet::new();
 
         for acknowledgement in &result.acknowledgements {
             if acknowledgement.remote_sequence == 0 {
@@ -172,6 +184,11 @@ impl SyncEngine {
             if !seen_ids.insert(acknowledgement.event_id) {
                 return Err(SyncError::Transport(
                     "push acknowledgement contained duplicate event ids".to_string(),
+                ));
+            }
+            if !seen_sequences.insert(acknowledgement.remote_sequence) {
+                return Err(SyncError::Transport(
+                    "push acknowledgement assigned one remote sequence to multiple events".into(),
                 ));
             }
         }

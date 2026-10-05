@@ -6,6 +6,77 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.37.0] - 2026-10-01
+
+### Added
+
+- Version-checked shipment packing and lifecycle updates across the Rust,
+  HTTP, Node, and governed tool surfaces, with bounded integer validation and
+  durable conflict handling.
+- Durable synchronization recovery, payload integrity checks, scoped receive
+  validation, and isolated database maintenance tests.
+- Native-engine database manager backups with checksum manifests and safe,
+  non-overwriting recovery to a new path.
+- Positive inventory receipts now automatically reserve available units for
+  matching open backorders in priority order; allocation remains retryable and
+  separate from physical fulfillment.
+- Strict month-end close: `CloseMonthOptions.fail_on_warnings` refuses to seal
+  a period with unresolved warnings before writing anything, surfaced as
+  HTTP 422 with a `failed_item_count`, and plumbed through the Node, Python,
+  and CLI surfaces.
+- New `stateset-saga` crate owning the persisted PostgreSQL saga coordinator
+  (moved out of `stateset-db`; `stateset-db/saga` now only registers the
+  `035_sagas` schema migration).
+- Live-Postgres behavior parity tests for month-end close (identical postings
+  to SQLite) and for the sync/async runtime pool fix.
+- Real payment and carrier rails in `stateset-embedded` (`events` feature):
+  `PaymentProvider` (Stripe PaymentIntents, manual capture) behind
+  `Payments::{authorize,capture,refund}_with_provider`, and
+  `ShipmentProvider` (EasyPost rates, labels, tracking) behind
+  `Shipments::buy_label_with_provider`, each with a deterministic mock.
+  Declines (including Stripe HTTP 402 card errors) are persisted as data,
+  refunds settle only when the processor reports `succeeded` (a `pending`
+  refund stays pending), every engine refund has its own idempotency key,
+  and amounts finer than the currency's minor unit (including three-decimal
+  currencies such as KWD) are rejected rather than rounded. Postage is only
+  bought for an existing, still-packable shipment with no tracking number,
+  so a retry never buys a second label. Partial capture is refused until the
+  payment row can record a captured amount.
+
+### Changed
+
+- Compliance operations for file-backed stores run in a process-isolated
+  SQLite worker, avoiding multiple independently bundled SQLite libraries in
+  the commerce engine process.
+- GDPR erasure clears the customer email lookup key and related profile fields
+  so an erased address can be reused safely.
+- Release and generated-artifact checks now cover the expanded recovery,
+  synchronization, and shipment evidence surfaces.
+
+### Security
+
+- The generated storefront pins Next.js 16.3.8 (was 16.3.3), which includes
+  the `next/og` ImageResponse remote-code-execution fix (GHSA-vcvr-r3jv-pc5j).
+- CLI: `@grpc/grpc-js` ^1.14.5 and `axios` 1.20.0 clear their high-severity
+  advisories.
+- npm audit gates accept an allowlisted advisory only while no patched
+  version is published; `braces` (GHSA-vfj7-8cjw-p6xm, reached only through
+  Tailwind CSS 3 build tooling) is the single entry and has no patch yet.
+
+### Changed (breaking)
+
+- `stateset_db::saga` is removed. Depend on the `stateset-saga` crate for the
+  PostgreSQL saga coordinator; the `stateset-db/saga` feature now only
+  registers the `035_sagas` schema migration.
+
+### Fixed
+
+- Strict month-end close (`fail_on_warnings`) no longer leaves depreciation and
+  revenue-recognition postings behind when FX revaluation cannot run: the
+  dry-run evaluation now checks the same preconditions (an exchange rate for
+  every foreign account with a balance, and an FX gain/loss account) and
+  refuses before anything is written.
+
 ## [1.36.0] - 2026-09-29
 
 ### Added

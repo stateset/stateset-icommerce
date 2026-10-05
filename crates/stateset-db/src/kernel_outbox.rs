@@ -25,6 +25,8 @@ pub struct KernelOutboxEvent {
     pub published_at: Option<DateTime<Utc>>,
     pub attempts: u32,
     pub last_error: Option<String>,
+    /// Opaque token for this claim, including a worker label and random nonce.
+    /// Pass the returned value to settlement APIs; a worker label alone is insufficient.
     pub lease_owner: Option<String>,
     pub lease_expires_at: Option<DateTime<Utc>>,
     pub next_attempt_at: Option<DateTime<Utc>>,

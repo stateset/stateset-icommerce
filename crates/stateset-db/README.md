@@ -86,6 +86,23 @@ are not subtracted a second time. Allocations do not reserve stock or update
 physical fulfillment. Automatic partial-shipment recovery still requires atomic
 reconciliation with those records and durable request idempotency.
 
+Tracking event appends also lock and version the parent. The event, parent update,
+and `shipments.event_added.v1` outbox fact commit together; audit failure or version
+exhaustion rolls back all three. The fact contains the full stored event and both
+shipment versions. Previously read `expected_version` values become stale after
+an append. Event types must contain non-whitespace text and fit in 100 characters;
+locations fit in 255 characters. All event text rejects NUL characters. Both
+backends count Unicode characters rather than UTF-8 bytes. Missing shipments
+return `NotFound`.
+
+Late observations may be appended to delivered or cancelled shipments. Their
+historical `event_time` never changes lifecycle status, shipment milestones, or
+order fulfillment; `updated_at` records ingestion time. New event timestamps use
+microsecond precision on both backends, including returned values and audit facts.
+Each call appends a distinct observation, so provider delivery deduplication must
+be handled by the caller. This native tracking API does not certify a carrier's
+claims or provide governed command receipts.
+
 ## Feature Flags
 
 | Feature | Description | Default |

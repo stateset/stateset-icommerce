@@ -23,6 +23,7 @@
 import { EventEmitter } from 'events';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { toProtoTimestamp } from './grpc-timestamp.js';
 import {
   computeLegacyPayloadHash,
   hexToBuffer,
@@ -653,6 +654,17 @@ export class GrpcSequencerClient extends EventEmitter {
    * canonical_json_hash (no domain prefix), NOT VES payload_plain_hash.
    */
   _toProtoEvent(event) {
+    // Store routing is operator configuration; never silently rewrite a signed
+    // envelope from a different tenant/store into the configured destination.
+    for (const [field, alias] of [
+      ['tenantId', 'tenant_id'],
+      ['storeId', 'store_id'],
+    ]) {
+      const value = event[field] ?? event[alias];
+      if (value !== undefined && value !== this.config[field]) {
+        throw new Error(`Event ${field} does not match the configured destination`);
+      }
+    }
     const payload = event.payload || {};
     const localPayloadKind = Number(event.payloadKind ?? event.payload_kind ?? 0);
     const payloadKind = toProtoPayloadKind(localPayloadKind);
@@ -673,7 +685,7 @@ export class GrpcSequencerClient extends EventEmitter {
         ? fromHexOrBuffer(event.agentSignature)
         : event.signature !== undefined
           ? fromHexOrBuffer(event.signature)
-          : Buffer.alloc(64);
+          : Buffer.alloc(this.config.securityProfile === 'pqc-strict' ? 0 : 64);
 
     return {
       event_id: event.eventId || event.event_id || crypto.randomUUID(),
@@ -683,11 +695,12 @@ export class GrpcSequencerClient extends EventEmitter {
       entity_type: event.entityType || event.entity_type,
       entity_id: event.entityId || event.entity_id,
       event_type: event.eventType || event.event_type,
-      source_agent: this.config.agentId,
-      ves_version: 1,
+      source_agent:
+        event.sourceAgent ?? event.source_agent ?? event.source_agent_id ?? this.config.agentId,
+      ves_version: event.vesVersion ?? event.ves_version ?? 1,
       payload_kind: payloadKind,
       payload: localPayloadKind === 1 ? Buffer.alloc(0) : Buffer.from(JSON.stringify(payload)),
-      payload_encrypted: toProtoEncryptedPayload(event.payloadEncrypted),
+      payload_encrypted: toProtoEncryptedPayload(event.payloadEncrypted ?? event.payload_encrypted),
       payload_plain_hash: payloadHash,
       payload_cipher_hash: payloadCipherHash,
       agent_key_id: event.agentKeyId || 0,
@@ -695,14 +708,7 @@ export class GrpcSequencerClient extends EventEmitter {
       agent_signature_scheme: event.agentSignatureScheme || 0,
       agent_signature_bundle: toProtoSignatureBundle(event.agentSignatureBundle),
       base_version: event.baseVersion || event.base_version || 0,
-      created_at: {
-        seconds: Math.floor(
-          (event.createdAt instanceof Date
-            ? event.createdAt.getTime()
-            : event.createdAt || Date.now()) / 1000,
-        ),
-        nanos: 0,
-      },
+      created_at: toProtoTimestamp(event.createdAtRaw ?? event.createdAt ?? Date.now()),
     };
   }
 
@@ -969,6 +975,11 @@ export class GrpcSequencerClient extends EventEmitter {
   pushEventsViaStream(events) {
     if (!this.syncStream) {
       throw new Error('Sync stream not started');
+    }
+
+    // Apply the same profile gate as unary pushes before writing any batch.
+    for (const event of events) {
+      assertEventMatchesSecurityProfile(event, this.config.securityProfile);
     }
 
     this.syncStream.write({
