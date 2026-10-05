@@ -9,6 +9,6 @@
   },
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "PORT=0 node --test test/"
+    "test": "PORT=0 node --test test/*.test.mjs"
   }
 }

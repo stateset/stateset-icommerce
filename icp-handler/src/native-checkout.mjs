@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalJson } from './codec.mjs';
 import { amount, exactMoney } from './quote-money.mjs';
+import { clone } from './clone.mjs';
 
 const hash = (value) => createHash('sha256').update(canonicalJson(value)).digest('hex');
 function required(value, name) {
@@ -28,9 +29,9 @@ export class NativeMerchantCheckout {
   }) {
     this.store = store;
     this.commerce = commerce;
-    this.principal = structuredClone(principal);
+    this.principal = clone(principal);
     this.storeId = required(storeId, 'storeId');
-    this.policy = structuredClone(policy);
+    this.policy = clone(policy);
     required(principal.id, 'principal id');
     required(principal.tenant_id, 'tenant id');
     required(policy.version, 'policy version');
@@ -63,8 +64,8 @@ export class NativeMerchantCheckout {
       return this.allowApply ? this.resume(id) : { id, status: 'preview', existing: true };
     }
     await this.requireStockPolicySupport(this.stockPolicy);
-    const quote = structuredClone(
-      await this.resolveQuote(request.quoteId, structuredClone(this.principal)),
+    const quote = clone(
+      await this.resolveQuote(request.quoteId, clone(this.principal)),
     );
     if (
       quote.quoteId !== request.quoteId ||
@@ -161,8 +162,8 @@ export class NativeMerchantCheckout {
         if (command.payload.expected_cart_fingerprint !== undefined)
           await this.requireFeature('checkout.cart_fingerprint.v1');
         receipt = await this.commerce.executeKernelCommand(
-          structuredClone(command),
-          structuredClone(this.policy),
+          clone(command),
+          clone(this.policy),
         );
       }
       if (!receipt || typeof receipt !== 'object')
