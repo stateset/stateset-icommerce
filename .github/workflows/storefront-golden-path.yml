@@ -12,6 +12,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "scripts/ci/run_storefront_golden_path.sh"
+      - "scripts/ci/npm-audit-allowlist.json"
       - "docs/RELEASE_EVIDENCE.md"
   push:
     branches: [master]
@@ -25,6 +26,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "scripts/ci/run_storefront_golden_path.sh"
+      - "scripts/ci/npm-audit-allowlist.json"
       - "docs/RELEASE_EVIDENCE.md"
   workflow_dispatch:
 
