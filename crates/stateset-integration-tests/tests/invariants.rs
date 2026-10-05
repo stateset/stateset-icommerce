@@ -23,12 +23,12 @@ use proptest::prelude::*;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_core::{
-    CommerceError, CreateAutoPostingConfig, CreateGlPeriod, CreateInventoryItem, CreateInvoice,
-    CreateInvoiceItem, CreateOrder, CreateOrderItem, CreatePayment, CreateRefund, CreateReturn,
-    CreateReturnItem, CustomerId, InvoiceId, JournalEntryFilter, JournalEntryStatus, OrderId,
-    OrderItemId, OrderStatus, PaymentId, PaymentTransactionStatus, ProductId, RecordInvoicePayment,
-    RefundStatus, ReservationStatus, ReturnDisposition, ReturnId, ReturnReason, ReturnStatus,
-    SetReturnDisposition,
+    BackorderFilter, BackorderStatus, CommerceError, CreateAutoPostingConfig, CreateGlPeriod,
+    CreateInventoryItem, CreateInvoice, CreateInvoiceItem, CreateOrder, CreateOrderItem,
+    CreatePayment, CreateRefund, CreateReturn, CreateReturnItem, CustomerId, InvoiceId,
+    JournalEntryFilter, JournalEntryStatus, OrderId, OrderItemId, OrderStatus, PaymentId,
+    PaymentTransactionStatus, ProductId, RecordInvoicePayment, RefundStatus, ReservationStatus,
+    ReturnDisposition, ReturnId, ReturnReason, ReturnStatus, SetReturnDisposition,
 };
 use stateset_embedded::Commerce;
 use stateset_test_utils::fixtures;
@@ -963,6 +963,43 @@ impl Harness {
                         .iter()
                         .position(|id| *id == r.item_id)
                         .ok_or_else(|| format!("reservation on unknown item {}", r.item_id))?;
+                    live_reserved[idx] += r.quantity;
+                }
+            }
+        }
+        // Backorder allocations reserve real stock under reference_type
+        // "backorder": received units are dealt to open backorders by
+        // `auto_allocate_inventory` on receipt, so their live reservations
+        // count toward allocated exactly like order reservations do.
+        for bo in self
+            .commerce
+            .backorder()
+            .list_backorders(BackorderFilter::default())
+            .map_err(|e| e.to_string())?
+        {
+            if !matches!(
+                bo.status,
+                BackorderStatus::Pending
+                    | BackorderStatus::PartiallyFulfilled
+                    | BackorderStatus::Allocated
+                    | BackorderStatus::ReadyToShip
+            ) {
+                continue;
+            }
+            for r in inventory
+                .list_reservations_by_reference("backorder", &bo.id.to_string())
+                .map_err(|e| e.to_string())?
+            {
+                if matches!(
+                    r.status,
+                    ReservationStatus::Pending
+                        | ReservationStatus::Confirmed
+                        | ReservationStatus::Allocated
+                ) {
+                    let idx = SKUS
+                        .iter()
+                        .position(|sku| *sku == bo.sku)
+                        .ok_or_else(|| format!("backorder on unknown sku {}", bo.sku))?;
                     live_reserved[idx] += r.quantity;
                 }
             }

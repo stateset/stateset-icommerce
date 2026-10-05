@@ -1,0 +1,27 @@
+---
+source: crates/stateset-db/tests/snapshot_migrations.rs
+assertion_line: 103
+expression: tables
+---
+[
+    (
+        "customer_embeddings",
+        "CREATE TABLE customer_embeddings (\n    customer_id TEXT PRIMARY KEY,\n    embedding BLOB NOT NULL,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
+    ),
+    (
+        "embedding_metadata",
+        "CREATE TABLE embedding_metadata (\n    entity_type TEXT NOT NULL,\n    entity_id TEXT NOT NULL,\n    model TEXT NOT NULL DEFAULT 'text-embedding-3-small',\n    text_hash TEXT NOT NULL,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    PRIMARY KEY (entity_type, entity_id)\n)",
+    ),
+    (
+        "inventory_embeddings",
+        "CREATE TABLE inventory_embeddings (\n    item_id INTEGER PRIMARY KEY,\n    embedding BLOB NOT NULL,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
+    ),
+    (
+        "order_embeddings",
+        "CREATE TABLE order_embeddings (\n    order_id TEXT PRIMARY KEY,\n    embedding BLOB NOT NULL,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
+    ),
+    (
+        "product_embeddings",
+        "CREATE TABLE product_embeddings (\n    product_id TEXT PRIMARY KEY,\n    embedding BLOB NOT NULL,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
+    ),
+]

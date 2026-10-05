@@ -1,5 +1,6 @@
 ---
 source: crates/stateset-db/tests/snapshot_migrations.rs
+assertion_line: 70
 expression: tables
 ---
 [
