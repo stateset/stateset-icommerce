@@ -32,10 +32,15 @@
 //! ```
 
 use crate::Database;
+#[cfg(feature = "events")]
+use crate::payment_providers::{PaymentProvider, ProviderCharge, ProviderDecision};
+use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
+#[cfg(feature = "events")]
+use stateset_core::PaymentTransactionStatus;
 use stateset_core::{
     CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CustomerId, OrderId, Payment,
-    PaymentFilter, PaymentId, PaymentMethod, Refund, Result, Validate,
+    PaymentError, PaymentFilter, PaymentId, PaymentMethod, Refund, Result, UpdatePayment, Validate,
 };
 use stateset_observability::Metrics;
 use std::sync::Arc;
@@ -165,6 +170,184 @@ impl Payments {
     /// Cancel a payment
     pub fn cancel(&self, id: PaymentId) -> Result<Payment> {
         self.db.payments().cancel(id)
+    }
+
+    /// Hold funds through an upstream processor without moving them.
+    ///
+    /// This is the first half of real card capture: the processor places a
+    /// hold (Stripe: a manually-captured `PaymentIntent` in `requires_capture`)
+    /// and the engine records the upstream reference on the payment. A
+    /// decline is persisted via `mark_failed`, never thrown away.
+    #[cfg(feature = "events")]
+    pub fn authorize_with_provider(
+        &self,
+        id: PaymentId,
+        provider: &dyn PaymentProvider,
+        payment_method: Option<String>,
+    ) -> Result<ProviderDecision> {
+        let payment = self
+            .db
+            .payments()
+            .get(id)?
+            .ok_or_else(|| CommerceError::Payment(PaymentError::NotFound(id.into())))?;
+        // Refuse before going upstream: a hold placed for a payment the
+        // engine can no longer move to `Processing` (failed, cancelled,
+        // already captured) would be an orphaned authorization on the card.
+        if !matches!(
+            payment.status,
+            PaymentTransactionStatus::Pending | PaymentTransactionStatus::RequiresAction
+        ) {
+            return Err(CommerceError::ValidationError(format!(
+                "cannot authorize a payment in status {}; create a new payment to retry",
+                payment.status
+            )));
+        }
+        // Scope the key to the payment method: retrying the same card replays
+        // the original decision, while retrying with a different card after a
+        // decline is a new upstream request rather than an idempotency clash.
+        let idempotency_key = format!(
+            "authorize-{}-{}",
+            payment.payment_number,
+            payment_method.as_deref().unwrap_or("default")
+        );
+        let decision = provider.authorize(&ProviderCharge {
+            amount: payment.amount,
+            currency: payment.currency.to_string(),
+            payment_method,
+            idempotency_key,
+            description: Some(format!(
+                "order {}",
+                payment.order_id.map(|o| o.to_string()).unwrap_or_default()
+            )),
+        })?;
+        self.persist_provider_decision(id, &decision)?;
+        Ok(decision)
+    }
+
+    /// Move previously held funds through an upstream processor.
+    ///
+    /// The second half of real card capture. `amount` must be `None` or the
+    /// full payment amount: the payment row has no captured-amount column, so
+    /// a partial capture would record money that never moved and is refused.
+    /// The upstream reference recorded at authorize time is reused; when the
+    /// payment has none yet (record-only row), `authorize_with_provider` runs
+    /// first with `payment_method`, and capture only follows a hold —
+    /// a 3-D Secure challenge, an immediate capture, or a decline is returned
+    /// as-is for the caller to act on.
+    #[cfg(feature = "events")]
+    pub fn capture_with_provider(
+        &self,
+        id: PaymentId,
+        provider: &dyn PaymentProvider,
+        amount: Option<Decimal>,
+        payment_method: Option<String>,
+    ) -> Result<ProviderDecision> {
+        let payment = self
+            .db
+            .payments()
+            .get(id)?
+            .ok_or_else(|| CommerceError::Payment(PaymentError::NotFound(id.into())))?;
+        if amount.is_some_and(|amount| amount != payment.amount) {
+            return Err(CommerceError::ValidationError(format!(
+                "partial capture is not supported: capture amount must equal the payment amount {}",
+                payment.amount
+            )));
+        }
+        let reference = match payment.external_id.clone() {
+            Some(reference) => reference,
+            None => match self.authorize_with_provider(id, provider, payment_method)? {
+                ProviderDecision::Authorized { reference } => reference,
+                // Already settled, awaiting the customer, or refused: there is
+                // no hold to capture, and the caller needs this outcome.
+                other => return Ok(other),
+            },
+        };
+        let decision = provider.capture(&reference, amount, &payment.currency.to_string())?;
+        self.persist_provider_decision(id, &decision)?;
+        Ok(decision)
+    }
+
+    /// Return captured funds through the same upstream processor.
+    ///
+    /// Records the engine-side refund row first (so the refunds invariant
+    /// holds even if the upstream call fails), then completes it once the
+    /// processor reports the refund succeeded, fails it with the processor's
+    /// reason, or leaves it pending when the processor has not settled yet.
+    #[cfg(feature = "events")]
+    pub fn refund_with_provider(
+        &self,
+        payment_id: PaymentId,
+        provider: &dyn PaymentProvider,
+        amount: Option<Decimal>,
+        reason: Option<String>,
+    ) -> Result<ProviderDecision> {
+        let payment = self
+            .db
+            .payments()
+            .get(payment_id)?
+            .ok_or_else(|| CommerceError::Payment(PaymentError::NotFound(payment_id.into())))?;
+        let reference = payment.external_id.clone().ok_or_else(|| {
+            CommerceError::ValidationError(
+                "payment has no upstream reference to refund against".into(),
+            )
+        })?;
+        let refund = self.db.payments().create_refund(CreateRefund {
+            payment_id,
+            amount,
+            reason,
+            ..Default::default()
+        })?;
+        // One key per engine refund row: partial refunds against the same
+        // payment are distinct upstream operations, and a retry of this row
+        // replays rather than double-refunding.
+        let idempotency_key = format!("refund-{}", refund.id);
+        match provider.refund(&reference, amount, &payment.currency.to_string(), &idempotency_key) {
+            Ok(ProviderDecision::Declined { code, message }) => {
+                self.db.payments().fail_refund(refund.id, &format!("{code}: {message}"))?;
+                Ok(ProviderDecision::Declined { code, message })
+            }
+            // Accepted but not settled: leave the engine refund pending until
+            // the processor confirms, so nothing reads as refunded early.
+            Ok(pending @ ProviderDecision::Pending { .. }) => Ok(pending),
+            Ok(decision) => {
+                self.db.payments().complete_refund(refund.id)?;
+                Ok(decision)
+            }
+            Err(e) => {
+                self.db.payments().fail_refund(refund.id, &e.to_string())?;
+                Err(e)
+            }
+        }
+    }
+
+    /// Persist one provider outcome onto the payment row.
+    #[cfg(feature = "events")]
+    fn persist_provider_decision(&self, id: PaymentId, decision: &ProviderDecision) -> Result<()> {
+        match decision {
+            ProviderDecision::Authorized { reference }
+            | ProviderDecision::Captured { reference } => {
+                self.db.payments().update(
+                    id,
+                    UpdatePayment { external_id: Some(reference.clone()), ..Default::default() },
+                )?;
+                if matches!(decision, ProviderDecision::Captured { .. }) {
+                    self.mark_completed(id)?;
+                } else {
+                    self.mark_processing(id)?;
+                }
+            }
+            ProviderDecision::RequiresAction { reference, .. }
+            | ProviderDecision::Pending { reference } => {
+                self.db.payments().update(
+                    id,
+                    UpdatePayment { external_id: Some(reference.clone()), ..Default::default() },
+                )?;
+            }
+            ProviderDecision::Declined { code, message } => {
+                self.mark_failed(id, message, Some(code.as_str()))?;
+            }
+        }
+        Ok(())
     }
 
     /// Create a refund for a payment
