@@ -4523,6 +4523,10 @@ impl SqliteKernelExecutor {
                 StorefrontAggregate::Payment,
                 target.clone(),
                 |tx| {
+                    // Mirror Postgres behavior: allow preview/apply without a configured
+                    // external capture provider. The governed surface simulates capture
+                    // in-engine and records a single `payments.completed.v1` fact; raw
+                    // `pay` remains explicitly unsupported at dispatch.
                     let status: String = tx
                         .query_row(
                             "SELECT status FROM payments WHERE id = ?",

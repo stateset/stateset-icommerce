@@ -219,6 +219,15 @@ impl Commerce {
                 execute!(CreateInventoryItem, execute_create_inventory_item)
             }
             "products.create" => execute!(CreateProduct, execute_create_product),
+            // Economic verbs are framework-neutral; this engine does not provide a card-capture
+            // provider. A raw "pay" command must never look like money moved — reject it with a
+            // clear, stable error that callers can branch on.
+            //
+            // Settlement is recorded explicitly via domain commands (e.g. x402.settle) and
+            // never inferred from a receipt alone.
+            "pay" => Err(CommerceError::ValidationError(
+                "payments.capture_unsupported: no capture provider is configured in-engine".into(),
+            )),
             "payments.create" => execute!(CreatePayment, execute_create_payment),
             "payments.create_refund" => execute!(CreateRefund, execute_create_refund),
             "inventory.reserve" => execute!(ReserveInventory, execute_reserve_inventory),
@@ -359,6 +368,84 @@ mod tests {
             .execute_kernel_command(command, KernelPolicy::new("test-policy"))
             .expect_err("unsupported command must fail");
         assert!(error.to_string().contains("unsupported governed kernel command type"));
+    }
+
+    #[test]
+    fn payments_complete_preview_and_apply_without_external_processor() {
+        use stateset_core::{CreatePayment, PaymentMethodType};
+        let commerce = Commerce::in_memory().expect("in-memory commerce");
+        let policy = KernelPolicy::new("payments-complete-policy")
+            .allow("payments.complete", KernelCommandPolicy::requiring(["payments.complete"]));
+        // Create a pending payment with no external processor configured.
+        let payment = commerce
+            .payments()
+            .create(CreatePayment {
+                amount: Decimal::new(1000, 2),
+                payment_method: PaymentMethodType::CreditCard,
+                ..Default::default()
+            })
+            .expect("create payment");
+        // Build the governed completion command.
+        let mut command = CommandEnvelope::preview(
+            "payments.complete",
+            "complete-no-provider",
+            KernelPrincipal {
+                id: "agent:test".into(),
+                kind: PrincipalKind::Agent,
+                tenant_id: Some("tenant:test".into()),
+                delegated_by: Some("user:test".into()),
+                capabilities: vec!["payments.complete".into()],
+            },
+            CompletePayment { payment_id: payment.id },
+        );
+        command.store_id = Some("store:test".into());
+        // Preview succeeds and records nothing durable.
+        let preview = commerce
+            .kernel_executor(policy.clone())
+            .expect("executor")
+            .execute_complete_payment(&command)
+            .expect("preview");
+        assert_eq!(preview.status, ExecutionStatus::Previewed);
+        // Apply captures and marks the payment completed.
+        let applied = commerce
+            .kernel_executor(policy)
+            .expect("executor")
+            .execute_complete_payment(&command.into_apply())
+            .expect("apply");
+        assert_eq!(applied.status, ExecutionStatus::Succeeded);
+        let stored =
+            commerce.payments().get(payment.id).expect("get payment").expect("found payment");
+        assert_eq!(stored.status, stateset_core::PaymentTransactionStatus::Completed);
+    }
+
+    #[test]
+    fn bare_pay_command_surfaces_unsupported_capture() {
+        // Build the minimal envelope shape needed for dispatch to read command_type.
+        let commerce = Commerce::in_memory().expect("in-memory commerce");
+        let command = serde_json::json!({
+            "contract_version": stateset_core::KERNEL_CONTRACT_VERSION,
+            "command_id": uuid::Uuid::new_v4(),
+            "idempotency_key": "pay-unsupported-1",
+            "command_type": "pay",
+            "principal": {
+                "id": "agent:test",
+                "kind": "agent",
+                "tenant_id": "tenant:test",
+                "delegated_by": "user:test",
+                "capabilities": ["payments.create"]
+            },
+            "store_id": "store:test",
+            "mode": "preview",
+            "payload": {}
+        });
+        let err = commerce
+            .execute_kernel_command(command, KernelPolicy::new("test-policy"))
+            .expect_err("raw pay must be rejected clearly");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("payments.capture_unsupported"),
+            "expected a clear unsupported-capture error, got: {msg}"
+        );
     }
 
     #[test]
