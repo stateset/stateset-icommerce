@@ -6,8 +6,10 @@
  * - Runs `npm audit --json --audit-level=<level>` in the current working dir.
  * - If there are no findings at that level, exits 0.
  * - Otherwise, every advisory GHSA id must be present in scripts/ci/npm-audit-allowlist.json.
- * - Allowlisted IDs remain allowed when the only reported fix is a semver-major bump.
- *   They fail the moment npm reports a same-major (patched) fix.
+ * - Allowlisted IDs remain allowed only while no patched version is published:
+ *   the advisory's package must still have its latest registry version inside
+ *   the advisory's vulnerable range. npm's `fixAvailable` is not used, since it
+ *   reports `true` for chains (Tailwind 3 -> braces) with no patch at all.
  *
  * Usage:
  *   node scripts/ci/enforce_npm_audit_allowlist.mjs --level high
@@ -120,6 +122,48 @@ function collectGhsaFindingsFromVuln(vuln, report, seenPkgs = new Set()) {
   return findings;
 }
 
+/** Advisory objects (with name + range) for `id` reachable from `vuln`. */
+function advisoriesFor(vuln, report, id, seenPkgs = new Set(), out = new Map()) {
+  for (const entry of Array.isArray(vuln?.via) ? vuln.via : []) {
+    if (typeof entry === 'string') {
+      if (!seenPkgs.has(entry) && report.vulnerabilities?.[entry]) {
+        seenPkgs.add(entry);
+        advisoriesFor(report.vulnerabilities[entry], report, id, seenPkgs, out);
+      }
+    } else if (
+      entry &&
+      extractGhsaIdsFromUrl(entry.url).includes(id) &&
+      entry.name &&
+      entry.range
+    ) {
+      out.set(`${entry.name}@${entry.range}`, { name: entry.name, range: entry.range });
+    }
+  }
+  return [...out.values()];
+}
+
+const viewCache = new Map();
+function npmView(args) {
+  const key = args.join(' ');
+  if (!viewCache.has(key)) {
+    const r = spawnSync('npm', ['view', ...args, '--json'], { encoding: 'utf8' });
+    if (r.status !== 0) {
+      console.error(`error: npm view ${key} failed; refusing to allow without registry data`);
+      console.error((r.stderr || '').slice(0, 500));
+      process.exit(1);
+    }
+    viewCache.set(key, JSON.parse(r.stdout || 'null'));
+  }
+  return viewCache.get(key);
+}
+
+/** Latest published version when it is outside `range` (a patch exists), else null. */
+function patchedVersionPublished(name, range) {
+  const latest = npmView([name, 'version']);
+  const vulnerable = [npmView([`${name}@${range}`, 'version'])].flat().filter(Boolean);
+  return vulnerable.includes(latest) ? null : latest;
+}
+
 const violations = [];
 for (const [pkg, v] of relevant) {
   const findings = collectGhsaFindingsFromVuln(v, report);
@@ -132,40 +176,20 @@ for (const [pkg, v] of relevant) {
     if (!allowedIds.has(id)) {
       violations.push({ pkg, ids: [id], reason: 'id not on allowlist' });
     } else {
-      // For this allowlisted id, aggregate all fixAvailable contexts observed along the via-chain.
-      const fas = findings.filter((f) => f.id === id).map((f) => f.fixAvailable);
-      // Rule:
-      // - Pass if EVERY observed context is either: no fixAvailable, or an object/array where all suggestions are isSemVerMajor === true.
-      // - Fail if ANY observed context indicates a same-major fix is available:
-      //     * boolean true (npm says a non-major fix exists)
-      //     * object/array suggestion where some has isSemVerMajor !== true
-      let failSameMajor = false;
-      for (const fa of fas) {
-        if (!fa) continue; // no fix reported -> allowed for allowlisted id
-        if (fa === true) {
-          failSameMajor = true;
-          break;
+      // npm's `fixAvailable` is not trustworthy here: for the Tailwind 3
+      // chain it reports `true` although no patched braces exists. Ask the
+      // registry instead: the allowlisted advisory stays allowed only while
+      // the package's latest published version is still inside the
+      // advisory's vulnerable range. Once a patched release ships, fail.
+      for (const advisory of advisoriesFor(v, report, id)) {
+        const patched = patchedVersionPublished(advisory.name, advisory.range);
+        if (patched) {
+          violations.push({
+            pkg,
+            ids: [id],
+            reason: `patched ${advisory.name}@${patched} is published (vulnerable ${advisory.range})`,
+          });
         }
-        if (typeof fa === 'object') {
-          if (Array.isArray(fa)) {
-            if (fa.some((f) => !f || typeof f !== 'object' || f.isSemVerMajor !== true)) {
-              failSameMajor = true;
-              break;
-            }
-          } else {
-            if (fa.isSemVerMajor !== true) {
-              failSameMajor = true;
-              break;
-            }
-          }
-        } else {
-          // Unexpected type: be conservative and treat as same-major
-          failSameMajor = true;
-          break;
-        }
-      }
-      if (failSameMajor) {
-        violations.push({ pkg, ids: [id], reason: 'same-major fix available for allowlisted advisory' });
       }
     }
   }
@@ -176,10 +200,11 @@ if (violations.length > 0) {
   for (const v of violations) {
     console.error(`  - ${v.pkg}: ${v.reason}${v.ids.length ? ` (${v.ids.join(', ')})` : ''}`);
   }
-  console.error('note: only IDs listed in scripts/ci/npm-audit-allowlist.json may pass; allowlisted IDs fail once a same-major patch is available');
+  console.error(
+    'note: only IDs listed in scripts/ci/npm-audit-allowlist.json may pass; allowlisted IDs fail once a patched version is published',
+  );
   process.exit(1);
 }
 
 console.log(`npm audit: ${level} (and higher) advisories allowed by committed list`);
 process.exit(0);
-
