@@ -8,7 +8,7 @@
   },
   "engine": {
     "domainCount": 70,
-    "methodCount": 1227,
+    "methodCount": 1231,
     "accessorAliases": [
       {
         "accessor": "custom_states",
@@ -913,7 +913,19 @@
         "type": "Payments",
         "features": [],
         "methods": [
+          {
+            "name": "authorize_with_provider",
+            "features": [
+              "events"
+            ]
+          },
           "cancel",
+          {
+            "name": "capture_with_provider",
+            "features": [
+              "events"
+            ]
+          },
           "complete_refund",
           "count",
           "create",
@@ -934,6 +946,12 @@
           "mark_failed",
           "mark_processing",
           "open_captures_for_order",
+          {
+            "name": "refund_with_provider",
+            "features": [
+              "events"
+            ]
+          },
           "set_default_payment_method",
           "update"
         ]
@@ -1323,6 +1341,12 @@
           "add_event",
           "add_item",
           "add_item_with_version",
+          {
+            "name": "buy_label_with_provider",
+            "features": [
+              "events"
+            ]
+          },
           "cancel",
           "count",
           "create",
@@ -1801,8 +1825,8 @@
       "engineBacked": true,
       "gated": true,
       "exposedCount": 742,
-      "applicableCount": 1219,
-      "coverage": 60.9,
+      "applicableCount": 1223,
+      "coverage": 60.7,
       "notes": null,
       "domains": {
         "commerce": {
@@ -2618,7 +2642,7 @@
           "missing": []
         },
         "payments": {
-          "coverage": 52.2,
+          "coverage": 46.2,
           "exposed": [
             "cancel",
             "complete_refund",
@@ -2634,6 +2658,8 @@
             "mark_failed"
           ],
           "missing": [
+            "authorize_with_provider",
+            "capture_with_provider",
             "create_payment_method",
             "delete_payment_method",
             "for_invoice",
@@ -2643,6 +2669,7 @@
             "get_payment_methods",
             "mark_processing",
             "open_captures_for_order",
+            "refund_with_provider",
             "set_default_payment_method",
             "update"
           ]
@@ -3015,7 +3042,7 @@
           ]
         },
         "shipments": {
-          "coverage": 41.7,
+          "coverage": 40,
           "exposed": [
             "add_item_with_version",
             "cancel",
@@ -3031,6 +3058,7 @@
           "missing": [
             "add_event",
             "add_item",
+            "buy_label_with_provider",
             "for_order",
             "get_by_number",
             "get_by_tracking",
@@ -3486,8 +3514,8 @@
       "engineBacked": true,
       "gated": true,
       "exposedCount": 593,
-      "applicableCount": 1219,
-      "coverage": 48.6,
+      "applicableCount": 1223,
+      "coverage": 48.5,
       "notes": null,
       "domains": {
         "commerce": {
@@ -4302,7 +4330,7 @@
           "missing": []
         },
         "payments": {
-          "coverage": 47.8,
+          "coverage": 42.3,
           "exposed": [
             "complete_refund",
             "count",
@@ -4317,7 +4345,9 @@
             "mark_failed"
           ],
           "missing": [
+            "authorize_with_provider",
             "cancel",
+            "capture_with_provider",
             "create_payment_method",
             "delete_payment_method",
             "for_invoice",
@@ -4327,6 +4357,7 @@
             "get_payment_methods",
             "mark_processing",
             "open_captures_for_order",
+            "refund_with_provider",
             "set_default_payment_method",
             "update"
           ]
@@ -4700,7 +4731,7 @@
           ]
         },
         "shipments": {
-          "coverage": 29.2,
+          "coverage": 28,
           "exposed": [
             "cancel",
             "count",
@@ -4714,6 +4745,7 @@
             "add_event",
             "add_item",
             "add_item_with_version",
+            "buy_label_with_provider",
             "for_order",
             "get_by_number",
             "get_by_tracking",
@@ -5170,8 +5202,8 @@
       "engineBacked": true,
       "gated": true,
       "exposedCount": 80,
-      "applicableCount": 1219,
-      "coverage": 6.6,
+      "applicableCount": 1223,
+      "coverage": 6.5,
       "notes": null,
       "domains": {
         "commerce": {
@@ -5977,7 +6009,7 @@
           ]
         },
         "payments": {
-          "coverage": 26.1,
+          "coverage": 23.1,
           "exposed": [
             "create",
             "create_refund",
@@ -5987,7 +6019,9 @@
             "mark_failed"
           ],
           "missing": [
+            "authorize_with_provider",
             "cancel",
+            "capture_with_provider",
             "complete_refund",
             "count",
             "create_payment_method",
@@ -6002,6 +6036,7 @@
             "get_refunds",
             "mark_processing",
             "open_captures_for_order",
+            "refund_with_provider",
             "set_default_payment_method",
             "update"
           ]
@@ -6370,7 +6405,7 @@
           ]
         },
         "shipments": {
-          "coverage": 25,
+          "coverage": 24,
           "exposed": [
             "cancel",
             "create",
@@ -6383,6 +6418,7 @@
             "add_event",
             "add_item",
             "add_item_with_version",
+            "buy_label_with_provider",
             "count",
             "for_order",
             "get_by_number",
@@ -6836,7 +6872,7 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 48,
-      "applicableCount": 1219,
+      "applicableCount": 1223,
       "coverage": 3.9,
       "notes": "host (C#) layer is not traced; known in-memory fake at the host level",
       "domains": {
@@ -6931,7 +6967,7 @@
           ]
         },
         "payments": {
-          "coverage": 4.3,
+          "coverage": 3.8,
           "exposed": [
             "create"
           ]
@@ -6965,7 +7001,7 @@
           ]
         },
         "shipments": {
-          "coverage": 25,
+          "coverage": 24,
           "exposed": [
             "cancel",
             "create",
@@ -6992,7 +7028,7 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 77,
-      "applicableCount": 1219,
+      "applicableCount": 1223,
       "coverage": 6.3,
       "notes": "host (Java/JNI) layer is not traced",
       "domains": {
@@ -7114,7 +7150,7 @@
           ]
         },
         "payments": {
-          "coverage": 4.3,
+          "coverage": 3.8,
           "exposed": [
             "create"
           ]
@@ -7182,7 +7218,7 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 61,
-      "applicableCount": 1219,
+      "applicableCount": 1223,
       "coverage": 5,
       "notes": "host (Kotlin/JNI) layer is not traced",
       "domains": {
@@ -7281,7 +7317,7 @@
           ]
         },
         "payments": {
-          "coverage": 13,
+          "coverage": 11.5,
           "exposed": [
             "create",
             "get",
@@ -7322,7 +7358,7 @@
           ]
         },
         "shipments": {
-          "coverage": 33.3,
+          "coverage": 32,
           "exposed": [
             "cancel",
             "create",
@@ -7351,7 +7387,7 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 178,
-      "applicableCount": 1219,
+      "applicableCount": 1223,
       "coverage": 14.6,
       "notes": "engine linkage is behind an optional cargo feature",
       "domains": {
@@ -7521,7 +7557,7 @@
           ]
         },
         "payments": {
-          "coverage": 4.3,
+          "coverage": 3.8,
           "exposed": [
             "create"
           ]
@@ -7604,7 +7640,7 @@
           ]
         },
         "shipments": {
-          "coverage": 37.5,
+          "coverage": 36,
           "exposed": [
             "cancel",
             "count",
@@ -7692,7 +7728,7 @@
       "engineBacked": false,
       "gated": false,
       "exposedCount": 0,
-      "applicableCount": 1219,
+      "applicableCount": 1223,
       "coverage": 0,
       "notes": "does not depend on stateset-embedded",
       "domains": {}
@@ -7704,7 +7740,7 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 51,
-      "applicableCount": 1219,
+      "applicableCount": 1223,
       "coverage": 4.2,
       "notes": "host (Swift) layer is not traced; known in-memory fake at the host level",
       "domains": {
@@ -7801,7 +7837,7 @@
           ]
         },
         "payments": {
-          "coverage": 4.3,
+          "coverage": 3.8,
           "exposed": [
             "create"
           ]
@@ -7836,7 +7872,7 @@
           ]
         },
         "shipments": {
-          "coverage": 25,
+          "coverage": 24,
           "exposed": [
             "cancel",
             "create",
@@ -7863,7 +7899,7 @@
       "engineBacked": false,
       "gated": false,
       "exposedCount": 0,
-      "applicableCount": 1219,
+      "applicableCount": 1223,
       "coverage": 0,
       "notes": "in-memory reimplementation; does not link stateset-embedded",
       "domains": {}
@@ -7969,7 +8005,7 @@
       "engineBacked": null,
       "gated": false,
       "exposedCount": 220,
-      "applicableCount": 1219,
+      "applicableCount": 1223,
       "coverage": 18,
       "notes": null,
       "hostMethodCount": 245,
@@ -8195,7 +8231,7 @@
           ]
         },
         "payments": {
-          "coverage": 26.1,
+          "coverage": 23.1,
           "exposed": [
             "create",
             "create_refund",
@@ -8298,7 +8334,7 @@
           ]
         },
         "shipments": {
-          "coverage": 25,
+          "coverage": 24,
           "exposed": [
             "cancel",
             "create",
@@ -8388,7 +8424,7 @@
       "engineBacked": null,
       "gated": false,
       "exposedCount": 71,
-      "applicableCount": 1219,
+      "applicableCount": 1223,
       "coverage": 5.8,
       "notes": null,
       "hostMethodCount": 71,
@@ -8484,7 +8520,7 @@
           ]
         },
         "payments": {
-          "coverage": 13,
+          "coverage": 11.5,
           "exposed": [
             "create",
             "get",
@@ -8527,7 +8563,7 @@
           ]
         },
         "shipments": {
-          "coverage": 25,
+          "coverage": 24,
           "exposed": [
             "cancel",
             "create",
@@ -8580,7 +8616,7 @@
       "engineBacked": null,
       "gated": false,
       "exposedCount": 134,
-      "applicableCount": 1219,
+      "applicableCount": 1223,
       "coverage": 11,
       "notes": null,
       "hostMethodCount": 148,
@@ -8692,7 +8728,7 @@
           ]
         },
         "payments": {
-          "coverage": 26.1,
+          "coverage": 23.1,
           "exposed": [
             "count",
             "create",
@@ -8758,7 +8794,7 @@
           ]
         },
         "shipments": {
-          "coverage": 25,
+          "coverage": 24,
           "exposed": [
             "count",
             "create",

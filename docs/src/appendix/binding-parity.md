@@ -15,7 +15,7 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 - **Domains** are the `Commerce` accessors that return a handle (`commerce.orders()`,
   `commerce.promotions()`, ...) plus the root `commerce` methods. Each domain's engine methods are
   the `pub fn` methods with a `self` receiver on the returned type. The engine exposes
-  70 domains and 1227 methods.
+  70 domains and 1231 methods.
 - **Traced bindings** (Node, Python, Go): an engine method is *exposed* only when an exported
   binding method (or a helper it calls) actually calls it — `commerce.promotions().get_by_code(`.
   Names do not matter, so renames (`GetLevel` → `get_stock`) are credited correctly. A class
@@ -33,16 +33,16 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 
 | Binding | Evidence | Gated | Exposed | Coverage | Parity vs Node |
 | --- | --- | --- | --- | --- | --- |
-| Node.js | traced: #[napi] methods -> engine calls | yes | 742/1219 | 60.9% | reference |
-| Python | traced: #[pymethods] methods -> engine calls | yes | 593/1219 | 48.6% | 79.2% |
-| Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1219 | 6.6% | 10.8% |
-| .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1219 | 3.9% | 6.3% |
-| Java | native reach: engine calls anywhere in the Rust layer | no | 77/1219 | 6.3% | 9.6% |
-| Kotlin | native reach: engine calls anywhere in the Rust layer | no | 61/1219 | 5% | 8% |
-| PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1219 | 14.6% | 21.7% |
-| Ruby | native reach: engine calls anywhere in the Rust layer | no | 0/1219 | 0% | 0% |
-| Swift | native reach: engine calls anywhere in the Rust layer | no | 51/1219 | 4.2% | 6.9% |
-| WASM | native reach: engine calls anywhere in the Rust layer | no | 0/1219 | 0% | 0% |
+| Node.js | traced: #[napi] methods -> engine calls | yes | 742/1223 | 60.7% | reference |
+| Python | traced: #[pymethods] methods -> engine calls | yes | 593/1223 | 48.5% | 79.2% |
+| Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1223 | 6.5% | 10.8% |
+| .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1223 | 3.9% | 6.3% |
+| Java | native reach: engine calls anywhere in the Rust layer | no | 77/1223 | 6.3% | 9.6% |
+| Kotlin | native reach: engine calls anywhere in the Rust layer | no | 61/1223 | 5% | 8% |
+| PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1223 | 14.6% | 21.7% |
+| Ruby | native reach: engine calls anywhere in the Rust layer | no | 0/1223 | 0% | 0% |
+| Swift | native reach: engine calls anywhere in the Rust layer | no | 51/1223 | 4.2% | 6.9% |
+| WASM | native reach: engine calls anywhere in the Rust layer | no | 0/1223 | 0% | 0% |
 
 Coverage is exposed / (engine methods − exempt). Parity vs Node is the share of Node-exposed engine
 methods the binding also exposes.
@@ -51,9 +51,9 @@ methods the binding also exposes.
 
 | Binding | Host methods | Name-matched | Coverage | Unmatched host methods |
 | --- | --- | --- | --- | --- |
-| .NET | 245 | 220/1219 | 18% | 7 |
-| Swift | 71 | 71/1219 | 5.8% | 0 |
-| WASM | 148 | 134/1219 | 11% | 14 |
+| .NET | 245 | 220/1223 | 18% | 7 |
+| Swift | 71 | 71/1223 | 5.8% | 0 |
+| WASM | 148 | 134/1223 | 11% | 14 |
 
 ## Per-domain matrix
 
@@ -95,7 +95,7 @@ Cells are exposed / applicable engine methods.
 | `maintenance` | 10 | 0 | 7/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 |
 | `orders` | 18 | 0 | 10/18 | 8/18 | 5/18 | 4/18 | 8/18 | 6/18 | 8/18 | 0/18 | 4/18 | 0/18 |
 | `payment_obligations` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
-| `payments` | 23 | 0 | 12/23 | 11/23 | 6/23 | 1/23 | 1/23 | 3/23 | 1/23 | 0/23 | 1/23 | 0/23 |
+| `payments` | 26 | 0 | 12/26 | 11/26 | 6/26 | 1/26 | 1/26 | 3/26 | 1/26 | 0/26 | 1/26 | 0/26 |
 | `prepayments` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `price_levels` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `price_schedules` | 10 | 0 | 10/10 | 10/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 |
@@ -113,7 +113,7 @@ Cells are exposed / applicable engine methods.
 | `search_config` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `segments` | 11 | 0 | 10/11 | 10/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 |
 | `serials` | 36 | 0 | 9/36 | 4/36 | 0/36 | 2/36 | 3/36 | 2/36 | 4/36 | 0/36 | 2/36 | 0/36 |
-| `shipments` | 24 | 0 | 10/24 | 7/24 | 6/24 | 6/24 | 0/24 | 8/24 | 9/24 | 0/24 | 6/24 | 0/24 |
+| `shipments` | 25 | 0 | 10/25 | 7/25 | 6/25 | 6/25 | 0/25 | 8/25 | 9/25 | 0/25 | 6/25 | 0/25 |
 | `shipping_zones` | 12 | 0 | 12/12 | 12/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 |
 | `stock_snapshots` | 6 | 0 | 6/6 | 6/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 |
 | `store_credits` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
@@ -1087,7 +1087,9 @@ None found.
 
 | Engine method | Node.js | Python | Go |
 | --- | --- | --- | --- |
+| `authorize_with_provider` | — | — | — |
 | `cancel` | yes | — | — |
+| `capture_with_provider` | — | — | — |
 | `complete_refund` | yes | yes | — |
 | `count` | yes | yes | — |
 | `create` | yes | yes | yes |
@@ -1108,6 +1110,7 @@ None found.
 | `mark_failed` | yes | yes | yes |
 | `mark_processing` | — | — | — |
 | `open_captures_for_order` | — | — | — |
+| `refund_with_provider` | — | — | — |
 | `set_default_payment_method` | — | — | — |
 | `update` | — | — | — |
 
@@ -1461,6 +1464,7 @@ None found.
 | `add_event` | — | — | — |
 | `add_item` | — | — | — |
 | `add_item_with_version` | yes | — | — |
+| `buy_label_with_provider` | — | — | — |
 | `cancel` | yes | yes | yes |
 | `count` | yes | yes | — |
 | `create` | yes | yes | yes |

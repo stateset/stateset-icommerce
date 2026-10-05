@@ -6568,6 +6568,7 @@ never recalculate it at acceptance.
 | `skipRevenueRecognition?` | `boolean` | Skip recognizing deferred revenue through period end |
 | `skipFxRevaluation?` | `boolean` | Skip FX revaluation of foreign-currency accounts |
 | `skipPeriodClose?` | `boolean` | Skip the final period close (closing entries + close period) |
+| `failOnWarnings?` | `boolean` | Refuse with an error when any step reports warnings (strict mode) |
 | `closedBy?` | `string` | Actor recorded as the closer; defaults to `system` |
 
 ### CloseMonthReportOutput
@@ -6592,6 +6593,7 @@ never recalculate it at acceptance.
 | `entryCount` | `number` | Entries posted (or that would be posted in a dry run) |
 | `totalAmount` | `string` | Exact decimal string |
 | `warnings` | `Array<string>` | Per-item failures that did not abort the close |
+| `failedItemCount` | `number` | Warnings that record a per-item failure (vs informational skip notes) |
 
 ### CloseMonthStepStatus
 

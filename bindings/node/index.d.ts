@@ -1981,6 +1981,8 @@ export interface CloseMonthOptionsInput {
   skipFxRevaluation?: boolean
   /** Skip the final period close (closing entries + close period) */
   skipPeriodClose?: boolean
+  /** Refuse with an error when any step reports warnings (strict mode) */
+  failOnWarnings?: boolean
   /** Actor recorded as the closer; defaults to `system` */
   closedBy?: string
 }
@@ -1993,6 +1995,8 @@ export interface CloseMonthStepOutput {
   totalAmount: string
   /** Per-item failures that did not abort the close */
   warnings: Array<string>
+  /** Warnings that record a per-item failure (vs informational skip notes) */
+  failedItemCount: number
 }
 export interface CloseMonthReportOutput {
   periodId: string

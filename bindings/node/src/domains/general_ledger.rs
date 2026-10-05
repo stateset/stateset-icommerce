@@ -675,6 +675,7 @@ impl GeneralLedger {
                     skip_revenue_recognition: options.skip_revenue_recognition.unwrap_or(false),
                     skip_fx_revaluation: options.skip_fx_revaluation.unwrap_or(false),
                     skip_period_close: options.skip_period_close.unwrap_or(false),
+                    fail_on_warnings: options.fail_on_warnings.unwrap_or(false),
                     closed_by: options.closed_by,
                 },
             )
@@ -756,6 +757,8 @@ pub struct CloseMonthOptionsInput {
     pub skip_fx_revaluation: Option<bool>,
     /// Skip the final period close (closing entries + close period)
     pub skip_period_close: Option<bool>,
+    /// Refuse with an error when any step reports warnings (strict mode)
+    pub fail_on_warnings: Option<bool>,
     /// Actor recorded as the closer; defaults to `system`
     pub closed_by: Option<String>,
 }
@@ -772,6 +775,8 @@ pub struct CloseMonthStepOutput {
     pub total_amount: String,
     /// Per-item failures that did not abort the close
     pub warnings: Vec<String>,
+    /// Warnings that record a per-item failure (vs informational skip notes)
+    pub failed_item_count: i64,
 }
 
 impl From<stateset_core::CloseMonthStepReport> for CloseMonthStepOutput {
@@ -781,6 +786,7 @@ impl From<stateset_core::CloseMonthStepReport> for CloseMonthStepOutput {
             entry_count: i64::try_from(step.entry_count).unwrap_or(i64::MAX),
             total_amount: step.total_amount.to_string(),
             warnings: step.warnings,
+            failed_item_count: i64::try_from(step.failed_item_count).unwrap_or(i64::MAX),
         }
     }
 }

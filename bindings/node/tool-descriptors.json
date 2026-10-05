@@ -1295,6 +1295,10 @@
           "type": "boolean",
           "description": "Skip the final period close (closing entries + close period)"
         },
+        "failOnWarnings": {
+          "type": "boolean",
+          "description": "Refuse with an error when any step reports warnings (strict mode)"
+        },
         "closedBy": {
           "type": "string",
           "description": "Actor recorded as the closer; defaults to `system`"

@@ -165,6 +165,8 @@ pub(crate) struct CloseMonthRequest {
     pub skip_fx_revaluation: Option<bool>,
     /// Skip the final period close (closing entries + close period).
     pub skip_period_close: Option<bool>,
+    /// Refuse with 422 when any step reports warnings (strict mode).
+    pub fail_on_warnings: Option<bool>,
     /// Actor recorded as the closer. Defaults to `api`.
     pub closed_by: Option<String>,
 }
@@ -179,6 +181,8 @@ pub(crate) struct CloseMonthStepResponse {
     pub total_amount: String,
     /// Per-item failures that did not abort the close.
     pub warnings: Vec<String>,
+    /// Warnings that record a per-item failure (vs informational skip notes).
+    pub failed_item_count: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -857,6 +861,7 @@ fn to_close_month_step_resp(step: &stateset_core::CloseMonthStepReport) -> Close
         entry_count: step.entry_count,
         total_amount: step.total_amount.to_string(),
         warnings: step.warnings.clone(),
+        failed_item_count: step.failed_item_count,
     }
 }
 
@@ -878,6 +883,7 @@ pub(crate) async fn close_month(
         skip_revenue_recognition: req.skip_revenue_recognition.unwrap_or(false),
         skip_fx_revaluation: req.skip_fx_revaluation.unwrap_or(false),
         skip_period_close: req.skip_period_close.unwrap_or(false),
+        fail_on_warnings: req.fail_on_warnings.unwrap_or(false),
         closed_by: Some(actor_or_default(req.closed_by)),
     };
     let report = c.general_ledger().close_month(period_id, options)?;
