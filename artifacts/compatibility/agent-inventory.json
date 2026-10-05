@@ -9,7 +9,7 @@
   "totalX402Tools": 5,
   "fullAccessAgentCount": 1,
   "scopedAgentCount": 19,
-  "totalScopedToolReferences": 310,
+  "totalScopedToolReferences": 312,
   "supportedServers": [
     {
       "name": "stateset-commerce",
@@ -200,10 +200,10 @@
       "id": "shipments",
       "name": "Shipments Agent",
       "description": "Shipment tracking and delivery management specialist",
-      "toolCount": 18,
+      "toolCount": 20,
       "usesAllCommerceTools": false,
       "serverCounts": {
-        "stateset-commerce": 18
+        "stateset-commerce": 20
       },
       "serverNamespaces": [
         "stateset-commerce"

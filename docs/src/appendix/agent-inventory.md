@@ -20,7 +20,7 @@ Machine-readable output lives at `artifacts/compatibility/agent-inventory.json`.
 | x402 MCP tools | 5 |
 | Agents with full commerce access | 1 |
 | Agents with scoped tool sets | 19 |
-| Scoped tool references | 310 |
+| Scoped tool references | 312 |
 
 ## Supported MCP Servers
 
@@ -46,7 +46,7 @@ Machine-readable output lives at `artifacts/compatibility/agent-inventory.json`.
 | `payments` | Payments Agent | 22 named tools | `stateset-commerce` | Payment processing and refund management specialist |
 | `promotions` | Promotions Agent | 20 named tools | `stateset-commerce` | Promotions, discounts, and coupon code management specialist |
 | `returns` | Returns Agent | 8 named tools | `stateset-commerce` | Return request processing specialist |
-| `shipments` | Shipments Agent | 18 named tools | `stateset-commerce` | Shipment tracking and delivery management specialist |
+| `shipments` | Shipments Agent | 20 named tools | `stateset-commerce` | Shipment tracking and delivery management specialist |
 | `stablecoin` | Stablecoin Agent | 4 named tools | `stateset-commerce` | Native stablecoin wallet, balance, and payment specialist |
 | `storefront` | Storefront Agent | 13 scaffold tools | `stateset-scaffold` | Creates e-commerce storefront websites using StateSet iCommerce |
 | `subscriptions` | Subscriptions Agent | 19 named tools | `stateset-commerce` | Subscription plans, recurring billing, and customer subscription lifecycle management |

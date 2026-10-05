@@ -229,6 +229,10 @@
     "qrcode-terminal": "^0.12.0",
     "ws": "^8.18.0"
   },
+  "devDependencies": {
+    "@grpc/grpc-js": "^1.14.5",
+    "@grpc/proto-loader": "^0.8.1"
+  },
   "overrides": {
     "@slack/socket-mode": {
       "ws": "7.5.11"

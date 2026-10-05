@@ -272,6 +272,8 @@ export const TOOL_PERMISSIONS = {
   plan_partial_shipment: 'read',
   create_shipment: 'write',
   update_shipment: 'write',
+  add_shipment_item: 'write',
+  remove_shipment_item: 'write',
   ship_shipment: 'write',
   deliver_shipment: 'write',
   cancel_shipment: 'delete',
