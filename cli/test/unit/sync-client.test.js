@@ -29,6 +29,17 @@ import {
 } from '../../src/sync/crypto.js';
 import { SIGNATURE_SCHEME_ED25519_ML_DSA_65 } from '../../src/sync/pqc.js';
 
+// Node 20 (the supported floor) has no Promise.withResolvers.
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -836,7 +847,7 @@ describe('SequencerClient — request deadline configuration', () => {
 describe('SequencerClient — connection generation', () => {
   it('a late cancelled handshake cannot mark a newer connection disconnected', async () => {
     const client = new SequencerClient(makeConfig());
-    const handshake = Promise.withResolvers();
+    const handshake = deferred();
     client._request = () => handshake.promise;
     const cancelled = assert.rejects(client.connect(), { code: 'SEQUENCER_DISCONNECTED' });
     await client.disconnect();

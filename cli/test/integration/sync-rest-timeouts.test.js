@@ -12,6 +12,17 @@ import { SequencerClient } from '../../src/sync/client.js';
 import { SyncEngine } from '../../src/sync/engine.js';
 import { UnifiedSequencerClient } from '../../src/sync/unified-client.js';
 
+// Node 20 (the supported floor) has no Promise.withResolvers.
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 async function endpoint(t, handler) {
   const server = createServer(handler);
   server.listen(0, '127.0.0.1');
@@ -93,7 +104,7 @@ for (const interruption of ['timeout', 'shutdown']) {
     { timeout: 10000 },
     async (t) => {
       const received = [];
-      const firstRequest = Promise.withResolvers();
+      const firstRequest = deferred();
       const receipt = {
         eventsAccepted: 1,
         eventsRejected: 0,
@@ -174,8 +185,8 @@ for (const interruption of ['timeout', 'shutdown']) {
 
 for (const stage of ['headers', 'success body', 'error body']) {
   test(`disconnect cancels an active REST ${stage}`, { timeout: 5000 }, async (t) => {
-    const received = Promise.withResolvers();
-    const closed = Promise.withResolvers();
+    const received = deferred();
+    const closed = deferred();
     let requests = 0;
     const config = await endpoint(t, (req, res) => {
       requests++;
@@ -209,7 +220,7 @@ test(
   'unified disconnect cancels a pending connection without resurrecting it on reconnect',
   { timeout: 5000 },
   async (t) => {
-    const received = Promise.withResolvers();
+    const received = deferred();
     let requests = 0;
     const config = await endpoint(t, (req, res) => {
       requests++;

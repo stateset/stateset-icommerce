@@ -4,6 +4,17 @@ import { UnifiedSequencerClient } from '../../src/sync/unified-client.js';
 import { GrpcSequencerClient } from '../../src/sync/grpc-client.js';
 import { SyncConfig } from '../../src/sync/config.js';
 
+// Node 20 (the supported floor) has no Promise.withResolvers.
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function config() {
   return new SyncConfig({
     sequencer: { url: 'grpc://localhost:50051', insecure: true },
@@ -13,8 +24,8 @@ function config() {
 }
 
 test('retired gRPC callbacks cannot publish into a replacement unified connection', async (t) => {
-  const started = Promise.withResolvers();
-  const release = Promise.withResolvers();
+  const started = deferred();
+  const release = deferred();
   const retired = [];
   let first;
   t.mock.method(GrpcSequencerClient.prototype, 'connect', async function () {
