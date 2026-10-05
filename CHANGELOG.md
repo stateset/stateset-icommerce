@@ -53,6 +53,16 @@ This project follows Keep a Changelog and Semantic Versioning.
 - Release and generated-artifact checks now cover the expanded recovery,
   synchronization, and shipment evidence surfaces.
 
+### Security
+
+- The generated storefront pins Next.js 16.3.8 (was 16.3.3), which includes
+  the `next/og` ImageResponse remote-code-execution fix (GHSA-vcvr-r3jv-pc5j).
+- CLI: `@grpc/grpc-js` ^1.14.5 and `axios` 1.20.0 clear their high-severity
+  advisories.
+- npm audit gates accept an allowlisted advisory only while no patched
+  version is published; `braces` (GHSA-vfj7-8cjw-p6xm, reached only through
+  Tailwind CSS 3 build tooling) is the single entry and has no patch yet.
+
 ### Changed (breaking)
 
 - `stateset_db::saga` is removed. Depend on the `stateset-saga` crate for the
