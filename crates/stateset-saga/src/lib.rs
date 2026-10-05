@@ -3,7 +3,7 @@
 //! Intended for long-lived, multi-step orchestrations where each step can be
 //! compensated (rolled back) if a later step fails.
 //!
-//! The coordinator persists state through [`PostgresDatabase`](stateset_db::PostgresDatabase).
+//! The coordinator persists state through [`stateset_db::PostgresDatabase`].
 //! Enabling this crate pulls in `stateset-db/saga`, which additionally
 //! registers the `035_sagas` schema migration, so no extra feature flags are
 //! needed to get both the tables and the coordinator.

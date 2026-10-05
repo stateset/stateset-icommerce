@@ -73,7 +73,7 @@ pub struct PurchasedLabel {
     pub currency: String,
 }
 
-/// Upstream carrier. Synchronous like [`crate::payment_providers`]: the
+/// Upstream carrier. Synchronous like [`PaymentProvider`](crate::PaymentProvider): the
 /// engine is single-process and `reqwest::blocking` is already on board.
 pub trait ShipmentProvider {
     /// Human name for logs and audit (`"easypost"`, `"mock"`).
