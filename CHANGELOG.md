@@ -6,6 +6,28 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Performance
+
+- `:memory:` SQLite stores (`SqliteDatabase::in_memory()`,
+  `Commerce::new(":memory:")`, the Node/Python bindings' `":memory:"`) no
+  longer run the full migration chain each. The chain runs once per process
+  into a migrated template, and every store starts as a byte-for-byte copy of
+  it in its own private temp file, so stores stay isolated and keep the
+  production locking model (WAL, `BEGIN IMMEDIATE`). Opening a store in a
+  debug build went from ~1.5 s to ~70 ms, and from ~24 s to ~1.1 s with 32
+  opening at once; the `stateset-db` test suite runs ~3.5x faster. Set
+  `STATESET_SQLITE_NO_TEMPLATE=1` to migrate every store from scratch.
+
+### Fixed
+
+- Opening a `:memory:` store on a busy disk could fail with `Database error:
+  timed out waiting for connection`. Its first connection switched the fresh
+  file to WAL under `synchronous = FULL`, which costs four fsyncs, while
+  `Pool::build` waited for that connection with the 30 s timeout; under
+  parallel builds a single fsync took seconds. `:memory:` stores now run with
+  `synchronous = OFF`, because their files are deleted when the store drops
+  and an fsync protects nothing. File-backed stores keep `synchronous = NORMAL`.
+
 ## [1.37.0] - 2026-10-01
 
 ### Added

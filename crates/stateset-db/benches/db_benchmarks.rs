@@ -596,8 +596,60 @@ fn benchmark_mixed_workload(c: &mut Criterion) {
     group.finish();
 }
 
+// ============================================================================
+// Store construction (`:memory:`)
+// ============================================================================
+//
+// Every test opens fresh `:memory:` stores, so construction cost multiplies
+// across the whole suite. Compare against the pre-template behaviour (every
+// store runs the full migration chain) with:
+//
+//     STATESET_SQLITE_NO_TEMPLATE=1 cargo bench -p stateset-db -- in_memory_store
+
+fn benchmark_in_memory_construction(c: &mut Criterion) {
+    // Build the per-process migration template outside the measurement.
+    drop(setup_database());
+
+    let mut group = c.benchmark_group("in_memory_store");
+    group.sample_size(20);
+
+    group.bench_function("construct", |b| b.iter(|| black_box(setup_database())));
+
+    group.bench_function("construct_and_first_query", |b| {
+        b.iter(|| {
+            let db = setup_database();
+            let count: i64 = db
+                .conn()
+                .expect("connection")
+                .query_row("SELECT count(*) FROM tax_rates", [], |row| row.get(0))
+                .expect("seeded tax rates");
+            black_box(count)
+        });
+    });
+
+    for concurrency in [8usize, 32] {
+        group.bench_with_input(
+            BenchmarkId::new("concurrent_construct", concurrency),
+            &concurrency,
+            |b, &concurrency| {
+                b.iter(|| {
+                    let handles: Vec<_> = (0..concurrency)
+                        .map(|_| thread::spawn(|| black_box(setup_database()).conn().map(drop)))
+                        .collect();
+                    for handle in handles {
+                        handle.join().expect("constructor thread").expect("store opens");
+                    }
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
+    benchmark_in_memory_construction,
     benchmark_customer_create,
     benchmark_customer_read,
     benchmark_customer_batch,
