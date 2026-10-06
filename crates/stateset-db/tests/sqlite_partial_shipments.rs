@@ -135,12 +135,14 @@ fn partial_ship_sets_partially_shipped_and_per_line_quantities() {
     assert_eq!(line(&shipped, "PS-SKU-A").remaining_to_ship(), 2);
     assert_eq!(line(&shipped, "PS-SKU-B").shipped_quantity, 0);
 
-    // Reservation for SKU-A was split: 3 confirmed + 2 still pending; SKU-B untouched.
+    // The 3 shipped units left stock: SKU-A's reservation keeps the 2 still
+    // to ship, and allocated drops with it; SKU-B is untouched.
     let a_res = reservations(&db, order.id, "PS-SKU-A");
-    assert_eq!(a_res, vec![("confirmed".to_string(), dec!(3)), ("pending".to_string(), dec!(2))]);
+    assert_eq!(a_res, vec![("pending".to_string(), dec!(2))]);
     assert_eq!(reservations(&db, order.id, "PS-SKU-B"), vec![("pending".to_string(), dec!(2))]);
-    // Allocation is unchanged by confirmation (it was already allocated on reserve).
-    assert_eq!(allocated(&db, "PS-SKU-A"), dec!(5));
+    assert_eq!(allocated(&db, "PS-SKU-A"), dec!(2));
+    let on_hand = db.inventory().get_stock("PS-SKU-A").unwrap().unwrap().total_on_hand;
+    assert_eq!(on_hand, dec!(7));
 }
 
 #[test]
@@ -177,8 +179,9 @@ fn second_ship_completes_order() {
     assert_eq!(shipped.status, OrderStatus::Shipped);
     assert_eq!(line(&shipped, "PS-SKU-A").shipped_quantity, 5);
     assert_eq!(line(&shipped, "PS-SKU-B").shipped_quantity, 2);
-    assert!(reservations(&db, order.id, "PS-SKU-A").iter().all(|(s, _)| s == "confirmed"));
-    assert!(reservations(&db, order.id, "PS-SKU-B").iter().all(|(s, _)| s == "confirmed"));
+    assert!(reservations(&db, order.id, "PS-SKU-A").iter().all(|(s, _)| s == "fulfilled"));
+    assert!(reservations(&db, order.id, "PS-SKU-B").iter().all(|(s, _)| s == "fulfilled"));
+    assert_eq!(allocated(&db, "PS-SKU-A"), dec!(0));
 }
 
 #[test]
@@ -286,7 +289,7 @@ fn legacy_ship_without_lines_ships_everything() {
     let shipped = db.orders().ship(order.id, ShipOrder::default()).expect("ship all");
     assert_eq!(shipped.status, OrderStatus::Shipped);
     assert!(shipped.items.iter().all(|i| i.shipped_quantity == i.quantity));
-    assert!(reservations(&db, order.id, "PS-SKU-A").iter().all(|(s, _)| s == "confirmed"));
+    assert!(reservations(&db, order.id, "PS-SKU-A").iter().all(|(s, _)| s == "fulfilled"));
 }
 
 #[test]
@@ -566,6 +569,15 @@ fn full_order_ship_carries_open_shipments_but_partial_does_not() {
     }
     assert_eq!(load_shipment(&db, pending.id).tracking_number, None);
 
+    // A hold blocks the ship that would complete the order: nothing moves.
+    let err = db
+        .orders()
+        .ship(order.id, ShipOrder { tracking_number: None, lines: None })
+        .expect_err("held shipment blocks completing the order");
+    assert!(matches!(err, CommerceError::Conflict(_)), "{err:?}");
+    assert_eq!(load_shipment(&db, pending.id).status, ShipmentStatus::Pending);
+    db.shipments().cancel(held.id).expect("cancel the hold");
+
     // Shipping the remainder completes the order: open shipments follow.
     let shipped = db
         .orders()
@@ -581,8 +593,8 @@ fn full_order_ship_carries_open_shipments_but_partial_does_not() {
         assert!(moved.shipped_at.is_some());
         assert_eq!(shipment_facts(&db, id), vec!["shipped".to_string()]);
     }
-    // A hold is an explicit decision; the order ship does not override it.
-    assert_eq!(load_shipment(&db, held.id).status, ShipmentStatus::OnHold);
+    // The hold was cancelled before the order could complete.
+    assert_eq!(load_shipment(&db, held.id).status, ShipmentStatus::Cancelled);
     assert!(shipment_facts(&db, held.id).is_empty());
     assert_eq!(load_shipment(&db, cancelled.id).status, ShipmentStatus::Cancelled);
     assert!(shipment_facts(&db, cancelled.id).is_empty());

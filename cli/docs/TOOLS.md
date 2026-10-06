@@ -149,8 +149,8 @@ Tier: **core**
 | `get_order` | core | read | Get a specific order by ID or order number. Returns full order details including line items. |
 | `create_order` | core | write | Create a new order for a customer with line items. |
 | `update_order_status` | core | write | Update the status of an order. Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded. |
-| `ship_order` | core | write | Mark an order as shipped with optional tracking number. |
-| `cancel_order` | core | delete | Cancel an order. Only pending or confirmed orders can be cancelled. |
+| `ship_order` | core | write | Ship every remaining unit of an order, with an optional tracking number. In the same transaction the shipped units leave stock (their reservations are fulfilled, so on-hand and allocated both drop) and the order's open shipments (pending, processing, ready_to_ship) move to shipped. Refused while one of the order's shipments is on_hold: release or cancel the hold first. |
+| `cancel_order` | core | delete | Cancel an order that has not shipped (pending, confirmed or processing). Releases its stock holds and cancels its shipments that never left (pending, processing, ready_to_ship, on_hold). Refused once any shipment of the order has shipped (shipped, in transit, delivered, ...): create a return for those units instead. |
 
 ## products
 
@@ -637,12 +637,12 @@ Tier: **core**
 | `plan_partial_shipment` | core | read | Read remaining order-line quantities and validate a partial-shipment recovery plan. Does not reserve stock or create a shipment; operator reconciliation is required. |
 | `list_shipments` | core | read | List all shipments. |
 | `get_shipment` | core | read | Get a shipment by ID. |
-| `create_shipment` | core | write | Create a shipment for an order. |
-| `update_shipment` | core | write | Update shipment fields or move through the native lifecycle. Preserves omitted fields and rejects invalid transitions or stale expectedVersion. Cancellation requires cancel_shipment. |
-| `add_shipment_item` | core | write | Add an order line to a shipment. Only a shipment that is still pending, processing or on_hold can change its items: one that is ready_to_ship, shipped, in transit, delivered, failed, returned or cancelled is refused, and nothing is written. Also rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order not in a shippable status, and a stale expectedVersion. |
+| `create_shipment` | core | write | Create a pending shipment for an order. Refused when the order is closed to fulfilment (shipped, delivered, cancelled or refunded). Nothing is fulfilled until the shipment ships: shipping it ships its lines on the order. |
+| `update_shipment` | core | write | Update shipment fields or move through the native lifecycle. Preserves omitted fields and rejects invalid transitions or stale expectedVersion. Moving to shipped ships the shipment's lines on its order (see ship_shipment); moving to delivered delivers the order once every non-cancelled shipment is delivered and they cover every ordered unit. Cancellation requires cancel_shipment. |
+| `add_shipment_item` | core | write | Add an order line to a shipment. Only a shipment that is still pending, processing or on_hold can change its items: one that is ready_to_ship, shipped, in transit, delivered, failed, returned or cancelled is refused, and nothing is written. Also rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order closed to fulfilment (shipped, delivered, cancelled or refunded), and a stale expectedVersion. |
 | `remove_shipment_item` | core | write | Remove an item from a shipment, releasing its order-line allocation. Only a shipment that is still pending, processing or on_hold can change its items: one that is ready_to_ship or later, or cancelled, is refused and nothing is written. Also rejects a stale expectedVersion. |
-| `ship_shipment` | core | write | Mark a ready_to_ship shipment as shipped with an optional tracking number. |
-| `deliver_shipment` | core | write | Mark an out_for_delivery shipment as delivered. |
+| `ship_shipment` | core | write | Mark a ready_to_ship shipment as shipped with an optional tracking number. In the same transaction its lines ship on the order (each capped at what the line still has unshipped, so nothing is counted twice; a shipment without items ships the order's remainder not promised to other open shipments): the order moves to partially_shipped or shipped, a pending/confirmed order walking through processing, and the units' reserved stock leaves on-hand. Refused for a cancelled or refunded order. |
+| `deliver_shipment` | core | write | Mark an out_for_delivery shipment as delivered. When the order is fully shipped, every one of its non-cancelled shipments is delivered and their items cover every ordered unit, the order moves to delivered in the same transaction. |
 | `cancel_shipment` | core | delete | Cancel a shipment before carrier handoff. Retains shipment history. |
 | `list_shipping_providers` | core | read | List shipping providers and capabilities for quoting, labeling, and tracking. |
 | `quote_shipping_rates` | core | read | Quote carrier rates from provider adapters using structured parcel data and destination address. |

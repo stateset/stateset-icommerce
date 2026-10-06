@@ -1683,7 +1683,10 @@ fn test_ship_confirms_reservations() {
         .list_reservations_by_reference("order", &order.id.to_string())
         .expect("Failed to load reservations");
     assert!(!reservations.is_empty());
-    assert!(reservations.iter().all(|r| r.status == ReservationStatus::Confirmed));
+    // Shipping consumes the holds: the units left on-hand with the shipment.
+    assert!(reservations.iter().all(|r| r.status == ReservationStatus::Fulfilled));
+    let stock = commerce.inventory().get_stock("SHIP-SKU-001").unwrap().unwrap();
+    assert_eq!(stock.total_allocated, rust_decimal::Decimal::ZERO);
 }
 
 /// The line-removal money guard is reachable through the embedded facade, and

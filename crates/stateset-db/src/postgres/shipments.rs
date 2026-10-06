@@ -92,6 +92,350 @@ pub(crate) async fn ship_open_shipments_for_order_in_tx(
     Ok(event_ids)
 }
 
+/// Shipment statuses at or past the carrier hand-off
+/// ([`ShipmentStatus::has_left`]), legacy spellings included. Mirrors SQLite.
+const LEFT_STATUSES_SQL: &str = "('shipped', 'in_transit', 'intransit', 'out_for_delivery', \
+     'outfordelivery', 'delivered', 'failed', 'returned')";
+
+/// Shipments still waiting to leave, holds included. Mirrors SQLite.
+const OPEN_STATUSES_SQL: &str =
+    "('pending', 'processing', 'ready_to_ship', 'readytoship', 'on_hold', 'onhold')";
+
+/// The first shipment of an order that is on hold, by number.
+pub(crate) async fn held_shipment_for_order_in_tx(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+) -> Result<Option<String>> {
+    sqlx::query_scalar(
+        "SELECT shipment_number FROM shipments
+         WHERE order_id = $1 AND status IN ('on_hold', 'onhold') ORDER BY created_at, id LIMIT 1",
+    )
+    .bind(order_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(map_db_error)
+}
+
+/// The first shipment of an order that has left the building
+/// ([`ShipmentStatus::has_left`]), as `"<number> (<status>)"`.
+pub(crate) async fn left_shipment_for_order_in_tx(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+) -> Result<Option<String>> {
+    let row: Option<(String, String)> = sqlx::query_as(&format!(
+        "SELECT shipment_number, status FROM shipments
+         WHERE order_id = $1 AND status IN {LEFT_STATUSES_SQL} ORDER BY created_at, id LIMIT 1"
+    ))
+    .bind(order_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    Ok(row.map(|(number, status)| format!("{number} ({status})")))
+}
+
+/// Refuse to finish shipping an order while one of its shipments is on hold
+/// (mirrors SQLite): the hold is an explicit decision the order ship must
+/// not override, and a fully shipped order keeps no package waiting.
+pub(crate) async fn ensure_no_held_shipments_in_tx(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+) -> Result<()> {
+    match held_shipment_for_order_in_tx(conn, order_id).await? {
+        Some(number) => Err(CommerceError::Conflict(format!(
+            "order {order_id} cannot finish shipping while shipment {number} is on hold; \
+             release or cancel the hold first"
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// Refuse to cancel an order once any of its shipments has left the building
+/// (mirrors SQLite): those units need a return.
+pub(crate) async fn ensure_no_shipment_left_in_tx(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+) -> Result<()> {
+    match left_shipment_for_order_in_tx(conn, order_id).await? {
+        Some(shipment) => Err(CommerceError::Conflict(format!(
+            "order {order_id} cannot be cancelled: shipment {shipment} has already left; \
+             create a return for the shipped units instead"
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// Cancel every shipment of a cancelled order that never left (pending,
+/// processing, ready to ship or on hold), inside the caller's transaction
+/// (mirrors SQLite). Each records a `shipment.status_changed` fact
+/// (`reason: order_cancelled`); returns the facts' event ids.
+pub(crate) async fn cancel_open_shipments_for_order_in_tx(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+    now: DateTime<Utc>,
+) -> Result<Vec<Uuid>> {
+    let open: Vec<(Uuid, String, i32)> = sqlx::query_as(&format!(
+        "SELECT id, status, version FROM shipments
+         WHERE order_id = $1 AND status IN {OPEN_STATUSES_SQL}
+         ORDER BY created_at, id FOR UPDATE"
+    ))
+    .bind(order_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    let mut event_ids = Vec::with_capacity(open.len());
+    for (shipment_id, previous_status, version) in open {
+        let next_version = version
+            .checked_add(1)
+            .ok_or_else(|| CommerceError::ValidationError("Shipment version overflow".into()))?;
+        let rows = sqlx::query(&format!(
+            "UPDATE shipments SET status = 'cancelled', version = version + 1, updated_at = $1
+             WHERE id = $2 AND status IN {OPEN_STATUSES_SQL}"
+        ))
+        .bind(now)
+        .bind(shipment_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            continue;
+        }
+        let event_id = super::kernel_outbox::record_outbox_fact(
+            &mut *conn,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "shipment.status_changed",
+                aggregate_type: "shipment",
+                aggregate_id: &shipment_id.to_string(),
+                payload: serde_json::json!({
+                    "shipment_id": shipment_id,
+                    "order_id": order_id,
+                    "previous_status": previous_status,
+                    "status": ShipmentStatus::Cancelled.to_string(),
+                    "reason": "order_cancelled",
+                    "version": next_version,
+                }),
+            },
+        )
+        .await?;
+        event_ids.push(event_id);
+    }
+    Ok(event_ids)
+}
+
+/// Refuse a new shipment for an order closed to fulfilment (fully shipped,
+/// delivered, cancelled, refunded), locking the order row. A shipment for an
+/// order this store does not hold is left alone (mirrors SQLite).
+async fn ensure_order_accepts_shipments(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+) -> Result<()> {
+    let status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM orders WHERE id = $1 FOR UPDATE")
+            .bind(order_id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(map_db_error)?;
+    match status {
+        Some(status) => crate::shipment_allocations::validate_order_status(&status),
+        None => Ok(()),
+    }
+}
+
+/// Σ item quantity per order line over the order's open (waiting to leave)
+/// or `delivered` shipments, optionally excluding one shipment.
+async fn manifest_units_in_tx(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+    delivered: bool,
+    excluding: Option<Uuid>,
+) -> Result<std::collections::BTreeMap<Uuid, i64>> {
+    let sql = if delivered {
+        "SELECT si.order_item_id, si.quantity FROM shipment_items si
+         JOIN shipments s ON s.id = si.shipment_id
+         WHERE s.order_id = $1 AND s.id IS DISTINCT FROM $2 AND s.status = 'delivered'
+           AND si.order_item_id IS NOT NULL"
+            .to_string()
+    } else {
+        format!(
+            "SELECT si.order_item_id, si.quantity FROM shipment_items si
+             JOIN shipments s ON s.id = si.shipment_id
+             WHERE s.order_id = $1 AND s.id IS DISTINCT FROM $2 AND s.status IN {OPEN_STATUSES_SQL}
+               AND si.order_item_id IS NOT NULL"
+        )
+    };
+    let rows: Vec<(Uuid, i32)> = sqlx::query_as(&sql)
+        .bind(order_id)
+        .bind(excluding)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(map_db_error)?;
+    let mut units = std::collections::BTreeMap::new();
+    for (line, quantity) in rows {
+        *units.entry(line).or_default() += i64::from(quantity);
+    }
+    Ok(units)
+}
+
+/// The order's lines as `(id, sku, quantity, shipped_quantity)`.
+async fn order_lines_in_tx(
+    conn: &mut sqlx::PgConnection,
+    order_id: Uuid,
+) -> Result<Vec<(Uuid, String, i32, i32)>> {
+    sqlx::query_as(
+        "SELECT id, sku, quantity, shipped_quantity FROM order_items WHERE order_id = $1
+         ORDER BY created_at, id",
+    )
+    .bind(order_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(map_db_error)
+}
+
+/// A shipment just left the building: ship its units on the order in the
+/// caller's transaction (shipment → order sync; mirrors SQLite's
+/// `ship_order_for_shipment_in_tx`). Manifest lines ship their quantity
+/// capped at what the line has unshipped (never counted twice); an itemless
+/// shipment carries the remainder not promised to another open shipment. The
+/// order goes through `PgOrderRepository::apply_update_in_tx` exactly like an
+/// explicit ship, whose own carry-along of open shipments is plain SQL, so
+/// the two directions cannot recurse. A cancelled/refunded order refuses.
+async fn ship_order_for_shipment_in_tx(
+    pool: &PgPool,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    shipment: &Shipment,
+) -> Result<()> {
+    use stateset_core::{OrderStatus, ShipmentLineInput, UpdateOrder};
+    let order_id = shipment.order_id.into_uuid();
+    let Some(status) = sqlx::query_scalar::<_, String>("SELECT status FROM orders WHERE id = $1")
+        .bind(order_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+    else {
+        return Ok(());
+    };
+    let status: OrderStatus = status.parse().map_err(|e| {
+        CommerceError::DatabaseError(format!("Invalid order.status '{status}': {e}"))
+    })?;
+    if matches!(status, OrderStatus::Cancelled | OrderStatus::Refunded) {
+        return Err(CommerceError::ValidationError(format!(
+            "shipment {} cannot ship: its order is {status}",
+            shipment.shipment_number
+        )));
+    }
+    let lines = order_lines_in_tx(tx.as_mut(), order_id).await?;
+    let mut wanted: std::collections::BTreeMap<Uuid, i64> = std::collections::BTreeMap::new();
+    if shipment.items.is_empty() {
+        let promised =
+            manifest_units_in_tx(tx.as_mut(), order_id, false, Some(shipment.id.into_uuid()))
+                .await?;
+        for (line, _, quantity, shipped) in &lines {
+            let open = i64::from(*quantity) - i64::from(*shipped);
+            wanted.insert(*line, open - promised.get(line).copied().unwrap_or(0));
+        }
+    } else {
+        for item in &shipment.items {
+            let line = item.order_item_id.or_else(|| {
+                let mut by_sku = lines.iter().filter(|(_, sku, ..)| *sku == item.sku);
+                match (by_sku.next(), by_sku.next()) {
+                    (Some((id, ..)), None) => Some(*id),
+                    _ => None,
+                }
+            });
+            if let Some(line) = line {
+                *wanted.entry(line).or_default() += i64::from(item.quantity);
+            }
+        }
+    }
+    let ship_lines: Vec<ShipmentLineInput> = lines
+        .iter()
+        .filter_map(|(line, _, quantity, shipped)| {
+            let open = i64::from(*quantity) - i64::from(*shipped);
+            let units = wanted.get(line).copied().unwrap_or(0).min(open);
+            (units > 0).then(|| ShipmentLineInput {
+                order_item_id: (*line).into(),
+                quantity: i32::try_from(units).unwrap_or(i32::MAX),
+            })
+        })
+        .collect();
+    if ship_lines.is_empty() {
+        return Ok(());
+    }
+    let outcome = super::orders::PgOrderRepository::new(pool.clone())
+        .apply_update_in_tx(
+            tx,
+            order_id,
+            &UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() },
+            super::orders::ShipMode::Lines(&ship_lines),
+            true,
+        )
+        .await?;
+    match outcome.post_commit_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// A shipment was just delivered: deliver its order when the evidence is
+/// complete (mirrors SQLite's `deliver_order_for_shipment_in_tx`). Derived
+/// conservatively, as there is no per-line delivered quantity: the order is
+/// fully `shipped`, every shipment of it that was not cancelled is
+/// `delivered`, and the delivered manifests cover every ordered unit.
+async fn deliver_order_for_shipment_in_tx(
+    pool: &PgPool,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    shipment: &Shipment,
+) -> Result<()> {
+    use stateset_core::{OrderStatus, UpdateOrder};
+    let order_id = shipment.order_id.into_uuid();
+    let Some(status) = sqlx::query_scalar::<_, String>("SELECT status FROM orders WHERE id = $1")
+        .bind(order_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+    else {
+        return Ok(());
+    };
+    if status.parse::<OrderStatus>().ok() != Some(OrderStatus::Shipped) {
+        return Ok(());
+    }
+    let statuses: Vec<String> =
+        sqlx::query_scalar("SELECT status FROM shipments WHERE order_id = $1")
+            .bind(order_id)
+            .fetch_all(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+    for status in &statuses {
+        let status: ShipmentStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid shipment.status '{status}': {e}"))
+        })?;
+        if !matches!(status, ShipmentStatus::Delivered | ShipmentStatus::Cancelled) {
+            return Ok(());
+        }
+    }
+    let delivered = manifest_units_in_tx(tx.as_mut(), order_id, true, None).await?;
+    let covered =
+        order_lines_in_tx(tx.as_mut(), order_id).await?.iter().all(|(line, _, quantity, _)| {
+            delivered.get(line).copied().unwrap_or(0) >= i64::from(*quantity)
+        });
+    if !covered {
+        return Ok(());
+    }
+    let outcome = super::orders::PgOrderRepository::new(pool.clone())
+        .apply_update_in_tx(
+            tx,
+            order_id,
+            &UpdateOrder { status: Some(OrderStatus::Delivered), ..Default::default() },
+            super::orders::ShipMode::None,
+            false,
+        )
+        .await?;
+    match outcome.post_commit_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
 /// Insert a shipment (and its lines) on the caller's transaction (shared by
 /// [`PgShipmentRepository::create_async`] and the governed `shipments.create`
 /// kernel command).
@@ -100,6 +444,7 @@ pub(crate) async fn create_shipment_pg(
     mut input: CreateShipment,
 ) -> Result<Shipment> {
     crate::shipment_updates::validate_create_items(&input)?;
+    ensure_order_accepts_shipments(conn, input.order_id.into_uuid()).await?;
     if let Some(items) = input.items.as_ref().filter(|items| !items.is_empty()) {
         input.items = Some(
             PgShipmentRepository::normalize_items_tx(conn, input.order_id.into_uuid(), items)
@@ -502,10 +847,24 @@ impl PgShipmentRepository {
     }
 
     async fn update_tx(
-        tx: &mut sqlx::PgConnection,
+        &self,
+        txn: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         id: Uuid,
         input: UpdateShipment,
     ) -> Result<Shipment> {
+        if input.status.is_some() {
+            // A status change may ship or deliver the order: lock the order
+            // before the shipment, the same order an order ship locks them in.
+            sqlx::query(
+                "SELECT o.id FROM orders o JOIN shipments s ON s.order_id = o.id
+                 WHERE s.id = $1 FOR UPDATE OF o",
+            )
+            .bind(id)
+            .fetch_optional(txn.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        }
+        let tx = txn.as_mut();
         let row =
             sqlx::query_as::<_, ShipmentRow>("SELECT * FROM shipments WHERE id = $1 FOR UPDATE")
                 .bind(id)
@@ -567,6 +926,16 @@ impl PgShipmentRepository {
             },
         )
         .await?;
+        // Shipment → order: the package's units ship (and deliver) on its
+        // order in this same transaction.
+        if shipment.status.has_left() && !previous_status.has_left() {
+            ship_order_for_shipment_in_tx(&self.pool, txn, &shipment).await?;
+        }
+        if shipment.status == ShipmentStatus::Delivered
+            && previous_status != ShipmentStatus::Delivered
+        {
+            deliver_order_for_shipment_in_tx(&self.pool, txn, &shipment).await?;
+        }
         Ok(shipment)
     }
 
@@ -631,6 +1000,7 @@ impl PgShipmentRepository {
         let tracking_url = input.tracking_number.as_ref().and_then(|tn| carrier.tracking_url(tn));
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        ensure_order_accepts_shipments(&mut tx, input.order_id.into_uuid()).await?;
 
         if let Some(inputs) = input.items.as_ref().filter(|items| !items.is_empty()) {
             input.items =
@@ -800,7 +1170,7 @@ impl PgShipmentRepository {
     /// Update shipment (async)
     pub async fn update_async(&self, id: Uuid, input: UpdateShipment) -> Result<Shipment> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let shipment = Self::update_tx(tx.as_mut(), id, input).await?;
+        let shipment = self.update_tx(&mut tx, id, input).await?;
         tx.commit().await.map_err(map_db_error)?;
         Ok(shipment)
     }
@@ -1228,6 +1598,7 @@ impl PgShipmentRepository {
 
         for mut input in inputs {
             crate::shipment_updates::validate_create_items(&input)?;
+            ensure_order_accepts_shipments(&mut tx, input.order_id.into_uuid()).await?;
             if let Some(items) = input.items.as_ref().filter(|items| !items.is_empty()) {
                 input.items = Some(
                     Self::normalize_items_tx(&mut tx, input.order_id.into_uuid(), items).await?,
@@ -1384,7 +1755,7 @@ impl PgShipmentRepository {
             .map_err(map_db_error)?;
         let mut results = Vec::with_capacity(updates.len());
         for (id, input) in updates {
-            results.push(Self::update_tx(tx.as_mut(), id.into_uuid(), input).await?);
+            results.push(self.update_tx(&mut tx, id.into_uuid(), input).await?);
         }
         tx.commit().await.map_err(map_db_error)?;
         Ok(results)

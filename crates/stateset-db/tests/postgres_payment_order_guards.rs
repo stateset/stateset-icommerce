@@ -585,18 +585,20 @@ async fn postgres_forced_cancel_voids_in_flight_payments_and_leaves_settled_ones
     assert_eq!(status(&db, settled.id.into_uuid()).await, PaymentTransactionStatus::Completed);
     assert_eq!(open_ids(&db, order_id).await, vec![settled.id.into_uuid()]);
 
-    let event = db
-        .kernel_outbox()
-        .pending_async(500)
-        .await
-        .expect("pending")
-        .into_iter()
-        .find(|e| {
-            e.event_type == "orders.updated.v1"
-                && e.aggregate_id == order_id.to_string()
-                && e.payload["status_after"] == "cancelled"
-        })
-        .expect("orders.updated.v1 for the cancel");
+    // Looked up by aggregate (a shared database holds more pending facts than
+    // any `pending_async` page).
+    let payload: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM kernel_outbox
+         WHERE event_type = 'orders.updated.v1' AND aggregate_id = $1
+           AND payload->>'status_after' = 'cancelled'
+         ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .bind(order_id.to_string())
+    .fetch_optional(db.pool())
+    .await
+    .expect("outbox")
+    .expect("orders.updated.v1 for the cancel");
+    let event = Fact { payload };
     assert_eq!(event.payload["void_payments"], true);
     let voided: Vec<String> = event.payload["voided_payment_ids"]
         .as_array()
@@ -941,4 +943,9 @@ async fn postgres_a_line_removal_on_an_unpaid_order_is_unaffected() {
     let (order_id, big, _small) = two_line_order(&db).await;
     db.orders().remove_item_async(order_id, big).await.expect("no captures, no guard");
     assert_eq!(total_of(&db, order_id).await, dec!(40.00));
+}
+
+/// The part of an outbox fact the assertions read.
+struct Fact {
+    payload: serde_json::Value,
 }

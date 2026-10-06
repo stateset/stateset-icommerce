@@ -4,7 +4,7 @@ use super::backorder::PgBackorderRepository;
 use super::carts::PgCartRepository;
 use super::customers::PgCustomerRepository;
 use super::general_ledger::{JournalEntryLineRow, JournalEntryRow, PgGeneralLedgerRepository};
-use super::inventory::{PgInventoryRepository, ReservationConfirmOutcome, ReservationRow};
+use super::inventory::{PgInventoryRepository, ReservationRow};
 use super::kernel_outbox::{
     append_kernel_event_tx, append_kernel_receipt_tx, receipt_by_idempotency_key_tx,
     sealed_audit_entry_tx,
@@ -1583,12 +1583,18 @@ impl PgKernelExecutor {
         let snapshot = match row {
             Some(row) => {
                 let order = load_pg_order(tx.as_mut(), order_uuid, row).await?;
-                let open_captures = if command.payload.status == OrderStatus::Cancelled {
+                let cancelling = command.payload.status == OrderStatus::Cancelled;
+                let open_captures = if cancelling {
                     open_captures_for_order_pg(tx.as_mut(), order_uuid).await?
                 } else {
                     Vec::new()
                 };
-                Some(OrderTransitionSnapshot { order, open_captures })
+                let left_shipment = if cancelling {
+                    super::shipments::left_shipment_for_order_in_tx(tx.as_mut(), order_uuid).await?
+                } else {
+                    None
+                };
+                Some(OrderTransitionSnapshot { order, open_captures, left_shipment })
             }
             None => None,
         };
@@ -1695,6 +1701,21 @@ impl PgKernelExecutor {
             PgBackorderRepository::new(self.pool.clone())
                 .cancel_backorders_for_order_in_tx(&mut tx, order_uuid)
                 .await?;
+            // Packages that never left are cancelled with the order; their
+            // facts carry this command's context.
+            let shipment_events = super::shipments::cancel_open_shipments_for_order_in_tx(
+                tx.as_mut(),
+                order_uuid,
+                started_at,
+            )
+            .await?;
+            for event_id in shipment_events {
+                sqlx::query("UPDATE kernel_outbox SET command_id = $1, idempotency_key = $2, principal_type = $3, principal_id = $4, correlation_id = $5, causation_id = $6 WHERE id = $7")
+                    .bind(command.command_id).bind(&command.idempotency_key).bind(principal_kind_name(command)).bind(&command.principal.id)
+                    .bind(command.correlation_id).bind(command.causation_id).bind(event_id).execute(tx.as_mut()).await
+                    .map_err(pg_err)?;
+                related_event_ids.push(event_id);
+            }
         }
         let outstanding_payment_ids: Vec<String> = effects
             .outstanding_capture_ids
@@ -1797,7 +1818,15 @@ impl PgKernelExecutor {
                        AND status IN ('pending', 'confirmed', 'allocated') AND expires_at IS NOT NULL AND expires_at < $2 LIMIT 1")
                     .bind(&order_id).bind(started_at).fetch_optional(tx.as_mut()).await
                     .map_err(pg_err)?;
-                Some(ShipOrderSnapshot { order, shipment, expired_reservation: expired.is_some() })
+                let held_shipment =
+                    super::shipments::held_shipment_for_order_in_tx(tx.as_mut(), order_uuid)
+                        .await?;
+                Some(ShipOrderSnapshot {
+                    order,
+                    shipment,
+                    expired_reservation: expired.is_some(),
+                    held_shipment,
+                })
             }
             None => None,
         };
@@ -1844,46 +1873,16 @@ impl PgKernelExecutor {
         let reservation_ids =
             inventory.list_reservation_ids_by_reference_in_tx(&mut tx, "order", &order_id).await?;
         sqlx::query("SAVEPOINT kernel_ship").execute(tx.as_mut()).await.map_err(pg_err)?;
-        let mut expired_during_shipment = false;
-        if lines.is_empty() {
-            for reservation_id in &reservation_ids {
-                if inventory
-                    .confirm_reservation_in_tx_with_now(&mut tx, *reservation_id, started_at)
-                    .await?
-                    == ReservationConfirmOutcome::Expired
-                {
-                    expired_during_shipment = true;
-                    break;
-                }
-            }
-        } else {
-            'deltas: for delta in effects.deltas.iter().filter(|d| d.delta > 0) {
-                let mut remaining = rust_decimal::Decimal::from(delta.delta);
-                let open = inventory
-                    .list_open_reservations_for_sku_in_tx(&mut tx, "order", &order_id, &delta.sku)
-                    .await?;
-                for (reservation_id, reserved) in open {
-                    if remaining <= rust_decimal::Decimal::ZERO {
-                        continue 'deltas;
-                    }
-                    let take = remaining.min(reserved);
-                    if inventory
-                        .confirm_reservation_quantity_in_tx_with_now(
-                            &mut tx,
-                            reservation_id,
-                            take,
-                            started_at,
-                        )
-                        .await?
-                        == ReservationConfirmOutcome::Expired
-                    {
-                        expired_during_shipment = true;
-                        break 'deltas;
-                    }
-                    remaining -= take;
-                }
-            }
-        }
+        let expired_during_shipment = PgOrderRepository::fulfil_shipped_reservations_in_tx(
+            &inventory,
+            &mut tx,
+            order_uuid,
+            &effects.deltas,
+            effects.resolved_status == OrderStatus::Shipped,
+            started_at,
+        )
+        .await?
+        .is_some();
         if expired_during_shipment {
             sqlx::query("ROLLBACK TO SAVEPOINT kernel_ship")
                 .execute(tx.as_mut())
@@ -1927,9 +1926,12 @@ impl PgKernelExecutor {
         }
         let mut event_ids = Vec::new();
         for reservation_id in reservation_ids {
+            // The ship consumed (or, once fully shipped, released) the order's
+            // holds: those facts carry this command's context.
             let ids: Vec<Uuid> = sqlx::query_scalar(
-                "SELECT id FROM kernel_outbox WHERE created_at >= $1 AND event_type = 'inventory.reservation_confirmed.v1'
-                   AND (aggregate_id = $2 OR payload->>'source_reservation_id' = $2) ORDER BY created_at, id")
+                "SELECT id FROM kernel_outbox WHERE created_at >= $1
+                   AND event_type IN ('inventory.reservation_fulfilled.v1', 'inventory.reservation_released.v1')
+                   AND aggregate_id = $2 ORDER BY created_at, id")
                 .bind(started_at).bind(reservation_id.to_string()).fetch_all(tx.as_mut()).await
                 .map_err(pg_err)?;
             for event_id in ids {

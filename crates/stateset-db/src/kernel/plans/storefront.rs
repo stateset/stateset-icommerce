@@ -283,10 +283,12 @@ pub fn refuse_recapture(status: &str) -> Result<(), CommerceError> {
     Ok(())
 }
 
-/// Order statuses a shipment may not be created against.
+/// Order statuses a shipment may not be created against: closed to
+/// fulfilment (every unit shipped, or cancelled/refunded). The same rule as
+/// the repositories' manifest check.
 #[must_use]
 pub fn order_status_refuses_shipment(status: &str) -> bool {
-    matches!(status, "cancelled" | "refunded")
+    crate::shipment_allocations::validate_order_status(status).is_err()
 }
 
 /// Static payload checks for `returns.create`.
@@ -489,7 +491,10 @@ mod tests {
             Some("commerce.payment.rejected")
         );
         assert!(order_status_refuses_shipment("cancelled"));
+        assert!(order_status_refuses_shipment("shipped"));
+        assert!(order_status_refuses_shipment("delivered"));
         assert!(!order_status_refuses_shipment("processing"));
+        assert!(!order_status_refuses_shipment("partially_shipped"));
     }
 
     #[test]
