@@ -211,8 +211,10 @@ impl Payments {
     /// Record a lost chargeback on a `Disputed` payment for `amount` (`None`
     /// = the whole remaining captured balance). A partial loss writes a
     /// `chargeback_lost` refund row for the disputed amount and leaves the
-    /// payment `PartiallyRefunded`; the whole balance is the same as the
-    /// `Disputed -> Refunded` status write.
+    /// payment `PartiallyRefunded` (refunds still in flight are left alone);
+    /// the whole balance is the same as the `Disputed -> Refunded` status
+    /// write, which also fails every refund still in flight
+    /// (`superseded_by_chargeback`).
     pub fn record_lost_chargeback(
         &self,
         id: PaymentId,
