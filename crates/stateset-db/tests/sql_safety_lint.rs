@@ -164,6 +164,9 @@ const ALLOWLIST: &[(&str, &str)] = &[
     ("postgres/a2a_messaging.rs", "id = $2{}"),
     // Test-only DDL pinning a UUID (hex+hyphens) into a trigger guard:
     ("sqlite/lots.rs", "OLD.id = '{}'"),
+    // Test-only dump of every table named in `sqlite_master`, comparing a
+    // `:memory:` template copy with a fresh migration run:
+    ("sqlite/memdb_template.rs", "SELECT * FROM \\\"{name}"),
     // Runtime-analyzed spans (verified during triage):
     ("postgres/analytics.rs", "as avg_daily"),
     ("postgres/warranties.rs", "FROM warranty_claims"),

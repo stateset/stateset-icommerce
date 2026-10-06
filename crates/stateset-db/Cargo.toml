@@ -53,6 +53,10 @@ required-features = ["sqlite"]
 name = "recorded_outbox_fixture"
 required-features = ["sqlite"]
 
+[[example]]
+name = "memdb_construction"
+required-features = ["sqlite"]
+
 [lints]
 workspace = true
 

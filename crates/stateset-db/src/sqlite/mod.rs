@@ -38,6 +38,7 @@ mod kernel_executor;
 mod kernel_outbox;
 mod lots;
 mod loyalty;
+mod memdb_template;
 mod money_agg;
 mod orders;
 pub(crate) mod parse_helpers;
@@ -191,12 +192,52 @@ struct EphemeralDbGuard {
 
 impl Drop for EphemeralDbGuard {
     fn drop(&mut self) {
-        for suffix in ["", "-wal", "-shm"] {
-            let mut p = self.path.as_os_str().to_owned();
-            p.push(suffix);
-            let _ = std::fs::remove_file(std::path::PathBuf::from(p));
-        }
+        memdb_template::remove_db_files(&self.path);
     }
+}
+
+/// Per-connection setup shared by every pooled connection and by the
+/// `:memory:` migration template (so the template is migrated under exactly
+/// the production pragmas).
+///
+/// `ephemeral` stores (`:memory:`, a private temp file deleted when the pool
+/// drops) run with `synchronous = OFF`: their contents never outlive the
+/// process, so an fsync protects nothing. It is set BEFORE the WAL switch on
+/// purpose. Switching a fresh file to WAL commits through a rollback journal
+/// under the default `synchronous = FULL`, which costs four fsyncs — and that
+/// runs on r2d2's worker thread while `Pool::build` waits with the 30 s
+/// connection timeout. On a busy ext4 disk (parallel `cargo` builds writing
+/// GBs of artifacts) single fsyncs took seconds, so those four fsyncs alone
+/// pushed store construction past 30 s ("timed out waiting for connection").
+/// Locking is unaffected: WAL, `BEGIN IMMEDIATE` and `busy_timeout` behave as
+/// for a file store.
+fn configure_connection(
+    conn: &rusqlite::Connection,
+    ephemeral: bool,
+) -> Result<(), rusqlite::Error> {
+    if ephemeral {
+        conn.execute_batch("PRAGMA synchronous = OFF;")?;
+    }
+    // Use longer busy_timeout for high concurrency scenarios
+    conn.execute_batch(&format!(
+        "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = {};",
+        crate::DEFAULT_TRANSACTION_TIMEOUT_MS
+    ))?;
+    conn.execute_batch("PRAGMA journal_mode = WAL;")?;
+    // Performance tuning: reduce fsync overhead and increase cache
+    if !ephemeral {
+        conn.execute_batch("PRAGMA synchronous = NORMAL;")?;
+    }
+    conn.execute_batch(
+        "PRAGMA cache_size = -16000;\
+         PRAGMA temp_store = MEMORY;\
+         PRAGMA mmap_size = 268435456;\
+         PRAGMA wal_autocheckpoint = 10000;",
+    )?;
+    // Exact-decimal money aggregate (decimal_sum) for analytics totals;
+    // see money_agg for why SQL's float SUM() is unsafe on TEXT money.
+    money_agg::register(conn)?;
+    Ok(())
 }
 
 /// Database health status returned by [`SqliteDatabase::health_check`].
@@ -278,7 +319,15 @@ impl Drop for PragmaScope {
 
 impl SqliteDatabase {
     /// Create a new SQLite database connection
+    ///
+    /// A `:memory:` store starts as a copy of a migrated template built once
+    /// per process (see `memdb_template`), unless `STATESET_SQLITE_NO_TEMPLATE`
+    /// is set, in which case it runs the full migration chain itself.
     pub fn new(config: &DatabaseConfig) -> Result<Self, CommerceError> {
+        Self::open(config, !memdb_template::disabled_by_env())
+    }
+
+    fn open(config: &DatabaseConfig, use_memory_template: bool) -> Result<Self, CommerceError> {
         use std::sync::atomic::{AtomicU64, Ordering};
         use std::time::Duration;
 
@@ -294,13 +343,36 @@ impl SqliteDatabase {
         // temp file gets the exact production locking model (WAL, IMMEDIATE
         // serialization, full pool concurrency); on Linux, tmp is typically
         // RAM-backed anyway. The files are deleted when the last handle drops.
+        //
+        // Each one starts as a private copy of the migrated template (see
+        // `memdb_template`): the copy is still its own file with the same
+        // locking model, but skips re-running ~100 migrations per store.
         let is_memory = config.url == ":memory:";
         let mut ephemeral = None;
+        let mut migrated = false;
         let (manager, max_connections) = if is_memory {
             let db_id = MEMORY_DB_COUNTER.fetch_add(1, Ordering::SeqCst);
             let path = std::env::temp_dir()
                 .join(format!("stateset_memdb_{}_{db_id}.db", std::process::id()));
             ephemeral = Some(std::sync::Arc::new(EphemeralDbGuard { path: path.clone() }));
+            // A dead process that had this pid may have left files at this
+            // name; a stale `-wal` must never be replayed onto a new store.
+            memdb_template::remove_db_files(&path);
+            // A template that failed to build was already reported once;
+            // such stores simply migrate from scratch.
+            let image = if use_memory_template { memdb_template::image() } else { None };
+            if let Some(image) = image {
+                match memdb_template::copy_to(&path, image) {
+                    Ok(()) => migrated = true,
+                    Err(e) => {
+                        memdb_template::remove_db_files(&path);
+                        tracing::warn!(
+                            "copying the :memory: migration template failed ({e}); \
+                             migrating this store from scratch"
+                        );
+                    }
+                }
+            }
             let manager = SqliteConnectionManager::file(&path).with_flags(
                 OpenFlags::SQLITE_OPEN_READ_WRITE
                     | OpenFlags::SQLITE_OPEN_CREATE
@@ -322,24 +394,7 @@ impl SqliteDatabase {
             // accessor repos still held pool clones — lazily opened
             // connections then recreated an EMPTY database ("no such table").
             let _keep_ephemeral_alive = &ephemeral;
-            // Use longer busy_timeout for high concurrency scenarios
-            conn.execute_batch(&format!(
-                "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = {};",
-                crate::DEFAULT_TRANSACTION_TIMEOUT_MS
-            ))?;
-            conn.execute_batch("PRAGMA journal_mode = WAL;")?;
-            // Performance tuning: reduce fsync overhead and increase cache
-            conn.execute_batch(
-                "PRAGMA synchronous = NORMAL;\
-                 PRAGMA cache_size = -16000;\
-                 PRAGMA temp_store = MEMORY;\
-                 PRAGMA mmap_size = 268435456;\
-                 PRAGMA wal_autocheckpoint = 10000;",
-            )?;
-            // Exact-decimal money aggregate (decimal_sum) for analytics totals;
-            // see money_agg for why SQL's float SUM() is unsafe on TEXT money.
-            money_agg::register(conn)?;
-            Ok(())
+            configure_connection(conn, is_memory)
         });
 
         let pool = Pool::builder()
@@ -358,9 +413,11 @@ impl SqliteDatabase {
         // Get connection for setup
         let mut conn = pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        // Run migrations
-        migrations::run_migrations(&mut conn)
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        // Run migrations (a template copy already carries them)
+        if !migrated {
+            migrations::run_migrations(&mut conn)
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        }
 
         Ok(Self { pool })
     }
