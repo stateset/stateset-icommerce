@@ -6,6 +6,30 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (Ruby):** the `stateset_embedded` gem is now a real binding to
+  the Rust engine. Previous versions were an in-memory stand-in with no
+  dependency on `stateset-embedded`: they ignored `db_path`, so nothing a
+  Ruby caller wrote was ever persisted, and their specs only exercised the
+  stand-in. The gem now links the engine through a magnus/rb-sys extension
+  and persists to the SQLite file at `db_path` (or `:memory:`). Surface:
+  customers, products, inventory, carts/checkout, orders, payments and
+  refunds, returns and shipments (keyword arguments mirror the engine input
+  and filter types; unknown keywords are refused). Money and quantities are
+  `BigDecimal`; `Float` arguments raise. Engine failures raise a
+  `StateSet::Error` hierarchy (`NotFoundError`, `ValidationError`,
+  `ConflictError`, `InvalidOperationError`, `InsufficientStockError`, ...)
+  carrying the engine `code` and `status`; panics are caught at the boundary.
+  The stand-in-only accessors (`warranties`, `purchase_orders`, `invoices`,
+  `bom`, `work_orders`, `analytics`, `currency`, `subscriptions`,
+  `promotions`, `tax`) are removed rather than kept unbacked. The specs now
+  run against the engine, including a persistence test that reopens the file
+  in a new instance and in a separate process, and the shared
+  `semantics-v1.json` corpus.
+- `ShipmentFilter` derives `Serialize`/`Deserialize` like the other engine
+  filters.
+
 ## [1.37.0] - 2026-10-01
 
 ### Added

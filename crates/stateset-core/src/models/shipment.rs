@@ -334,7 +334,7 @@ pub struct AddShipmentEvent {
 }
 
 /// Filter for querying shipments
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ShipmentFilter {
     pub order_id: Option<OrderId>,
     pub status: Option<ShipmentStatus>,

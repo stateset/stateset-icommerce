@@ -124,6 +124,11 @@ NODE
 
 echo "==> Regenerating Cargo.lock"
 cargo metadata --format-version 1 >/dev/null
+# The Ruby gem is its own cargo workspace (it needs ruby.h) and links the
+# engine by path, so its lockfile records the engine crates' versions too.
+# Let cargo rewrite those entries (the sed above must never touch a lock);
+# CI builds it with --locked.
+cargo metadata --format-version 1 --manifest-path bindings/ruby/Cargo.toml >/dev/null
 
 echo "==> Regenerating inventories"
 node ./scripts/ci/generate_workspace_inventory.mjs >/dev/null

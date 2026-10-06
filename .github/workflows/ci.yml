@@ -881,7 +881,9 @@ jobs:
   ruby-bindings:
     name: Ruby Bindings
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The extension links the real engine (stateset-embedded), so this job
+    # compiles it; the rust-cache step keeps reruns fast.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v7
@@ -891,22 +893,45 @@ jobs:
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: "3.2"
+          ruby-version: "3.3"
           bundler-cache: true
           working-directory: bindings/ruby
 
       - name: Install Rust
         # Pin to the workspace toolchain (rust-toolchain.toml) so this binding
-        # resolves dependencies exactly like the workspace. (The committed
-        # Cargo.lock fix — pinning cfg-if to the real published 1.0.4 rather
-        # than a phantom 1.1.0 — is what unblocks the build; this pin keeps the
-        # binding aligned with the workspace toolchain going forward.)
+        # resolves dependencies exactly like the workspace.
         uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         with:
           toolchain: "1.90"
+          components: clippy
 
-      - name: Test
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+        with:
+          workspaces: |
+            bindings/ruby -> target
+            bindings/ruby -> tmp
+
+      - name: Engine dispatcher tests (no Ruby)
+        # src/dispatch.rs is pure Rust: every Ruby call is one engine
+        # operation here, including the SQLite persistence round trip.
         working-directory: bindings/ruby
+        run: cargo test --locked --lib
+
+      - name: Clippy (dispatcher + magnus glue)
+        # The crate is outside the root workspace (it needs ruby.h), so the
+        # workspace clippy run does not cover it.
+        working-directory: bindings/ruby
+        run: cargo clippy --locked --all-targets --features runtime -- -D warnings
+
+      - name: Compile extension and run specs
+        # Builds the native extension against the real engine and runs the
+        # RSpec suite, including spec/persistence_spec.rb (write in one
+        # Commerce instance, reopen the file, read back -- also from a
+        # separate process).
+        working-directory: bindings/ruby
+        env:
+          # A dev-profile extension compiles much faster and is all the specs need.
+          RB_SYS_CARGO_PROFILE: dev
         run: bundle exec rake
 
   admin:

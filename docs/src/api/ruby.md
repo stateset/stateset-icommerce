@@ -1,6 +1,13 @@
 # Ruby API Reference
 
-The Ruby binding provides `StateSet::Commerce` for building commerce applications.
+The Ruby gem `stateset_embedded` is a native binding (magnus / rb-sys) to the
+Rust engine `stateset-embedded`. Every call runs in the real engine inside
+your process and persists to the SQLite file you open.
+
+> **Changed in the next release:** earlier versions of this gem were an
+> in-memory stand-in that ignored `db_path`, so nothing was ever saved. The
+> gem now links the engine, persists to SQLite, returns `BigDecimal` money,
+> and exposes only the engine-backed domains listed below.
 
 ## Installation
 
@@ -10,169 +17,139 @@ gem install stateset_embedded
 gem 'stateset_embedded'
 ```
 
+Ruby 3.0+. Building from source needs a Rust toolchain.
+
 ## Quick Start
 
 ```ruby
 require 'stateset_embedded'
 
-# Initialize with SQLite database
-commerce = StateSet::Commerce.new("commerce.db")
+commerce = StateSet::Commerce.new("commerce.db")  # SQLite file
+# commerce = StateSet::Commerce.new(":memory:")   # ephemeral store
 
-# Or use in-memory database for testing
-commerce = StateSet::Commerce.new(":memory:")
-
-# Create a customer
 customer = commerce.customers.create(
-  email: "alice@example.com",
-  first_name: "Alice",
-  last_name: "Smith",
-  phone: "+1-555-0123"
+  email: "alice@example.com", first_name: "Alice", last_name: "Smith"
 )
 
-# Create a product
 product = commerce.products.create(
   name: "Premium Widget",
-  sku: "WIDGET-001",
-  price: 29.99,
-  description: "High-quality widget"
+  description: "High-quality widget",
+  variants: [{ sku: "WIDGET-001", price: "29.99" }]
 )
 
-# Create inventory
-item = commerce.inventory.create_item(
-  sku: "WIDGET-001",
-  name: "Premium Widget",
-  initial_quantity: 100
-)
+commerce.inventory.create_item(sku: "WIDGET-001", name: "Premium Widget", initial_quantity: 100)
 
-# Create an order
 order = commerce.orders.create(
   customer_id: customer.id,
-  items: [
-    { sku: "WIDGET-001", name: "Widget", quantity: 2, unit_price: 29.99 }
-  ],
-  currency: "USD"
+  currency: "USD",
+  items: [{ product_id: product.id, sku: "WIDGET-001", name: "Premium Widget",
+            quantity: 2, unit_price: BigDecimal("29.99") }]
 )
+order.total_amount # => BigDecimal("59.98")
 
-# Ship the order
-shipped = commerce.orders.ship(order.id)
-puts "Order #{shipped.order_number} shipped!"
+shipped = commerce.orders.ship(order.id, tracking_number: "1Z999")
+puts "Order #{shipped.order_number} is #{shipped.status}"
 ```
+
+## Conventions
+
+- **Keywords mirror the engine.** `create`/`update` take the engine input's
+  fields as keywords; `list`/`count` take the engine filter's fields
+  (`orders.list(status: "pending", limit: 20)`). Unknown keywords raise
+  `StateSet::ValidationError` instead of being silently dropped.
+- **Money is exact.** Amounts and quantities come back as `BigDecimal`. Pass
+  `BigDecimal`, `Integer` or a decimal `String`; a `Float` raises
+  `StateSet::ValidationError` (code `binding.float_refused`).
+- **Records** (`StateSet::Order`, `Payment`, ...) are frozen value objects:
+  every engine field is a reader, plus `record[:field]` and `record.to_h`.
+  Enums are snake_case strings; timestamps are `Time`.
+- `get`-style methods return `nil` when nothing matches; a state change on a
+  missing record raises `StateSet::NotFoundError`.
 
 ## Common Operations
 
-### Customer Management
+### Customers
 
 ```ruby
-# Create customer
-customer = commerce.customers.create(
-  email: "test@example.com",
-  first_name: "Test",
-  last_name: "User"
-)
-
-# Get customer by ID
-found = commerce.customers.get(customer_id)
-
-# List all customers
-customers = commerce.customers.list
-
-# Delete customer
-deleted = commerce.customers.delete(customer_id)
+customer = commerce.customers.create(email: "test@example.com", first_name: "Test", last_name: "User")
+commerce.customers.get(customer.id)
+commerce.customers.get_by_email("test@example.com")
+commerce.customers.update(customer.id, phone: "+1-555-0100")
+commerce.customers.list(limit: 50)
+commerce.customers.delete(customer.id)  # => true
 ```
 
-### Inventory Management
+### Inventory
 
 ```ruby
-# Create inventory item
-item = commerce.inventory.create_item(
-  sku: "SKU-001",
-  name: "Widget",
-  initial_quantity: 100
-)
-
-# Adjust inventory
+commerce.inventory.create_item(sku: "SKU-001", name: "Widget", initial_quantity: 100)
 commerce.inventory.adjust("SKU-001", 50, "Received shipment")
-
-# Reserve inventory
-reservation = commerce.inventory.reserve("SKU-001", 10)
-
-# Release reservation
-commerce.inventory.release(reservation.id)
-
-# Get stock level
-level = commerce.inventory.get_level("SKU-001")
-puts "Available: #{level.available}"
+reservation = commerce.inventory.reserve("SKU-001", 10, reference_type: "order", reference_id: "ORD-1")
+commerce.inventory.release_reservation(reservation.id)
+commerce.inventory.get_stock("SKU-001").total_available  # => BigDecimal
 ```
 
-### Order Processing
+### Carts and checkout
 
 ```ruby
-# Create order
-order = commerce.orders.create(
-  customer_id: customer.id,
-  items: [
-    { sku: "SKU-001", name: "Widget", quantity: 2, unit_price: 29.99 }
-  ]
-)
+cart = commerce.carts.create(customer_id: customer.id, currency: "USD")
+commerce.carts.add_item(cart.id, sku: "SKU-001", name: "Widget", quantity: 2, unit_price: "29.99")
+commerce.carts.set_shipping(cart.id, address: {
+  first_name: "Alice", last_name: "Smith", line1: "1 Main St",
+  city: "Springfield", postal_code: "12345", country: "US"
+})
+commerce.carts.set_payment(cart.id, payment_method: "credit_card")
+commerce.carts.mark_ready_for_payment(cart.id)
+commerce.carts.begin_checkout(cart.id)
+result = commerce.carts.complete(cart.id)  # order is Confirmed, payment Pending
+commerce.payments.create(order_id: result.order_id, amount: result.total_charged, payment_method: "credit_card")
+```
 
-# Update status
+### Orders, payments, refunds
+
+```ruby
 commerce.orders.update_status(order.id, "processing")
+commerce.orders.ship(order.id, lines: [{ order_item_id: order.items.first.id, quantity: 1 }])  # partial
+commerce.orders.deliver(order.id)
 
-# Ship order
-shipped = commerce.orders.ship(order.id)
-
-# Cancel order
-cancelled = commerce.orders.cancel(order.id)
-
-# List orders by status
-pending = commerce.orders.list_by_status("pending")
+payment = commerce.payments.create(order_id: order.id, amount: order.total_amount, payment_method: "credit_card")
+commerce.payments.mark_completed(payment.id)
+refund = commerce.payments.create_refund(payment_id: payment.id, amount: "10.00", reason: "damaged")
+commerce.payments.complete_refund(refund.id)
 ```
 
-### Subscriptions
+### Returns and shipments
 
 ```ruby
-# Create a subscription plan
-plan = commerce.subscriptions.create_plan(
-  code: "PREMIUM",
-  name: "Premium Plan",
-  interval: "month",
-  interval_count: 1,
-  price: 19.99,
-  currency: "USD"
-)
+ret = commerce.returns.create(order_id: order.id, reason: "defective",
+                              items: [{ order_item_id: order.items.first.id, quantity: 1 }])
+commerce.returns.approve(ret.id)
+commerce.returns.mark_received(ret.id)
+commerce.returns.set_item_disposition(ret.id, ret.items.first.id, disposition: "restock")
+commerce.returns.complete(ret.id)
 
-# Subscribe a customer
-subscription = commerce.subscriptions.subscribe(customer.id, plan.id)
-
-# Pause/Resume/Cancel
-paused = commerce.subscriptions.pause(subscription.id)
-resumed = commerce.subscriptions.resume(subscription.id)
-cancelled = commerce.subscriptions.cancel(subscription.id)
-```
-
-### Analytics
-
-```ruby
-# Get sales summary
-summary = commerce.analytics.sales_summary
-puts "Total revenue: #{summary.total_revenue}"
-
-# Get top products
-top_products = commerce.analytics.top_products(10)
-
-# Get top customers
-top_customers = commerce.analytics.top_customers(10)
+shipment = commerce.shipments.create(order_id: order.id, recipient_name: "Alice Smith",
+                                     shipping_address: "1 Main St, Springfield", carrier: "ups")
+commerce.shipments.mark_processing(shipment.id)
+commerce.shipments.mark_ready(shipment.id)
+commerce.shipments.ship(shipment.id, tracking_number: "1Z999")
+commerce.shipments.mark_in_transit(shipment.id)
+commerce.shipments.mark_out_for_delivery(shipment.id)
+commerce.shipments.mark_delivered(shipment.id)
 ```
 
 ## Error Handling
 
 ```ruby
 begin
-  order = commerce.orders.ship(order_id)
+  commerce.payments.create_refund(payment_id: payment.id, amount: "9999.00")
+rescue StateSet::ValidationError => e
+  e.code    # => "commerce.refund.exceeds_captured"
+  e.status  # => 400
 rescue StateSet::Error => e
-  puts "StateSet error: #{e.message}"
-rescue => e
-  raise e
+  # NotFoundError, ConflictError, InvalidOperationError (incl. InsufficientStockError),
+  # NotPermittedError, DatabaseError, ExternalServiceError, InternalError
+  raise
 end
 ```
 
@@ -180,43 +157,29 @@ end
 
 | API | Description |
 |-----|-------------|
-| `customers` | Customer management |
-| `products` | Product catalog |
-| `orders` | Order lifecycle |
-| `inventory` | Stock management |
-| `carts` | Shopping carts |
-| `returns` | Return processing |
-| `payments` | Payment operations |
-| `shipments` | Shipping management |
-| `warranties` | Warranty tracking |
-| `suppliers` | Supplier management |
-| `purchase_orders` | Purchase orders |
-| `invoices` | B2B invoicing |
-| `bom` | Bills of Materials |
-| `work_orders` | Manufacturing |
-| `currency` | Multi-currency |
-| `subscriptions` | Recurring billing |
-| `promotions` | Discounts & coupons |
-| `tax` | Tax calculations |
-| `quality` | Quality control |
-| `lots` | Lot tracking |
-| `serials` | Serial numbers |
-| `warehouse` | Warehouse ops |
-| `receiving` | Receiving |
-| `fulfillment` | Picking & packing |
-| `accounts_payable` | A/P management |
-| `accounts_receivable` | A/R management |
-| `cost_accounting` | Cost tracking |
-| `credit` | Credit management |
-| `backorders` | Backorder tracking |
-| `general_ledger` | GL accounting |
-| `analytics` | Reporting & forecasts |
+| `customers` | Customer accounts |
+| `products` | Product catalog and variants |
+| `inventory` | Stock items, balances, reservations |
+| `carts` | Shopping carts and checkout |
+| `orders` | Order lifecycle, (partial) shipping |
+| `payments` | Payments and refunds |
+| `returns` | Return requests |
+| `shipments` | Outbound shipments |
+
+`StateSet::Crypto` provides the cross-binding primitives (`jcs_canonicalize`,
+`payload_plain_hash`, `merkle_root`). Other engine domains (finance,
+subscriptions, promotions, manufacturing, ...) are not exposed in Ruby yet;
+use the Python or Node binding, the CLI, or the HTTP server for those.
 
 ## Source Files
 
-- Entry point: `StateSet::Commerce`
-- Ruby API wrapper: `bindings/ruby/lib/stateset_embedded.rb`
+- Entry point: `StateSet::Commerce` (`bindings/ruby/lib/stateset_embedded/commerce.rb`)
+- Ruby API: `bindings/ruby/lib/stateset_embedded/apis.rb`
+- Engine dispatcher: `bindings/ruby/src/dispatch.rs`
 
 ## Examples
 
 - `examples/ruby/basic_usage.rb`
+- `examples/ruby/carts_example.rb`
+- `examples/ruby/payments_example.rb`
+- `examples/ruby/returns_example.rb`

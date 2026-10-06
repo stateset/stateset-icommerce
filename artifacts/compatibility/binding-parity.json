@@ -7725,13 +7725,171 @@
       "id": "ruby",
       "language": "Ruby",
       "evidence": "native reach: engine calls anywhere in the Rust layer",
-      "engineBacked": false,
+      "engineBacked": true,
       "gated": false,
-      "exposedCount": 0,
+      "exposedCount": 117,
       "applicableCount": 1223,
-      "coverage": 0,
-      "notes": "does not depend on stateset-embedded",
-      "domains": {}
+      "coverage": 9.6,
+      "notes": "host (Ruby) layer is not traced; each Ruby method is one named op in src/dispatch.rs",
+      "domains": {
+        "carts": {
+          "coverage": 84.8,
+          "exposed": [
+            "abandon",
+            "add_item",
+            "apply_discount",
+            "begin_checkout",
+            "cancel",
+            "clear_items",
+            "complete",
+            "count",
+            "create",
+            "delete",
+            "for_customer",
+            "get",
+            "get_by_number",
+            "get_items",
+            "get_shipping_rates",
+            "list",
+            "mark_ready_for_payment",
+            "recalculate",
+            "release_inventory",
+            "remove_discount",
+            "remove_item",
+            "reserve_inventory",
+            "set_billing_address",
+            "set_payment",
+            "set_shipping",
+            "set_shipping_address",
+            "set_tax",
+            "update_item"
+          ]
+        },
+        "customers": {
+          "coverage": 50,
+          "exposed": [
+            "count",
+            "create",
+            "delete",
+            "get",
+            "get_by_email",
+            "list",
+            "update"
+          ]
+        },
+        "inventory": {
+          "coverage": 75,
+          "exposed": [
+            "adjust",
+            "confirm_reservation",
+            "create_item",
+            "get_item",
+            "get_item_by_sku",
+            "get_reservation",
+            "get_stock",
+            "get_transactions",
+            "has_stock",
+            "list",
+            "release_reservation",
+            "reserve"
+          ]
+        },
+        "orders": {
+          "coverage": 55.6,
+          "exposed": [
+            "cancel",
+            "count",
+            "create",
+            "deliver",
+            "get",
+            "get_by_number",
+            "list",
+            "list_for_customer",
+            "ship_lines",
+            "update_status"
+          ]
+        },
+        "payments": {
+          "coverage": 57.7,
+          "exposed": [
+            "cancel",
+            "complete_refund",
+            "count",
+            "create",
+            "create_refund",
+            "fail_refund",
+            "for_order",
+            "get",
+            "get_by_number",
+            "get_refund",
+            "get_refunds",
+            "list",
+            "mark_completed",
+            "mark_failed",
+            "mark_processing"
+          ]
+        },
+        "products": {
+          "coverage": 82.4,
+          "exposed": [
+            "activate",
+            "add_variant",
+            "archive",
+            "count",
+            "create",
+            "delete",
+            "get",
+            "get_by_slug",
+            "get_variant",
+            "get_variant_by_sku",
+            "get_variants",
+            "list",
+            "search",
+            "update"
+          ]
+        },
+        "returns": {
+          "coverage": 80,
+          "exposed": [
+            "add_tracking",
+            "approve",
+            "cancel",
+            "complete",
+            "count",
+            "create",
+            "get",
+            "list",
+            "list_for_order",
+            "mark_received",
+            "reject",
+            "set_item_disposition"
+          ]
+        },
+        "shipments": {
+          "coverage": 76,
+          "exposed": [
+            "add_item",
+            "cancel",
+            "count",
+            "create",
+            "for_order",
+            "get",
+            "get_by_number",
+            "get_by_tracking",
+            "get_items",
+            "hold",
+            "list",
+            "mark_delivered",
+            "mark_failed",
+            "mark_in_transit",
+            "mark_out_for_delivery",
+            "mark_processing",
+            "mark_ready",
+            "remove_item",
+            "ship"
+          ]
+        }
+      }
     },
     {
       "id": "swift",
@@ -7979,10 +8137,36 @@
       ]
     },
     "ruby": {
-      "shared": 0,
+      "shared": 92,
       "referenceExposed": 742,
-      "parity": 0,
-      "beyondReference": []
+      "parity": 12.4,
+      "beyondReference": [
+        "inventory.get_item",
+        "inventory.get_item_by_sku",
+        "inventory.get_reservation",
+        "inventory.get_transactions",
+        "inventory.has_stock",
+        "inventory.list",
+        "orders.deliver",
+        "orders.list_for_customer",
+        "orders.ship_lines",
+        "payments.for_order",
+        "payments.get_by_number",
+        "payments.mark_processing",
+        "returns.set_item_disposition",
+        "shipments.add_item",
+        "shipments.for_order",
+        "shipments.get_by_number",
+        "shipments.get_by_tracking",
+        "shipments.get_items",
+        "shipments.hold",
+        "shipments.mark_failed",
+        "shipments.mark_in_transit",
+        "shipments.mark_out_for_delivery",
+        "shipments.mark_processing",
+        "shipments.mark_ready",
+        "shipments.remove_item"
+      ]
     },
     "swift": {
       "shared": 51,

@@ -96,7 +96,7 @@ cd bindings/dotnet/tests && dotnet test --filter FullyQualifiedName~CryptoVector
 # Local needs Swift 5.7+ on macOS. CI exercises this in the `swift-bindings` job.
 cd bindings/swift && swift test --filter CryptoVectorTests
 
-# Ruby binding (already wired)
+# Ruby binding (already wired; also consumes semantics-v1.json)
 # Local needs Ruby 3.0+ with dev headers (ruby.h) and `bundle install` first.
 # CI exercises this in the `ruby-bindings` job which runs `bundle exec rake`.
 cd bindings/ruby && bundle exec rake compile && bundle exec rspec spec/crypto_vector_spec.rb
@@ -161,6 +161,8 @@ still. `bindings/python/tests/test_semantics_vectors.py` is the reference:
 its declaration check is what revealed that the whole Tax API was registered
 in the native module but never exported from the Python package.
 
-Current consumers: Rust (ground truth) and Python. Node's strict-input
-surface lands with the phase-B binding round; Go, .NET, Swift, Java, Kotlin,
-PHP and WASM have not adopted it yet.
+Current consumers: Rust (ground truth), Python, Go
+(`bindings/go/stateset/semantics_vectors_test.go`) and Ruby
+(`bindings/ruby/spec/commerce_spec.rb`). Node's strict-input surface lands
+with the phase-B binding round; .NET, Swift, Java, Kotlin, PHP and WASM have
+not adopted it yet.
