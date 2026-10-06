@@ -1759,7 +1759,7 @@
     },
     {
       "name": "add_shipment_item",
-      "description": "Add an order line to a shipment. Rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order not in a shippable status, and a stale expectedVersion.",
+      "description": "Add an order line to a shipment. Only a shipment that is still pending, processing or on_hold can change its items: one that is ready_to_ship, shipped, in transit, delivered, failed, returned or cancelled is refused, and nothing is written. Also rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order not in a shippable status, and a stale expectedVersion.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__add_shipment_item",
@@ -7708,7 +7708,7 @@
     },
     {
       "name": "remove_shipment_item",
-      "description": "Remove an item from a shipment, releasing its order-line allocation. Rejects a stale expectedVersion.",
+      "description": "Remove an item from a shipment, releasing its order-line allocation. Only a shipment that is still pending, processing or on_hold can change its items: one that is ready_to_ship or later, or cancelled, is refused and nothing is written. Also rejects a stale expectedVersion.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__remove_shipment_item",
