@@ -191,18 +191,9 @@ impl AsyncOrders {
         tracking_number: Option<&str>,
         lines: Option<Vec<ShipmentLineInput>>,
     ) -> Result<Order> {
-        if let Some(order) = self.get(id).await? {
-            match order.status {
-                OrderStatus::Pending => {
-                    self.update_status(id, OrderStatus::Confirmed).await?;
-                    self.update_status(id, OrderStatus::Processing).await?;
-                }
-                OrderStatus::Confirmed => {
-                    self.update_status(id, OrderStatus::Processing).await?;
-                }
-                _ => {}
-            }
-        }
+        // Pending/confirmed orders walk through `processing` inside the ship's
+        // own transaction (`OrderStatus::can_ship_to`): a refused ship writes
+        // nothing.
         let tracking_number = tracking_number.map(|s| s.to_string());
         self.db.orders().ship_async(id, ShipOrder { tracking_number, lines }).await
     }

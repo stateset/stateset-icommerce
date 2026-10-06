@@ -217,3 +217,40 @@ fn partial_shipment_is_partially_fulfilled() {
     assert_eq!(rest.status, OrderStatus::Shipped);
     assert_eq!(rest.fulfillment_status, FulfillmentStatus::Shipped);
 }
+
+/// Regression (found by the cross-entity invariant harness): a ship that is
+/// refused — here, more units than the line has left — used to advance a
+/// confirmed order to `processing` anyway, because the pre-advance ran in its
+/// own transaction before the ship was validated. A refused ship now writes
+/// nothing, and a valid ship still moves a confirmed order straight through.
+#[test]
+fn refused_ship_leaves_a_confirmed_order_untouched() {
+    let commerce = Commerce::new(":memory:").expect("commerce");
+    let order = checkout(&commerce);
+    let before = get(&commerce, order.id);
+    assert_eq!(before.status, OrderStatus::Confirmed);
+
+    let line = order.items.iter().find(|item| item.quantity == 2).expect("two-unit line");
+    let err = commerce
+        .orders()
+        .ship_lines(
+            order.id,
+            None,
+            Some(vec![ShipmentLineInput { order_item_id: line.id, quantity: 3 }]),
+        )
+        .expect_err("3 of 2 units must be refused");
+    assert!(matches!(err, stateset_core::CommerceError::ShipmentExceedsOrdered { .. }), "{err:?}");
+    let after = get(&commerce, order.id);
+    assert_eq!(after.status, OrderStatus::Confirmed, "a refused ship moved the order");
+    assert_eq!(after.version, before.version, "a refused ship bumped the order version");
+
+    let partial = commerce
+        .orders()
+        .ship_lines(
+            order.id,
+            None,
+            Some(vec![ShipmentLineInput { order_item_id: line.id, quantity: 1 }]),
+        )
+        .expect("a valid ship of a confirmed order succeeds");
+    assert_eq!(partial.status, OrderStatus::PartiallyShipped);
+}

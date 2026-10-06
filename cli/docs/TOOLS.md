@@ -639,8 +639,8 @@ Tier: **core**
 | `get_shipment` | core | read | Get a shipment by ID. |
 | `create_shipment` | core | write | Create a shipment for an order. |
 | `update_shipment` | core | write | Update shipment fields or move through the native lifecycle. Preserves omitted fields and rejects invalid transitions or stale expectedVersion. Cancellation requires cancel_shipment. |
-| `add_shipment_item` | core | write | Add an order line to a shipment. Rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order not in a shippable status, and a stale expectedVersion. |
-| `remove_shipment_item` | core | write | Remove an item from a shipment, releasing its order-line allocation. Rejects a stale expectedVersion. |
+| `add_shipment_item` | core | write | Add an order line to a shipment. Only a shipment that is still pending, processing or on_hold can change its items: one that is ready_to_ship, shipped, in transit, delivered, failed, returned or cancelled is refused, and nothing is written. Also rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order not in a shippable status, and a stale expectedVersion. |
+| `remove_shipment_item` | core | write | Remove an item from a shipment, releasing its order-line allocation. Only a shipment that is still pending, processing or on_hold can change its items: one that is ready_to_ship or later, or cancelled, is refused and nothing is written. Also rejects a stale expectedVersion. |
 | `ship_shipment` | core | write | Mark a ready_to_ship shipment as shipped with an optional tracking number. |
 | `deliver_shipment` | core | write | Mark an out_for_delivery shipment as delivered. |
 | `cancel_shipment` | core | delete | Cancel a shipment before carrier handoff. Retains shipment history. |

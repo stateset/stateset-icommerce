@@ -1435,7 +1435,12 @@ impl PgOrderRepository {
             .unwrap_or(current_fulfillment_status);
         let now = Utc::now();
 
-        if !current_status.can_transition_to(new_status) {
+        let allowed = if is_ship {
+            current_status.can_ship_to(new_status)
+        } else {
+            current_status.can_transition_to(new_status)
+        };
+        if !allowed {
             if new_status == OrderStatus::Cancelled {
                 return Err(CommerceError::OrderCannotBeCancelled(current_status.to_string()));
             }

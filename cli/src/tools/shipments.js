@@ -246,7 +246,7 @@ export const shipmentTools = [
   {
     name: 'add_shipment_item',
     description:
-      'Add an order line to a shipment. Rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order not in a shippable status, and a stale expectedVersion.',
+      'Add an order line to a shipment. Only a shipment that is still pending, processing or on_hold can change its items: one that is ready_to_ship, shipped, in transit, delivered, failed, returned or cancelled is refused, and nothing is written. Also rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order not in a shippable status, and a stale expectedVersion.',
     inputSchema: {
       shipmentId: z.string().min(1).describe('Shipment ID'),
       orderItemId: z
@@ -278,7 +278,7 @@ export const shipmentTools = [
   {
     name: 'remove_shipment_item',
     description:
-      'Remove an item from a shipment, releasing its order-line allocation. Rejects a stale expectedVersion.',
+      'Remove an item from a shipment, releasing its order-line allocation. Only a shipment that is still pending, processing or on_hold can change its items: one that is ready_to_ship or later, or cancelled, is refused and nothing is written. Also rejects a stale expectedVersion.',
     inputSchema: {
       itemId: z.string().min(1).describe('Shipment item ID'),
       expectedVersion: z

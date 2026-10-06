@@ -242,4 +242,43 @@ mod pg {
         assert_eq!(rest.status, OrderStatus::Shipped);
         assert_eq!(rest.fulfillment_status, FulfillmentStatus::Shipped);
     }
+
+    /// Twin of `refused_ship_leaves_a_confirmed_order_untouched`: a refused
+    /// ship must not advance a confirmed order to `processing`.
+    #[tokio::test]
+    async fn postgres_refused_ship_leaves_a_confirmed_order_untouched() {
+        let Some(commerce) = connect().await else { return };
+        let order = checkout(&commerce).await;
+        let before = get(&commerce, &order).await;
+        assert_eq!(before.status, OrderStatus::Confirmed);
+
+        let line = order.items.iter().find(|item| item.quantity == 2).expect("two-unit line");
+        let err = commerce
+            .orders()
+            .ship_lines(
+                order.id.into_uuid(),
+                None,
+                Some(vec![ShipmentLineInput { order_item_id: line.id, quantity: 3 }]),
+            )
+            .await
+            .expect_err("3 of 2 units must be refused");
+        assert!(
+            matches!(err, stateset_core::CommerceError::ShipmentExceedsOrdered { .. }),
+            "{err:?}"
+        );
+        let after = get(&commerce, &order).await;
+        assert_eq!(after.status, OrderStatus::Confirmed, "a refused ship moved the order");
+        assert_eq!(after.version, before.version, "a refused ship bumped the order version");
+
+        let partial = commerce
+            .orders()
+            .ship_lines(
+                order.id.into_uuid(),
+                None,
+                Some(vec![ShipmentLineInput { order_item_id: line.id, quantity: 1 }]),
+            )
+            .await
+            .expect("a valid ship of a confirmed order succeeds");
+        assert_eq!(partial.status, OrderStatus::PartiallyShipped);
+    }
 }

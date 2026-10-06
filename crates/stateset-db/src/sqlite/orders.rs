@@ -1319,8 +1319,13 @@ impl SqliteOrderRepository {
                     line_deltas = deltas;
                 }
                 let target = effective_status.unwrap_or(status);
+                let allowed = if is_ship {
+                    current_status.can_ship_to(target)
+                } else {
+                    current_status.can_transition_to(target)
+                };
 
-                if !current_status.can_transition_to(target) {
+                if !allowed {
                     if target == OrderStatus::Cancelled {
                         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                             CommerceError::OrderCannotBeCancelled(current_status.to_string()),

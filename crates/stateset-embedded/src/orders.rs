@@ -374,8 +374,10 @@ impl Orders {
     /// ordered quantity fails with `CommerceError::ShipmentExceedsOrdered` and
     /// nothing is persisted. `None`/empty `lines` ships all remaining units.
     ///
-    /// Pending/confirmed orders are first advanced to `Processing`, as
-    /// [`Self::ship`] always did.
+    /// Pending/confirmed orders ship too: the walk through `Processing` is
+    /// part of the ship's own transaction
+    /// ([`OrderStatus::can_ship_to`](stateset_core::OrderStatus::can_ship_to)),
+    /// so a refused ship leaves the order exactly as it was.
     #[tracing::instrument(skip(self, lines), fields(order_id = %id, has_tracking = tracking_number.is_some()))]
     pub fn ship_lines(
         &self,
@@ -384,18 +386,6 @@ impl Orders {
         lines: Option<Vec<ShipmentLineInput>>,
     ) -> Result<Order> {
         tracing::info!("shipping order");
-        if let Some(order) = self.get(id)? {
-            match order.status {
-                OrderStatus::Pending => {
-                    self.update_status(id, OrderStatus::Confirmed)?;
-                    self.update_status(id, OrderStatus::Processing)?;
-                }
-                OrderStatus::Confirmed => {
-                    self.update_status(id, OrderStatus::Processing)?;
-                }
-                _ => {}
-            }
-        }
         #[cfg(feature = "events")]
         let previous = self.get(id)?;
         let tracking_number = tracking_number.map(std::string::ToString::to_string);
