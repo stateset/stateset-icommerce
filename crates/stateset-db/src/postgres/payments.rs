@@ -509,6 +509,7 @@ pub(crate) async fn record_lost_chargeback_pg(
     now: DateTime<Utc>,
 ) -> Result<Uuid> {
     let reversed = (payment.captured() - payment.amount_refunded).max(Decimal::ZERO);
+    supersede_in_flight_refunds_pg(&mut *conn, payment.id.into_uuid(), now).await?;
     write_chargeback_reversal_pg(
         conn,
         payment,
@@ -518,6 +519,52 @@ pub(crate) async fn record_lost_chargeback_pg(
         now,
     )
     .await
+}
+
+/// Fail every refund of `payment_id` still in flight (`pending` /
+/// `processing`) on the caller's transaction, because a FULL lost chargeback
+/// already took the whole remaining balance they would return (twin of the
+/// SQLite `supersede_in_flight_refunds_tx`): `failure_reason =`
+/// [`stateset_core::CHARGEBACK_SUPERSEDED_REFUND_REASON`], reservation
+/// released, one `payments.refund_failed.v1` fact each. Returns their ids.
+async fn supersede_in_flight_refunds_pg(
+    conn: &mut sqlx::PgConnection,
+    payment_id: Uuid,
+    now: DateTime<Utc>,
+) -> Result<Vec<Uuid>> {
+    let reason = stateset_core::CHARGEBACK_SUPERSEDED_REFUND_REASON;
+    let failed: Vec<(Uuid,)> = sqlx::query_as(
+        "UPDATE refunds SET status = $1, failure_reason = $2, updated_at = $3 \
+         WHERE payment_id = $4 AND status IN ('pending', 'processing')
+         RETURNING id",
+    )
+    .bind(RefundStatus::Failed.to_string())
+    .bind(reason)
+    .bind(now)
+    .bind(payment_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
+    let mut ids: Vec<Uuid> = failed.into_iter().map(|(id,)| id).collect();
+    ids.sort_unstable();
+    for id in &ids {
+        append_kernel_event_tx(
+            &mut *conn,
+            &KernelOutboxEvent::domain(
+                "payments.refund_failed.v1",
+                "refund",
+                id.to_string(),
+                serde_json::json!({
+                    "refund_id": id.to_string(),
+                    "payment_id": payment_id.to_string(),
+                    "reason": reason,
+                }),
+                None,
+            ),
+        )
+        .await?;
+    }
+    Ok(ids)
 }
 
 /// The ledger half of a lost chargeback (twin of the SQLite
@@ -637,6 +684,30 @@ pub(crate) async fn record_lost_chargeback_amount_pg(
         )));
     }
     let remaining = (payment.captured() - payment.amount_refunded).max(Decimal::ZERO);
+    if amount.is_none() {
+        // The whole remaining balance: the full lost-chargeback path, exactly
+        // as the `Disputed -> Refunded` status write records it — refunds
+        // still in flight are superseded (failed) in this transaction.
+        if remaining <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Chargeback amount must be greater than zero".into(),
+            ));
+        }
+        supersede_in_flight_refunds_pg(&mut *conn, id, now).await?;
+        write_chargeback_reversal_pg(
+            &mut *conn,
+            &payment,
+            remaining,
+            PaymentTransactionStatus::Disputed,
+            PaymentTransactionStatus::Refunded,
+            now,
+        )
+        .await?;
+        if let Some(order_id) = payment.order_id {
+            sync_order_payment_status_pg(&mut *conn, order_id.into_uuid(), now).await?;
+        }
+        return Ok(());
+    }
     let amount = amount.unwrap_or(remaining);
     if amount <= Decimal::ZERO {
         return Err(CommerceError::ValidationError(
@@ -644,6 +715,8 @@ pub(crate) async fn record_lost_chargeback_amount_pg(
         ));
     }
     stateset_core::validate_money_scale(payment.currency, amount)?;
+    // An explicit amount is bounded by the unreserved balance: in-flight
+    // refunds keep their reservation and are left alone.
     let in_flight = in_flight_refunds_pg(&mut *conn, id).await?;
     if amount > remaining - in_flight {
         return Err(CommerceError::RefundExceedsCaptured {
@@ -1259,11 +1332,12 @@ impl PgPaymentRepository {
         .ok_or(CommerceError::NotFound)?;
         let payment = Self::row_to_payment(row)?;
         let current = payment.status;
-        let target = input.status.unwrap_or(current);
-        if !payment_transition_allowed(current, target) {
-            return Err(transition_conflict(current, target));
+        let requested = input.status.unwrap_or(current);
+        if !payment_transition_allowed(current, requested) {
+            return Err(transition_conflict(current, requested));
         }
-        ensure_not_refund_by_status_flip(current, target)?;
+        ensure_not_refund_by_status_flip(current, requested)?;
+        let target = payment.resolved_status_write(requested);
 
         // A write that moves the payment from a non-capturing status into a
         // capturing one re-acquires a slice of the order total, so it gets the
@@ -1286,7 +1360,7 @@ impl PgPaymentRepository {
 
         // A lost chargeback is recorded on the ledger after the status write;
         // keep the pre-write payment for it.
-        let chargeback = current.is_lost_chargeback(target).then(|| payment.clone());
+        let chargeback = current.is_lost_chargeback(requested).then(|| payment.clone());
         let rows = sqlx::query(
             "UPDATE payments SET status = $1, external_id = $2, failure_reason = $3,
              failure_code = $4, metadata = $5, updated_at = $6
@@ -2331,11 +2405,12 @@ impl PgPaymentRepository {
             // the batch's own transaction: one illegal status write aborts the
             // whole atomic batch rather than silently landing.
             let current = payment.status;
-            let target = input.status.unwrap_or(current);
-            if !payment_transition_allowed(current, target) {
-                return Err(transition_conflict(current, target));
+            let requested = input.status.unwrap_or(current);
+            if !payment_transition_allowed(current, requested) {
+                return Err(transition_conflict(current, requested));
             }
-            ensure_not_refund_by_status_flip(current, target)?;
+            ensure_not_refund_by_status_flip(current, requested)?;
+            let target = payment.resolved_status_write(requested);
             // Same order guards as the single-row `update_async` when the
             // write re-acquires a slice of the order total.
             if !is_capturing(current) && is_capturing(target) {
@@ -2350,7 +2425,7 @@ impl PgPaymentRepository {
                     .await?;
                 }
             }
-            let chargeback = current.is_lost_chargeback(target).then(|| payment.clone());
+            let chargeback = current.is_lost_chargeback(requested).then(|| payment.clone());
             let rows = sqlx::query(
                 "UPDATE payments SET status = $1, external_id = $2, failure_reason = $3,
                  failure_code = $4, metadata = $5, updated_at = $6

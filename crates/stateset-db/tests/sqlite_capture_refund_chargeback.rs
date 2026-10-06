@@ -11,14 +11,20 @@
 //! 3. A dispute lost for PART of a payment writes a `chargeback_lost` refund
 //!    row for the disputed amount and leaves the payment partially refunded;
 //!    a disputed payment can never be cancelled.
+//! 4. Resolving a dispute keeps the refund ledger: a won dispute restores the
+//!    status the ledger implies (refunds completed before the dispute stay),
+//!    and a FULL lost chargeback fails every refund still in flight (the
+//!    network already took the money they would return), while a partial loss
+//!    leaves them alone.
 
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_core::{
-    CommerceError, CreateCustomer, CreateOrder, CreateOrderItem, CreatePayment, CreateRefund,
-    CustomerRepository, LOST_CHARGEBACK_REFUND_REASON, OrderId, OrderRepository, Payment,
-    PaymentId, PaymentMethodType, PaymentRepository, PaymentStatus, PaymentTransactionStatus,
-    ProductId, RefundStatus, UpdatePayment,
+    CHARGEBACK_SUPERSEDED_REFUND_REASON, CommerceError, CreateCustomer, CreateOrder,
+    CreateOrderItem, CreatePayment, CreateRefund, CustomerRepository,
+    LOST_CHARGEBACK_REFUND_REASON, OrderId, OrderRepository, Payment, PaymentId, PaymentMethodType,
+    PaymentRepository, PaymentStatus, PaymentTransactionStatus, ProductId, RefundStatus,
+    UpdatePayment,
 };
 use stateset_db::{DatabaseConfig, SqliteDatabase};
 use std::sync::Arc;
@@ -491,4 +497,198 @@ fn full_lost_chargeback_via_status_write_uses_the_captured_amount() {
     assert_eq!(lost.amount_refunded, dec!(45.00), "only the capture was reversed");
     let rows = db.payments().get_refunds(payment.id).expect("refunds");
     assert_eq!(rows[0].amount, dec!(45.00));
+}
+
+// ---------------------------------------------------------------------------
+// 4. Dispute resolution keeps the refund ledger
+// ---------------------------------------------------------------------------
+
+fn pending_refund(
+    db: &SqliteDatabase,
+    payment_id: PaymentId,
+    amount: Decimal,
+) -> stateset_core::Refund {
+    db.payments()
+        .create_refund(CreateRefund { payment_id, amount: Some(amount), ..Default::default() })
+        .expect("create refund")
+}
+
+fn completed_refund(db: &SqliteDatabase, payment_id: PaymentId, amount: Decimal) {
+    let refund = pending_refund(db, payment_id, amount);
+    db.payments().complete_refund(refund.id).expect("complete refund");
+}
+
+/// Move refund `id` to `processing` (the processor accepted it but has not
+/// settled it yet); no public API takes a refund there.
+fn mark_processing(db: &SqliteDatabase, id: Uuid) {
+    let conn = db.conn().expect("conn");
+    conn.execute("UPDATE refunds SET status = 'processing' WHERE id = ?", [id.to_string()])
+        .expect("mark processing");
+}
+
+#[test]
+fn won_dispute_after_a_partial_refund_restores_partially_refunded() {
+    let db = db();
+    let (order_id, payment) = captured_payment(&db, dec!(100.00));
+    completed_refund(&db, payment.id, dec!(30.00));
+    assert_eq!(order_payment_status(&db, order_id), PaymentStatus::PartiallyRefunded);
+    set_status(&db, payment.id, PaymentTransactionStatus::Disputed).expect("dispute");
+
+    let won = set_status(&db, payment.id, PaymentTransactionStatus::Completed).expect("won");
+    assert_eq!(won.status, PaymentTransactionStatus::PartiallyRefunded, "the refund stays");
+    assert_eq!(won.amount_refunded, dec!(30.00));
+    assert_eq!(order_payment_status(&db, order_id), PaymentStatus::PartiallyRefunded);
+    assert!(events(&db, "payments.chargeback_lost.v1", &payment.id.to_string()).is_empty());
+
+    // Exactly the unrefunded remainder is still refundable.
+    let err = db
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(70.01)),
+            ..Default::default()
+        })
+        .expect_err("over the remainder");
+    assert!(matches!(err, CommerceError::RefundExceedsCaptured { .. }), "{err:?}");
+    completed_refund(&db, payment.id, dec!(70.00));
+    let after = db.payments().get(payment.id).expect("get").expect("payment");
+    assert_eq!(after.status, PaymentTransactionStatus::Refunded);
+    assert_eq!(order_payment_status(&db, order_id), PaymentStatus::Refunded);
+}
+
+#[test]
+fn won_dispute_through_the_atomic_batch_restores_partially_refunded() {
+    let db = db();
+    let (order_id, payment) = captured_payment(&db, dec!(100.00));
+    completed_refund(&db, payment.id, dec!(25.00));
+    set_status(&db, payment.id, PaymentTransactionStatus::Disputed).expect("dispute");
+    let won = db
+        .payments()
+        .update_batch_atomic(vec![(
+            payment.id,
+            UpdatePayment {
+                status: Some(PaymentTransactionStatus::Completed),
+                ..Default::default()
+            },
+        )])
+        .expect("won");
+    assert_eq!(won[0].status, PaymentTransactionStatus::PartiallyRefunded);
+    assert_eq!(won[0].amount_refunded, dec!(25.00));
+    assert_eq!(order_payment_status(&db, order_id), PaymentStatus::PartiallyRefunded);
+}
+
+#[test]
+fn won_dispute_with_nothing_refunded_is_completed_and_keeps_in_flight_refunds() {
+    let db = db();
+    let (order_id, payment) = captured_payment(&db, dec!(100.00));
+    let pending = pending_refund(&db, payment.id, dec!(40.00));
+    set_status(&db, payment.id, PaymentTransactionStatus::Disputed).expect("dispute");
+
+    let won = set_status(&db, payment.id, PaymentTransactionStatus::Completed).expect("won");
+    assert_eq!(won.status, PaymentTransactionStatus::Completed);
+    assert_eq!(order_payment_status(&db, order_id), PaymentStatus::Paid);
+    // The refund requested before the dispute settles normally afterwards.
+    db.payments().complete_refund(pending.id).expect("complete after the win");
+    let after = db.payments().get(payment.id).expect("get").expect("payment");
+    assert_eq!(after.status, PaymentTransactionStatus::PartiallyRefunded);
+    assert_eq!(after.amount_refunded, dec!(40.00));
+}
+
+fn assert_superseded(db: &SqliteDatabase, refund_ids: &[Uuid]) {
+    for id in refund_ids {
+        let refund = db.payments().get_refund(*id).expect("get").expect("refund");
+        assert_eq!(refund.status, RefundStatus::Failed, "refund {id}");
+        assert_eq!(refund.failure_reason.as_deref(), Some(CHARGEBACK_SUPERSEDED_REFUND_REASON));
+        let facts = events(db, "payments.refund_failed.v1", &id.to_string());
+        assert_eq!(facts.len(), 1, "one refund_failed fact for {id}");
+        assert_eq!(facts[0]["reason"], CHARGEBACK_SUPERSEDED_REFUND_REASON);
+        // Completing it later is refused, and failing it again is a no-op.
+        assert!(db.payments().complete_refund(*id).is_err());
+        db.payments().fail_refund(*id, "late sweep").expect("idempotent fail");
+        assert_eq!(events(db, "payments.refund_failed.v1", &id.to_string()).len(), 1);
+    }
+}
+
+#[test]
+fn full_lost_chargeback_via_status_write_fails_in_flight_refunds() {
+    let db = db();
+    let (order_id, payment) = captured_payment(&db, dec!(100.00));
+    completed_refund(&db, payment.id, dec!(10.00));
+    let pending = pending_refund(&db, payment.id, dec!(20.00));
+    let processing = pending_refund(&db, payment.id, dec!(15.00));
+    mark_processing(&db, processing.id);
+    set_status(&db, payment.id, PaymentTransactionStatus::Disputed).expect("dispute");
+
+    let lost = set_status(&db, payment.id, PaymentTransactionStatus::Refunded).expect("lost");
+    assert_eq!(lost.status, PaymentTransactionStatus::Refunded);
+    assert_eq!(lost.amount_refunded, dec!(100.00));
+    let reversal = db
+        .payments()
+        .get_refunds(payment.id)
+        .expect("refunds")
+        .into_iter()
+        .find(|r| r.reason.as_deref() == Some(LOST_CHARGEBACK_REFUND_REASON))
+        .expect("chargeback row");
+    assert_eq!(reversal.amount, dec!(90.00), "the whole unrefunded remainder");
+    assert_superseded(&db, &[pending.id, processing.id]);
+    assert_eq!(order_payment_status(&db, order_id), PaymentStatus::Refunded);
+    let after = db.payments().get(payment.id).expect("get").expect("payment");
+    assert_eq!(after.amount_refunded, dec!(100.00), "nothing settled after the loss");
+}
+
+#[test]
+fn full_lost_chargeback_via_record_lost_chargeback_fails_in_flight_refunds() {
+    let db = db();
+    let (order_id, payment) = captured_payment(&db, dec!(100.00));
+    let pending = pending_refund(&db, payment.id, dec!(30.00));
+    set_status(&db, payment.id, PaymentTransactionStatus::Disputed).expect("dispute");
+
+    let lost = db.payments().record_lost_chargeback(payment.id, None).expect("full loss");
+    assert_eq!(lost.status, PaymentTransactionStatus::Refunded);
+    assert_eq!(lost.amount_refunded, dec!(100.00));
+    assert_superseded(&db, &[pending.id]);
+    assert_eq!(order_payment_status(&db, order_id), PaymentStatus::Refunded);
+}
+
+#[test]
+fn full_lost_chargeback_through_the_atomic_batch_fails_in_flight_refunds() {
+    let db = db();
+    let (_, payment) = captured_payment(&db, dec!(100.00));
+    let pending = pending_refund(&db, payment.id, dec!(30.00));
+    set_status(&db, payment.id, PaymentTransactionStatus::Disputed).expect("dispute");
+    db.payments()
+        .update_batch_atomic(vec![(
+            payment.id,
+            UpdatePayment {
+                status: Some(PaymentTransactionStatus::Refunded),
+                ..Default::default()
+            },
+        )])
+        .expect("lost");
+    assert_superseded(&db, &[pending.id]);
+}
+
+#[test]
+fn partial_lost_chargeback_leaves_in_flight_refunds_alone() {
+    let db = db();
+    let (order_id, payment) = captured_payment(&db, dec!(100.00));
+    completed_refund(&db, payment.id, dec!(10.00));
+    let pending = pending_refund(&db, payment.id, dec!(30.00));
+    set_status(&db, payment.id, PaymentTransactionStatus::Disputed).expect("dispute");
+
+    let lost =
+        db.payments().record_lost_chargeback(payment.id, Some(dec!(40.00))).expect("partial loss");
+    assert_eq!(lost.status, PaymentTransactionStatus::PartiallyRefunded);
+    assert_eq!(lost.amount_refunded, dec!(50.00));
+    let still = db.payments().get_refund(pending.id).expect("get").expect("refund");
+    assert_eq!(still.status, RefundStatus::Pending, "a partial loss keeps the reservation");
+    assert!(events(&db, "payments.refund_failed.v1", &pending.id.to_string()).is_empty());
+    // captured - completed - in flight is still non-negative ...
+    assert!(lost.captured() - lost.amount_refunded - still.amount >= Decimal::ZERO);
+    // ... so the refund settles and the books still balance.
+    db.payments().complete_refund(pending.id).expect("complete");
+    let after = db.payments().get(payment.id).expect("get").expect("payment");
+    assert_eq!(after.amount_refunded, dec!(80.00));
+    assert_eq!(after.status, PaymentTransactionStatus::PartiallyRefunded);
+    assert_eq!(order_payment_status(&db, order_id), PaymentStatus::PartiallyRefunded);
 }

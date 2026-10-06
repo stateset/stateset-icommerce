@@ -357,14 +357,18 @@ pub(crate) fn create_refund_in_tx(
 /// unrefundable (nothing remains to refund), frees the order for cancel/delete
 /// guards, and lets the caller's `sync_order_payment_status_tx` re-derive the
 /// order from the ledger (full order lost -> `refunded`, part ->
-/// `partially_refunded`). Emits `payments.chargeback_lost.v1`. Returns the
-/// ledger row's id. Mirrored exactly in the Postgres backend.
+/// `partially_refunded`). Emits `payments.chargeback_lost.v1`. Refunds still
+/// in flight are failed in the same transaction
+/// ([`supersede_in_flight_refunds_tx`]): the network took the money they
+/// would have returned. Returns the ledger row's id. Mirrored exactly in the
+/// Postgres backend.
 pub(crate) fn record_lost_chargeback_tx(
     tx: &rusqlite::Transaction<'_>,
     payment: &Payment,
     now: chrono::DateTime<chrono::Utc>,
 ) -> rusqlite::Result<Uuid> {
     let reversed = (payment.captured() - payment.amount_refunded).max(rust_decimal::Decimal::ZERO);
+    supersede_in_flight_refunds_tx(tx, &payment.id.to_string(), now)?;
     write_chargeback_reversal_tx(
         tx,
         payment,
@@ -373,6 +377,57 @@ pub(crate) fn record_lost_chargeback_tx(
         PaymentTransactionStatus::Refunded,
         now,
     )
+}
+
+/// Fail every refund of `payment_id` still in flight (`pending` /
+/// `processing`), on the caller's transaction, because a FULL lost chargeback
+/// has already taken the whole remaining balance they would return: completing
+/// one later is refused (it would refund past the capture), so leaving it
+/// in flight would strand it forever. Each is failed exactly as `fail_refund`
+/// fails it — `failure_reason =`
+/// [`stateset_core::CHARGEBACK_SUPERSEDED_REFUND_REASON`], its reservation
+/// released, one `payments.refund_failed.v1` fact — and its id is returned.
+/// A partial loss never calls this: it is bounded by the unreserved balance,
+/// so in-flight refunds stay covered. Mirrored in the Postgres backend.
+fn supersede_in_flight_refunds_tx(
+    tx: &rusqlite::Transaction<'_>,
+    payment_id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<Vec<Uuid>> {
+    let reason = stateset_core::CHARGEBACK_SUPERSEDED_REFUND_REASON;
+    let ids: Vec<String> = tx
+        .prepare(
+            "SELECT id FROM refunds WHERE payment_id = ? AND status IN ('pending', 'processing')
+             ORDER BY created_at",
+        )?
+        .query_map([payment_id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut failed = Vec::with_capacity(ids.len());
+    for id in ids {
+        let rows = tx.execute(
+            "UPDATE refunds SET status = ?, failure_reason = ?, updated_at = ? \
+             WHERE id = ? AND status IN ('pending', 'processing')",
+            params![RefundStatus::Failed.to_string(), reason, now.to_rfc3339(), &id],
+        )?;
+        if rows == 1 {
+            append_kernel_event_tx(
+                tx,
+                &KernelOutboxEvent::domain(
+                    "payments.refund_failed.v1",
+                    "refund",
+                    id.clone(),
+                    serde_json::json!({
+                        "refund_id": id,
+                        "payment_id": payment_id,
+                        "reason": reason,
+                    }),
+                    None,
+                ),
+            )?;
+            failed.push(parse_uuid_row(&id, "refund", "id")?);
+        }
+    }
+    Ok(failed)
 }
 
 /// The ledger half of a lost chargeback: a `completed` refund row of
@@ -997,6 +1052,29 @@ pub(crate) fn record_lost_chargeback_amount_tx(
         ))));
     }
     let remaining = (payment.captured() - payment.amount_refunded).max(rust_decimal::Decimal::ZERO);
+    if amount.is_none() {
+        // The whole remaining balance: the full lost-chargeback path, exactly
+        // as the `Disputed -> Refunded` status write records it — refunds
+        // still in flight are superseded (failed) in this transaction.
+        if remaining <= rust_decimal::Decimal::ZERO {
+            return Err(domain_err(CommerceError::ValidationError(
+                "Chargeback amount must be greater than zero".into(),
+            )));
+        }
+        supersede_in_flight_refunds_tx(tx, &id.to_string(), now)?;
+        write_chargeback_reversal_tx(
+            tx,
+            &payment,
+            remaining,
+            PaymentTransactionStatus::Disputed,
+            PaymentTransactionStatus::Refunded,
+            now,
+        )?;
+        if let Some(order_id) = payment.order_id {
+            sync_order_payment_status_tx(tx, &order_id.to_string(), now)?;
+        }
+        return Ok(());
+    }
     let amount = amount.unwrap_or(remaining);
     if amount <= rust_decimal::Decimal::ZERO {
         return Err(domain_err(CommerceError::ValidationError(
@@ -1004,8 +1082,9 @@ pub(crate) fn record_lost_chargeback_amount_tx(
         )));
     }
     stateset_core::validate_money_scale(payment.currency, amount).map_err(domain_err)?;
-    // In-flight refunds still hold their reservation: a reversal may not take
-    // money they are about to return.
+    // An explicit amount is bounded by the unreserved balance: in-flight
+    // refunds still hold their reservation, and a reversal may not take money
+    // they are about to return — so they are left alone.
     let in_flight = in_flight_refunds_tx(tx, &id.to_string())?;
     if amount > remaining - in_flight {
         return Err(domain_err(CommerceError::RefundExceedsCaptured {
@@ -1219,11 +1298,12 @@ impl PaymentRepository for SqlitePaymentRepository {
                     other => other,
                 })?;
             let current = payment.status;
-            let target = input.status.unwrap_or(current);
-            if !payment_transition_allowed(current, target) {
-                return Err(domain_err(transition_conflict(current, target)));
+            let requested = input.status.unwrap_or(current);
+            if !payment_transition_allowed(current, requested) {
+                return Err(domain_err(transition_conflict(current, requested)));
             }
-            ensure_not_refund_by_status_flip(current, target).map_err(domain_err)?;
+            ensure_not_refund_by_status_flip(current, requested).map_err(domain_err)?;
+            let target = payment.resolved_status_write(requested);
 
             // A write that moves the payment from a non-capturing status into a
             // capturing one re-acquires a slice of the order total, so it gets
@@ -1245,7 +1325,7 @@ impl PaymentRepository for SqlitePaymentRepository {
 
             // A lost chargeback is recorded on the ledger after the status
             // write; keep the pre-write payment for it.
-            let chargeback = current.is_lost_chargeback(target).then(|| payment.clone());
+            let chargeback = current.is_lost_chargeback(requested).then(|| payment.clone());
             let sql = format!(
                 "UPDATE payments SET status = ?, external_id = ?, failure_reason = ?,
                  failure_code = ?, metadata = ?, updated_at = ? WHERE id = ? AND status IN ({})",
@@ -2133,11 +2213,12 @@ impl PaymentRepository for SqlitePaymentRepository {
             // batch's own transaction: one illegal status write aborts the whole
             // atomic batch rather than silently landing.
             let current = payment.status;
-            let target = input.status.unwrap_or(current);
-            if !payment_transition_allowed(current, target) {
-                return Err(transition_conflict(current, target));
+            let requested = input.status.unwrap_or(current);
+            if !payment_transition_allowed(current, requested) {
+                return Err(transition_conflict(current, requested));
             }
-            ensure_not_refund_by_status_flip(current, target)?;
+            ensure_not_refund_by_status_flip(current, requested)?;
+            let target = payment.resolved_status_write(requested);
             // Same order guards as the single-row `update` when the write
             // re-acquires a slice of the order total.
             if !is_capturing(current) && is_capturing(target) {
@@ -2152,7 +2233,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                     .map_err(map_db_error)?;
                 }
             }
-            let chargeback = current.is_lost_chargeback(target).then(|| payment.clone());
+            let chargeback = current.is_lost_chargeback(requested).then(|| payment.clone());
             let sql = format!(
                 "UPDATE payments SET status = ?, external_id = ?, failure_reason = ?,
                  failure_code = ?, metadata = ?, updated_at = ? WHERE id = ? AND status IN ({})",

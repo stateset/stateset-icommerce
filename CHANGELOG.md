@@ -52,6 +52,27 @@ This project follows Keep a Changelog and Semantic Versioning.
   chargeback).
 - `Payment::refundable_remaining` and `validate_refund` are bounded by the
   captured amount; `RefundExceedsCaptured.captured` reports it.
+- A won dispute no longer forgets refunds completed before the dispute.
+  `Disputed -> Completed` (via `update` / `update_batch_atomic`) now stores
+  the status the refund ledger implies (`Payment::resolved_status_write`):
+  `partially_refunded` when `0 < amount_refunded < captured`, `completed`
+  only when nothing was refunded. Previously a partially refunded payment
+  that won its dispute read `completed` with a non-zero `amount_refunded`.
+  The order's payment status is re-derived in the same transaction. Both
+  backends.
+- A FULL lost chargeback (`Disputed -> Refunded`, or
+  `record_lost_chargeback(id, None)`) fails every refund still `pending` /
+  `processing` on the payment in the same transaction, with
+  `failure_reason = "superseded_by_chargeback"`
+  (`stateset_core::CHARGEBACK_SUPERSEDED_REFUND_REASON`), releasing its
+  reservation and emitting `payments.refund_failed.v1` exactly as
+  `fail_refund` does. Previously such a refund could never complete (that
+  would refund past the capture) and stayed in flight forever.
+  `record_lost_chargeback(id, None)` with refunds in flight is therefore
+  accepted (it was refused); a partial loss with an explicit amount is still
+  bounded by the unreserved balance and leaves in-flight refunds alone. Both
+  backends; the TLA+ `PaymentRefunds` spec models both resolutions and gains
+  the `CompletedMeansNothingRefunded` and `NoStrandedRefund` invariants.
 - Breaking (`stateset-embedded`, `events` feature):
   `ProviderDecision::Captured` gains an `amount: Option<Decimal>` field (the
   amount the processor reports as moved). Partial capture through

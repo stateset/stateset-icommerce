@@ -3,14 +3,17 @@
 //! is recorded exactly and bounds refunds, pending refunds carry the
 //! processor's id and settle exactly once, and a dispute lost for part of a
 //! payment writes a `chargeback_lost` refund row; a disputed payment can never
-//! be cancelled.
+//! be cancelled. Resolving a dispute keeps the refund ledger: a won dispute
+//! restores the status the ledger implies, and a FULL lost chargeback fails
+//! every refund still in flight while a partial loss leaves them alone.
 
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_core::{
-    CommerceError, CreateCustomer, CreateOrder, CreateOrderItem, CreatePayment, CreateRefund,
-    LOST_CHARGEBACK_REFUND_REASON, OrderId, Payment, PaymentId, PaymentMethodType, PaymentStatus,
-    PaymentTransactionStatus, ProductId, RefundStatus, UpdatePayment,
+    CHARGEBACK_SUPERSEDED_REFUND_REASON, CommerceError, CreateCustomer, CreateOrder,
+    CreateOrderItem, CreatePayment, CreateRefund, LOST_CHARGEBACK_REFUND_REASON, OrderId, Payment,
+    PaymentId, PaymentMethodType, PaymentStatus, PaymentTransactionStatus, ProductId, RefundStatus,
+    UpdatePayment,
 };
 use stateset_db::PostgresDatabase;
 use std::env;
@@ -312,13 +315,12 @@ async fn pg_lost_chargeback_is_bounded_and_requires_a_dispute() {
         assert!(db.payments().record_lost_chargeback_async(id, Some(bad)).await.is_err(), "{bad}");
     }
     assert!(db.payments().complete_refund_async(pending.id).await.is_err());
-    let lost = db.payments().record_lost_chargeback_async(id, None).await;
-    // The whole remainder minus the in-flight reservation is not "the whole
-    // remainder", so None (= remaining 100) is refused while 30 is reserved.
-    assert!(lost.is_err());
+    // An explicit amount is bounded by the unreserved balance (70 here) ...
     let partial =
         db.payments().record_lost_chargeback_async(id, Some(dec!(70.00))).await.expect("70");
     assert_eq!(partial.status, PaymentTransactionStatus::PartiallyRefunded);
+    let still = db.payments().get_refund_async(pending.id).await.expect("get").expect("refund");
+    assert_eq!(still.status, RefundStatus::Pending, "a partial loss keeps the reservation");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -330,4 +332,188 @@ async fn pg_full_lost_chargeback_via_status_write_uses_the_captured_amount() {
     set_status(&db, payment.id, PaymentTransactionStatus::Disputed).await.expect("dispute");
     let lost = set_status(&db, payment.id, PaymentTransactionStatus::Refunded).await.expect("lost");
     assert_eq!(lost.amount_refunded, dec!(45.00));
+}
+
+// ---------------------------------------------------------------------------
+// Dispute resolution keeps the refund ledger
+// ---------------------------------------------------------------------------
+
+async fn completed_refund(db: &PostgresDatabase, payment_id: PaymentId, amount: Decimal) {
+    let pending = refund(db, payment_id, Some(amount)).await.expect("create refund");
+    db.payments().complete_refund_async(pending.id).await.expect("complete refund");
+}
+
+/// Move refund `id` to `processing`; no public API takes a refund there.
+async fn mark_processing(db: &PostgresDatabase, id: Uuid) {
+    sqlx::query("UPDATE refunds SET status = 'processing' WHERE id = $1")
+        .bind(id)
+        .execute(db.pool())
+        .await
+        .expect("mark processing");
+}
+
+async fn payment(db: &PostgresDatabase, id: PaymentId) -> Payment {
+    db.payments().get_async(id.into_uuid()).await.expect("get").expect("payment")
+}
+
+async fn assert_superseded(db: &PostgresDatabase, refund_ids: &[Uuid]) {
+    for id in refund_ids {
+        let stored = db.payments().get_refund_async(*id).await.expect("get").expect("refund");
+        assert_eq!(stored.status, RefundStatus::Failed, "refund {id}");
+        assert_eq!(stored.failure_reason.as_deref(), Some(CHARGEBACK_SUPERSEDED_REFUND_REASON));
+        let facts = events(db, "payments.refund_failed.v1", &id.to_string()).await;
+        assert_eq!(facts.len(), 1, "one refund_failed fact for {id}");
+        assert_eq!(facts[0]["reason"], CHARGEBACK_SUPERSEDED_REFUND_REASON);
+        assert!(db.payments().complete_refund_async(*id).await.is_err());
+        db.payments().fail_refund_async(*id, "late sweep").await.expect("idempotent fail");
+        assert_eq!(events(db, "payments.refund_failed.v1", &id.to_string()).await.len(), 1);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pg_won_dispute_after_a_partial_refund_restores_partially_refunded() {
+    let db = require_db!();
+    let (order_id, paid) = captured_payment(&db, dec!(100.00)).await;
+    completed_refund(&db, paid.id, dec!(30.00)).await;
+    set_status(&db, paid.id, PaymentTransactionStatus::Disputed).await.expect("dispute");
+
+    let won = set_status(&db, paid.id, PaymentTransactionStatus::Completed).await.expect("won");
+    assert_eq!(won.status, PaymentTransactionStatus::PartiallyRefunded, "the refund stays");
+    assert_eq!(won.amount_refunded, dec!(30.00));
+    assert_eq!(order_payment_status(&db, order_id).await, PaymentStatus::PartiallyRefunded);
+    assert!(events(&db, "payments.chargeback_lost.v1", &paid.id.to_string()).await.is_empty());
+
+    let err = refund(&db, paid.id, Some(dec!(70.01))).await.expect_err("over the remainder");
+    assert!(matches!(err, CommerceError::RefundExceedsCaptured { .. }), "{err:?}");
+    completed_refund(&db, paid.id, dec!(70.00)).await;
+    assert_eq!(payment(&db, paid.id).await.status, PaymentTransactionStatus::Refunded);
+    assert_eq!(order_payment_status(&db, order_id).await, PaymentStatus::Refunded);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pg_won_dispute_through_the_atomic_batch_restores_partially_refunded() {
+    let db = require_db!();
+    let (order_id, paid) = captured_payment(&db, dec!(100.00)).await;
+    completed_refund(&db, paid.id, dec!(25.00)).await;
+    set_status(&db, paid.id, PaymentTransactionStatus::Disputed).await.expect("dispute");
+    let won = db
+        .payments()
+        .update_batch_atomic_async(vec![(
+            paid.id,
+            UpdatePayment {
+                status: Some(PaymentTransactionStatus::Completed),
+                ..Default::default()
+            },
+        )])
+        .await
+        .expect("won");
+    assert_eq!(won[0].status, PaymentTransactionStatus::PartiallyRefunded);
+    assert_eq!(won[0].amount_refunded, dec!(25.00));
+    assert_eq!(order_payment_status(&db, order_id).await, PaymentStatus::PartiallyRefunded);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pg_won_dispute_with_nothing_refunded_is_completed_and_keeps_in_flight_refunds() {
+    let db = require_db!();
+    let (order_id, paid) = captured_payment(&db, dec!(100.00)).await;
+    let pending = refund(&db, paid.id, Some(dec!(40.00))).await.expect("refund");
+    set_status(&db, paid.id, PaymentTransactionStatus::Disputed).await.expect("dispute");
+
+    let won = set_status(&db, paid.id, PaymentTransactionStatus::Completed).await.expect("won");
+    assert_eq!(won.status, PaymentTransactionStatus::Completed);
+    assert_eq!(order_payment_status(&db, order_id).await, PaymentStatus::Paid);
+    db.payments().complete_refund_async(pending.id).await.expect("complete after the win");
+    let after = payment(&db, paid.id).await;
+    assert_eq!(after.status, PaymentTransactionStatus::PartiallyRefunded);
+    assert_eq!(after.amount_refunded, dec!(40.00));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pg_full_lost_chargeback_via_status_write_fails_in_flight_refunds() {
+    let db = require_db!();
+    let (order_id, paid) = captured_payment(&db, dec!(100.00)).await;
+    completed_refund(&db, paid.id, dec!(10.00)).await;
+    let pending = refund(&db, paid.id, Some(dec!(20.00))).await.expect("refund");
+    let processing = refund(&db, paid.id, Some(dec!(15.00))).await.expect("refund");
+    mark_processing(&db, processing.id).await;
+    set_status(&db, paid.id, PaymentTransactionStatus::Disputed).await.expect("dispute");
+
+    let lost = set_status(&db, paid.id, PaymentTransactionStatus::Refunded).await.expect("lost");
+    assert_eq!(lost.status, PaymentTransactionStatus::Refunded);
+    assert_eq!(lost.amount_refunded, dec!(100.00));
+    let reversal = db
+        .payments()
+        .get_refunds_async(paid.id.into_uuid())
+        .await
+        .expect("refunds")
+        .into_iter()
+        .find(|r| r.reason.as_deref() == Some(LOST_CHARGEBACK_REFUND_REASON))
+        .expect("chargeback row");
+    assert_eq!(reversal.amount, dec!(90.00), "the whole unrefunded remainder");
+    assert_superseded(&db, &[pending.id, processing.id]).await;
+    assert_eq!(order_payment_status(&db, order_id).await, PaymentStatus::Refunded);
+    assert_eq!(payment(&db, paid.id).await.amount_refunded, dec!(100.00));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pg_full_lost_chargeback_via_record_lost_chargeback_fails_in_flight_refunds() {
+    let db = require_db!();
+    let (order_id, paid) = captured_payment(&db, dec!(100.00)).await;
+    let pending = refund(&db, paid.id, Some(dec!(30.00))).await.expect("refund");
+    set_status(&db, paid.id, PaymentTransactionStatus::Disputed).await.expect("dispute");
+
+    let lost = db
+        .payments()
+        .record_lost_chargeback_async(paid.id.into_uuid(), None)
+        .await
+        .expect("full loss");
+    assert_eq!(lost.status, PaymentTransactionStatus::Refunded);
+    assert_eq!(lost.amount_refunded, dec!(100.00));
+    assert_superseded(&db, &[pending.id]).await;
+    assert_eq!(order_payment_status(&db, order_id).await, PaymentStatus::Refunded);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pg_full_lost_chargeback_through_the_atomic_batch_fails_in_flight_refunds() {
+    let db = require_db!();
+    let (_, paid) = captured_payment(&db, dec!(100.00)).await;
+    let pending = refund(&db, paid.id, Some(dec!(30.00))).await.expect("refund");
+    set_status(&db, paid.id, PaymentTransactionStatus::Disputed).await.expect("dispute");
+    db.payments()
+        .update_batch_atomic_async(vec![(
+            paid.id,
+            UpdatePayment {
+                status: Some(PaymentTransactionStatus::Refunded),
+                ..Default::default()
+            },
+        )])
+        .await
+        .expect("lost");
+    assert_superseded(&db, &[pending.id]).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pg_partial_lost_chargeback_leaves_in_flight_refunds_alone() {
+    let db = require_db!();
+    let (order_id, paid) = captured_payment(&db, dec!(100.00)).await;
+    completed_refund(&db, paid.id, dec!(10.00)).await;
+    let pending = refund(&db, paid.id, Some(dec!(30.00))).await.expect("refund");
+    set_status(&db, paid.id, PaymentTransactionStatus::Disputed).await.expect("dispute");
+
+    let lost = db
+        .payments()
+        .record_lost_chargeback_async(paid.id.into_uuid(), Some(dec!(40.00)))
+        .await
+        .expect("partial loss");
+    assert_eq!(lost.status, PaymentTransactionStatus::PartiallyRefunded);
+    assert_eq!(lost.amount_refunded, dec!(50.00));
+    let still = db.payments().get_refund_async(pending.id).await.expect("get").expect("refund");
+    assert_eq!(still.status, RefundStatus::Pending, "a partial loss keeps the reservation");
+    assert!(events(&db, "payments.refund_failed.v1", &pending.id.to_string()).await.is_empty());
+    assert!(lost.captured() - lost.amount_refunded - still.amount >= Decimal::ZERO);
+    db.payments().complete_refund_async(pending.id).await.expect("complete");
+    let after = payment(&db, paid.id).await;
+    assert_eq!(after.amount_refunded, dec!(80.00));
+    assert_eq!(after.status, PaymentTransactionStatus::PartiallyRefunded);
+    assert_eq!(order_payment_status(&db, order_id).await, PaymentStatus::PartiallyRefunded);
 }
