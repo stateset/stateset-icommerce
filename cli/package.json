@@ -216,7 +216,7 @@
     "zod-to-json-schema": "^3.25.2"
   },
   "optionalDependencies": {
-    "@google-cloud/pubsub": "^6.0.1",
+    "@google-cloud/pubsub": "^5.3.1",
     "@grpc/grpc-js": "^1.14.5",
     "@grpc/proto-loader": "^0.8.1",
     "@slack/bolt": "^3.17.0",
