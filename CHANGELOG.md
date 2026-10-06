@@ -6,6 +6,13 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Security
+
+- The generated storefront forces `postcss-selector-parser` to 7.1.6 with an
+  npm override, for GHSA-rj75-hqrm-r3gf (quadratic selector parsing, published
+  2026-10-05). Tailwind CSS 3 still declares `^6.1.2` and no 6.x release is
+  patched; the template's compiled CSS is byte-identical under 7.1.6.
+
 ## [1.37.0] - 2026-10-01
 
 ### Added

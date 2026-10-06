@@ -119,6 +119,8 @@ describe('scaffold', () => {
 
     assert.equal(pkg.dependencies['@stateset/embedded'], `^${embeddedPkg.version}`);
     assert.equal(pkg.dependencies.next, '16.3.8');
+    // Tailwind 3 declares postcss-selector-parser ^6; only 7.1.6 fixes GHSA-rj75-hqrm-r3gf.
+    assert.equal(pkg.overrides?.['postcss-selector-parser'], '7.1.6');
     assert.equal(pkg.dependencies['better-sqlite3'], undefined);
     assert.equal(pkg.devDependencies['better-sqlite3'], undefined);
     assert.equal(pkg.scripts.lint, undefined);
