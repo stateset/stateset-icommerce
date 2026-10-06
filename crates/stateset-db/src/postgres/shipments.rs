@@ -993,6 +993,7 @@ impl PgShipmentRepository {
             .ok_or(CommerceError::OrderNotFound(order_id))?;
         let mut shipment = Self::lock_shipment_tx(&mut tx, shipment_id).await?;
         crate::shipment_updates::check_version(&shipment, expected_version)?;
+        crate::shipment_updates::ensure_items_editable(&shipment)?;
         let item = Self::normalize_items_tx(&mut tx, order_id, &[item])
             .await?
             .pop()
@@ -1062,6 +1063,7 @@ impl PgShipmentRepository {
                 .ok_or(CommerceError::NotFound)?;
         let mut shipment = Self::lock_shipment_tx(&mut tx, parent).await?;
         crate::shipment_updates::check_version(&shipment, expected_version)?;
+        crate::shipment_updates::ensure_items_editable(&shipment)?;
         let row = sqlx::query_as::<_, ShipmentItemRow>(
             "DELETE FROM shipment_items WHERE id = $1 AND shipment_id = $2 RETURNING *",
         )

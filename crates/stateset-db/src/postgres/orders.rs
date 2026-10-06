@@ -1200,7 +1200,7 @@ impl PgOrderRepository {
     /// Update an order (async)
     pub async fn update_async(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
         let mode = Self::ship_mode_for_update(&input)?;
-        self.apply_update_async(id, input, mode).await
+        self.apply_update_async(id, input, mode, false).await
     }
 
     /// How a plain status update touches the lines: `Shipped` ships every
@@ -1231,6 +1231,7 @@ impl PgOrderRepository {
                 ..Default::default()
             },
             mode,
+            true,
         )
         .await
     }
@@ -1317,9 +1318,11 @@ impl PgOrderRepository {
         id: Uuid,
         input: UpdateOrder,
         ship: ShipMode<'_>,
+        walk_to_processing: bool,
     ) -> Result<Order> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let outcome = self.apply_update_in_tx(&mut tx, id, &input, ship).await?;
+        let outcome =
+            self.apply_update_in_tx(&mut tx, id, &input, ship, walk_to_processing).await?;
         tx.commit().await.map_err(map_db_error)?;
         if let Some(err) = outcome.post_commit_error {
             return Err(err);
@@ -1333,12 +1336,18 @@ impl PgOrderRepository {
     /// This is THE transition path: `update_async`, `ship_async` and
     /// `update_batch_atomic_async` all route through it, so a batch of N
     /// updates behaves exactly like N single updates sharing one commit.
+    ///
+    /// `walk_to_processing` is set only by `ship_async`: an explicit ship may
+    /// take a pending/confirmed order through `processing` in this same
+    /// transaction ([`OrderStatus::can_ship_to`]). A plain status update keeps
+    /// the strict state machine ([`OrderStatus::can_transition_to`]).
     pub(crate) async fn apply_update_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         id: Uuid,
         input: &UpdateOrder,
         ship: ShipMode<'_>,
+        walk_to_processing: bool,
     ) -> Result<UpdateOutcome> {
         // The payment status is derived from the payment ledger, never
         // declared (see `UpdateOrder::payment_status`).
@@ -1435,7 +1444,12 @@ impl PgOrderRepository {
             .unwrap_or(current_fulfillment_status);
         let now = Utc::now();
 
-        if !current_status.can_transition_to(new_status) {
+        let allowed = if is_ship && walk_to_processing {
+            current_status.can_ship_to(new_status)
+        } else {
+            current_status.can_transition_to(new_status)
+        };
+        if !allowed {
             if new_status == OrderStatus::Cancelled {
                 return Err(CommerceError::OrderCannotBeCancelled(current_status.to_string()));
             }
@@ -2040,7 +2054,7 @@ impl PgOrderRepository {
 
         for (id, input) in &updates {
             let mode = Self::ship_mode_for_update(input)?;
-            let outcome = self.apply_update_in_tx(&mut tx, *id, input, mode).await?;
+            let outcome = self.apply_update_in_tx(&mut tx, *id, input, mode, false).await?;
             if let Some(err) = outcome.post_commit_error {
                 // An atomic batch cannot commit part of itself: dropping `tx`
                 // rolls every row back; the reservation is still expired by

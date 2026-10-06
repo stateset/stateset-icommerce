@@ -82,18 +82,24 @@ pub(crate) fn validate_create_items(input: &CreateShipment) -> Result<()> {
     Ok(())
 }
 
+/// Refuse an item edit unless the shipment's manifest is still editable
+/// ([`ShipmentStatus::allows_item_changes`]). Call with the parent locked in
+/// the same transaction as the edit, *before* any item row is written, so the
+/// status that is checked is the status the edit commits against.
+pub(crate) fn ensure_items_editable(shipment: &Shipment) -> Result<()> {
+    if shipment.status.allows_item_changes() {
+        return Ok(());
+    }
+    Err(CommerceError::ValidationError(format!(
+        "Cannot change items for shipment in {} status",
+        shipment.status
+    )))
+}
+
 /// Call with the parent locked in a transaction. Contents freeze once ready to ship,
 /// including after cancellation.
 pub(crate) fn change_contents(shipment: &mut Shipment, now: DateTime<Utc>) -> Result<()> {
-    if !matches!(
-        shipment.status,
-        ShipmentStatus::Pending | ShipmentStatus::Processing | ShipmentStatus::OnHold
-    ) {
-        return Err(CommerceError::ValidationError(format!(
-            "Cannot change items for shipment in {} status",
-            shipment.status
-        )));
-    }
+    ensure_items_editable(shipment)?;
     shipment.version = shipment
         .version
         .checked_add(1)

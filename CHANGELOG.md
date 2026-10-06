@@ -6,6 +6,50 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **Cross-entity invariant harness** (`crates/stateset-integration-tests/tests/cross_entity_invariants.rs`):
+  a model-based proptest that drives random sequences across carts → checkout → payments
+  (authorize / capture / fail / cancel / refund) → shipments (create / add item / remove item /
+  advance / hold / cancel) → order ship / deliver / cancel → returns → inventory through the public
+  `Commerce` API, on SQLite always and on Postgres too with `--features postgres` and
+  `DATABASE_URL`. After every operation it checks, from the database alone: refunds ≤ captured per
+  payment and per order; `orders.payment_status` is the fixed point of `PaymentStatus::derive` over
+  the order's payments; order and checkout money foot exactly; fulfillment status, per-line
+  `shipped_quantity`, shipment manifests and shipment statuses agree; inventory balances are
+  non-negative and `allocated` equals Σ live reservations; returns never exceed shipped units; and
+  every refused call leaves every entity the case owns byte-for-byte unchanged. Cases:
+  `CROSS_ENTITY_CASES` (default 32) / `CROSS_ENTITY_PG_CASES` (default 12); shrink budget
+  `CROSS_ENTITY_SHRINK_ITERS`. Four cross-entity gaps that need a product decision are tracked
+  in its shrink-only `KNOWN_GAPS` list, each with a reproducer that must keep failing: shipping a
+  shipment record never ships the order; shipped orders keep their stock `confirmed` (allocated
+  and on hand) forever; a shipped order can still own a shipment waiting to ship (created later,
+  or on hold during the order ship and released after); and cancelling an order leaves its open
+  shipments shippable.
+- **Guard-predicate wiring lint** (`crates/stateset-core/tests/guard_predicate_wiring.rs`): every
+  `can_*` / `allows_*` / `*_allowed` / `*eligible*` predicate on a core model must have a
+  production call site outside its own model file. Known-unwired predicates sit in a shrink-only
+  backlog (27 today); an unlisted dead predicate, a listed predicate that became wired, or a stale
+  witness fails the lint.
+- `ShipmentStatus::allows_item_changes` and `OrderStatus::can_ship_to`.
+
+### Changed (behaviour, needs a release note)
+
+- **A refused ship no longer moves the order.** `Orders::ship` / `ship_lines` (and the async
+  twins) used to advance a `pending`/`confirmed` order to `processing` in separate transactions
+  *before* the ship was validated, so a ship refused for too many units or an expired reservation
+  left the order stranded in `processing` with its version bumped. The walk through `processing`
+  now happens inside the ship's own transaction on both backends (`OrderStatus::can_ship_to`), so a
+  refused ship writes nothing. A successful ship of a pending/confirmed order now bumps the order
+  version once and records one status change (to `partially_shipped`/`shipped`) instead of
+  separate `confirmed` → `processing` steps. Found by the cross-entity harness.
+- **Shipment item edits are decided by one exhaustive rule.** Adding or removing a shipment item
+  is allowed only while the shipment is `pending`, `processing` or `on_hold`; from `ready_to_ship`
+  on (and once cancelled) it is refused with a validation error. The rule now lives in
+  `ShipmentStatus::allows_item_changes` — an exhaustive match, so a new status must decide — and is
+  checked under the shipment lock before any item row is written, on both backends. The
+  `add_shipment_item` / `remove_shipment_item` MCP tool descriptions now state it.
+
 ## [1.37.0] - 2026-10-01
 
 ### Added

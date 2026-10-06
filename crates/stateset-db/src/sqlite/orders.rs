@@ -1241,11 +1241,17 @@ impl SqliteOrderRepository {
     /// remaining unit (legacy status flip), [`ShipMode::Lines`] ships explicit
     /// per-line quantities and resolves the status to
     /// `PartiallyShipped`/`Shipped` from the line totals.
+    ///
+    /// `walk_to_processing` is set only by [`OrderRepository::ship`]: an
+    /// explicit ship may take a pending/confirmed order through `processing`
+    /// in this same transaction ([`OrderStatus::can_ship_to`]). A plain status
+    /// update keeps the strict state machine ([`OrderStatus::can_transition_to`]).
     pub(crate) fn apply_update_in_tx(
         tx: &rusqlite::Transaction<'_>,
         id: OrderId,
         input: &UpdateOrder,
         ship: &ShipMode<'_>,
+        walk_to_processing: bool,
     ) -> std::result::Result<UpdateOutcome, rusqlite::Error> {
         // The payment status is derived from the payment ledger, never
         // declared (see `UpdateOrder::payment_status`).
@@ -1319,8 +1325,13 @@ impl SqliteOrderRepository {
                     line_deltas = deltas;
                 }
                 let target = effective_status.unwrap_or(status);
+                let allowed = if is_ship && walk_to_processing {
+                    current_status.can_ship_to(target)
+                } else {
+                    current_status.can_transition_to(target)
+                };
 
-                if !current_status.can_transition_to(target) {
+                if !allowed {
                     if target == OrderStatus::Cancelled {
                         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                             CommerceError::OrderCannotBeCancelled(current_status.to_string()),
@@ -1581,9 +1592,15 @@ impl SqliteOrderRepository {
 
     /// Shared implementation of [`OrderRepository::update`] and [`OrderRepository::ship`]:
     /// one [`Self::apply_update_in_tx`] in its own immediate transaction.
-    fn apply_update(&self, id: OrderId, input: UpdateOrder, ship: ShipMode<'_>) -> Result<Order> {
+    fn apply_update(
+        &self,
+        id: OrderId,
+        input: UpdateOrder,
+        ship: ShipMode<'_>,
+        walk_to_processing: bool,
+    ) -> Result<Order> {
         let outcome = with_immediate_transaction(&self.pool, |tx| {
-            Self::apply_update_in_tx(tx, id, &input, &ship)
+            Self::apply_update_in_tx(tx, id, &input, &ship, walk_to_processing)
         })?;
 
         if let Some(err) = outcome.post_commit_error {
@@ -1656,7 +1673,7 @@ impl OrderRepository for SqliteOrderRepository {
 
     fn update(&self, id: OrderId, input: UpdateOrder) -> Result<Order> {
         let mode = Self::ship_mode_for_update(&input)?;
-        self.apply_update(id, input, mode)
+        self.apply_update(id, input, mode, false)
     }
 
     fn ship(&self, id: OrderId, input: ShipOrder) -> Result<Order> {
@@ -1671,6 +1688,7 @@ impl OrderRepository for SqliteOrderRepository {
                 ..Default::default()
             },
             mode,
+            true,
         )
     }
 
@@ -2019,7 +2037,8 @@ impl OrderRepository for SqliteOrderRepository {
 
         for (id, input) in &updates {
             let mode = Self::ship_mode_for_update(input)?;
-            let outcome = Self::apply_update_in_tx(&tx, *id, input, &mode).map_err(map_db_error)?;
+            let outcome =
+                Self::apply_update_in_tx(&tx, *id, input, &mode, false).map_err(map_db_error)?;
             if let Some(err) = outcome.post_commit_error {
                 // A single update commits the expiry bookkeeping before
                 // surfacing `ReservationExpired`; an atomic batch cannot

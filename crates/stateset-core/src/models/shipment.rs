@@ -139,6 +139,31 @@ impl ShipmentStatus {
     pub const fn is_terminal(&self) -> bool {
         matches!(self, Self::Delivered | Self::Cancelled | Self::Returned)
     }
+
+    /// Whether items may be added to or removed from a shipment in this status.
+    ///
+    /// The manifest is editable only before the package is packed: `pending`,
+    /// `processing` and `on_hold` (a hold is entered only from those two).
+    /// From `ready_to_ship` on — and once cancelled — the contents are frozen,
+    /// because they are what was (or will be) handed to the carrier and what
+    /// order-line allocation was computed against.
+    ///
+    /// The match is exhaustive on purpose: a new status must decide here
+    /// whether its manifest is editable.
+    #[must_use]
+    pub const fn allows_item_changes(self) -> bool {
+        match self {
+            Self::Pending | Self::Processing | Self::OnHold => true,
+            Self::ReadyToShip
+            | Self::Shipped
+            | Self::InTransit
+            | Self::OutForDelivery
+            | Self::Delivered
+            | Self::Failed
+            | Self::Returned
+            | Self::Cancelled => false,
+        }
+    }
 }
 
 /// A shipment tracks the physical delivery of items from an order
@@ -358,6 +383,30 @@ mod tests {
             ShipmentStatus::OutForDelivery
         );
         assert_eq!(ShipmentStatus::from_str("canceled").unwrap(), ShipmentStatus::Cancelled);
+    }
+
+    /// A shipment's manifest is editable only before it is packed: once it is
+    /// `ready_to_ship` (or anywhere past it, or cancelled) the contents are
+    /// frozen. `on_hold` is reachable only from `pending`/`processing`, so it
+    /// is still pre-pack.
+    #[test]
+    fn item_changes_are_allowed_only_before_packing() {
+        use ShipmentStatus::*;
+        for status in [Pending, Processing, OnHold] {
+            assert!(status.allows_item_changes(), "{status}");
+        }
+        for status in [
+            ReadyToShip,
+            Shipped,
+            InTransit,
+            OutForDelivery,
+            Delivered,
+            Failed,
+            Returned,
+            Cancelled,
+        ] {
+            assert!(!status.allows_item_changes(), "{status}");
+        }
     }
 
     #[test]

@@ -908,6 +908,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut shipment = Self::get_with_conn(&tx, shipment_id)?.ok_or(CommerceError::NotFound)?;
         crate::shipment_updates::check_version(&shipment, expected_version)?;
+        crate::shipment_updates::ensure_items_editable(&shipment)?;
         let item = Self::normalize_items_tx(&tx, shipment.order_id, &[item])?
             .pop()
             .ok_or_else(|| CommerceError::Internal("Missing normalized shipment item".into()))?;
@@ -967,6 +968,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
         let shipment_id = ShipmentId::from(parse_uuid(&parent, "shipment_item", "shipment_id")?);
         let mut shipment = Self::get_with_conn(&tx, shipment_id)?.ok_or(CommerceError::NotFound)?;
         crate::shipment_updates::check_version(&shipment, expected_version)?;
+        crate::shipment_updates::ensure_items_editable(&shipment)?;
         let item = shipment
             .items
             .iter()

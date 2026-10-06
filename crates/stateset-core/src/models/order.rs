@@ -129,6 +129,24 @@ impl OrderStatus {
         }
     }
 
+    /// Whether a ship (every remaining unit, or some lines) may take an order
+    /// from this status to `target` in one atomic step.
+    ///
+    /// Shipping a `pending` or `confirmed` order implies the walk through
+    /// `processing`. The repositories apply that walk inside the ship's own
+    /// transaction, so a ship that is refused (too many units, an expired
+    /// reservation, …) leaves the order exactly as it was instead of
+    /// stranding it in `processing`.
+    #[must_use]
+    pub fn can_ship_to(self, target: Self) -> bool {
+        match (self, target) {
+            (Self::Pending | Self::Confirmed, Self::PartiallyShipped | Self::Shipped) => {
+                Self::Processing.can_transition_to(target)
+            }
+            _ => self.can_transition_to(target),
+        }
+    }
+
     /// Whether lines may still be added to / removed from an order in this
     /// status.
     ///
@@ -1204,6 +1222,23 @@ mod tests {
     fn test_order_status_allows_idempotent_transition() {
         assert!(OrderStatus::Pending.can_transition_to(OrderStatus::Pending));
         assert!(OrderStatus::Cancelled.can_transition_to(OrderStatus::Cancelled));
+    }
+
+    #[test]
+    fn test_ship_walks_pre_processing_orders_through_processing() {
+        use OrderStatus::*;
+        for from in [Pending, Confirmed, Processing] {
+            assert!(from.can_ship_to(Shipped), "{from}");
+            assert!(from.can_ship_to(PartiallyShipped), "{from}");
+        }
+        assert!(PartiallyShipped.can_ship_to(Shipped));
+        for from in [Shipped, Delivered, Cancelled, Refunded] {
+            assert!(!from.can_ship_to(PartiallyShipped), "{from}");
+        }
+        assert!(!Cancelled.can_ship_to(Shipped));
+        // Only ships get the walk; other targets are plain transitions.
+        assert!(!Pending.can_ship_to(Delivered));
+        assert!(!Confirmed.can_ship_to(Delivered));
     }
 
     #[test]
