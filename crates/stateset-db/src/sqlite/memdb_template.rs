@@ -30,6 +30,10 @@
 //!   migrates from scratch), for debugging migrations themselves.
 //! - If the template cannot be built, stores fall back to migrating from
 //!   scratch.
+//! - On Linux, building the template also sweeps `stateset_memdb_<pid>_*`
+//!   files left in the temp dir by processes that no longer exist (a killed
+//!   test run never reaches its drop guards). Files of live processes are
+//!   never touched.
 
 use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest, Sha256};
@@ -92,6 +96,8 @@ fn migration_set_key() -> String {
 }
 
 fn build() -> Option<Vec<u8>> {
+    #[cfg(target_os = "linux")]
+    sweep_orphans(&std::env::temp_dir(), |pid| Path::new("/proc").join(pid.to_string()).exists());
     let path = std::env::temp_dir().join(format!(
         "stateset_memdb_template_{}_{}.db",
         std::process::id(),
@@ -112,6 +118,33 @@ fn build() -> Option<Vec<u8>> {
             None
         }
     }
+}
+
+/// Delete `stateset_memdb_<pid>_*` files (stores, templates and their
+/// `-wal`/`-shm`/`-journal` siblings) in `dir` whose `<pid>` is not alive.
+/// Returns how many files were removed.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn sweep_orphans(dir: &Path, is_alive: impl Fn(u32) -> bool) -> usize {
+    let own = std::process::id();
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(rest) = name.to_str().and_then(|n| n.strip_prefix("stateset_memdb_")) else {
+            continue;
+        };
+        let rest = rest.strip_prefix("template_").unwrap_or(rest);
+        let Some(pid) = rest.split('_').next().and_then(|p| p.parse::<u32>().ok()) else {
+            continue;
+        };
+        if pid != own && !is_alive(pid) && std::fs::remove_file(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        tracing::debug!("removed {removed} :memory: store files left by dead processes");
+    }
+    removed
 }
 
 fn build_at(path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -332,6 +365,41 @@ mod tests {
         let durable = SqliteDatabase::new(&DatabaseConfig::sqlite(file.to_str().expect("utf8")))
             .expect("file store opens");
         assert_eq!(synchronous(&durable), 1, "file store must keep synchronous = NORMAL");
+    }
+
+    #[test]
+    fn orphan_sweep_removes_only_dead_processes_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let own = std::process::id();
+        let touch = |name: &str| std::fs::write(dir.path().join(name), b"x").expect("write");
+        for name in [
+            "stateset_memdb_4000001_0.db",
+            "stateset_memdb_4000001_0.db-wal",
+            "stateset_memdb_template_4000001_abcd.db",
+            "stateset_memdb_4000002_7.db",
+            "unrelated_4000001.db",
+            "stateset_memdb_notapid_1.db",
+        ] {
+            touch(name);
+        }
+        touch(&format!("stateset_memdb_{own}_0.db"));
+
+        // 4000001 is dead, 4000002 is alive; our own files are never swept.
+        let removed = sweep_orphans(dir.path(), |pid| pid == 4_000_002);
+        assert_eq!(removed, 3);
+        let mut left: Vec<String> = std::fs::read_dir(dir.path())
+            .expect("read_dir")
+            .map(|e| e.expect("entry").file_name().into_string().expect("utf8"))
+            .collect();
+        left.sort();
+        let mut expected = vec![
+            format!("stateset_memdb_{own}_0.db"),
+            "stateset_memdb_4000002_7.db".to_string(),
+            "stateset_memdb_notapid_1.db".to_string(),
+            "unrelated_4000001.db".to_string(),
+        ];
+        expected.sort();
+        assert_eq!(left, expected);
     }
 
     #[test]

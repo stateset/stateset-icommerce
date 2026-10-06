@@ -27,6 +27,10 @@ This project follows Keep a Changelog and Semantic Versioning.
   parallel builds a single fsync took seconds. `:memory:` stores now run with
   `synchronous = OFF`, because their files are deleted when the store drops
   and an fsync protects nothing. File-backed stores keep `synchronous = NORMAL`.
+- `:memory:` store files of killed processes were never removed (their drop
+  guards never ran); one developer machine held 2,098 of them (3.4 GB). On
+  Linux, the first `:memory:` store in a process now sweeps
+  `stateset_memdb_<pid>_*` files whose process no longer exists.
 
 ## [1.37.0] - 2026-10-01
 
