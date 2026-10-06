@@ -83,6 +83,16 @@ bindings/ruby/target/
 bindings/ruby/lib/*.so
 bindings/ruby/lib/*.dylib
 bindings/ruby/lib/*.bundle
+bindings/ruby/lib/stateset_embedded/*.so
+bindings/ruby/lib/stateset_embedded/*.dylib
+bindings/ruby/lib/stateset_embedded/*.bundle
+bindings/ruby/tmp/
+bindings/ruby/pkg/
+bindings/ruby/vendor/
+bindings/ruby/.bundle/
+bindings/ruby/Gemfile.lock
+bindings/ruby/spec/examples.txt
+# Built gems (stateset_embedded-*.gem) are release artifacts, never source.
 *.gem
 
 # PHP

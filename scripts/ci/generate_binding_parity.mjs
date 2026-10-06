@@ -962,7 +962,12 @@ export async function buildParity(rootDir = defaultRoot) {
     ['java', 'Java', 'bindings/java/src', 'host (Java/JNI) layer is not traced'],
     ['kotlin', 'Kotlin', 'bindings/kotlin/src', 'host (Kotlin/JNI) layer is not traced'],
     ['php', 'PHP', 'bindings/php/src', 'engine linkage is behind an optional cargo feature'],
-    ['ruby', 'Ruby', 'bindings/ruby/src', 'does not depend on stateset-embedded'],
+    [
+      'ruby',
+      'Ruby',
+      'bindings/ruby/src',
+      'host (Ruby) layer is not traced; each Ruby method is one named op in src/dispatch.rs',
+    ],
     [
       'swift',
       'Swift',
