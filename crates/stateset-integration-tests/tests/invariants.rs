@@ -14,6 +14,13 @@
 //! after each step.
 //!
 //! Run with `PROPTEST_CASES=<n>` to override the default of 64 cases.
+//!
+//! Its sibling `cross_entity_invariants.rs` drives the customer-facing order
+//! lifecycle (cart → checkout → authorize/capture/refund → shipments →
+//! returns) across both storage backends and checks the invariants that span
+//! entities; this file owns the books (ledger, AR, invoices).
+
+mod support;
 
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -32,10 +39,9 @@ use stateset_core::{
 };
 use stateset_embedded::Commerce;
 use stateset_test_utils::fixtures;
+use support::{MONEY_SCALE, money_scale, panic_message};
 use uuid::Uuid;
 
-/// Minor units for the harness currency (USD).
-const MONEY_SCALE: u32 = 2;
 const SKUS: [&str; 3] = ["INV-SKU-A", "INV-SKU-B", "INV-SKU-C"];
 const INITIAL_STOCK: i64 = 10;
 const OPS_MIN: usize = 32;
@@ -325,11 +331,7 @@ impl Harness {
                 Ok(())
             }
             Err(payload) => {
-                let msg = payload
-                    .downcast_ref::<String>()
-                    .cloned()
-                    .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
-                    .unwrap_or_else(|| "non-string panic".into());
+                let msg = panic_message(payload.as_ref());
                 Err(format!("op {op:?} PANICKED instead of returning CommerceError: {msg}"))
             }
         }
@@ -340,7 +342,7 @@ impl Harness {
     }
 
     fn pct_of(amount: Decimal, pct: u8) -> Decimal {
-        (amount * Decimal::from(pct) / dec!(100)).round_dp(MONEY_SCALE)
+        support::pct_of(amount, pct)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1183,14 +1185,6 @@ impl Harness {
     }
 }
 
-/// No money value may carry more decimal places than the currency allows.
-fn money_scale(what: &str, value: Decimal) -> Result<(), String> {
-    if value.normalize().scale() > MONEY_SCALE {
-        return Err(format!("MONEY SCALE: {what} = {value} has more than {MONEY_SCALE} decimals"));
-    }
-    Ok(())
-}
-
 /// Run a sequence, checking invariants after every op. Returns the failing
 /// step and message so proptest can shrink on it.
 fn run_sequence(ops: &[Op]) -> Result<Harness, String> {
@@ -1204,7 +1198,7 @@ fn run_sequence(ops: &[Op]) -> Result<Harness, String> {
 }
 
 fn cases() -> u32 {
-    std::env::var("PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
+    support::cases_from_env(&[], 64)
 }
 
 proptest! {

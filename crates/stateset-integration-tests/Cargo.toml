@@ -27,6 +27,11 @@ rust_decimal_macros = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 
+[features]
+# Also run the cross-entity invariant harness against Postgres when
+# `DATABASE_URL` / `POSTGRES_URL` is set.
+postgres = ["stateset-embedded/postgres"]
+
 [dev-dependencies]
 proptest = "1.4"
 
