@@ -81,6 +81,13 @@ token before serving; keep that credential separate from the write-capable API
 token. Without it, `/metrics` retains its generated default token. See the
 [deployment guide](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/advanced/deployment.md).
 
+To let a customer, or an agent acting for one, call the API directly, issue
+it a token with `add_bearer_auth_for_customer(token, actor, customer_uuid)`.
+That principal may only reach records owned by its customer. It gets `404` for
+anyone else's record and `403` on staff-only and destructive routes, and its
+list results are filtered to its own records. Every route is classified in
+[`docs/src/security/http-authz.md`](https://github.com/stateset/stateset-icommerce/blob/master/docs/src/security/http-authz.md).
+
 For shared hosting, configure `with_tenant_db_dir` and bind tokens to tenants
 and actors. API requests include `x-tenant-id`; in tenant-bound deployments it
 must match the operator-owned token binding. The single-store example explicitly

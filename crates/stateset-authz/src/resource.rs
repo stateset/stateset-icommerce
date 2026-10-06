@@ -90,6 +90,14 @@ pub enum Action {
     List,
     /// Execute a tool or command.
     Execute,
+    /// An irreversible or money-moving operation: void, reverse, write-off,
+    /// charge, settle, refund, dispose, period close, and similar.
+    ///
+    /// Classified separately from [`Action::Execute`] so that a role with
+    /// plain write access cannot perform it, approval rules can target it, and
+    /// audit records name it. Requires [`PermissionLevel::Delete`] (the
+    /// built-in `operator` role or above).
+    Destructive,
 }
 
 impl Action {
@@ -106,14 +114,22 @@ impl Action {
         match self {
             Self::Read | Self::List => PermissionLevel::Read,
             Self::Create | Self::Update | Self::Execute => PermissionLevel::Write,
-            Self::Delete => PermissionLevel::Delete,
+            Self::Delete | Self::Destructive => PermissionLevel::Delete,
         }
     }
 
     /// Returns all action variants.
     #[must_use]
     pub const fn all() -> &'static [Self] {
-        &[Self::Create, Self::Read, Self::Update, Self::Delete, Self::List, Self::Execute]
+        &[
+            Self::Create,
+            Self::Read,
+            Self::Update,
+            Self::Delete,
+            Self::List,
+            Self::Execute,
+            Self::Destructive,
+        ]
     }
 }
 
@@ -126,6 +142,7 @@ impl fmt::Display for Action {
             Self::Delete => "delete",
             Self::List => "list",
             Self::Execute => "execute",
+            Self::Destructive => "destructive",
         };
         f.write_str(s)
     }
@@ -211,8 +228,18 @@ mod tests {
     }
 
     #[test]
-    fn action_all_returns_six() {
-        assert_eq!(Action::all().len(), 6);
+    fn action_all_returns_seven() {
+        assert_eq!(Action::all().len(), 7);
+    }
+
+    #[test]
+    fn destructive_requires_delete_and_is_denied_to_writers() {
+        assert_eq!(Action::Destructive.required_permission(), PermissionLevel::Delete);
+        assert_eq!(Action::Destructive.to_string(), "destructive");
+        let writer = crate::RoleBuilder::new("clerk").default_level(PermissionLevel::Write).build();
+        assert!(writer.check("gl", &Action::Destructive).is_denied());
+        assert!(crate::Role::operator().check("gl", &Action::Destructive).is_allowed());
+        assert!(crate::Role::viewer().check("gl", &Action::Destructive).is_denied());
     }
 
     #[test]

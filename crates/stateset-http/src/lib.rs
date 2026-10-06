@@ -52,6 +52,8 @@
 //! └────────────────────────────────────────────────┘
 //! ```
 
+#[cfg(test)]
+mod authz_matrix_tests;
 mod dto;
 mod error;
 pub mod etag;
@@ -59,6 +61,8 @@ mod events_replay;
 mod idempotency;
 mod middleware;
 pub mod openapi;
+mod ownership;
+mod route_policy;
 pub mod routes;
 mod server;
 mod state;

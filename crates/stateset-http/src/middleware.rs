@@ -132,8 +132,10 @@ impl MisconfiguredApiAuthConfig {
     }
 }
 
+/// Request extension inserted when an actor-bound credential established the
+/// request's actor (and overwrote any client-supplied `x-actor-id`).
 #[derive(Clone, Debug)]
-struct AuthenticatedActorIdentity;
+pub(crate) struct AuthenticatedActorIdentity;
 
 #[derive(Clone, Debug)]
 pub(crate) struct AuthzConfig {
@@ -208,103 +210,19 @@ fn requires_tenant_header(path: &str) -> bool {
     path.starts_with("/api/v1")
 }
 
-fn authz_target(request: &Request<Body>) -> Option<(Resource, Action)> {
-    let path = request.uri().path();
-    let stripped = path.strip_prefix("/api/v1/")?;
-    let segments = stripped.split('/').filter(|segment| !segment.is_empty()).collect::<Vec<_>>();
-    if segments.is_empty() {
-        return None;
-    }
-
-    let resource_type = match segments.as_slice() {
-        ["openapi.json"] => "openapi".to_string(),
-        [first, ..] => (*first).to_string(),
-        [] => return None,
+/// Resolve the role-engine target for a matched route from the reviewed
+/// [`crate::route_policy`] table.
+///
+/// `template` is axum's [`MatchedPath`] (e.g. `/api/v1/orders/{id}`) and
+/// `path` the concrete request path. Returns `None` when the `(method,
+/// template)` pair has no policy row, which fails closed.
+fn authz_target(method: &Method, template: &str, path: &str) -> Option<(Resource, Action)> {
+    let policy = crate::route_policy::policy_for(method.as_str(), template)?;
+    let resource = match policy.first_param(path) {
+        Some(id) => Resource::with_id(policy.resource_type(), id),
+        None => Resource::new(policy.resource_type()),
     };
-    let resource = if is_list_like_route(&segments) || is_execute_route(&segments) {
-        Resource::new(resource_type)
-    } else if segments.len() >= 2 {
-        Resource::with_id(resource_type, segments[1])
-    } else {
-        Resource::new(resource_type)
-    };
-
-    let terminal_segment = segments.last().copied();
-    let action = match *request.method() {
-        Method::GET => {
-            if is_list_like_route(&segments) {
-                Action::List
-            } else {
-                Action::Read
-            }
-        }
-        Method::POST => {
-            if let Some(segment) = terminal_segment.filter(|_| is_execute_route(&segments)) {
-                action_for_route_segment(segment)
-            } else {
-                Action::Create
-            }
-        }
-        Method::PATCH | Method::PUT => {
-            if let Some(segment) = terminal_segment.filter(|_| is_execute_route(&segments)) {
-                action_for_route_segment(segment)
-            } else {
-                Action::Update
-            }
-        }
-        Method::DELETE => Action::Delete,
-        _ => return None,
-    };
-
-    Some((resource, action))
-}
-
-fn is_list_like_route(segments: &[&str]) -> bool {
-    matches!(
-        segments,
-        [_] | ["loyalty", "programs"]
-            | ["currencies", "rates"]
-            | ["tax", "rates"]
-            | ["tax", "jurisdictions"]
-            | ["events", "stream"]
-    )
-}
-
-fn is_execute_route(segments: &[&str]) -> bool {
-    segments.last().is_some_and(|segment| is_action_segment(segment))
-}
-
-fn action_for_route_segment(segment: &str) -> Action {
-    if is_delete_like_action_segment(segment) { Action::Delete } else { Action::Execute }
-}
-
-fn is_action_segment(segment: &str) -> bool {
-    matches!(
-        segment,
-        "cancel"
-            | "ship"
-            | "disable"
-            | "complete"
-            | "refund"
-            | "calculate"
-            | "deliver"
-            | "enroll"
-            | "send"
-            | "pause"
-            | "resume"
-            | "activate"
-            | "deactivate"
-            | "adjust"
-            | "convert"
-            | "approve"
-            | "start"
-            | "move"
-            | "disposition"
-    )
-}
-
-fn is_delete_like_action_segment(segment: &str) -> bool {
-    matches!(segment, "cancel" | "disable" | "refund" | "deactivate")
+    Some((resource, policy.action.to_authz()))
 }
 
 pub(crate) fn is_valid_actor_id(value: &str) -> bool {
@@ -427,13 +345,21 @@ async fn require_authorization(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let Some((resource, action)) = authz_target(&request) else {
-        if !config.allow_unmapped_routes && request.uri().path().starts_with("/api/v1") {
+    if !request.uri().path().starts_with("/api/v1") {
+        return next.run(request).await;
+    }
+    // No matched route: the router answers 404/405 without running a handler.
+    let Some(template) = request.extensions().get::<MatchedPath>().map(|m| m.as_str().to_owned())
+    else {
+        return next.run(request).await;
+    };
+    let Some((resource, action)) = authz_target(request.method(), &template, request.uri().path())
+    else {
+        if !config.allow_unmapped_routes {
             return HttpError::UnmappedRoute(format!(
-                "{} {} is not mapped to an authorization target; authorization fails closed \
-                 (opt out with ServerBuilder::allow_unmapped_authz_routes(true))",
+                "{} {template} is not mapped to an authorization target; authorization fails \
+                 closed (opt out with ServerBuilder::allow_unmapped_authz_routes(true))",
                 request.method(),
-                request.uri().path()
             ))
             .into_response();
         }
@@ -1387,66 +1313,106 @@ mod tests {
 
     #[test]
     fn authz_target_maps_list_and_destructive_routes() {
-        let list_request = Request::get("/api/v1/orders").body(Body::empty()).unwrap();
-        let cancel_request =
-            Request::patch("/api/v1/orders/ord_1/cancel").body(Body::empty()).unwrap();
-
-        let list_target = authz_target(&list_request).expect("list target should map");
+        let list_target = authz_target(&Method::GET, "/api/v1/orders", "/api/v1/orders")
+            .expect("list target should map");
         assert_eq!(list_target, (Resource::new("orders"), Action::List));
 
-        let cancel_target = authz_target(&cancel_request).expect("cancel target should map");
-        assert_eq!(cancel_target, (Resource::new("orders"), Action::Delete));
+        let cancel_target = authz_target(
+            &Method::PATCH,
+            "/api/v1/orders/{id}/cancel",
+            "/api/v1/orders/ord_1/cancel",
+        )
+        .expect("cancel target should map");
+        assert_eq!(cancel_target, (Resource::with_id("orders", "ord_1"), Action::Delete));
+
+        // Money-moving verbs are their own class, not a plain write.
+        let void_target = authz_target(
+            &Method::POST,
+            "/api/v1/gl/journal-entries/{id}/void",
+            "/api/v1/gl/journal-entries/je_1/void",
+        )
+        .expect("void target should map");
+        assert_eq!(void_target, (Resource::with_id("gl", "je_1"), Action::Destructive));
+
+        assert!(authz_target(&Method::HEAD, "/api/v1/orders", "/api/v1/orders").is_none());
+        assert!(authz_target(&Method::GET, "/api/v1/widgets", "/api/v1/widgets").is_none());
     }
 
-    /// Every `/api/v1/**` operation documented in the `OpenAPI` spec must map to
-    /// an authorization target. Authorization now fails closed for unmapped
-    /// routes, so a new route that the mapper does not understand would ship
-    /// as a hard 403 for every caller; this test catches that before release.
-    #[test]
-    fn every_openapi_api_v1_operation_has_an_authz_mapping() {
-        use utoipa::OpenApi as _;
-
-        const HTTP_VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
-
-        let spec = serde_json::to_value(crate::openapi::ApiDoc::openapi()).expect("spec json");
-        let paths = spec["paths"].as_object().expect("openapi paths object");
-
-        let mut checked = 0usize;
-        let mut unmapped = Vec::new();
-        for (template, item) in paths {
-            if !template.starts_with("/api/v1") {
-                continue;
-            }
-            // Replace `{id}`-style parameters with a concrete placeholder so
-            // the request URI is well-formed.
-            let concrete = template
-                .split('/')
-                .map(|segment| if segment.starts_with('{') { "x" } else { segment })
-                .collect::<Vec<_>>()
-                .join("/");
-            for verb in HTTP_VERBS {
-                if item.get(verb).is_none() {
-                    continue;
-                }
-                let method =
-                    Method::from_bytes(verb.to_ascii_uppercase().as_bytes()).expect("http verb");
-                let request = Request::builder()
-                    .method(method.clone())
-                    .uri(&concrete)
-                    .body(Body::empty())
-                    .expect("request");
-                checked += 1;
-                if authz_target(&request).is_none() {
-                    unmapped.push(format!("{method} {template}"));
-                }
-            }
-        }
-
-        assert!(checked > 50, "expected the OpenAPI spec to document /api/v1 operations");
-        assert!(
-            unmapped.is_empty(),
-            "unmapped /api/v1 operations (authorization would deny them): {unmapped:#?}"
+    /// A role with plain write access can no longer void a journal entry: the
+    /// verb used to fall through the classifier to `Create`.
+    #[tokio::test]
+    async fn authz_denies_money_moving_verbs_to_write_only_role() {
+        let router = Router::new()
+            .route("/api/v1/gl/journal-entries/{id}/void", post(|| async { "ok" }))
+            .route("/api/v1/gl/journal-entries", post(|| async { "ok" }));
+        let engine = AuthzEngineBuilder::new()
+            .add_role(RoleBuilder::new("clerk").default_level(PermissionLevel::Write).build())
+            .add_role(Role::operator())
+            .assign_role("clerk-1", "clerk")
+            .assign_role("op-1", "operator")
+            .build();
+        let app = apply_middleware(
+            router,
+            false,
+            false,
+            None,
+            Some(AuthzConfig::new(engine).with_trusted_actor_headers()),
+            None,
+            None,
         );
+        let call = |actor: &'static str, uri: &'static str| {
+            Request::post(uri).header("x-actor-id", actor).body(Body::empty()).unwrap()
+        };
+
+        let void = "/api/v1/gl/journal-entries/je_1/void";
+        let response = app.clone().oneshot(call("clerk-1", void)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let response =
+            app.clone().oneshot(call("clerk-1", "/api/v1/gl/journal-entries")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "plain writes stay allowed");
+        let response = app.oneshot(call("op-1", void)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "operators may void");
+    }
+
+    #[tokio::test]
+    async fn authz_denies_matched_but_unclassified_routes() {
+        let router = Router::new().route("/api/v1/widgets", get(|| async { "ok" }));
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::admin())
+            .assign_role("admin-1", "admin")
+            .build();
+        let app = apply_middleware(
+            router,
+            false,
+            false,
+            None,
+            Some(AuthzConfig::new(engine).with_trusted_actor_headers()),
+            None,
+            None,
+        );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/widgets")
+                    .header("x-actor-id", "admin-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        // Unrouted paths reach the router, which answers 404 without a handler.
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/nothing-here")
+                    .header("x-actor-id", "admin-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

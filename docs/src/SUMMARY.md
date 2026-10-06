@@ -91,6 +91,7 @@
 - [Security Overview](security/overview.md)
 - [VES v1.0 Specification](security/ves.md)
 - [Security Architecture](security/architecture.md)
+- [HTTP Authorization and Ownership](security/http-authz.md)
 - [ERC-8004 Agent Identity](security/erc8004-identity.md)
 
 # Policy & Safety
