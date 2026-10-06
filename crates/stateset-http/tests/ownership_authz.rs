@@ -359,3 +359,27 @@ async fn invalid_customer_binding_fails_closed() {
         app.oneshot(Request::get("/api/v1/products").body(Body::empty()).unwrap()).await.unwrap();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
+
+#[tokio::test]
+async fn customer_reads_back_a_warranty_created_on_their_own_order() {
+    // The route takes only `order_id`; the warranty used to be stored with a
+    // nil customer, so its own buyer got 404 on it and an empty list.
+    let (app, _a, _b, a_orders, _b_orders, product) = app(world());
+    let body = json!({ "order_id": a_orders[0], "product_id": product, "duration_months": 12 });
+    let (status, created) =
+        call(&app, "a-token", "POST", "/api/v1/warranties", Some(body), &[]).await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["id"].as_str().expect("warranty id").to_string();
+
+    let (status, read) =
+        call(&app, "a-token", "GET", &format!("/api/v1/warranties/{id}"), None, &[]).await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    let (status, listed) = call(&app, "a-token", "GET", "/api/v1/warranties", None, &[]).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["total"], 1, "{listed}");
+
+    // The other customer still cannot see it.
+    let (status, _) =
+        call(&app, "b-token", "GET", &format!("/api/v1/warranties/{id}"), None, &[]).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

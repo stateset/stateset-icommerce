@@ -6,6 +6,15 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Warranties sold against an order now belong to that order's customer, on
+  both backends and in the atomic batch. A nil `customer_id` takes the order's
+  customer, a different explicit one is refused (`ValidationError`), and an
+  unknown order is `OrderNotFound`. `POST /api/v1/warranties` takes only
+  `order_id` and used to store a random customer id (`CustomerId::default()`
+  is a fresh id), so the buyer got 404 on their own warranty.
+
 ### Added
 
 - `stateset-http`: object-level authorization for **customer-scoped
