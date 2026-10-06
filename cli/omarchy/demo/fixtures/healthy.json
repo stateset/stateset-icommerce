@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "configured": true,
+  "dbPath": "/tmp/stateset-demo/store.db",
+  "mode": "preview",
+  "message": "Store ready",
+  "sizeBytes": 18874368,
+  "counts": { "orders": 248, "customers": 91, "products": 64, "returns": 7, "payments": 239 },
+  "alerts": { "pendingOrders": 0, "failedPayments": 0, "pendingReturns": 0, "lowStock": 0 },
+  "signalsComplete": true,
+  "unavailableSignals": []
+}
