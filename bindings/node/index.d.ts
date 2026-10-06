@@ -2889,6 +2889,12 @@ export interface PaymentOutput {
    * once `completeRefund` settles it; pending refunds are not included.
    */
   amountRefundedExact: string
+  /**
+   * Exact base-10 amount actually captured; `null` until the payment is
+   * captured. May be less than `amountExact` (a partial capture), and
+   * bounds every refund.
+   */
+  capturedAmountExact?: string
   currency: string
   status: PaymentTransactionStatus
   version: number
@@ -6794,6 +6800,19 @@ export declare class Payments {
    */
   list(filter?: PaymentFilterInput | undefined | null): Promise<Array<PaymentOutput>>
   markCompleted(id: string): Promise<PaymentOutput>
+  /**
+   * Capture a payment for an exact amount, which may be less than the
+   * authorized amount (a partial capture). The captured amount bounds
+   * every later refund.
+   */
+  markCaptured(id: string, amount: string): Promise<PaymentOutput>
+  /**
+   * Record a lost chargeback on a disputed payment. `amount` (exact
+   * decimal) is the disputed amount the network reversed; omit it for the
+   * whole remaining captured balance. A partial loss leaves the payment
+   * `partially_refunded` with a `chargeback_lost` refund row.
+   */
+  recordLostChargeback(id: string, amount?: string | undefined | null): Promise<PaymentOutput>
   markFailed(id: string, reason: string, code?: string | undefined | null): Promise<PaymentOutput>
   cancel(id: string): Promise<PaymentOutput>
   createRefund(input: CreateRefundInput): Promise<RefundOutput>

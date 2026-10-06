@@ -203,8 +203,11 @@ pub(crate) fn check_order_capture_capacity_tx(
         ))));
     }
 
+    // A captured payment holds what it captured (a partial capture releases
+    // the rest of its hold); an in-flight one still reserves its whole amount.
     let sql = format!(
-        "SELECT id, amount FROM payments WHERE order_id = ? AND status IN ({})",
+        "SELECT id, COALESCE(captured_amount, amount) FROM payments
+         WHERE order_id = ? AND status IN ({})",
         capturing_statuses()
     );
     let mut stmt = tx.prepare(&sql)?;
@@ -216,7 +219,7 @@ pub(crate) fn check_order_capture_capacity_tx(
         if exclude_payment_id == Some(id.as_str()) {
             continue;
         }
-        captured += parse_decimal_row(&raw_amount, "payment", "amount")?;
+        captured += parse_decimal_row(&raw_amount, "payment", "captured_amount")?;
     }
 
     if captured + amount > total {
@@ -233,7 +236,8 @@ pub(crate) fn check_order_capture_capacity_tx(
 }
 
 /// Payments for `order_id` still holding captured money: every payment in a
-/// capturing status whose `amount` exceeds its `amount_refunded`. Runs on the
+/// capturing status whose captured amount ([`Payment::captured`]) exceeds its
+/// `amount_refunded`. Runs on the
 /// caller's connection/transaction so the orders module can consult it inside
 /// its own cancel transaction. TEXT money columns are compared in `Decimal`.
 pub(crate) fn open_captures_for_order_conn(
@@ -249,7 +253,7 @@ pub(crate) fn open_captures_for_order_conn(
     let mut open = Vec::new();
     for row in rows {
         let payment = row?;
-        if payment.amount > payment.amount_refunded {
+        if payment.captured() > payment.amount_refunded {
             open.push(payment);
         }
     }
@@ -267,17 +271,7 @@ pub(crate) fn refundable_remaining_in_tx(
     if !payment.status.is_refundable() {
         return Ok(rust_decimal::Decimal::ZERO);
     }
-    let mut in_flight = rust_decimal::Decimal::ZERO;
-    let mut stmt = tx.prepare(
-        "SELECT amount FROM refunds WHERE payment_id = ? AND status IN ('pending', 'processing')",
-    )?;
-    let rows = stmt.query_map([payment.id.to_string()], |row| {
-        let amount: String = row.get(0)?;
-        parse_decimal_row(&amount, "refund", "amount")
-    })?;
-    for row in rows {
-        in_flight += row?;
-    }
+    let in_flight = in_flight_refunds_tx(tx, &payment.id.to_string())?;
     Ok((payment.refundable_remaining() - in_flight).max(rust_decimal::Decimal::ZERO))
 }
 
@@ -354,11 +348,11 @@ pub(crate) fn create_refund_in_tx(
 /// `Refunded` by the caller's status write) inside the caller's transaction.
 ///
 /// The card network has already reversed the charge, so the payment's whole
-/// remaining balance (`amount - amount_refunded`) has left the merchant. It is
-/// recorded where every other money-out is: a `completed` refund-ledger row
-/// for that balance, stamped `reason =`
+/// remaining captured balance (`captured - amount_refunded`) has left the
+/// merchant. It is recorded where every other money-out is: a `completed`
+/// refund-ledger row for that balance, stamped `reason =`
 /// [`stateset_core::LOST_CHARGEBACK_REFUND_REASON`] so it is distinguishable
-/// from a refund the merchant issued, and `amount_refunded = amount`. That
+/// from a refund the merchant issued, and `amount_refunded = captured`. That
 /// keeps `amount_refunded == Σ completed refunds`, makes the payment
 /// unrefundable (nothing remains to refund), frees the order for cancel/delete
 /// guards, and lets the caller's `sync_order_payment_status_tx` re-derive the
@@ -370,7 +364,30 @@ pub(crate) fn record_lost_chargeback_tx(
     payment: &Payment,
     now: chrono::DateTime<chrono::Utc>,
 ) -> rusqlite::Result<Uuid> {
-    let reversed = (payment.amount - payment.amount_refunded).max(rust_decimal::Decimal::ZERO);
+    let reversed = (payment.captured() - payment.amount_refunded).max(rust_decimal::Decimal::ZERO);
+    write_chargeback_reversal_tx(
+        tx,
+        payment,
+        reversed,
+        PaymentTransactionStatus::Refunded,
+        PaymentTransactionStatus::Refunded,
+        now,
+    )
+}
+
+/// The ledger half of a lost chargeback: a `completed` refund row of
+/// `reversed` (reason [`stateset_core::LOST_CHARGEBACK_REFUND_REASON`]),
+/// `amount_refunded += reversed`, the payment moved to `new_status` — guarded
+/// on it currently being `expected_status` — and a
+/// `payments.chargeback_lost.v1` event, all on the caller's transaction.
+fn write_chargeback_reversal_tx(
+    tx: &rusqlite::Transaction<'_>,
+    payment: &Payment,
+    reversed: rust_decimal::Decimal,
+    expected_status: PaymentTransactionStatus,
+    new_status: PaymentTransactionStatus,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<Uuid> {
     let id = Uuid::new_v4();
     let refund_number = generate_refund_number();
     tx.execute(
@@ -391,19 +408,22 @@ pub(crate) fn record_lost_chargeback_tx(
             now.to_rfc3339(),
         ],
     )?;
+    let new_refunded = payment.amount_refunded + reversed;
     let rows = tx.execute(
-        "UPDATE payments SET amount_refunded = ?, updated_at = ? WHERE id = ? AND status = ?",
+        "UPDATE payments SET amount_refunded = ?, status = ?, updated_at = ?
+         WHERE id = ? AND status = ?",
         params![
-            payment.amount.to_string(),
+            new_refunded.to_string(),
+            new_status.to_string(),
             now.to_rfc3339(),
             payment.id.to_string(),
-            PaymentTransactionStatus::Refunded.to_string(),
+            expected_status.to_string(),
         ],
     )?;
     if rows == 0 {
         return Err(domain_err(transition_conflict(
             PaymentTransactionStatus::Disputed,
-            PaymentTransactionStatus::Refunded,
+            new_status,
         )));
     }
     append_kernel_event_tx(
@@ -419,11 +439,32 @@ pub(crate) fn record_lost_chargeback_tx(
                 "refund_number": refund_number,
                 "amount": reversed.to_string(),
                 "currency": payment.currency.as_str(),
+                "partial": new_status == PaymentTransactionStatus::PartiallyRefunded,
             }),
             None,
         ),
     )?;
     Ok(id)
+}
+
+/// Σ in-flight (`pending` / `processing`) refunds of `payment_id`, summed in
+/// `Decimal` (TEXT money is never added in SQL).
+fn in_flight_refunds_tx(
+    tx: &rusqlite::Transaction<'_>,
+    payment_id: &str,
+) -> rusqlite::Result<rust_decimal::Decimal> {
+    let mut in_flight = rust_decimal::Decimal::ZERO;
+    let mut stmt = tx.prepare(
+        "SELECT amount FROM refunds WHERE payment_id = ? AND status IN ('pending', 'processing')",
+    )?;
+    let rows = stmt.query_map([payment_id], |row| {
+        let amount: String = row.get(0)?;
+        parse_decimal_row(&amount, "refund", "amount")
+    })?;
+    for row in rows {
+        in_flight += row?;
+    }
+    Ok(in_flight)
 }
 
 /// Statuses a payment can be voided from when its order is force-cancelled:
@@ -487,8 +528,11 @@ pub(crate) fn order_payment_ledger_conn(
     conn: &rusqlite::Connection,
     order_id: &str,
 ) -> rusqlite::Result<OrderPaymentLedger> {
-    let mut stmt =
-        conn.prepare("SELECT status, amount, amount_refunded FROM payments WHERE order_id = ?")?;
+    // A captured payment counts what it captured, not what it authorized.
+    let mut stmt = conn.prepare(
+        "SELECT status, COALESCE(captured_amount, amount), amount_refunded
+         FROM payments WHERE order_id = ?",
+    )?;
     let rows = stmt.query_map([order_id], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
     })?;
@@ -497,7 +541,7 @@ pub(crate) fn order_payment_ledger_conn(
         let (status, amount, refunded) = row?;
         ledger.record(
             parse_enum_row(&status, "payment", "status")?,
-            parse_decimal_row(&amount, "payment", "amount")?,
+            parse_decimal_row(&amount, "payment", "captured_amount")?,
             parse_decimal_row(&refunded, "payment", "amount_refunded")?,
         );
     }
@@ -641,6 +685,10 @@ impl SqlitePaymentRepository {
                 "payment",
                 "amount_refunded",
             )?,
+            captured_amount: match row.get::<_, Option<String>>("captured_amount")? {
+                Some(raw) => Some(parse_decimal_row(&raw, "payment", "captured_amount")?),
+                None => None,
+            },
             external_id: row.get("external_id")?,
             idempotency_key: row.get("idempotency_key")?,
             processor: row.get("processor")?,
@@ -816,61 +864,192 @@ impl SqlitePaymentRepository {
 
 /// Capture payment `id` on the caller's transaction (shared by
 /// [`PaymentRepository::mark_completed`] and the governed `payments.complete`
-/// kernel command).
-///
-/// Two guards, in this order:
-///   1. the state machine — only a payment that may legally reach `Completed`
-///      may be completed (never a cancelled/failed/refunded one);
-///   2. the order's capacity, re-checked at completion time: a payment that
-///      was failed/cancelled while still in flight (and so released its slice
-///      of the total) must not be completed on top of captures made since.
+/// kernel command): a full capture, `captured_amount = amount`.
 pub(crate) fn mark_completed_tx(
     tx: &rusqlite::Transaction<'_>,
     id: PaymentId,
     now: chrono::DateTime<chrono::Utc>,
 ) -> rusqlite::Result<()> {
+    capture_tx(tx, id, None, now)
+}
+
+/// Capture payment `id` for `captured` (`None` = the full authorized amount)
+/// on the caller's transaction.
+///
+/// Three guards, in this order:
+///   1. the state machine — only a payment that may legally reach `Completed`
+///      may be completed (never a cancelled/failed/refunded one);
+///   2. the amount — positive, within the currency's minor unit, at most the
+///      authorized amount; and a payment already captured cannot be
+///      re-captured for a DIFFERENT amount (re-recording the same capture is
+///      an idempotent no-op);
+///   3. the order's capacity, re-checked at completion time against what
+///      will actually be held (the captured amount): a payment that was
+///      failed/cancelled while still in flight (and so released its slice of
+///      the total) must not be completed on top of captures made since.
+pub(crate) fn capture_tx(
+    tx: &rusqlite::Transaction<'_>,
+    id: PaymentId,
+    captured: Option<rust_decimal::Decimal>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<()> {
     let target = PaymentTransactionStatus::Completed;
-    let (raw_status, order_id, raw_amount, currency): (
-        String,
-        Option<String>,
-        String,
-        CurrencyCode,
-    ) = tx
-        .query_row(
-            "SELECT status, order_id, amount, currency FROM payments WHERE id = ?",
-            [id.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
+    let payment = tx
+        .query_row("SELECT * FROM payments WHERE id = ?", [id.to_string()], |row| {
+            SqlitePaymentRepository::row_to_payment(row)
+        })
         .map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => domain_err(CommerceError::NotFound),
             other => other,
         })?;
-    let current: PaymentTransactionStatus = parse_enum_row(&raw_status, "payment", "status")?;
+    let current = payment.status;
     if !payment_transition_allowed(current, target) {
         return Err(domain_err(transition_conflict(current, target)));
     }
+    let amount = match captured {
+        Some(amount) => payment.validate_capture_amount(amount).map_err(domain_err)?,
+        None => payment.captured_amount.unwrap_or(payment.amount),
+    };
+    if let Some(recorded) = payment.captured_amount {
+        if recorded != amount {
+            return Err(domain_err(CommerceError::Conflict(format!(
+                "Payment {id} already captured {recorded}; it cannot be re-captured for {amount}"
+            ))));
+        }
+    }
 
-    if let Some(order_id) = &order_id {
-        let amount = parse_decimal_row(&raw_amount, "payment", "amount")?;
-        check_order_capture_capacity_tx(tx, order_id, Some(&id.to_string()), amount, currency)?;
+    if let Some(order_id) = payment.order_id {
+        check_order_capture_capacity_tx(
+            tx,
+            &order_id.to_string(),
+            Some(&id.to_string()),
+            amount,
+            payment.currency,
+        )?;
     }
 
     let sql = format!(
-        "UPDATE payments SET status = ?, paid_at = ?, updated_at = ?
-         WHERE id = ? AND status IN ({})",
+        "UPDATE payments SET status = ?, captured_amount = ?, paid_at = ?,
+         updated_at = ? WHERE id = ? AND status IN ({})",
         statuses_allowing_transition_to(target)
     );
     let rows = tx.execute(
         &sql,
-        params![target.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
+        params![
+            target.to_string(),
+            amount.to_string(),
+            now.to_rfc3339(),
+            now.to_rfc3339(),
+            id.to_string()
+        ],
     )?;
     if rows == 0 {
         return Err(domain_err(transition_conflict(current, target)));
     }
-    if let Some(order_id) = order_id {
-        sync_order_payment_status_tx(tx, &order_id, now)?;
+    if current != target {
+        append_kernel_event_tx(
+            tx,
+            &KernelOutboxEvent::domain(
+                "payments.captured.v1",
+                "payment",
+                id.to_string(),
+                serde_json::json!({
+                    "payment_id": id.to_string(),
+                    "order_id": payment.order_id.map(|o| o.to_string()),
+                    "authorized_amount": payment.amount.to_string(),
+                    "captured_amount": amount.to_string(),
+                    "currency": payment.currency.as_str(),
+                    "partial": amount < payment.amount,
+                }),
+                None,
+            ),
+        )?;
+    }
+    if let Some(order_id) = payment.order_id {
+        sync_order_payment_status_tx(tx, &order_id.to_string(), now)?;
     }
     Ok(())
+}
+
+/// Record a lost chargeback of `amount` (`None` = the whole remaining
+/// captured balance) on `Disputed` payment `id`, on the caller's transaction.
+/// The whole balance is the `Disputed -> Refunded` path; less than that is a
+/// partial loss (`Disputed -> PartiallyRefunded`). See
+/// [`PaymentRepository::record_lost_chargeback`].
+pub(crate) fn record_lost_chargeback_amount_tx(
+    tx: &rusqlite::Transaction<'_>,
+    id: PaymentId,
+    amount: Option<rust_decimal::Decimal>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> rusqlite::Result<()> {
+    let payment = tx
+        .query_row("SELECT * FROM payments WHERE id = ?", [id.to_string()], |row| {
+            SqlitePaymentRepository::row_to_payment(row)
+        })
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => domain_err(CommerceError::NotFound),
+            other => other,
+        })?;
+    if payment.status != PaymentTransactionStatus::Disputed {
+        return Err(domain_err(CommerceError::ValidationError(format!(
+            "Only a disputed payment can lose a chargeback; payment {id} is {}",
+            payment.status
+        ))));
+    }
+    let remaining = (payment.captured() - payment.amount_refunded).max(rust_decimal::Decimal::ZERO);
+    let amount = amount.unwrap_or(remaining);
+    if amount <= rust_decimal::Decimal::ZERO {
+        return Err(domain_err(CommerceError::ValidationError(
+            "Chargeback amount must be greater than zero".into(),
+        )));
+    }
+    stateset_core::validate_money_scale(payment.currency, amount).map_err(domain_err)?;
+    // In-flight refunds still hold their reservation: a reversal may not take
+    // money they are about to return.
+    let in_flight = in_flight_refunds_tx(tx, &id.to_string())?;
+    if amount > remaining - in_flight {
+        return Err(domain_err(CommerceError::RefundExceedsCaptured {
+            payment_id: id.into_uuid(),
+            captured: payment.captured().to_string(),
+            already_refunded: (payment.amount_refunded + in_flight).to_string(),
+            requested: amount.to_string(),
+        }));
+    }
+    let new_status = if amount == remaining {
+        PaymentTransactionStatus::Refunded
+    } else {
+        PaymentTransactionStatus::PartiallyRefunded
+    };
+    write_chargeback_reversal_tx(
+        tx,
+        &payment,
+        amount,
+        PaymentTransactionStatus::Disputed,
+        new_status,
+        now,
+    )?;
+    if let Some(order_id) = payment.order_id {
+        sync_order_payment_status_tx(tx, &order_id.to_string(), now)?;
+    }
+    Ok(())
+}
+
+/// The statuses a completing refund may fold itself into a payment from, for
+/// a write that sets the payment to `target`. The state machine's own list,
+/// minus `Disputed -> PartiallyRefunded`: that edge belongs to a partial lost
+/// chargeback, and a refund settling part of a disputed payment must not end
+/// the dispute as a side effect.
+fn refund_fold_statuses(target: PaymentTransactionStatus) -> String {
+    ALL_PAYMENT_STATUSES
+        .iter()
+        .filter(|from| payment_transition_allowed(**from, target))
+        .filter(|from| {
+            !(**from == PaymentTransactionStatus::Disputed
+                && target == PaymentTransactionStatus::PartiallyRefunded)
+        })
+        .map(|status| format!("'{status}'"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 impl PaymentRepository for SqlitePaymentRepository {
@@ -1170,6 +1349,99 @@ impl PaymentRepository for SqlitePaymentRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
+    fn mark_captured(
+        &self,
+        id: PaymentId,
+        captured_amount: rust_decimal::Decimal,
+    ) -> Result<Payment> {
+        let now = chrono::Utc::now();
+        with_immediate_transaction(&self.pool, |tx| {
+            capture_tx(tx, id, Some(captured_amount), now)
+        })?;
+        self.get(id)?.ok_or(CommerceError::NotFound)
+    }
+
+    fn record_lost_chargeback(
+        &self,
+        id: PaymentId,
+        amount: Option<rust_decimal::Decimal>,
+    ) -> Result<Payment> {
+        let now = chrono::Utc::now();
+        with_immediate_transaction(&self.pool, |tx| {
+            record_lost_chargeback_amount_tx(tx, id, amount, now)
+        })?;
+        self.get(id)?.ok_or(CommerceError::NotFound)
+    }
+
+    fn set_refund_external_id(&self, id: Uuid, external_id: &str) -> Result<Refund> {
+        if external_id.trim().is_empty() {
+            return Err(CommerceError::ValidationError(
+                "Refund external id must not be empty".into(),
+            ));
+        }
+        let now = chrono::Utc::now();
+        with_immediate_transaction(&self.pool, |tx| {
+            let current: Option<String> = tx
+                .query_row(
+                    "SELECT external_id FROM refunds WHERE id = ?",
+                    [id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => domain_err(CommerceError::NotFound),
+                    other => other,
+                })?;
+            match current.as_deref() {
+                Some(existing) if existing == external_id => return Ok(()),
+                Some(existing) => {
+                    return Err(domain_err(CommerceError::Conflict(format!(
+                        "Refund {id} already has processor id {existing}"
+                    ))));
+                }
+                None => {}
+            }
+            // Guarded on the column still being NULL, so two writers racing
+            // different ids cannot both win.
+            let rows = tx.execute(
+                "UPDATE refunds SET external_id = ?, updated_at = ? WHERE id = ? AND external_id IS NULL",
+                params![external_id, now.to_rfc3339(), id.to_string()],
+            )?;
+            if rows == 0 {
+                return Err(domain_err(CommerceError::Conflict(format!(
+                    "Refund {id} processor id changed concurrently"
+                ))));
+            }
+            append_kernel_event_tx(
+                tx,
+                &KernelOutboxEvent::domain(
+                    "payments.refund_external_id_recorded.v1",
+                    "refund",
+                    id.to_string(),
+                    serde_json::json!({
+                        "refund_id": id.to_string(),
+                        "external_id": external_id,
+                    }),
+                    None,
+                ),
+            )?;
+            Ok(())
+        })?;
+        self.get_refund(id)?.ok_or(CommerceError::NotFound)
+    }
+
+    fn list_in_flight_refunds(&self, limit: u32) -> Result<Vec<Refund>> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT * FROM refunds
+                 WHERE status IN ('pending', 'processing') AND external_id IS NOT NULL
+                 ORDER BY created_at, id LIMIT ?",
+            )
+            .map_err(map_db_error)?;
+        let rows = stmt.query_map([limit], Self::row_to_refund).map_err(map_db_error)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
+    }
+
     /// Mark a payment failed.
     ///
     /// Status-guarded, for the same reason as [`Self::update`]: a `Completed`
@@ -1422,9 +1694,12 @@ impl PaymentRepository for SqlitePaymentRepository {
             // read the current values, compute the new balance and status with
             // `rust_decimal::Decimal` in Rust, and write the precomputed TEXT
             // values back as bound parameters.
-            let (raw_payment_status, current_refunded, payment_amount): (String, String, String) =
+            // Bounded by what was CAPTURED, not by what was authorized: a
+            // partially captured payment can only ever return its capture.
+            let (raw_payment_status, current_refunded, payment_captured): (String, String, String) =
                 tx.query_row(
-                    "SELECT status, amount_refunded, amount FROM payments WHERE id = ?",
+                    "SELECT status, amount_refunded, COALESCE(captured_amount, amount)
+                     FROM payments WHERE id = ?",
                     params![refund.payment_id.to_string()],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )?;
@@ -1432,10 +1707,21 @@ impl PaymentRepository for SqlitePaymentRepository {
                 parse_enum_row(&raw_payment_status, "payment", "status")?;
             let current_refunded =
                 parse_decimal_row(&current_refunded, "payment", "amount_refunded")?;
-            let payment_amount = parse_decimal_row(&payment_amount, "payment", "amount")?;
+            let payment_captured =
+                parse_decimal_row(&payment_captured, "payment", "captured_amount")?;
 
             let new_refunded = current_refunded + refund.amount;
-            let new_status = if new_refunded >= payment_amount {
+            // Last line of defence: whatever reserved this refund, completing
+            // it must never return more than the payment captured.
+            if new_refunded > payment_captured {
+                return Err(domain_err(CommerceError::RefundExceedsCaptured {
+                    payment_id: refund.payment_id.into_uuid(),
+                    captured: payment_captured.to_string(),
+                    already_refunded: current_refunded.to_string(),
+                    requested: refund.amount.to_string(),
+                }));
+            }
+            let new_status = if new_refunded >= payment_captured {
                 PaymentTransactionStatus::Refunded
             } else {
                 PaymentTransactionStatus::PartiallyRefunded
@@ -1447,7 +1733,7 @@ impl PaymentRepository for SqlitePaymentRepository {
             let sql = format!(
                 "UPDATE payments SET amount_refunded = ?, status = ?, updated_at = ?
                  WHERE id = ? AND status IN ({})",
-                statuses_allowing_transition_to(new_status)
+                refund_fold_statuses(new_status)
             );
             let rows = tx.execute(
                 &sql,
@@ -1461,6 +1747,23 @@ impl PaymentRepository for SqlitePaymentRepository {
             if rows == 0 {
                 return Err(domain_err(transition_conflict(payment_status, new_status)));
             }
+            append_kernel_event_tx(
+                tx,
+                &KernelOutboxEvent::domain(
+                    "payments.refund_completed.v1",
+                    "refund",
+                    id.to_string(),
+                    serde_json::json!({
+                        "refund_id": id.to_string(),
+                        "payment_id": refund.payment_id.to_string(),
+                        "amount": refund.amount.to_string(),
+                        "currency": refund.currency.as_str(),
+                        "amount_refunded": new_refunded.to_string(),
+                        "payment_status": new_status.to_string(),
+                    }),
+                    None,
+                ),
+            )?;
             sync_order_payment_status_for_payment_tx(tx, &refund.payment_id.to_string(), now)?;
 
             Ok(())
@@ -1478,15 +1781,37 @@ impl PaymentRepository for SqlitePaymentRepository {
         // shows the money (Σ completed refunds != amount_refunded). The status
         // guard lives in the UPDATE itself so a concurrent completion cannot
         // slip between a read and the write.
-        let rows = {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
+        // Failing releases the refund's reservation: it stops counting against
+        // the payment's refundable balance in the same commit as its fact.
+        let rows = with_immediate_transaction(&self.pool, |tx| {
+            let rows = tx.execute(
                 "UPDATE refunds SET status = ?, failure_reason = ?, updated_at = ? \
                  WHERE id = ? AND status IN ('pending', 'processing')",
                 params![RefundStatus::Failed.to_string(), reason, now.to_rfc3339(), id.to_string()],
-            )
-            .map_err(map_db_error)?
-        };
+            )?;
+            if rows == 1 {
+                let payment_id: String = tx.query_row(
+                    "SELECT payment_id FROM refunds WHERE id = ?",
+                    [id.to_string()],
+                    |row| row.get(0),
+                )?;
+                append_kernel_event_tx(
+                    tx,
+                    &KernelOutboxEvent::domain(
+                        "payments.refund_failed.v1",
+                        "refund",
+                        id.to_string(),
+                        serde_json::json!({
+                            "refund_id": id.to_string(),
+                            "payment_id": payment_id,
+                            "reason": reason,
+                        }),
+                        None,
+                    ),
+                )?;
+            }
+            Ok(rows)
+        })?;
 
         let refund = self.get_refund(id)?.ok_or(CommerceError::NotFound)?;
         // Idempotent: failing an already-failed refund is a no-op.
@@ -1723,6 +2048,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                 amount: input.amount,
                 currency,
                 amount_refunded: rust_decimal::Decimal::ZERO,
+                captured_amount: None,
                 external_id: input.external_id,
                 idempotency_key: input.idempotency_key,
                 processor: input.processor,

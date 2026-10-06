@@ -1332,18 +1332,16 @@ impl PgAccountsReceivableRepository {
         // The payment itself bounds the total that can be applied: read its
         // amount and what is already applied inside the transaction, so a
         // payment can never be applied beyond its own value.
-        let payment_amount: Decimal =
-            sqlx::query_scalar("SELECT amount FROM payments WHERE id = $1")
-                .bind(input.payment_id)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?
-                .ok_or_else(|| {
-                    CommerceError::ValidationError(format!(
-                        "Payment {} not found",
-                        input.payment_id
-                    ))
-                })?;
+        let payment_amount: Decimal = sqlx::query_scalar(
+            "SELECT COALESCE(captured_amount, amount) FROM payments WHERE id = $1",
+        )
+        .bind(input.payment_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or_else(|| {
+            CommerceError::ValidationError(format!("Payment {} not found", input.payment_id))
+        })?;
         let existing_applied: Decimal = sqlx::query_scalar(
             "SELECT COALESCE(SUM(applied_amount), 0) FROM ar_payment_applications WHERE payment_id = $1",
         )

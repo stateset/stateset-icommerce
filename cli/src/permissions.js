@@ -250,6 +250,8 @@ export const TOOL_PERMISSIONS = {
   get_payment: 'read',
   create_payment: 'write',
   complete_payment: 'write',
+  capture_payment: 'write',
+  record_lost_chargeback: 'write',
   mark_failed_payment: 'write',
   cancel_payment: 'delete',
   create_refund: 'write',

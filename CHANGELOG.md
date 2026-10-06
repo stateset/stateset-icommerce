@@ -6,6 +6,57 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Partial capture. Payments record `captured_amount` (exact decimal; new
+  migrations `101_payment_captured_amount` on SQLite and
+  `106_payment_captured_amount` on PostgreSQL, which backfill
+  `captured_amount = amount` for every completed, partially refunded,
+  refunded or disputed payment). `PaymentRepository::mark_captured` /
+  `Payments::mark_captured` capture less than was authorized; refunds,
+  lost chargebacks, order capacity, the order payment-status ledger, AR
+  payment application and GL cash posting all use the captured amount.
+  `capture_with_provider` now accepts a partial `amount` and records exactly
+  what the processor reports (Stripe `amount_received`). Node
+  (`markCaptured`, `capturedAmountExact`), Python (`mark_captured`,
+  `captured_amount_exact`) and the `capture_payment` MCP tool expose it.
+- Pending-refund reconciliation. A refund the processor leaves pending keeps
+  the processor's refund id (`refunds.external_id`);
+  `Payments::refresh_refund_status` / `reconcile_pending_refunds` ask the
+  processor (`PaymentProvider::refund_status`, implemented for Stripe as
+  `GET /v1/refunds/{id}`) and complete the refund (counts toward refunded
+  totals and the order's payment status) or fail it (releases its
+  reservation). Idempotent and safe under concurrent passes. The HTTP server
+  runs it as an opt-in background sweep
+  (`ServerBuilder::with_refund_reconciliation`).
+- Partial lost chargebacks: `PaymentRepository::record_lost_chargeback(id,
+  Some(amount))` on a disputed payment writes a completed `chargeback_lost`
+  refund row for the disputed amount and leaves the payment
+  `partially_refunded`; the order's payment status is re-derived as usual.
+  `None` (the whole remaining balance) is the existing full-loss path. Node
+  (`recordLostChargeback`), Python (`record_lost_chargeback`) and the
+  `record_lost_chargeback` MCP tool expose it.
+- Outbox facts `payments.captured.v1`, `payments.refund_completed.v1`,
+  `payments.refund_failed.v1` and `payments.refund_external_id_recorded.v1`;
+  `payments.chargeback_lost.v1` gains a `partial` flag.
+
+### Changed (behaviour)
+
+- `Disputed -> Cancelled` is refused: a dispute must be resolved (won ->
+  `completed`, lost -> `refunded` / `partially_refunded`) first. The TLA+
+  spec and `can_transition.golden` gain `disputed -> partially_refunded` and
+  drop `disputed -> cancelled`.
+- `complete_refund` refuses to fold a refund that would take
+  `amount_refunded` above the captured amount, and never folds part of a
+  refund into a `Disputed` payment (that edge belongs to a partial lost
+  chargeback).
+- `Payment::refundable_remaining` and `validate_refund` are bounded by the
+  captured amount; `RefundExceedsCaptured.captured` reports it.
+- Breaking (`stateset-embedded`, `events` feature):
+  `ProviderDecision::Captured` gains an `amount: Option<Decimal>` field (the
+  amount the processor reports as moved). Partial capture through
+  `capture_with_provider` is no longer refused.
+
 ## [1.37.0] - 2026-10-01
 
 ### Added

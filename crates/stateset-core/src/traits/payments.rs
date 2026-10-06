@@ -61,8 +61,52 @@ pub trait PaymentRepository: Send + Sync {
     /// Mark payment as processing
     fn mark_processing(&self, id: PaymentId) -> Result<Payment>;
 
-    /// Mark payment as completed (paid)
+    /// Mark payment as completed (paid) for its full authorized `amount`
+    /// (`captured_amount = amount`).
     fn mark_completed(&self, id: PaymentId) -> Result<Payment>;
+
+    /// Mark a payment captured for `captured_amount`, which may be LESS than
+    /// the authorized `amount` (a partial capture; the processor releases the
+    /// rest of the hold). Same transition and order guards as
+    /// [`Self::mark_completed`]; the payment becomes `Completed` with
+    /// `captured_amount` recorded exactly, and from then on refunds are
+    /// bounded by the captured amount and the payment consumes only that much
+    /// of its order's total. The amount must be positive, within the
+    /// currency's minor unit, and at most `amount`
+    /// ([`crate::Payment::validate_capture_amount`]).
+    fn mark_captured(
+        &self,
+        id: PaymentId,
+        captured_amount: rust_decimal::Decimal,
+    ) -> Result<Payment>;
+
+    /// Record a **lost chargeback** on a `Disputed` payment for `amount`
+    /// (`None` = the whole remaining captured balance).
+    ///
+    /// The whole remaining balance behaves exactly like the
+    /// `Disputed -> Refunded` status write ([`Self::update`]). A smaller
+    /// amount — a dispute lost for part of the payment — writes a completed
+    /// refund-ledger row for that amount (reason
+    /// [`crate::LOST_CHARGEBACK_REFUND_REASON`]), advances `amount_refunded`,
+    /// moves the payment to `PartiallyRefunded`, and re-derives the order's
+    /// payment status from the ledger. The amount must be positive and fit
+    /// within the captured amount net of refunds already completed or in
+    /// flight.
+    fn record_lost_chargeback(
+        &self,
+        id: PaymentId,
+        amount: Option<rust_decimal::Decimal>,
+    ) -> Result<Payment>;
+
+    /// Record the processor's id for refund `id` (e.g. a Stripe `re_...`), so
+    /// a refund the processor left pending can be reconciled later. Set once:
+    /// re-recording the same id is a no-op; a different id is a `Conflict`.
+    fn set_refund_external_id(&self, id: Uuid, external_id: &str) -> Result<Refund>;
+
+    /// Refunds still in flight (`pending` / `processing`) that carry a
+    /// processor reference (`external_id`), oldest first, at most `limit` —
+    /// the work list of pending-refund reconciliation.
+    fn list_in_flight_refunds(&self, limit: u32) -> Result<Vec<Refund>>;
 
     /// Mark payment as failed
     fn mark_failed(&self, id: PaymentId, reason: &str, code: Option<&str>) -> Result<Payment>;

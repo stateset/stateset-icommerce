@@ -151,7 +151,7 @@ pub(crate) async fn check_order_capture_capacity_pg(
     }
 
     let (captured,): (Decimal,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(amount), 0) FROM payments \
+        "SELECT COALESCE(SUM(COALESCE(captured_amount, amount)), 0) FROM payments \
          WHERE order_id = $1 AND status = ANY($2) AND id IS DISTINCT FROM $3",
     )
     .bind(order_id)
@@ -182,10 +182,11 @@ pub(crate) async fn open_captures_for_order_pg(
 ) -> Result<Vec<Payment>> {
     let rows = sqlx::query_as::<_, PaymentRow>(
         "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-         amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+         amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor, card_brand, card_last4,
          card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
          description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
-         FROM payments WHERE order_id = $1 AND status = ANY($2) AND amount > amount_refunded
+         FROM payments WHERE order_id = $1 AND status = ANY($2)
+           AND COALESCE(captured_amount, amount) > amount_refunded
          ORDER BY created_at",
     )
     .bind(order_id)
@@ -334,12 +335,14 @@ pub(crate) async fn order_payment_ledger_pg(
     conn: &mut sqlx::PgConnection,
     order_id: Uuid,
 ) -> Result<OrderPaymentLedger> {
-    let rows: Vec<(String, Decimal, Decimal)> =
-        sqlx::query_as("SELECT status, amount, amount_refunded FROM payments WHERE order_id = $1")
-            .bind(order_id)
-            .fetch_all(&mut *conn)
-            .await
-            .map_err(map_db_error)?;
+    let rows: Vec<(String, Decimal, Decimal)> = sqlx::query_as(
+        "SELECT status, COALESCE(captured_amount, amount), amount_refunded
+             FROM payments WHERE order_id = $1",
+    )
+    .bind(order_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(map_db_error)?;
     let mut ledger = OrderPaymentLedger::default();
     for (raw_status, amount, refunded) in rows {
         let status: PaymentTransactionStatus = raw_status.parse().map_err(|_| {
@@ -495,17 +498,40 @@ pub(crate) fn ensure_not_refund_by_status_flip(
 /// `Refunded` by the caller's status write) inside the caller's transaction.
 ///
 /// PostgreSQL twin of the SQLite `record_lost_chargeback_tx`: a `completed`
-/// refund-ledger row for the whole remaining balance, stamped `reason =`
-/// [`stateset_core::LOST_CHARGEBACK_REFUND_REASON`], `amount_refunded =
-/// amount`, and a `payments.chargeback_lost.v1` event. The caller then
-/// re-derives the order's payment status from the ledger. Returns the ledger
-/// row's id.
+/// refund-ledger row for the whole remaining captured balance, stamped
+/// `reason =` [`stateset_core::LOST_CHARGEBACK_REFUND_REASON`],
+/// `amount_refunded = captured`, and a `payments.chargeback_lost.v1` event.
+/// The caller then re-derives the order's payment status from the ledger.
+/// Returns the ledger row's id.
 pub(crate) async fn record_lost_chargeback_pg(
     conn: &mut sqlx::PgConnection,
     payment: &Payment,
     now: DateTime<Utc>,
 ) -> Result<Uuid> {
-    let reversed = (payment.amount - payment.amount_refunded).max(Decimal::ZERO);
+    let reversed = (payment.captured() - payment.amount_refunded).max(Decimal::ZERO);
+    write_chargeback_reversal_pg(
+        conn,
+        payment,
+        reversed,
+        PaymentTransactionStatus::Refunded,
+        PaymentTransactionStatus::Refunded,
+        now,
+    )
+    .await
+}
+
+/// The ledger half of a lost chargeback (twin of the SQLite
+/// `write_chargeback_reversal_tx`): a `completed` refund row of `reversed`,
+/// `amount_refunded += reversed`, the payment moved to `new_status` (guarded
+/// on it being `expected_status`), and a `payments.chargeback_lost.v1` event.
+async fn write_chargeback_reversal_pg(
+    conn: &mut sqlx::PgConnection,
+    payment: &Payment,
+    reversed: Decimal,
+    expected_status: PaymentTransactionStatus,
+    new_status: PaymentTransactionStatus,
+    now: DateTime<Utc>,
+) -> Result<Uuid> {
     let id = Uuid::new_v4();
     let refund_number = generate_refund_number();
     sqlx::query(
@@ -526,21 +552,20 @@ pub(crate) async fn record_lost_chargeback_pg(
     .await
     .map_err(map_db_error)?;
     let rows = sqlx::query(
-        "UPDATE payments SET amount_refunded = $1, updated_at = $2 WHERE id = $3 AND status = $4",
+        "UPDATE payments SET amount_refunded = $1, status = $2, updated_at = $3
+         WHERE id = $4 AND status = $5",
     )
-    .bind(payment.amount)
+    .bind(payment.amount_refunded + reversed)
+    .bind(new_status.to_string())
     .bind(now)
     .bind(payment.id.into_uuid())
-    .bind(PaymentTransactionStatus::Refunded.to_string())
+    .bind(expected_status.to_string())
     .execute(&mut *conn)
     .await
     .map_err(map_db_error)?
     .rows_affected();
     if rows == 0 {
-        return Err(transition_conflict(
-            PaymentTransactionStatus::Disputed,
-            PaymentTransactionStatus::Refunded,
-        ));
+        return Err(transition_conflict(PaymentTransactionStatus::Disputed, new_status));
     }
     append_kernel_event_tx(
         conn,
@@ -555,12 +580,112 @@ pub(crate) async fn record_lost_chargeback_pg(
                 "refund_number": refund_number,
                 "amount": reversed.to_string(),
                 "currency": payment.currency.as_str(),
+                "partial": new_status == PaymentTransactionStatus::PartiallyRefunded,
             }),
             None,
         ),
     )
     .await?;
     Ok(id)
+}
+
+/// Σ in-flight (`pending` / `processing`) refunds of `payment_id`.
+async fn in_flight_refunds_pg(conn: &mut sqlx::PgConnection, payment_id: Uuid) -> Result<Decimal> {
+    sqlx::query_scalar(
+        "SELECT COALESCE(SUM(amount), 0) FROM refunds \
+         WHERE payment_id = $1 AND status IN ($2, $3)",
+    )
+    .bind(payment_id)
+    .bind(RefundStatus::Pending.to_string())
+    .bind(RefundStatus::Processing.to_string())
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(map_db_error)
+}
+
+/// Load payment `id` with its row locked (`FOR UPDATE`).
+async fn load_payment_for_update_pg(conn: &mut sqlx::PgConnection, id: Uuid) -> Result<Payment> {
+    let row = sqlx::query_as::<_, PaymentRow>(
+        "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
+         amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor, card_brand, card_last4,
+         card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
+         description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
+         FROM payments WHERE id = $1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(map_db_error)?
+    .ok_or(CommerceError::NotFound)?;
+    PgPaymentRepository::row_to_payment(row)
+}
+
+/// Record a lost chargeback of `amount` (`None` = the whole remaining
+/// captured balance) on `Disputed` payment `id`, on the caller's transaction.
+/// Twin of the SQLite `record_lost_chargeback_amount_tx`.
+pub(crate) async fn record_lost_chargeback_amount_pg(
+    conn: &mut sqlx::PgConnection,
+    id: Uuid,
+    amount: Option<Decimal>,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    let payment = load_payment_for_update_pg(&mut *conn, id).await?;
+    if payment.status != PaymentTransactionStatus::Disputed {
+        return Err(CommerceError::ValidationError(format!(
+            "Only a disputed payment can lose a chargeback; payment {id} is {}",
+            payment.status
+        )));
+    }
+    let remaining = (payment.captured() - payment.amount_refunded).max(Decimal::ZERO);
+    let amount = amount.unwrap_or(remaining);
+    if amount <= Decimal::ZERO {
+        return Err(CommerceError::ValidationError(
+            "Chargeback amount must be greater than zero".into(),
+        ));
+    }
+    stateset_core::validate_money_scale(payment.currency, amount)?;
+    let in_flight = in_flight_refunds_pg(&mut *conn, id).await?;
+    if amount > remaining - in_flight {
+        return Err(CommerceError::RefundExceedsCaptured {
+            payment_id: id,
+            captured: payment.captured().to_string(),
+            already_refunded: (payment.amount_refunded + in_flight).to_string(),
+            requested: amount.to_string(),
+        });
+    }
+    let new_status = if amount == remaining {
+        PaymentTransactionStatus::Refunded
+    } else {
+        PaymentTransactionStatus::PartiallyRefunded
+    };
+    write_chargeback_reversal_pg(
+        &mut *conn,
+        &payment,
+        amount,
+        PaymentTransactionStatus::Disputed,
+        new_status,
+        now,
+    )
+    .await?;
+    if let Some(order_id) = payment.order_id {
+        sync_order_payment_status_pg(&mut *conn, order_id.into_uuid(), now).await?;
+    }
+    Ok(())
+}
+
+/// Statuses a completing refund may fold itself into a payment from (twin of
+/// the SQLite `refund_fold_statuses`): the state machine's list minus
+/// `Disputed -> PartiallyRefunded`, which belongs to a partial lost chargeback.
+fn refund_fold_statuses(target: PaymentTransactionStatus) -> Vec<String> {
+    ALL_PAYMENT_STATUSES
+        .iter()
+        .filter(|from| payment_transition_allowed(**from, target))
+        .filter(|from| {
+            !(**from == PaymentTransactionStatus::Disputed
+                && target == PaymentTransactionStatus::PartiallyRefunded)
+        })
+        .map(ToString::to_string)
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -580,6 +705,7 @@ pub(crate) struct PaymentRow {
     amount: Decimal,
     currency: CurrencyCode,
     amount_refunded: Decimal,
+    captured_amount: Option<Decimal>,
     external_id: Option<String>,
     idempotency_key: Option<String>,
     processor: Option<String>,
@@ -639,47 +765,61 @@ struct PaymentMethodRow {
 
 /// Capture payment `id` on the caller's transaction (shared by
 /// [`PgPaymentRepository::mark_completed_async`] and the governed
-/// `payments.complete` kernel command).
+/// `payments.complete` kernel command): a full capture.
 pub(crate) async fn mark_completed_pg(
     conn: &mut sqlx::PgConnection,
     id: Uuid,
     now: DateTime<Utc>,
 ) -> Result<()> {
-    let target = PaymentTransactionStatus::Completed;
+    capture_pg(conn, id, None, now).await
+}
 
-    // Two guards, in this order (same as SQLite):
-    //   1. the state machine — only a payment that may legally reach
-    //      `Completed` may be completed (never a cancelled/failed/refunded
-    //      one);
-    //   2. the order's capacity, re-checked at completion time: a payment
-    //      that was failed/cancelled while still in flight (and so released
-    //      its slice of the total) must not be completed on top of captures
-    //      made since.
-    let (raw_status, order_id, amount, currency): (String, Option<Uuid>, Decimal, CurrencyCode) =
-        sqlx::query_as(
-            "SELECT status, order_id, amount, currency FROM payments WHERE id = $1 FOR UPDATE",
-        )
-        .bind(id)
-        .fetch_optional(&mut *conn)
-        .await
-        .map_err(map_db_error)?
-        .ok_or(CommerceError::NotFound)?;
-    let current: PaymentTransactionStatus = raw_status.parse().map_err(|_| {
-        CommerceError::DatabaseError(format!("Invalid payment status '{raw_status}'"))
-    })?;
+/// Capture payment `id` for `captured` (`None` = the full authorized amount)
+/// on the caller's transaction. Twin of the SQLite `capture_tx`: the state
+/// machine, then the amount (positive, minor-unit, at most authorized; a
+/// recorded capture cannot change), then the order's capacity against what
+/// will actually be held.
+pub(crate) async fn capture_pg(
+    conn: &mut sqlx::PgConnection,
+    id: Uuid,
+    captured: Option<Decimal>,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    let target = PaymentTransactionStatus::Completed;
+    let payment = load_payment_for_update_pg(&mut *conn, id).await?;
+    let current = payment.status;
     if !payment_transition_allowed(current, target) {
         return Err(transition_conflict(current, target));
     }
+    let amount = match captured {
+        Some(amount) => payment.validate_capture_amount(amount)?,
+        None => payment.captured_amount.unwrap_or(payment.amount),
+    };
+    if let Some(recorded) = payment.captured_amount {
+        if recorded != amount {
+            return Err(CommerceError::Conflict(format!(
+                "Payment {id} already captured {recorded}; it cannot be re-captured for {amount}"
+            )));
+        }
+    }
 
-    if let Some(order_id) = order_id {
-        check_order_capture_capacity_pg(&mut *conn, order_id, Some(id), amount, currency).await?;
+    if let Some(order_id) = payment.order_id {
+        check_order_capture_capacity_pg(
+            &mut *conn,
+            order_id.into_uuid(),
+            Some(id),
+            amount,
+            payment.currency,
+        )
+        .await?;
     }
 
     let rows = sqlx::query(
-        "UPDATE payments SET status = $1, paid_at = $2, updated_at = $3
-         WHERE id = $4 AND status = ANY($5)",
+        "UPDATE payments SET status = $1, captured_amount = $2, paid_at = $3, updated_at = $4
+         WHERE id = $5 AND status = ANY($6)",
     )
     .bind(target.to_string())
+    .bind(amount)
     .bind(now)
     .bind(now)
     .bind(id)
@@ -691,8 +831,28 @@ pub(crate) async fn mark_completed_pg(
     if rows == 0 {
         return Err(transition_conflict(current, target));
     }
-    if let Some(order_id) = order_id {
-        sync_order_payment_status_pg(&mut *conn, order_id, now).await?;
+    if current != target {
+        append_kernel_event_tx(
+            &mut *conn,
+            &KernelOutboxEvent::domain(
+                "payments.captured.v1",
+                "payment",
+                id.to_string(),
+                serde_json::json!({
+                    "payment_id": id.to_string(),
+                    "order_id": payment.order_id.map(|o| o.to_string()),
+                    "authorized_amount": payment.amount.to_string(),
+                    "captured_amount": amount.to_string(),
+                    "currency": payment.currency.as_str(),
+                    "partial": amount < payment.amount,
+                }),
+                None,
+            ),
+        )
+        .await?;
+    }
+    if let Some(order_id) = payment.order_id {
+        sync_order_payment_status_pg(&mut *conn, order_id.into_uuid(), now).await?;
     }
     Ok(())
 }
@@ -714,6 +874,7 @@ impl PgPaymentRepository {
             amount,
             currency,
             amount_refunded,
+            captured_amount,
             external_id,
             idempotency_key,
             processor,
@@ -764,6 +925,7 @@ impl PgPaymentRepository {
             amount,
             currency,
             amount_refunded,
+            captured_amount,
             external_id,
             idempotency_key,
             processor,
@@ -1002,7 +1164,7 @@ impl PgPaymentRepository {
     pub async fn get_async(&self, id: Uuid) -> Result<Option<Payment>> {
         let row = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+             amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor, card_brand, card_last4,
              card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
              description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
              FROM payments WHERE id = $1"
@@ -1019,7 +1181,7 @@ impl PgPaymentRepository {
     pub async fn get_by_number_async(&self, payment_number: &str) -> Result<Option<Payment>> {
         let row = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+             amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor, card_brand, card_last4,
              card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
              description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
              FROM payments WHERE payment_number = $1"
@@ -1036,7 +1198,7 @@ impl PgPaymentRepository {
     pub async fn get_by_external_id_async(&self, external_id: &str) -> Result<Option<Payment>> {
         let row = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+             amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor, card_brand, card_last4,
              card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
              description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
              FROM payments WHERE external_id = $1"
@@ -1052,7 +1214,7 @@ impl PgPaymentRepository {
     async fn get_by_idempotency_key_async(&self, key: &str) -> Result<Option<Payment>> {
         let row = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+             amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor, card_brand, card_last4,
              card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
              description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
              FROM payments WHERE idempotency_key = $1"
@@ -1085,7 +1247,7 @@ impl PgPaymentRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let row = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+             amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor, card_brand, card_last4,
              card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
              description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
              FROM payments WHERE id = $1 FOR UPDATE"
@@ -1165,7 +1327,7 @@ impl PgPaymentRepository {
 
         let mut query = String::from(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+             amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor, card_brand, card_last4,
              card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
              description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
              FROM payments WHERE 1=1"
@@ -1260,6 +1422,110 @@ impl PgPaymentRepository {
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
+    }
+
+    /// Mark payment captured for `captured_amount` (may be partial) (async).
+    pub async fn mark_captured_async(&self, id: Uuid, captured_amount: Decimal) -> Result<Payment> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        capture_pg(tx.as_mut(), id, Some(captured_amount), Utc::now()).await?;
+        tx.commit().await.map_err(map_db_error)?;
+
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
+    }
+
+    /// Record a lost chargeback (full or partial) on a disputed payment (async).
+    pub async fn record_lost_chargeback_async(
+        &self,
+        id: Uuid,
+        amount: Option<Decimal>,
+    ) -> Result<Payment> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        record_lost_chargeback_amount_pg(tx.as_mut(), id, amount, Utc::now()).await?;
+        tx.commit().await.map_err(map_db_error)?;
+
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
+    }
+
+    /// Record the processor's id for a refund, once (async).
+    pub async fn set_refund_external_id_async(
+        &self,
+        id: Uuid,
+        external_id: &str,
+    ) -> Result<Refund> {
+        if external_id.trim().is_empty() {
+            return Err(CommerceError::ValidationError(
+                "Refund external id must not be empty".into(),
+            ));
+        }
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let (current,): (Option<String>,) =
+            sqlx::query_as("SELECT external_id FROM refunds WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        match current.as_deref() {
+            Some(existing) if existing == external_id => {
+                tx.commit().await.map_err(map_db_error)?;
+                return self.get_refund_async(id).await?.ok_or(CommerceError::NotFound);
+            }
+            Some(existing) => {
+                return Err(CommerceError::Conflict(format!(
+                    "Refund {id} already has processor id {existing}"
+                )));
+            }
+            None => {}
+        }
+        let rows = sqlx::query(
+            "UPDATE refunds SET external_id = $1, updated_at = $2
+             WHERE id = $3 AND external_id IS NULL",
+        )
+        .bind(external_id)
+        .bind(now)
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .rows_affected();
+        if rows == 0 {
+            return Err(CommerceError::Conflict(format!(
+                "Refund {id} processor id changed concurrently"
+            )));
+        }
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "payments.refund_external_id_recorded.v1",
+                "refund",
+                id.to_string(),
+                serde_json::json!({
+                    "refund_id": id.to_string(),
+                    "external_id": external_id,
+                }),
+                None,
+            ),
+        )
+        .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)
+    }
+
+    /// In-flight refunds that carry a processor reference, oldest first (async).
+    pub async fn list_in_flight_refunds_async(&self, limit: u32) -> Result<Vec<Refund>> {
+        let rows = sqlx::query_as::<_, RefundRow>(
+            "SELECT id, refund_number, payment_id, status, amount, currency, reason, external_id,
+             idempotency_key, failure_reason, notes, refunded_at, created_at, updated_at
+             FROM refunds
+             WHERE status IN ('pending', 'processing') AND external_id IS NOT NULL
+             ORDER BY created_at, id LIMIT $1",
+        )
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        rows.into_iter().map(Self::row_to_refund).collect()
     }
 
     /// Mark payment as failed (async)
@@ -1359,7 +1625,7 @@ impl PgPaymentRepository {
         // concurrent refund of the same payment is serialized behind us.
         let row = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+             amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor, card_brand, card_last4,
              card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
              description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
              FROM payments WHERE id = $1 FOR UPDATE"
@@ -1549,9 +1815,11 @@ impl PgPaymentRepository {
         // matches the SQLite backend: a refund may only fold itself into a
         // payment that can legally reach `Refunded`/`PartiallyRefunded`.
         let payment_id = refund.payment_id.into_uuid();
-        let (raw_payment_status, current_refunded, payment_amount): (String, Decimal, Decimal) =
+        // Bounded by what was CAPTURED, not by what was authorized.
+        let (raw_payment_status, current_refunded, payment_captured): (String, Decimal, Decimal) =
             sqlx::query_as(
-                "SELECT status, amount_refunded, amount FROM payments WHERE id = $1 FOR UPDATE",
+                "SELECT status, amount_refunded, COALESCE(captured_amount, amount)
+                 FROM payments WHERE id = $1 FOR UPDATE",
             )
             .bind(payment_id)
             .fetch_optional(tx.as_mut())
@@ -1566,7 +1834,17 @@ impl PgPaymentRepository {
             })?;
 
         let new_refunded = current_refunded + refund.amount;
-        let new_status = if new_refunded >= payment_amount {
+        // Last line of defence: completing a refund never returns more than
+        // the payment captured.
+        if new_refunded > payment_captured {
+            return Err(CommerceError::RefundExceedsCaptured {
+                payment_id,
+                captured: payment_captured.to_string(),
+                already_refunded: current_refunded.to_string(),
+                requested: refund.amount.to_string(),
+            });
+        }
+        let new_status = if new_refunded >= payment_captured {
             PaymentTransactionStatus::Refunded
         } else {
             PaymentTransactionStatus::PartiallyRefunded
@@ -1580,7 +1858,7 @@ impl PgPaymentRepository {
         .bind(new_status.to_string())
         .bind(now)
         .bind(payment_id)
-        .bind(statuses_allowing_transition_to(new_status))
+        .bind(refund_fold_statuses(new_status))
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?
@@ -1588,6 +1866,24 @@ impl PgPaymentRepository {
         if rows == 0 {
             return Err(transition_conflict(payment_status, new_status));
         }
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "payments.refund_completed.v1",
+                "refund",
+                id.to_string(),
+                serde_json::json!({
+                    "refund_id": id.to_string(),
+                    "payment_id": payment_id.to_string(),
+                    "amount": refund.amount.to_string(),
+                    "currency": refund.currency.as_str(),
+                    "amount_refunded": new_refunded.to_string(),
+                    "payment_status": new_status.to_string(),
+                }),
+                None,
+            ),
+        )
+        .await?;
         sync_order_payment_status_for_payment_pg(tx.as_mut(), payment_id, now).await?;
 
         tx.commit().await.map_err(map_db_error)?;
@@ -1601,18 +1897,38 @@ impl PgPaymentRepository {
 
         // Only an in-flight refund can fail; a `Completed` refund is already
         // folded into `payments.amount_refunded` (see the SQLite backend).
-        let rows = sqlx::query(
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let failed: Option<(Uuid,)> = sqlx::query_as(
             "UPDATE refunds SET status = $1, failure_reason = $2, updated_at = $3 \
-             WHERE id = $4 AND status IN ('pending', 'processing')",
+             WHERE id = $4 AND status IN ('pending', 'processing')
+             RETURNING payment_id",
         )
         .bind(RefundStatus::Failed.to_string())
         .bind(reason)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await
-        .map_err(map_db_error)?
-        .rows_affected();
+        .map_err(map_db_error)?;
+        if let Some((payment_id,)) = failed {
+            append_kernel_event_tx(
+                tx.as_mut(),
+                &KernelOutboxEvent::domain(
+                    "payments.refund_failed.v1",
+                    "refund",
+                    id.to_string(),
+                    serde_json::json!({
+                        "refund_id": id.to_string(),
+                        "payment_id": payment_id.to_string(),
+                        "reason": reason,
+                    }),
+                    None,
+                ),
+            )
+            .await?;
+        }
+        tx.commit().await.map_err(map_db_error)?;
+        let rows = u64::from(failed.is_some());
 
         let refund = self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)?;
         if rows == 0 && refund.status != RefundStatus::Failed {
@@ -1927,6 +2243,7 @@ impl PgPaymentRepository {
                 amount: input.amount,
                 currency,
                 amount_refunded: Decimal::ZERO,
+                captured_amount: None,
                 external_id: input.external_id,
                 idempotency_key: input.idempotency_key,
                 processor: input.processor,
@@ -1995,7 +2312,7 @@ impl PgPaymentRepository {
             let raw_id = id.into_uuid();
             let payment = sqlx::query_as::<_, PaymentRow>(
                 "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-                 amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+                 amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor, card_brand, card_last4,
                  card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
                  description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
                  FROM payments WHERE id = $1 FOR UPDATE"
@@ -2066,7 +2383,7 @@ impl PgPaymentRepository {
             // Fetch the updated payment
             let updated_row = sqlx::query_as::<_, PaymentRow>(
                 "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-                 amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+                 amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor, card_brand, card_last4,
                  card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
                  description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
                  FROM payments WHERE id = $1"
@@ -2142,7 +2459,7 @@ impl PgPaymentRepository {
 
         let rows = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+             amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor, card_brand, card_last4,
              card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
              description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
              FROM payments WHERE id = ANY($1)"
@@ -2199,6 +2516,22 @@ impl PaymentRepository for PgPaymentRepository {
 
     fn mark_processing(&self, id: PaymentId) -> Result<Payment> {
         super::block_on(self.mark_processing_async(id.into_uuid()))
+    }
+
+    fn mark_captured(&self, id: PaymentId, captured_amount: Decimal) -> Result<Payment> {
+        super::block_on(self.mark_captured_async(id.into_uuid(), captured_amount))
+    }
+
+    fn record_lost_chargeback(&self, id: PaymentId, amount: Option<Decimal>) -> Result<Payment> {
+        super::block_on(self.record_lost_chargeback_async(id.into_uuid(), amount))
+    }
+
+    fn set_refund_external_id(&self, id: Uuid, external_id: &str) -> Result<Refund> {
+        super::block_on(self.set_refund_external_id_async(id, external_id))
+    }
+
+    fn list_in_flight_refunds(&self, limit: u32) -> Result<Vec<Refund>> {
+        super::block_on(self.list_in_flight_refunds_async(limit))
     }
 
     fn mark_completed(&self, id: PaymentId) -> Result<Payment> {

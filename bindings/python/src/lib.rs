@@ -2847,6 +2847,10 @@ pub struct Payment {
     amount_refunded: f64,
     #[pyo3(get)]
     amount_refunded_exact: String,
+    /// Exact amount actually captured; `None` until captured. May be less
+    /// than `amount_exact` (a partial capture) and bounds every refund.
+    #[pyo3(get)]
+    captured_amount_exact: Option<String>,
     #[pyo3(get)]
     currency: String,
     #[pyo3(get)]
@@ -2887,6 +2891,7 @@ impl TryFrom<stateset_core::Payment> for Payment {
             amount_exact,
             amount_refunded: to_f64_result(p.amount_refunded, "payment amount refunded")?,
             amount_refunded_exact: p.amount_refunded.to_string(),
+            captured_amount_exact: p.captured_amount.map(|amount| amount.to_string()),
             currency: p.currency.to_string(),
             status: format!("{}", p.status),
             payment_method: format!("{}", p.payment_method),
@@ -3143,6 +3148,63 @@ impl Payments {
             .mark_completed(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to complete payment: {}", e)))?;
 
+        convert_output(payment)
+    }
+
+    /// Capture a payment for an exact decimal amount, which may be less than
+    /// the authorized amount (a partial capture). The captured amount bounds
+    /// every later refund.
+    fn mark_captured(&self, id: String, amount: String) -> PyResult<Payment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|error| PyRuntimeError::new_err(format!("Lock error: {error}")))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let payment = commerce
+            .payments()
+            .get(uuid.into())
+            .map_err(|error| PyRuntimeError::new_err(format!("Failed to get payment: {error}")))?
+            .ok_or_else(|| PyValueError::new_err("Payment not found"))?;
+        let money = stateset_core::Money::from_decimal_str(&amount, payment.currency)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let payment =
+            commerce.payments().mark_captured(uuid.into(), money.amount()).map_err(|error| {
+                PyRuntimeError::new_err(format!("Failed to capture payment: {error}"))
+            })?;
+        convert_output(payment)
+    }
+
+    /// Record a lost chargeback on a disputed payment. `amount` (exact
+    /// decimal string) is the disputed amount the network reversed; omit it
+    /// for the whole remaining captured balance.
+    #[pyo3(signature = (id, amount=None))]
+    fn record_lost_chargeback(&self, id: String, amount: Option<String>) -> PyResult<Payment> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|error| PyRuntimeError::new_err(format!("Lock error: {error}")))?;
+        let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let amount = match amount {
+            Some(amount) => {
+                let payment = commerce
+                    .payments()
+                    .get(uuid.into())
+                    .map_err(|error| {
+                        PyRuntimeError::new_err(format!("Failed to get payment: {error}"))
+                    })?
+                    .ok_or_else(|| PyValueError::new_err("Payment not found"))?;
+                Some(
+                    stateset_core::Money::from_decimal_str(&amount, payment.currency)
+                        .map_err(|error| PyValueError::new_err(error.to_string()))?
+                        .amount(),
+                )
+            }
+            None => None,
+        };
+        let payment =
+            commerce.payments().record_lost_chargeback(uuid.into(), amount).map_err(|error| {
+                PyRuntimeError::new_err(format!("Failed to record lost chargeback: {error}"))
+            })?;
         convert_output(payment)
     }
 

@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:3a032ac219c934becf2bc0a5ea0178dea1615d65b12ddbefa7aa63919c2bda65",
+  "digest": "sha256:de4711aee6524e657334a6150d5629e0a26fc0763e4c9ecf9e9c49bd4aff3ca1",
   "counts": {
-    "total": 957,
+    "total": 959,
     "readOnly": 471,
-    "mutations": 486,
+    "mutations": 488,
     "governed": 36,
     "governedComposite": 1,
-    "blocked": 449
+    "blocked": 451
   },
   "entries": [
     {
@@ -1924,6 +1924,13 @@
     {
       "name": "cancel_work_order",
       "permission": "delete",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "capture_payment",
+      "permission": "write",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -5542,6 +5549,13 @@
     },
     {
       "name": "record_invoice_payment",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "record_lost_chargeback",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",

@@ -271,9 +271,9 @@ pub use payment_obligations::PaymentObligations;
 #[cfg(feature = "events")]
 pub use payment_providers::{
     MockPaymentProvider, PaymentProvider, ProviderCharge, ProviderDecision, StripeProvider,
-    minor_units,
+    from_minor_units, minor_units,
 };
-pub use payments::Payments;
+pub use payments::{Payments, RefundReconciliation, RefundReconciliationError};
 pub use prepayments::Prepayments;
 pub use price_levels::PriceLevels;
 pub use price_schedules::PriceSchedules;

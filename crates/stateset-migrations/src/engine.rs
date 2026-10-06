@@ -500,6 +500,12 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         // territories; QST no longer compounds on GST.
         ("099_canadian_sales_tax", include_str!("../migrations/099_canadian_sales_tax.sql")),
         ("100_shipment_version", include_str!("../migrations/100_shipment_version.sql")),
+        // What a payment actually captured, apart from what it authorized,
+        // so a partial capture is recorded exactly and bounds its refunds.
+        (
+            "101_payment_captured_amount",
+            include_str!("../migrations/101_payment_captured_amount.sql"),
+        ),
     ]
 }
 

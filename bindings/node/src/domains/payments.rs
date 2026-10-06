@@ -61,6 +61,10 @@ pub struct PaymentOutput {
     /// Exact base-10 total of COMPLETED refunds. A refund only counts here
     /// once `completeRefund` settles it; pending refunds are not included.
     pub amount_refunded_exact: String,
+    /// Exact base-10 amount actually captured; `null` until the payment is
+    /// captured. May be less than `amountExact` (a partial capture), and
+    /// bounds every refund.
+    pub captured_amount_exact: Option<String>,
     pub currency: String,
     #[napi(ts_type = "PaymentTransactionStatus")]
     pub status: String,
@@ -87,6 +91,7 @@ impl TryFrom<stateset_core::Payment> for PaymentOutput {
             amount_exact,
             amount_refunded,
             amount_refunded_exact,
+            captured_amount_exact: p.captured_amount.map(|amount| amount.to_string()),
             currency: p.currency.to_string(),
             status: format!("{}", p.status),
             version: p.version,
@@ -317,6 +322,63 @@ impl Payments {
             .mark_completed(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to complete payment", e))?;
 
+        convert_output(payment)
+    }
+
+    /// Capture a payment for an exact amount, which may be less than the
+    /// authorized amount (a partial capture). The captured amount bounds
+    /// every later refund.
+    #[napi]
+    pub async fn mark_captured(&self, id: String, amount: String) -> Result<PaymentOutput> {
+        let commerce = self.commerce.get()?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
+        let payment = commerce
+            .payments()
+            .get(uuid.into())
+            .map_err(|error| wrap(ErrCode::Internal, "Failed to get payment", error))?
+            .ok_or_else(|| coded(ErrCode::NotFound, "Payment not found"))?;
+        let money = stateset_core::Money::from_decimal_str(&amount, payment.currency)
+            .map_err(|error| from_cause(ErrCode::Validation, error))?;
+        let payment = commerce
+            .payments()
+            .mark_captured(uuid.into(), money.amount())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to capture payment", e))?;
+        convert_output(payment)
+    }
+
+    /// Record a lost chargeback on a disputed payment. `amount` (exact
+    /// decimal) is the disputed amount the network reversed; omit it for the
+    /// whole remaining captured balance. A partial loss leaves the payment
+    /// `partially_refunded` with a `chargeback_lost` refund row.
+    #[napi]
+    pub async fn record_lost_chargeback(
+        &self,
+        id: String,
+        amount: Option<String>,
+    ) -> Result<PaymentOutput> {
+        let commerce = self.commerce.get()?;
+        let uuid: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
+        let amount = match amount {
+            Some(amount) => {
+                let payment = commerce
+                    .payments()
+                    .get(uuid.into())
+                    .map_err(|error| wrap(ErrCode::Internal, "Failed to get payment", error))?
+                    .ok_or_else(|| coded(ErrCode::NotFound, "Payment not found"))?;
+                Some(
+                    stateset_core::Money::from_decimal_str(&amount, payment.currency)
+                        .map_err(|error| from_cause(ErrCode::Validation, error))?
+                        .amount(),
+                )
+            }
+            None => None,
+        };
+        let payment = commerce
+            .payments()
+            .record_lost_chargeback(uuid.into(), amount)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to record lost chargeback", e))?;
         convert_output(payment)
     }
 

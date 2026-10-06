@@ -16,7 +16,7 @@ use crate::error::HttpError;
 use crate::middleware::{self, AuthzConfig, BearerAuthBinding, RateLimitConfig};
 use crate::routes::{self, DEFAULT_REQUEST_BODY_LIMIT_BYTES};
 use crate::state::{AppState, IpCidr, MetricsHeaderLimits};
-use crate::sweeps::{SweepConfig, spawn_background_sweeps};
+use crate::sweeps::{RefundReconciliationSweep, SweepConfig, spawn_background_sweeps_with};
 
 /// Default bind address.
 const DEFAULT_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 3000);
@@ -145,6 +145,7 @@ pub struct ServerBuilder {
     rate_limit: Option<RateLimitConfig>,
     require_idempotency_keys: bool,
     background_sweeps: Option<SweepConfig>,
+    refund_reconciliation: Option<RefundReconciliationSweep>,
 }
 
 impl fmt::Debug for ServerBuilder {
@@ -172,6 +173,7 @@ impl fmt::Debug for ServerBuilder {
             .field("rate_limit", &self.rate_limit)
             .field("require_idempotency_keys", &self.require_idempotency_keys)
             .field("background_sweeps", &self.background_sweeps)
+            .field("refund_reconciliation", &self.refund_reconciliation)
             .finish()
     }
 }
@@ -286,7 +288,18 @@ impl ServerBuilder {
             // SKU keeps counting holds that timed out long ago, so the server
             // runs both built-in sweeps unless an operator turns them off.
             background_sweeps: Some(SweepConfig::default()),
+            // Needs a payment processor to ask; off until one is configured.
+            refund_reconciliation: None,
         }
+    }
+
+    /// Also settle refunds a payment processor left pending, on the
+    /// background sweep thread (see [`RefundReconciliationSweep`]). Runs only
+    /// while background sweeps are enabled.
+    #[must_use]
+    pub fn with_refund_reconciliation(mut self, sweep: RefundReconciliationSweep) -> Self {
+        self.refund_reconciliation = Some(sweep);
+        self
     }
 
     /// Override how the built-in stock and traceability sweeps are scheduled.
@@ -1037,11 +1050,17 @@ impl ServerBuilder {
         // worker); the handle is held for the lifetime of `serve` and stops
         // the loop when the server returns.
         let sweeps = match self.background_sweeps {
-            Some(config) => match spawn_background_sweeps(&self.state.commerce_arc(), config) {
+            Some(config) => match spawn_background_sweeps_with(
+                &self.state.commerce_arc(),
+                config,
+                self.refund_reconciliation.as_ref(),
+            ) {
                 Ok(handle) => {
                     tracing::info!(
                         reservation_interval_secs = config.reservation_interval.as_secs(),
                         traceability_interval_secs = config.traceability_interval.as_secs(),
+                        refund_reconciliation_interval_secs =
+                            self.refund_reconciliation.as_ref().map(|r| r.interval().as_secs()),
                         "Background inventory and traceability sweeps started"
                     );
                     if self.state.tenant_db_dir().is_some() {

@@ -1650,7 +1650,7 @@ impl PgGeneralLedgerRepository {
         })?;
 
         let (amount, paid_at): (Decimal, DateTime<Utc>) = sqlx::query_as(
-            "SELECT amount, COALESCE(paid_at, created_at) FROM payments WHERE id = $1",
+            "SELECT COALESCE(captured_amount, amount), COALESCE(paid_at, created_at) FROM payments WHERE id = $1",
         )
         .bind(payment_id)
         .fetch_one(tx.as_mut())

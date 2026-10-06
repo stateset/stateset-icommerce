@@ -13,11 +13,11 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 975 |
+| Total tools | 977 |
 | MCP servers | 3 |
 | Policy domains | 90 |
 | Read tools | 480 |
-| Write tools | 427 |
+| Write tools | 429 |
 | Delete tools | 21 |
 | Admin tools | 47 |
 | Unknown permission | 0 |
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 957 | `cli/src/mcp-server.js` |
+| stateset-commerce | 959 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -83,7 +83,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | manufacturing | 11 |
 | orders | 6 |
 | payment-obligations | 7 |
-| payments | 19 |
+| payments | 21 |
 | policies | 5 |
 | prepayments | 8 |
 | price_levels | 9 |
@@ -132,7 +132,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | admin | 47 |
 | delete | 21 |
 | read | 480 |
-| write | 427 |
+| write | 429 |
 
 ## Tool Registry
 
@@ -412,6 +412,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `cancel_vendor_credit` | `stateset-commerce` | `vendor_credits` | `write` |
 | `cancel_vendor_return` | `stateset-commerce` | `vendor-returns` | `write` |
 | `cancel_work_order` | `stateset-commerce` | `manufacturing` | `delete` |
+| `capture_payment` | `stateset-commerce` | `payments` | `write` |
 | `capture_payment_intent` | `stateset-commerce` | `payments` | `write` |
 | `capture_stock_snapshot` | `stateset-commerce` | `stock-snapshots` | `write` |
 | `capture_topology_snapshot` | `stateset-commerce` | `topology-snapshots` | `write` |
@@ -929,6 +930,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `record_activity` | `stateset-commerce` | `activity_logs` | `write` |
 | `record_cycle_counts` | `stateset-commerce` | `cycle_counts` | `write` |
 | `record_invoice_payment` | `stateset-commerce` | `invoices` | `write` |
+| `record_lost_chargeback` | `stateset-commerce` | `payments` | `write` |
 | `record_payment_obligation_payment` | `stateset-commerce` | `payment-obligations` | `write` |
 | `record_promotion_usage` | `stateset-commerce` | `promotions` | `write` |
 | `redeem_points` | `stateset-commerce` | `loyalty` | `write` |

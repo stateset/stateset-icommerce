@@ -309,6 +309,8 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       get: ['get_payment'],
       list: ['list_payments', 'explain_order'],
       markCompleted: ['complete_payment'],
+      markCaptured: ['capture_payment'],
+      recordLostChargeback: ['record_lost_chargeback'],
       markFailed: ['mark_failed_payment'],
       cancel: ['cancel_payment'],
       createRefund: ['create_refund'],

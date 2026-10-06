@@ -43,7 +43,7 @@ CanTransition(from, to) ==
     \/ from = "requires_action"    /\ to \in {"processing", "completed", "failed", "cancelled"}
     \/ from = "completed"          /\ to \in {"refunded", "partially_refunded", "disputed"}
     \/ from = "partially_refunded" /\ to \in {"refunded", "disputed"}
-    \/ from = "disputed"           /\ to \in {"completed", "refunded", "cancelled"}
+    \/ from = "disputed"           /\ to \in {"completed", "refunded", "partially_refunded"}
 
 (* PaymentTransactionStatus::is_refundable *)
 Refundable(s) == s \in {"completed", "partially_refunded"}
@@ -138,6 +138,10 @@ CompleteRefund(i) ==
     /\ LET nr == refunded + refunds[i].amt
            ns == NewStatus(nr)
        IN  /\ CanTransition(pstatus, ns)
+           \* A refund never folds PART of itself into a disputed payment:
+           \* disputed -> partially_refunded is the partial lost chargeback's
+           \* edge (record_lost_chargeback), not a refund completion's.
+           /\ ~(pstatus = "disputed" /\ ns = "partially_refunded")
            /\ refunded' = nr
            /\ pstatus'  = ns
            /\ refunds'  = [refunds EXCEPT ![i].st = "completed"]

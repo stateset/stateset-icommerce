@@ -1,6 +1,5 @@
 ---
 source: crates/stateset-db/tests/snapshot_migrations.rs
-assertion_line: 70
 expression: tables
 ---
 [
@@ -562,7 +561,7 @@ expression: tables
     ),
     (
         "payments",
-        "CREATE TABLE payments (\n    id TEXT PRIMARY KEY,\n    payment_number TEXT UNIQUE NOT NULL,\n    order_id TEXT,\n    invoice_id TEXT,\n    customer_id TEXT,\n    status TEXT NOT NULL DEFAULT 'pending',\n    payment_method TEXT NOT NULL DEFAULT 'credit_card',\n    amount TEXT NOT NULL,\n    currency TEXT NOT NULL DEFAULT 'USD',\n    amount_refunded TEXT NOT NULL DEFAULT '0',\n    external_id TEXT,\n    processor TEXT,\n    card_brand TEXT,\n    card_last4 TEXT,\n    card_exp_month INTEGER,\n    card_exp_year INTEGER,\n    billing_email TEXT,\n    billing_name TEXT,\n    billing_address TEXT,\n    description TEXT,\n    failure_reason TEXT,\n    failure_code TEXT,\n    metadata TEXT,\n    paid_at TEXT,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n, version INTEGER NOT NULL DEFAULT 1, idempotency_key TEXT)",
+        "CREATE TABLE payments (\n    id TEXT PRIMARY KEY,\n    payment_number TEXT UNIQUE NOT NULL,\n    order_id TEXT,\n    invoice_id TEXT,\n    customer_id TEXT,\n    status TEXT NOT NULL DEFAULT 'pending',\n    payment_method TEXT NOT NULL DEFAULT 'credit_card',\n    amount TEXT NOT NULL,\n    currency TEXT NOT NULL DEFAULT 'USD',\n    amount_refunded TEXT NOT NULL DEFAULT '0',\n    external_id TEXT,\n    processor TEXT,\n    card_brand TEXT,\n    card_last4 TEXT,\n    card_exp_month INTEGER,\n    card_exp_year INTEGER,\n    billing_email TEXT,\n    billing_name TEXT,\n    billing_address TEXT,\n    description TEXT,\n    failure_reason TEXT,\n    failure_code TEXT,\n    metadata TEXT,\n    paid_at TEXT,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n, version INTEGER NOT NULL DEFAULT 1, idempotency_key TEXT, captured_amount TEXT)",
     ),
     (
         "performance_obligations",
