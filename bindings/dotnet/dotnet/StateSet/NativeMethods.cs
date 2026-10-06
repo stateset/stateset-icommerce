@@ -1,565 +1,93 @@
+using System.Reflection;
 using System.Runtime.InteropServices;
 
 namespace StateSet.Embedded;
 
 /// <summary>
-/// P/Invoke declarations for the native StateSet library
+/// P/Invoke declarations for the native library <c>stateset_dotnet</c>.
 /// </summary>
+/// <remarks>
+/// The library is a thin re-export of the <c>stateset-ffi</c> crate's C ABI
+/// (<c>crates/stateset-ffi/src/json_api.rs</c> and <c>crypto_api.rs</c>).
+/// The whole commerce surface goes through one entry point,
+/// <see cref="stateset_json_call"/>, which takes a method name and a JSON
+/// object and returns a JSON envelope that must be released with
+/// <see cref="stateset_string_free"/>.
+///
+/// Library resolution: the default .NET probing (application directory,
+/// <c>runtimes/&lt;rid&gt;/native</c> in a NuGet package, then the OS loader
+/// path) is used, unless the <c>STATESET_NATIVE_LIB</c> environment variable
+/// names the library file explicitly.
+/// </remarks>
 internal static partial class NativeMethods
 {
-    private const string LibraryName = "stateset_dotnet";
-
-    // =============================================================================
-    // Memory Management
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern void stateset_string_free(IntPtr s);
-
-    // =============================================================================
-    // Commerce Lifecycle
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_commerce_new(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string dbPath);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern void stateset_commerce_free(IntPtr handle);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_get_last_error();
-
-    // =============================================================================
-    // Customers API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_customer_create(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string email,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string firstName,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string lastName,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? phone);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_customer_get(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_customer_list(IntPtr handle);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int stateset_customer_delete(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int stateset_customer_count(IntPtr handle);
-
-    // =============================================================================
-    // Products API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_product_create(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string sku,
-        double price,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? description);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_product_get(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_product_list(IntPtr handle);
-
-    // =============================================================================
-    // Orders API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_order_create(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string customerId,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string itemsJson,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string currency);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_order_get(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_order_list(IntPtr handle);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_order_update_status(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string status);
-
-    // =============================================================================
-    // Inventory API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_inventory_create_item(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string sku,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
-        double initialQuantity);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int stateset_inventory_adjust(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string sku,
-        double quantityDelta,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string reason);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_inventory_get_level(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string sku);
-
-    // =============================================================================
-    // Carts API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_cart_create(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? customerId,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? currency);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_cart_add_item(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string cartId,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string variantId,
-        int quantity);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_cart_get(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string cartId);
-
-    // =============================================================================
-    // Returns API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_return_create(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string orderId,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string reason,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? notes);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_return_list(IntPtr handle);
-
-    // =============================================================================
-    // Payments API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_payment_create(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string orderId,
-        double amount,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string currency,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string method);
-
-    // =============================================================================
-    // Analytics API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_analytics_sales_summary(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string period);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_analytics_top_products(
-        IntPtr handle,
-        int limit);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_analytics_top_customers(
-        IntPtr handle,
-        int limit);
-
-    // =============================================================================
-    // Orders API - Additional Methods
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_order_ship(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_order_cancel(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    // =============================================================================
-    // Returns API - Additional Methods
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_return_get(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_return_approve(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_return_reject(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string reason);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_return_complete(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    // =============================================================================
-    // Payments API - Additional Methods
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_payment_get(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_payment_list(IntPtr handle);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_payment_complete(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_payment_fail(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string reason);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_payment_refund(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string paymentId,
-        double amount,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string reason);
-
-    // =============================================================================
-    // Shipments API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_shipment_create(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string orderId,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string recipientName,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string shippingAddress,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string carrier);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_shipment_get(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_shipment_list(IntPtr handle);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_shipment_ship(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string trackingNumber);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_shipment_deliver(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_shipment_cancel(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    // =============================================================================
-    // Warranties API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_warranty_create(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string customerId,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string productId,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string warrantyType,
-        int durationMonths);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_warranty_get(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_warranty_list(IntPtr handle);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_warranty_create_claim(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string warrantyId,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string issueDescription);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_warranty_approve_claim(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string claimId);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_warranty_deny_claim(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string claimId,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string reason);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_warranty_complete_claim(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string claimId,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string resolution);
-
-    // =============================================================================
-    // Suppliers API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_supplier_create(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string email,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string phone);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_supplier_get(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_supplier_list(IntPtr handle);
-
-    // =============================================================================
-    // Purchase Orders API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_purchase_order_create(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string supplierId,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string itemsJson);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_purchase_order_get(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_purchase_order_list(IntPtr handle);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_purchase_order_submit(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_purchase_order_approve(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string approvedBy);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_purchase_order_send(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_purchase_order_cancel(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    // =============================================================================
-    // Invoices API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_invoice_create(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string customerId,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string itemsJson,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string billingEmail);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_invoice_get(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_invoice_list(IntPtr handle);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_invoice_send(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_invoice_void(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_invoice_record_payment(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id,
-        double amount,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string paymentMethod);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_invoice_get_overdue(IntPtr handle);
-
-    // =============================================================================
-    // BOM API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_bom_create(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string productId,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? description);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_bom_get(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_bom_list(IntPtr handle);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_bom_add_component(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string bomId,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string componentSku,
-        double quantity);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_bom_get_components(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string bomId);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_bom_activate(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    // =============================================================================
-    // Work Orders API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_work_order_create(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string productId,
-        double quantityToBuild,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? bomId);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_work_order_get(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_work_order_list(IntPtr handle);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_work_order_start(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_work_order_complete(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id,
-        double quantityCompleted);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_work_order_cancel(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
-
-    // =============================================================================
-    // Currency API
-    // =============================================================================
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_currency_set_rate(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string fromCurrency,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string toCurrency,
-        double rate);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_currency_get_rate(
-        IntPtr handle,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string fromCurrency,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string toCurrency);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_currency_convert(
-        IntPtr handle,
-        double amount,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string fromCurrency,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string toCurrency);
-
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr stateset_currency_get_settings(IntPtr handle);
-
-    // =============================================================================
+    internal const string LibraryName = "stateset_dotnet";
+
+    /// <summary>The <c>stateset-ffi</c> ABI major version this binding was written for.</summary>
+    internal const uint ExpectedAbiVersion = 1;
+
+    static NativeMethods()
+    {
+        try
+        {
+            NativeLibrary.SetDllImportResolver(typeof(NativeMethods).Assembly, Resolve);
+        }
+        catch (InvalidOperationException)
+        {
+            // A resolver is already registered for this assembly; keep it.
+        }
+    }
+
+    private static IntPtr Resolve(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
+    {
+        if (libraryName != LibraryName)
+        {
+            return IntPtr.Zero;
+        }
+        var explicitPath = Environment.GetEnvironmentVariable("STATESET_NATIVE_LIB");
+        if (!string.IsNullOrEmpty(explicitPath))
+        {
+            return NativeLibrary.Load(explicitPath);
+        }
+        return IntPtr.Zero; // fall back to default probing
+    }
+
+    // ------------------------------------------------------------------
+    // Lifecycle, calls and memory
+    // ------------------------------------------------------------------
+
+    [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int stateset_json_open(string dbPath, out IntPtr handle);
+
+    [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial IntPtr stateset_json_call(IntPtr handle, string method, string? argsJson);
+
+    [LibraryImport(LibraryName)]
+    internal static partial void stateset_destroy(IntPtr handle);
+
+    [LibraryImport(LibraryName)]
+    internal static partial void stateset_string_free(IntPtr s);
+
+    /// <summary>Borrowed pointer, valid until the next call on this thread. Never free it.</summary>
+    [LibraryImport(LibraryName)]
+    internal static partial IntPtr stateset_last_error_message();
+
+    [LibraryImport(LibraryName)]
+    internal static partial uint stateset_abi_version();
+
+    // ------------------------------------------------------------------
     // Cross-binding crypto primitives
-    // =============================================================================
+    // ------------------------------------------------------------------
 
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern void stateset_crypto_free_buffer(IntPtr ptr, nuint len);
+    [LibraryImport(LibraryName)]
+    internal static partial void stateset_crypto_free_buffer(IntPtr ptr, nuint len);
 
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int stateset_crypto_jcs_canonicalize(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string jsonIn,
-        out IntPtr outPtr,
-        out nuint outLen);
+    [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int stateset_crypto_jcs_canonicalize(string jsonIn, out IntPtr outPtr, out nuint outLen);
 
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int stateset_crypto_payload_plain_hash(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string jsonIn,
-        IntPtr saltIn,
-        nuint saltLen,
-        IntPtr outBuf32);
+    [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int stateset_crypto_payload_plain_hash(string jsonIn, IntPtr saltIn, nuint saltLen, IntPtr outBuf32);
 
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int stateset_crypto_merkle_root(
-        IntPtr leavesIn,
-        nuint leafCount,
-        IntPtr outBuf32);
+    [LibraryImport(LibraryName)]
+    internal static partial int stateset_crypto_merkle_root(IntPtr leavesIn, nuint leafCount, IntPtr outBuf32);
 }

@@ -21,7 +21,7 @@
 - Ruby: `/home/dom/stateset-icommerce/examples/ruby/basic_usage.rb`
 - Java: `/home/dom/stateset-icommerce/examples/java/BasicUsage.java`
 - Kotlin: `/home/dom/stateset-icommerce/examples/kotlin/BasicUsage.kt`
-- Swift: `/home/dom/stateset-icommerce/examples/swift/BasicUsage.swift`
+- Swift: `/home/dom/stateset-icommerce/examples/swift-basic/BasicUsage.swift`
 - C#: `/home/dom/stateset-icommerce/examples/dotnet/BasicUsage.cs`
 - Go: `/home/dom/stateset-icommerce/examples/go/basic_usage.go`
 - WASM: see `/home/dom/stateset-icommerce/bindings/wasm`

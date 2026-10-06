@@ -1,1625 +1,609 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace StateSet.Embedded;
 
-/// <summary>
-/// Represents a customer in the commerce system
-/// </summary>
-public record Customer
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
+// ============================================================================
+// These records mirror the JSON the Rust engine (stateset-embedded) emits
+// through stateset-ffi's JSON call surface. Property names map to the engine's
+// snake_case fields; every money/quantity field is `decimal` and crosses the
+// boundary as an exact decimal string, never a float.
+// ============================================================================
 
-    [JsonPropertyName("email")]
-    public string Email { get; init; } = string.Empty;
+#region Enums
 
-    [JsonPropertyName("first_name")]
-    public string FirstName { get; init; } = string.Empty;
+/// <summary>Customer lifecycle status.</summary>
+public enum CustomerStatus { Active, Inactive, Suspended, Deleted }
 
-    [JsonPropertyName("last_name")]
-    public string LastName { get; init; } = string.Empty;
+/// <summary>Product lifecycle status.</summary>
+public enum ProductStatus { Draft, Active, Archived }
 
-    [JsonPropertyName("phone")]
-    public string? Phone { get; init; }
+/// <summary>Product type.</summary>
+public enum ProductType { Simple, Variable, Bundle, Digital }
 
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
+/// <summary>Order status.</summary>
+public enum OrderStatus { Pending, Confirmed, Processing, PartiallyShipped, Shipped, Delivered, Cancelled, Refunded }
 
-    [JsonPropertyName("updated_at")]
-    public string? UpdatedAt { get; init; }
-}
+/// <summary>Payment status of an order.</summary>
+public enum OrderPaymentStatus { Pending, Authorized, Paid, PartiallyPaid, Refunded, PartiallyRefunded, Failed }
 
-/// <summary>
-/// Represents a product in the catalog
-/// </summary>
-public record Product
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
+/// <summary>Fulfillment status of an order.</summary>
+public enum FulfillmentStatus { Unfulfilled, PartiallyFulfilled, Fulfilled, Shipped, Delivered }
 
-    [JsonPropertyName("name")]
-    public string Name { get; init; } = string.Empty;
+/// <summary>Cart status.</summary>
+public enum CartStatus { Active, ReadyForPayment, PaymentPending, Completed, Abandoned, Cancelled, Expired }
 
-    [JsonPropertyName("slug")]
-    public string? Slug { get; init; }
+/// <summary>Payment status of a cart.</summary>
+public enum CartPaymentStatus { None, MethodSelected, Authorized, Captured, Failed, Refunded }
 
-    [JsonPropertyName("description")]
-    public string? Description { get; init; }
-
-    [JsonPropertyName("is_active")]
-    public bool IsActive { get; init; } = true;
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-
-    [JsonPropertyName("updated_at")]
-    public string? UpdatedAt { get; init; }
-}
-
-/// <summary>
-/// Represents a product variant (SKU)
-/// </summary>
-public record ProductVariant
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("product_id")]
-    public string ProductId { get; init; } = string.Empty;
-
-    [JsonPropertyName("sku")]
-    public string Sku { get; init; } = string.Empty;
-
-    [JsonPropertyName("name")]
-    public string? Name { get; init; }
-
-    [JsonPropertyName("price")]
-    public string Price { get; init; } = "0";
-
-    [JsonPropertyName("compare_at_price")]
-    public string? CompareAtPrice { get; init; }
-
-    [JsonPropertyName("is_default")]
-    public bool IsDefault { get; init; }
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-}
-
-/// <summary>
-/// Represents an order
-/// </summary>
-public record Order
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("order_number")]
-    public string OrderNumber { get; init; } = string.Empty;
-
-    [JsonPropertyName("customer_id")]
-    public string CustomerId { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-
-    [JsonPropertyName("total_amount")]
-    public string TotalAmount { get; init; } = "0";
-
-    [JsonPropertyName("currency")]
-    public string Currency { get; init; } = "USD";
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-
-    [JsonPropertyName("updated_at")]
-    public string? UpdatedAt { get; init; }
-}
-
-/// <summary>
-/// Represents an order item for order creation
-/// </summary>
-public record OrderItem
-{
-    [JsonPropertyName("sku")]
-    public string Sku { get; init; } = string.Empty;
-
-    [JsonPropertyName("name")]
-    public string Name { get; init; } = string.Empty;
-
-    [JsonPropertyName("quantity")]
-    public int Quantity { get; init; }
-
-    [JsonPropertyName("unit_price")]
-    public double UnitPrice { get; init; }
-
-    [JsonPropertyName("product_id")]
-    public string ProductId { get; init; } = "00000000-0000-0000-0000-000000000000";
-}
-
-/// <summary>
-/// Represents an inventory item
-/// </summary>
-public record InventoryItem
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("sku")]
-    public string Sku { get; init; } = string.Empty;
-
-    [JsonPropertyName("name")]
-    public string Name { get; init; } = string.Empty;
-
-    [JsonPropertyName("description")]
-    public string? Description { get; init; }
-
-    [JsonPropertyName("unit_of_measure")]
-    public string? UnitOfMeasure { get; init; }
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-}
-
-/// <summary>
-/// Represents a stock level for an inventory item
-/// </summary>
-public record StockLevel
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("inventory_item_id")]
-    public string InventoryItemId { get; init; } = string.Empty;
-
-    [JsonPropertyName("location_id")]
-    public string? LocationId { get; init; }
-
-    [JsonPropertyName("available")]
-    public string Available { get; init; } = "0";
-
-    [JsonPropertyName("reserved")]
-    public string Reserved { get; init; } = "0";
-
-    [JsonPropertyName("incoming")]
-    public string? Incoming { get; init; }
-
-    [JsonPropertyName("updated_at")]
-    public string? UpdatedAt { get; init; }
-}
-
-/// <summary>
-/// Represents a shopping cart
-/// </summary>
-public record Cart
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("customer_id")]
-    public string? CustomerId { get; init; }
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-
-    [JsonPropertyName("grand_total")]
-    public string GrandTotal { get; init; } = "0";
-
-    [JsonPropertyName("currency")]
-    public string Currency { get; init; } = "USD";
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-}
-
-/// <summary>
-/// Represents a return request
-/// </summary>
-public record Return
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("order_id")]
-    public string OrderId { get; init; } = string.Empty;
-
-    [JsonPropertyName("reason")]
-    public string Reason { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-
-    [JsonPropertyName("refund_amount")]
-    public string? RefundAmount { get; init; }
-
-    [JsonPropertyName("notes")]
-    public string? Notes { get; init; }
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-}
-
-/// <summary>
-/// Represents a payment
-/// </summary>
-public record Payment
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("order_id")]
-    public string OrderId { get; init; } = string.Empty;
-
-    [JsonPropertyName("amount")]
-    public string Amount { get; init; } = "0";
-
-    [JsonPropertyName("currency")]
-    public string Currency { get; init; } = "USD";
-
-    [JsonPropertyName("method")]
-    public string Method { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-}
-
-/// <summary>
-/// Represents a sales summary from analytics
-/// </summary>
-public record SalesSummary
-{
-    [JsonPropertyName("total_revenue")]
-    public string TotalRevenue { get; init; } = "0";
-
-    [JsonPropertyName("order_count")]
-    public int OrderCount { get; init; }
-
-    [JsonPropertyName("average_order_value")]
-    public string AverageOrderValue { get; init; } = "0";
-}
-
-/// <summary>
-/// Represents a top-selling product from analytics
-/// </summary>
-public record TopProduct
-{
-    [JsonPropertyName("product_id")]
-    public string ProductId { get; init; } = string.Empty;
-
-    [JsonPropertyName("product_name")]
-    public string ProductName { get; init; } = string.Empty;
-
-    [JsonPropertyName("total_quantity")]
-    public int TotalQuantity { get; init; }
-
-    [JsonPropertyName("total_revenue")]
-    public string TotalRevenue { get; init; } = "0";
-}
-
-/// <summary>
-/// Represents a top customer from analytics
-/// </summary>
-public record TopCustomer
-{
-    [JsonPropertyName("customer_id")]
-    public string CustomerId { get; init; } = string.Empty;
-
-    [JsonPropertyName("customer_name")]
-    public string CustomerName { get; init; } = string.Empty;
-
-    [JsonPropertyName("order_count")]
-    public int OrderCount { get; init; }
-
-    [JsonPropertyName("total_spent")]
-    public string TotalSpent { get; init; } = "0";
-}
-
-// =============================================================================
-// Enums
-// =============================================================================
-
-/// <summary>
-/// Order status values
-/// </summary>
-public enum OrderStatus
-{
-    Pending,
-    Confirmed,
-    Processing,
-    Shipped,
-    Delivered,
-    Cancelled,
-    Refunded
-}
-
-/// <summary>
-/// Return reason values
-/// </summary>
-public enum ReturnReason
-{
-    Defective,
-    WrongItem,
-    NotAsDescribed,
-    ChangedMind,
-    Damaged,
-    Other
-}
-
-/// <summary>
-/// Payment method values
-/// </summary>
+/// <summary>Payment method type.</summary>
 public enum PaymentMethod
 {
-    CreditCard,
-    DebitCard,
-    BankTransfer,
-    PayPal,
-    ApplePay,
-    GooglePay,
-    Crypto,
-    Other
+    CreditCard, DebitCard, BankTransfer, PayPal, ApplePay, GooglePay, Crypto, Stablecoin,
+    StoreCredit, GiftCard, CashOnDelivery, Invoice, Other,
 }
 
-/// <summary>
-/// Analytics time period values
-/// </summary>
-public enum TimePeriod
+/// <summary>Status of a payment transaction.</summary>
+public enum PaymentStatus
 {
-    Today,
-    Week,
-    Month,
-    Quarter,
-    Year,
-    AllTime
+    Pending, Processing, RequiresAction, Completed, Failed, Cancelled, Refunded, PartiallyRefunded, Disputed,
 }
 
-// =============================================================================
-// Shipment Models
-// =============================================================================
+/// <summary>Refund status.</summary>
+public enum RefundStatus { Pending, Processing, Completed, Failed, Cancelled }
 
-/// <summary>
-/// Represents a shipment
-/// </summary>
-public record Shipment
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
+/// <summary>Reason for a return.</summary>
+public enum ReturnReason { Defective, WrongItem, NotAsDescribed, ChangedMind, BetterPriceFound, NoLongerNeeded, Damaged, Other }
 
-    [JsonPropertyName("shipment_number")]
-    public string ShipmentNumber { get; init; } = string.Empty;
+/// <summary>Return status.</summary>
+public enum ReturnStatus { Requested, Approved, Rejected, InTransit, Received, Inspecting, Completed, Cancelled }
 
-    [JsonPropertyName("order_id")]
-    public string OrderId { get; init; } = string.Empty;
+/// <summary>What happens to a returned item.</summary>
+public enum ReturnDisposition { Restock, Refurbish, Scrap, ReturnToVendor, Quarantine }
 
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
+/// <summary>Condition of a returned item.</summary>
+public enum ItemCondition { New, Opened, Used, Damaged, Defective }
 
-    [JsonPropertyName("carrier")]
-    public string? Carrier { get; init; }
-
-    [JsonPropertyName("tracking_number")]
-    public string? TrackingNumber { get; init; }
-
-    [JsonPropertyName("tracking_url")]
-    public string? TrackingUrl { get; init; }
-
-    [JsonPropertyName("recipient_name")]
-    public string RecipientName { get; init; } = string.Empty;
-
-    [JsonPropertyName("recipient_email")]
-    public string? RecipientEmail { get; init; }
-
-    [JsonPropertyName("shipping_address")]
-    public string ShippingAddress { get; init; } = string.Empty;
-
-    [JsonPropertyName("shipped_at")]
-    public string? ShippedAt { get; init; }
-
-    [JsonPropertyName("delivered_at")]
-    public string? DeliveredAt { get; init; }
-
-    [JsonPropertyName("estimated_delivery")]
-    public string? EstimatedDelivery { get; init; }
-
-    [JsonPropertyName("weight")]
-    public string? Weight { get; init; }
-
-    [JsonPropertyName("notes")]
-    public string? Notes { get; init; }
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-
-    [JsonPropertyName("updated_at")]
-    public string? UpdatedAt { get; init; }
-}
-
-/// <summary>
-/// Shipment status values
-/// </summary>
+/// <summary>Shipment status.</summary>
 public enum ShipmentStatus
 {
-    Pending,
-    Processing,
-    Ready,
-    Shipped,
-    InTransit,
-    OutForDelivery,
-    Delivered,
-    Failed,
-    Cancelled
+    Pending, Processing, ReadyToShip, Shipped, InTransit, OutForDelivery, Delivered, Failed, Returned, Cancelled, OnHold,
 }
 
-/// <summary>
-/// Shipping carrier values
-/// </summary>
-public enum ShippingCarrier
+/// <summary>Shipping carrier.</summary>
+public enum ShippingCarrier { Other, Ups, FedEx, Usps, Dhl, OnTrac, LaserShip }
+
+/// <summary>Shipping method / service level.</summary>
+public enum ShippingMethod { Standard, Express, Overnight, TwoDay, Ground, International, SameDay, Freight }
+
+/// <summary>Inventory reservation status.</summary>
+public enum ReservationStatus { Pending, Confirmed, Allocated, Cancelled, Released, Expired, Fulfilled }
+
+#endregion
+
+#region Customers
+
+/// <summary>A customer record.</summary>
+public sealed record Customer
 {
-    UPS,
-    FedEx,
-    USPS,
-    DHL,
-    Other
-}
-
-// =============================================================================
-// Warranty Models
-// =============================================================================
-
-/// <summary>
-/// Represents a warranty
-/// </summary>
-public record Warranty
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("warranty_number")]
-    public string WarrantyNumber { get; init; } = string.Empty;
-
-    [JsonPropertyName("customer_id")]
-    public string CustomerId { get; init; } = string.Empty;
-
-    [JsonPropertyName("product_id")]
-    public string? ProductId { get; init; }
-
-    [JsonPropertyName("order_id")]
-    public string? OrderId { get; init; }
-
-    [JsonPropertyName("order_item_id")]
-    public string? OrderItemId { get; init; }
-
-    [JsonPropertyName("serial_number")]
-    public string? SerialNumber { get; init; }
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-
-    [JsonPropertyName("warranty_type")]
-    public string WarrantyType { get; init; } = string.Empty;
-
-    [JsonPropertyName("duration_months")]
-    public int DurationMonths { get; init; }
-
-    [JsonPropertyName("coverage_description")]
-    public string? CoverageDescription { get; init; }
-
-    [JsonPropertyName("start_date")]
-    public string StartDate { get; init; } = string.Empty;
-
-    [JsonPropertyName("end_date")]
-    public string EndDate { get; init; } = string.Empty;
-
-    [JsonPropertyName("purchase_date")]
-    public string? PurchaseDate { get; init; }
-
-    [JsonPropertyName("notes")]
-    public string? Notes { get; init; }
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-
-    [JsonPropertyName("updated_at")]
-    public string? UpdatedAt { get; init; }
-}
-
-/// <summary>
-/// Represents a warranty claim
-/// </summary>
-public record WarrantyClaim
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("claim_number")]
-    public string ClaimNumber { get; init; } = string.Empty;
-
-    [JsonPropertyName("warranty_id")]
-    public string WarrantyId { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-
-    [JsonPropertyName("issue_description")]
-    public string IssueDescription { get; init; } = string.Empty;
-
-    [JsonPropertyName("resolution")]
-    public string? Resolution { get; init; }
-
-    [JsonPropertyName("resolution_notes")]
-    public string? ResolutionNotes { get; init; }
-
-    [JsonPropertyName("contact_email")]
-    public string? ContactEmail { get; init; }
-
-    [JsonPropertyName("contact_phone")]
-    public string? ContactPhone { get; init; }
-
-    [JsonPropertyName("denial_reason")]
-    public string? DenialReason { get; init; }
-
-    [JsonPropertyName("resolved_at")]
-    public string? ResolvedAt { get; init; }
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-
-    [JsonPropertyName("updated_at")]
-    public string? UpdatedAt { get; init; }
-}
-
-/// <summary>
-/// Warranty type values
-/// </summary>
-public enum WarrantyType
-{
-    Standard,
-    Extended,
-    Limited,
-    Lifetime
-}
-
-/// <summary>
-/// Warranty status values
-/// </summary>
-public enum WarrantyStatus
-{
-    Active,
-    Expired,
-    Voided
-}
-
-/// <summary>
-/// Claim status values
-/// </summary>
-public enum ClaimStatus
-{
-    Pending,
-    Approved,
-    Denied,
-    Completed,
-    Cancelled
-}
-
-/// <summary>
-/// Claim resolution values
-/// </summary>
-public enum ClaimResolution
-{
-    Repair,
-    Replacement,
-    Refund,
-    StoreCredit
-}
-
-// =============================================================================
-// Supplier Models
-// =============================================================================
-
-/// <summary>
-/// Represents a supplier
-/// </summary>
-public record Supplier
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("supplier_code")]
-    public string? SupplierCode { get; init; }
-
-    [JsonPropertyName("name")]
-    public string Name { get; init; } = string.Empty;
-
-    [JsonPropertyName("email")]
-    public string? Email { get; init; }
-
-    [JsonPropertyName("phone")]
+    public string Id { get; init; } = "";
+    public string Email { get; init; } = "";
+    public string FirstName { get; init; } = "";
+    public string LastName { get; init; } = "";
     public string? Phone { get; init; }
+    public CustomerStatus Status { get; init; }
+    public bool AcceptsMarketing { get; init; }
+    public bool EmailVerified { get; init; }
+    public List<string> Tags { get; init; } = new();
+    public JsonNode? Metadata { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; }
 
-    [JsonPropertyName("address")]
-    public string? Address { get; init; }
-
-    [JsonPropertyName("contact_name")]
-    public string? ContactName { get; init; }
-
-    [JsonPropertyName("payment_terms")]
-    public string? PaymentTerms { get; init; }
-
-    [JsonPropertyName("lead_time_days")]
-    public int? LeadTimeDays { get; init; }
-
-    [JsonPropertyName("is_active")]
-    public bool IsActive { get; init; } = true;
-
-    [JsonPropertyName("notes")]
-    public string? Notes { get; init; }
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-
-    [JsonPropertyName("updated_at")]
-    public string? UpdatedAt { get; init; }
+    /// <summary>"First Last".</summary>
+    [JsonIgnore]
+    public string FullName => $"{FirstName} {LastName}".Trim();
 }
 
-// =============================================================================
-// Purchase Order Models
-// =============================================================================
-
-/// <summary>
-/// Represents a purchase order
-/// </summary>
-public record PurchaseOrder
+/// <summary>Fields to change on a customer; null leaves a field unchanged.</summary>
+public sealed record UpdateCustomer
 {
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("po_number")]
-    public string PoNumber { get; init; } = string.Empty;
-
-    [JsonPropertyName("supplier_id")]
-    public string SupplierId { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-
-    [JsonPropertyName("subtotal")]
-    public string Subtotal { get; init; } = "0";
-
-    [JsonPropertyName("tax_amount")]
-    public string TaxAmount { get; init; } = "0";
-
-    [JsonPropertyName("shipping_cost")]
-    public string ShippingCost { get; init; } = "0";
-
-    [JsonPropertyName("total")]
-    public string Total { get; init; } = "0";
-
-    [JsonPropertyName("currency")]
-    public string Currency { get; init; } = "USD";
-
-    [JsonPropertyName("ship_to_address")]
-    public string? ShipToAddress { get; init; }
-
-    [JsonPropertyName("expected_date")]
-    public string? ExpectedDate { get; init; }
-
-    [JsonPropertyName("received_date")]
-    public string? ReceivedDate { get; init; }
-
-    [JsonPropertyName("approved_by")]
-    public string? ApprovedBy { get; init; }
-
-    [JsonPropertyName("approved_at")]
-    public string? ApprovedAt { get; init; }
-
-    [JsonPropertyName("supplier_reference")]
-    public string? SupplierReference { get; init; }
-
-    [JsonPropertyName("notes")]
-    public string? Notes { get; init; }
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-
-    [JsonPropertyName("updated_at")]
-    public string? UpdatedAt { get; init; }
+    public string? Email { get; init; }
+    public string? FirstName { get; init; }
+    public string? LastName { get; init; }
+    public string? Phone { get; init; }
+    public CustomerStatus? Status { get; init; }
+    public bool? AcceptsMarketing { get; init; }
+    public List<string>? Tags { get; init; }
 }
 
-/// <summary>
-/// Represents a purchase order item
-/// </summary>
-public record PurchaseOrderItem
+#endregion
+
+#region Products
+
+/// <summary>A product (catalog entry). Prices live on its variants.</summary>
+public sealed record Product
 {
-    [JsonPropertyName("sku")]
-    public string Sku { get; init; } = string.Empty;
-
-    [JsonPropertyName("name")]
-    public string Name { get; init; } = string.Empty;
-
-    [JsonPropertyName("quantity")]
-    public double Quantity { get; init; }
-
-    [JsonPropertyName("unit_cost")]
-    public double UnitCost { get; init; }
+    public string Id { get; init; } = "";
+    public string Name { get; init; } = "";
+    public string Slug { get; init; } = "";
+    public string Description { get; init; } = "";
+    public ProductStatus Status { get; init; }
+    public ProductType ProductType { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; }
 }
 
-/// <summary>
-/// Purchase order status values
-/// </summary>
-public enum PurchaseOrderStatus
+/// <summary>A sellable variant of a product (SKU + price).</summary>
+public sealed record ProductVariant
 {
-    Draft,
-    PendingApproval,
-    Approved,
-    Sent,
-    Acknowledged,
-    PartiallyReceived,
-    Received,
-    Completed,
-    Cancelled,
-    OnHold
+    public string Id { get; init; } = "";
+    public string ProductId { get; init; } = "";
+    public string Sku { get; init; } = "";
+    public string Name { get; init; } = "";
+    public decimal Price { get; init; }
+    public decimal? CompareAtPrice { get; init; }
+    public decimal? Cost { get; init; }
+    public string? Barcode { get; init; }
+    public decimal? Weight { get; init; }
+    public string? WeightUnit { get; init; }
+    public bool IsDefault { get; init; }
+    public bool IsActive { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; }
 }
 
-// =============================================================================
-// Invoice Models
-// =============================================================================
-
-/// <summary>
-/// Represents an invoice
-/// </summary>
-public record Invoice
+/// <summary>Input for a product variant.</summary>
+public sealed record CreateProductVariant
 {
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
+    public string Sku { get; init; } = "";
+    public string? Name { get; init; }
+    public decimal Price { get; init; }
+    public decimal? CompareAtPrice { get; init; }
+    public decimal? Cost { get; init; }
+    public string? Barcode { get; init; }
+    public decimal? Weight { get; init; }
+    public string? WeightUnit { get; init; }
+    public bool? IsDefault { get; init; }
+}
 
-    [JsonPropertyName("invoice_number")]
-    public string InvoiceNumber { get; init; } = string.Empty;
+/// <summary>Fields to change on a product; null leaves a field unchanged.</summary>
+public sealed record UpdateProduct
+{
+    public string? Name { get; init; }
+    public string? Slug { get; init; }
+    public string? Description { get; init; }
+    public ProductStatus? Status { get; init; }
+}
 
-    [JsonPropertyName("customer_id")]
-    public string CustomerId { get; init; } = string.Empty;
+#endregion
 
-    [JsonPropertyName("order_id")]
+#region Inventory
+
+/// <summary>An inventory item (one per SKU).</summary>
+public sealed record InventoryItem
+{
+    public long Id { get; init; }
+    public string Sku { get; init; } = "";
+    public string Name { get; init; } = "";
+    public string? Description { get; init; }
+    public string UnitOfMeasure { get; init; } = "";
+    public bool IsActive { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; }
+}
+
+/// <summary>Aggregated stock for a SKU across locations.</summary>
+public sealed record StockLevel
+{
+    public string Sku { get; init; } = "";
+    public string Name { get; init; } = "";
+    public decimal TotalOnHand { get; init; }
+    public decimal TotalAllocated { get; init; }
+    public decimal TotalAvailable { get; init; }
+    public List<LocationStock> Locations { get; init; } = new();
+}
+
+/// <summary>Stock at one location.</summary>
+public sealed record LocationStock
+{
+    public int LocationId { get; init; }
+    public string? LocationName { get; init; }
+    public decimal OnHand { get; init; }
+    public decimal Allocated { get; init; }
+    public decimal Available { get; init; }
+}
+
+/// <summary>A recorded inventory movement.</summary>
+public sealed record InventoryTransaction
+{
+    public long Id { get; init; }
+    public long ItemId { get; init; }
+    public int LocationId { get; init; }
+    public string TransactionType { get; init; } = "";
+    public decimal Quantity { get; init; }
+    public string? ReferenceType { get; init; }
+    public string? ReferenceId { get; init; }
+    public string? Reason { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+}
+
+/// <summary>A hold on stock for a reference (cart, order, ...).</summary>
+public sealed record InventoryReservation
+{
+    public string Id { get; init; } = "";
+    public long ItemId { get; init; }
+    public int LocationId { get; init; }
+    public decimal Quantity { get; init; }
+    public ReservationStatus Status { get; init; }
+    public string ReferenceType { get; init; } = "";
+    public string ReferenceId { get; init; } = "";
+    public DateTimeOffset? ExpiresAt { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+}
+
+#endregion
+
+#region Carts
+
+/// <summary>A postal address on a cart.</summary>
+public sealed record CartAddress
+{
+    public string FirstName { get; init; } = "";
+    public string LastName { get; init; } = "";
+    public string? Company { get; init; }
+    public string Line1 { get; init; } = "";
+    public string? Line2 { get; init; }
+    public string City { get; init; } = "";
+    public string? State { get; init; }
+    public string PostalCode { get; init; } = "";
+    public string Country { get; init; } = "";
+    public string? Phone { get; init; }
+    public string? Email { get; init; }
+}
+
+/// <summary>A shopping cart.</summary>
+public sealed record Cart
+{
+    public string Id { get; init; } = "";
+    public string CartNumber { get; init; } = "";
+    public string? CustomerId { get; init; }
+    public CartStatus Status { get; init; }
+    public string Currency { get; init; } = "";
+    public List<CartItem> Items { get; init; } = new();
+    public decimal Subtotal { get; init; }
+    public decimal TaxAmount { get; init; }
+    public decimal ShippingAmount { get; init; }
+    public decimal DiscountAmount { get; init; }
+    public decimal GrandTotal { get; init; }
+    public string? CustomerEmail { get; init; }
+    public string? CustomerName { get; init; }
+    public CartAddress? ShippingAddress { get; init; }
+    public CartAddress? BillingAddress { get; init; }
+    public string? ShippingMethod { get; init; }
+    public string? ShippingCarrier { get; init; }
+    public string? PaymentMethod { get; init; }
+    public CartPaymentStatus PaymentStatus { get; init; }
+    public string? CouponCode { get; init; }
     public string? OrderId { get; init; }
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-
-    [JsonPropertyName("invoice_type")]
-    public string InvoiceType { get; init; } = string.Empty;
-
-    [JsonPropertyName("subtotal")]
-    public string Subtotal { get; init; } = "0";
-
-    [JsonPropertyName("tax_amount")]
-    public string TaxAmount { get; init; } = "0";
-
-    [JsonPropertyName("total")]
-    public string Total { get; init; } = "0";
-
-    [JsonPropertyName("amount_paid")]
-    public string AmountPaid { get; init; } = "0";
-
-    [JsonPropertyName("currency")]
-    public string Currency { get; init; } = "USD";
-
-    [JsonPropertyName("billing_email")]
-    public string? BillingEmail { get; init; }
-
-    [JsonPropertyName("billing_name")]
-    public string? BillingName { get; init; }
-
-    [JsonPropertyName("billing_address")]
-    public string? BillingAddress { get; init; }
-
-    [JsonPropertyName("due_date")]
-    public string? DueDate { get; init; }
-
-    [JsonPropertyName("sent_at")]
-    public string? SentAt { get; init; }
-
-    [JsonPropertyName("viewed_at")]
-    public string? ViewedAt { get; init; }
-
-    [JsonPropertyName("paid_at")]
-    public string? PaidAt { get; init; }
-
-    [JsonPropertyName("notes")]
+    public string? OrderNumber { get; init; }
     public string? Notes { get; init; }
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-
-    [JsonPropertyName("updated_at")]
-    public string? UpdatedAt { get; init; }
+    public bool InventoryReserved { get; init; }
+    public DateTimeOffset? ExpiresAt { get; init; }
+    public DateTimeOffset? CompletedAt { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; }
 }
 
-/// <summary>
-/// Represents an invoice item
-/// </summary>
-public record InvoiceItem
+/// <summary>A line in a cart.</summary>
+public sealed record CartItem
 {
-    [JsonPropertyName("description")]
-    public string Description { get; init; } = string.Empty;
-
-    [JsonPropertyName("quantity")]
-    public double Quantity { get; init; }
-
-    [JsonPropertyName("unit_price")]
-    public double UnitPrice { get; init; }
-
-    [JsonPropertyName("sku")]
-    public string? Sku { get; init; }
+    public string Id { get; init; } = "";
+    public string CartId { get; init; } = "";
+    public string? ProductId { get; init; }
+    public string? VariantId { get; init; }
+    public string Sku { get; init; } = "";
+    public string Name { get; init; } = "";
+    public int Quantity { get; init; }
+    public decimal UnitPrice { get; init; }
+    public decimal? OriginalPrice { get; init; }
+    public decimal DiscountAmount { get; init; }
+    public decimal TaxAmount { get; init; }
+    public decimal Total { get; init; }
+    public bool RequiresShipping { get; init; }
 }
 
-/// <summary>
-/// Invoice status values
-/// </summary>
-public enum InvoiceStatus
+/// <summary>Input for a cart line.</summary>
+public sealed record AddCartItem
 {
-    Draft,
-    Sent,
-    Viewed,
-    PartiallyPaid,
-    Paid,
-    Overdue,
-    Voided,
-    WrittenOff,
-    Disputed
-}
-
-// =============================================================================
-// Bill of Materials Models
-// =============================================================================
-
-/// <summary>
-/// Represents a bill of materials
-/// </summary>
-public record BillOfMaterials
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("bom_number")]
-    public string BomNumber { get; init; } = string.Empty;
-
-    [JsonPropertyName("product_id")]
-    public string ProductId { get; init; } = string.Empty;
-
-    [JsonPropertyName("name")]
-    public string Name { get; init; } = string.Empty;
-
-    [JsonPropertyName("description")]
+    public string? ProductId { get; init; }
+    public string? VariantId { get; init; }
+    public string Sku { get; init; } = "";
+    public string Name { get; init; } = "";
     public string? Description { get; init; }
+    public int Quantity { get; init; } = 1;
+    public decimal UnitPrice { get; init; }
+    public decimal? OriginalPrice { get; init; }
+    public bool? RequiresShipping { get; init; }
+}
 
-    [JsonPropertyName("version")]
-    public string Version { get; init; } = string.Empty;
+/// <summary>Outcome of completing checkout.</summary>
+public sealed record CheckoutResult
+{
+    public string CartId { get; init; } = "";
+    public string OrderId { get; init; } = "";
+    public string OrderNumber { get; init; } = "";
+    public string? PaymentId { get; init; }
+    public decimal TotalCharged { get; init; }
+    public string Currency { get; init; } = "";
+}
 
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
+#endregion
 
-    [JsonPropertyName("notes")]
+#region Orders
+
+/// <summary>A postal address on an order.</summary>
+public sealed record Address
+{
+    public string Line1 { get; init; } = "";
+    public string? Line2 { get; init; }
+    public string City { get; init; } = "";
+    public string? State { get; init; }
+    public string PostalCode { get; init; } = "";
+    public string Country { get; init; } = "";
+}
+
+/// <summary>An order.</summary>
+public sealed record Order
+{
+    public string Id { get; init; } = "";
+    public string OrderNumber { get; init; } = "";
+    public string CustomerId { get; init; } = "";
+    public OrderStatus Status { get; init; }
+    public DateTimeOffset OrderDate { get; init; }
+    public decimal TotalAmount { get; init; }
+    public decimal TaxAmount { get; init; }
+    public decimal ShippingAmount { get; init; }
+    public decimal DiscountAmount { get; init; }
+    public string Currency { get; init; } = "";
+    public OrderPaymentStatus PaymentStatus { get; init; }
+    public FulfillmentStatus FulfillmentStatus { get; init; }
+    public string? PaymentMethod { get; init; }
+    public string? ShippingMethod { get; init; }
+    public string? TrackingNumber { get; init; }
     public string? Notes { get; init; }
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-
-    [JsonPropertyName("updated_at")]
-    public string? UpdatedAt { get; init; }
+    public Address? ShippingAddress { get; init; }
+    public Address? BillingAddress { get; init; }
+    public List<OrderItem> Items { get; init; } = new();
+    public int Version { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; }
 }
 
-/// <summary>
-/// Represents a BOM component
-/// </summary>
-public record BomComponent
+/// <summary>A line on an order.</summary>
+public sealed record OrderItem
 {
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("bom_id")]
-    public string BomId { get; init; } = string.Empty;
-
-    [JsonPropertyName("component_sku")]
-    public string? ComponentSku { get; init; }
-
-    [JsonPropertyName("name")]
-    public string Name { get; init; } = string.Empty;
-
-    [JsonPropertyName("description")]
-    public string? Description { get; init; }
-
-    [JsonPropertyName("quantity")]
-    public string Quantity { get; init; } = "0";
-
-    [JsonPropertyName("unit_of_measure")]
-    public string? UnitOfMeasure { get; init; }
-
-    [JsonPropertyName("position")]
-    public string? Position { get; init; }
-
-    [JsonPropertyName("is_optional")]
-    public bool IsOptional { get; init; }
-
-    [JsonPropertyName("notes")]
-    public string? Notes { get; init; }
+    public string Id { get; init; } = "";
+    public string OrderId { get; init; } = "";
+    public string ProductId { get; init; } = "";
+    public string? VariantId { get; init; }
+    public string Sku { get; init; } = "";
+    public string Name { get; init; } = "";
+    public int Quantity { get; init; }
+    public int ShippedQuantity { get; init; }
+    public decimal UnitPrice { get; init; }
+    public decimal Discount { get; init; }
+    public decimal TaxAmount { get; init; }
+    public decimal Total { get; init; }
 }
 
-/// <summary>
-/// BOM status values
-/// </summary>
-public enum BomStatus
+/// <summary>Input for an order line.</summary>
+public sealed record CreateOrderItem
 {
-    Draft,
-    Active,
-    Obsolete
+    public string ProductId { get; init; } = "";
+    public string? VariantId { get; init; }
+    public string Sku { get; init; } = "";
+    public string Name { get; init; } = "";
+    public int Quantity { get; init; } = 1;
+    public decimal UnitPrice { get; init; }
+    public decimal? Discount { get; init; }
+    public decimal? TaxAmount { get; init; }
 }
 
-// =============================================================================
-// Work Order Models
-// =============================================================================
+#endregion
 
-/// <summary>
-/// Represents a work order
-/// </summary>
-public record WorkOrder
+#region Payments
+
+/// <summary>A payment.</summary>
+public sealed record Payment
 {
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("work_order_number")]
-    public string WorkOrderNumber { get; init; } = string.Empty;
-
-    [JsonPropertyName("product_id")]
-    public string ProductId { get; init; } = string.Empty;
-
-    [JsonPropertyName("bom_id")]
-    public string? BomId { get; init; }
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-
-    [JsonPropertyName("priority")]
-    public string Priority { get; init; } = string.Empty;
-
-    [JsonPropertyName("quantity_to_build")]
-    public string QuantityToBuild { get; init; } = "0";
-
-    [JsonPropertyName("quantity_completed")]
-    public string QuantityCompleted { get; init; } = "0";
-
-    [JsonPropertyName("planned_start")]
-    public string? PlannedStart { get; init; }
-
-    [JsonPropertyName("planned_end")]
-    public string? PlannedEnd { get; init; }
-
-    [JsonPropertyName("actual_start")]
-    public string? ActualStart { get; init; }
-
-    [JsonPropertyName("actual_end")]
-    public string? ActualEnd { get; init; }
-
-    [JsonPropertyName("notes")]
-    public string? Notes { get; init; }
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-
-    [JsonPropertyName("updated_at")]
-    public string? UpdatedAt { get; init; }
-}
-
-/// <summary>
-/// Work order status values
-/// </summary>
-public enum WorkOrderStatus
-{
-    Planned,
-    InProgress,
-    OnHold,
-    Completed,
-    PartiallyCompleted,
-    Cancelled
-}
-
-/// <summary>
-/// Work order priority values
-/// </summary>
-public enum WorkOrderPriority
-{
-    Low,
-    Normal,
-    High,
-    Urgent
-}
-
-// =============================================================================
-// Currency Models
-// =============================================================================
-
-/// <summary>
-/// Represents an exchange rate
-/// </summary>
-public record ExchangeRate
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("base_currency")]
-    public string BaseCurrency { get; init; } = string.Empty;
-
-    [JsonPropertyName("quote_currency")]
-    public string QuoteCurrency { get; init; } = string.Empty;
-
-    [JsonPropertyName("rate")]
-    public string Rate { get; init; } = "0";
-
-    [JsonPropertyName("source")]
-    public string? Source { get; init; }
-
-    [JsonPropertyName("valid_from")]
-    public string ValidFrom { get; init; } = string.Empty;
-
-    [JsonPropertyName("valid_to")]
-    public string? ValidTo { get; init; }
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
-}
-
-/// <summary>
-/// Represents a currency conversion result
-/// </summary>
-public record ConversionResult
-{
-    [JsonPropertyName("from_currency")]
-    public string FromCurrency { get; init; } = string.Empty;
-
-    [JsonPropertyName("to_currency")]
-    public string ToCurrency { get; init; } = string.Empty;
-
-    [JsonPropertyName("original_amount")]
-    public string OriginalAmount { get; init; } = "0";
-
-    [JsonPropertyName("converted_amount")]
-    public string ConvertedAmount { get; init; } = "0";
-
-    [JsonPropertyName("rate")]
-    public string Rate { get; init; } = "0";
-
-    [JsonPropertyName("rate_at")]
-    public string RateAt { get; init; } = string.Empty;
-}
-
-/// <summary>
-/// Represents store currency settings
-/// </summary>
-public record StoreCurrencySettings
-{
-    [JsonPropertyName("base_currency")]
-    public string BaseCurrency { get; init; } = string.Empty;
-
-    [JsonPropertyName("enabled_currencies")]
-    public List<string> EnabledCurrencies { get; init; } = new();
-
-    [JsonPropertyName("auto_convert")]
-    public bool AutoConvert { get; init; }
-
-    [JsonPropertyName("rounding_mode")]
-    public string RoundingMode { get; init; } = string.Empty;
-}
-
-/// <summary>
-/// Currency codes
-/// </summary>
-public enum CurrencyCode
-{
-    USD,
-    EUR,
-    GBP,
-    JPY,
-    CAD,
-    AUD,
-    CHF,
-    CNY
-}
-
-// =============================================================================
-// Refund Models
-// =============================================================================
-
-/// <summary>
-/// Represents a refund
-/// </summary>
-public record Refund
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("refund_number")]
-    public string RefundNumber { get; init; } = string.Empty;
-
-    [JsonPropertyName("payment_id")]
-    public string PaymentId { get; init; } = string.Empty;
-
-    [JsonPropertyName("amount")]
-    public string Amount { get; init; } = "0";
-
-    [JsonPropertyName("currency")]
-    public string Currency { get; init; } = "USD";
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-
-    [JsonPropertyName("reason")]
-    public string? Reason { get; init; }
-
-    [JsonPropertyName("external_id")]
+    public string Id { get; init; } = "";
+    public string PaymentNumber { get; init; } = "";
+    public string? OrderId { get; init; }
+    public string? CustomerId { get; init; }
+    public PaymentStatus Status { get; init; }
+    public PaymentMethod PaymentMethod { get; init; }
+    public decimal Amount { get; init; }
+    public string Currency { get; init; } = "";
+    public decimal AmountRefunded { get; init; }
     public string? ExternalId { get; init; }
-
-    [JsonPropertyName("failure_reason")]
+    public string? Processor { get; init; }
+    public string? Description { get; init; }
     public string? FailureReason { get; init; }
-
-    [JsonPropertyName("refunded_at")]
-    public string? RefundedAt { get; init; }
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; init; }
+    public string? FailureCode { get; init; }
+    public DateTimeOffset? PaidAt { get; init; }
+    public int Version { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; }
 }
 
-/// <summary>
-/// Refund status values
-/// </summary>
-public enum RefundStatus
+/// <summary>A refund against a payment.</summary>
+public sealed record Refund
 {
-    Pending,
-    Completed,
-    Failed
-}
-
-/// <summary>
-/// Return status values
-/// </summary>
-public enum ReturnStatus
-{
-    Requested,
-    Approved,
-    Rejected,
-    InTransit,
-    Received,
-    Completed,
-    Cancelled
-}
-
-// =============================================================================
-// Advanced Operations Models
-// =============================================================================
-
-/// <summary>
-/// Represents a quality inspection.
-/// </summary>
-public record Inspection
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-
-    [JsonPropertyName("sku")]
-    public string? Sku { get; init; }
-}
-
-/// <summary>
-/// Represents a non-conformance report.
-/// </summary>
-public record Ncr
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-
-    [JsonPropertyName("reason")]
+    public string Id { get; init; } = "";
+    public string RefundNumber { get; init; } = "";
+    public string PaymentId { get; init; } = "";
+    public RefundStatus Status { get; init; }
+    public decimal Amount { get; init; }
+    public string Currency { get; init; } = "";
     public string? Reason { get; init; }
+    public string? FailureReason { get; init; }
+    public DateTimeOffset? RefundedAt { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; }
 }
+
+#endregion
+
+#region Returns
+
+/// <summary>A return (RMA).</summary>
+public sealed record Return
+{
+    public string Id { get; init; } = "";
+    public string OrderId { get; init; } = "";
+    public string CustomerId { get; init; } = "";
+    public ReturnStatus Status { get; init; }
+    public ReturnReason Reason { get; init; }
+    public string? ReasonDetails { get; init; }
+    public decimal? RefundAmount { get; init; }
+    public string? RefundMethod { get; init; }
+    public string? TrackingNumber { get; init; }
+    public List<ReturnItem> Items { get; init; } = new();
+    public string? Notes { get; init; }
+    public int Version { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; }
+}
+
+/// <summary>A line on a return.</summary>
+public sealed record ReturnItem
+{
+    public string Id { get; init; } = "";
+    public string ReturnId { get; init; } = "";
+    public string OrderItemId { get; init; } = "";
+    public string Sku { get; init; } = "";
+    public string Name { get; init; } = "";
+    public int Quantity { get; init; }
+    public ItemCondition Condition { get; init; }
+    public decimal RefundAmount { get; init; }
+    public ReturnDisposition? Disposition { get; init; }
+}
+
+/// <summary>Input for a return line.</summary>
+public sealed record CreateReturnItem
+{
+    public string OrderItemId { get; init; } = "";
+    public int Quantity { get; init; } = 1;
+    public ItemCondition? Condition { get; init; }
+}
+
+#endregion
+
+#region Shipments
+
+/// <summary>A shipment.</summary>
+public sealed record Shipment
+{
+    public string Id { get; init; } = "";
+    public string ShipmentNumber { get; init; } = "";
+    public string OrderId { get; init; } = "";
+    public ShipmentStatus Status { get; init; }
+    public ShippingCarrier Carrier { get; init; }
+    public ShippingMethod ShippingMethod { get; init; }
+    public string? TrackingNumber { get; init; }
+    public string? TrackingUrl { get; init; }
+    public string RecipientName { get; init; } = "";
+    public string? RecipientEmail { get; init; }
+    public string? RecipientPhone { get; init; }
+    public string ShippingAddress { get; init; } = "";
+    public decimal? WeightKg { get; init; }
+    public decimal? ShippingCost { get; init; }
+    public bool SignatureRequired { get; init; }
+    public DateTimeOffset? ShippedAt { get; init; }
+    public DateTimeOffset? DeliveredAt { get; init; }
+    public string? Notes { get; init; }
+    public List<ShipmentItem> Items { get; init; } = new();
+    public int Version { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; }
+}
+
+/// <summary>A line in a shipment.</summary>
+public sealed record ShipmentItem
+{
+    public string Id { get; init; } = "";
+    public string ShipmentId { get; init; } = "";
+    public string? OrderItemId { get; init; }
+    public string? ProductId { get; init; }
+    public string Sku { get; init; } = "";
+    public string Name { get; init; } = "";
+    public int Quantity { get; init; }
+}
+
+/// <summary>Input for a shipment line.</summary>
+public sealed record CreateShipmentItem
+{
+    public string? OrderItemId { get; init; }
+    public string? ProductId { get; init; }
+    public string Sku { get; init; } = "";
+    public string Name { get; init; } = "";
+    public int Quantity { get; init; } = 1;
+}
+
+#endregion
+
+#region Errors
 
 /// <summary>
-/// Represents a quality hold.
+/// Stable error codes reported by the native engine (the values of
+/// <c>FfiErrorCode</c> in <c>crates/stateset-ffi</c>).
 /// </summary>
-public record QualityHold
+public enum StateSetErrorCode
 {
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("sku")]
-    public string Sku { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
+    Ok = 0,
+    NotFound = 1,
+    InvalidArgument = 2,
+    InternalError = 3,
+    DatabaseError = 4,
+    SerializationError = 5,
+    NullPointer = 6,
+    Utf8Error = 7,
+    BufferTooSmall = 8,
 }
 
-/// <summary>
-/// Represents an inventory lot.
-/// </summary>
-public record Lot
+/// <summary>An error raised by the StateSet engine.</summary>
+public class StateSetException : Exception
 {
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
+    /// <summary>The engine's error code.</summary>
+    public StateSetErrorCode Code { get; }
 
-    [JsonPropertyName("lot_number")]
-    public string LotNumber { get; init; } = string.Empty;
+    /// <summary>The engine's error kind, e.g. <c>"not_found"</c>.</summary>
+    public string Kind { get; }
 
-    [JsonPropertyName("sku")]
-    public string Sku { get; init; } = string.Empty;
+    public StateSetException(string message)
+        : this(StateSetErrorCode.InternalError, "internal_error", message) { }
 
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
+    public StateSetException(StateSetErrorCode code, string kind, string message)
+        : base(message)
+    {
+        Code = code;
+        Kind = kind;
+    }
 }
 
-/// <summary>
-/// Represents a serialized inventory unit.
-/// </summary>
-public record Serial
+/// <summary>Raised when an operation names an entity that does not exist.</summary>
+public sealed class StateSetNotFoundException : StateSetException
 {
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("serial_number")]
-    public string SerialNumber { get; init; } = string.Empty;
-
-    [JsonPropertyName("sku")]
-    public string Sku { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
+    public StateSetNotFoundException(string kind, string message)
+        : base(StateSetErrorCode.NotFound, kind, message) { }
 }
 
-/// <summary>
-/// Represents a warehouse.
-/// </summary>
-public record Warehouse
+/// <summary>Raised when the engine refuses an argument or a state transition.</summary>
+public sealed class StateSetValidationException : StateSetException
 {
-    [JsonPropertyName("id")]
-    public int Id { get; init; }
-
-    [JsonPropertyName("code")]
-    public string Code { get; init; } = string.Empty;
-
-    [JsonPropertyName("name")]
-    public string Name { get; init; } = string.Empty;
+    public StateSetValidationException(string kind, string message)
+        : base(StateSetErrorCode.InvalidArgument, kind, message) { }
 }
 
-/// <summary>
-/// Represents a warehouse location.
-/// </summary>
-public record Location
-{
-    [JsonPropertyName("id")]
-    public int Id { get; init; }
-
-    [JsonPropertyName("warehouse_id")]
-    public int WarehouseId { get; init; }
-
-    [JsonPropertyName("location_type")]
-    public string LocationType { get; init; } = string.Empty;
-}
-
-/// <summary>
-/// Represents an inbound receipt.
-/// </summary>
-public record Receipt
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("receipt_number")]
-    public string ReceiptNumber { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-}
-
-/// <summary>
-/// Represents a fulfillment wave.
-/// </summary>
-public record Wave
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("wave_number")]
-    public string WaveNumber { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-}
-
-/// <summary>
-/// Represents a warehouse picking task.
-/// </summary>
-public record PickTask
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-
-    [JsonPropertyName("assigned_to")]
-    public string? AssignedTo { get; init; }
-}
-
-/// <summary>
-/// Represents an accounts payable bill.
-/// </summary>
-public record Bill
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("bill_number")]
-    public string BillNumber { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-}
-
-/// <summary>
-/// Represents accounts payable aging totals.
-/// </summary>
-public record ApAgingSummary
-{
-    [JsonPropertyName("total_outstanding")]
-    public string TotalOutstanding { get; init; } = "0";
-}
-
-/// <summary>
-/// Represents accounts receivable aging totals.
-/// </summary>
-public record ArAgingSummary
-{
-    [JsonPropertyName("total_outstanding")]
-    public string TotalOutstanding { get; init; } = "0";
-}
-
-/// <summary>
-/// Represents an accounts receivable credit memo.
-/// </summary>
-public record CreditMemo
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("customer_id")]
-    public string CustomerId { get; init; } = string.Empty;
-
-    [JsonPropertyName("amount")]
-    public string Amount { get; init; } = "0";
-}
-
-/// <summary>
-/// Represents item costing.
-/// </summary>
-public record ItemCost
-{
-    [JsonPropertyName("sku")]
-    public string Sku { get; init; } = string.Empty;
-
-    [JsonPropertyName("standard_cost")]
-    public string StandardCost { get; init; } = "0";
-
-    [JsonPropertyName("current_cost")]
-    public string CurrentCost { get; init; } = "0";
-}
-
-/// <summary>
-/// Represents a customer credit account.
-/// </summary>
-public record CreditAccount
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("customer_id")]
-    public string CustomerId { get; init; } = string.Empty;
-
-    [JsonPropertyName("credit_limit")]
-    public string CreditLimit { get; init; } = "0";
-}
-
-/// <summary>
-/// Represents a credit authorization decision.
-/// </summary>
-public record CreditCheck
-{
-    [JsonPropertyName("approved")]
-    public bool Approved { get; init; }
-
-    [JsonPropertyName("reason")]
-    public string? Reason { get; init; }
-}
-
-/// <summary>
-/// Represents a backorder.
-/// </summary>
-public record Backorder
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("backorder_number")]
-    public string BackorderNumber { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-}
-
-/// <summary>
-/// Represents backorder summary totals.
-/// </summary>
-public record BackorderSummary
-{
-    [JsonPropertyName("pending_count")]
-    public int PendingCount { get; init; }
-}
-
-/// <summary>
-/// Represents a general ledger account.
-/// </summary>
-public record GlAccount
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("account_number")]
-    public string AccountNumber { get; init; } = string.Empty;
-
-    [JsonPropertyName("name")]
-    public string Name { get; init; } = string.Empty;
-}
-
-/// <summary>
-/// Represents a general ledger journal entry.
-/// </summary>
-public record JournalEntry
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("entry_number")]
-    public string EntryNumber { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-}
-
-/// <summary>
-/// Represents a trial balance report.
-/// </summary>
-public record TrialBalance
-{
-    [JsonPropertyName("as_of_date")]
-    public string AsOfDate { get; init; } = string.Empty;
-}
-
-/// <summary>
-/// Represents a balance sheet report.
-/// </summary>
-public record BalanceSheet
-{
-    [JsonPropertyName("as_of_date")]
-    public string AsOfDate { get; init; } = string.Empty;
-}
-
-/// <summary>
-/// Represents an income statement report.
-/// </summary>
-public record IncomeStatement
-{
-    [JsonPropertyName("start_date")]
-    public string StartDate { get; init; } = string.Empty;
-
-    [JsonPropertyName("end_date")]
-    public string EndDate { get; init; } = string.Empty;
-}
-
-// =============================================================================
-// Subscription, Promotion, and Tax Models
-// =============================================================================
-
-public record SubscriptionPlan
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("code")]
-    public string Code { get; init; } = string.Empty;
-
-    [JsonPropertyName("name")]
-    public string Name { get; init; } = string.Empty;
-}
-
-public record Subscription
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("customer_id")]
-    public string CustomerId { get; init; } = string.Empty;
-
-    [JsonPropertyName("status")]
-    public string Status { get; init; } = string.Empty;
-}
-
-public record Promotion
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("code")]
-    public string Code { get; init; } = string.Empty;
-
-    [JsonPropertyName("name")]
-    public string Name { get; init; } = string.Empty;
-}
-
-public record Coupon
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("code")]
-    public string Code { get; init; } = string.Empty;
-}
-
-public record TaxJurisdiction
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("name")]
-    public string Name { get; init; } = string.Empty;
-}
-
-public record TaxRate
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("country")]
-    public string Country { get; init; } = string.Empty;
-
-    [JsonPropertyName("rate")]
-    public string Rate { get; init; } = "0";
-}
-
-public record TaxExemption
-{
-    [JsonPropertyName("id")]
-    public string Id { get; init; } = string.Empty;
-
-    [JsonPropertyName("customer_id")]
-    public string CustomerId { get; init; } = string.Empty;
-}
-
-public record TaxCalculation
-{
-    [JsonPropertyName("subtotal")]
-    public string Subtotal { get; init; } = "0";
-
-    [JsonPropertyName("tax_amount")]
-    public string TaxAmount { get; init; } = "0";
-
-    [JsonPropertyName("total")]
-    public string Total { get; init; } = "0";
-}
-
-public record TaxSettings
-{
-    [JsonPropertyName("enabled")]
-    public bool Enabled { get; init; }
-}
+#endregion

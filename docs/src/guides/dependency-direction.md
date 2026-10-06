@@ -65,7 +65,8 @@ The binding story is more direct than the top-level marketing language implies.
 
 - `bindings/node` links directly to `stateset-embedded`, `stateset-core`, `stateset-db`, and `stateset-crypto`.
 - `bindings/python` links directly to `stateset-embedded`, `stateset-core`, `stateset-primitives`, `stateset-db`, and `stateset-sdk`.
-- Go, Swift, Kotlin, Java, and .NET also link directly to `stateset-embedded` and `stateset-core`.
+- Go, Kotlin, and Java also link directly to `stateset-embedded` and `stateset-core`.
+- Swift and .NET link `stateset-ffi`, whose JSON call surface (`crates/stateset-ffi/src/json_api.rs`) dispatches to `stateset-embedded`; their `bindings/*/src` crates only rename the shared library.
 - Ruby and PHP are present in the repo but excluded from default workspace membership because they require host runtimes or headers.
 
 The practical takeaway is that API changes in `stateset-core` and `stateset-embedded` ripple outward quickly across the binding layer.

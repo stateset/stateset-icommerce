@@ -62,7 +62,9 @@ compile_error!(
 
 pub mod api;
 pub mod convert;
+pub mod crypto_api;
 pub mod error;
+pub mod json_api;
 pub mod strings;
 pub mod sync_api;
 pub mod types;

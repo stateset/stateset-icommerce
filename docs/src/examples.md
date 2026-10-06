@@ -145,7 +145,7 @@ Each language folder runs the same end-to-end flow (customer → product → ord
 - `examples/go/` — Go
 - `examples/java/` — Java
 - `examples/kotlin/` — Kotlin
-- `examples/swift/` — Swift
+- `examples/swift-basic/` — Swift
 - `examples/dotnet/` — C# / .NET
 
 ## Running Examples

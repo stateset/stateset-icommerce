@@ -1,4 +1,6 @@
 // swift-tools-version:5.7
+// (The directory is not called "swift": SwiftPM derives a package identity from the
+// directory name, and "swift" would collide with ../../bindings/swift.)
 import PackageDescription
 
 let package = Package(

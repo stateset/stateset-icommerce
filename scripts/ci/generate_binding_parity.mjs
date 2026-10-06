@@ -956,8 +956,8 @@ export async function buildParity(rootDir = defaultRoot) {
     [
       'dotnet',
       '.NET',
-      'bindings/dotnet/src',
-      'host (C#) layer is not traced; known in-memory fake at the host level',
+      'crates/stateset-ffi/src/json_api.rs',
+      'C# host calls stateset_json_call; reach is the stateset-ffi JSON dispatch it routes to',
     ],
     ['java', 'Java', 'bindings/java/src', 'host (Java/JNI) layer is not traced'],
     ['kotlin', 'Kotlin', 'bindings/kotlin/src', 'host (Kotlin/JNI) layer is not traced'],
@@ -966,12 +966,13 @@ export async function buildParity(rootDir = defaultRoot) {
     [
       'swift',
       'Swift',
-      'bindings/swift/src',
-      'host (Swift) layer is not traced; known in-memory fake at the host level',
+      'crates/stateset-ffi/src/json_api.rs',
+      'Swift host calls stateset_json_call; reach is the stateset-ffi JSON dispatch it routes to',
     ],
   ];
   for (const [id, language, dir, notes] of nativeBindings) {
-    const sources = await loadSources(rootDir, await listRustFiles(rootDir, dir));
+    const files = dir.endsWith('.rs') ? [dir] : await listRustFiles(rootDir, dir);
+    const sources = await loadSources(rootDir, files);
     analyses.push({
       id,
       language,

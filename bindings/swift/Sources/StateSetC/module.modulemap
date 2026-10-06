@@ -1,4 +1,4 @@
-module StateSetC {
+module StateSetC [system] {
     header "stateset.h"
     link "stateset_swift"
     export *

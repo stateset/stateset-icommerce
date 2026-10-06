@@ -1,259 +1,103 @@
 # Swift API Reference
 
-The Swift package provides `StateSetCommerce` for building commerce applications on Apple platforms.
+The StateSet commerce engine (the Rust `stateset-embedded` crate) for Swift,
+running in-process through a C ABI and persisting to a local SQLite file.
 
-## Installation
+> **Status.** Not yet published as a release; build it from this repository
+> (below). Before October 2026 this binding was an in-memory fake (its C shim
+> was empty and no engine call was ever made, so data was silently lost); it
+> is now a real binding with a smaller, honest surface (see
+> [Coverage](#coverage)).
 
-### Swift Package Manager
+## How it works
 
-Add to your `Package.swift`:
-
-```swift
-dependencies: [
-    .package(url: "https://github.com/stateset/stateset-embedded-swift", from: "1.37.0")
-]
+```
+Swift API (StateSetCommerce, CustomersAPI, ...)
+   │  StateSetC module map + stateset.h, JSON with decimals as exact strings
+   ▼
+libstateset_swift  ──  re-exports crates/stateset-ffi (json_api.rs, crypto_api.rs)
+   ▼
+stateset-embedded (Rust)  ──  SQLite file (or :memory:)
 ```
 
-Or in Xcode: File > Add Package Dependencies and enter the repository URL.
+Every method is one call to `stateset_json_call(handle, "orders.create",
+"{...}")`, which dispatches to the engine in safe Rust and returns a JSON
+envelope. The native side catches panics, reports typed error codes, and owns
+every string it returns until `stateset_string_free`.
 
-## Quick Start
+## Build and test
+
+Requires Swift 5.7+ and a Rust toolchain.
+
+```bash
+cargo build -p stateset-swift --release
+cd bindings/swift
+LIB=$(pwd)/../../target/release
+# Linux
+LD_LIBRARY_PATH=$LIB swift test -Xlinker -L$LIB
+# macOS
+DYLD_LIBRARY_PATH=$LIB swift test -Xlinker -L$LIB
+```
+
+For an app, link the static `libstateset_swift.a` (or ship the dynamic
+library) and add its directory to the linker search path.
+
+## Quick start
 
 ```swift
 import StateSet
 
-// Initialize with SQLite database
-let commerce = try StateSetCommerce(dbPath: "commerce.db")
+let commerce = try StateSetCommerce(dbPath: "commerce.db")   // or ":memory:"
+defer { commerce.close() }
 
-// Or use in-memory database for testing
-let commerce = try StateSetCommerce(dbPath: ":memory:")
+let customer = try commerce.customers.create(email: "alice@example.com", firstName: "Alice", lastName: "Smith")
+let product = try commerce.products.create(name: "Premium Widget", sku: "WIDGET-001",
+                                           price: Decimal(string: "29.99")!)
+_ = try commerce.inventory.createItem(sku: "WIDGET-001", name: "Premium Widget", initialQuantity: 100)
 
-// Create a customer
-let customer = try commerce.customers.create(
-    email: "alice@example.com",
-    firstName: "Alice",
-    lastName: "Smith",
-    phone: "+1-555-0123"
-)
+var order = try commerce.orders.create(customerId: customer.id, items: [
+    CreateOrderItem(productId: product.id, sku: "WIDGET-001", name: "Widget", quantity: 2,
+                    unitPrice: Decimal(string: "29.99")!),
+])
+// order.totalAmount == 59.98, exactly
 
-// Create a product
-let product = try commerce.products.create(
-    name: "Premium Widget",
-    sku: "WIDGET-001",
-    price: 29.99,
-    description: "High-quality widget"
-)
-
-// Create inventory
-let item = try commerce.inventory.createItem(
-    sku: "WIDGET-001",
-    name: "Premium Widget",
-    initialQuantity: 100
-)
-
-// Create an order
-let order = try commerce.orders.create(
-    customerId: customer.id,
-    items: [
-        OrderItem(sku: "WIDGET-001", name: "Widget", quantity: 2, unitPrice: 29.99)
-    ],
-    currency: "USD"
-)
-
-// Ship the order
-let shipped = try commerce.orders.ship(id: order.id)
-print("Order \(shipped.orderNumber) shipped!")
-
-// Clean up
-commerce.close()
+order = try commerce.orders.updateStatus(id: order.id, status: .confirmed)
+let payment = try commerce.payments.create(orderId: order.id, amount: order.totalAmount)
+_ = try commerce.payments.complete(id: payment.id)
+_ = try commerce.payments.refund(paymentId: payment.id, amount: 10, reason: "goodwill")
 ```
 
-## Common Operations
+## Coverage
 
-### Customer Management
+| API | Methods |
+|---|---|
+| `customers` | `create`, `get(id:)`, `get(email:)`, `update`, `list`, `count`, `delete` |
+| `products` | `create` (single price or variants), `get(id:)`, `get(slug:)`, `list`, `count`, `search`, `activate`, `archive`, `delete`, `addVariant`, `variants`, `variant(sku:)` |
+| `inventory` | `createItem`, `item(sku:)`, `list`, `getStock`, `adjust`, `hasStock`, `reserve`, `releaseReservation`, `confirmReservation` |
+| `carts` | `create`, `get`, `list`, `addItem`, `updateItemQuantity`, `removeItem`, `items`, `clearItems`, `setShippingAddress`, `setBillingAddress`, `setShipping`, `setPayment`, `applyDiscount`, `recalculate`, `complete`, `cancel`, `abandon` |
+| `orders` | `create`, `get(id:)`, `get(orderNumber:)`, `list`, `list(customerId:)`, `count`, `updateStatus`, `ship`, `deliver`, `cancel` |
+| `payments` | `create`, `get`, `list`, `list(orderId:)`, `markProcessing`, `complete`, `fail`, `cancel`, `refund(paymentId:...)`, `refund(id:)`, `refunds`, `completeRefund`, `failRefund` |
+| `returns` | `create`, `get`, `list`, `list(orderId:)`, `approve`, `reject`, `markReceived`, `complete`, `cancel`, `addTracking` |
+| `shipments` | `create`, `get(id:)`, `get(trackingNumber:)`, `list`, `list(orderId:)`, `markProcessing`, `markReady`, `ship`, `markInTransit`, `deliver`, `cancel` |
+| `Crypto` | `jcsCanonicalize`, `payloadPlainHash`, `merkleRoot` (checked against `bindings/test-vectors/v1.json`) |
 
-```swift
-// Create customer
-let customer = try commerce.customers.create(
-    email: "test@example.com",
-    firstName: "Test",
-    lastName: "User"
-)
+Domains the old fake pretended to support (analytics, warranties, suppliers,
+purchase orders, invoices, BOM, work orders, currency, subscriptions,
+promotions, tax, quality, lots, serials, warehouse, receiving, fulfillment,
+AP/AR, cost accounting, credit, backorders, general ledger) were removed
+rather than kept as fakes. They exist in the engine and can be added by
+routing them in `crates/stateset-ffi/src/json_api.rs` plus a typed wrapper
+here.
 
-// Get customer by ID
-let found = try commerce.customers.get(id: customerId)
+## Money and errors
 
-// List all customers
-let customers = try commerce.customers.list()
+- Every money and quantity field is `Decimal`, decoded from and encoded as an
+  exact decimal string (`"29.99"`) — never a `Double`. The native side refuses
+  JSON floats.
+- Lookups return `nil` when nothing matches. Everything else `throws` a
+  `StateSetError` with a `code` (`.notFound`, `.invalidArgument`,
+  `.databaseError`, ...), a `kind`, and a `message`.
+- `StateSetCommerce` may be shared across threads; `close()` waits for
+  in-flight calls and is idempotent.
 
-// Delete customer
-let deleted = try commerce.customers.delete(id: customerId)
-```
-
-### Inventory Management
-
-```swift
-// Create inventory item
-let item = try commerce.inventory.createItem(
-    sku: "SKU-001",
-    name: "Widget",
-    initialQuantity: 100
-)
-
-// Adjust inventory
-try commerce.inventory.adjust(
-    sku: "SKU-001",
-    delta: 50,
-    reason: "Received shipment"
-)
-
-// Get stock level
-let level = try commerce.inventory.getLevel(sku: "SKU-001")
-print("Available: \(level.available)")
-```
-
-### Order Processing
-
-```swift
-// Create order
-let order = try commerce.orders.create(
-    customerId: customer.id,
-    items: [
-        OrderItem(sku: "SKU-001", name: "Widget", quantity: 2, unitPrice: 29.99)
-    ]
-)
-
-// Ship order
-let shipped = try commerce.orders.ship(id: order.id)
-
-// Cancel order
-let cancelled = try commerce.orders.cancel(id: order.id)
-```
-
-### Subscriptions
-
-```swift
-// Create a subscription plan
-let plan = try commerce.subscriptions.createPlan(
-    code: "PREMIUM",
-    name: "Premium Plan",
-    interval: "month",
-    intervalCount: 1,
-    price: 19.99,
-    currency: "USD"
-)
-
-// Subscribe a customer
-let subscription = try commerce.subscriptions.subscribe(
-    customerId: customer.id,
-    planId: plan.id
-)
-
-// Pause/Resume/Cancel
-let paused = try commerce.subscriptions.pause(id: subscription.id)
-let resumed = try commerce.subscriptions.resume(id: subscription.id)
-let cancelled = try commerce.subscriptions.cancel(id: subscription.id)
-```
-
-### Promotions
-
-```swift
-// Create a promotion
-let promo = try commerce.promotions.create(
-    code: "SUMMER20",
-    name: "Summer Sale",
-    discountType: "percentage",
-    discountValue: 20.0
-)
-
-// Activate promotion
-try commerce.promotions.activate(id: promo.id)
-
-// Create a coupon
-let coupon = try commerce.promotions.createCoupon(
-    promotionId: promo.id,
-    code: "SAVE20NOW",
-    maxUses: 100
-)
-
-// Validate coupon
-let validation = try commerce.promotions.validateCoupon(code: "SAVE20NOW")
-```
-
-### Analytics
-
-```swift
-// Get sales summary
-let summary = try commerce.analytics.salesSummary()
-print("Total revenue: \(summary.totalRevenue)")
-
-// Get top products
-let topProducts = try commerce.analytics.topProducts(limit: 10)
-
-// Get top customers
-let topCustomers = try commerce.analytics.topCustomers(limit: 10)
-```
-
-## Error Handling
-
-```swift
-do {
-    let order = try commerce.orders.ship(id: orderId)
-} catch let error as StateSetError {
-    print("StateSet error: \(error.message)")
-} catch {
-    print("Unknown error: \(error)")
-}
-```
-
-## Available APIs
-
-| API | Description |
-|-----|-------------|
-| `customers` | Customer management |
-| `products` | Product catalog |
-| `orders` | Order lifecycle |
-| `inventory` | Stock management |
-| `carts` | Shopping carts |
-| `returns` | Return processing |
-| `payments` | Payment operations |
-| `shipments` | Shipping management |
-| `warranties` | Warranty tracking |
-| `suppliers` | Supplier management |
-| `purchaseOrders` | Purchase orders |
-| `invoices` | B2B invoicing |
-| `bom` | Bills of Materials |
-| `workOrders` | Manufacturing |
-| `currency` | Multi-currency |
-| `subscriptions` | Recurring billing |
-| `promotions` | Discounts & coupons |
-| `tax` | Tax calculations |
-| `quality` | Quality control |
-| `lots` | Lot tracking |
-| `serials` | Serial numbers |
-| `warehouse` | Warehouse ops |
-| `receiving` | Receiving |
-| `fulfillment` | Picking & packing |
-| `accountsPayable` | A/P management |
-| `accountsReceivable` | A/R management |
-| `costAccounting` | Cost tracking |
-| `credit` | Credit management |
-| `backorders` | Backorder tracking |
-| `generalLedger` | GL accounting |
-| `analytics` | Reporting & forecasts |
-
-## Platform Support
-
-| Platform | Architectures | Status |
-|----------|---------------|--------|
-| macOS | x64, arm64 | Supported |
-| iOS | arm64 | Supported |
-| iOS Simulator | x64, arm64 | Supported |
-
-## Source Files
-
-- Entry point: `StateSetCommerce`
-- Sources: `bindings/swift/Sources/StateSet/`
-
-## Examples
-
-- `examples/swift/BasicUsage.swift`
+Source: [`bindings/swift`](https://github.com/stateset/stateset-icommerce/tree/master/bindings/swift); native surface: [`crates/stateset-ffi/src/json_api.rs`](https://github.com/stateset/stateset-icommerce/blob/master/crates/stateset-ffi/src/json_api.rs).

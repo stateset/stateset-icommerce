@@ -6,7 +6,7 @@ namespace StateSet.Embedded;
 /// Cross-binding cryptographic primitives.
 /// </summary>
 /// <remarks>
-/// Thin wrappers over the C-FFI exports in <c>bindings/dotnet/src/lib.rs</c>
+/// Thin wrappers over the C-FFI exports in <c>crates/stateset-ffi/src/crypto_api.rs</c>
 /// that delegate to the <c>stateset-crypto</c> Rust crate. The same set of
 /// primitives is exported from every StateSet binding and verified against
 /// the language-neutral test corpus at

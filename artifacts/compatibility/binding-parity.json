@@ -6871,152 +6871,150 @@
       "evidence": "native reach: engine calls anywhere in the Rust layer",
       "engineBacked": true,
       "gated": false,
-      "exposedCount": 48,
+      "exposedCount": 101,
       "applicableCount": 1223,
-      "coverage": 3.9,
-      "notes": "host (C#) layer is not traced; known in-memory fake at the host level",
+      "coverage": 8.3,
+      "notes": "C# host calls stateset_json_call; reach is the stateset-ffi JSON dispatch it routes to",
       "domains": {
-        "accounts_payable": {
-          "coverage": 5.3,
-          "exposed": [
-            "create_bill",
-            "list_bills"
-          ]
-        },
-        "accounts_receivable": {
-          "coverage": 7.1,
-          "exposed": [
-            "get_aging_summary",
-            "get_customer_aging"
-          ]
-        },
-        "analytics": {
-          "coverage": 21.4,
-          "exposed": [
-            "sales_summary",
-            "top_customers",
-            "top_products"
-          ]
-        },
-        "backorder": {
-          "coverage": 9.5,
-          "exposed": [
-            "create_backorder",
-            "list_backorders"
-          ]
-        },
         "carts": {
-          "coverage": 9.1,
+          "coverage": 66.7,
           "exposed": [
+            "abandon",
             "add_item",
+            "apply_discount",
+            "begin_checkout",
+            "cancel",
+            "clear_items",
+            "complete",
+            "count",
             "create",
-            "get"
-          ]
-        },
-        "cost_accounting": {
-          "coverage": 7.4,
-          "exposed": [
-            "get_item_cost",
-            "set_item_cost"
-          ]
-        },
-        "credit": {
-          "coverage": 3.4,
-          "exposed": [
-            "create_credit_account"
+            "get",
+            "get_by_number",
+            "get_items",
+            "list",
+            "mark_ready_for_payment",
+            "recalculate",
+            "remove_discount",
+            "remove_item",
+            "set_billing_address",
+            "set_payment",
+            "set_shipping",
+            "set_shipping_address",
+            "update_item"
           ]
         },
         "customers": {
-          "coverage": 28.6,
+          "coverage": 50,
           "exposed": [
+            "count",
             "create",
             "delete",
             "get",
-            "list"
-          ]
-        },
-        "general_ledger": {
-          "coverage": 4.5,
-          "exposed": [
-            "create_account",
-            "list_accounts"
+            "get_by_email",
+            "list",
+            "update"
           ]
         },
         "inventory": {
-          "coverage": 18.8,
+          "coverage": 62.5,
           "exposed": [
             "adjust",
+            "confirm_reservation",
             "create_item",
-            "get_stock"
-          ]
-        },
-        "lots": {
-          "coverage": 5.7,
-          "exposed": [
-            "create",
-            "list"
+            "get_item_by_sku",
+            "get_reservation",
+            "get_stock",
+            "has_stock",
+            "list",
+            "release_reservation",
+            "reserve"
           ]
         },
         "orders": {
-          "coverage": 22.2,
+          "coverage": 55.6,
           "exposed": [
+            "cancel",
+            "count",
             "create",
+            "deliver",
             "get",
+            "get_by_number",
             "list",
+            "list_for_customer",
+            "ship",
             "update_status"
           ]
         },
         "payments": {
-          "coverage": 3.8,
+          "coverage": 53.8,
           "exposed": [
-            "create"
+            "cancel",
+            "complete_refund",
+            "count",
+            "create",
+            "create_refund",
+            "fail_refund",
+            "for_order",
+            "get",
+            "get_refund",
+            "get_refunds",
+            "list",
+            "mark_completed",
+            "mark_failed",
+            "mark_processing"
           ]
         },
         "products": {
-          "coverage": 17.6,
+          "coverage": 76.5,
           "exposed": [
+            "activate",
+            "add_variant",
+            "archive",
+            "count",
             "create",
+            "delete",
             "get",
-            "list"
-          ]
-        },
-        "quality": {
-          "coverage": 3,
-          "exposed": [
-            "create_inspection"
+            "get_by_slug",
+            "get_variant_by_sku",
+            "get_variants",
+            "list",
+            "search",
+            "update"
           ]
         },
         "returns": {
-          "coverage": 13.3,
+          "coverage": 80,
           "exposed": [
-            "create",
-            "list"
-          ]
-        },
-        "serials": {
-          "coverage": 5.6,
-          "exposed": [
-            "create",
-            "list"
-          ]
-        },
-        "shipments": {
-          "coverage": 24,
-          "exposed": [
+            "add_tracking",
+            "approve",
             "cancel",
+            "complete",
+            "count",
             "create",
             "get",
             "list",
-            "mark_delivered",
-            "ship"
+            "list_for_order",
+            "mark_received",
+            "reject",
+            "set_item_disposition"
           ]
         },
-        "warehouse": {
-          "coverage": 5.8,
+        "shipments": {
+          "coverage": 52,
           "exposed": [
-            "create_location",
-            "create_warehouse",
-            "list_warehouses"
+            "cancel",
+            "count",
+            "create",
+            "for_order",
+            "get",
+            "get_by_tracking",
+            "list",
+            "mark_delivered",
+            "mark_in_transit",
+            "mark_out_for_delivery",
+            "mark_processing",
+            "mark_ready",
+            "ship"
           ]
         }
       }
@@ -7739,155 +7737,150 @@
       "evidence": "native reach: engine calls anywhere in the Rust layer",
       "engineBacked": true,
       "gated": false,
-      "exposedCount": 51,
+      "exposedCount": 101,
       "applicableCount": 1223,
-      "coverage": 4.2,
-      "notes": "host (Swift) layer is not traced; known in-memory fake at the host level",
+      "coverage": 8.3,
+      "notes": "Swift host calls stateset_json_call; reach is the stateset-ffi JSON dispatch it routes to",
       "domains": {
-        "accounts_payable": {
-          "coverage": 7.9,
-          "exposed": [
-            "create_bill",
-            "get_aging_summary",
-            "list_bills"
-          ]
-        },
-        "accounts_receivable": {
-          "coverage": 7.1,
-          "exposed": [
-            "get_aging_summary",
-            "get_dso"
-          ]
-        },
-        "analytics": {
-          "coverage": 21.4,
-          "exposed": [
-            "sales_summary",
-            "top_customers",
-            "top_products"
-          ]
-        },
-        "backorder": {
-          "coverage": 9.5,
-          "exposed": [
-            "create_backorder",
-            "list_backorders"
-          ]
-        },
         "carts": {
-          "coverage": 9.1,
+          "coverage": 66.7,
           "exposed": [
+            "abandon",
             "add_item",
+            "apply_discount",
+            "begin_checkout",
+            "cancel",
+            "clear_items",
+            "complete",
+            "count",
             "create",
-            "get"
-          ]
-        },
-        "cost_accounting": {
-          "coverage": 7.4,
-          "exposed": [
-            "get_item_cost",
-            "set_item_cost"
-          ]
-        },
-        "credit": {
-          "coverage": 6.9,
-          "exposed": [
-            "check_credit",
-            "create_credit_account"
+            "get",
+            "get_by_number",
+            "get_items",
+            "list",
+            "mark_ready_for_payment",
+            "recalculate",
+            "remove_discount",
+            "remove_item",
+            "set_billing_address",
+            "set_payment",
+            "set_shipping",
+            "set_shipping_address",
+            "update_item"
           ]
         },
         "customers": {
-          "coverage": 28.6,
+          "coverage": 50,
           "exposed": [
+            "count",
             "create",
             "delete",
             "get",
-            "list"
-          ]
-        },
-        "general_ledger": {
-          "coverage": 4.5,
-          "exposed": [
-            "create_account",
-            "get_trial_balance"
+            "get_by_email",
+            "list",
+            "update"
           ]
         },
         "inventory": {
-          "coverage": 18.8,
+          "coverage": 62.5,
           "exposed": [
             "adjust",
+            "confirm_reservation",
             "create_item",
-            "get_stock"
-          ]
-        },
-        "lots": {
-          "coverage": 5.7,
-          "exposed": [
-            "create",
-            "list"
+            "get_item_by_sku",
+            "get_reservation",
+            "get_stock",
+            "has_stock",
+            "list",
+            "release_reservation",
+            "reserve"
           ]
         },
         "orders": {
-          "coverage": 22.2,
+          "coverage": 55.6,
           "exposed": [
+            "cancel",
+            "count",
             "create",
+            "deliver",
             "get",
+            "get_by_number",
             "list",
+            "list_for_customer",
+            "ship",
             "update_status"
           ]
         },
         "payments": {
-          "coverage": 3.8,
+          "coverage": 53.8,
           "exposed": [
-            "create"
+            "cancel",
+            "complete_refund",
+            "count",
+            "create",
+            "create_refund",
+            "fail_refund",
+            "for_order",
+            "get",
+            "get_refund",
+            "get_refunds",
+            "list",
+            "mark_completed",
+            "mark_failed",
+            "mark_processing"
           ]
         },
         "products": {
-          "coverage": 17.6,
+          "coverage": 76.5,
           "exposed": [
+            "activate",
+            "add_variant",
+            "archive",
+            "count",
             "create",
+            "delete",
             "get",
-            "list"
-          ]
-        },
-        "quality": {
-          "coverage": 6.1,
-          "exposed": [
-            "create_inspection",
-            "list_inspections"
+            "get_by_slug",
+            "get_variant_by_sku",
+            "get_variants",
+            "list",
+            "search",
+            "update"
           ]
         },
         "returns": {
-          "coverage": 13.3,
+          "coverage": 80,
           "exposed": [
-            "create",
-            "list"
-          ]
-        },
-        "serials": {
-          "coverage": 5.6,
-          "exposed": [
-            "create",
-            "list"
-          ]
-        },
-        "shipments": {
-          "coverage": 24,
-          "exposed": [
+            "add_tracking",
+            "approve",
             "cancel",
+            "complete",
+            "count",
             "create",
             "get",
             "list",
-            "mark_delivered",
-            "ship"
+            "list_for_order",
+            "mark_received",
+            "reject",
+            "set_item_disposition"
           ]
         },
-        "warehouse": {
-          "coverage": 5.8,
+        "shipments": {
+          "coverage": 52,
           "exposed": [
-            "create_location",
-            "create_warehouse",
-            "list_warehouses"
+            "cancel",
+            "count",
+            "create",
+            "for_order",
+            "get",
+            "get_by_tracking",
+            "list",
+            "mark_delivered",
+            "mark_in_transit",
+            "mark_out_for_delivery",
+            "mark_processing",
+            "mark_ready",
+            "ship"
           ]
         }
       }
@@ -7925,11 +7918,25 @@
       "beyondReference": []
     },
     "dotnet": {
-      "shared": 47,
+      "shared": 86,
       "referenceExposed": 742,
-      "parity": 6.3,
+      "parity": 11.6,
       "beyondReference": [
-        "accounts_receivable.get_customer_aging"
+        "inventory.get_item_by_sku",
+        "inventory.get_reservation",
+        "inventory.has_stock",
+        "inventory.list",
+        "orders.deliver",
+        "orders.list_for_customer",
+        "payments.for_order",
+        "payments.mark_processing",
+        "returns.set_item_disposition",
+        "shipments.for_order",
+        "shipments.get_by_tracking",
+        "shipments.mark_in_transit",
+        "shipments.mark_out_for_delivery",
+        "shipments.mark_processing",
+        "shipments.mark_ready"
       ]
     },
     "java": {
@@ -7985,10 +7992,26 @@
       "beyondReference": []
     },
     "swift": {
-      "shared": 51,
+      "shared": 86,
       "referenceExposed": 742,
-      "parity": 6.9,
-      "beyondReference": []
+      "parity": 11.6,
+      "beyondReference": [
+        "inventory.get_item_by_sku",
+        "inventory.get_reservation",
+        "inventory.has_stock",
+        "inventory.list",
+        "orders.deliver",
+        "orders.list_for_customer",
+        "payments.for_order",
+        "payments.mark_processing",
+        "returns.set_item_disposition",
+        "shipments.for_order",
+        "shipments.get_by_tracking",
+        "shipments.mark_in_transit",
+        "shipments.mark_out_for_delivery",
+        "shipments.mark_processing",
+        "shipments.mark_ready"
+      ]
     },
     "wasm": {
       "shared": 0,
@@ -8004,415 +8027,158 @@
       "evidence": "name-matched host surface",
       "engineBacked": null,
       "gated": false,
-      "exposedCount": 220,
+      "exposedCount": 95,
       "applicableCount": 1223,
-      "coverage": 18,
+      "coverage": 7.8,
       "notes": null,
-      "hostMethodCount": 245,
+      "hostMethodCount": 96,
       "mappedTypes": {
-        "AccountsPayableApi": "accounts_payable",
-        "AccountsReceivableApi": "accounts_receivable",
-        "AnalyticsApi": "analytics",
-        "BomApi": "bom",
         "CartsApi": "carts",
-        "CostAccountingApi": "cost_accounting",
-        "CreditApi": "credit",
-        "CurrencyApi": "currency",
         "CustomersApi": "customers",
-        "FulfillmentApi": "fulfillment",
-        "GeneralLedgerApi": "general_ledger",
         "InventoryApi": "inventory",
-        "InvoicesApi": "invoices",
-        "LotsApi": "lots",
         "OrdersApi": "orders",
         "PaymentsApi": "payments",
         "ProductsApi": "products",
-        "PromotionsApi": "promotions",
-        "PurchaseOrdersApi": "purchase_orders",
-        "QualityApi": "quality",
-        "ReceivingApi": "receiving",
         "ReturnsApi": "returns",
-        "SerialsApi": "serials",
-        "ShipmentsApi": "shipments",
-        "SubscriptionsApi": "subscriptions",
-        "TaxApi": "tax",
-        "WarehouseApi": "warehouse",
-        "WarrantiesApi": "warranties",
-        "WorkOrdersApi": "work_orders"
+        "ShipmentsApi": "shipments"
       },
       "unmatchedHostMethods": [
-        "AccountsReceivableApi.ListReceivables",
-        "CostAccountingApi.ListCostEntries",
-        "CreditApi.GetCreditLimit",
-        "CreditApi.SetCreditLimit",
-        "FulfillmentApi.ListPickLists",
-        "SerialsApi.ListSerials",
-        "SerialsApi.RegisterSerial"
+        "CartsApi.UpdateItemQuantity"
       ],
       "domains": {
-        "accounts_payable": {
-          "coverage": 26.3,
+        "carts": {
+          "coverage": 57.6,
           "exposed": [
-            "approve_bill",
-            "cancel_bill",
-            "create_bill",
-            "get_aging_summary",
-            "get_bill",
-            "get_bill_by_number",
-            "get_bills_due_soon",
-            "get_overdue_bills",
-            "get_total_outstanding",
-            "list_bills"
-          ]
-        },
-        "accounts_receivable": {
-          "coverage": 28.6,
-          "exposed": [
-            "create_credit_memo",
-            "get_aging_summary",
-            "get_credit_memo",
-            "get_dso",
-            "get_total_outstanding",
-            "get_unapplied_credits",
-            "list_credit_memos",
-            "void_credit_memo"
-          ]
-        },
-        "analytics": {
-          "coverage": 21.4,
-          "exposed": [
-            "sales_summary",
-            "top_customers",
-            "top_products"
-          ]
-        },
-        "bom": {
-          "coverage": 46.2,
-          "exposed": [
-            "activate",
-            "add_component",
+            "abandon",
+            "add_item",
+            "apply_discount",
+            "begin_checkout",
+            "cancel",
+            "clear_items",
+            "complete",
             "create",
             "get",
-            "get_components",
-            "list"
-          ]
-        },
-        "carts": {
-          "coverage": 9.1,
-          "exposed": [
-            "add_item",
-            "create",
-            "get"
-          ]
-        },
-        "cost_accounting": {
-          "coverage": 18.5,
-          "exposed": [
-            "get_item_cost",
-            "get_total_inventory_value",
-            "list_item_costs",
-            "set_item_cost",
-            "update_average_cost"
-          ]
-        },
-        "credit": {
-          "coverage": 31,
-          "exposed": [
-            "adjust_credit_limit",
-            "check_credit",
-            "create_credit_account",
-            "get_credit_account",
-            "get_credit_account_by_customer",
-            "get_over_limit_customers",
-            "list_credit_accounts",
-            "reactivate_credit_account",
-            "suspend_credit_account"
-          ]
-        },
-        "currency": {
-          "coverage": 25,
-          "exposed": [
-            "convert",
-            "get_rate",
-            "get_settings",
-            "set_rate"
+            "get_items",
+            "list",
+            "mark_ready_for_payment",
+            "recalculate",
+            "remove_discount",
+            "remove_item",
+            "set_billing_address",
+            "set_payment",
+            "set_shipping",
+            "set_shipping_address"
           ]
         },
         "customers": {
-          "coverage": 35.7,
+          "coverage": 50,
           "exposed": [
             "count",
             "create",
             "delete",
             "get",
-            "list"
-          ]
-        },
-        "fulfillment": {
-          "coverage": 28.3,
-          "exposed": [
-            "assign_pick",
-            "cancel_pick",
-            "cancel_wave",
-            "complete_wave",
-            "create_wave",
-            "get_pick",
-            "get_wave",
-            "is_order_ready_to_pack",
-            "is_order_ready_to_ship",
-            "list_picks",
-            "list_waves",
-            "release_wave",
-            "start_pick"
-          ]
-        },
-        "general_ledger": {
-          "coverage": 29.5,
-          "exposed": [
-            "create_account",
-            "get_account",
-            "get_account_balance",
-            "get_account_by_number",
-            "get_balance_sheet",
-            "get_income_statement",
-            "get_journal_entry",
-            "get_trial_balance",
-            "initialize_chart_of_accounts",
-            "list_accounts",
-            "list_journal_entries",
-            "post_journal_entry",
-            "void_journal_entry"
+            "get_by_email",
+            "list",
+            "update"
           ]
         },
         "inventory": {
-          "coverage": 18.8,
+          "coverage": 62.5,
           "exposed": [
             "adjust",
+            "confirm_reservation",
             "create_item",
-            "get_stock"
-          ]
-        },
-        "invoices": {
-          "coverage": 33.3,
-          "exposed": [
-            "create",
-            "get",
-            "get_overdue",
+            "get_item",
+            "get_reservation",
+            "get_stock",
+            "has_stock",
             "list",
-            "record_payment",
-            "send",
-            "void"
-          ]
-        },
-        "lots": {
-          "coverage": 28.6,
-          "exposed": [
-            "create",
-            "get",
-            "get_active_lots",
-            "get_by_number",
-            "get_expired_lots",
-            "get_expiring_lots",
-            "get_quarantined",
-            "list",
-            "quarantine",
-            "release_quarantine"
+            "release_reservation",
+            "reserve"
           ]
         },
         "orders": {
-          "coverage": 33.3,
+          "coverage": 55.6,
           "exposed": [
             "cancel",
+            "count",
             "create",
+            "deliver",
             "get",
+            "get_by_number",
             "list",
+            "list_for_customer",
             "ship",
             "update_status"
           ]
         },
         "payments": {
-          "coverage": 23.1,
+          "coverage": 50,
           "exposed": [
+            "cancel",
+            "complete_refund",
             "create",
             "create_refund",
+            "fail_refund",
+            "for_order",
             "get",
+            "get_refund",
+            "get_refunds",
             "list",
             "mark_completed",
-            "mark_failed"
+            "mark_failed",
+            "mark_processing"
           ]
         },
         "products": {
-          "coverage": 17.6,
-          "exposed": [
-            "create",
-            "get",
-            "list"
-          ]
-        },
-        "promotions": {
-          "coverage": 57.9,
+          "coverage": 76.5,
           "exposed": [
             "activate",
+            "add_variant",
+            "archive",
+            "count",
             "create",
-            "create_coupon",
-            "deactivate",
             "delete",
             "get",
-            "get_active",
-            "get_by_code",
-            "get_coupon_by_code",
+            "get_by_slug",
+            "get_variant_by_sku",
+            "get_variants",
             "list",
-            "validate_coupon"
-          ]
-        },
-        "purchase_orders": {
-          "coverage": 26.9,
-          "exposed": [
-            "approve",
-            "cancel",
-            "create",
-            "get",
-            "list",
-            "send",
-            "submit"
-          ]
-        },
-        "quality": {
-          "coverage": 42.4,
-          "exposed": [
-            "close_ncr",
-            "complete_inspection",
-            "create_hold",
-            "create_inspection",
-            "create_ncr",
-            "get_active_holds",
-            "get_hold",
-            "get_inspection",
-            "get_ncr",
-            "list_holds",
-            "list_inspections",
-            "list_ncrs",
-            "release_hold",
-            "start_inspection"
-          ]
-        },
-        "receiving": {
-          "coverage": 33.3,
-          "exposed": [
-            "cancel_receipt",
-            "complete_receiving",
-            "create_receipt",
-            "create_receipt_from_po",
-            "get_receipt",
-            "get_receipt_by_number",
-            "list_receipts",
-            "start_receiving"
+            "search",
+            "update"
           ]
         },
         "returns": {
-          "coverage": 40,
+          "coverage": 73.3,
           "exposed": [
+            "add_tracking",
             "approve",
+            "cancel",
             "complete",
             "create",
             "get",
             "list",
-            "reject"
-          ]
-        },
-        "serials": {
-          "coverage": 22.2,
-          "exposed": [
-            "create",
-            "get",
-            "get_available",
-            "get_by_serial",
-            "is_available",
-            "list",
-            "mark_sold",
-            "quarantine"
+            "list_for_order",
+            "mark_received",
+            "reject",
+            "set_item_disposition"
           ]
         },
         "shipments": {
-          "coverage": 24,
+          "coverage": 48,
           "exposed": [
             "cancel",
             "create",
+            "for_order",
             "get",
+            "get_by_tracking",
             "list",
             "mark_delivered",
+            "mark_in_transit",
+            "mark_out_for_delivery",
+            "mark_processing",
+            "mark_ready",
             "ship"
-          ]
-        },
-        "subscriptions": {
-          "coverage": 33.3,
-          "exposed": [
-            "activate_plan",
-            "archive_plan",
-            "cancel",
-            "create_plan",
-            "get",
-            "get_plan",
-            "list",
-            "list_plans",
-            "pause",
-            "resume",
-            "subscribe"
-          ]
-        },
-        "tax": {
-          "coverage": 61.9,
-          "exposed": [
-            "calculate",
-            "create_exemption",
-            "create_jurisdiction",
-            "create_rate",
-            "customer_is_exempt",
-            "get_customer_exemptions",
-            "get_effective_rate",
-            "get_jurisdiction",
-            "get_rate",
-            "get_settings",
-            "list_jurisdictions",
-            "list_rates",
-            "set_enabled"
-          ]
-        },
-        "warehouse": {
-          "coverage": 17.3,
-          "exposed": [
-            "create_location",
-            "create_warehouse",
-            "get_location",
-            "get_pickable_locations",
-            "get_total_available",
-            "get_warehouse",
-            "get_warehouse_by_code",
-            "list_locations",
-            "list_warehouses"
-          ]
-        },
-        "warranties": {
-          "coverage": 29.2,
-          "exposed": [
-            "approve_claim",
-            "complete_claim",
-            "create",
-            "create_claim",
-            "deny_claim",
-            "get",
-            "list"
-          ]
-        },
-        "work_orders": {
-          "coverage": 26.1,
-          "exposed": [
-            "cancel",
-            "complete",
-            "create",
-            "get",
-            "list",
-            "start"
           ]
         }
       }
@@ -8423,96 +8189,81 @@
       "evidence": "name-matched host surface",
       "engineBacked": null,
       "gated": false,
-      "exposedCount": 71,
+      "exposedCount": 76,
       "applicableCount": 1223,
-      "coverage": 5.8,
+      "coverage": 6.2,
       "notes": null,
-      "hostMethodCount": 71,
+      "hostMethodCount": 82,
       "mappedTypes": {
-        "AccountsPayableAPI": "accounts_payable",
-        "AccountsReceivableAPI": "accounts_receivable",
-        "AnalyticsAPI": "analytics",
-        "BOMAPI": "bom",
         "CartsAPI": "carts",
-        "CostAccountingAPI": "cost_accounting",
-        "CreditAPI": "credit",
-        "CurrencyAPI": "currency",
         "CustomersAPI": "customers",
-        "FulfillmentAPI": "fulfillment",
-        "GeneralLedgerAPI": "general_ledger",
         "InventoryAPI": "inventory",
-        "InvoicesAPI": "invoices",
-        "LotsAPI": "lots",
         "OrdersAPI": "orders",
         "PaymentsAPI": "payments",
         "ProductsAPI": "products",
-        "PromotionsAPI": "promotions",
-        "PurchaseOrdersAPI": "purchase_orders",
-        "QualityAPI": "quality",
-        "ReceivingAPI": "receiving",
         "ReturnsAPI": "returns",
-        "SerialsAPI": "serials",
-        "ShipmentsAPI": "shipments",
-        "SubscriptionsAPI": "subscriptions",
-        "TaxAPI": "tax",
-        "WarehouseAPI": "warehouse",
-        "WarrantiesAPI": "warranties",
-        "WorkOrdersAPI": "work_orders"
+        "ShipmentsAPI": "shipments"
       },
-      "unmatchedHostMethods": [],
+      "unmatchedHostMethods": [
+        "CartsAPI.items",
+        "CartsAPI.updateItemQuantity",
+        "InventoryAPI.item",
+        "PaymentsAPI.refunds",
+        "ProductsAPI.variant",
+        "ProductsAPI.variants"
+      ],
       "domains": {
-        "analytics": {
-          "coverage": 21.4,
-          "exposed": [
-            "sales_summary",
-            "top_customers",
-            "top_products"
-          ]
-        },
         "carts": {
-          "coverage": 3,
+          "coverage": 45.5,
           "exposed": [
-            "create"
-          ]
-        },
-        "currency": {
-          "coverage": 25,
-          "exposed": [
-            "convert",
-            "get_rate",
-            "get_settings",
-            "set_rate"
+            "abandon",
+            "add_item",
+            "apply_discount",
+            "cancel",
+            "clear_items",
+            "complete",
+            "create",
+            "get",
+            "list",
+            "recalculate",
+            "remove_item",
+            "set_billing_address",
+            "set_payment",
+            "set_shipping",
+            "set_shipping_address"
           ]
         },
         "customers": {
-          "coverage": 28.6,
+          "coverage": 42.9,
           "exposed": [
+            "count",
             "create",
             "delete",
             "get",
-            "list"
-          ]
-        },
-        "general_ledger": {
-          "coverage": 4.5,
-          "exposed": [
-            "create_account",
-            "list_accounts"
+            "list",
+            "update"
           ]
         },
         "inventory": {
-          "coverage": 18.8,
+          "coverage": 50,
           "exposed": [
             "adjust",
+            "confirm_reservation",
             "create_item",
-            "get_stock"
+            "get_stock",
+            "has_stock",
+            "list",
+            "release_reservation",
+            "reserve"
           ]
         },
         "orders": {
-          "coverage": 33.3,
+          "coverage": 44.4,
           "exposed": [
             "cancel",
+            "count",
             "create",
+            "deliver",
             "get",
             "list",
             "ship",
@@ -8520,91 +8271,62 @@
           ]
         },
         "payments": {
-          "coverage": 11.5,
+          "coverage": 38.5,
           "exposed": [
+            "cancel",
+            "complete_refund",
             "create",
+            "create_refund",
+            "fail_refund",
             "get",
-            "list"
+            "list",
+            "mark_completed",
+            "mark_failed",
+            "mark_processing"
           ]
         },
         "products": {
-          "coverage": 17.6,
-          "exposed": [
-            "create",
-            "get",
-            "list"
-          ]
-        },
-        "promotions": {
-          "coverage": 57.9,
+          "coverage": 52.9,
           "exposed": [
             "activate",
+            "add_variant",
+            "archive",
+            "count",
             "create",
-            "create_coupon",
-            "deactivate",
             "delete",
             "get",
-            "get_active",
-            "get_by_code",
-            "get_coupon_by_code",
             "list",
-            "validate_coupon"
+            "search"
           ]
         },
         "returns": {
-          "coverage": 40,
+          "coverage": 66.7,
           "exposed": [
+            "add_tracking",
             "approve",
+            "cancel",
             "complete",
             "create",
             "get",
             "list",
-            "reject"
+            "mark_received",
+            "reject",
+            "set_item_disposition"
           ]
         },
         "shipments": {
-          "coverage": 24,
+          "coverage": 40,
           "exposed": [
             "cancel",
             "create",
             "get",
             "list",
             "mark_delivered",
+            "mark_in_transit",
+            "mark_out_for_delivery",
+            "mark_processing",
+            "mark_ready",
             "ship"
-          ]
-        },
-        "subscriptions": {
-          "coverage": 33.3,
-          "exposed": [
-            "activate_plan",
-            "archive_plan",
-            "cancel",
-            "create_plan",
-            "get",
-            "get_plan",
-            "list",
-            "list_plans",
-            "pause",
-            "resume",
-            "subscribe"
-          ]
-        },
-        "tax": {
-          "coverage": 19,
-          "exposed": [
-            "calculate",
-            "get_effective_rate",
-            "get_settings",
-            "set_enabled"
-          ]
-        },
-        "warehouse": {
-          "coverage": 7.7,
-          "exposed": [
-            "create_warehouse",
-            "get_warehouse",
-            "get_warehouse_by_code",
-            "list_warehouses"
           ]
         }
       }

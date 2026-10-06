@@ -1,229 +1,101 @@
 # StateSet Swift Binding
 
-**The SQLite of Commerce** - Embedded commerce engine for Swift and iOS applications.
+The StateSet commerce engine (the Rust `stateset-embedded` crate) for Swift,
+running in-process through a C ABI and persisting to a local SQLite file.
 
-[![Swift](https://img.shields.io/badge/Swift-5.5+-orange.svg)](https://swift.org/)
-[![Platform](https://img.shields.io/badge/Platform-iOS%20%7C%20macOS%20%7C%20Linux-blue.svg)](https://developer.apple.com/)
+> **Status.** Not yet published as a release; build it from this repository
+> (below). Before October 2026 this binding was an in-memory fake (its C shim
+> was empty and no engine call was ever made, so data was silently lost); it
+> is now a real binding with a smaller, honest surface (see
+> [Coverage](#coverage)).
 
-## Installation
+## How it works
 
-### Swift Package Manager
-
-Add to your `Package.swift`:
-
-```swift
-dependencies: [
-    .package(url: "https://github.com/stateset/stateset-icommerce", from: "1.37.0")
-]
+```
+Swift API (StateSetCommerce, CustomersAPI, ...)
+   │  StateSetC module map + stateset.h, JSON with decimals as exact strings
+   ▼
+libstateset_swift  ──  re-exports crates/stateset-ffi (json_api.rs, crypto_api.rs)
+   ▼
+stateset-embedded (Rust)  ──  SQLite file (or :memory:)
 ```
 
-Or in Xcode: File > Add Packages > Enter the repository URL.
+Every method is one call to `stateset_json_call(handle, "orders.create",
+"{...}")`, which dispatches to the engine in safe Rust and returns a JSON
+envelope. The native side catches panics, reports typed error codes, and owns
+every string it returns until `stateset_string_free`.
 
-## Quick Start
+## Build and test
+
+Requires Swift 5.7+ and a Rust toolchain.
+
+```bash
+cargo build -p stateset-swift --release
+cd bindings/swift
+LIB=$(pwd)/../../target/release
+# Linux
+LD_LIBRARY_PATH=$LIB swift test -Xlinker -L$LIB
+# macOS
+DYLD_LIBRARY_PATH=$LIB swift test -Xlinker -L$LIB
+```
+
+For an app, link the static `libstateset_swift.a` (or ship the dynamic
+library) and add its directory to the linker search path.
+
+## Quick start
 
 ```swift
 import StateSet
 
-// Initialize with SQLite database
-let commerce = try StateSetCommerce(dbPath: "commerce.db")
+let commerce = try StateSetCommerce(dbPath: "commerce.db")   // or ":memory:"
+defer { commerce.close() }
 
-// Or use in-memory database for testing
-let commerce = try StateSetCommerce(dbPath: ":memory:")
+let customer = try commerce.customers.create(email: "alice@example.com", firstName: "Alice", lastName: "Smith")
+let product = try commerce.products.create(name: "Premium Widget", sku: "WIDGET-001",
+                                           price: Decimal(string: "29.99")!)
+_ = try commerce.inventory.createItem(sku: "WIDGET-001", name: "Premium Widget", initialQuantity: 100)
 
-// Create a customer
-let customer = try commerce.customers.create(
-    email: "alice@example.com",
-    firstName: "Alice",
-    lastName: "Smith",
-    phone: "+1-555-0123"
-)
+var order = try commerce.orders.create(customerId: customer.id, items: [
+    CreateOrderItem(productId: product.id, sku: "WIDGET-001", name: "Widget", quantity: 2,
+                    unitPrice: Decimal(string: "29.99")!),
+])
+// order.totalAmount == 59.98, exactly
 
-// Create a product
-let product = try commerce.products.create(
-    name: "Premium Widget",
-    sku: "WIDGET-001",
-    price: 29.99,
-    description: "High-quality widget"
-)
-
-// Create inventory
-let item = try commerce.inventory.createItem(
-    sku: "WIDGET-001",
-    name: "Premium Widget",
-    initialQuantity: 100
-)
-
-// Create an order
-let order = try commerce.orders.create(
-    customerId: customer.id,
-    items: [
-        OrderItem(sku: "WIDGET-001", name: "Widget", quantity: 2, unitPrice: 29.99)
-    ],
-    currency: "USD"
-)
-
-// Ship the order
-let shipped = try commerce.orders.ship(id: order.id)
+order = try commerce.orders.updateStatus(id: order.id, status: .confirmed)
+let payment = try commerce.payments.create(orderId: order.id, amount: order.totalAmount)
+_ = try commerce.payments.complete(id: payment.id)
+_ = try commerce.payments.refund(paymentId: payment.id, amount: 10, reason: "goodwill")
 ```
 
-## API Reference
+## Coverage
 
-| API | Description |
-|-----|-------------|
-| `customers` | Customer management |
-| `products` | Product catalog |
-| `orders` | Order lifecycle |
-| `inventory` | Stock management |
-| `carts` | Shopping carts |
-| `returns` | Return processing |
-| `payments` | Payment operations |
-| `shipments` | Shipping management |
-| `warranties` | Warranty tracking |
-| `suppliers` | Supplier management |
-| `purchaseOrders` | Purchase orders |
-| `invoices` | B2B invoicing |
-| `bom` | Bills of Materials |
-| `workOrders` | Manufacturing |
-| `currency` | Multi-currency |
-| `subscriptions` | Recurring billing |
-| `promotions` | Discounts & coupons |
-| `tax` | Tax calculations |
-| `quality` | Quality control |
-| `lots` | Lot tracking |
-| `serials` | Serial numbers |
-| `warehouse` | Warehouse ops |
-| `receiving` | Receiving |
-| `fulfillment` | Picking & packing |
-| `accountsPayable` | A/P management |
-| `accountsReceivable` | A/R management |
-| `costAccounting` | Cost tracking |
-| `credit` | Credit management |
-| `backorders` | Backorder tracking |
-| `generalLedger` | GL accounting |
-| `analytics` | Reporting & forecasts |
+| API | Methods |
+|---|---|
+| `customers` | `create`, `get(id:)`, `get(email:)`, `update`, `list`, `count`, `delete` |
+| `products` | `create` (single price or variants), `get(id:)`, `get(slug:)`, `list`, `count`, `search`, `activate`, `archive`, `delete`, `addVariant`, `variants`, `variant(sku:)` |
+| `inventory` | `createItem`, `item(sku:)`, `list`, `getStock`, `adjust`, `hasStock`, `reserve`, `releaseReservation`, `confirmReservation` |
+| `carts` | `create`, `get`, `list`, `addItem`, `updateItemQuantity`, `removeItem`, `items`, `clearItems`, `setShippingAddress`, `setBillingAddress`, `setShipping`, `setPayment`, `applyDiscount`, `recalculate`, `complete`, `cancel`, `abandon` |
+| `orders` | `create`, `get(id:)`, `get(orderNumber:)`, `list`, `list(customerId:)`, `count`, `updateStatus`, `ship`, `deliver`, `cancel` |
+| `payments` | `create`, `get`, `list`, `list(orderId:)`, `markProcessing`, `complete`, `fail`, `cancel`, `refund(paymentId:...)`, `refund(id:)`, `refunds`, `completeRefund`, `failRefund` |
+| `returns` | `create`, `get`, `list`, `list(orderId:)`, `approve`, `reject`, `markReceived`, `setItemDisposition`, `complete`, `cancel`, `addTracking` |
+| `shipments` | `create`, `get(id:)`, `get(trackingNumber:)`, `list`, `list(orderId:)`, `markProcessing`, `markReady`, `ship`, `markInTransit`, `markOutForDelivery`, `deliver`, `cancel` |
+| `Crypto` | `jcsCanonicalize`, `payloadPlainHash`, `merkleRoot` (checked against `bindings/test-vectors/v1.json`) |
 
-## Common Operations
+Domains the old fake pretended to support (analytics, warranties, suppliers,
+purchase orders, invoices, BOM, work orders, currency, subscriptions,
+promotions, tax, quality, lots, serials, warehouse, receiving, fulfillment,
+AP/AR, cost accounting, credit, backorders, general ledger) were removed
+rather than kept as fakes. They exist in the engine and can be added by
+routing them in `crates/stateset-ffi/src/json_api.rs` plus a typed wrapper
+here.
 
-### Subscriptions
+## Money and errors
 
-```swift
-// Create a subscription plan
-let plan = try commerce.subscriptions.createPlan(
-    code: "PREMIUM",
-    name: "Premium Plan",
-    interval: "month",
-    intervalCount: 1,
-    price: 19.99,
-    currency: "USD"
-)
-
-// Subscribe a customer
-let subscription = try commerce.subscriptions.subscribe(
-    customerId: customer.id,
-    planId: plan.id
-)
-
-// Pause subscription
-let paused = try commerce.subscriptions.pause(id: subscription.id)
-
-// Resume subscription
-let resumed = try commerce.subscriptions.resume(id: subscription.id)
-```
-
-### Promotions
-
-```swift
-// Create a promotion
-let promo = try commerce.promotions.create(
-    code: "SUMMER20",
-    name: "Summer Sale",
-    discountType: "percentage",
-    discountValue: 20.0
-)
-
-// Create a coupon code
-let coupon = try commerce.promotions.createCoupon(
-    promotionId: promo.id,
-    code: "SAVE20NOW",
-    maxUses: 100
-)
-
-// Validate a coupon
-if let valid = try commerce.promotions.validateCoupon(code: "SAVE20NOW") {
-    print("Coupon is valid: \(valid.code)")
-}
-```
-
-### Tax Calculations
-
-```swift
-// Get effective tax rate
-let rate = try commerce.tax.getEffectiveRate(
-    country: "US",
-    state: "CA",
-    category: "general"
-)
-
-// Create tax exemption
-let exemption = try commerce.tax.createExemption(
-    customerId: customer.id,
-    exemptionType: "resale",
-    effectiveFrom: "2024-01-01"
-)
-```
-
-### Warehouse & Fulfillment
-
-```swift
-// Create warehouse
-let warehouse = try commerce.warehouse.createWarehouse(
-    code: "WH-001",
-    name: "Main Warehouse",
-    warehouseType: "distribution"
-)
-
-// Create fulfillment wave
-let wave = try commerce.fulfillment.createWave(
-    warehouseId: warehouse.id,
-    orderIds: [order.id],
-    priority: 1
-)
-
-// Release wave for picking
-let released = try commerce.fulfillment.releaseWave(id: wave.id)
-```
-
-## Error Handling
-
-```swift
-do {
-    let customer = try commerce.customers.create(
-        email: "test@example.com",
-        firstName: "Test",
-        lastName: "User"
-    )
-} catch StateSetError.initializationFailed(let msg) {
-    print("Failed to initialize: \(msg)")
-} catch StateSetError.invalidJSON(let msg) {
-    print("Invalid response: \(msg)")
-} catch {
-    print("Error: \(error)")
-}
-```
-
-## Platform Support
-
-| Platform | Architectures | Status |
-|----------|---------------|--------|
-| macOS 12+ | x86_64, arm64 | Supported |
-| iOS 15+ | arm64 | Supported |
-| Linux | x86_64, arm64 | Supported |
-| Windows | x86_64 | Planned |
-
-## Thread Safety
-
-`StateSetCommerce` is thread-safe. SQLite operations are serialized internally via connection pooling.
-
-## License
-
-MIT OR Apache-2.0
+- Every money and quantity field is `Decimal`, decoded from and encoded as an
+  exact decimal string (`"29.99"`) — never a `Double`. The native side refuses
+  JSON floats.
+- Lookups return `nil` when nothing matches. Everything else `throws` a
+  `StateSetError` with a `code` (`.notFound`, `.invalidArgument`,
+  `.databaseError`, ...), a `kind`, and a `message`.
+- `StateSetCommerce` may be shared across threads; `close()` waits for
+  in-flight calls and is idempotent.

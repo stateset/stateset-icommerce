@@ -54,222 +54,95 @@
         "bindings/dotnet/dotnet/StateSet/APIs.cs",
         "bindings/dotnet/dotnet/StateSet/Models.cs"
       ],
-      "targetFrameworks": [
-        "net6.0",
-        "net7.0",
-        "net8.0"
-      ],
-      "publicTypeCount": 112,
-      "apiTypeCount": 31,
-      "facadePropertyCount": 31,
-      "apiMethodCount": 245,
+      "targetFrameworks": [],
+      "publicTypeCount": 60,
+      "apiTypeCount": 8,
+      "facadePropertyCount": 8,
+      "apiMethodCount": 96,
       "publicTypes": [
-        "AccountsPayableApi",
-        "AccountsReceivableApi",
-        "AnalyticsApi",
-        "ApAgingSummary",
-        "ArAgingSummary",
-        "Backorder",
-        "BackordersApi",
-        "BackorderSummary",
-        "BalanceSheet",
-        "Bill",
-        "BillOfMaterials",
-        "BomApi",
-        "BomComponent",
-        "BomStatus",
+        "AddCartItem",
+        "Address",
         "Cart",
+        "CartAddress",
+        "CartItem",
+        "CartPaymentStatus",
         "CartsApi",
-        "ClaimResolution",
-        "ClaimStatus",
-        "ConversionResult",
-        "CostAccountingApi",
-        "Coupon",
-        "CreditAccount",
-        "CreditApi",
-        "CreditCheck",
-        "CreditMemo",
-        "CurrencyApi",
-        "CurrencyCode",
+        "CartStatus",
+        "CheckoutResult",
+        "CreateOrderItem",
+        "CreateProductVariant",
+        "CreateReturnItem",
+        "CreateShipmentItem",
         "Customer",
         "CustomersApi",
-        "ExchangeRate",
-        "FulfillmentApi",
-        "GeneralLedgerApi",
-        "GlAccount",
-        "IncomeStatement",
-        "Inspection",
+        "CustomerStatus",
+        "FulfillmentStatus",
         "InventoryApi",
         "InventoryItem",
-        "Invoice",
-        "InvoiceItem",
-        "InvoicesApi",
-        "InvoiceStatus",
-        "ItemCost",
-        "JournalEntry",
-        "Location",
-        "Lot",
-        "LotsApi",
-        "Ncr",
+        "InventoryReservation",
+        "InventoryTransaction",
+        "ItemCondition",
+        "LocationStock",
         "Order",
         "OrderItem",
+        "OrderPaymentStatus",
         "OrdersApi",
         "OrderStatus",
         "Payment",
         "PaymentMethod",
         "PaymentsApi",
-        "PickTask",
+        "PaymentStatus",
         "Product",
         "ProductsApi",
+        "ProductStatus",
+        "ProductType",
         "ProductVariant",
-        "Promotion",
-        "PromotionsApi",
-        "PurchaseOrder",
-        "PurchaseOrderItem",
-        "PurchaseOrdersApi",
-        "PurchaseOrderStatus",
-        "QualityApi",
-        "QualityHold",
-        "Receipt",
-        "ReceivingApi",
         "Refund",
         "RefundStatus",
+        "ReservationStatus",
         "Return",
+        "ReturnDisposition",
+        "ReturnItem",
         "ReturnReason",
         "ReturnsApi",
         "ReturnStatus",
-        "SalesSummary",
-        "Serial",
-        "SerialsApi",
         "Shipment",
+        "ShipmentItem",
         "ShipmentsApi",
         "ShipmentStatus",
         "ShippingCarrier",
+        "ShippingMethod",
         "StateSetCommerce",
+        "StateSetErrorCode",
         "StateSetException",
+        "StateSetNotFoundException",
+        "StateSetValidationException",
         "StockLevel",
-        "StoreCurrencySettings",
-        "Subscription",
-        "SubscriptionPlan",
-        "SubscriptionsApi",
-        "Supplier",
-        "SuppliersApi",
-        "TaxApi",
-        "TaxCalculation",
-        "TaxExemption",
-        "TaxJurisdiction",
-        "TaxRate",
-        "TaxSettings",
-        "TimePeriod",
-        "TopCustomer",
-        "TopProduct",
-        "TrialBalance",
-        "Warehouse",
-        "WarehouseApi",
-        "WarrantiesApi",
-        "Warranty",
-        "WarrantyClaim",
-        "WarrantyStatus",
-        "WarrantyType",
-        "Wave",
-        "WorkOrder",
-        "WorkOrderPriority",
-        "WorkOrdersApi",
-        "WorkOrderStatus"
+        "UpdateCustomer",
+        "UpdateProduct"
       ],
       "apiTypes": [
-        "AccountsPayableApi",
-        "AccountsReceivableApi",
-        "AnalyticsApi",
-        "BackordersApi",
-        "BomApi",
         "CartsApi",
-        "CostAccountingApi",
-        "CreditApi",
-        "CurrencyApi",
         "CustomersApi",
-        "FulfillmentApi",
-        "GeneralLedgerApi",
         "InventoryApi",
-        "InvoicesApi",
-        "LotsApi",
         "OrdersApi",
         "PaymentsApi",
         "ProductsApi",
-        "PromotionsApi",
-        "PurchaseOrdersApi",
-        "QualityApi",
-        "ReceivingApi",
         "ReturnsApi",
-        "SerialsApi",
-        "ShipmentsApi",
-        "SubscriptionsApi",
-        "SuppliersApi",
-        "TaxApi",
-        "WarehouseApi",
-        "WarrantiesApi",
-        "WorkOrdersApi"
+        "ShipmentsApi"
       ],
       "facadeProperties": [
         {
-          "type": "AccountsPayableApi",
-          "name": "AccountsPayable"
-        },
-        {
-          "type": "AccountsReceivableApi",
-          "name": "AccountsReceivable"
-        },
-        {
-          "type": "AnalyticsApi",
-          "name": "Analytics"
-        },
-        {
-          "type": "BackordersApi",
-          "name": "Backorders"
-        },
-        {
-          "type": "BomApi",
-          "name": "Bom"
-        },
-        {
           "type": "CartsApi",
           "name": "Carts"
-        },
-        {
-          "type": "CostAccountingApi",
-          "name": "CostAccounting"
-        },
-        {
-          "type": "CreditApi",
-          "name": "Credit"
-        },
-        {
-          "type": "CurrencyApi",
-          "name": "Currency"
         },
         {
           "type": "CustomersApi",
           "name": "Customers"
         },
         {
-          "type": "FulfillmentApi",
-          "name": "Fulfillment"
-        },
-        {
-          "type": "GeneralLedgerApi",
-          "name": "GeneralLedger"
-        },
-        {
           "type": "InventoryApi",
           "name": "Inventory"
-        },
-        {
-          "type": "InvoicesApi",
-          "name": "Invoices"
-        },
-        {
-          "type": "LotsApi",
-          "name": "Lots"
         },
         {
           "type": "OrdersApi",
@@ -284,222 +157,18 @@
           "name": "Products"
         },
         {
-          "type": "PromotionsApi",
-          "name": "Promotions"
-        },
-        {
-          "type": "PurchaseOrdersApi",
-          "name": "PurchaseOrders"
-        },
-        {
-          "type": "QualityApi",
-          "name": "Quality"
-        },
-        {
-          "type": "ReceivingApi",
-          "name": "Receiving"
-        },
-        {
           "type": "ReturnsApi",
           "name": "Returns"
         },
         {
-          "type": "SerialsApi",
-          "name": "Serials"
-        },
-        {
           "type": "ShipmentsApi",
           "name": "Shipments"
-        },
-        {
-          "type": "SubscriptionsApi",
-          "name": "Subscriptions"
-        },
-        {
-          "type": "SuppliersApi",
-          "name": "Suppliers"
-        },
-        {
-          "type": "TaxApi",
-          "name": "Tax"
-        },
-        {
-          "type": "WarehouseApi",
-          "name": "Warehouse"
-        },
-        {
-          "type": "WarrantiesApi",
-          "name": "Warranties"
-        },
-        {
-          "type": "WorkOrdersApi",
-          "name": "WorkOrders"
         }
       ],
       "apiMethods": [
         {
-          "type": "AccountsPayableApi",
-          "method": "ApproveBill"
-        },
-        {
-          "type": "AccountsPayableApi",
-          "method": "CancelBill"
-        },
-        {
-          "type": "AccountsPayableApi",
-          "method": "CreateBill"
-        },
-        {
-          "type": "AccountsPayableApi",
-          "method": "GetAgingSummary"
-        },
-        {
-          "type": "AccountsPayableApi",
-          "method": "GetBill"
-        },
-        {
-          "type": "AccountsPayableApi",
-          "method": "GetBillByNumber"
-        },
-        {
-          "type": "AccountsPayableApi",
-          "method": "GetBillsDueSoon"
-        },
-        {
-          "type": "AccountsPayableApi",
-          "method": "GetOverdueBills"
-        },
-        {
-          "type": "AccountsPayableApi",
-          "method": "GetTotalOutstanding"
-        },
-        {
-          "type": "AccountsPayableApi",
-          "method": "ListBills"
-        },
-        {
-          "type": "AccountsReceivableApi",
-          "method": "CreateCreditMemo"
-        },
-        {
-          "type": "AccountsReceivableApi",
-          "method": "GetAgingSummary"
-        },
-        {
-          "type": "AccountsReceivableApi",
-          "method": "GetCreditMemo"
-        },
-        {
-          "type": "AccountsReceivableApi",
-          "method": "GetDso"
-        },
-        {
-          "type": "AccountsReceivableApi",
-          "method": "GetTotalOutstanding"
-        },
-        {
-          "type": "AccountsReceivableApi",
-          "method": "GetUnappliedCredits"
-        },
-        {
-          "type": "AccountsReceivableApi",
-          "method": "ListCreditMemos"
-        },
-        {
-          "type": "AccountsReceivableApi",
-          "method": "ListReceivables"
-        },
-        {
-          "type": "AccountsReceivableApi",
-          "method": "VoidCreditMemo"
-        },
-        {
-          "type": "AnalyticsApi",
-          "method": "GetSalesSummary"
-        },
-        {
-          "type": "AnalyticsApi",
-          "method": "GetTopCustomers"
-        },
-        {
-          "type": "AnalyticsApi",
-          "method": "GetTopProducts"
-        },
-        {
-          "type": "AnalyticsApi",
-          "method": "SalesSummary"
-        },
-        {
-          "type": "AnalyticsApi",
-          "method": "TopCustomers"
-        },
-        {
-          "type": "AnalyticsApi",
-          "method": "TopProducts"
-        },
-        {
-          "type": "BackordersApi",
-          "method": "CancelBackorder"
-        },
-        {
-          "type": "BackordersApi",
-          "method": "CountPending"
-        },
-        {
-          "type": "BackordersApi",
-          "method": "CreateBackorder"
-        },
-        {
-          "type": "BackordersApi",
-          "method": "GetBackorder"
-        },
-        {
-          "type": "BackordersApi",
-          "method": "GetBackorderByNumber"
-        },
-        {
-          "type": "BackordersApi",
-          "method": "GetBackordersForOrder"
-        },
-        {
-          "type": "BackordersApi",
-          "method": "GetBackordersForSku"
-        },
-        {
-          "type": "BackordersApi",
-          "method": "GetOverdueBackorders"
-        },
-        {
-          "type": "BackordersApi",
-          "method": "GetSummary"
-        },
-        {
-          "type": "BackordersApi",
-          "method": "ListBackorders"
-        },
-        {
-          "type": "BomApi",
-          "method": "Activate"
-        },
-        {
-          "type": "BomApi",
-          "method": "AddComponent"
-        },
-        {
-          "type": "BomApi",
-          "method": "Create"
-        },
-        {
-          "type": "BomApi",
-          "method": "Get"
-        },
-        {
-          "type": "BomApi",
-          "method": "GetComponents"
-        },
-        {
-          "type": "BomApi",
-          "method": "List"
+          "type": "CartsApi",
+          "method": "Abandon"
         },
         {
           "type": "CartsApi",
@@ -507,6 +176,26 @@
         },
         {
           "type": "CartsApi",
+          "method": "ApplyDiscount"
+        },
+        {
+          "type": "CartsApi",
+          "method": "BeginCheckout"
+        },
+        {
+          "type": "CartsApi",
+          "method": "Cancel"
+        },
+        {
+          "type": "CartsApi",
+          "method": "ClearItems"
+        },
+        {
+          "type": "CartsApi",
+          "method": "Complete"
+        },
+        {
+          "type": "CartsApi",
           "method": "Create"
         },
         {
@@ -514,88 +203,48 @@
           "method": "Get"
         },
         {
-          "type": "CostAccountingApi",
-          "method": "GetItemCost"
+          "type": "CartsApi",
+          "method": "GetItems"
         },
         {
-          "type": "CostAccountingApi",
-          "method": "GetTotalInventoryValue"
+          "type": "CartsApi",
+          "method": "List"
         },
         {
-          "type": "CostAccountingApi",
-          "method": "ListCostEntries"
+          "type": "CartsApi",
+          "method": "MarkReadyForPayment"
         },
         {
-          "type": "CostAccountingApi",
-          "method": "ListItemCosts"
+          "type": "CartsApi",
+          "method": "Recalculate"
         },
         {
-          "type": "CostAccountingApi",
-          "method": "SetItemCost"
+          "type": "CartsApi",
+          "method": "RemoveDiscount"
         },
         {
-          "type": "CostAccountingApi",
-          "method": "UpdateAverageCost"
+          "type": "CartsApi",
+          "method": "RemoveItem"
         },
         {
-          "type": "CreditApi",
-          "method": "AdjustCreditLimit"
+          "type": "CartsApi",
+          "method": "SetBillingAddress"
         },
         {
-          "type": "CreditApi",
-          "method": "CheckCredit"
+          "type": "CartsApi",
+          "method": "SetPayment"
         },
         {
-          "type": "CreditApi",
-          "method": "CreateCreditAccount"
+          "type": "CartsApi",
+          "method": "SetShipping"
         },
         {
-          "type": "CreditApi",
-          "method": "GetCreditAccount"
+          "type": "CartsApi",
+          "method": "SetShippingAddress"
         },
         {
-          "type": "CreditApi",
-          "method": "GetCreditAccountByCustomer"
-        },
-        {
-          "type": "CreditApi",
-          "method": "GetCreditLimit"
-        },
-        {
-          "type": "CreditApi",
-          "method": "GetOverLimitCustomers"
-        },
-        {
-          "type": "CreditApi",
-          "method": "ListCreditAccounts"
-        },
-        {
-          "type": "CreditApi",
-          "method": "ReactivateCreditAccount"
-        },
-        {
-          "type": "CreditApi",
-          "method": "SetCreditLimit"
-        },
-        {
-          "type": "CreditApi",
-          "method": "SuspendCreditAccount"
-        },
-        {
-          "type": "CurrencyApi",
-          "method": "Convert"
-        },
-        {
-          "type": "CurrencyApi",
-          "method": "GetRate"
-        },
-        {
-          "type": "CurrencyApi",
-          "method": "GetSettings"
-        },
-        {
-          "type": "CurrencyApi",
-          "method": "SetRate"
+          "type": "CartsApi",
+          "method": "UpdateItemQuantity"
         },
         {
           "type": "CustomersApi",
@@ -615,115 +264,15 @@
         },
         {
           "type": "CustomersApi",
+          "method": "GetByEmail"
+        },
+        {
+          "type": "CustomersApi",
           "method": "List"
         },
         {
-          "type": "FulfillmentApi",
-          "method": "AssignPick"
-        },
-        {
-          "type": "FulfillmentApi",
-          "method": "CancelPick"
-        },
-        {
-          "type": "FulfillmentApi",
-          "method": "CancelWave"
-        },
-        {
-          "type": "FulfillmentApi",
-          "method": "CompleteWave"
-        },
-        {
-          "type": "FulfillmentApi",
-          "method": "CreateWave"
-        },
-        {
-          "type": "FulfillmentApi",
-          "method": "GetPick"
-        },
-        {
-          "type": "FulfillmentApi",
-          "method": "GetWave"
-        },
-        {
-          "type": "FulfillmentApi",
-          "method": "IsOrderReadyToPack"
-        },
-        {
-          "type": "FulfillmentApi",
-          "method": "IsOrderReadyToShip"
-        },
-        {
-          "type": "FulfillmentApi",
-          "method": "ListPickLists"
-        },
-        {
-          "type": "FulfillmentApi",
-          "method": "ListPicks"
-        },
-        {
-          "type": "FulfillmentApi",
-          "method": "ListWaves"
-        },
-        {
-          "type": "FulfillmentApi",
-          "method": "ReleaseWave"
-        },
-        {
-          "type": "FulfillmentApi",
-          "method": "StartPick"
-        },
-        {
-          "type": "GeneralLedgerApi",
-          "method": "CreateAccount"
-        },
-        {
-          "type": "GeneralLedgerApi",
-          "method": "GetAccount"
-        },
-        {
-          "type": "GeneralLedgerApi",
-          "method": "GetAccountBalance"
-        },
-        {
-          "type": "GeneralLedgerApi",
-          "method": "GetAccountByNumber"
-        },
-        {
-          "type": "GeneralLedgerApi",
-          "method": "GetBalanceSheet"
-        },
-        {
-          "type": "GeneralLedgerApi",
-          "method": "GetIncomeStatement"
-        },
-        {
-          "type": "GeneralLedgerApi",
-          "method": "GetJournalEntry"
-        },
-        {
-          "type": "GeneralLedgerApi",
-          "method": "GetTrialBalance"
-        },
-        {
-          "type": "GeneralLedgerApi",
-          "method": "InitializeChartOfAccounts"
-        },
-        {
-          "type": "GeneralLedgerApi",
-          "method": "ListAccounts"
-        },
-        {
-          "type": "GeneralLedgerApi",
-          "method": "ListJournalEntries"
-        },
-        {
-          "type": "GeneralLedgerApi",
-          "method": "PostJournalEntry"
-        },
-        {
-          "type": "GeneralLedgerApi",
-          "method": "VoidJournalEntry"
+          "type": "CustomersApi",
+          "method": "Update"
         },
         {
           "type": "InventoryApi",
@@ -731,87 +280,39 @@
         },
         {
           "type": "InventoryApi",
+          "method": "ConfirmReservation"
+        },
+        {
+          "type": "InventoryApi",
           "method": "CreateItem"
         },
         {
           "type": "InventoryApi",
-          "method": "GetLevel"
+          "method": "GetItem"
         },
         {
-          "type": "InvoicesApi",
-          "method": "Create"
+          "type": "InventoryApi",
+          "method": "GetReservation"
         },
         {
-          "type": "InvoicesApi",
-          "method": "Get"
+          "type": "InventoryApi",
+          "method": "GetStock"
         },
         {
-          "type": "InvoicesApi",
-          "method": "GetOverdue"
+          "type": "InventoryApi",
+          "method": "HasStock"
         },
         {
-          "type": "InvoicesApi",
+          "type": "InventoryApi",
           "method": "List"
         },
         {
-          "type": "InvoicesApi",
-          "method": "RecordPayment"
+          "type": "InventoryApi",
+          "method": "ReleaseReservation"
         },
         {
-          "type": "InvoicesApi",
-          "method": "Send"
-        },
-        {
-          "type": "InvoicesApi",
-          "method": "Void"
-        },
-        {
-          "type": "LotsApi",
-          "method": "Create"
-        },
-        {
-          "type": "LotsApi",
-          "method": "CreateLot"
-        },
-        {
-          "type": "LotsApi",
-          "method": "Get"
-        },
-        {
-          "type": "LotsApi",
-          "method": "GetActiveLots"
-        },
-        {
-          "type": "LotsApi",
-          "method": "GetByNumber"
-        },
-        {
-          "type": "LotsApi",
-          "method": "GetExpiredLots"
-        },
-        {
-          "type": "LotsApi",
-          "method": "GetExpiringLots"
-        },
-        {
-          "type": "LotsApi",
-          "method": "GetQuarantined"
-        },
-        {
-          "type": "LotsApi",
-          "method": "List"
-        },
-        {
-          "type": "LotsApi",
-          "method": "ListLots"
-        },
-        {
-          "type": "LotsApi",
-          "method": "Quarantine"
-        },
-        {
-          "type": "LotsApi",
-          "method": "ReleaseQuarantine"
+          "type": "InventoryApi",
+          "method": "Reserve"
         },
         {
           "type": "OrdersApi",
@@ -819,7 +320,15 @@
         },
         {
           "type": "OrdersApi",
+          "method": "Count"
+        },
+        {
+          "type": "OrdersApi",
           "method": "Create"
+        },
+        {
+          "type": "OrdersApi",
+          "method": "Deliver"
         },
         {
           "type": "OrdersApi",
@@ -827,7 +336,15 @@
         },
         {
           "type": "OrdersApi",
+          "method": "GetByNumber"
+        },
+        {
+          "type": "OrdersApi",
           "method": "List"
+        },
+        {
+          "type": "OrdersApi",
+          "method": "ListForCustomer"
         },
         {
           "type": "OrdersApi",
@@ -839,7 +356,15 @@
         },
         {
           "type": "PaymentsApi",
+          "method": "Cancel"
+        },
+        {
+          "type": "PaymentsApi",
           "method": "Complete"
+        },
+        {
+          "type": "PaymentsApi",
+          "method": "CompleteRefund"
         },
         {
           "type": "PaymentsApi",
@@ -851,11 +376,31 @@
         },
         {
           "type": "PaymentsApi",
+          "method": "FailRefund"
+        },
+        {
+          "type": "PaymentsApi",
+          "method": "ForOrder"
+        },
+        {
+          "type": "PaymentsApi",
           "method": "Get"
         },
         {
           "type": "PaymentsApi",
+          "method": "GetRefund"
+        },
+        {
+          "type": "PaymentsApi",
+          "method": "GetRefunds"
+        },
+        {
+          "type": "PaymentsApi",
           "method": "List"
+        },
+        {
+          "type": "PaymentsApi",
+          "method": "MarkProcessing"
         },
         {
           "type": "PaymentsApi",
@@ -863,179 +408,67 @@
         },
         {
           "type": "ProductsApi",
-          "method": "Create"
-        },
-        {
-          "type": "ProductsApi",
-          "method": "Get"
-        },
-        {
-          "type": "ProductsApi",
-          "method": "List"
-        },
-        {
-          "type": "PromotionsApi",
           "method": "Activate"
         },
         {
-          "type": "PromotionsApi",
+          "type": "ProductsApi",
+          "method": "AddVariant"
+        },
+        {
+          "type": "ProductsApi",
+          "method": "Archive"
+        },
+        {
+          "type": "ProductsApi",
+          "method": "Count"
+        },
+        {
+          "type": "ProductsApi",
           "method": "Create"
         },
         {
-          "type": "PromotionsApi",
-          "method": "CreateCoupon"
-        },
-        {
-          "type": "PromotionsApi",
-          "method": "Deactivate"
-        },
-        {
-          "type": "PromotionsApi",
+          "type": "ProductsApi",
           "method": "Delete"
         },
         {
-          "type": "PromotionsApi",
+          "type": "ProductsApi",
           "method": "Get"
         },
         {
-          "type": "PromotionsApi",
-          "method": "GetActive"
+          "type": "ProductsApi",
+          "method": "GetBySlug"
         },
         {
-          "type": "PromotionsApi",
-          "method": "GetByCode"
+          "type": "ProductsApi",
+          "method": "GetVariantBySku"
         },
         {
-          "type": "PromotionsApi",
-          "method": "GetCouponByCode"
+          "type": "ProductsApi",
+          "method": "GetVariants"
         },
         {
-          "type": "PromotionsApi",
+          "type": "ProductsApi",
           "method": "List"
         },
         {
-          "type": "PromotionsApi",
-          "method": "ValidateCoupon"
+          "type": "ProductsApi",
+          "method": "Search"
         },
         {
-          "type": "PurchaseOrdersApi",
-          "method": "Approve"
+          "type": "ProductsApi",
+          "method": "Update"
         },
         {
-          "type": "PurchaseOrdersApi",
-          "method": "Cancel"
-        },
-        {
-          "type": "PurchaseOrdersApi",
-          "method": "Create"
-        },
-        {
-          "type": "PurchaseOrdersApi",
-          "method": "Get"
-        },
-        {
-          "type": "PurchaseOrdersApi",
-          "method": "List"
-        },
-        {
-          "type": "PurchaseOrdersApi",
-          "method": "Send"
-        },
-        {
-          "type": "PurchaseOrdersApi",
-          "method": "Submit"
-        },
-        {
-          "type": "QualityApi",
-          "method": "CloseNcr"
-        },
-        {
-          "type": "QualityApi",
-          "method": "CompleteInspection"
-        },
-        {
-          "type": "QualityApi",
-          "method": "CreateHold"
-        },
-        {
-          "type": "QualityApi",
-          "method": "CreateInspection"
-        },
-        {
-          "type": "QualityApi",
-          "method": "CreateNcr"
-        },
-        {
-          "type": "QualityApi",
-          "method": "GetActiveHolds"
-        },
-        {
-          "type": "QualityApi",
-          "method": "GetHold"
-        },
-        {
-          "type": "QualityApi",
-          "method": "GetInspection"
-        },
-        {
-          "type": "QualityApi",
-          "method": "GetNcr"
-        },
-        {
-          "type": "QualityApi",
-          "method": "ListHolds"
-        },
-        {
-          "type": "QualityApi",
-          "method": "ListInspections"
-        },
-        {
-          "type": "QualityApi",
-          "method": "ListNcrs"
-        },
-        {
-          "type": "QualityApi",
-          "method": "ReleaseHold"
-        },
-        {
-          "type": "QualityApi",
-          "method": "StartInspection"
-        },
-        {
-          "type": "ReceivingApi",
-          "method": "CancelReceipt"
-        },
-        {
-          "type": "ReceivingApi",
-          "method": "CompleteReceiving"
-        },
-        {
-          "type": "ReceivingApi",
-          "method": "CreateReceipt"
-        },
-        {
-          "type": "ReceivingApi",
-          "method": "CreateReceiptFromPo"
-        },
-        {
-          "type": "ReceivingApi",
-          "method": "GetReceipt"
-        },
-        {
-          "type": "ReceivingApi",
-          "method": "GetReceiptByNumber"
-        },
-        {
-          "type": "ReceivingApi",
-          "method": "ListReceipts"
-        },
-        {
-          "type": "ReceivingApi",
-          "method": "StartReceiving"
+          "type": "ReturnsApi",
+          "method": "AddTracking"
         },
         {
           "type": "ReturnsApi",
           "method": "Approve"
+        },
+        {
+          "type": "ReturnsApi",
+          "method": "Cancel"
         },
         {
           "type": "ReturnsApi",
@@ -1055,47 +488,19 @@
         },
         {
           "type": "ReturnsApi",
+          "method": "ListForOrder"
+        },
+        {
+          "type": "ReturnsApi",
+          "method": "MarkReceived"
+        },
+        {
+          "type": "ReturnsApi",
           "method": "Reject"
         },
         {
-          "type": "SerialsApi",
-          "method": "Create"
-        },
-        {
-          "type": "SerialsApi",
-          "method": "Get"
-        },
-        {
-          "type": "SerialsApi",
-          "method": "GetAvailable"
-        },
-        {
-          "type": "SerialsApi",
-          "method": "GetBySerial"
-        },
-        {
-          "type": "SerialsApi",
-          "method": "IsAvailable"
-        },
-        {
-          "type": "SerialsApi",
-          "method": "List"
-        },
-        {
-          "type": "SerialsApi",
-          "method": "ListSerials"
-        },
-        {
-          "type": "SerialsApi",
-          "method": "MarkSold"
-        },
-        {
-          "type": "SerialsApi",
-          "method": "Quarantine"
-        },
-        {
-          "type": "SerialsApi",
-          "method": "RegisterSerial"
+          "type": "ReturnsApi",
+          "method": "SetItemDisposition"
         },
         {
           "type": "ShipmentsApi",
@@ -1111,211 +516,39 @@
         },
         {
           "type": "ShipmentsApi",
+          "method": "ForOrder"
+        },
+        {
+          "type": "ShipmentsApi",
           "method": "Get"
         },
         {
           "type": "ShipmentsApi",
+          "method": "GetByTracking"
+        },
+        {
+          "type": "ShipmentsApi",
           "method": "List"
+        },
+        {
+          "type": "ShipmentsApi",
+          "method": "MarkInTransit"
+        },
+        {
+          "type": "ShipmentsApi",
+          "method": "MarkOutForDelivery"
+        },
+        {
+          "type": "ShipmentsApi",
+          "method": "MarkProcessing"
+        },
+        {
+          "type": "ShipmentsApi",
+          "method": "MarkReady"
         },
         {
           "type": "ShipmentsApi",
           "method": "Ship"
-        },
-        {
-          "type": "SubscriptionsApi",
-          "method": "ActivatePlan"
-        },
-        {
-          "type": "SubscriptionsApi",
-          "method": "ArchivePlan"
-        },
-        {
-          "type": "SubscriptionsApi",
-          "method": "Cancel"
-        },
-        {
-          "type": "SubscriptionsApi",
-          "method": "CreatePlan"
-        },
-        {
-          "type": "SubscriptionsApi",
-          "method": "Get"
-        },
-        {
-          "type": "SubscriptionsApi",
-          "method": "GetPlan"
-        },
-        {
-          "type": "SubscriptionsApi",
-          "method": "List"
-        },
-        {
-          "type": "SubscriptionsApi",
-          "method": "ListPlans"
-        },
-        {
-          "type": "SubscriptionsApi",
-          "method": "Pause"
-        },
-        {
-          "type": "SubscriptionsApi",
-          "method": "Resume"
-        },
-        {
-          "type": "SubscriptionsApi",
-          "method": "Subscribe"
-        },
-        {
-          "type": "SuppliersApi",
-          "method": "Create"
-        },
-        {
-          "type": "SuppliersApi",
-          "method": "Get"
-        },
-        {
-          "type": "SuppliersApi",
-          "method": "List"
-        },
-        {
-          "type": "TaxApi",
-          "method": "Calculate"
-        },
-        {
-          "type": "TaxApi",
-          "method": "CreateExemption"
-        },
-        {
-          "type": "TaxApi",
-          "method": "CreateJurisdiction"
-        },
-        {
-          "type": "TaxApi",
-          "method": "CreateRate"
-        },
-        {
-          "type": "TaxApi",
-          "method": "CustomerIsExempt"
-        },
-        {
-          "type": "TaxApi",
-          "method": "GetCustomerExemptions"
-        },
-        {
-          "type": "TaxApi",
-          "method": "GetEffectiveRate"
-        },
-        {
-          "type": "TaxApi",
-          "method": "GetJurisdiction"
-        },
-        {
-          "type": "TaxApi",
-          "method": "GetRate"
-        },
-        {
-          "type": "TaxApi",
-          "method": "GetSettings"
-        },
-        {
-          "type": "TaxApi",
-          "method": "ListJurisdictions"
-        },
-        {
-          "type": "TaxApi",
-          "method": "ListRates"
-        },
-        {
-          "type": "TaxApi",
-          "method": "SetEnabled"
-        },
-        {
-          "type": "WarehouseApi",
-          "method": "CreateLocation"
-        },
-        {
-          "type": "WarehouseApi",
-          "method": "CreateWarehouse"
-        },
-        {
-          "type": "WarehouseApi",
-          "method": "GetLocation"
-        },
-        {
-          "type": "WarehouseApi",
-          "method": "GetPickableLocations"
-        },
-        {
-          "type": "WarehouseApi",
-          "method": "GetTotalAvailable"
-        },
-        {
-          "type": "WarehouseApi",
-          "method": "GetWarehouse"
-        },
-        {
-          "type": "WarehouseApi",
-          "method": "GetWarehouseByCode"
-        },
-        {
-          "type": "WarehouseApi",
-          "method": "ListLocations"
-        },
-        {
-          "type": "WarehouseApi",
-          "method": "ListWarehouses"
-        },
-        {
-          "type": "WarrantiesApi",
-          "method": "ApproveClaim"
-        },
-        {
-          "type": "WarrantiesApi",
-          "method": "CompleteClaim"
-        },
-        {
-          "type": "WarrantiesApi",
-          "method": "Create"
-        },
-        {
-          "type": "WarrantiesApi",
-          "method": "CreateClaim"
-        },
-        {
-          "type": "WarrantiesApi",
-          "method": "DenyClaim"
-        },
-        {
-          "type": "WarrantiesApi",
-          "method": "Get"
-        },
-        {
-          "type": "WarrantiesApi",
-          "method": "List"
-        },
-        {
-          "type": "WorkOrdersApi",
-          "method": "Cancel"
-        },
-        {
-          "type": "WorkOrdersApi",
-          "method": "Complete"
-        },
-        {
-          "type": "WorkOrdersApi",
-          "method": "Create"
-        },
-        {
-          "type": "WorkOrdersApi",
-          "method": "Get"
-        },
-        {
-          "type": "WorkOrdersApi",
-          "method": "List"
-        },
-        {
-          "type": "WorkOrdersApi",
-          "method": "Start"
         }
       ]
     },
@@ -2206,181 +1439,94 @@
       ],
       "targets": [
         "StateSet",
-        "StateSetC",
         "StateSetTests"
       ],
-      "publicTypeCount": 73,
-      "apiTypeCount": 31,
-      "facadePropertyCount": 31,
-      "apiMethodCount": 71,
+      "publicTypeCount": 58,
+      "apiTypeCount": 8,
+      "facadePropertyCount": 8,
+      "apiMethodCount": 82,
       "publicTypes": [
-        "AccountsPayableAPI",
-        "AccountsReceivableAPI",
-        "AnalyticsAPI",
-        "BackordersAPI",
-        "BOMAPI",
+        "AddCartItem",
+        "Address",
         "Cart",
+        "CartAddress",
         "CartItem",
+        "CartPaymentStatus",
         "CartsAPI",
-        "ConversionResult",
-        "CostAccountingAPI",
-        "Coupon",
-        "CreditAPI",
-        "Currency",
-        "CurrencyAPI",
+        "CartStatus",
+        "CheckoutResult",
+        "Code",
+        "CreateOrderItem",
+        "CreateProductVariant",
+        "CreateReturnItem",
+        "CreateShipmentItem",
         "Customer",
         "CustomersAPI",
-        "ExchangeRate",
-        "FulfillmentAPI",
-        "GeneralLedgerAPI",
-        "GlAccount",
+        "CustomerStatus",
+        "DecimalString",
+        "FulfillmentStatus",
         "InventoryAPI",
         "InventoryItem",
-        "InvoicesAPI",
-        "Location",
-        "LotsAPI",
+        "InventoryReservation",
+        "InventoryTransaction",
+        "ItemCondition",
+        "LocationStock",
+        "OptionalDecimalString",
         "Order",
         "OrderItem",
+        "OrderPaymentStatus",
         "OrdersAPI",
         "OrderStatus",
         "Payment",
         "PaymentMethod",
         "PaymentsAPI",
+        "PaymentStatus",
         "Product",
         "ProductsAPI",
+        "ProductStatus",
+        "ProductType",
         "ProductVariant",
-        "Promotion",
-        "PromotionsAPI",
-        "PurchaseOrdersAPI",
-        "QualityAPI",
-        "ReceivingAPI",
         "Refund",
         "RefundStatus",
+        "ReservationStatus",
         "Return",
+        "ReturnDisposition",
+        "ReturnItem",
         "ReturnReason",
         "ReturnsAPI",
         "ReturnStatus",
-        "SalesSummary",
-        "SerialsAPI",
         "Shipment",
+        "ShipmentItem",
         "ShipmentsAPI",
         "ShipmentStatus",
         "ShippingCarrier",
+        "ShippingMethod",
         "StateSetCommerce",
         "StateSetError",
-        "StockLevel",
-        "StoreCurrencySettings",
-        "Subscription",
-        "SubscriptionPlan",
-        "SubscriptionsAPI",
-        "SuppliersAPI",
-        "TaxAPI",
-        "TaxCalculation",
-        "TaxExemption",
-        "TaxJurisdiction",
-        "TaxRate",
-        "TaxSettings",
-        "TimePeriod",
-        "TopCustomer",
-        "TopProduct",
-        "Warehouse",
-        "WarehouseAPI",
-        "WarrantiesAPI",
-        "WorkOrdersAPI"
+        "StockLevel"
       ],
       "apiTypes": [
-        "AccountsPayableAPI",
-        "AccountsReceivableAPI",
-        "AnalyticsAPI",
-        "BackordersAPI",
-        "BOMAPI",
         "CartsAPI",
-        "CostAccountingAPI",
-        "CreditAPI",
-        "CurrencyAPI",
         "CustomersAPI",
-        "FulfillmentAPI",
-        "GeneralLedgerAPI",
         "InventoryAPI",
-        "InvoicesAPI",
-        "LotsAPI",
         "OrdersAPI",
         "PaymentsAPI",
         "ProductsAPI",
-        "PromotionsAPI",
-        "PurchaseOrdersAPI",
-        "QualityAPI",
-        "ReceivingAPI",
         "ReturnsAPI",
-        "SerialsAPI",
-        "ShipmentsAPI",
-        "SubscriptionsAPI",
-        "SuppliersAPI",
-        "TaxAPI",
-        "WarehouseAPI",
-        "WarrantiesAPI",
-        "WorkOrdersAPI"
+        "ShipmentsAPI"
       ],
       "facadeProperties": [
         {
-          "name": "accountsPayable",
-          "type": "AccountsPayableAPI"
-        },
-        {
-          "name": "accountsReceivable",
-          "type": "AccountsReceivableAPI"
-        },
-        {
-          "name": "analytics",
-          "type": "AnalyticsAPI"
-        },
-        {
-          "name": "backorders",
-          "type": "BackordersAPI"
-        },
-        {
-          "name": "bom",
-          "type": "BOMAPI"
-        },
-        {
           "name": "carts",
           "type": "CartsAPI"
-        },
-        {
-          "name": "costAccounting",
-          "type": "CostAccountingAPI"
-        },
-        {
-          "name": "credit",
-          "type": "CreditAPI"
-        },
-        {
-          "name": "currency",
-          "type": "CurrencyAPI"
         },
         {
           "name": "customers",
           "type": "CustomersAPI"
         },
         {
-          "name": "fulfillment",
-          "type": "FulfillmentAPI"
-        },
-        {
-          "name": "generalLedger",
-          "type": "GeneralLedgerAPI"
-        },
-        {
           "name": "inventory",
           "type": "InventoryAPI"
-        },
-        {
-          "name": "invoices",
-          "type": "InvoicesAPI"
-        },
-        {
-          "name": "lots",
-          "type": "LotsAPI"
         },
         {
           "name": "orders",
@@ -2395,90 +1541,86 @@
           "type": "ProductsAPI"
         },
         {
-          "name": "promotions",
-          "type": "PromotionsAPI"
-        },
-        {
-          "name": "purchaseOrders",
-          "type": "PurchaseOrdersAPI"
-        },
-        {
-          "name": "quality",
-          "type": "QualityAPI"
-        },
-        {
-          "name": "receiving",
-          "type": "ReceivingAPI"
-        },
-        {
           "name": "returns",
           "type": "ReturnsAPI"
         },
         {
-          "name": "serials",
-          "type": "SerialsAPI"
-        },
-        {
           "name": "shipments",
           "type": "ShipmentsAPI"
-        },
-        {
-          "name": "subscriptions",
-          "type": "SubscriptionsAPI"
-        },
-        {
-          "name": "suppliers",
-          "type": "SuppliersAPI"
-        },
-        {
-          "name": "tax",
-          "type": "TaxAPI"
-        },
-        {
-          "name": "warehouse",
-          "type": "WarehouseAPI"
-        },
-        {
-          "name": "warranties",
-          "type": "WarrantiesAPI"
-        },
-        {
-          "name": "workOrders",
-          "type": "WorkOrdersAPI"
         }
       ],
       "apiMethods": [
         {
-          "type": "AnalyticsAPI",
-          "method": "salesSummary"
+          "type": "CartsAPI",
+          "method": "abandon"
         },
         {
-          "type": "AnalyticsAPI",
-          "method": "topCustomers"
+          "type": "CartsAPI",
+          "method": "addItem"
         },
         {
-          "type": "AnalyticsAPI",
-          "method": "topProducts"
+          "type": "CartsAPI",
+          "method": "applyDiscount"
+        },
+        {
+          "type": "CartsAPI",
+          "method": "cancel"
+        },
+        {
+          "type": "CartsAPI",
+          "method": "clearItems"
+        },
+        {
+          "type": "CartsAPI",
+          "method": "complete"
         },
         {
           "type": "CartsAPI",
           "method": "create"
         },
         {
-          "type": "CurrencyAPI",
-          "method": "convert"
+          "type": "CartsAPI",
+          "method": "get"
         },
         {
-          "type": "CurrencyAPI",
-          "method": "getRate"
+          "type": "CartsAPI",
+          "method": "items"
         },
         {
-          "type": "CurrencyAPI",
-          "method": "getSettings"
+          "type": "CartsAPI",
+          "method": "list"
         },
         {
-          "type": "CurrencyAPI",
-          "method": "setRate"
+          "type": "CartsAPI",
+          "method": "recalculate"
+        },
+        {
+          "type": "CartsAPI",
+          "method": "removeItem"
+        },
+        {
+          "type": "CartsAPI",
+          "method": "setBillingAddress"
+        },
+        {
+          "type": "CartsAPI",
+          "method": "setPayment"
+        },
+        {
+          "type": "CartsAPI",
+          "method": "setShipping"
+        },
+        {
+          "type": "CartsAPI",
+          "method": "setShippingAddress"
+        },
+        {
+          "type": "CartsAPI",
+          "method": "updateItemQuantity"
+        },
+        {
+          "type": "CustomersAPI",
+          "method": "count"
         },
         {
           "type": "CustomersAPI",
@@ -2497,12 +1639,8 @@
           "method": "list"
         },
         {
-          "type": "GeneralLedgerAPI",
-          "method": "createAccount"
-        },
-        {
-          "type": "GeneralLedgerAPI",
-          "method": "listAccounts"
+          "type": "CustomersAPI",
+          "method": "update"
         },
         {
           "type": "InventoryAPI",
@@ -2510,11 +1648,35 @@
         },
         {
           "type": "InventoryAPI",
+          "method": "confirmReservation"
+        },
+        {
+          "type": "InventoryAPI",
           "method": "createItem"
         },
         {
           "type": "InventoryAPI",
-          "method": "getLevel"
+          "method": "getStock"
+        },
+        {
+          "type": "InventoryAPI",
+          "method": "hasStock"
+        },
+        {
+          "type": "InventoryAPI",
+          "method": "item"
+        },
+        {
+          "type": "InventoryAPI",
+          "method": "list"
+        },
+        {
+          "type": "InventoryAPI",
+          "method": "releaseReservation"
+        },
+        {
+          "type": "InventoryAPI",
+          "method": "reserve"
         },
         {
           "type": "OrdersAPI",
@@ -2522,7 +1684,15 @@
         },
         {
           "type": "OrdersAPI",
+          "method": "count"
+        },
+        {
+          "type": "OrdersAPI",
           "method": "create"
+        },
+        {
+          "type": "OrdersAPI",
+          "method": "deliver"
         },
         {
           "type": "OrdersAPI",
@@ -2542,7 +1712,27 @@
         },
         {
           "type": "PaymentsAPI",
+          "method": "cancel"
+        },
+        {
+          "type": "PaymentsAPI",
+          "method": "complete"
+        },
+        {
+          "type": "PaymentsAPI",
+          "method": "completeRefund"
+        },
+        {
+          "type": "PaymentsAPI",
           "method": "create"
+        },
+        {
+          "type": "PaymentsAPI",
+          "method": "fail"
+        },
+        {
+          "type": "PaymentsAPI",
+          "method": "failRefund"
         },
         {
           "type": "PaymentsAPI",
@@ -2553,64 +1743,72 @@
           "method": "list"
         },
         {
-          "type": "ProductsAPI",
-          "method": "create"
+          "type": "PaymentsAPI",
+          "method": "markProcessing"
+        },
+        {
+          "type": "PaymentsAPI",
+          "method": "refund"
+        },
+        {
+          "type": "PaymentsAPI",
+          "method": "refunds"
         },
         {
           "type": "ProductsAPI",
-          "method": "get"
-        },
-        {
-          "type": "ProductsAPI",
-          "method": "list"
-        },
-        {
-          "type": "PromotionsAPI",
           "method": "activate"
         },
         {
-          "type": "PromotionsAPI",
+          "type": "ProductsAPI",
+          "method": "addVariant"
+        },
+        {
+          "type": "ProductsAPI",
+          "method": "archive"
+        },
+        {
+          "type": "ProductsAPI",
+          "method": "count"
+        },
+        {
+          "type": "ProductsAPI",
           "method": "create"
         },
         {
-          "type": "PromotionsAPI",
-          "method": "createCoupon"
-        },
-        {
-          "type": "PromotionsAPI",
-          "method": "deactivate"
-        },
-        {
-          "type": "PromotionsAPI",
+          "type": "ProductsAPI",
           "method": "delete"
         },
         {
-          "type": "PromotionsAPI",
+          "type": "ProductsAPI",
           "method": "get"
         },
         {
-          "type": "PromotionsAPI",
-          "method": "getActive"
-        },
-        {
-          "type": "PromotionsAPI",
-          "method": "getByCode"
-        },
-        {
-          "type": "PromotionsAPI",
-          "method": "getCouponByCode"
-        },
-        {
-          "type": "PromotionsAPI",
+          "type": "ProductsAPI",
           "method": "list"
         },
         {
-          "type": "PromotionsAPI",
-          "method": "validateCoupon"
+          "type": "ProductsAPI",
+          "method": "search"
+        },
+        {
+          "type": "ProductsAPI",
+          "method": "variant"
+        },
+        {
+          "type": "ProductsAPI",
+          "method": "variants"
+        },
+        {
+          "type": "ReturnsAPI",
+          "method": "addTracking"
         },
         {
           "type": "ReturnsAPI",
           "method": "approve"
+        },
+        {
+          "type": "ReturnsAPI",
+          "method": "cancel"
         },
         {
           "type": "ReturnsAPI",
@@ -2630,7 +1828,15 @@
         },
         {
           "type": "ReturnsAPI",
+          "method": "markReceived"
+        },
+        {
+          "type": "ReturnsAPI",
           "method": "reject"
+        },
+        {
+          "type": "ReturnsAPI",
+          "method": "setItemDisposition"
         },
         {
           "type": "ShipmentsAPI",
@@ -2654,83 +1860,23 @@
         },
         {
           "type": "ShipmentsAPI",
+          "method": "markInTransit"
+        },
+        {
+          "type": "ShipmentsAPI",
+          "method": "markOutForDelivery"
+        },
+        {
+          "type": "ShipmentsAPI",
+          "method": "markProcessing"
+        },
+        {
+          "type": "ShipmentsAPI",
+          "method": "markReady"
+        },
+        {
+          "type": "ShipmentsAPI",
           "method": "ship"
-        },
-        {
-          "type": "SubscriptionsAPI",
-          "method": "activatePlan"
-        },
-        {
-          "type": "SubscriptionsAPI",
-          "method": "archivePlan"
-        },
-        {
-          "type": "SubscriptionsAPI",
-          "method": "cancel"
-        },
-        {
-          "type": "SubscriptionsAPI",
-          "method": "createPlan"
-        },
-        {
-          "type": "SubscriptionsAPI",
-          "method": "get"
-        },
-        {
-          "type": "SubscriptionsAPI",
-          "method": "getPlan"
-        },
-        {
-          "type": "SubscriptionsAPI",
-          "method": "list"
-        },
-        {
-          "type": "SubscriptionsAPI",
-          "method": "listPlans"
-        },
-        {
-          "type": "SubscriptionsAPI",
-          "method": "pause"
-        },
-        {
-          "type": "SubscriptionsAPI",
-          "method": "resume"
-        },
-        {
-          "type": "SubscriptionsAPI",
-          "method": "subscribe"
-        },
-        {
-          "type": "TaxAPI",
-          "method": "calculate"
-        },
-        {
-          "type": "TaxAPI",
-          "method": "getEffectiveRate"
-        },
-        {
-          "type": "TaxAPI",
-          "method": "getSettings"
-        },
-        {
-          "type": "TaxAPI",
-          "method": "setEnabled"
-        },
-        {
-          "type": "WarehouseAPI",
-          "method": "createWarehouse"
-        },
-        {
-          "type": "WarehouseAPI",
-          "method": "getWarehouse"
-        },
-        {
-          "type": "WarehouseAPI",
-          "method": "getWarehouseByCode"
-        },
-        {
-          "type": "WarehouseAPI",
-          "method": "listWarehouses"
         }
       ]
     },

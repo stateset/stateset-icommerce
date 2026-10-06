@@ -80,7 +80,7 @@ const fn handle_id_to_token(id: usize) -> CommerceHandle {
     id as CommerceHandle
 }
 
-struct EngineLease {
+pub(crate) struct EngineLease {
     handle_id: usize,
     engine_ptr: usize,
 }
@@ -88,7 +88,7 @@ struct EngineLease {
 impl EngineLease {
     #[allow(clippy::missing_const_for_fn)]
     #[allow(unsafe_code)]
-    fn engine(&self) -> &Commerce {
+    pub(crate) fn engine(&self) -> &Commerce {
         // SAFETY: The handle is registered and held by this lease until drop.
         unsafe { &*(self.engine_ptr as *const Commerce) }
     }
@@ -113,7 +113,7 @@ impl Drop for EngineLease {
     }
 }
 
-fn begin_engine_use(engine: CommerceHandle) -> Result<EngineLease, FfiErrorCode> {
+pub(crate) fn begin_engine_use(engine: CommerceHandle) -> Result<EngineLease, FfiErrorCode> {
     if engine.is_null() {
         set_last_error("null engine handle");
         return Err(FfiErrorCode::NullPointer);
@@ -302,7 +302,9 @@ fn drop_engine_ptr(engine_ptr: usize) {
     unsafe { drop(Box::from_raw(engine_ptr as *mut Commerce)) };
 }
 
-fn register_new_engine_handle(boxed: Box<Commerce>) -> Result<CommerceHandle, FfiErrorCode> {
+pub(crate) fn register_new_engine_handle(
+    boxed: Box<Commerce>,
+) -> Result<CommerceHandle, FfiErrorCode> {
     let engine_ptr = Box::into_raw(boxed) as usize;
     let (mutex, _) = handle_registry();
     let mut handles = match mutex.lock() {

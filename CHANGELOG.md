@@ -6,6 +6,38 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The .NET and Swift bindings are now real.** Both were in-memory fakes:
+  the C# side made no native calls and the Swift C shim was empty, so a store
+  opened on a SQLite path wrote to a managed list and every record was lost on
+  exit, while their test suites passed against the fake. Both now call the
+  Rust engine through a new JSON call surface in `stateset-ffi`
+  (`stateset_json_open` / `stateset_json_call` / `stateset_destroy`), persist
+  to the given file (or `:memory:`), and are tested against the engine,
+  including a close-and-reopen persistence test and the shared semantic
+  corpus (`bindings/test-vectors/semantics-v1.json`). Money is `decimal` /
+  `Decimal` carried as exact strings; engine errors surface as typed
+  exceptions / `StateSetError`; panics are caught at the boundary.
+
+### Changed (breaking)
+
+- .NET and Swift bindings: the public surface is now customers, products,
+  inventory, carts/checkout, orders, payments and refunds, returns,
+  shipments, and crypto. The fake-only domains (analytics, warranties,
+  suppliers, purchase orders, invoices, BOM, work orders, currency,
+  subscriptions, promotions, tax, quality, lots, serials, warehouse,
+  receiving, fulfillment, AP/AR, cost accounting, credit, backorders, general
+  ledger) were removed rather than kept as fakes. Several signatures changed
+  to match the engine (e.g. `Orders.Create` takes `CreateOrderItem` lines with
+  a `ProductId`; `Products.Create` returns a `Product` whose price lives on
+  its variant; returns need an item disposition before `Complete`). The .NET
+  package now targets `net8.0` only.
+- `stateset-dotnet` / `stateset-swift` crates are thin re-exports of
+  `stateset-ffi` (no FFI code of their own); `stateset-ffi` gains `json_api`
+  and the `stateset_crypto_*` exports (`crypto_api`). The Swift example moved
+  to `examples/swift-basic` (SwiftPM package identities collided).
+
 ## [1.37.0] - 2026-10-01
 
 ### Added

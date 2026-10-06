@@ -8,7 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="StateSet.Embedded" Version="1.37.0" />
+    <!-- StateSet.Embedded is not on NuGet yet; reference the binding source. -->
+    <ProjectReference Include="../../bindings/dotnet/dotnet/StateSet/StateSet.csproj" />
   </ItemGroup>
 
 </Project>

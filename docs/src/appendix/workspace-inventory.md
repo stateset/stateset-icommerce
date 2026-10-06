@@ -35,35 +35,36 @@ and 'stateset-test-utils') so the runtime/product graph is easier to read.
 | L2 | `stateset-core`, `stateset-icp-iut`, `stateset-pricing`, `stateset-sync` |
 | L3 | `stateset-db`, `stateset-embedded-wasm` |
 | L4 | `stateset-embedded`, `stateset-saga` |
-| L5 | `stateset-dotnet`, `stateset-embedded-node`, `stateset-go`, `stateset-http`, `stateset-java`, `stateset-kotlin`, `stateset-sdk`, `stateset-swift` |
+| L5 | `stateset-embedded-node`, `stateset-go`, `stateset-http`, `stateset-java`, `stateset-kotlin`, `stateset-sdk` |
 | L6 | `stateset-embedded-python`, `stateset-ffi` |
+| L7 | `stateset-dotnet`, `stateset-swift` |
 
 ## Highest Fan-In Crates
 
 | Package | Direct dependents |
 | --- | --- |
-| `stateset-core` | 13 |
-| `stateset-crypto` | 12 |
-| `stateset-embedded` | 10 |
+| `stateset-core` | 11 |
+| `stateset-crypto` | 11 |
+| `stateset-embedded` | 8 |
 | `stateset-primitives` | 7 |
 | `stateset-db` | 5 |
 | `stateset-observability` | 3 |
+| `stateset-ffi` | 2 |
 | `stateset-pricing` | 2 |
 | `stateset-sdk` | 2 |
 | `stateset-a2a` | 1 |
-| `stateset-authz` | 1 |
 
 ## Binding Topology
 
 | Binding | Cargo package | Published package | Direct internal deps |
 | --- | --- | --- | --- |
-| `bindings/dotnet` | `stateset-dotnet` | — | `stateset-core`, `stateset-crypto`, `stateset-embedded` |
+| `bindings/dotnet` | `stateset-dotnet` | — | `stateset-ffi` |
 | `bindings/go` | `stateset-go` | — | `stateset-core`, `stateset-crypto`, `stateset-embedded` |
 | `bindings/java` | `stateset-java` | — | `stateset-core`, `stateset-crypto`, `stateset-embedded`, `stateset-primitives` |
 | `bindings/kotlin` | `stateset-kotlin` | — | `stateset-core`, `stateset-crypto`, `stateset-embedded` |
 | `bindings/node` | `stateset-embedded-node` | `@stateset/embedded` | `stateset-core`, `stateset-crypto`, `stateset-db`, `stateset-embedded` |
 | `bindings/python` | `stateset-embedded-python` | — | `stateset-core`, `stateset-crypto`, `stateset-db`, `stateset-embedded`, `stateset-primitives`, `stateset-sdk` |
-| `bindings/swift` | `stateset-swift` | — | `stateset-core`, `stateset-crypto`, `stateset-embedded` |
+| `bindings/swift` | `stateset-swift` | — | `stateset-ffi` |
 | `bindings/wasm` | `stateset-embedded-wasm` | `@stateset/embedded-wasm` | `stateset-core`, `stateset-crypto`, `stateset-pricing` |
 
 ## Excluded Local Binding Manifests

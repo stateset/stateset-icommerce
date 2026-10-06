@@ -27,6 +27,29 @@ Several bindings in this repo link directly to `stateset-embedded` and
 `stateset-core` in their own crates. Treat `stateset-ffi` as an explicit interop
 option, not as the mandatory path through the binding layer.
 
+## JSON call surface (backs the .NET and Swift bindings)
+
+Besides the typed functions, `json_api` exposes the whole core commerce
+surface (customers, products, inventory, carts/checkout, orders, payments and
+refunds, returns, shipments) through one entry point, so a host language needs
+no new unsafe export per method:
+
+```c
+StateSetHandle h;
+if (stateset_json_open("store.db", &h) != 0) { /* stateset_last_error_message() */ }
+char *env = stateset_json_call(h, "orders.create",
+    "{\"customer_id\":\"...\",\"items\":[{\"product_id\":\"...\",\"sku\":\"A\",\"name\":\"A\",\"quantity\":3,\"unit_price\":\"0.10\"}]}");
+/* {"ok":true,"result":{..."total_amount":"0.30"...}} or
+   {"ok":false,"error":{"code":2,"kind":"invalid_argument","message":"..."}} */
+stateset_string_free(env);
+stateset_destroy(h);
+```
+
+Money crosses as exact decimal strings in both directions (JSON floats are
+refused), every call is wrapped in `catch_unwind`, and `meta.methods` lists the
+catalog. The `stateset_crypto_*` exports (JCS, VES payload hash, merkle root)
+live in `crypto_api`.
+
 ## Design Principles
 
 - **Minimal surface** — only the most commonly needed operations are exposed.

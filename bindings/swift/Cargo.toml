@@ -5,32 +5,17 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Swift C FFI bindings for StateSet Embedded Commerce"
+description = "Native library for the StateSet Swift binding (re-exports the stateset-ffi C ABI)"
+publish = false
 
 [lib]
 name = "stateset_swift"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-stateset-embedded = { path = "../../crates/stateset-embedded", version = "1.37.0" }
-stateset-core = { path = "../../crates/stateset-core", version = "1.37.0" }
-stateset-crypto = { path = "../../crates/stateset-crypto", version = "1.37.0" }
-
-# Serialization
-serde = { workspace = true }
-serde_json = { workspace = true }
-
-# Utilities
-uuid = { workspace = true }
-rust_decimal = { workspace = true }
-chrono = { workspace = true }
-thiserror = { workspace = true }
-
-# C FFI helpers
-libc = "0.2"
-
-[build-dependencies]
-cbindgen = "0.29"
+# The whole C ABI lives in stateset-ffi (JSON call surface + crypto exports);
+# this crate only gives the library the name the Swift module map links.
+stateset-ffi = { path = "../../crates/stateset-ffi", version = "1.37.0" }
 
 [lints]
 workspace = true

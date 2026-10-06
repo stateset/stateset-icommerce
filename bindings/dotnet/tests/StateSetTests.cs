@@ -1,1091 +1,430 @@
-using Xunit;
 using StateSet.Embedded;
+using Xunit;
 
 namespace StateSet.Tests;
 
-public class StateSetTests : IDisposable
+/// <summary>
+/// End-to-end tests against the REAL Rust engine through P/Invoke. There is
+/// no managed fake: if the native library is missing, every test fails.
+/// </summary>
+public sealed class StateSetTests : IDisposable
 {
-    private readonly StateSetCommerce _commerce;
+    private readonly StateSetCommerce _commerce = new(":memory:");
 
-    public StateSetTests()
-    {
-        _commerce = new StateSetCommerce(":memory:");
-    }
+    public void Dispose() => _commerce.Dispose();
 
-    public void Dispose()
-    {
-        _commerce.Dispose();
-    }
+    private Customer NewCustomer(string email = "alice@example.com") =>
+        _commerce.Customers.Create(email, "Alice", "Smith");
 
-    #region API Availability Tests
+    private static CreateOrderItem Line(Customer c, string sku, int qty, decimal price) =>
+        new() { ProductId = c.Id, Sku = sku, Name = sku, Quantity = qty, UnitPrice = price };
 
-    [Fact]
-    public void AllAPIsAvailable()
-    {
-        Assert.NotNull(_commerce.Customers);
-        Assert.NotNull(_commerce.Products);
-        Assert.NotNull(_commerce.Orders);
-        Assert.NotNull(_commerce.Inventory);
-        Assert.NotNull(_commerce.Carts);
-        Assert.NotNull(_commerce.Returns);
-        Assert.NotNull(_commerce.Payments);
-        Assert.NotNull(_commerce.Analytics);
-        Assert.NotNull(_commerce.Shipments);
-        Assert.NotNull(_commerce.Warranties);
-        Assert.NotNull(_commerce.Suppliers);
-        Assert.NotNull(_commerce.PurchaseOrders);
-        Assert.NotNull(_commerce.Invoices);
-        Assert.NotNull(_commerce.Bom);
-        Assert.NotNull(_commerce.WorkOrders);
-        Assert.NotNull(_commerce.Currency);
-        Assert.NotNull(_commerce.Subscriptions);
-        Assert.NotNull(_commerce.Promotions);
-        Assert.NotNull(_commerce.Tax);
-        Assert.NotNull(_commerce.Quality);
-        Assert.NotNull(_commerce.Lots);
-        Assert.NotNull(_commerce.Serials);
-        Assert.NotNull(_commerce.Warehouse);
-        Assert.NotNull(_commerce.Receiving);
-        Assert.NotNull(_commerce.Fulfillment);
-        Assert.NotNull(_commerce.AccountsPayable);
-        Assert.NotNull(_commerce.AccountsReceivable);
-        Assert.NotNull(_commerce.CostAccounting);
-        Assert.NotNull(_commerce.Credit);
-        Assert.NotNull(_commerce.Backorders);
-        Assert.NotNull(_commerce.GeneralLedger);
-    }
-
-    #endregion
-
-    #region Customer Tests
+    // ------------------------------------------------------------------
+    // Proof that this is not an in-memory fake
+    // ------------------------------------------------------------------
 
     [Fact]
-    public void CreateCustomer()
+    public void DataPersistsAcrossInstancesOnTheSameFile()
     {
-        var customer = _commerce.Customers.Create(
-            email: "test@example.com",
-            firstName: "Test",
-            lastName: "User"
-        );
-
-        Assert.NotEmpty(customer.Id);
-        Assert.Equal("test@example.com", customer.Email);
-        Assert.Equal("Test", customer.FirstName);
-        Assert.Equal("User", customer.LastName);
-    }
-
-    [Fact]
-    public void GetCustomer()
-    {
-        var created = _commerce.Customers.Create(
-            email: "get@example.com",
-            firstName: "Get",
-            lastName: "Test"
-        );
-
-        var retrieved = _commerce.Customers.Get(created.Id);
-        Assert.NotNull(retrieved);
-        Assert.Equal(created.Id, retrieved.Id);
-        Assert.Equal("get@example.com", retrieved.Email);
-    }
-
-    [Fact]
-    public void ListCustomers()
-    {
-        _commerce.Customers.Create(
-            email: "list1@example.com",
-            firstName: "List",
-            lastName: "One"
-        );
-        _commerce.Customers.Create(
-            email: "list2@example.com",
-            firstName: "List",
-            lastName: "Two"
-        );
-
-        var customers = _commerce.Customers.List();
-        Assert.True(customers.Count >= 2);
-    }
-
-    [Fact]
-    public void DeleteCustomer()
-    {
-        var customer = _commerce.Customers.Create(
-            email: "delete@example.com",
-            firstName: "Delete",
-            lastName: "Me"
-        );
-
-        var deleted = _commerce.Customers.Delete(customer.Id);
-        Assert.True(deleted);
-
-        var retrieved = _commerce.Customers.Get(customer.Id);
-        Assert.Null(retrieved);
-    }
-
-    [Fact]
-    public void CustomerCount()
-    {
-        _commerce.Customers.Create(
-            email: "count1@example.com",
-            firstName: "Count",
-            lastName: "One"
-        );
-        _commerce.Customers.Create(
-            email: "count2@example.com",
-            firstName: "Count",
-            lastName: "Two"
-        );
-
-        var count = _commerce.Customers.Count();
-        Assert.True(count >= 2);
-    }
-
-    #endregion
-
-    #region Product Tests
-
-    [Fact]
-    public void CreateProduct()
-    {
-        var product = _commerce.Products.Create(
-            name: "Test Product",
-            sku: "TEST-001",
-            price: 29.99m,
-            description: "A test product"
-        );
-
-        Assert.NotEmpty(product.Id);
-        Assert.Equal("Test Product", product.Name);
-    }
-
-    [Fact]
-    public void ListProducts()
-    {
-        _commerce.Products.Create(
-            name: "Product A",
-            sku: "PROD-A",
-            price: 10.00m
-        );
-        _commerce.Products.Create(
-            name: "Product B",
-            sku: "PROD-B",
-            price: 20.00m
-        );
-
-        var products = _commerce.Products.List();
-        Assert.True(products.Count >= 2);
-    }
-
-    #endregion
-
-    #region Inventory Tests
-
-    [Fact]
-    public void CreateInventoryItem()
-    {
-        var item = _commerce.Inventory.CreateItem(
-            sku: "INV-001",
-            name: "Inventory Item",
-            initialQuantity: 100
-        );
-
-        Assert.Equal("INV-001", item.Sku);
-    }
-
-    [Fact]
-    public void AdjustInventory()
-    {
-        _commerce.Inventory.CreateItem(
-            sku: "ADJ-001",
-            name: "Adjust Test",
-            initialQuantity: 50
-        );
-
-        var adjusted = _commerce.Inventory.Adjust(
-            sku: "ADJ-001",
-            quantityDelta: 10,
-            reason: "Received shipment"
-        );
-        Assert.True(adjusted);
-
-        var level = _commerce.Inventory.GetLevel("ADJ-001");
-        Assert.NotNull(level);
-    }
-
-    #endregion
-
-    #region Order Tests
-
-    [Fact]
-    public void CreateOrder()
-    {
-        var customer = _commerce.Customers.Create(
-            email: "order@example.com",
-            firstName: "Order",
-            lastName: "Test"
-        );
-
-        var order = _commerce.Orders.Create(
-            customerId: customer.Id,
-            items: new[]
+        var dir = Path.Combine(Path.GetTempPath(), "stateset-dotnet-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "store.db");
+        try
+        {
+            string customerId, orderId;
+            using (var first = new StateSetCommerce(path))
             {
-                new OrderItem { Sku = "TEST-SKU", Name = "Test Item", Quantity = 2, UnitPrice = 19.99 }
-            },
-            currency: "USD"
-        );
-
-        Assert.NotEmpty(order.Id);
-        Assert.Equal(customer.Id, order.CustomerId);
-    }
-
-    [Fact]
-    public void OrderLifecycle()
-    {
-        var customer = _commerce.Customers.Create(
-            email: "lifecycle@example.com",
-            firstName: "Lifecycle",
-            lastName: "Test"
-        );
-
-        var order = _commerce.Orders.Create(
-            customerId: customer.Id,
-            items: new[]
-            {
-                new OrderItem { Sku = "LIFE-001", Name = "Lifecycle Item", Quantity = 1, UnitPrice = 49.99 }
+                var customer = first.Customers.Create("persist@example.com", "Per", "Sist");
+                var order = first.Orders.Create(customer.Id, new[]
+                {
+                    new CreateOrderItem { ProductId = customer.Id, Sku = "P-1", Name = "Persisted", Quantity = 3, UnitPrice = 0.10m },
+                });
+                customerId = customer.Id;
+                orderId = order.Id;
             }
-        );
 
-        // Ship order
-        var shipped = _commerce.Orders.Ship(order.Id);
-        Assert.Equal("shipped", shipped.Status);
+            Assert.True(new FileInfo(path).Length > 0, "the SQLite file must exist and be non-empty");
+
+            using var second = new StateSetCommerce(path);
+            var reread = second.Customers.Get(customerId);
+            Assert.NotNull(reread);
+            Assert.Equal("persist@example.com", reread!.Email);
+            var order2 = second.Orders.Get(orderId);
+            Assert.NotNull(order2);
+            Assert.Equal(0.30m, order2!.TotalAmount);
+            Assert.Equal("0.30", order2.TotalAmount.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Assert.Single(second.Customers.List());
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
     }
 
     [Fact]
-    public void CancelOrder()
+    public void SeparateInMemoryStoresDoNotShareData()
     {
-        var customer = _commerce.Customers.Create(
-            email: "cancel@example.com",
-            firstName: "Cancel",
-            lastName: "Test"
-        );
-
-        var order = _commerce.Orders.Create(
-            customerId: customer.Id,
-            items: new[]
-            {
-                new OrderItem { Sku = "CANCEL-001", Name = "Cancel Item", Quantity = 1, UnitPrice = 25.00 }
-            }
-        );
-
-        var cancelled = _commerce.Orders.Cancel(order.Id);
-        Assert.Equal("cancelled", cancelled.Status);
+        NewCustomer();
+        using var other = new StateSetCommerce(":memory:");
+        Assert.Equal(0, other.Customers.Count());
+        Assert.Equal(1, _commerce.Customers.Count());
     }
 
-    #endregion
-
-    #region Cart Tests
-
     [Fact]
-    public void CreateCart()
+    public void NativeSurfaceReportsVersionsAndMethods()
     {
-        var cart = _commerce.Carts.Create(currency: "USD");
+        var v = _commerce.Version;
+        Assert.Equal(1, v.GetProperty("json_api_version").GetInt32());
+        Assert.Equal(1, v.GetProperty("abi_version").GetInt32());
+        Assert.Contains("orders.create", _commerce.NativeMethodNames);
+        Assert.Contains("payments.create_refund", _commerce.NativeMethodNames);
+    }
 
-        Assert.NotEmpty(cart.Id);
-        Assert.Equal("USD", cart.Currency);
+    // ------------------------------------------------------------------
+    // Customers
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void CustomerCrud()
+    {
+        var c = _commerce.Customers.Create("bob@example.com", "Bob", "Jones", phone: "+15550001");
+        Assert.False(string.IsNullOrEmpty(c.Id));
+        Assert.Equal(CustomerStatus.Active, c.Status);
+        Assert.Equal("Bob Jones", c.FullName);
+
+        Assert.Equal(c.Id, _commerce.Customers.Get(c.Id)!.Id);
+        Assert.Equal(c.Id, _commerce.Customers.GetByEmail("bob@example.com")!.Id);
+
+        var updated = _commerce.Customers.Update(c.Id, new UpdateCustomer { FirstName = "Robert" });
+        Assert.Equal("Robert", updated.FirstName);
+
+        Assert.Equal(1, _commerce.Customers.Count());
+        _commerce.Customers.Delete(c.Id);
+        var afterDelete = _commerce.Customers.Get(c.Id);
+        Assert.True(afterDelete is null || afterDelete.Status == CustomerStatus.Deleted);
     }
 
     [Fact]
-    public void AddItemToCart()
+    public void DuplicateEmailIsRefused()
+    {
+        NewCustomer("dup@example.com");
+        var ex = Assert.ThrowsAny<StateSetException>(() => NewCustomer("dup@example.com"));
+        Assert.Equal(StateSetErrorCode.InvalidArgument, ex.Code);
+    }
+
+    [Fact]
+    public void LookupsOfMissingEntitiesReturnNull()
+    {
+        var id = Guid.NewGuid().ToString();
+        Assert.Null(_commerce.Customers.Get(id));
+        Assert.Null(_commerce.Orders.Get(id));
+        Assert.Null(_commerce.Products.Get(id));
+        Assert.Null(_commerce.Carts.Get(id));
+        Assert.Null(_commerce.Payments.Get(id));
+        Assert.Null(_commerce.Returns.Get(id));
+        Assert.Null(_commerce.Shipments.Get(id));
+        Assert.Null(_commerce.Inventory.GetStock("NO-SUCH-SKU"));
+    }
+
+    [Fact]
+    public void MalformedIdsAreRefusedNotCoerced()
+    {
+        var ex = Assert.Throws<StateSetValidationException>(() => _commerce.Orders.Get("not-a-uuid"));
+        Assert.Equal("invalid_argument", ex.Kind);
+    }
+
+    [Fact]
+    public void MutatingAMissingEntityThrowsNotFound()
+    {
+        Assert.Throws<StateSetNotFoundException>(() => _commerce.Orders.Cancel(Guid.NewGuid().ToString()));
+    }
+
+    [Fact]
+    public void DisposedInstanceRefusesCalls()
+    {
+        var c = new StateSetCommerce(":memory:");
+        c.Dispose();
+        c.Dispose(); // idempotent
+        Assert.Throws<ObjectDisposedException>(() => c.Customers.List());
+    }
+
+    // ------------------------------------------------------------------
+    // Products
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void ProductWithExactDecimalPrice()
+    {
+        var p = _commerce.Products.Create("Premium Widget", "WIDGET-001", 29.99m, "A widget");
+        Assert.Equal("Premium Widget", p.Name);
+        var variant = _commerce.Products.GetVariantBySku("WIDGET-001");
+        Assert.NotNull(variant);
+        Assert.Equal(29.99m, variant!.Price);
+        Assert.Equal(p.Id, variant.ProductId);
+
+        _commerce.Products.AddVariant(p.Id, new CreateProductVariant { Sku = "WIDGET-002", Price = 31.50m });
+        Assert.Equal(2, _commerce.Products.GetVariants(p.Id).Count);
+        Assert.Empty(_commerce.Products.Search("Premium")); // search covers active products only
+        Assert.Equal(ProductStatus.Active, _commerce.Products.Activate(p.Id).Status);
+        Assert.Single(_commerce.Products.Search("Premium"));
+        Assert.Equal(1, _commerce.Products.Count());
+    }
+
+    [Fact]
+    public void NegativePriceIsRefused()
+    {
+        Assert.ThrowsAny<StateSetException>(() => _commerce.Products.Create("Bad", "BAD-1", -1m));
+    }
+
+    // ------------------------------------------------------------------
+    // Inventory
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void InventoryAdjustAndReserve()
+    {
+        _commerce.Inventory.CreateItem("INV-1", "Bolt", initialQuantity: 100m);
+        Assert.Equal(100m, _commerce.Inventory.GetStock("INV-1")!.TotalOnHand);
+
+        var tx = _commerce.Inventory.Adjust("INV-1", -5.5m, "damaged");
+        Assert.Equal(-5.5m, tx.Quantity);
+        Assert.Equal(94.5m, _commerce.Inventory.GetStock("INV-1")!.TotalOnHand);
+
+        var res = _commerce.Inventory.Reserve("INV-1", 10m, "order", "ORD-1");
+        Assert.Equal(10m, res.Quantity);
+        Assert.Equal(84.5m, _commerce.Inventory.GetStock("INV-1")!.TotalAvailable);
+        Assert.True(_commerce.Inventory.HasStock("INV-1", 84.5m));
+        Assert.False(_commerce.Inventory.HasStock("INV-1", 84.6m));
+
+        _commerce.Inventory.ReleaseReservation(res.Id);
+        Assert.Equal(94.5m, _commerce.Inventory.GetStock("INV-1")!.TotalAvailable);
+        Assert.NotNull(_commerce.Inventory.GetItem("INV-1"));
+    }
+
+    [Fact]
+    public void OverReservationIsRefused()
+    {
+        _commerce.Inventory.CreateItem("INV-2", "Nut", initialQuantity: 1m);
+        Assert.ThrowsAny<StateSetException>(() => _commerce.Inventory.Reserve("INV-2", 2m, "order", "X"));
+    }
+
+    // ------------------------------------------------------------------
+    // Orders
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void OrderTotalsAreExactDecimals()
+    {
+        var c = NewCustomer();
+        var order = _commerce.Orders.Create(c.Id, new[] { Line(c, "A", 3, 0.10m), Line(c, "B", 1, 19.99m) });
+        Assert.Equal(20.29m, order.TotalAmount);
+        Assert.Equal(2, order.Items.Count);
+        Assert.Equal("USD", order.Currency);
+        Assert.Equal(OrderStatus.Pending, order.Status);
+        Assert.Equal(order.Id, _commerce.Orders.GetByNumber(order.OrderNumber)!.Id);
+        Assert.Single(_commerce.Orders.ListForCustomer(c.Id));
+    }
+
+    [Fact]
+    public void OrderLifecycleFollowsTheEngineStateMachine()
+    {
+        var c = NewCustomer();
+        var order = _commerce.Orders.Create(c.Id, new[] { Line(c, "A", 1, 10m) });
+        order = _commerce.Orders.UpdateStatus(order.Id, OrderStatus.Confirmed);
+        Assert.Equal(OrderStatus.Confirmed, order.Status);
+        order = _commerce.Orders.Ship(order.Id, "1Z999");
+        Assert.Equal(OrderStatus.Shipped, order.Status);
+        Assert.Equal("1Z999", order.TrackingNumber);
+        order = _commerce.Orders.Deliver(order.Id);
+        Assert.Equal(OrderStatus.Delivered, order.Status);
+        // A delivered order cannot be cancelled -- the engine says so.
+        Assert.ThrowsAny<StateSetException>(() => _commerce.Orders.Cancel(order.Id));
+    }
+
+    [Fact]
+    public void CancelPendingOrder()
+    {
+        var c = NewCustomer();
+        var order = _commerce.Orders.Create(c.Id, new[] { Line(c, "A", 1, 10m) });
+        Assert.Equal(OrderStatus.Cancelled, _commerce.Orders.Cancel(order.Id).Status);
+    }
+
+    [Fact]
+    public void ExplicitCurrencyIsValidated()
+    {
+        var c = NewCustomer();
+        Assert.Equal("EUR", _commerce.Orders.Create(c.Id, new[] { Line(c, "A", 1, 1m) }, currency: "eur").Currency);
+        Assert.Throws<StateSetValidationException>(() =>
+            _commerce.Orders.Create(c.Id, new[] { Line(c, "A", 1, 1m) }, currency: "EURO"));
+    }
+
+    // ------------------------------------------------------------------
+    // Carts / checkout
+    // ------------------------------------------------------------------
+
+    private static readonly CartAddress Addr = new()
+    {
+        FirstName = "Alice",
+        LastName = "Smith",
+        Line1 = "1 Main St",
+        City = "Austin",
+        State = "TX",
+        PostalCode = "78701",
+        Country = "US",
+    };
+
+    [Fact]
+    public void CartCheckoutCreatesARealOrder()
+    {
+        var c = NewCustomer();
+        _commerce.Inventory.CreateItem("CART-1", "Mug", initialQuantity: 10m);
+        var cart = _commerce.Carts.Create(customerId: c.Id, customerEmail: c.Email);
+        Assert.Equal(CartStatus.Active, cart.Status);
+
+        var item = _commerce.Carts.AddItem(cart.Id, "CART-1", "Mug", 2, 12.50m);
+        Assert.Equal(25.00m, item.Total);
+        Assert.Single(_commerce.Carts.GetItems(cart.Id));
+
+        _commerce.Carts.SetShipping(cart.Id, Addr, method: "standard", amount: 5.00m);
+        _commerce.Carts.SetPayment(cart.Id, "credit_card", "tok_test");
+        var result = _commerce.Carts.Complete(cart.Id);
+
+        var order = _commerce.Orders.Get(result.OrderId);
+        Assert.NotNull(order);
+        Assert.Equal(result.TotalCharged, order!.TotalAmount);
+        Assert.Equal(CartStatus.Completed, _commerce.Carts.Get(cart.Id)!.Status);
+    }
+
+    [Fact]
+    public void CartItemQuantityUpdateAndRemoval()
     {
         var cart = _commerce.Carts.Create();
-
-        var updated = _commerce.Carts.AddItem(
-            cartId: cart.Id,
-            sku: "CART-SKU",
-            name: "Cart Item",
-            quantity: 2,
-            unitPrice: 15.99m
-        );
-
-        Assert.NotNull(updated);
+        var item = _commerce.Carts.AddItem(cart.Id, "CART-2", "Pen", 1, 1.25m);
+        Assert.Equal(3.75m, _commerce.Carts.UpdateItemQuantity(item.Id, 3).Total);
+        _commerce.Carts.RemoveItem(item.Id);
+        Assert.Empty(_commerce.Carts.GetItems(cart.Id));
+        Assert.Equal(CartStatus.Cancelled, _commerce.Carts.Cancel(cart.Id).Status);
     }
 
-    #endregion
-
-    #region Analytics Tests
-
-    [Fact]
-    public void SalesSummary()
-    {
-        var summary = _commerce.Analytics.SalesSummary();
-        Assert.NotNull(summary);
-    }
+    // ------------------------------------------------------------------
+    // Payments / refunds
+    // ------------------------------------------------------------------
 
     [Fact]
-    public void TopProducts()
+    public void PaymentAndPartialRefund()
     {
-        var products = _commerce.Analytics.TopProducts();
-        Assert.NotNull(products);
-    }
+        var c = NewCustomer();
+        var order = _commerce.Orders.Create(c.Id, new[] { Line(c, "A", 1, 100m) });
+        var payment = _commerce.Payments.Create(order.Id, 100.00m, customerId: c.Id);
+        Assert.Equal(PaymentStatus.Pending, payment.Status);
+        Assert.Equal(100.00m, payment.Amount);
 
-    [Fact]
-    public void TopCustomers()
-    {
-        var customers = _commerce.Analytics.TopCustomers();
-        Assert.NotNull(customers);
-    }
+        payment = _commerce.Payments.Complete(payment.Id);
+        Assert.Equal(PaymentStatus.Completed, payment.Status);
 
-    #endregion
+        var refund = _commerce.Payments.Refund(payment.Id, 30.01m, "partial");
+        Assert.Equal(30.01m, refund.Amount);
+        _commerce.Payments.CompleteRefund(refund.Id);
+        Assert.Single(_commerce.Payments.GetRefunds(payment.Id));
+        Assert.Equal(30.01m, _commerce.Payments.Get(payment.Id)!.AmountRefunded);
 
-    #region Supplier Tests
-
-    [Fact]
-    public void CreateSupplier()
-    {
-        var supplier = _commerce.Suppliers.Create(
-            name: "Test Supplier",
-            email: "supplier@example.com"
-        );
-
-        Assert.NotEmpty(supplier.Id);
-        Assert.Equal("Test Supplier", supplier.Name);
+        // Over-refund is refused by the engine.
+        Assert.ThrowsAny<StateSetException>(() => _commerce.Payments.Refund(payment.Id, 70.00m, "too much"));
+        Assert.Single(_commerce.Payments.ForOrder(order.Id));
     }
 
     [Fact]
-    public void ListSuppliers()
+    public void FailedPayment()
     {
-        _commerce.Suppliers.Create(
-            name: "Supplier A",
-            email: "suppliera@example.com"
-        );
-
-        var suppliers = _commerce.Suppliers.List();
-        Assert.True(suppliers.Count >= 1);
+        var c = NewCustomer();
+        var order = _commerce.Orders.Create(c.Id, new[] { Line(c, "A", 1, 5m) });
+        var payment = _commerce.Payments.Create(order.Id, 5m);
+        var failed = _commerce.Payments.Fail(payment.Id, "card declined", "card_declined");
+        Assert.Equal(PaymentStatus.Failed, failed.Status);
+        Assert.Equal("card declined", failed.FailureReason);
     }
 
-    #endregion
-
-    #region Invoice Tests
-
-    [Fact]
-    public void CreateInvoice()
-    {
-        var customer = _commerce.Customers.Create(
-            email: "invoice@example.com",
-            firstName: "Invoice",
-            lastName: "Test"
-        );
-
-        var invoice = _commerce.Invoices.Create(
-            customerId: customer.Id,
-            items: new[]
-            {
-                new InvoiceItem { Description = "Service", Quantity = 1, UnitPrice = 100.00 }
-            }
-        );
-
-        Assert.NotEmpty(invoice.Id);
-    }
+    // ------------------------------------------------------------------
+    // Returns
+    // ------------------------------------------------------------------
 
     [Fact]
-    public void ListInvoices()
+    public void ReturnLifecycle()
     {
-        var invoices = _commerce.Invoices.List();
-        Assert.NotNull(invoices);
-    }
+        var c = NewCustomer();
+        var order = _commerce.Orders.Create(c.Id, new[] { Line(c, "R-1", 2, 15m) });
+        _commerce.Orders.UpdateStatus(order.Id, OrderStatus.Confirmed);
+        _commerce.Orders.Ship(order.Id);
+        _commerce.Orders.Deliver(order.Id);
 
-    #endregion
+        var ret = _commerce.Returns.Create(order.Id, ReturnReason.Defective,
+            new[] { new CreateReturnItem { OrderItemId = order.Items[0].Id, Quantity = 1, Condition = ItemCondition.Damaged } },
+            reasonDetails: "cracked");
+        Assert.Equal(ReturnStatus.Requested, ret.Status);
+        Assert.Single(ret.Items);
 
-    #region Subscription Tests
-
-    [Fact]
-    public void CreateSubscriptionPlan()
-    {
-        var plan = _commerce.Subscriptions.CreatePlan(
-            code: "BASIC",
-            name: "Basic Plan",
-            interval: "month",
-            intervalCount: 1,
-            price: 9.99m,
-            currency: "USD"
-        );
-
-        Assert.NotEmpty(plan.Id);
-        Assert.Equal("BASIC", plan.Code);
+        Assert.Equal(ReturnStatus.Approved, _commerce.Returns.Approve(ret.Id).Status);
+        Assert.Equal("RT-1", _commerce.Returns.AddTracking(ret.Id, "RT-1").TrackingNumber);
+        Assert.Equal(ReturnStatus.Received, _commerce.Returns.MarkReceived(ret.Id).Status);
+        // The engine refuses to complete a return with undecided items.
+        Assert.ThrowsAny<StateSetException>(() => _commerce.Returns.Complete(ret.Id));
+        var item = _commerce.Returns.SetItemDisposition(ret.Id, ret.Items[0].Id, ReturnDisposition.Scrap);
+        Assert.Equal(ReturnDisposition.Scrap, item.Disposition);
+        Assert.Equal(ReturnStatus.Completed, _commerce.Returns.Complete(ret.Id).Status);
+        Assert.Single(_commerce.Returns.ListForOrder(order.Id));
     }
 
     [Fact]
-    public void ListSubscriptionPlans()
+    public void ReturningMoreThanWasOrderedIsRefused()
     {
-        _commerce.Subscriptions.CreatePlan(
-            code: "LIST-PLAN",
-            name: "List Plan",
-            interval: "month",
-            intervalCount: 1,
-            price: 19.99m
-        );
-
-        var plans = _commerce.Subscriptions.ListPlans();
-        Assert.True(plans.Count >= 1);
+        var c = NewCustomer();
+        var order = _commerce.Orders.Create(c.Id, new[] { Line(c, "R-2", 1, 15m) });
+        _commerce.Orders.UpdateStatus(order.Id, OrderStatus.Confirmed);
+        _commerce.Orders.Ship(order.Id);
+        _commerce.Orders.Deliver(order.Id);
+        Assert.ThrowsAny<StateSetException>(() => _commerce.Returns.Create(order.Id, ReturnReason.ChangedMind,
+            new[] { new CreateReturnItem { OrderItemId = order.Items[0].Id, Quantity = 5 } }));
     }
+
+    // ------------------------------------------------------------------
+    // Shipments
+    // ------------------------------------------------------------------
 
     [Fact]
-    public void SubscribeCustomer()
+    public void ShipmentLifecycle()
     {
-        var customer = _commerce.Customers.Create(
-            email: "subscribe@example.com",
-            firstName: "Subscribe",
-            lastName: "Test"
-        );
+        var c = NewCustomer();
+        var order = _commerce.Orders.Create(c.Id, new[] { Line(c, "S-1", 1, 15m) });
+        _commerce.Orders.UpdateStatus(order.Id, OrderStatus.Confirmed);
 
-        var plan = _commerce.Subscriptions.CreatePlan(
-            code: "SUB-PLAN",
-            name: "Subscribe Plan",
-            interval: "month",
-            intervalCount: 1,
-            price: 29.99m
-        );
+        var s = _commerce.Shipments.Create(order.Id, "Alice Smith", "1 Main St, Austin TX",
+            carrier: ShippingCarrier.Ups, method: ShippingMethod.Ground, shippingCost: 7.25m);
+        Assert.Equal(ShipmentStatus.Pending, s.Status);
+        Assert.Equal(ShippingCarrier.Ups, s.Carrier);
+        Assert.Equal(7.25m, s.ShippingCost);
 
-        var subscription = _commerce.Subscriptions.Subscribe(
-            customerId: customer.Id,
-            planId: plan.Id
-        );
-
-        Assert.NotEmpty(subscription.Id);
-        Assert.Equal(customer.Id, subscription.CustomerId);
+        // pending -> shipped is not a legal transition; the engine says so.
+        Assert.Throws<StateSetValidationException>(() => _commerce.Shipments.Ship(s.Id, "1ZTRACK"));
+        Assert.Equal(ShipmentStatus.Processing, _commerce.Shipments.MarkProcessing(s.Id).Status);
+        Assert.Equal(ShipmentStatus.ReadyToShip, _commerce.Shipments.MarkReady(s.Id).Status);
+        s = _commerce.Shipments.Ship(s.Id, "1ZTRACK");
+        Assert.Equal(ShipmentStatus.Shipped, s.Status);
+        Assert.Equal(s.Id, _commerce.Shipments.GetByTracking("1ZTRACK")!.Id);
+        Assert.Equal(ShipmentStatus.InTransit, _commerce.Shipments.MarkInTransit(s.Id).Status);
+        Assert.Equal(ShipmentStatus.OutForDelivery, _commerce.Shipments.MarkOutForDelivery(s.Id).Status);
+        Assert.Equal(ShipmentStatus.Delivered, _commerce.Shipments.Deliver(s.Id).Status);
+        Assert.Single(_commerce.Shipments.ForOrder(order.Id));
+        Assert.Single(_commerce.Shipments.List());
     }
 
-    #endregion
-
-    #region Promotion Tests
+    // ------------------------------------------------------------------
+    // Concurrency: one handle, many threads
+    // ------------------------------------------------------------------
 
     [Fact]
-    public void CreatePromotion()
+    public void ConcurrentCallsOnOneHandle()
     {
-        var promo = _commerce.Promotions.Create(
-            code: "TEST20",
-            name: "Test Discount",
-            discountType: "percentage",
-            discountValue: 20.0m
-        );
-
-        Assert.NotEmpty(promo.Id);
-        Assert.Equal("TEST20", promo.Code);
+        Parallel.For(0, 16, i => _commerce.Customers.Create($"p{i}@example.com", "P", i.ToString()));
+        Assert.Equal(16, _commerce.Customers.Count());
     }
-
-    [Fact]
-    public void GetActivePromotions()
-    {
-        var promo = _commerce.Promotions.Create(
-            code: "ACTIVE10",
-            name: "Active Promo",
-            discountType: "percentage",
-            discountValue: 10.0m
-        );
-        _commerce.Promotions.Activate(promo.Id);
-
-        var active = _commerce.Promotions.GetActive();
-        Assert.True(active.Count >= 1);
-    }
-
-    [Fact]
-    public void CreateCoupon()
-    {
-        var promo = _commerce.Promotions.Create(
-            code: "COUPON-PROMO",
-            name: "Coupon Promotion",
-            discountType: "percentage",
-            discountValue: 15.0m
-        );
-
-        var coupon = _commerce.Promotions.CreateCoupon(
-            promotionId: promo.Id,
-            code: "SAVE15NOW",
-            maxUses: 100
-        );
-
-        Assert.NotEmpty(coupon.Id);
-        Assert.Equal("SAVE15NOW", coupon.Code);
-    }
-
-    #endregion
-
-    #region Tax Tests
-
-    [Fact]
-    public void GetTaxSettings()
-    {
-        var settings = _commerce.Tax.GetSettings();
-        Assert.NotNull(settings);
-    }
-
-    [Fact]
-    public void CreateTaxRate()
-    {
-        var rate = _commerce.Tax.CreateRate(
-            country: "US",
-            rate: 8.25m
-        );
-
-        Assert.NotEmpty(rate.Id);
-        Assert.Equal("US", rate.Country);
-    }
-
-    #endregion
-
-    #region Warehouse Tests
-
-    [Fact]
-    public void CreateWarehouse()
-    {
-        var warehouse = _commerce.Warehouse.CreateWarehouse(
-            code: "WH-TEST",
-            name: "Test Warehouse",
-            warehouseType: "distribution"
-        );
-
-        Assert.Equal("WH-TEST", warehouse.Code);
-        Assert.Equal("Test Warehouse", warehouse.Name);
-    }
-
-    [Fact]
-    public void ListWarehouses()
-    {
-        _commerce.Warehouse.CreateWarehouse(
-            code: "WH-LIST",
-            name: "List Warehouse"
-        );
-
-        var warehouses = _commerce.Warehouse.ListWarehouses();
-        Assert.True(warehouses.Count >= 1);
-    }
-
-    [Fact]
-    public void CreateZone()
-    {
-        var warehouse = _commerce.Warehouse.CreateWarehouse(
-            code: "WH-ZONE",
-            name: "Zone Warehouse"
-        );
-
-        var location = _commerce.Warehouse.CreateLocation(
-            warehouseId: warehouse.Id,
-            locationType: "storage",
-            zone: "ZONE-A"
-        );
-
-        Assert.True(location.Id > 0);
-        Assert.Equal(warehouse.Id, location.WarehouseId);
-    }
-
-    #endregion
-
-    #region Quality Tests
-
-    [Fact]
-    public void CreateInspection()
-    {
-        var inspection = _commerce.Quality.CreateInspection(
-            inspectionType: "incoming",
-            referenceType: "purchase_order",
-            referenceId: "test-po-id"
-        );
-
-        Assert.NotEmpty(inspection.Id);
-    }
-
-    [Fact]
-    public void ListInspections()
-    {
-        var inspections = _commerce.Quality.ListInspections();
-        Assert.NotNull(inspections);
-    }
-
-    #endregion
-
-    #region Lots Tests
-
-    [Fact]
-    public void CreateLot()
-    {
-        _commerce.Inventory.CreateItem(
-            sku: "LOT-SKU",
-            name: "Lot Item",
-            initialQuantity: 0
-        );
-
-        var lot = _commerce.Lots.CreateLot(
-            lotNumber: "LOT-001",
-            sku: "LOT-SKU",
-            quantity: 100
-        );
-
-        Assert.NotEmpty(lot.Id);
-        Assert.Equal("LOT-001", lot.LotNumber);
-    }
-
-    [Fact]
-    public void ListLots()
-    {
-        var lots = _commerce.Lots.ListLots();
-        Assert.NotNull(lots);
-    }
-
-    #endregion
-
-    #region Serials Tests
-
-    [Fact]
-    public void RegisterSerial()
-    {
-        _commerce.Inventory.CreateItem(
-            sku: "SERIAL-SKU",
-            name: "Serial Item",
-            initialQuantity: 0
-        );
-
-        var serial = _commerce.Serials.RegisterSerial(
-            serialNumber: "SN-001",
-            sku: "SERIAL-SKU"
-        );
-
-        Assert.NotEmpty(serial.Id);
-        Assert.Equal("SN-001", serial.SerialNumber);
-    }
-
-    [Fact]
-    public void ListSerials()
-    {
-        var serials = _commerce.Serials.ListSerials();
-        Assert.NotNull(serials);
-    }
-
-    #endregion
-
-    #region General Ledger Tests
-
-    [Fact]
-    public void CreateGlAccount()
-    {
-        var account = _commerce.GeneralLedger.CreateAccount(
-            accountNumber: "1000",
-            name: "Cash",
-            accountType: "asset"
-        );
-
-        Assert.NotEmpty(account.Id);
-        Assert.Equal("1000", account.AccountNumber);
-        Assert.Equal("Cash", account.Name);
-    }
-
-    [Fact]
-    public void ListGlAccounts()
-    {
-        _commerce.GeneralLedger.CreateAccount(
-            accountNumber: "2000",
-            name: "Accounts Payable",
-            accountType: "liability"
-        );
-
-        var accounts = _commerce.GeneralLedger.ListAccounts();
-        Assert.True(accounts.Count >= 1);
-    }
-
-    [Fact]
-    public void InitializeChartOfAccounts()
-    {
-        var accounts = _commerce.GeneralLedger.InitializeChartOfAccounts();
-        Assert.NotNull(accounts);
-        Assert.True(accounts.Count > 0);
-    }
-
-    #endregion
-
-    #region Accounts Payable Tests
-
-    [Fact]
-    public void ListBills()
-    {
-        var bills = _commerce.AccountsPayable.ListBills();
-        Assert.NotNull(bills);
-    }
-
-    [Fact]
-    public void GetApAgingSummary()
-    {
-        var summary = _commerce.AccountsPayable.GetAgingSummary();
-        Assert.NotNull(summary);
-    }
-
-    #endregion
-
-    #region Accounts Receivable Tests
-
-    [Fact]
-    public void ListReceivables()
-    {
-        var receivables = _commerce.AccountsReceivable.ListReceivables();
-        Assert.NotNull(receivables);
-    }
-
-    [Fact]
-    public void GetArAgingSummary()
-    {
-        var summary = _commerce.AccountsReceivable.GetAgingSummary();
-        Assert.NotNull(summary);
-    }
-
-    #endregion
-
-    #region Credit Tests
-
-    [Fact]
-    public void GetCreditLimit()
-    {
-        var customer = _commerce.Customers.Create(
-            email: "credit@example.com",
-            firstName: "Credit",
-            lastName: "Test"
-        );
-
-        var limit = _commerce.Credit.GetCreditLimit(customer.Id);
-        Assert.NotNull(limit);
-    }
-
-    [Fact]
-    public void SetCreditLimit()
-    {
-        var customer = _commerce.Customers.Create(
-            email: "setcredit@example.com",
-            firstName: "Set",
-            lastName: "Credit"
-        );
-
-        var limit = _commerce.Credit.SetCreditLimit(
-            customerId: customer.Id,
-            limit: 10000.00m,
-            currency: "USD"
-        );
-
-        Assert.NotNull(limit);
-    }
-
-    #endregion
-
-    #region Backorders Tests
-
-    [Fact]
-    public void ListBackorders()
-    {
-        var backorders = _commerce.Backorders.ListBackorders();
-        Assert.NotNull(backorders);
-    }
-
-    [Fact]
-    public void GetBackorderSummary()
-    {
-        var summary = _commerce.Backorders.GetSummary();
-        Assert.NotNull(summary);
-    }
-
-    #endregion
-
-    #region Fulfillment Tests
-
-    [Fact]
-    public void ListWaves()
-    {
-        var waves = _commerce.Fulfillment.ListWaves();
-        Assert.NotNull(waves);
-    }
-
-    [Fact]
-    public void ListPickLists()
-    {
-        var pickLists = _commerce.Fulfillment.ListPickLists();
-        Assert.NotNull(pickLists);
-    }
-
-    #endregion
-
-    #region Receiving Tests
-
-    [Fact]
-    public void ListReceipts()
-    {
-        var receipts = _commerce.Receiving.ListReceipts();
-        Assert.NotNull(receipts);
-    }
-
-    #endregion
-
-    #region Cost Accounting Tests
-
-    [Fact]
-    public void ListCostEntries()
-    {
-        var entries = _commerce.CostAccounting.ListCostEntries();
-        Assert.NotNull(entries);
-    }
-
-    #endregion
-
-    #region BOM Tests
-
-    [Fact]
-    public void CreateBom()
-    {
-        var product = _commerce.Products.Create(
-            name: "BOM Product",
-            sku: "BOM-PROD",
-            price: 99.99m
-        );
-
-        var bom = _commerce.Bom.Create(
-            productId: product.Id,
-            name: "Test BOM"
-        );
-
-        Assert.NotEmpty(bom.Id);
-        Assert.Equal("Test BOM", bom.Name);
-    }
-
-    [Fact]
-    public void ListBoms()
-    {
-        var boms = _commerce.Bom.List();
-        Assert.NotNull(boms);
-    }
-
-    #endregion
-
-    #region Work Orders Tests
-
-    [Fact]
-    public void CreateWorkOrder()
-    {
-        var product = _commerce.Products.Create(
-            name: "WO Product",
-            sku: "WO-PROD",
-            price: 49.99m
-        );
-
-        var workOrder = _commerce.WorkOrders.Create(
-            productId: product.Id,
-            quantityToBuild: 10
-        );
-
-        Assert.NotEmpty(workOrder.Id);
-    }
-
-    [Fact]
-    public void ListWorkOrders()
-    {
-        var workOrders = _commerce.WorkOrders.List();
-        Assert.NotNull(workOrders);
-    }
-
-    #endregion
-
-    #region Purchase Orders Tests
-
-    [Fact]
-    public void CreatePurchaseOrder()
-    {
-        var supplier = _commerce.Suppliers.Create(
-            name: "PO Supplier",
-            email: "posupplier@example.com",
-            phone: "555-0100"
-        );
-
-        var po = _commerce.PurchaseOrders.Create(
-            supplierId: supplier.Id,
-            items: new[]
-            {
-                new PurchaseOrderItem { Sku = "PO-SKU", Name = "PO Item", Quantity = 10, UnitCost = 5.00 }
-            }
-        );
-
-        Assert.NotEmpty(po.Id);
-    }
-
-    [Fact]
-    public void ListPurchaseOrders()
-    {
-        var pos = _commerce.PurchaseOrders.List();
-        Assert.NotNull(pos);
-    }
-
-    #endregion
-
-    #region Shipments Tests
-
-    [Fact]
-    public void CreateShipment()
-    {
-        var customer = _commerce.Customers.Create(
-            email: "shipment@example.com",
-            firstName: "Shipment",
-            lastName: "Test"
-        );
-
-        var order = _commerce.Orders.Create(
-            customerId: customer.Id,
-            items: new[]
-            {
-                new OrderItem { Sku = "SHIP-SKU", Name = "Ship Item", Quantity = 1, UnitPrice = 30.00 }
-            }
-        );
-
-        var shipment = _commerce.Shipments.Create(
-            orderId: order.Id,
-            recipientName: "Test Recipient",
-            shippingAddress: "123 Test St",
-            carrier: "ups"
-        );
-
-        Assert.NotEmpty(shipment.Id);
-
-        var shipped = _commerce.Shipments.Ship(shipment.Id, "1Z999AA10123456784");
-        Assert.Equal("shipped", shipped.Status);
-
-        var delivered = _commerce.Shipments.Deliver(shipment.Id);
-        Assert.Equal("delivered", delivered.Status);
-
-        var order2 = _commerce.Orders.Create(
-            customerId: customer.Id,
-            items: new[]
-            {
-                new OrderItem { Sku = "SHIP-SKU-2", Name = "Ship Item 2", Quantity = 1, UnitPrice = 12.00 }
-            }
-        );
-
-        var toCancel = _commerce.Shipments.Create(
-            orderId: order2.Id,
-            recipientName: "Test Recipient",
-            shippingAddress: "456 Market St",
-            carrier: "ups"
-        );
-
-        var cancelled = _commerce.Shipments.Cancel(toCancel.Id);
-        Assert.Equal("cancelled", cancelled.Status);
-    }
-
-    [Fact]
-    public void ListShipments()
-    {
-        var shipments = _commerce.Shipments.List();
-        Assert.NotNull(shipments);
-    }
-
-    #endregion
-
-    #region Warranties Tests
-
-    [Fact]
-    public void CreateWarranty()
-    {
-        var customer = _commerce.Customers.Create(
-            email: "warranty@example.com",
-            firstName: "Warranty",
-            lastName: "Test"
-        );
-        var product = _commerce.Products.Create(
-            name: "Warranty Product",
-            sku: "WARRANTY-PROD",
-            price: 25.00m
-        );
-
-        var warranty = _commerce.Warranties.Create(
-            customerId: customer.Id,
-            productId: product.Id,
-            warrantyType: WarrantyType.Standard,
-            durationMonths: 12
-        );
-
-        Assert.NotEmpty(warranty.Id);
-    }
-
-    [Fact]
-    public void ListWarranties()
-    {
-        var warranties = _commerce.Warranties.List();
-        Assert.NotNull(warranties);
-    }
-
-    #endregion
-
-    #region Returns Tests
-
-    [Fact]
-    public void CreateReturn()
-    {
-        var customer = _commerce.Customers.Create(
-            email: "return@example.com",
-            firstName: "Return",
-            lastName: "Test"
-        );
-
-        var order = _commerce.Orders.Create(
-            customerId: customer.Id,
-            items: new[]
-            {
-                new OrderItem { Sku = "RET-SKU", Name = "Return Item", Quantity = 1, UnitPrice = 50.00 }
-            }
-        );
-
-        var returnRequest = _commerce.Returns.Create(
-            orderId: order.Id,
-            reason: ReturnReason.Defective
-        );
-
-        Assert.NotEmpty(returnRequest.Id);
-    }
-
-    [Fact]
-    public void ListReturns()
-    {
-        var returns = _commerce.Returns.List();
-        Assert.NotNull(returns);
-    }
-
-    #endregion
-
-    #region Payments Tests
-
-    [Fact]
-    public void CreatePayment()
-    {
-        var customer = _commerce.Customers.Create(
-            email: "payment@example.com",
-            firstName: "Payment",
-            lastName: "Test"
-        );
-
-        var order = _commerce.Orders.Create(
-            customerId: customer.Id,
-            items: new[]
-            {
-                new OrderItem { Sku = "PAY-SKU", Name = "Payment Item", Quantity = 1, UnitPrice = 100.00 }
-            }
-        );
-
-        var payment = _commerce.Payments.Create(
-            orderId: order.Id,
-            amount: 100.00m,
-            method: PaymentMethod.CreditCard
-        );
-
-        Assert.NotEmpty(payment.Id);
-    }
-
-    [Fact]
-    public void ListPayments()
-    {
-        var payments = _commerce.Payments.List();
-        Assert.NotNull(payments);
-    }
-
-    #endregion
 }
